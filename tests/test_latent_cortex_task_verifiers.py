@@ -330,3 +330,18 @@ def test_public_response_contract_controls_branch_score_and_receipt():
     receipt = verifier.to_receipt()
     assert receipt["response_contract_required"] is True
     assert receipt["response_contract_satisfied"] is True
+
+
+def test_latent_state_score_omits_wire_shape_without_weakening_public_score():
+    verifier = EpisodeTaskVerifier(
+        "Compute two plus two and explain the result.",
+        response_contract='{"answer":int}',
+    )
+    malformed = "Two plus two equals 4 because two pairs contain four items."
+
+    semantic = verifier.latent_state_score(malformed)
+    strict = verifier(malformed)
+
+    assert semantic > strict
+    assert verifier.evaluations[-1]["checks"]["response_contract"]["valid"] is False
+    assert len(verifier.evaluations) == 1

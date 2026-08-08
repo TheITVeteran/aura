@@ -69,6 +69,7 @@ def test_the_full_stack_arm_enables_every_pillar_that_was_built():
     assert cfg.decode_contract == "none"
     assert cfg.verifier_probe_contract == "final_answer_v1"
     assert cfg.local_repair_max_attempts == 2
+    assert cfg.verifier_accept_non_regression is True
     # Adaptive halting: the depth is a ceiling, not a floor.
     assert cfg.recurrence.min_steps == 2
     assert cfg.recurrence.max_steps == 8
@@ -86,6 +87,7 @@ def test_the_mechanism_arm_stays_an_ablation():
     # Forced depth: no early halting, which is what makes it an ablation.
     assert cfg.recurrence.min_steps == cfg.recurrence.max_steps == 4
     assert cfg.recurrence.fixed_depth is True
+    assert cfg.verifier_accept_non_regression is False
 
 
 def test_frontier_verifiers_enforce_each_tasks_public_response_shape():

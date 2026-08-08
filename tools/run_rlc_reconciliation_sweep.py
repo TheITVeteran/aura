@@ -385,6 +385,13 @@ def _build_config(
         # why "the recurrent path" had never actually been measured: without
         # these the second pass is the same computation as the first.
         latent_opt=LatentOptConfig(enabled=full, steps=4, lr=0.05),
+        # Raw latent proposals often preserve the exact greedy text while
+        # reducing the answer-independent proxy. Rejecting those ties means
+        # every proposal is reverted before it can accumulate into a changed
+        # decode. The optimizer already requires BOTH semantic non-regression
+        # and strict proxy descent; enable that conservative continuation rule
+        # for the complete-engine arm so latent search can actually move.
+        verifier_accept_non_regression=full,
         fast_weights=FastWeightsConfig(enabled=full, rank=2, opt_steps=4),
         prelude_frac=0.25,
         coda_frac=0.25,
@@ -856,6 +863,11 @@ class _OracleTaskVerifier:
 
     def fast_weight_learning_evidence(self, *args, **kwargs):
         return self._local.fast_weight_learning_evidence(*args, **kwargs)
+
+    def latent_state_score(self, text: str) -> float:
+        """Use only candidate-local semantics; hidden answers remain excluded."""
+
+        return self._local.latent_state_score(text)
 
     def to_receipt(self, *args, **kwargs):
         return self._local.to_receipt(*args, **kwargs)

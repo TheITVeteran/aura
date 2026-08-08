@@ -560,6 +560,15 @@ class LatentCortexEngine:
                 research_oracle,
                 text,
             )
+        latent_state_score = getattr(verifier, "latent_state_score", None)
+        if callable(latent_state_score):
+            # Raw latent probes precede task-shape repair. This candidate-local
+            # semantic score can guide transient state search, but never branch
+            # admission, answer replacement, or serving.
+            metered.latent_state_score = lambda text: charge(
+                latent_state_score,
+                text,
+            )
         return metered
 
     def _token_ends_sentence(self, token: int) -> bool:
@@ -4853,6 +4862,7 @@ class LatentCortexEngine:
         )
         branch_verifier_score: float | None = None
         branch_probe_texts: dict[int, str] = {}
+        latent_optimization_probe_texts: dict[int, str] = {}
         research_oracle_candidates: dict[int, str] = {}
         blind_scores: dict[int, float] = {}
         if (
@@ -4870,6 +4880,7 @@ class LatentCortexEngine:
                 )
                 text = self._decode_public_text(probe, receipt=receipt)
                 branch_probe_texts[branch.index] = text
+            latent_optimization_probe_texts = dict(branch_probe_texts)
             valid_contract_branches: set[int] | None = None
             if "final_answer_v1" in {
                 self.config.decode_contract,
@@ -5901,6 +5912,8 @@ class LatentCortexEngine:
                 protected_slots=winner.workspace.context_slot_indices,
             )
             if verifier is not None and self.tokenizer is not None:
+                latent_state_score = getattr(verifier, "latent_state_score", None)
+                latent_state_score_enabled = callable(latent_state_score)
 
                 def z_score(z) -> float:
                     saved = winner.z
@@ -5914,7 +5927,12 @@ class LatentCortexEngine:
                             budget,
                             bridge_tokens=bridge_tokens,
                         )
-                        return float(verifier(self.tokenizer.decode(probe)))
+                        decoded = self.tokenizer.decode(probe)
+                        return float(
+                            latent_state_score(decoded)
+                            if latent_state_score_enabled
+                            else verifier(decoded)
+                        )
                     finally:
                         winner.z = saved
                         winner.workspace.update(saved)
@@ -5923,9 +5941,22 @@ class LatentCortexEngine:
                     winner.z,
                     z_score,
                     verifier_layer_apps=self._verifier_probe_layer_apps(bridge_tokens),
-                    initial_score=branch_verifier_score,
+                    initial_score=(
+                        float(
+                            latent_state_score(
+                                latent_optimization_probe_texts[winner.index]
+                            )
+                        )
+                        if latent_state_score_enabled
+                        and winner.index in latent_optimization_probe_texts
+                        else branch_verifier_score
+                    ),
                     accept_non_regression=(self.config.verifier_accept_non_regression),
                 )
+                if latent_state_score_enabled:
+                    optimizer.trace.verifier_policy = (
+                        "semantic_candidate_score_for_latent_search_only_v1"
+                    )
             else:
                 z_opt = optimizer.run(winner.z)
             winner.z = winner.workspace.restore_context_evidence(z_opt)

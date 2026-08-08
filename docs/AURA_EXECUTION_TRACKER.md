@@ -38932,3 +38932,43 @@ hygiene pass. Reasoning gain, fusion, frontier-level performance, and
 `WOW Signal` remain false. The
 completion envelope stays `809/920` (approximately `87.9%`); the RLC envelope
 item remains open for a content-generation intervention and fresh evidence.
+
+## Checkpoint 2026-08-08-043: Latent Search Can Move Before Serialization
+
+Latent optimization no longer evaluates raw internal probes against the final
+wire-format contract before CP042's representation repair can run. The task
+verifier now exposes a candidate-local semantic score that omits only the
+response-object serialization check. It has transient latent-search authority
+only: strict response shape remains mandatory for branch admission, answer
+selection, replacement, and serving. Verifier metering charges the path, and
+the research oracle delegates it to the ordinary candidate-local verifier so
+hidden answers cannot enter optimization.
+
+The complete-engine research arm now enables the optimizer's existing
+conservative continuation rule. A proposal is accepted only when semantic
+score does not regress and the answer-independent proxy strictly descends.
+The mechanism ablation retains strict-improvement behavior. This lets multiple
+small latent improvements accumulate without allowing a lower-scoring state
+to survive.
+
+The final source-byte-bound Qwen2.5-1.5B canary completed `21/21` cells with no
+infrastructure faults and the paired ordinary floor intact. Every domain had a
+nonzero semantic baseline (`0.523438` through `0.778409`), and all `28/28`
+latent proposals were accepted under semantic non-regression plus strict proxy
+descent; no proposal was rejected. Before CP043 the same proposals were all
+scored `0.0`, then all tied and were reverted. The optimizer is therefore
+causally active rather than decorative.
+
+This is not a reasoning-gain result. All three arms still scored `0/7`, and
+the receipt audit found that oracle arbitration and answer replacement still
+consume branch probes captured before latent optimization. The full-stack arm
+has therefore not yet measured the post-optimization candidate. The durable
+compact record is
+`artifacts/closeout/latent_cortex/cp043_semantic_latent_search_1p5b.json`.
+
+The complete affected RLC contract selection passes `321/321`; canonical smoke
+passes `103/103`; compilation, Ruff, governance lint, layering, and diff
+hygiene pass. Reasoning gain, fusion, frontier-level performance, and
+`WOW Signal` remain false. The
+completion envelope stays `809/920` (approximately `87.9%`); the next RLC
+checkpoint must refresh and bind the candidate pool after latent adaptation.

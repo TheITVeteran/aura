@@ -170,6 +170,17 @@ def test_frozen_frontier_oracle_emits_hidden_answer_commitments_only() -> None:
     assert accepted["answer_key_exposed"] is False
 
 
+def test_oracle_latent_state_score_does_not_consult_hidden_answer() -> None:
+    from core.brain.llm.latent_cortex import frontier_tasks as ft
+    from tools.run_rlc_reconciliation_sweep import _OracleTaskVerifier
+
+    task = ft.generate_task_battery([20260808], difficulty=2)[0]
+    verifier = _OracleTaskVerifier(task)
+    wrong = 'FINAL_ANSWER: {"sequence":[],"checksum":0}'
+
+    assert verifier.latent_state_score(wrong) == verifier._local.latent_state_score(wrong)
+
+
 def test_engine_meter_preserves_and_charges_research_oracle_assessment() -> None:
     from core.brain.llm.latent_cortex.engine import LatentCortexEngine
 
@@ -187,6 +198,9 @@ def test_engine_meter_preserves_and_charges_research_oracle_assessment() -> None
         def research_oracle_assessment(self, text: str) -> dict:
             return {"candidate": text, "correct": text == "right"}
 
+        def latent_state_score(self, text: str) -> float:
+            return 0.75 if text == "semantic" else 0.0
+
     budget = Budget()
     metered = LatentCortexEngine._meter_verifier(Verifier(), budget)
 
@@ -196,7 +210,9 @@ def test_engine_meter_preserves_and_charges_research_oracle_assessment() -> None
         "candidate": "right",
         "correct": True,
     }
+    assert metered.latent_state_score("semantic") == 0.75
     assert [row["operation"] for row in budget.calls] == [
+        "task_verifier",
         "task_verifier",
         "task_verifier",
     ]

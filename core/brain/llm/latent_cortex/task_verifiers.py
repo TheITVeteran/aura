@@ -288,7 +288,13 @@ class EpisodeTaskVerifier:
         )
         return earned / total
 
-    def evaluate(self, text: str) -> dict[str, Any]:
+    def evaluate(
+        self,
+        text: str,
+        *,
+        _include_response_contract: bool = True,
+        _record: bool = True,
+    ) -> dict[str, Any]:
         atomic = decomposition_check(text, objective=self.objective)
         routed = router_check(
             text,
@@ -303,7 +309,7 @@ class EpisodeTaskVerifier:
             "facets": check_facet_coverage(text, self.objective),
             "grounding": check_objective_grounding(text, self.objective),
         }
-        if self.response_contract:
+        if self.response_contract and _include_response_contract:
             checks["response_contract"] = check_response_contract(
                 text,
                 self.response_contract,
@@ -342,11 +348,29 @@ class EpisodeTaskVerifier:
             "checks": checks,
             "text_chars": len(text or ""),
         }
-        self.evaluations.append(row)
+        if _record:
+            self.evaluations.append(row)
         return row
 
     def __call__(self, text: str) -> float:
         return float(self.evaluate(text)["score"])
+
+    def latent_state_score(self, text: str) -> float:
+        """Score semantic progress before the separate wire-format repair.
+
+        This score has latent-search authority only. It deliberately omits the
+        public response-object shape because raw state probes are evaluated
+        before bounded representation repair. The strict response contract is
+        still mandatory for branch admission, answer selection, and serving.
+        """
+
+        return float(
+            self.evaluate(
+                text,
+                _include_response_contract=False,
+                _record=False,
+            )["score"]
+        )
 
     def fast_weight_learning_evidence(
         self,
