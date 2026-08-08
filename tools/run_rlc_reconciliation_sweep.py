@@ -265,6 +265,13 @@ def _build_config(
     max_tokens: int,
     decode_contract: str = "final_answer_v1",
     profile: str = "mechanism",
+    # NOTE: the product arm overrides decode_contract to "none" below, which
+    # is what the deployed system runs. Contract enforcement inside the engine
+    # does not merely stop generation the way the ordinary control does -- it
+    # can discard the produced answer entirely (measured: 576 generated tokens
+    # returned as an empty string under token_limit_contract_incomplete). An
+    # unfinished answer is a policy observation to be scored, never something
+    # to blank, and blanking it puts the arm below the floor by construction.
 ):
     from core.brain.llm.latent_cortex.types import (
         BranchConfig,
@@ -361,8 +368,10 @@ def _build_config(
         # arm's label -- the worst possible failure here, because it looks like
         # a result. Let it fault visibly instead.
         allow_vanilla_fallback=False,
-        decode_contract=decode_contract,
-        decode_contract_grace_tokens=320 if decode_contract != "none" else 0,
+        decode_contract="none" if full else decode_contract,
+        decode_contract_grace_tokens=(
+            0 if full else (320 if decode_contract != "none" else 0)
+        ),
         terminal_instruction_policy=policy,
     )
 

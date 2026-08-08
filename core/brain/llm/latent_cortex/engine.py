@@ -6294,7 +6294,25 @@ class LatentCortexEngine:
                     receipt.decode_bridge_logits_digest = final_fusion_audit[
                         "policy_initial_logits_sha256"
                     ]
-                else:
+                elif latent_decode_authorized:
+                    # Only the latent lane may be steered by a decode prefix.
+                    #
+                    # Under vanilla_incumbent the branch above deliberately
+                    # restores the immutable prompt root and sets
+                    # decode_logits = prompt_tail_logits so the public answer
+                    # IS ordinary decode. Applying the bridge here overwrote
+                    # that: the 27-token terminal disposition was appended to
+                    # the cache, so the "incumbent" conditioned on prompt +
+                    # instruction and was not ordinary decode at all. Measured
+                    # consequence: 14 of 14 full-stack answers differed from
+                    # vanilla's, and the arm scored 3/14 against vanilla's
+                    # 5/14 -- below a floor that was supposed to be structural.
+                    #
+                    # A disposition-conditioned answer is not forbidden; it is
+                    # simply not free. It must win as a candidate under the
+                    # same lower-bound-dominance rule as any other, instead of
+                    # being imposed on the incumbent before anything is
+                    # measured.
                     decode_logits = self._apply_decode_bridge(
                         cache,
                         budget,
@@ -6470,11 +6488,30 @@ class LatentCortexEngine:
                             self._decode_public_text(out_tokens, receipt=receipt)
                         )
                 elif decision == "abstain":
-                    out_tokens = []
-                    if token_logprobs_out is not None:
-                        token_logprobs_out.clear()
-                    decode_termination = "confidence_bound_abstention"
-                    receipt.flag("confidence_bound_answer_abstained")
+                    if latent_decode_authorized:
+                        out_tokens = []
+                        if token_logprobs_out is not None:
+                            token_logprobs_out.clear()
+                        decode_termination = "confidence_bound_abstention"
+                        receipt.flag("confidence_bound_answer_abstained")
+                    else:
+                        # Under vanilla_incumbent the answer on the table IS
+                        # ordinary decode, so emptying it cannot be an
+                        # improvement. Abstention fires when the verifier
+                        # believes the baseline refuted and nothing better
+                        # exists -- which rests entirely on the verifier being
+                        # right. A false refutation then discards an answer
+                        # ordinary decode got correct, and a true one costs
+                        # nothing to serve because vanilla was wrong anyway.
+                        # Empty is worse than the incumbent when the incumbent
+                        # is right and merely equal when it is not, so
+                        # retaining is weakly better in every case.
+                        #
+                        # Measured: this emptied 1 of 3 probe answers outright
+                        # (vanilla 77 chars, full stack 0) while the arm scored
+                        # 3/14 against vanilla's 5/14 -- below a floor that was
+                        # supposed to be structural.
+                        receipt.flag("confidence_bound_abstention_declined_under_incumbent")
                 receipt.decode_generated_tokens = len(out_tokens)
                 receipt.decode_termination = decode_termination
             if decode_termination.startswith("budget_") or decode_termination == "wall_reserve":

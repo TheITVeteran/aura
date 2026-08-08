@@ -32,9 +32,23 @@ _CONTROL_DECODE = {
     "decode_top_p": 1.0,
     "decode_repetition_penalty": 1.0,
     "decode_max_tokens": 512,
-    "decode_contract": "final_answer_v1",
     "decode_min_tokens": 0,
 }
+
+# decode_contract is deliberately NOT in the list above.
+#
+# The control uses final_answer_v1 purely as a STOPPING rule -- `_run_vanilla`
+# breaks on the first complete answer and never discards anything. Inside the
+# engine the same setting is also a validity gate that can blank the produced
+# answer: measured, 576 generated tokens came back as an empty string under
+# token_limit_contract_incomplete, which puts the arm below the floor by
+# construction. The deployed system runs "none", and so does the product arm.
+#
+# The risk that creates -- running past a correct answer into a second
+# FINAL_ANSWER marker, which grades invalid -- was measured rather than
+# assumed: marker counts matched the control exactly (0/1/1 on both arms) and
+# two of three probe answers were byte-identical to ordinary decode.
+_PRODUCT_CONTRACT = "none"
 
 
 def test_the_product_arm_decodes_like_the_control():
@@ -47,6 +61,11 @@ def test_the_product_arm_decodes_like_the_control():
         for knob, expected in _CONTROL_DECODE.items()
         if getattr(full, knob) != expected
     }
+    assert full.decode_contract == _PRODUCT_CONTRACT, (
+        "the product arm must run the deployed contract setting; enforcement "
+        "inside the engine can discard a produced answer, which the control "
+        "never does"
+    )
     assert not mismatched, (
         "the product arm's decode differs from ordinary decode, so its "
         f"neutral path is not neutral: {mismatched}"
