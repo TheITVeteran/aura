@@ -88,6 +88,20 @@ def test_the_mechanism_arm_stays_an_ablation():
     assert cfg.recurrence.fixed_depth is True
 
 
+def test_frontier_verifiers_enforce_each_tasks_public_response_shape():
+    from core.brain.llm.latent_cortex import frontier_tasks as ft
+
+    task = ft.generate_task_battery([20260808], difficulty=2)[0]
+    verifier = sweep._episode_verifier(task)
+    oracle = sweep._OracleTaskVerifier(task)
+
+    assert verifier.response_contract == task.public.response_contract
+    assert oracle.response_contract == task.public.response_contract
+    assert verifier.evaluate('FINAL_ANSWER: {"wrong_key": 1}')["checks"][
+        "response_contract"
+    ]["valid"] is False
+
+
 def test_the_battery_leads_with_the_unified_system_not_the_ablation():
     by_name = {a.name: a for a in sweep.ARMS}
     assert by_name["vanilla"].profile == "ordinary"

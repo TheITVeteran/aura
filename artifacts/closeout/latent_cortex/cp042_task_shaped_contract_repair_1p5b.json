@@ -1,0 +1,62 @@
+{
+  "schema": "aura.rlc.cp042_task_shaped_contract_repair_closeout.v1",
+  "checkpoint": "CP042",
+  "model": "/Users/bryan/.aura/live-source/models/Qwen2.5-1.5B-Instruct-4bit",
+  "base_commit": "729c6f4f599b1e960d86862368fddbb4a9a83862",
+  "implementation_sha256": "31a2f887db4cd82acde97a91d00a3789ac94fc8d11b7857bcb7dca49adddf29f",
+  "task_commitment_sha256": "96727e6cd698ae1b3fc17594e10b0631ca9903fb5623cf8b8708494bbf9b961c",
+  "seed": 20260808,
+  "per_domain": 1,
+  "arms": [
+    "vanilla",
+    "vanilla_equal_compute",
+    "full_stack_oracle"
+  ],
+  "artifact_sha256": {
+    "task_commitment_json": "2ed7779c35d34f1fa355cefe2a7cfd193c4c138e6114af88be9553c085cd57f4",
+    "decode_fingerprint_json": "39efb4b28cf2db1b05535b7177cbc423c5db69638b49cb530f1900cf18e22ebd",
+    "journal_jsonl": "e00b290b87068d1d58cb47548ff87581c1c839d24350281c8c49f5ee00fee672",
+    "verdict_json": "e7b04e05fa3f8a81f9c7966c6db8bb75109c53fb20a5a5f2fcb93c61e92a8021"
+  },
+  "mechanical_gates": {
+    "coverage_complete": true,
+    "evidence_manifest_valid": true,
+    "full_stack_runtime_measured": true,
+    "faulted_arms": {},
+    "paired_vanilla_floor_holds": true
+  },
+  "scores": {
+    "vanilla": "0/7",
+    "vanilla_equal_compute": "0/7",
+    "full_stack_oracle": "0/7"
+  },
+  "private_candidate_measurement": {
+    "domains_with_two_schema_valid_branches": [
+      "novel_algorithms",
+      "mathematics",
+      "coding",
+      "scientific_inference",
+      "long_horizon_planning",
+      "calibration",
+      "misleading_premise"
+    ],
+    "contract_valid_branch_count": 14,
+    "contract_repair_requests": 10,
+    "contract_repairs_admitted": 10,
+    "schema_coercions_applied": 2,
+    "schema_coercion_domains": [
+      "coding"
+    ],
+    "selected_recurrent_candidates_oracle_correct": 0
+  },
+  "conclusion": {
+    "task_response_contract_bound_end_to_end": true,
+    "representation_failure_observed": false,
+    "generation_content_failure_observed": true,
+    "selection_only_failure_observed": false,
+    "battery_informative_for_gain": false,
+    "reasoning_gain_proven": false,
+    "fusion_authorized": false,
+    "frontier_level_proven": false
+  }
+}

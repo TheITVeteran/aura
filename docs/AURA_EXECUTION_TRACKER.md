@@ -38892,3 +38892,43 @@ performance, weight fusion, and `WOW Signal` remain false. The completion
 envelope stays `809/920` (approximately `87.9%`): five causal RLC blockers are
 closed inside an envelope item that remains open until a fresh informative
 resident campaign proves a gain without regressions.
+
+## Checkpoint 2026-08-08-042: Private Candidates Obey the Task's Shape
+
+The fresh-context representation repair no longer treats any terminal JSON
+object as interchangeable with the task's declared output. The reconciliation
+harness now constructs both deployable and research-oracle verifiers with each
+task's public response contract. That contract is hash-bound into every repair
+request and receipt, included in the private repair prompt, independently
+validated after generation, and combined with the terminal-answer protocol for
+branch admission. A generic object with the wrong keys or types cannot enter
+the comparable candidate pool.
+
+Two bounded deterministic serialization repairs cover weak-checkpoint output
+without acquiring answer authority. A generated array may be placed into an
+object only when the schema has exactly one array-valued field and every other
+missing field has one fixed public literal. Recursively, a generated value may
+be wrapped as one list item only when it already validates exactly as that
+item and does not validate as the required list. No symbol, number, order, or
+free field is guessed, removed, or changed. Every coercion is disclosed in the
+public transaction receipt. Independently recovered objects may also retain
+the truthful `token_limit_contract_incomplete` generation termination.
+
+The final source-byte-bound Qwen2.5-1.5B canary completed `21/21` cells with no
+infrastructure faults and the paired ordinary floor intact. All seven domains
+produced two schema-valid recurrent candidates: `14/14` private branches. Ten
+repair requests were admitted, including two disclosed schema coercions for
+coding. This closes the representation and task-shape blocker exposed by
+CP041. It does not prove intelligence gain: vanilla, equal-compute vanilla,
+and oracle full stack each scored `0/7`, and the hidden oracle found every
+selected recurrent candidate wrong. The observed blocker is now reasoning
+content generation, not malformed output or a correct answer discarded only
+by selection. The durable compact record is
+`artifacts/closeout/latent_cortex/cp042_task_shaped_contract_repair_1p5b.json`.
+
+The complete affected RLC contract selection passes `279/279`; canonical smoke
+passes `103/103`; compilation, Ruff, governance lint, layering, and diff
+hygiene pass. Reasoning gain, fusion, frontier-level performance, and
+`WOW Signal` remain false. The
+completion envelope stays `809/920` (approximately `87.9%`); the RLC envelope
+item remains open for a content-generation intervention and fresh evidence.

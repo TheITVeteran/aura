@@ -630,7 +630,10 @@ def _episode_verifier(task):
     """
     from core.brain.llm.latent_cortex.task_verifiers import EpisodeTaskVerifier
 
-    return EpisodeTaskVerifier(task.public.prompt)
+    return EpisodeTaskVerifier(
+        task.public.prompt,
+        response_contract=task.public.response_contract,
+    )
 
 
 def _route_counts(receipt: dict[str, Any]) -> dict[str, int]:
@@ -830,7 +833,11 @@ class _OracleTaskVerifier:
         from core.brain.llm.latent_cortex.task_verifiers import EpisodeTaskVerifier
 
         self.task = task
-        self._local = EpisodeTaskVerifier(task.public.prompt)
+        self.response_contract = task.public.response_contract
+        self._local = EpisodeTaskVerifier(
+            task.public.prompt,
+            response_contract=self.response_contract,
+        )
         self.evaluations = self._local.evaluations
         self._scorer_source_sha256 = hashlib.sha256(
             Path(ft.__file__).read_bytes()

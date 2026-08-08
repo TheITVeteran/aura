@@ -996,7 +996,10 @@ def test_contract_invalid_private_branches_are_repaired_before_verifier_selectio
         lambda branch, *_args, **_kwargs: [100 + branch.index],
     )
 
+    repair_prompts: list[str] = []
+
     def fresh(_prompt: str, *_args, **_kwargs):
+        repair_prompts.append(_prompt)
         return {
             "text": 'FINAL_ANSWER: {"answer": 4}',
             "context": {
@@ -1015,7 +1018,10 @@ def test_contract_invalid_private_branches_are_repaired_before_verifier_selectio
     monkeypatch.setattr(engine, "_fresh_verifier_generation", fresh)
     result = engine.reason(
         prompt="Compute two plus two.",
-        verifier=lambda _text: 0.5,
+        verifier=EpisodeTaskVerifier(
+            "Compute two plus two.",
+            response_contract='{"answer":int}',
+        ),
         budget=ComputeBudget(max_layer_apps=500_000, wall_clock_s=30.0),
     )
 
@@ -1023,6 +1029,8 @@ def test_contract_invalid_private_branches_are_repaired_before_verifier_selectio
     assert result.receipt.contract_repair["request_count"] == 2
     assert result.receipt.contract_repair["admitted_count"] == 2
     assert result.receipt.contract_repair["answer_selection_effect"] == "none"
+    assert result.receipt.contract_repair["response_contract_required"] is True
+    assert all('{"answer":int}' in prompt for prompt in repair_prompts)
     assert all(row["valid"] is True for row in result.receipt.branch_contract)
     assert all(
         row["original_contract_reason"] == "no_marker"

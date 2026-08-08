@@ -98,6 +98,115 @@ def test_fresh_strict_contract_candidate_is_admitted_without_answer_authority():
     validate_contract_repair_receipt(receipt)
 
 
+def test_task_shape_is_bound_into_request_and_required_for_admission():
+    candidates = {0: 'FINAL_ANSWER: {"items": [1, 2], "total": 3}'}
+    response_contract = '{"sequence":list[int],"checksum":int}'
+    request = prepare_contract_repair_requests(
+        branch_candidates=candidates,
+        objective="Return the sequence and checksum.",
+        response_contract=response_contract,
+        max_requests=1,
+    )[0]
+
+    assert response_contract in request["prompt"]
+    assert request["original_contract_reason"].startswith("response_contract:")
+    with pytest.raises(ValueError, match="violates response contract"):
+        parse_contract_repair_generation(
+            candidates[0],
+            response_contract=response_contract,
+        )
+
+    repaired = 'FINAL_ANSWER: {"sequence": [1, 2], "checksum": 3}'
+    receipt = build_contract_repair_receipt(
+        branch_candidates=candidates,
+        objective="Return the sequence and checksum.",
+        response_contract=response_contract,
+        generated_repairs={
+            request["request_id"]: {
+                "candidate": repaired,
+                "generation_context": _context(request["prompt_sha256"]),
+            }
+        },
+        max_requests=1,
+        max_tokens=128,
+    )
+    assert receipt["response_contract_required"] is True
+    assert receipt["admitted_count"] == 1
+    validate_contract_repair_receipt(receipt)
+
+
+def test_unambiguous_array_is_wrapped_without_inventing_free_values():
+    response_contract = (
+        '{"returns":list[{"state":list[[str,int]],"pressure":list[int]}],'
+        '"time_complexity":"O(n^2)"}'
+    )
+    raw = '[{"state": [["a", 1]], "pressure": [2]}]'
+    repaired = parse_contract_repair_generation(
+        raw,
+        response_contract=response_contract,
+    )
+    assert repaired == (
+        'FINAL_ANSWER: {"returns":[{"pressure":[2],"state":[["a",1]]}],'
+        '"time_complexity":"O(n^2)"}'
+    )
+
+    with pytest.raises(ValueError, match="contract repair generation is invalid"):
+        parse_contract_repair_generation(
+            "[1, 2]",
+            response_contract='{"left":list[int],"right":list[int]}',
+        )
+    with pytest.raises(ValueError, match="contract repair generation is invalid"):
+        parse_contract_repair_generation(
+            "[1, 2]",
+            response_contract='{"items":list[int],"count":int}',
+        )
+
+
+def test_one_tuple_is_wrapped_as_one_list_item_without_changing_values():
+    response_contract = (
+        '{"returns":list[{"state":list[[str,int]],"pressure":list[int]}],'
+        '"time_complexity":"O(n^2)"}'
+    )
+    raw = (
+        '{"returns":[{"state":["ax",-1],"pressure":[1]}],'
+        '"time_complexity":"O(n^2)"}\nTrailing explanation.'
+    )
+    repaired = parse_contract_repair_generation(
+        raw,
+        response_contract=response_contract,
+    )
+    assert repaired == (
+        'FINAL_ANSWER: {"returns":[{"pressure":[1],"state":[["ax",-1]]}],'
+        '"time_complexity":"O(n^2)"}'
+    )
+
+
+def test_schema_coercion_is_disclosed_in_the_public_receipt():
+    candidates = {0: "not contracted"}
+    response_contract = '{"items":list[int],"kind":"fixed"}'
+    request = prepare_contract_repair_requests(
+        branch_candidates=candidates,
+        objective="Return the items.",
+        response_contract=response_contract,
+        max_requests=1,
+    )[0]
+    receipt = build_contract_repair_receipt(
+        branch_candidates=candidates,
+        objective="Return the items.",
+        response_contract=response_contract,
+        generated_repairs={
+            request["request_id"]: {
+                "candidate": "[1, 2]",
+                "generation_context": _context(request["prompt_sha256"]),
+            }
+        },
+        max_requests=1,
+        max_tokens=128,
+    )
+    assert receipt["transactions"][0]["schema_coercion_applied"] is True
+    validate_contract_repair_receipt(receipt)
+
+
 def test_canonicalized_object_can_bind_an_irrecoverable_raw_termination():
     candidates = {0: "The answer is four."}
     request = prepare_contract_repair_requests(
@@ -120,6 +229,37 @@ def test_canonicalized_object_can_bind_an_irrecoverable_raw_termination():
         max_tokens=128,
     )
     assert receipt["admitted_count"] == 1
+    validate_contract_repair_receipt(receipt)
+
+
+def test_independently_salvaged_object_discloses_contract_incomplete_termination():
+    candidates = {0: "not contracted"}
+    response_contract = '{"items":list[int],"kind":"fixed"}'
+    request = prepare_contract_repair_requests(
+        branch_candidates=candidates,
+        objective="Return the items.",
+        response_contract=response_contract,
+        max_requests=1,
+    )[0]
+    context = _context(request["prompt_sha256"])
+    context["termination"] = "token_limit_contract_incomplete"
+    receipt = build_contract_repair_receipt(
+        branch_candidates=candidates,
+        objective="Return the items.",
+        response_contract=response_contract,
+        generated_repairs={
+            request["request_id"]: {
+                "candidate": '{"items":[1],"kind":"fixed"}\nTrailing prose.',
+                "generation_context": context,
+            }
+        },
+        max_requests=1,
+        max_tokens=128,
+    )
+    assert receipt["admitted_count"] == 1
+    assert receipt["transactions"][0]["generation_context"]["termination"] == (
+        "token_limit_contract_incomplete"
+    )
     validate_contract_repair_receipt(receipt)
 
 

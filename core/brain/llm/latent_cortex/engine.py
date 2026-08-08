@@ -4891,9 +4891,13 @@ class LatentCortexEngine:
                     if self.config.local_repair_enabled
                     else 0
                 )
+                verification_response_contract = str(
+                    getattr(information_verifier, "response_contract", "") or ""
+                )
                 contract_repair_requests = prepare_contract_repair_requests(
                     branch_candidates=original_branch_probe_texts,
                     objective=verification_objective,
+                    response_contract=verification_response_contract,
                     max_requests=contract_repair_limit,
                 )
                 contract_repairs: dict[str, dict[str, Any]] = {}
@@ -4908,7 +4912,8 @@ class LatentCortexEngine:
                             reserve_layer_apps=safety_reserve,
                         )
                         repaired_candidate = parse_contract_repair_generation(
-                            generated["text"]
+                            generated["text"],
+                            response_contract=verification_response_contract,
                         )
                         generated_context = generated["context"]
                         context = {
@@ -4934,7 +4939,7 @@ class LatentCortexEngine:
                             ],
                         }
                         contract_repairs[request_id] = {
-                            "candidate": repaired_candidate,
+                            "candidate": generated["text"],
                             "generation_context": context,
                         }
                         branch_probe_texts[int(request["branch"])] = repaired_candidate
@@ -4955,6 +4960,7 @@ class LatentCortexEngine:
                 receipt.contract_repair = build_contract_repair_receipt(
                     branch_candidates=original_branch_probe_texts,
                     objective=verification_objective,
+                    response_contract=verification_response_contract,
                     generated_repairs=contract_repairs,
                     execution_failures=contract_repair_failures,
                     max_requests=contract_repair_limit,
@@ -4964,6 +4970,22 @@ class LatentCortexEngine:
                     index: contract_answer_state(text)
                     for index, text in sorted(branch_probe_texts.items())
                 }
+                if verification_response_contract:
+                    from core.brain.llm.latent_cortex.task_verifiers import (
+                        check_response_contract,
+                    )
+
+                    for index, state in contract_states.items():
+                        response_state = check_response_contract(
+                            branch_probe_texts[index],
+                            verification_response_contract,
+                        )
+                        state["response_contract_valid"] = bool(
+                            response_state["valid"]
+                        )
+                        if state["valid"] and not response_state["valid"]:
+                            state["valid"] = False
+                            state["reason"] = "response_contract_invalid"
                 receipt.branch_contract = [
                     {
                         "branch": index,
@@ -4971,6 +4993,9 @@ class LatentCortexEngine:
                         "complete": state["complete"],
                         "valid": state["valid"],
                         "reason": str(state["reason"])[:120],
+                        "response_contract_valid": state.get(
+                            "response_contract_valid"
+                        ),
                     }
                     for index, state in contract_states.items()
                 ]

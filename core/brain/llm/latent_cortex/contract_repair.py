@@ -19,7 +19,7 @@ from core.brain.llm.latent_cortex.answer_contract import (
     contract_answer_state,
 )
 
-CONTRACT_REPAIR_SCHEMA = "aura.rlc.contract_repair.v1"
+CONTRACT_REPAIR_SCHEMA = "aura.rlc.contract_repair.v2"
 MAX_CONTRACT_REPAIR_REQUESTS = 8
 MAX_CONTRACT_REPAIR_TOKENS = 512
 _SHA256_RE = re.compile(r"[0-9a-f]{64}\Z")
@@ -62,13 +62,24 @@ def prepare_contract_repair_requests(
     *,
     branch_candidates: Mapping[int, str],
     objective: str,
+    response_contract: str = "",
     max_requests: int,
 ) -> list[dict[str, Any]]:
     """Build bounded fresh-context requests for contract-invalid candidates."""
 
     limit = _request_limit(max_requests)
-    if not isinstance(branch_candidates, Mapping) or not isinstance(objective, str):
+    if (
+        not isinstance(branch_candidates, Mapping)
+        or not isinstance(objective, str)
+        or not isinstance(response_contract, str)
+    ):
         raise TypeError("contract repair private sources are invalid")
+    if response_contract:
+        from core.brain.llm.latent_cortex.response_contracts import (
+            parse_response_contract,
+        )
+
+        parse_response_contract(response_contract)
     if limit == 0:
         return []
     prepared: list[dict[str, Any]] = []
@@ -76,15 +87,39 @@ def prepare_contract_repair_requests(
         if type(raw_branch) is not int or raw_branch < 0 or not isinstance(candidate, str):
             raise ValueError("contract repair candidate inventory is invalid")
         state = contract_answer_state(candidate)
-        if state["valid"]:
+        response_state: dict[str, Any] | None = None
+        if response_contract and state["valid"]:
+            from core.brain.llm.latent_cortex.task_verifiers import (
+                check_response_contract,
+            )
+
+            response_state = check_response_contract(candidate, response_contract)
+        if state["valid"] and (
+            not response_contract or bool(response_state and response_state["valid"])
+        ):
             continue
+        original_reason = str(state["reason"])
+        if state["valid"] and response_state is not None:
+            failures = response_state.get("failures") or []
+            original_reason = (
+                f"response_contract:{str(failures[0])[:120]}"
+                if failures
+                else "response_contract_invalid"
+            )
         payload = {
             "branch": raw_branch,
             "objective_sha256": _text_sha(objective),
+            "response_contract_sha256": _text_sha(response_contract),
             "original_candidate_sha256": _text_sha(candidate),
-            "original_contract_reason": str(state["reason"])[:160],
+            "original_contract_reason": original_reason[:160],
         }
         request_id = _sha(payload)
+        schema_guidance = (
+            "Required public response-object schema (shape and types only; it "
+            f"contains no answer values):\n{response_contract}\n"
+            if response_contract
+            else ""
+        )
         prompt = (
             "Re-encode the candidate answer below into the strict terminal answer "
             "contract. Preserve its proposed reasoning and conclusion; do not add "
@@ -93,6 +128,7 @@ def prepare_contract_repair_requests(
             "the object in a markdown fence and write nothing after it. This step "
             "repairs representation only; separate verifiers will judge correctness.\n"
             f"Objective:\n{objective}\n"
+            f"{schema_guidance}"
             f"Candidate:\n{candidate}\n"
             "Begin the complete contract response now."
         )
@@ -109,8 +145,156 @@ def prepare_contract_repair_requests(
     return prepared
 
 
-def parse_contract_repair_generation(value: Any) -> str:
+def parse_contract_repair_generation(
+    value: Any,
+    *,
+    response_contract: str = "",
+) -> str:
     """Accept exactly one complete strict answer-contract object."""
+
+    return _contract_repair_generation_state(
+        value,
+        response_contract=response_contract,
+    )["candidate"]
+
+
+def _unambiguous_schema_coercion(
+    candidate: str,
+    *,
+    response_contract: str,
+) -> str | None:
+    """Wrap one generated value only when the public shape has one mapping.
+
+    This is serialization repair, not answer synthesis: every model-generated
+    value is preserved, there is exactly one compatible container field, and
+    any additional fields have one fixed public literal value. Ambiguous field
+    assignments, missing free values, or incompatible types fail closed.
+    """
+
+    if not response_contract:
+        return None
+    from core.brain.llm.latent_cortex.response_contracts import (
+        ContractType,
+        ListType,
+        LiteralType,
+        ObjectType,
+        TupleType,
+        parse_response_contract,
+        validate_response_payload,
+    )
+
+    source = candidate.strip()
+    if source.startswith("FINAL_ANSWER:"):
+        source = source.split("FINAL_ANSWER:", 1)[1].lstrip()
+    try:
+        payload, end = json.JSONDecoder().raw_decode(source)
+    except json.JSONDecodeError:
+        return None
+    tail = source[end:].strip()
+    if tail:
+        # Explanatory prose is disposable protocol noise. A second JSON value
+        # is a competing answer and therefore ambiguous, even when both values
+        # happen to be equal after canonicalization.
+        decoder = json.JSONDecoder()
+        for index, char in enumerate(tail):
+            if char not in "[{":
+                continue
+            try:
+                competing, _competing_end = decoder.raw_decode(tail[index:])
+            except json.JSONDecodeError:
+                continue
+            if isinstance(competing, (dict, list)):
+                return None
+    contract = parse_response_contract(response_contract)
+    if not isinstance(contract, ObjectType):
+        return None
+
+    missing = object()
+
+    def coerce(value: Any, expected: ContractType) -> Any:
+        if validate_response_payload(value, expected)["valid"]:
+            return value
+        if isinstance(expected, ObjectType):
+            if not isinstance(value, dict):
+                return missing
+            expected_names = {name for name, _field in expected.fields}
+            if set(value) - expected_names:
+                return missing
+            result: dict[str, Any] = {}
+            for name, field_contract in expected.fields:
+                if name not in value:
+                    if (
+                        isinstance(field_contract, LiteralType)
+                        and len(field_contract.values) == 1
+                    ):
+                        result[name] = field_contract.values[0]
+                        continue
+                    return missing
+                field_value = coerce(value[name], field_contract)
+                if field_value is missing:
+                    return missing
+                result[name] = field_value
+            return result
+        if isinstance(expected, TupleType):
+            if not isinstance(value, list) or len(value) != len(expected.items):
+                return missing
+            result = []
+            for item, item_contract in zip(value, expected.items, strict=True):
+                coerced_item = coerce(item, item_contract)
+                if coerced_item is missing:
+                    return missing
+                result.append(coerced_item)
+            return result
+        if isinstance(expected, ListType) and isinstance(value, list):
+            result = []
+            itemwise_valid = True
+            for item in value:
+                coerced_item = coerce(item, expected.item)
+                if coerced_item is missing:
+                    itemwise_valid = False
+                    break
+                result.append(coerced_item)
+            if itemwise_valid and validate_response_payload(result, expected)["valid"]:
+                return result
+            single_item = coerce(value, expected.item)
+            if single_item is not missing:
+                wrapped = [single_item]
+                if validate_response_payload(wrapped, expected)["valid"]:
+                    return wrapped
+        return missing
+
+    generated_fields = [
+        (name, field_contract)
+        for name, field_contract in contract.fields
+        if isinstance(field_contract, (ListType, TupleType))
+    ]
+    if isinstance(payload, list) and len(generated_fields) == 1:
+        generated_name, _generated_contract = generated_fields[0]
+        coerced: dict[str, Any] = {generated_name: payload}
+    elif isinstance(payload, dict):
+        coerced = dict(payload)
+    else:
+        return None
+
+    coerced = coerce(coerced, contract)
+    if coerced is missing or not validate_response_payload(coerced, contract)["valid"]:
+        return None
+    encoded = json.dumps(
+        coerced,
+        sort_keys=True,
+        separators=(",", ":"),
+        ensure_ascii=True,
+        allow_nan=False,
+    )
+    return f"FINAL_ANSWER: {encoded}"
+
+
+def _contract_repair_generation_state(
+    value: Any,
+    *,
+    response_contract: str = "",
+) -> dict[str, Any]:
+    """Return the admitted candidate and whether schema coercion was used."""
 
     if not isinstance(value, str):
         raise TypeError("contract repair generation must be text")
@@ -159,9 +343,34 @@ def parse_contract_repair_generation(value: Any) -> str:
             if contract_answer_state(framed)["valid"]:
                 candidate = framed
                 state = contract_answer_state(candidate)
+    schema_coercion_applied = False
+    if not state["valid"]:
+        coerced = _unambiguous_schema_coercion(
+            candidate,
+            response_contract=response_contract,
+        )
+        if coerced is not None:
+            candidate = coerced
+            state = contract_answer_state(candidate)
+            schema_coercion_applied = True
     if not state["valid"]:
         raise ValueError(f"contract repair generation is invalid: {state['reason']}")
-    return candidate
+    if response_contract:
+        from core.brain.llm.latent_cortex.task_verifiers import (
+            check_response_contract,
+        )
+
+        response_state = check_response_contract(candidate, response_contract)
+        if not response_state["valid"]:
+            failures = response_state.get("failures") or ["response_contract_invalid"]
+            raise ValueError(
+                "contract repair generation violates response contract: "
+                f"{str(failures[0])[:160]}"
+            )
+    return {
+        "candidate": candidate,
+        "schema_coercion_applied": schema_coercion_applied,
+    }
 
 
 def _generation_context(value: Any, *, prompt_sha256: str) -> dict[str, Any]:
@@ -196,6 +405,7 @@ def _generation_context(value: Any, *, prompt_sha256: str) -> dict[str, Any]:
             "contract_irrecoverable",
             "eos",
             "token_limit",
+            "token_limit_contract_incomplete",
             "token_limit_sentence_grace",
         }
         or not isinstance(initial, list)
@@ -216,6 +426,7 @@ def build_contract_repair_receipt(
     *,
     branch_candidates: Mapping[int, str],
     objective: str,
+    response_contract: str = "",
     generated_repairs: Mapping[str, Mapping[str, Any]] | None = None,
     execution_failures: Mapping[str, str] | None = None,
     max_requests: int,
@@ -228,6 +439,7 @@ def build_contract_repair_receipt(
     prepared = prepare_contract_repair_requests(
         branch_candidates=branch_candidates,
         objective=objective,
+        response_contract=response_contract,
         max_requests=request_limit,
     )
     generated = dict(generated_repairs or {})
@@ -251,7 +463,11 @@ def build_contract_repair_receipt(
                 "generation_context",
             }:
                 raise ValueError("contract repair generated result is invalid")
-            candidate = parse_contract_repair_generation(generated_row["candidate"])
+            parsed_generation = _contract_repair_generation_state(
+                generated_row["candidate"],
+                response_contract=response_contract,
+            )
+            candidate = parsed_generation["candidate"]
             context = _generation_context(
                 generated_row["generation_context"],
                 prompt_sha256=request["prompt_sha256"],
@@ -267,6 +483,9 @@ def build_contract_repair_receipt(
                 "generation_context": context,
                 "candidate_effect": "branch_probe_replaced",
                 "answer_selection_effect": "none",
+                "schema_coercion_applied": parsed_generation[
+                    "schema_coercion_applied"
+                ],
             }
         else:
             transaction = {
@@ -279,6 +498,7 @@ def build_contract_repair_receipt(
                 "generation_context": {},
                 "candidate_effect": "none",
                 "answer_selection_effect": "none",
+                "schema_coercion_applied": False,
             }
         transactions.append(transaction)
 
@@ -289,6 +509,8 @@ def build_contract_repair_receipt(
     payload = {
         "schema": CONTRACT_REPAIR_SCHEMA,
         "objective_sha256": _text_sha(objective),
+        "response_contract_sha256": _text_sha(response_contract),
+        "response_contract_required": bool(response_contract),
         "max_requests": request_limit,
         "max_tokens": token_limit,
         "requests": public_requests,
@@ -315,6 +537,8 @@ def validate_contract_repair_receipt(value: Any) -> dict[str, Any]:
     fields = {
         "schema",
         "objective_sha256",
+        "response_contract_sha256",
+        "response_contract_required",
         "max_requests",
         "max_tokens",
         "requests",
@@ -339,6 +563,8 @@ def validate_contract_repair_receipt(value: Any) -> dict[str, Any]:
     if (
         value["schema"] != CONTRACT_REPAIR_SCHEMA
         or _SHA256_RE.fullmatch(str(value["objective_sha256"])) is None
+        or _SHA256_RE.fullmatch(str(value["response_contract_sha256"])) is None
+        or type(value["response_contract_required"]) is not bool
         or not isinstance(requests, list)
         or not isinstance(transactions, list)
         or len(requests) != len(transactions)
@@ -374,6 +600,7 @@ def validate_contract_repair_receipt(value: Any) -> dict[str, Any]:
                 )
                 is None
                 or transaction.get("candidate_effect") != "branch_probe_replaced"
+                or type(transaction.get("schema_coercion_applied")) is not bool
             ):
                 raise ValueError("contract repair admission is invalid")
             _generation_context(
@@ -386,6 +613,7 @@ def validate_contract_repair_receipt(value: Any) -> dict[str, Any]:
                 or transaction.get("repaired_candidate_sha256") != ""
                 or transaction.get("generation_context") != {}
                 or transaction.get("candidate_effect") != "none"
+                or transaction.get("schema_coercion_applied") is not False
             ):
                 raise ValueError("contract repair rejection is invalid")
         else:
