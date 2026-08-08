@@ -42,6 +42,8 @@ teeth without eating correct answers.
 
 from __future__ import annotations
 
+import re
+from collections.abc import Iterable
 from dataclasses import dataclass
 
 from core.conversation.thread_continuity import content_terms
@@ -64,6 +66,34 @@ RUNTIME_SELF_TERMS = frozenset(
     self-model session settling signal state substrate surface system telemetry
     thread threshold throughput token turn upstream valence verbosity window
     workspace
+    """.split()
+)
+
+# Terms that make a second-person turn a question about the responder's own
+# cognition or condition. A pronoun alone carries no subject: "you should open
+# Notes" is about a desktop task, while "how does uncertainty change your
+# decision process?" is about the runtime's own operation. The conjunction is
+# the semantic evidence the old bare-you bypass never required.
+SELF_PROCESS_REQUEST_TERMS = frozenset(
+    """
+    agency attention aware awareness believe belief cognition cognitive
+    coherence coherent confusion conscious consciousness decide decision
+    emotion experience feel feeling identity intention memory mind notice
+    noticing preference process processing reason reasoning recall remember
+    self state think thinking uncertainty understand understanding valence will
+    """.split()
+)
+
+# A request can mention Aura's cognition while still asking about an external
+# object: "use your reasoning to solve this checksum". Those verbs are
+# counterevidence to a self-process subject. Explanatory self-questions do not
+# need a phrase whitelist; they pass because they have self-process evidence
+# and none of these concrete action predicates.
+EXTERNAL_TASK_REQUEST_TERMS = frozenset(
+    """
+    browse calculate click compute create delete download edit email execute
+    export fetch find install move navigate open post rename run save search
+    send solve terminal type upload write
     """.split()
 )
 
@@ -104,6 +134,26 @@ class SubjectDriftVerdict:
             "subject_drift_reason": self.reason,
             "runtime_share": round(self.runtime_share, 3),
             "external_subjects": list(self.external_subjects)[:8],
+        }
+
+
+@dataclass(frozen=True)
+class SubjectAlignmentVerdict:
+    """Whether self-runtime prose answers a grounded self-process question."""
+
+    aligned: bool
+    reason: str
+    request_self_terms: tuple[str, ...]
+    request_task_terms: tuple[str, ...]
+    request_has_self_reference: bool
+
+    def as_metrics(self) -> dict[str, object]:
+        return {
+            "subject_aligned": self.aligned,
+            "subject_alignment_reason": self.reason,
+            "request_self_terms": list(self.request_self_terms)[:8],
+            "request_task_terms": list(self.request_task_terms)[:8],
+            "request_has_self_reference": self.request_has_self_reference,
         }
 
 
@@ -152,6 +202,87 @@ def assess_subject_drift(
         )
     return SubjectDriftVerdict(
         True, "runtime_self_reference", share, external_terms, runtime_terms
+    )
+
+
+def assess_subject_alignment(
+    user_message: str,
+    reply_text: str,
+    *,
+    recent_thread: Iterable[str] | None = None,
+) -> SubjectAlignmentVerdict:
+    """Require semantic request evidence before accepting runtime self-prose.
+
+    This is intentionally narrower than general topical similarity. It answers
+    the exact ambiguity that previously made ``you`` a universal bypass: is a
+    runtime-dominated reply self-description because the person asked about
+    Aura's own process, or did the answer abandon an external subject?
+    """
+
+    drift = assess_subject_drift(reply_text)
+    if not drift.drifted:
+        return SubjectAlignmentVerdict(
+            True,
+            "reply_names_external_subject",
+            (),
+            (),
+            False,
+        )
+
+    def request_evidence(text: str) -> tuple[tuple[str, ...], tuple[str, ...], bool]:
+        normalized = str(text or "").strip().lower()
+        tokens = content_terms(normalized)
+        return (
+            tuple(sorted(tokens & SELF_PROCESS_REQUEST_TERMS)),
+            tuple(sorted(tokens & EXTERNAL_TASK_REQUEST_TERMS)),
+            bool(re.search(r"\b(?:you|your|yourself|aura)\b", normalized)),
+        )
+
+    self_terms, task_terms, has_self_reference = request_evidence(user_message)
+    if has_self_reference and self_terms and not task_terms:
+        return SubjectAlignmentVerdict(
+            True,
+            "grounded_self_process_request",
+            self_terms,
+            (),
+            True,
+        )
+
+    # A short pro-form question may inherit its subject from the immediately
+    # preceding user turn. Do not merge the whole thread: an old introspection
+    # request must not license a later desktop-task failure, and an old task
+    # must not poison a new direct self-process question.
+    current = str(user_message or "").strip().lower()
+    referential_followup = len(current.split()) <= 24 and bool(
+        re.search(
+            r"\b(?:that|this|it)\b|\b(?:after|before)\s+that\b|"
+            r"\bwhat\s+changes\b|\bwhy\s+(?:is|does|did)\b",
+            current,
+        )
+    )
+    if referential_followup:
+        for prior in reversed(tuple(recent_thread or ())):
+            prior_text = str(prior or "").strip()
+            if not prior_text:
+                continue
+            prior_self, prior_task, prior_reference = request_evidence(prior_text)
+            if prior_reference and prior_self and not prior_task:
+                return SubjectAlignmentVerdict(
+                    True,
+                    "grounded_self_process_followup",
+                    prior_self,
+                    (),
+                    True,
+                )
+            # The nearest substantive turn owns the pro-form. Looking farther
+            # back would silently switch its antecedent.
+            break
+    return SubjectAlignmentVerdict(
+        False,
+        "runtime_subject_not_requested",
+        self_terms,
+        task_terms,
+        has_self_reference,
     )
 
 
@@ -237,9 +368,13 @@ __all__ = [
     "MIN_EXTERNAL_TO_RUNTIME_RATIO",
     "MIN_RUNTIME_SHARE",
     "MIN_RUNTIME_TERMS",
+    "EXTERNAL_TASK_REQUEST_TERMS",
     "RUNTIME_SELF_TERMS",
+    "SELF_PROCESS_REQUEST_TERMS",
+    "SubjectAlignmentVerdict",
     "SubjectDriftVerdict",
     "answers_polar_question",
+    "assess_subject_alignment",
     "assess_subject_drift",
     "is_polar_question",
 ]

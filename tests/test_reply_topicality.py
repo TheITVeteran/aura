@@ -56,17 +56,32 @@ def test_temporal_filler_is_not_a_topic_anchor():
     assert "now" not in _extract_topic_tokens("tell me what is happening right now")
 
 
-def test_bridge_markers_match_words_not_substrings():
-    """Bare demonstratives cannot discriminate; substring matching made them universal."""
-    from interface.routes import chat
+def test_second_person_words_do_not_bypass_subject_evidence():
+    """The live failure used "your" and still abandoned the requested task."""
+    from interface.routes.chat import _evaluate_reply_topicality
 
-    assert chat._has_topical_bridge("what you asked for") is True
-    assert chat._has_topical_bridge("your question") is True
-    # "it" lives inside both of these words and must not count as a bridge.
-    assert chat._has_topical_bridge("the priority stayed intact") is False
-    assert chat._has_topical_bridge("this that there because") is False
-    # The multi-word bridges still work.
-    assert chat._has_topical_bridge("it feels like the same thing") is True
+    reply = LIVE_OFF_TOPIC_REPLY + " You asked me to stay connected."
+    assert _evaluate_reply_topicality(QUESTION, reply) == (
+        True,
+        "foreign_topic_burst",
+    )
+
+
+def test_self_process_questions_can_receive_runtime_self_prose():
+    from interface.routes.chat import _evaluate_reply_topicality
+
+    question = "How does uncertainty change your attention and decision process?"
+    assert _evaluate_reply_topicality(question, LIVE_OFF_TOPIC_REPLY) == (False, "")
+
+
+def test_external_reasoning_request_remains_an_external_task():
+    from interface.routes.chat import _evaluate_reply_topicality
+
+    question = "Can you use your reasoning process to solve this checksum?"
+    assert _evaluate_reply_topicality(question, LIVE_OFF_TOPIC_REPLY) == (
+        True,
+        "foreign_topic_burst",
+    )
 
 
 def test_real_answers_refusals_and_topic_free_replies_all_pass():

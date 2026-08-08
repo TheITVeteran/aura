@@ -38424,3 +38424,69 @@ first durable source-bound cell, then continue non-model closeout work while it
 runs. The overall completion envelope remains `809/920` (approximately
 `87.9%`) until the empirical RLC and downstream fusion/activation obligations
 actually pass.
+
+## Checkpoint 2026-08-08-019: Resident Evidence Starts From Git-Backed Source
+
+The resident complete-engine campaign now runs from a detached, clean Git
+worktree at exact scientific source commit `61928848654c24a34d2a6ad2ca5441fd05c36753`.
+Its source capsule is
+`/Users/bryan/.aura/training-capsules/rlc-complete-engine-32b-619288486-20260808-093353`;
+its durable campaign root is
+`/Users/bryan/.aura/rlc-complete-engine-32b-20260808-093353-619288486`.
+Launchd owns the controller, the controller owns one exact `caffeinate -dims`
+child and one sweep process group, and its authenticated heartbeat binds the
+campaign, config digest, process lineage, source commit, arm, durable-cell
+count, and last progress time. The exact resident checkpoint manifest digest
+is `22b540a55f108b13d67a2dd7862d55385972be38de48c409200fa1bce8bc7325`.
+The first committed ordinary cell includes its canonical incumbent artifact,
+cryptographic checkpoint identity, prompt/output token hashes, decode policy,
+termination, and compute accounting.
+
+Published controller commit `a63098991` makes this launch property mandatory
+for future campaigns. Preparation and every attempt now reject archive copies,
+non-Git directories, attached branches, dirty source, root/commit mismatch, or
+a changed source Git-identity receipt. This closes the loophole where a copied
+directory could assert a commit string without proving what source Git
+actually contained. Focused controller and reconciliation tests pass `52/52`;
+controller-only tests pass `17/17`; smoke passes `103/103`; Ruff, compilation,
+and diff hygiene pass.
+
+At this checkpoint the active campaign has durable progress but no verdict.
+Its four preregistered arms total `112` cells across seven domains; the product
+arm and oracle diagnostic still have to complete, and every receipt must be
+independently reconstructed before any result is credited. The completion
+envelope remains `809/920` (approximately `87.9%`). No fusion, frontier, live
+activation, or `WOW Signal` claim is authorized by launch health.
+
+## Checkpoint 2026-08-08-020: Second Person Is Not a Topicality Bypass
+
+The chat topicality gate no longer treats bare `you` or `your` as proof that a
+reply answered the person's subject. The former bridge let a long runtime-state
+monologue pass an external calculation or desktop request merely by saying
+"you asked". Replies without lexical overlap are still not rejected on absence
+alone: the existing measured subject-drift discriminator must first establish
+that runtime self-vocabulary dominates the response. A second typed verdict
+then requires semantic evidence that the current turn actually asks about
+Aura's cognition, condition, identity, memory, attention, preference, agency,
+or decision process.
+
+Concrete task predicates are counterevidence. A turn such as "use your
+reasoning process to solve this checksum" remains a checksum task rather than
+an introspection request. Short pro-form follow-ups may inherit the immediately
+preceding self-process subject, but the entire thread is never merged: an old
+self-question cannot license a later task failure, and an old task cannot
+poison a new direct self-question. Correct external paraphrases and direct
+polar answers retain their existing exemptions because they carry positive
+answer shape or external subject matter rather than runtime drift.
+
+Regressions cover the original live runtime burst, second-person false bypass,
+direct self-process acceptance, adversarial reasoning-task ambiguity,
+immediate contextual follow-up, current-subject precedence, correct external
+answers, honest refusals, polar answers, and the measured physics paraphrase.
+The focused discriminator suite passes `18/18`; wider self-process, human-level
+chat, and reliability contracts pass `239/239`; smoke passes `103/103`; Ruff,
+full Python compilation, and diff hygiene pass. Signed-app live proof remains
+open until the resident proof campaign releases the model lane. The completion
+envelope remains `809/920` (approximately `87.9%`); this closes one bounded
+chat P2, not the full conversation, RLC, release, semantic-review, or endurance
+program.

@@ -14,6 +14,7 @@ from core.conversation.reply_subject import (
     MIN_RUNTIME_SHARE,
     MIN_RUNTIME_TERMS,
     answers_polar_question,
+    assess_subject_alignment,
     assess_subject_drift,
     is_polar_question,
 )
@@ -107,3 +108,63 @@ def test_a_polar_answer_is_exempt_only_for_a_polar_question():
 def test_empty_and_tiny_replies_are_never_drifted():
     for text in ("", "   ", "Sure.", "I think so."):
         assert assess_subject_drift(text).drifted is False
+
+
+def test_runtime_self_prose_requires_a_self_process_subject():
+    external = assess_subject_alignment(
+        "Can you open Notes and write a summary for me?",
+        RUNTIME_BURST,
+    )
+    assert external.aligned is False
+    assert external.reason == "runtime_subject_not_requested"
+    assert set(external.request_task_terms) == {"open", "write"}
+
+    introspective = assess_subject_alignment(
+        "How does uncertainty change your attention and decision process?",
+        RUNTIME_BURST,
+    )
+    assert introspective.aligned is True
+    assert introspective.reason == "grounded_self_process_request"
+    assert {"attention", "decision", "process", "uncertainty"} <= set(
+        introspective.request_self_terms
+    )
+
+
+def test_reasoning_language_does_not_turn_an_external_task_into_introspection():
+    verdict = assess_subject_alignment(
+        "Can you use your reasoning process to solve this checksum?",
+        RUNTIME_BURST,
+    )
+    assert verdict.aligned is False
+    assert verdict.request_has_self_reference is True
+    assert "reasoning" in verdict.request_self_terms
+    assert "solve" in verdict.request_task_terms
+
+
+def test_recent_self_process_context_can_ground_a_natural_followup():
+    verdict = assess_subject_alignment(
+        "And what changes after that?",
+        RUNTIME_BURST,
+        recent_thread=(
+            "How does uncertainty change your attention and decision process?",
+        ),
+    )
+    assert verdict.aligned is True
+    assert verdict.reason == "grounded_self_process_followup"
+
+
+def test_recent_thread_does_not_override_the_current_subject():
+    direct_self = assess_subject_alignment(
+        "How does uncertainty change your attention?",
+        RUNTIME_BURST,
+        recent_thread=("Can you open Notes and write a summary?",),
+    )
+    assert direct_self.aligned is True
+    assert direct_self.reason == "grounded_self_process_request"
+
+    external_task = assess_subject_alignment(
+        "Can you open Notes and write a summary?",
+        RUNTIME_BURST,
+        recent_thread=("How does uncertainty change your attention?",),
+    )
+    assert external_task.aligned is False

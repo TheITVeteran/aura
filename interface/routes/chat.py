@@ -3680,48 +3680,6 @@ _TOPIC_STOPWORDS = frozenset(
         "your",
     }
 )
-# A "topical bridge" is text that ties the reply back to the person's turn, so
-# a reply sharing no topic words with the question is still answering it. The
-# list used to include bare "it", "this", "that", "there" and "because", matched
-# as SUBSTRINGS of the whole reply — and every English sentence of any length
-# contains those, "it" even inside words like "priority" and "intact". The guard
-# was therefore unconditionally true and `foreign_topic_burst` could never fire.
-#
-# Measured live: asked to run a real sandbox calculation and report the result,
-# the reply was 48 tokens of felt state sharing ZERO topic words with the
-# question, and it was logged off_topic=False. Two markers matched: "it" and
-# "this".
-#
-# Second person is a real bridge — a reply engaging with what the person said
-# tends to say "you". The multi-word phrases are real bridges. Bare
-# demonstratives carry no information about whether anything was answered.
-_TOPICAL_BRIDGE_MARKERS = (
-    "you",
-    "your",
-    "feels like",
-    "standing in for",
-    "underneath that",
-    "what you",
-    "when you",
-    "if you",
-)
-#: Markers are matched on WORD boundaries; substring matching is what made the
-#: single-word entries above match every reply ever written.
-_TOPICAL_BRIDGE_MARKER_RE = re.compile(
-    r"(?:" + "|".join(re.escape(marker) for marker in _TOPICAL_BRIDGE_MARKERS) + r")",
-    re.IGNORECASE,
-)
-
-
-def _has_topical_bridge(lowered_reply: str) -> bool:
-    """True when the reply ties back to the person's turn on a word boundary."""
-    for marker in _TOPICAL_BRIDGE_MARKERS:
-        if " " in marker:
-            if marker in lowered_reply:
-                return True
-        elif re.search(rf"\b{re.escape(marker)}\b", lowered_reply):
-            return True
-    return False
 _CONTEXTUAL_RELEVANCE_CHALLENGE_MARKERS = (
     "what does that have to do",
     "what does this have to do",
@@ -10792,9 +10750,6 @@ def _evaluate_reply_topicality(
     if len(concrete_reply_tokens) < 12:
         return False, ""
 
-    if _has_topical_bridge(lowered_reply):
-        return False, ""
-
     # Everything above this line measures ABSENCE — the reply borrowed no
     # vocabulary from the question. That is not evidence of drift, and treating
     # it as evidence cost two correct answers live on 2026-08-04:
@@ -10816,6 +10771,7 @@ def _evaluate_reply_topicality(
     try:
         from core.conversation.reply_subject import (
             answers_polar_question,
+            assess_subject_alignment,
             assess_subject_drift,
         )
     except ImportError as exc:  # pragma: no cover - import wiring failure
@@ -10829,6 +10785,13 @@ def _evaluate_reply_topicality(
 
     drift = assess_subject_drift(reply)
     if not drift.drifted:
+        return False, ""
+    alignment = assess_subject_alignment(
+        user_message,
+        reply,
+        recent_thread=recent_user_messages,
+    )
+    if alignment.aligned:
         return False, ""
 
     return True, "foreign_topic_burst"
