@@ -563,6 +563,32 @@ def _validate_generation_context(value: Any) -> dict[str, Any]:
     return dict(value)
 
 
+def _failed_verifier_recheck(
+    routes: Mapping[str, Any],
+    request: Mapping[str, Any],
+) -> tuple[bool, bool]:
+    """Did the refuted claim get re-checked by its own verifier, and pass?
+
+    Looked up by VERIFIER CLASS, not by index. The replacement span decomposes
+    into its own atoms, so the route sitting at the failed ordinal in the
+    repaired candidate is a different claim -- usually one with no
+    deterministic route at all, which read as "the verifier was never
+    re-run". Measured on the 32B: prefix and unrelated work both verified
+    clean, and admission still failed failed_verifier_not_rechecked because
+    index 15 now held something else.
+
+    What the guarantee means is that the exact verifier which refuted the
+    original claim now runs on the repaired text and verifies. Paired with the
+    no-exact-refutations check in the caller, that is strictly what
+    "the refutation was removed" requires.
+    """
+    required = str(request["required_verifier"])
+    rows = [row for row in routes["routes"] if row["verifier"] == required]
+    rechecked = bool(rows)
+    passed = rechecked and all(row["outcome"] == "verified" for row in rows)
+    return rechecked, passed
+
+
 def _unrelated_work_unchanged(
     decomposition: Mapping[str, Any],
     request: Mapping[str, Any],
@@ -639,13 +665,8 @@ def _admitted_transaction(
     prefix_unchanged = observed_prefix == request["preserved_prefix_atoms"]
     ordinal = int(request["failed_atom_ordinal"])
     unrelated_unchanged = _unrelated_work_unchanged(decomposition, request)
-    replacement_route = route["routes"][ordinal] if ordinal < len(route["routes"]) else None
-    failed_verifier_rechecked = bool(
-        replacement_route
-        and replacement_route["verifier"] == request["required_verifier"]
-    )
-    failed_verifier_passed = bool(
-        failed_verifier_rechecked and replacement_route["outcome"] == "verified"
+    failed_verifier_rechecked, failed_verifier_passed = _failed_verifier_recheck(
+        route, request
     )
     no_exact_refutations = not any(
         row["verifier"] in _EXACT_VERIFIERS and row["outcome"] == "refuted"
@@ -964,14 +985,7 @@ def validate_local_repair_receipt(
         prefix_unchanged = observed_prefix == request["preserved_prefix_atoms"]
         unrelated_unchanged = _unrelated_work_unchanged(decomposition, request)
         ordinal = int(request["failed_atom_ordinal"])
-        replacement_route = (
-            routes["routes"][ordinal] if ordinal < len(routes["routes"]) else None
-        )
-        rechecked = bool(
-            replacement_route
-            and replacement_route["verifier"] == request["required_verifier"]
-        )
-        passed = bool(rechecked and replacement_route["outcome"] == "verified")
+        rechecked, passed = _failed_verifier_recheck(routes, request)
         no_refutations = not any(
             row["verifier"] in _EXACT_VERIFIERS and row["outcome"] == "refuted"
             for row in routes["routes"]
