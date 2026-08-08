@@ -38116,7 +38116,7 @@ review coverage is not remediation and none is closed by the review receipt:
 
 - **P1 CLOSED CP011:** principal-bind durable memory pins before paired cross-session recall.
 - **P1 CLOSED CP011:** session-filter protected recovery history before it reaches a model prompt.
-- **P1:** cancel or generation-fence stale turn holders when a chat lock is preempted.
+- **P1 CLOSED CP012:** cancel and generation-fence stale turn holders when a chat lock is preempted.
 - **P1 CLOSED CP011:** make regenerate select and update one session-bound exchange by immutable ID.
 - **P1:** verify every requested desktop/research predicate, including source count,
   recency, actual reading, synthesis, independent opinion, format, and location.
@@ -38175,3 +38175,30 @@ reconstruction, at-rest encryption, or measured-capability items. The resident
 complete-engine experiment and every downstream gain, fusion, activation,
 release, endurance, frontier, and `WOW Signal` claim remain open pending their
 independent evidence.
+
+## Checkpoint 2026-08-08-012: Preemption Cancels the Superseded Turn
+
+Foreground lock preemption now owns the actual `asyncio.Task`, not only a
+replaceable lock object. When a genuinely different request preempts a stale
+holder, the lock cancels that owner with a typed reason, clears the obsolete
+lease, drains old waiters onto the replacement lock, and retains token/task
+fencing so neither the stale task nor an unrelated caller can release the new
+owner's reservation. The same task cannot accidentally cancel itself during
+maintenance or test setup.
+
+The chat cancellation path recognizes this preemption reason, cancels its
+owned kernel work, marks the superseded exchange `preempted` without inventing
+assistant speech, and re-raises cancellation. It cannot convert preemption into
+a normal user-visible response after the successor has acquired the lane.
+Ordinary client cancellation retains its existing in-band recovery behavior.
+
+Focused lock and live-route regressions pass `6/6`, including a separately
+scheduled stale owner, waiter migration, successor exclusivity, no fabricated
+reply, and successful current-turn completion after preemption. The complete
+conversation and desktop-intent suites pass `320/320`; smoke passes `103/103`;
+compile, curated Ruff, diff hygiene, and governance lint pass with no new
+ownership debt. This closes the stale
+turn-holder P1 only; semantic task-completion verification, defensive
+fail-closed behavior, event-loop isolation, per-session quality state, durable
+transcript reconstruction, at-rest encryption, measured capabilities, and all
+broader closeout and scientific obligations remain open.

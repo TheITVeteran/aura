@@ -1264,6 +1264,57 @@ async def test_preemptible_chat_lock_waiter_survives_force_release_without_doubl
 
 
 @pytest.mark.asyncio
+async def test_preemptible_chat_lock_force_release_cancels_stale_owner_task():
+    from interface.routes import chat as chat_routes
+
+    lock = chat_routes.PreemptibleChatLock()
+    owner_started = asyncio.Event()
+    owner_blocked = asyncio.Event()
+
+    async def _stale_owner():
+        token = await lock.acquire()
+        owner_started.set()
+        try:
+            await owner_blocked.wait()
+        finally:
+            lock.release(token)
+
+    owner_task = asyncio.create_task(_stale_owner())
+    await asyncio.wait_for(owner_started.wait(), timeout=1.0)
+
+    lock.force_release(reason=chat_routes._FOREGROUND_CHAT_PREEMPT_CANCEL_REASON)
+
+    with pytest.raises(asyncio.CancelledError):
+        await owner_task
+    replacement_token = await asyncio.wait_for(lock.acquire(), timeout=1.0)
+    assert lock.locked() is True
+    assert lock.release(replacement_token) is True
+    assert lock.locked() is False
+
+
+@pytest.mark.asyncio
+async def test_preempted_exchange_has_no_fabricated_assistant_reply():
+    from interface.routes import chat as chat_routes
+
+    exchange_id = await chat_routes._begin_logged_exchange(
+        "This turn will be preempted",
+        session_id="preemption-test",
+    )
+
+    await chat_routes._mark_logged_exchange_preempted(
+        exchange_id,
+        reason=chat_routes._FOREGROUND_CHAT_PREEMPT_CANCEL_REASON,
+    )
+
+    exchange = next(
+        entry for entry in chat_routes._conversation_log if entry["id"] == exchange_id
+    )
+    assert exchange["status"] == "preempted"
+    assert exchange["aura"] == ""
+    assert exchange["preemption_reason"] == "foreground_chat_preempted"
+
+
+@pytest.mark.asyncio
 async def test_preemptible_chat_lock_held_duration_uses_monotonic_clock():
     """held_duration must not be inflatable by wall-clock jumps (system sleep)."""
     from interface.routes import chat as chat_routes
@@ -14108,12 +14159,24 @@ async def test_api_chat_preempts_stale_foreground_lock_and_clears_mlx_owner(monk
 
     monkeypatch.setattr(KernelInterface, "get_instance", staticmethod(lambda: None))
 
-    await chat_routes._foreground_chat_lock.acquire()
-    # held_duration is monotonic-based (sleep-proof), so age the lock on the
-    # monotonic clock.
-    chat_routes._foreground_chat_lock._acquired_at = (
-        time.monotonic() - chat_routes._FOREGROUND_CHAT_LOCK_PREEMPT_AFTER_S - 1.0
-    )
+    stale_owner_started = asyncio.Event()
+    stale_owner_blocked = asyncio.Event()
+
+    async def _stale_owner():
+        token = await chat_routes._foreground_chat_lock.acquire()
+        chat_routes._foreground_chat_lock._acquired_at = (
+            time.monotonic()
+            - chat_routes._FOREGROUND_CHAT_LOCK_PREEMPT_AFTER_S
+            - 1.0
+        )
+        stale_owner_started.set()
+        try:
+            await stale_owner_blocked.wait()
+        finally:
+            chat_routes._foreground_chat_lock.release(token)
+
+    stale_owner_task = asyncio.create_task(_stale_owner())
+    await asyncio.wait_for(stale_owner_started.wait(), timeout=1.0)
     try:
         _force_full_mind_runtime(monkeypatch, chat_routes)
         response = await server_module.api_chat(
@@ -14129,6 +14192,10 @@ async def test_api_chat_preempts_stale_foreground_lock_and_clears_mlx_owner(monk
             None,
         )
     finally:
+        if not stale_owner_task.done():
+            stale_owner_task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await stale_owner_task
         if chat_routes._foreground_chat_lock.locked():
             chat_routes._foreground_chat_lock.release()
 

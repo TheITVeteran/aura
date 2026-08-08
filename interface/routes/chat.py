@@ -1328,6 +1328,7 @@ class PreemptibleChatLock:
         self._lock = asyncio.Lock()
         self._acquired_at = 0.0
         self._owner_token: object | None = None
+        self._owner_task: asyncio.Task[Any] | None = None
 
     async def acquire(self):
         # Bounded: each retry means force_release() swapped the lock object
@@ -1340,6 +1341,7 @@ class PreemptibleChatLock:
                 # held_duration into a false 45s preemption on wake.
                 self._acquired_at = time.monotonic()
                 self._owner_token = object()
+                self._owner_task = asyncio.current_task()
                 return self._owner_token
             # force_release() swapped the lock object while we were waiting;
             # what we just acquired is the dead pre-preemption lock. Holding
@@ -1358,6 +1360,14 @@ class PreemptibleChatLock:
         if owner_token is not None and owner_token is not self._owner_token:
             logger.debug("Conversation turn lock release skipped: stale owner token.")
             return False
+        current_task = asyncio.current_task()
+        if (
+            owner_token is None
+            and self._owner_task is not None
+            and current_task is not self._owner_task
+        ):
+            logger.debug("Conversation turn lock release skipped: non-owner task.")
+            return False
         try:
             if self._lock.locked():
                 self._lock.release()
@@ -1366,6 +1376,7 @@ class PreemptibleChatLock:
             logger.debug("Conversation turn lock release skipped: %s", exc)
         self._acquired_at = 0.0
         self._owner_token = None
+        self._owner_task = None
         return True
 
     @property
@@ -1374,12 +1385,21 @@ class PreemptibleChatLock:
             return 0.0
         return time.monotonic() - self._acquired_at
 
-    def force_release(self):
+    def force_release(self, *, reason: str = "foreground_chat_preempted"):
         logger.warning("🚨 Preempting stuck foreground chat lock!")
         dead_lock = self._lock
+        stale_owner_task = self._owner_task
         self._lock = asyncio.Lock()
         self._acquired_at = 0.0
         self._owner_token = None
+        self._owner_task = None
+        current_task = asyncio.current_task()
+        if (
+            stale_owner_task is not None
+            and stale_owner_task is not current_task
+            and not stale_owner_task.done()
+        ):
+            stale_owner_task.cancel(reason)
         # Wake anyone still parked on the dead lock: the first drained waiter
         # acquires it, sees the swap in acquire(), releases it again (draining
         # the next), and re-queues on the live lock. Without this the parked
@@ -1389,6 +1409,9 @@ class PreemptibleChatLock:
                 dead_lock.release()
         except RuntimeError as exc:
             logger.debug("Dead pre-preemption lock drain skipped: %s", exc)
+
+
+_FOREGROUND_CHAT_PREEMPT_CANCEL_REASON = "foreground_chat_preempted"
 
 def _get_fg_lock(): return _locks.setdefault("fg", PreemptibleChatLock())
 _foreground_chat_lock = _get_fg_lock()
@@ -1596,6 +1619,26 @@ async def _complete_logged_exchange(
     except _CHAT_RECOVERABLE_ERRORS as exc:
         record_degradation('chat', exc)
         logger.debug("Conversation experience recording skipped: %s", exc)
+
+
+async def _mark_logged_exchange_preempted(
+    exchange_id: str | None,
+    *,
+    reason: str,
+) -> None:
+    """Fence a superseded turn without recording invented assistant speech."""
+
+    if not exchange_id:
+        return
+    async with _get_convo_lock():
+        for entry in reversed(_conversation_log):
+            if str(entry.get("id") or "") != str(exchange_id):
+                continue
+            entry["status"] = "preempted"
+            entry["aura"] = ""
+            entry["completed_at"] = _utc_now_iso()
+            entry["preemption_reason"] = str(reason or "foreground_chat_preempted")[:80]
+            return
 
 
 async def _log_exchange(
@@ -21147,7 +21190,9 @@ async def _api_chat_turn(body: ChatRequest, request: Request):
                     min_age_s=_FOREGROUND_CHAT_LOCK_PREEMPT_AFTER_S,
                 )
                 if hasattr(_foreground_chat_lock, "force_release"):
-                    _foreground_chat_lock.force_release()
+                    _foreground_chat_lock.force_release(
+                        reason=_FOREGROUND_CHAT_PREEMPT_CANCEL_REASON,
+                    )
                 try:
                     foreground_lock_token = await asyncio.wait_for(_foreground_chat_lock.acquire(), timeout=1.0)
                     foreground_slot_acquired = True
@@ -24941,8 +24986,17 @@ async def _api_chat_turn(body: ChatRequest, request: Request):
             },
             status_code=200,  # [STABILITY v53] Changed from 503/504 to 200
         )
-    except asyncio.CancelledError:
+    except asyncio.CancelledError as cancel_exc:
         await _cancel_kernel_task_if_pending("request_cancelled")
+        if _FOREGROUND_CHAT_PREEMPT_CANCEL_REASON in {
+            str(value) for value in cancel_exc.args
+        }:
+            await _mark_logged_exchange_preempted(
+                pending_exchange_id,
+                reason=_FOREGROUND_CHAT_PREEMPT_CANCEL_REASON,
+            )
+            pending_exchange_id = None
+            raise
         lane = _mark_conversation_lane_state("foreground_cancelled", state="recovering")
         # Don't ask the user to re-send. If we got cancelled while a newer
         # message was already inbound, the user has already moved on; if
