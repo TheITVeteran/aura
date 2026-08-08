@@ -685,6 +685,70 @@ async def test_route_fails_in_band_when_affordance_visibility_cannot_be_verified
     assert payload["delivery_state"] == DeliveryState.FAILED.value
 
 
+@pytest.mark.asyncio
+async def test_route_settles_surface_with_the_actual_sanitized_payload(
+    monkeypatch: pytest.MonkeyPatch,
+    journal: ChatDeliveryJournal,
+) -> None:
+    from core.conversation import surface_delivery
+    from interface.routes import chat as chat_mod
+
+    _patch_route_identity(monkeypatch, journal)
+    delivered: list[str] = []
+    monkeypatch.setattr(surface_delivery, "note_route_delivered", delivered.append)
+
+    @chat_mod._paired_chat_response_boundary
+    async def handler(*, body, request):
+        return JSONResponse(
+            {
+                "response": "Visible ⟦affordance:unknown target=private⟧ answer",
+                "status": "ok",
+            }
+        )
+
+    response = await handler(
+        body=chat_mod.ChatRequest(message="show me", session_id="session-1"),
+        request=_request("route-surface-settled"),
+    )
+    payload = _payload(response)
+
+    assert payload["response"] == "Visible answer"
+    assert delivered == [payload["response"]]
+
+
+@pytest.mark.asyncio
+async def test_route_settles_surface_after_terminal_receipt_substitution(
+    monkeypatch: pytest.MonkeyPatch,
+    journal: ChatDeliveryJournal,
+) -> None:
+    from core.conversation import surface_delivery
+    from interface.routes import chat as chat_mod
+
+    _patch_route_identity(monkeypatch, journal)
+    delivered: list[str] = []
+    monkeypatch.setattr(surface_delivery, "note_route_delivered", delivered.append)
+
+    async def fail_terminal_receipt(*_args, **_kwargs):
+        raise ChatDeliveryJournalUnavailable("terminal receipt unavailable")
+
+    monkeypatch.setattr(chat_mod, "_finalize_chat_delivery", fail_terminal_receipt)
+
+    @chat_mod._paired_chat_response_boundary
+    async def handler(*, body, request):
+        return JSONResponse({"response": "draft that must be withheld", "status": "ok"})
+
+    response = await handler(
+        body=chat_mod.ChatRequest(message="hello", session_id="session-1"),
+        request=_request("route-terminal-substitution"),
+    )
+    payload = _payload(response)
+
+    assert response.status_code == 503
+    assert payload["status"] == "chat_delivery_terminal_unsealed"
+    assert delivered == [payload["response"]]
+    assert delivered != ["draft that must be withheld"]
+
+
 def test_request_contract_binds_method_and_path(monkeypatch: pytest.MonkeyPatch) -> None:
     from interface.routes import chat as chat_mod
 

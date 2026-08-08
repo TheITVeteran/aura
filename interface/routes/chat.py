@@ -577,6 +577,29 @@ def _chat_delivery_state_for_response(
     return DeliveryState.COMPLETED
 
 
+def _note_chat_surface_delivery_response(response: JSONResponse) -> None:
+    """Close the one-message/one-reply surface state with delivered text."""
+
+    try:
+        decoded = json.loads(bytes(response.body))
+        if not isinstance(decoded, dict):
+            raise TypeError("chat delivery body must be a JSON object")
+        delivered = str(decoded.get("response") or decoded.get("message") or "").strip()
+        if not delivered:
+            return
+        from core.conversation.surface_delivery import note_route_delivered
+
+        note_route_delivered(delivered)
+    except (ImportError, AttributeError, RuntimeError, TypeError, ValueError, json.JSONDecodeError) as exc:
+        record_degradation(
+            "chat.surface_delivery",
+            exc,
+            severity="warning",
+            action="delivered the response while route-delivery settlement failed",
+            enforce_failure_policy=False,
+        )
+
+
 def _contains_private_affordance_control_syntax(value: Any) -> bool:
     """Recognize private affordance controls without parsing or executing them."""
 
@@ -1321,7 +1344,13 @@ def _paired_chat_response_boundary(handler: Callable[..., Any]) -> Callable[...,
             _CHAT_DELIVERY_IDEMPOTENCY_KEY.reset(key_token)
             _CHAT_DELIVERY_TURN_ID.reset(turn_token)
 
-    return _wrapped
+    @wraps(handler)
+    async def _surface_settled(*args: Any, **kwargs: Any) -> JSONResponse:
+        response = await _wrapped(*args, **kwargs)
+        _note_chat_surface_delivery_response(response)
+        return response
+
+    return _surface_settled
 
 
 # Max chat message size to prevent memory exhaustion
@@ -21263,21 +21292,8 @@ def _early_chat_json_response(
     *,
     status_code: int,
 ) -> JSONResponse:
-    """Settle an admitted surface turn before returning outside cognition."""
+    """Return an early payload; the paired boundary settles actual delivery."""
 
-    delivered = str(payload.get("response") or payload.get("message") or "").strip()
-    if delivered:
-        try:
-            from core.conversation.surface_delivery import note_route_delivered
-
-            note_route_delivered(delivered)
-        except _CHAT_RECOVERABLE_ERRORS as exc:
-            record_degradation(
-                "chat",
-                exc,
-                severity="info",
-                action="early route delivery state unrecorded",
-            )
     return JSONResponse(payload, status_code=status_code)
 
 

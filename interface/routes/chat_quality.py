@@ -8,9 +8,8 @@ resolve through chat.py's globals, and intra-section calls live here).
 from __future__ import annotations
 
 import logging
-from dataclasses import dataclass
 import re
-import time
+from dataclasses import dataclass
 from typing import Any
 
 from core.runtime.errors import record_degradation
@@ -55,27 +54,10 @@ def _log_response_quality_metrics(
     Writes to a dedicated logger so these can be routed to a file/store
     independently of the main application log.
 
-    Also the point where the route records WHAT it served, so a second lane
-    finishing the same turn minutes later cannot publish a competing answer
-    into the conversation. Every delivered reply passes through here, which
-    is the reason the bookkeeping sits in a logging function.
+    Delivery settlement is owned by the outer paired-response boundary after
+    journal sealing. Metrics must not claim an answer was delivered before the
+    route knows which payload actually reached the client.
     """
-    try:
-        from core.conversation.surface_delivery import note_route_delivered
-
-        note_route_delivered(reply_text)
-    except Exception as exc:  # bookkeeping must never break a delivered reply
-        # The reply still goes out. A delivery-note path that has been broken
-        # for weeks should not be indistinguishable from one that simply had
-        # nothing to note.
-        record_degradation(
-            "chat_quality",
-            exc,
-            severity="warning",
-            action="delivered the reply after route-delivery bookkeeping failed",
-            enforce_failure_policy=False,
-        )
-
     try:
         assessment_reasons: tuple[str, ...] = ()
         try:

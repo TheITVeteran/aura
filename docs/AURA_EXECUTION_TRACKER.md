@@ -38131,7 +38131,7 @@ review coverage is not remediation and none is closed by the review receipt:
   keep output-shape failures consistent with the in-band degraded-response contract.
 - **P2 CLOSED CP022:** strip malformed affordance control syntax before any user delivery.
 - **P2 CLOSED CP023:** reconstruct durable transcripts by exchange identity rather than row adjacency.
-- **P2:** close surface-delivery state on every fast, defensive, conscience, pressure,
+- **P2 CLOSED CP024:** close surface-delivery state on every fast, defensive, conscience, pressure,
   and error return, not only the final quality path.
 - **P3:** encrypt and principal-bind explicit memory pins at rest.
 - **P3:** report capability availability only from a measured catalog/health snapshot.
@@ -38586,3 +38586,34 @@ detached and advanced into its complete-engine arm. The completion envelope
 stays `809/920` (approximately `87.9%`); this closes one bounded chat P2, not
 the remaining conversation, RLC, fusion, release, semantic-review, or
 endurance program.
+
+## Checkpoint 2026-08-08-024: The Delivered Payload Closes the Surface Turn
+
+The one-message/one-reply guard no longer depends on final-quality logging or
+selected early-return helpers to learn what the chat route served. The outer
+paired-response boundary now settles surface delivery exactly once for every
+normal route return: successful final answers, deterministic fast paths,
+defensive and conscience refusals, memory-pressure and foreground-busy
+responses, timeouts, error floors, replays, fence failures, and terminal-
+receipt substitutions all pass through the same owner.
+
+Settlement runs only after affordance-control sanitization and durable chat-
+journal handling. The recorded text is therefore the payload the client
+actually receives, not a pre-sanitized draft or an answer later withheld
+because its terminal receipt could not be sealed. This closes the open-turn
+suppression window for every response path and gives late-lane arbitration the
+right comparison text. The response-quality logger is again metrics-only, and
+the old early helper no longer double-records delivery.
+
+Regressions prove that defensive pre-gates still settle once, malformed
+affordance syntax settles as its sanitized prose, and a terminal-journal
+failure settles as the substituted withheld-result response rather than the
+unsealed draft. Focused delivery, pre-gate, and one-message/one-reply tests pass
+`44/44`; the complete conversation-lane, delivery-journal, pre-gate, envelope,
+and one-message/one-reply suite passes `339/339`; canonical smoke passes
+`103/103`; Ruff, full Python compilation, and diff hygiene pass. The active
+source-bound resident-32B campaign remained detached and reached full-stack
+cell `3/28`. The completion envelope remains `809/920` (approximately
+`87.9%`); all P1/P2 items from this bounded chat semantic queue are now closed,
+while its P3 work and the broader RLC, fusion, release, semantic-review, and
+endurance program remain open.
