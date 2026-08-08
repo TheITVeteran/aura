@@ -43,6 +43,58 @@ async def test_bounded_chat_blocking_work_does_not_own_event_loop():
             await operation
     finally:
         release.set()
+        pending = list(chat_routes._chat_blocking_tasks)
+        if pending:
+            await asyncio.gather(*pending, return_exceptions=True)
+
+
+@pytest.mark.asyncio
+async def test_bounded_deterministic_work_can_finish_in_turn_during_grace():
+    from interface.routes import chat as chat_routes
+
+    def slightly_late() -> str:
+        time.sleep(0.07)
+        return "complete deterministic result"
+
+    result = await chat_routes._await_bounded_chat_blocking(
+        slightly_late,
+        timeout_s=0.02,
+        completion_grace_s=0.2,
+        operation_name="recoverable_deterministic_test",
+    )
+
+    assert result == "complete deterministic result"
+    assert not chat_routes._chat_blocking_tasks
+
+
+@pytest.mark.asyncio
+async def test_hard_timed_out_blocking_work_remains_supervised_until_exit():
+    from interface.routes import chat as chat_routes
+
+    started = threading.Event()
+    release = threading.Event()
+
+    def late() -> str:
+        started.set()
+        release.wait(1.0)
+        return "too late for this turn"
+
+    try:
+        with pytest.raises(TimeoutError):
+            await chat_routes._await_bounded_chat_blocking(
+                late,
+                timeout_s=0.02,
+                operation_name="supervised_timeout_test",
+            )
+        assert started.is_set()
+        assert chat_routes._chat_blocking_tasks
+    finally:
+        release.set()
+        pending = list(chat_routes._chat_blocking_tasks)
+        if pending:
+            await asyncio.gather(*pending, return_exceptions=True)
+
+    assert not chat_routes._chat_blocking_tasks
 
 
 @pytest.mark.asyncio

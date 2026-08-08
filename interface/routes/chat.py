@@ -941,6 +941,12 @@ def _paired_chat_response_boundary(handler: Callable[..., Any]) -> Callable[...,
         conversation_only = bool(
             request_access_profile(request).get("conversation_only", True)
         )
+        strict_output_status = bool(
+            not conversation_only
+            and request is not None
+            and str(request.headers.get("X-Aura-Benchmark") or "").casefold()
+            == "true"
+        )
 
         identity: DeliveryIdentity | None = None
         try:
@@ -1160,7 +1166,11 @@ def _paired_chat_response_boundary(handler: Callable[..., Any]) -> Callable[...,
                             "status": "chat_response_format_rejected",
                             "response_confidence": "failed",
                         },
-                        status_code=500,
+                        # Real chat failures are delivered in-band so the UI
+                        # can render the authoritative status without a retry
+                        # storm. Proof/benchmark callers retain strict HTTP
+                        # failure semantics.
+                        status_code=500 if strict_output_status else 200,
                     )
 
             payload: dict[str, Any]
@@ -1178,7 +1188,7 @@ def _paired_chat_response_boundary(handler: Callable[..., Any]) -> Callable[...,
                     "status": "chat_response_projection_failed",
                     "response_confidence": "failed",
                 }
-                response.status_code = 500
+                response.status_code = 500 if strict_output_status else 200
 
             terminal_state = _chat_delivery_state_for_response(
                 payload,
@@ -1342,6 +1352,7 @@ _CHAT_EXPORT_TOTAL_CHARS = 2 * 1024 * 1024
 _CHAT_EXPORT_ITEM_CHARS = 32 * 1024
 _REPO_PROBE_MAX_BYTES = 2 * 1024 * 1024
 _reasoning_audit_tasks: set[asyncio.Task[Any]] = set()
+_chat_blocking_tasks: set[asyncio.Task[Any]] = set()
 _chat_blocking_slots = threading.BoundedSemaphore(_CHAT_BLOCKING_MAX_ACTIVE)
 
 
@@ -1368,19 +1379,56 @@ async def _await_bounded_chat_blocking(
     *args: Any,
     timeout_s: float,
     operation_name: str,
+    completion_grace_s: float = 0.0,
     **kwargs: Any,
 ) -> Any:
-    """Run bounded synchronous chat work without owning the request loop."""
+    """Run bounded synchronous chat work without orphaning a late result.
 
+    Cancelling ``asyncio.to_thread`` does not stop its worker. The former
+    ``wait_for(to_thread(...))`` therefore discarded a deterministic result
+    while the operation kept consuming its slot. Keep one supervised task,
+    allow explicitly recoverable callers a small in-turn completion window,
+    and retain ownership until the worker actually exits even after a hard
+    timeout or caller cancellation.
+    """
+
+    task = get_task_tracker().track(
+        asyncio.to_thread(
+            _invoke_chat_blocking_with_slot,
+            operation,
+            args,
+            kwargs,
+        ),
+        name=f"ChatBlocking:{operation_name}"[:120],
+        owner="interface.routes.chat",
+    )
+    _chat_blocking_tasks.add(task)
+    task.add_done_callback(_chat_blocking_tasks.discard)
     try:
-        return await asyncio.wait_for(
-            asyncio.to_thread(
-                _invoke_chat_blocking_with_slot,
-                operation,
-                args,
-                kwargs,
-            ),
-            timeout=max(0.05, float(timeout_s)),
+        primary_timeout = max(0.05, float(timeout_s))
+        await asyncio.wait({task}, timeout=primary_timeout)
+        if task.done():
+            return task.result()
+
+        completion_grace = max(0.0, float(completion_grace_s))
+        if completion_grace:
+            logger.info(
+                "Bounded chat operation %s reached its %.2fs soft budget; "
+                "waiting up to %.2fs for its already-running deterministic result.",
+                operation_name,
+                primary_timeout,
+                completion_grace,
+            )
+            await asyncio.wait({task}, timeout=completion_grace)
+            if task.done():
+                logger.info(
+                    "Recovered bounded chat operation %s during completion grace.",
+                    operation_name,
+                )
+                return task.result()
+
+        raise TimeoutError(
+            f"{operation_name} exceeded {primary_timeout + completion_grace:.2f}s hard budget"
         )
     except _ChatBlockingBudgetSaturatedError as exc:
         record_degradation(
@@ -2735,6 +2783,7 @@ async def _recall_durable_session_memory_pin(
             principal_surface=safe_principal_surface,
             timeout_s=_CHAT_BLOCKING_PREFLIGHT_TIMEOUT_S,
             operation_name="session_memory_pin_ledger_recall",
+            completion_grace_s=0.75,
         )
     except TimeoutError:
         ledger_recall = None
@@ -21303,6 +21352,7 @@ async def _api_chat_turn(body: ChatRequest, request: Request):
                     deadline_monotonic=_resume_deadline,
                     timeout_s=_CHAT_BLOCKING_PREFLIGHT_TIMEOUT_S,
                     operation_name="pending_chat_resume_collection",
+                    completion_grace_s=0.5,
                 )
                 if _delivered:
                     _resume_prefix_for_response = format_resume_prefix(_delivered)
@@ -21331,6 +21381,7 @@ async def _api_chat_turn(body: ChatRequest, request: Request):
                         _refs,
                         timeout_s=_CHAT_BLOCKING_PREFLIGHT_TIMEOUT_S,
                         operation_name="referenced_file_context",
+                        completion_grace_s=_CHAT_BLOCKING_PREFLIGHT_TIMEOUT_S,
                     )
                     if _block:
                         body.message = f"{_block}\nUser message: {body.message}"
@@ -23090,6 +23141,7 @@ async def _api_chat_turn(body: ChatRequest, request: Request):
                     _semantic_user_message,
                     timeout_s=_CHAT_BLOCKING_PREFLIGHT_TIMEOUT_S,
                     operation_name="repo_probe_read",
+                    completion_grace_s=_CHAT_BLOCKING_PREFLIGHT_TIMEOUT_S,
                 )
             except TimeoutError:
                 repo_probe = {

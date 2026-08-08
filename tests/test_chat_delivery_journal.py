@@ -45,7 +45,11 @@ def _request(
     *,
     path: str = "/api/chat",
     method: str = "POST",
+    benchmark: bool = False,
 ) -> Request:
+    headers = [(b"x-idempotency-key", key.encode("ascii"))]
+    if benchmark:
+        headers.append((b"x-aura-benchmark", b"true"))
     return Request(
         {
             "type": "http",
@@ -56,7 +60,7 @@ def _request(
             "path": path,
             "raw_path": path.encode("ascii"),
             "query_string": b"",
-            "headers": [(b"x-idempotency-key", key.encode("ascii"))],
+            "headers": headers,
             "client": ("127.0.0.1", 50123),
             "server": ("127.0.0.1", 8000),
         }
@@ -551,6 +555,55 @@ async def test_route_same_key_different_message_returns_409_without_side_effect(
     assert mismatch.status_code == 409
     assert _payload(mismatch)["status"] == "idempotency_payload_mismatch"
     assert calls == 1
+
+
+@pytest.mark.asyncio
+async def test_route_delivers_unusable_output_shape_in_band_for_real_chat(
+    monkeypatch: pytest.MonkeyPatch,
+    journal: ChatDeliveryJournal,
+) -> None:
+    from interface.routes import chat as chat_mod
+
+    _patch_route_identity(monkeypatch, journal)
+
+    @chat_mod._paired_chat_response_boundary
+    async def handler(*, body, request):
+        return None
+
+    response = await handler(
+        body=chat_mod.ChatRequest(message="hello", session_id="session-1"),
+        request=_request("route-invalid-shape"),
+    )
+    payload = _payload(response)
+
+    assert response.status_code == 200
+    assert payload["status"] == "chat_response_format_rejected"
+    assert payload["response_confidence"] == "failed"
+    assert payload["delivery_state"] == DeliveryState.FAILED.value
+
+
+@pytest.mark.asyncio
+async def test_route_keeps_strict_http_failure_for_benchmark_output_shape(
+    monkeypatch: pytest.MonkeyPatch,
+    journal: ChatDeliveryJournal,
+) -> None:
+    from interface.routes import chat as chat_mod
+
+    _patch_route_identity(monkeypatch, journal)
+
+    @chat_mod._paired_chat_response_boundary
+    async def handler(*, body, request):
+        return None
+
+    response = await handler(
+        body=chat_mod.ChatRequest(message="hello", session_id="session-1"),
+        request=_request("route-invalid-shape-benchmark", benchmark=True),
+    )
+    payload = _payload(response)
+
+    assert response.status_code == 500
+    assert payload["status"] == "chat_response_format_rejected"
+    assert payload["delivery_state"] == DeliveryState.FAILED.value
 
 
 def test_request_contract_binds_method_and_path(monkeypatch: pytest.MonkeyPatch) -> None:

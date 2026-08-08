@@ -38126,8 +38126,8 @@ review coverage is not remediation and none is closed by the review receipt:
 - **P2 CLOSED CP016:** partition repetition, degradation, and relevance state by conversation.
 - **P2:** remove recovery claims about identity, recurrence, memory, tools, and failure
   cause unless the current request measured them.
-- **P2:** replace the bare `you`/`your` topicality bypass with semantic continuity evidence.
-- **P2:** finish recoverable deterministic work in-turn instead of discarding it, and
+- **P2 CLOSED CP020:** replace the bare `you`/`your` topicality bypass with semantic continuity evidence.
+- **P2 CLOSED CP021:** finish recoverable deterministic work in-turn instead of discarding it, and
   keep output-shape failures consistent with the in-band degraded-response contract.
 - **P2:** strip malformed affordance control syntax before any user delivery.
 - **P2:** reconstruct durable transcripts by exchange identity rather than row adjacency.
@@ -38490,3 +38490,39 @@ open until the resident proof campaign releases the model lane. The completion
 envelope remains `809/920` (approximately `87.9%`); this closes one bounded
 chat P2, not the full conversation, RLC, release, semantic-review, or endurance
 program.
+
+## Checkpoint 2026-08-08-021: A Soft Timeout Does Not Orphan Its Answer
+
+Bounded synchronous chat work now has one supervised lifecycle after it leaves
+the event loop. The former `wait_for(to_thread(...))` pattern cancelled only
+the asyncio waiter; Python could not cancel the worker thread. A deterministic
+file read, repository probe, or memory lookup could finish moments later while
+its result was irretrievably discarded, and the still-running thread continued
+to hold one of the blocking-work slots without an explicit task owner.
+
+The shared runner now starts one TaskTracker-owned operation, waits through a
+primary soft budget, and permits explicitly selected deterministic user work a
+small bounded in-turn completion grace. A result completed during that window
+is delivered normally. A task that exceeds the hard budget remains supervised
+until its thread actually exits, so cancellation or timeout cannot orphan the
+work, leak an unobserved exception, or falsely release ownership. Concurrency
+remains capped by the existing eight-slot semaphore. Live-mind collection and
+post-response audit retain strict deadlines; completion grace is limited to
+session-memory recall, pending-answer collection, referenced-file context, and
+the user-requested repository probe.
+
+Response-envelope failures now follow the same transport distinction as other
+chat degradation paths. A real desktop or paired chat receives an authoritative
+in-band payload with HTTP 200, `response_confidence=failed`, a failed delivery
+state, and an exact format/projection status; this prevents frontend retry
+storms while preserving failure truth. Owner-only benchmark/proof requests keep
+strict HTTP 500 semantics. A non-empty bare text answer is still salvaged as a
+degraded 200 because the work itself succeeded.
+
+Focused blocking-budget, delivery-journal, and envelope regressions pass
+`44/44`; broader human-level and reliability contracts pass `237/237`; smoke
+passes `103/103`; Ruff, full Python compilation, and diff hygiene pass. No
+resident model was loaded and the active source-bound 32B campaign was not
+disturbed. Signed-app proof remains open. The completion envelope stays
+`809/920` (approximately `87.9%`); this closes one bounded P2, not the remaining
+chat, RLC, fusion, release, semantic-review, or endurance program.
