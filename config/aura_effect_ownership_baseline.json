@@ -16185,14 +16185,6 @@
       "scope": "<module>.OnlineLoRAGovernor._decide"
     },
     {
-      "callee": "core.governance.will.get_will().decide",
-      "canonical_owner": false,
-      "category": "will_decision",
-      "count": 1,
-      "path": "core/agency/hierarchical_agency.py",
-      "scope": "<module>.HierarchicalAgency._governance"
-    },
-    {
       "callee": "<will_decision>.decide",
       "canonical_owner": false,
       "category": "will_decision",
@@ -16466,6 +16458,6 @@
     }
   ],
   "description": "Exact AST effect-ownership debt ratchet; refresh only after reviewed change",
-  "inventory_sha256": "7aeac949f8c006f4eb3184e212a4a8f77cd0ebe6c450a0ed31521cf36af08b3f",
+  "inventory_sha256": "fee83c89f4598c8c25e504c7bcfdbb8d30bf091d596c390a0d3f074e5ba7cc7a",
   "schema_version": 1
 }

@@ -27,9 +27,10 @@ scientific engine, RSI loop, Will); all are overridable for testing.
 from __future__ import annotations
 
 import logging
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from enum import IntEnum
-from typing import Any, Callable, Dict, Optional
+from typing import Any
 
 from core.runtime.errors import record_degradation
 
@@ -58,13 +59,13 @@ class Situation:
 
     description: str
     threat: float = 0.0            # acute damage/danger → reflex
-    known_skill: Optional[str] = None  # a learned routine applies → habit
+    known_skill: str | None = None  # a learned routine applies → habit
     novelty: float = 0.0           # how unfamiliar
     uncertainty: float = 0.0       # how unsure about world dynamics → scientific
     goal_horizon: float = 0.0      # how long-horizon / multi-step → strategic
     capability_gap: float = 0.0    # Aura lacks a needed capability → self-improvement
     value_conflict: float = 0.0    # safety/value tension → governance
-    context: Dict[str, Any] = field(default_factory=dict)
+    context: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass
@@ -73,7 +74,7 @@ class TierResult:
     handled: bool
     escalate: bool = False
     confidence: float = 0.0
-    detail: Dict[str, Any] = field(default_factory=dict)
+    detail: dict[str, Any] = field(default_factory=dict)
     reason: str = ""
 
 
@@ -85,10 +86,10 @@ class DispatchResult:
     handled: bool
     confidence: float
     path: list  # tiers traversed during escalation
-    receipt_id: Optional[str] = None
-    detail: Dict[str, Any] = field(default_factory=dict)
+    receipt_id: str | None = None
+    detail: dict[str, Any] = field(default_factory=dict)
 
-    def as_dict(self) -> Dict[str, Any]:
+    def as_dict(self) -> dict[str, Any]:
         return {
             "situation": self.situation,
             "starting_tier": self.starting_tier.name,
@@ -125,7 +126,7 @@ class HierarchicalAgency:
         self._horizon_t = horizon_threshold
         self._novelty_habit_ceiling = novelty_habit_ceiling
         self._ledger_enabled = ledger_enabled
-        self._handlers: Dict[AgencyTier, Handler] = {}
+        self._handlers: dict[AgencyTier, Handler] = {}
         self._register_default_handlers()
 
     # ── tier selection ────────────────────────────────────────────────────
@@ -156,7 +157,7 @@ class HierarchicalAgency:
         start = self.classify(s)
         tier = start
         path: list = []
-        last: Optional[TierResult] = None
+        last: TierResult | None = None
 
         for steps in range(max_escalations + 1):
             path.append(tier)
@@ -199,7 +200,7 @@ class HierarchicalAgency:
 
     # ── outcome-ledger integration ────────────────────────────────────────
 
-    def _open_receipt(self, s: Situation, result: TierResult) -> Optional[str]:
+    def _open_receipt(self, s: Situation, result: TierResult) -> str | None:
         try:
             from core.cognition.outcome_ledger import CreditSource, get_outcome_ledger
             return get_outcome_ledger().open(
@@ -351,7 +352,7 @@ class HierarchicalAgency:
         )
 
     @staticmethod
-    def _social_context(s: Situation) -> Optional[Dict[str, Any]]:
+    def _social_context(s: Situation) -> dict[str, Any] | None:
         """Pull the live other-agent estimate when a situation names an agent (best-effort)."""
         agent_id = (s.context or {}).get("agent_id")
         if not agent_id:
@@ -373,7 +374,7 @@ class HierarchicalAgency:
         # tighten). This makes value_model causal on the live action path rather than a
         # registered island — every governance decision runs through it.
         try:
-            from core.values.value_model import get_value_model, ActionDescriptor
+            from core.values.value_model import ActionDescriptor, get_value_model
             judgment = get_value_model().evaluate_with_will(
                 ActionDescriptor(
                     description=s.description,
@@ -398,16 +399,26 @@ class HierarchicalAgency:
             pass
 
         try:
-            from core.governance.will import ActionDomain, get_will
-            decision = get_will().decide(
-                content=f"hierarchical_agency_governance:{s.description}",
+            from core.governance.will import ActionDomain
+            from core.runtime.action_executor import ActionExecutor
+
+            admission = ActionExecutor.authorize_action(
+                action_name="hierarchical_agency.governance_fallback",
+                params={
+                    "description": s.description[:500],
+                    "value_conflict": s.value_conflict,
+                },
                 source="hierarchical_agency",
                 domain=ActionDomain.STATE_MUTATION,
                 priority=0.6,
                 context={"value_conflict": s.value_conflict, "social": social},
             )
-            approved = bool(decision.is_approved())
-            detail = {"approved": approved, "reason": str(decision.reason)}
+            approved = admission.approved
+            detail = {
+                "approved": approved,
+                "reason": admission.reason,
+                "will_receipt_id": admission.receipt_id,
+            }
             if social:
                 detail["social"] = social
             return TierResult(
@@ -426,7 +437,7 @@ class HierarchicalAgency:
             )
 
 
-_agency: Optional[HierarchicalAgency] = None
+_agency: HierarchicalAgency | None = None
 
 
 def get_hierarchical_agency() -> HierarchicalAgency:

@@ -24,6 +24,48 @@ def test_value_conflict_routes_to_governance(agency):
     assert agency.classify(s) == AgencyTier.GOVERNANCE  # governance preempts even threat
 
 
+def test_governance_fallback_uses_one_evidence_bound_admission(agency, monkeypatch):
+    decisions = []
+
+    def value_model_unavailable():
+        raise RuntimeError("value model offline")
+
+    class _Decision:
+        reason = "fallback approved"
+        receipt_id = "hierarchical-fallback-receipt"
+
+        def is_approved(self):
+            return True
+
+    class _Will:
+        def decide(self, **kwargs):
+            decisions.append(kwargs)
+            return _Decision()
+
+    monkeypatch.setattr(
+        "core.values.value_model.get_value_model",
+        value_model_unavailable,
+    )
+    monkeypatch.setattr("core.will.get_will", lambda: _Will())
+
+    result = agency.dispatch(
+        Situation(
+            "resolve a conflicting preference",
+            value_conflict=0.8,
+            context={"agent_id": "unknown-agent"},
+        )
+    )
+
+    assert result.handled is True
+    assert result.final_tier == AgencyTier.GOVERNANCE
+    assert result.detail["approved"] is True
+    assert result.detail["will_receipt_id"] == "hierarchical-fallback-receipt"
+    assert len(decisions) == 1
+    assert decisions[0]["source"] == "hierarchical_agency"
+    assert decisions[0]["context"]["value_conflict"] == 0.8
+    assert "resolve a conflicting preference" in decisions[0]["content"]
+
+
 def test_acute_threat_routes_to_reflex(agency):
     assert agency.classify(Situation("memory corrupting now", threat=0.9)) == AgencyTier.REFLEX
 
