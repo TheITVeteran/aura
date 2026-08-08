@@ -8,9 +8,11 @@ from __future__ import annotations
 import asyncio
 import collections
 import contextlib
+import dataclasses
 import hashlib
 import html
 import inspect
+import itertools
 import json
 import logging
 import math
@@ -1323,6 +1325,77 @@ _RECENT_CONVERSATION_USER_CHARS = 800
 _RECENT_CONVERSATION_AURA_CHARS = 1200
 _RECENT_CONVERSATION_RENDERED_CHARS = 6000
 _SESSION_MEMORY_PIN_LEDGER_LIMIT = 500
+_SESSION_MEMORY_PIN_LEDGER_READ_BYTES = 2 * 1024 * 1024
+_CHAT_BLOCKING_PREFLIGHT_TIMEOUT_S = 2.0
+_CHAT_LIVE_MIND_COLLECTION_TIMEOUT_S = 2.5
+_CHAT_EXPORT_SECTION_TIMEOUT_S = 3.0
+_CHAT_REASONING_AUDIT_TIMEOUT_S = 1.5
+_CHAT_REASONING_AUDIT_MAX_ACTIVE = 2
+_CHAT_BLOCKING_MAX_ACTIVE = 8
+_CHAT_EXPORT_TOTAL_CHARS = 2 * 1024 * 1024
+_CHAT_EXPORT_ITEM_CHARS = 32 * 1024
+_REPO_PROBE_MAX_BYTES = 2 * 1024 * 1024
+_reasoning_audit_tasks: set[asyncio.Task[Any]] = set()
+_chat_blocking_slots = threading.BoundedSemaphore(_CHAT_BLOCKING_MAX_ACTIVE)
+
+
+class _ChatBlockingBudgetSaturatedError(RuntimeError):
+    pass
+
+
+def _invoke_chat_blocking_with_slot(
+    operation: Callable[..., Any],
+    args: tuple[Any, ...],
+    kwargs: dict[str, Any],
+) -> Any:
+    if not _chat_blocking_slots.acquire(blocking=False):
+        raise _ChatBlockingBudgetSaturatedError("chat blocking-work budget saturated")
+    try:
+        return operation(*args, **kwargs)
+    finally:
+        _chat_blocking_slots.release()
+
+
+async def _await_bounded_chat_blocking(
+    operation: Callable[..., Any],
+    /,
+    *args: Any,
+    timeout_s: float,
+    operation_name: str,
+    **kwargs: Any,
+) -> Any:
+    """Run bounded synchronous chat work without owning the request loop."""
+
+    try:
+        return await asyncio.wait_for(
+            asyncio.to_thread(
+                _invoke_chat_blocking_with_slot,
+                operation,
+                args,
+                kwargs,
+            ),
+            timeout=max(0.05, float(timeout_s)),
+        )
+    except _ChatBlockingBudgetSaturatedError as exc:
+        record_degradation(
+            "chat.event_loop_budget",
+            exc,
+            severity="warning",
+            action=f"rejected saturated bounded chat operation {operation_name}",
+            extra={"operation": operation_name},
+        )
+        raise
+    except TimeoutError as exc:
+        record_degradation(
+            "chat.event_loop_budget",
+            exc,
+            severity="warning",
+            action=f"stopped waiting for bounded chat operation {operation_name}",
+            extra={"operation": operation_name, "timeout_s": float(timeout_s)},
+        )
+        raise
+
+
 class PreemptibleChatLock:
     def __init__(self):
         self._lock = asyncio.Lock()
@@ -2403,7 +2476,15 @@ def _recall_session_memory_pin_from_ledger(
         if not path.exists():
             return None
         expected_session_id = str(session_id or "")[:64]
-        lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
+        size = path.stat().st_size
+        with path.open("rb") as handle:
+            if size > _SESSION_MEMORY_PIN_LEDGER_READ_BYTES:
+                handle.seek(-_SESSION_MEMORY_PIN_LEDGER_READ_BYTES, os.SEEK_END)
+            payload = handle.read(_SESSION_MEMORY_PIN_LEDGER_READ_BYTES + 1)
+        lines = payload.decode("utf-8", errors="replace").splitlines()
+        if size > _SESSION_MEMORY_PIN_LEDGER_READ_BYTES and lines:
+            # The bounded tail may begin in the middle of one JSONL row.
+            lines = lines[1:]
         for line in reversed(lines[-_SESSION_MEMORY_PIN_LEDGER_LIMIT:]):
             if not line.strip():
                 continue
@@ -2639,13 +2720,18 @@ async def _recall_durable_session_memory_pin(
         principal_id=principal_id,
         principal_surface=principal_surface,
     )
-    ledger_recall = await asyncio.to_thread(
-        _recall_session_memory_pin_from_ledger,
-        session_id=safe_session_id,
-        cross_session=cross_session,
-        principal_id=safe_principal_id,
-        principal_surface=safe_principal_surface,
-    )
+    try:
+        ledger_recall = await _await_bounded_chat_blocking(
+            _recall_session_memory_pin_from_ledger,
+            session_id=safe_session_id,
+            cross_session=cross_session,
+            principal_id=safe_principal_id,
+            principal_surface=safe_principal_surface,
+            timeout_s=_CHAT_BLOCKING_PREFLIGHT_TIMEOUT_S,
+            operation_name="session_memory_pin_ledger_recall",
+        )
+    except TimeoutError:
+        ledger_recall = None
     if ledger_recall:
         return ledger_recall
     try:
@@ -3287,7 +3373,26 @@ def _read_repo_probe_reply(user_message: str) -> dict[str, str] | None:
                 "status": "repo_probe_missing",
             }
 
-        source = path.read_text(encoding="utf-8", errors="replace")
+        size = path.stat().st_size
+        if size > _REPO_PROBE_MAX_BYTES:
+            return {
+                "reply": (
+                    f"`{path.name}` is larger than my bounded live-read budget "
+                    f"({size} bytes > {_REPO_PROBE_MAX_BYTES} bytes), so I did not "
+                    "pretend to inspect the whole file."
+                ),
+                "status": "repo_probe_too_large",
+            }
+        with path.open("r", encoding="utf-8", errors="replace") as handle:
+            source = handle.read(_REPO_PROBE_MAX_BYTES + 1)
+        if len(source.encode("utf-8", errors="replace")) > _REPO_PROBE_MAX_BYTES:
+            return {
+                "reply": (
+                    f"`{path.name}` exceeded my bounded live-read budget while I "
+                    "was reading it, so I did not report a partial result as complete."
+                ),
+                "status": "repo_probe_too_large",
+            }
         lines = source.splitlines()
 
         if mode == "first_non_comment_dependency_line":
@@ -7115,6 +7220,67 @@ def _build_live_mind_context_payload(
     }
 
 
+async def _collect_live_mind_context_payload(
+    *,
+    user_message: str,
+    lane: dict[str, Any] | None,
+    recent_conversation_context: str = "",
+    recent_context_needed: bool = False,
+    require_engine: bool = False,
+    conversation_only_surface: bool = False,
+) -> dict[str, Any]:
+    """Collect the multi-organ snapshot off-loop under a foreground deadline."""
+
+    try:
+        payload = await _await_bounded_chat_blocking(
+            _build_live_mind_context_payload,
+            user_message=user_message,
+            lane=lane,
+            recent_conversation_context=recent_conversation_context,
+            recent_context_needed=recent_context_needed,
+            require_engine=require_engine,
+            conversation_only_surface=conversation_only_surface,
+            timeout_s=_CHAT_LIVE_MIND_COLLECTION_TIMEOUT_S,
+            operation_name="live_mind_context_collection",
+        )
+        if isinstance(payload, dict):
+            return payload
+    except TimeoutError:
+        pass
+    except _CHAT_RECOVERABLE_ERRORS as exc:
+        record_degradation("chat.live_mind_context", exc)
+    lane_snapshot = dict(lane or {})
+    required = {
+        "kernel": False,
+        "cognitive_engine": False,
+        "inference": False,
+        "memory": False,
+        "tool_governance": False,
+        "substrate_voice": False,
+    }
+    return {
+        "schema": "aura.live_mind_context.v1",
+        "collection_status": "unavailable",
+        "required_for_live_desktop": bool(require_engine),
+        "must_answer_from_full_mind_path": bool(require_engine),
+        "user_message": _bounded_text(user_message, 1000),
+        "lane": lane_snapshot,
+        "required_subsystems": required,
+        "required_subsystems_ok": False,
+        "recent_context_needed": bool(recent_context_needed),
+        "recent_conversation_context": _bounded_text(
+            recent_conversation_context,
+            2200,
+        ),
+        "mind_snapshot_quality": {"present": False, "ready": False},
+        "governance": {
+            "tool_governance_available": False,
+            "legacy_fallback_allowed": False,
+            "bounded_repairs_are_degraded": True,
+        },
+    }
+
+
 def _canonical_runtime_model_label(lane: dict[str, Any] | None) -> str:
     lane = dict(lane or {})
     candidates = [
@@ -8309,7 +8475,7 @@ async def _run_cognitive_engine_chat_turn(
         if recent_exchanges
         else ""
     )
-    live_mind_context = _build_live_mind_context_payload(
+    live_mind_context = await _collect_live_mind_context_payload(
         user_message=visible,
         lane=lane,
         recent_conversation_context=recent_conversation_context,
@@ -10565,6 +10731,59 @@ async def _realize_expressive_affordances(
         return reply_text, []
 
 
+def _audit_recent_response_reasoning_sync(text: str) -> None:
+    from core.reasoning.deduction_governance import get_deduction_governance
+    from core.reasoning.symbolic_bridge import SymbolicBridge
+
+    findings = SymbolicBridge().audit_reasoning(str(text))
+    if not findings.get("clean", True):
+        get_deduction_governance().record_reasoning_audit(
+            findings.get("non_sequiturs", []),
+            findings.get("arithmetic_errors", []),
+        )
+
+
+async def _run_recent_response_reasoning_audit(text: str) -> None:
+    try:
+        await _await_bounded_chat_blocking(
+            _audit_recent_response_reasoning_sync,
+            text,
+            timeout_s=_CHAT_REASONING_AUDIT_TIMEOUT_S,
+            operation_name="post_reply_symbolic_audit",
+        )
+    except TimeoutError:
+        logger.warning(
+            "Post-reply symbolic audit exceeded %.1fs; delivery remained independent.",
+            _CHAT_REASONING_AUDIT_TIMEOUT_S,
+        )
+    except _CHAT_RECOVERABLE_ERRORS as exc:
+        record_degradation("chat.reasoning_audit", exc)
+
+
+def _schedule_recent_response_reasoning_audit(text: str) -> None:
+    if not text or len(str(text)) >= 4000:
+        return
+    try:
+        asyncio.get_running_loop()
+    except RuntimeError:
+        # Synchronous tools/tests still update repetition state; the live
+        # symbolic audit requires a supervised runtime loop.
+        return
+    active = {task for task in _reasoning_audit_tasks if not task.done()}
+    _reasoning_audit_tasks.clear()
+    _reasoning_audit_tasks.update(active)
+    if len(active) >= _CHAT_REASONING_AUDIT_MAX_ACTIVE:
+        logger.info("Post-reply symbolic audit skipped under bounded backpressure.")
+        return
+    task = get_task_tracker().bounded_track(
+        _run_recent_response_reasoning_audit(str(text)),
+        name="ChatPostReplySymbolicAudit",
+        owner="interface.routes.chat",
+    )
+    _reasoning_audit_tasks.add(task)
+    task.add_done_callback(_reasoning_audit_tasks.discard)
+
+
 def _record_recent_response(text: str, user_message: str = "") -> None:
     fp = _response_fingerprint(text)
     if fp:
@@ -10576,24 +10795,10 @@ def _record_recent_response(text: str, user_message: str = "") -> None:
         response_body = _normalize_response_body(text)[:500]
         if response_body:
             _recent_response_pairs.append((_response_fingerprint(user_message), response_body))
-    # Reasoning self-audit (non-blocking), routed through the SymbolicBridge so it
-    # exercises the exact solvers live: the natural-deduction prover catches
-    # formalizable non-sequiturs and numeric evaluation catches calculation errors
-    # in her own reply. Conservative — silent on anything it cannot prove wrong, and
-    # it never alters the reply.
-    if text and len(str(text)) < 4000:
-        try:
-            from core.reasoning.deduction_governance import get_deduction_governance
-            from core.reasoning.symbolic_bridge import SymbolicBridge
-
-            findings = SymbolicBridge().audit_reasoning(str(text))
-            if not findings.get("clean", True):
-                get_deduction_governance().record_reasoning_audit(
-                    findings.get("non_sequiturs", []),
-                    findings.get("arithmetic_errors", []),
-                )
-        except _CHAT_RECOVERABLE_ERRORS as exc:
-            record_degradation("chat", exc)
+    # Delivery never waits for tableau/numeric proof. The audit is supervised,
+    # off-loop, deadline-bound, and backpressured instead of merely being called
+    # "non-blocking" while running synchronously.
+    _schedule_recent_response_reasoning_audit(str(text))
 
 
 def _is_stale_repeated_response(text: str) -> bool:
@@ -20391,16 +20596,210 @@ async def api_chat_regenerate(
         return JSONResponse({"error": "regeneration_failed", "message": str(e)}, status_code=500)
 
 
+def _export_json_default(value: Any) -> Any:
+    if dataclasses.is_dataclass(value):
+        return dataclasses.asdict(value)
+    model_dump = getattr(value, "model_dump", None)
+    if callable(model_dump):
+        return model_dump(mode="json")
+    if isinstance(value, (datetime, Path)):
+        return value.isoformat() if isinstance(value, datetime) else str(value)
+    if isinstance(value, (set, tuple)):
+        return list(value)
+    return str(value)
+
+
+def _bounded_export_records(
+    records: Any,
+    *,
+    max_items: int,
+    total_chars: int,
+) -> tuple[list[Any], dict[str, Any]]:
+    output: list[Any] = []
+    used_chars = 0
+    truncated_items = 0
+    source_items = 0
+    source = records or ()
+    try:
+        known_source_items = len(source)
+    except (TypeError, AttributeError):
+        known_source_items = None
+    for item in itertools.islice(source, max_items):
+        if used_chars >= total_chars:
+            break
+        source_items += 1
+        try:
+            encoded = json.dumps(
+                item,
+                ensure_ascii=False,
+                allow_nan=False,
+                sort_keys=True,
+                default=_export_json_default,
+            )
+        except (OverflowError, TypeError, ValueError) as exc:
+            output.append(
+                {
+                    "export_unserializable": True,
+                    "error_type": type(exc).__name__,
+                    "preview": str(item)[:1024],
+                }
+            )
+            truncated_items += 1
+            used_chars += min(1200, total_chars - used_chars)
+            continue
+        remaining = total_chars - used_chars
+        if len(encoded) > _CHAT_EXPORT_ITEM_CHARS or len(encoded) > remaining:
+            preview_budget = max(0, min(_CHAT_EXPORT_ITEM_CHARS, remaining) - 160)
+            output.append(
+                {
+                    "export_truncated": True,
+                    "original_chars": len(encoded),
+                    "preview": encoded[:preview_budget],
+                }
+            )
+            used_chars += min(len(encoded), max(0, remaining))
+            truncated_items += 1
+            continue
+        output.append(json.loads(encoded))
+        used_chars += len(encoded)
+    if known_source_items is not None and known_source_items > source_items:
+        truncated_items += known_source_items - source_items
+    return output, {
+        "source_items": source_items,
+        "known_source_items": known_source_items,
+        "source_scan_complete": (
+            known_source_items is not None and source_items >= known_source_items
+        ),
+        "exported_items": len(output),
+        "truncated_items": truncated_items,
+        "exported_chars": used_chars,
+        "max_items": max_items,
+        "max_chars": total_chars,
+    }
+
+
+def _collect_export_service_records(
+    service_name: str,
+    method_name: str,
+    method_kwargs: dict[str, Any],
+    *,
+    max_items: int,
+    total_chars: int,
+) -> tuple[list[Any], dict[str, Any]]:
+    service = ServiceContainer.get(service_name, default=None)
+    method = getattr(service, method_name, None) if service is not None else None
+    if not callable(method):
+        return [], {
+            "status": "unavailable",
+            "service": service_name,
+            "method": method_name,
+        }
+    records = method(**method_kwargs)
+    if inspect.isawaitable(records):
+        close = getattr(records, "close", None)
+        if callable(close):
+            close()
+        raise TypeError(f"{service_name}.{method_name} returned an awaitable to a sync export")
+    bounded, receipt = _bounded_export_records(
+        records,
+        max_items=max_items,
+        total_chars=total_chars,
+    )
+    receipt.update({"status": "complete", "service": service_name, "method": method_name})
+    if receipt["truncated_items"]:
+        receipt["status"] = "truncated"
+    return bounded, receipt
+
+
+async def _collect_export_service_records_bounded(
+    service_name: str,
+    method_name: str,
+    method_kwargs: dict[str, Any],
+    *,
+    max_items: int,
+    total_chars: int,
+) -> tuple[list[Any], dict[str, Any]]:
+    try:
+        return await _await_bounded_chat_blocking(
+            _collect_export_service_records,
+            service_name,
+            method_name,
+            method_kwargs,
+            max_items=max_items,
+            total_chars=total_chars,
+            timeout_s=_CHAT_EXPORT_SECTION_TIMEOUT_S,
+            operation_name=f"export:{service_name}.{method_name}",
+        )
+    except TimeoutError:
+        return [], {
+            "status": "timeout",
+            "service": service_name,
+            "method": method_name,
+            "timeout_s": _CHAT_EXPORT_SECTION_TIMEOUT_S,
+        }
+    except _CHAT_RECOVERABLE_ERRORS as exc:
+        record_degradation("chat.export", exc)
+        return [], {
+            "status": "failed",
+            "service": service_name,
+            "method": method_name,
+            "error_type": type(exc).__name__,
+        }
+
+
+async def _bounded_export_records_async(
+    records: Any,
+    *,
+    section: str,
+    max_items: int,
+    total_chars: int,
+) -> tuple[list[Any], dict[str, Any]]:
+    try:
+        bounded, receipt = await _await_bounded_chat_blocking(
+            _bounded_export_records,
+            records,
+            max_items=max_items,
+            total_chars=total_chars,
+            timeout_s=_CHAT_EXPORT_SECTION_TIMEOUT_S,
+            operation_name=f"export:{section}",
+        )
+        receipt["status"] = (
+            "truncated" if receipt.get("truncated_items") else "complete"
+        )
+        return bounded, receipt
+    except TimeoutError:
+        return [], {
+            "status": "timeout",
+            "section": section,
+            "timeout_s": _CHAT_EXPORT_SECTION_TIMEOUT_S,
+        }
+    except _CHAT_RECOVERABLE_ERRORS as exc:
+        record_degradation("chat.export", exc)
+        return [], {
+            "status": "failed",
+            "section": section,
+            "error_type": type(exc).__name__,
+        }
+
+
 @router.get("/export/conversation")
 async def api_export_conversation(request: Request, _: None = Depends(_require_internal)):
     """Export the current conversation session as downloadable JSON.
     Flagship products support data export."""
     async with _get_convo_lock():
-        export_data = {
-            "exported_at": datetime.now(tz=UTC).isoformat(),
-            "version": version_string("full"),
-            "session_messages": list(_conversation_log),
-        }
+        messages = list(_conversation_log)
+    bounded_messages, message_receipt = await _bounded_export_records_async(
+        messages,
+        section="conversation",
+        max_items=_MAX_CONVERSATION_LOG_EXCHANGES,
+        total_chars=_CHAT_EXPORT_TOTAL_CHARS,
+    )
+    export_data = {
+        "exported_at": datetime.now(tz=UTC).isoformat(),
+        "version": version_string("full"),
+        "session_messages": bounded_messages,
+        "export_receipts": {"session_messages": message_receipt},
+    }
     return JSONResponse(
         export_data,
         headers={
@@ -20416,22 +20815,39 @@ async def api_export(request: Request, _: None = Depends(_require_internal)):
     async with _get_convo_lock():
         messages = list(_conversation_log)
 
-    ep_memories: list = []
-    sem_memories: list = []
-    goals: list = []
-    try:
-        ep = ServiceContainer.get("episodic_memory", default=None)
-        if ep and hasattr(ep, "get_recent"):
-            ep_memories = ep.get_recent(limit=100) or []
-        sem = ServiceContainer.get("semantic_memory", default=None)
-        if sem and hasattr(sem, "search"):
-            sem_memories = sem.search("", limit=50) or []
-        goal_svc = ServiceContainer.get("goal_manager", default=None)
-        if goal_svc and hasattr(goal_svc, "get_active_goals"):
-            goals = goal_svc.get_active_goals() or []
-    except _CHAT_RECOVERABLE_ERRORS as _exc:
-        record_degradation('chat', _exc)
-        logger.debug("Suppressed Exception: %s", _exc)
+    message_task = _bounded_export_records_async(
+        messages,
+        section="conversation",
+        max_items=_MAX_CONVERSATION_LOG_EXCHANGES,
+        total_chars=768 * 1024,
+    )
+    episodic_task = _collect_export_service_records_bounded(
+        "episodic_memory",
+        "get_recent",
+        {"limit": 100},
+        max_items=100,
+        total_chars=512 * 1024,
+    )
+    semantic_task = _collect_export_service_records_bounded(
+        "semantic_memory",
+        "search",
+        {"query": "", "limit": 50},
+        max_items=50,
+        total_chars=512 * 1024,
+    )
+    goals_task = _collect_export_service_records_bounded(
+        "goal_manager",
+        "get_active_goals",
+        {},
+        max_items=100,
+        total_chars=256 * 1024,
+    )
+    (
+        (messages, message_receipt),
+        (ep_memories, episodic_receipt),
+        (sem_memories, semantic_receipt),
+        (goals, goals_receipt),
+    ) = await asyncio.gather(message_task, episodic_task, semantic_task, goals_task)
 
     export_data = {
         "exported_at": datetime.now(tz=UTC).isoformat(),
@@ -20440,6 +20856,12 @@ async def api_export(request: Request, _: None = Depends(_require_internal)):
         "episodic_memories": ep_memories,
         "semantic_memories": sem_memories,
         "active_goals": goals,
+        "export_receipts": {
+            "session_messages": message_receipt,
+            "episodic_memories": episodic_receipt,
+            "semantic_memories": semantic_receipt,
+            "active_goals": goals_receipt,
+        },
     }
     return JSONResponse(
         export_data,
@@ -20729,7 +21151,16 @@ async def _api_chat_turn(body: ChatRequest, request: Request):
         #    cortex's reply to their new message.
         if not is_benchmark:
             try:
-                _delivered = consume_for_session(_chat_session_id)
+                _resume_deadline = (
+                    time.monotonic() + (_CHAT_BLOCKING_PREFLIGHT_TIMEOUT_S * 0.8)
+                )
+                _delivered = await _await_bounded_chat_blocking(
+                    consume_for_session,
+                    _chat_session_id,
+                    deadline_monotonic=_resume_deadline,
+                    timeout_s=_CHAT_BLOCKING_PREFLIGHT_TIMEOUT_S,
+                    operation_name="pending_chat_resume_collection",
+                )
                 if _delivered:
                     _resume_prefix_for_response = format_resume_prefix(_delivered)
                     # Fold a context-block into body.message so the cortex sees
@@ -20752,7 +21183,12 @@ async def _api_chat_turn(body: ChatRequest, request: Request):
             try:
                 _refs = extract_file_references(body.message)
                 if _refs:
-                    _block = build_file_context_block(_refs)
+                    _block = await _await_bounded_chat_blocking(
+                        build_file_context_block,
+                        _refs,
+                        timeout_s=_CHAT_BLOCKING_PREFLIGHT_TIMEOUT_S,
+                        operation_name="referenced_file_context",
+                    )
                     if _block:
                         body.message = f"{_block}\nUser message: {body.message}"
                         logger.info("Chat preflight: loaded %d referenced file(s) into context.", len(_refs))
@@ -22505,7 +22941,21 @@ async def _api_chat_turn(body: ChatRequest, request: Request):
             )
 
         if allow_chat_fastpaths:
-            repo_probe = _read_repo_probe_reply(_semantic_user_message)
+            try:
+                repo_probe = await _await_bounded_chat_blocking(
+                    _read_repo_probe_reply,
+                    _semantic_user_message,
+                    timeout_s=_CHAT_BLOCKING_PREFLIGHT_TIMEOUT_S,
+                    operation_name="repo_probe_read",
+                )
+            except TimeoutError:
+                repo_probe = {
+                    "reply": (
+                        "The bounded live file read did not finish in time, so I "
+                        "did not report a partial result as complete."
+                    ),
+                    "status": "repo_probe_timeout",
+                }
             if repo_probe:
                 return await _finalize_fastpath(
                     _apply_aura_voice_shaping(str(repo_probe.get("reply") or "")),
@@ -24395,14 +24845,15 @@ async def _api_chat_turn(body: ChatRequest, request: Request):
             canonical_evidence = _canonical_memory_state_evidence_from_tuple(
                 desktop_memory_state_evidence
             )
+            rebound_live_mind_context = await _collect_live_mind_context_payload(
+                user_message=_semantic_user_message,
+                lane=lane,
+                require_engine=True,
+            )
             grounded_memory_reply = _canonical_memory_state_grounding_reply(
                 _semantic_user_message,
                 canonical_evidence,
-                live_mind_context=_build_live_mind_context_payload(
-                    user_message=_semantic_user_message,
-                    lane=lane,
-                    require_engine=True,
-                ),
+                live_mind_context=rebound_live_mind_context,
             )
             if grounded_memory_reply and not _memory_state_evidence_is_missing_from_reply(
                 _semantic_user_message,

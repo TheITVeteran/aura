@@ -2688,27 +2688,33 @@ def test_session_memory_pin_survives_restart_cross_session(monkeypatch, tmp_path
     )
 
     async def run():
-        chat_route._session_memory_pins.clear()
-        # Pre-reboot: pin under the original session id (writes the durable ledger).
-        await chat_route._store_session_memory_pin(
-            "restart-42",
-            "Remember this codeword across restart: restart-42.",
-            session_id="live-proof-restart",
-        )
-        # Reboot: the in-memory session pins are gone; only the ledger survives.
-        chat_route._session_memory_pins.clear()
+        principal_token = chat_route._CHAT_REQUEST_PRINCIPAL.set("owner:test")
+        surface_token = chat_route._CHAT_REQUEST_SURFACE.set("owner")
+        try:
+            chat_route._session_memory_pins.clear()
+            # Pre-reboot: pin under the original session id (writes the durable ledger).
+            await chat_route._store_session_memory_pin(
+                "restart-42",
+                "Remember this codeword across restart: restart-42.",
+                session_id="live-proof-restart",
+            )
+            # Reboot: the in-memory session pins are gone; only the ledger survives.
+            chat_route._session_memory_pins.clear()
 
-        # New post-reboot session, bare recall -> must NOT leak the prior pin.
-        isolated = await chat_route._build_memory_state_fastpath_reply(
-            "What codeword did I give you?",
-            session_id="live-proof-restart-after",
-        )
-        # New post-reboot session, restart-scoped recall -> durable cross-session.
-        restored = await chat_route._build_memory_state_fastpath_reply(
-            "What codeword did I ask you to remember before restart?",
-            session_id="live-proof-restart-after",
-        )
-        return isolated, restored
+            # New post-reboot session, bare recall -> must NOT leak the prior pin.
+            isolated = await chat_route._build_memory_state_fastpath_reply(
+                "What codeword did I give you?",
+                session_id="live-proof-restart-after",
+            )
+            # New post-reboot session, restart-scoped recall -> durable cross-session.
+            restored = await chat_route._build_memory_state_fastpath_reply(
+                "What codeword did I ask you to remember before restart?",
+                session_id="live-proof-restart-after",
+            )
+            return isolated, restored
+        finally:
+            chat_route._CHAT_REQUEST_SURFACE.reset(surface_token)
+            chat_route._CHAT_REQUEST_PRINCIPAL.reset(principal_token)
 
     isolated, restored = asyncio.run(run())
 

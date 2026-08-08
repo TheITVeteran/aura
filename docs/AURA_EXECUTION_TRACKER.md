@@ -38121,7 +38121,7 @@ review coverage is not remediation and none is closed by the review receipt:
 - **P1 CLOSED CP013:** verify every requested desktop/research predicate, including source count,
   recency, actual reading, synthesis, independent opinion, format, and location.
 - **P1 CLOSED CP014:** fail closed when defensive-ingress or conscience pre-gates are unavailable.
-- **P2:** move tableau proof, collection, whole-file reads, and memory/goal exports off
+- **P2 CLOSED CP015:** move tableau proof, collection, whole-file reads, and memory/goal exports off
   the event loop under explicit time and size budgets.
 - **P2:** partition repetition, degradation, and relevance state by conversation.
 - **P2:** remove recovery claims about identity, recurrence, memory, tools, and failure
@@ -38265,3 +38265,41 @@ calls and no new debt. This closes the final P1 in the current chat semantic
 queue. Its P2/P3 items, the resident complete-engine campaign, active-code and
 exhaustive semantic review, live proof, fusion, release, endurance, frontier,
 and `WOW Signal` claims remain open.
+
+## Checkpoint 2026-08-08-015: Foreground Chat Does Not Own Blocking Work
+
+Post-reply symbolic and tableau auditing now runs as supervised, off-loop work
+with a `1.5s` wait budget, a two-audit backpressure ceiling, and no dependency
+from delivery to proof completion. The shared blocking bridge rejects work when
+its eight execution slots are saturated instead of allowing timed-out requests
+to build an unbounded executor queue.
+
+Multi-organ live-mind collection, referenced-file context, repository probes,
+pending-reply collection, and durable pin recall now leave the request loop and
+carry explicit deadlines. A live-mind timeout returns an unready, all-false
+required-subsystem receipt; it cannot reuse a plausible lane snapshot as proof.
+Repository probes cap exact reads at `2 MiB`, durable pin recall reads only a
+`2 MiB` tail, referenced files retain their `16 KiB` cross-file budget, and the
+pending-chat queue has a `24 MiB` tail budget. Pending-reply consumption has an
+internal deadline before mutation so a timed-out collection does not silently
+delete an answer it failed to deliver.
+
+Conversation, episodic-memory, semantic-memory, and active-goal exports are
+collected concurrently off-loop. Every section has independent item, character,
+and `3s` budgets plus a completion, truncation, timeout, unavailable, or failed
+receipt. One oversized, circular, or non-finite record is represented as an
+explicit unserializable/truncated entry and cannot fail the other export
+sections or make an incomplete export look complete.
+
+Adversarial regressions prove event-loop progress during a stalled operation,
+saturation refusal before side effects, supervised audit execution, fail-closed
+live-mind timeout, bounded queue and ledger tails, no post-deadline queue
+consumption, oversized repo-read refusal, bounded generator traversal, partial
+serialization truth, and off-loop memory/goal access. The focused latency slice
+passes `74/74`; the final conversation, preflight, live-mind, reliability, and
+feedback suite passes `696/696`; smoke passes `103/103`; Ruff, byte compilation,
+governance lint, and diff hygiene pass with the unchanged `2,215` recognized
+effect calls in `2,066` buckets and `1,948` pre-existing migration-debt calls.
+This closes the first P2 chat item only. Per-conversation quality state and all
+later queue items, the resident complete-engine verdict, fusion, release,
+endurance, frontier, and `WOW Signal` claims remain open.

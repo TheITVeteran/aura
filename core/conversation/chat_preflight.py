@@ -89,6 +89,7 @@ MAX_USER_MESSAGE_CHARS = 20_000
 MAX_ANSWER_TEXT_CHARS = 60_000
 MAX_REASON_CHARS = 240
 MAX_QUEUE_LINE_CHARS = 256_000
+MAX_PENDING_QUEUE_BYTES = 24 * 1024 * 1024
 _QUEUE_LOCK = threading.RLock()
 
 _CHAT_PREFLIGHT_RECOVERABLE_ERRORS = (
@@ -381,7 +382,26 @@ def _read_all(path: Path | None = None) -> list[dict[str, Any]]:
     try:
         out: list[dict[str, Any]] = []
         malformed = 0
-        for line in path.read_text(encoding="utf-8").splitlines():
+        size = path.stat().st_size
+        with path.open("rb") as handle:
+            if size > MAX_PENDING_QUEUE_BYTES:
+                handle.seek(-MAX_PENDING_QUEUE_BYTES, os.SEEK_END)
+            payload = handle.read(MAX_PENDING_QUEUE_BYTES + 1)
+        lines = payload.decode("utf-8", errors="replace").splitlines()
+        if size > MAX_PENDING_QUEUE_BYTES and lines:
+            lines = lines[1:]
+            _emit_chat_fault(
+                ValueError("pending-chat queue exceeded bounded read budget"),
+                action="read only the newest bounded queue tail",
+                severity="warning",
+                stage="read_queue",
+                extra={
+                    "path": str(path),
+                    "size_bytes": size,
+                    "read_budget_bytes": MAX_PENDING_QUEUE_BYTES,
+                },
+            )
+        for line in lines:
             line = line.strip()
             if not line:
                 continue
@@ -496,7 +516,12 @@ def answer_pending(session_id: str, answer_text: str, path: Path | None = None) 
         return updated
 
 
-def consume_for_session(session_id: str, path: Path | None = None) -> list[PendingChat]:
+def consume_for_session(
+    session_id: str,
+    path: Path | None = None,
+    *,
+    deadline_monotonic: float | None = None,
+) -> list[PendingChat]:
     """Return all answered pending chats for a session, mark them consumed
     (delete from the queue). Caller is responsible for surfacing them to the
     user. Unanswered entries stay in the queue.
@@ -507,6 +532,8 @@ def consume_for_session(session_id: str, path: Path | None = None) -> list[Pendi
     path = _resolve_pending_queue_path(path)
     with _QUEUE_LOCK:
         records = _read_all(path)
+        if deadline_monotonic is not None and time.monotonic() >= deadline_monotonic:
+            return []
         delivered: list[PendingChat] = []
         remaining: list[dict[str, Any]] = []
         for r in records:
@@ -530,8 +557,12 @@ def consume_for_session(session_id: str, path: Path | None = None) -> list[Pendi
                 )
             else:
                 remaining.append(r)
-        if delivered:
+        if delivered and (
+            deadline_monotonic is None or time.monotonic() < deadline_monotonic
+        ):
             _write_all(remaining, path)
+        elif delivered:
+            return []
         return delivered
 
 
