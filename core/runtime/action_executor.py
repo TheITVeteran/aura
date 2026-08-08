@@ -8,18 +8,20 @@ import hashlib
 import inspect
 import json
 import logging
+import math
 import re
 import subprocess
 import urllib.parse
 import uuid
 from collections.abc import Awaitable, Callable, Mapping
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
 from core.being.body_state_service import BodyStateService
 from core.being.welfare_state import WelfareState
 from core.being.welfare_transaction import WelfareTransaction
-from core.governance.will import ActionDomain, get_will
+from core.governance.will import ActionDomain
 from core.governance_context import (
     GovernanceViolation,
     governed_scope,
@@ -98,8 +100,72 @@ _HANDLER_DOMAINS = frozenset(
 )
 
 
+def get_will() -> Any:
+    """Resolve Will dynamically so tests and isolated runtimes can inject it."""
+
+    from core.will import get_will as resolve_will
+
+    return resolve_will()
+
+
+@dataclass(frozen=True, slots=True)
+class ActionAdmission:
+    """One canonical Will admission and the authority that issued it."""
+
+    approved: bool
+    reason: str
+    receipt_id: str
+    decision: Any
+    authority: Any
+
+
 class ActionExecutor:
     """Execute, observe, and receipt one consequential action."""
+
+    @classmethod
+    def authorize_action(
+        cls,
+        *,
+        domain: ActionDomain | str,
+        action_name: str,
+        params: Mapping[str, Any] | None,
+        source: str = "unknown",
+        priority: float = 0.5,
+        context: Mapping[str, Any] | None = None,
+    ) -> ActionAdmission:
+        """Own the single Unified Will decision for an action admission.
+
+        Callers that already own dispatch but need the canonical decision use
+        this method instead of importing Will. A policy owner that has already
+        denied an action must not call this merely to produce a second denial.
+        """
+
+        resolved_domain = _coerce_domain(domain)
+        resolved_name = _coerce_action_name(action_name)
+        resolved_params = _coerce_params(dict(params or {}))
+        try:
+            resolved_priority = float(priority)
+        except (TypeError, ValueError) as exc:
+            raise ValueError("action priority must be numeric") from exc
+        if not math.isfinite(resolved_priority) or not 0.0 <= resolved_priority <= 1.0:
+            raise ValueError("action priority must be finite and between 0 and 1")
+        authority = get_will()
+        decision = authority.decide(
+            content=_safe_action_summary(resolved_name, resolved_params),
+            source=str(source or "unknown")[:240],
+            domain=resolved_domain,
+            priority=resolved_priority,
+            context=dict(context or {}),
+        )
+        checker = getattr(decision, "is_approved", None)
+        approved = bool(checker()) if callable(checker) else False
+        return ActionAdmission(
+            approved=approved,
+            reason=str(getattr(decision, "reason", "") or ""),
+            receipt_id=str(getattr(decision, "receipt_id", "") or ""),
+            decision=decision,
+            authority=authority,
+        )
 
     @classmethod
     def request_desktop_transport(
@@ -345,11 +411,11 @@ class ActionExecutor:
                 ),
             }
 
-        will = get_will()
-        decision = will.decide(
-            content=_safe_action_summary(action_name, params),
-            source=source,
+        admission = cls.authorize_action(
             domain=domain,
+            action_name=action_name,
+            params=params,
+            source=source,
             priority=0.5,
             context={
                 "action_id": action_id,
@@ -358,7 +424,9 @@ class ActionExecutor:
                 "rollback_target_declared": bool(rollback_target),
             },
         )
-        if not decision.is_approved():
+        will = admission.authority
+        decision = admission.decision
+        if not admission.approved:
             logger.warning(
                 "ActionExecutor refused %s in domain %s",
                 action_name,
@@ -367,8 +435,8 @@ class ActionExecutor:
             return {
                 "ok": False,
                 "status": SkillStatus.BLOCKED_BY_POLICY.value,
-                "error": f"Will refused action: {decision.reason}",
-                "will_receipt_id": decision.receipt_id,
+                "error": f"Will refused action: {admission.reason}",
+                "will_receipt_id": admission.receipt_id,
                 "action_expectation": expectation_contract.to_dict(),
                 "action_id": action_id,
                 "request_digest": request_digest,
@@ -378,7 +446,7 @@ class ActionExecutor:
                 "manual_reconciliation_required": False,
             }
 
-        will_receipt_id = str(decision.receipt_id)
+        will_receipt_id = admission.receipt_id
         # Pre-action cortex: consequential actions get ONE cognitive thread
         # across their whole cycle — a latent rehearsal now (predicted
         # effect, preconditions, failure mode) and a discrepancy-driven

@@ -1903,11 +1903,9 @@ async def test_orchestrator_execute_tool_keeps_unsafe_autonomous_web_unscoped(
     assert result["ok"] is False
     assert result["status"] == "standing_authority_denied"
     assert "requires_narrower_security_scope" in result["error"]
-    assert len(will_contexts) == 1
-    assert "standing_authority_token" not in will_contexts[0]
-    assert "requires_narrower_security_scope" in will_contexts[0][
-        "standing_authority_denial_reason"
-    ]
+    # The standing-authority receipt is terminal evidence. A denied lease must
+    # not ask Will for a second decision solely to repeat the same refusal.
+    assert will_contexts == []
     assert orchestrator.router.execute.await_count == 0
 
 

@@ -16412,14 +16412,6 @@
       "callee": "core.will.get_will().decide",
       "canonical_owner": false,
       "category": "will_decision",
-      "count": 2,
-      "path": "core/orchestrator/mixins/tool_execution.py",
-      "scope": "<module>.ToolExecutionMixin.execute_tool"
-    },
-    {
-      "callee": "core.will.get_will().decide",
-      "canonical_owner": false,
-      "category": "will_decision",
       "count": 1,
       "path": "core/phases/identity_reflection.py",
       "scope": "<module>.IdentityReflectionPhase._authorize_identity_mutation"
@@ -16446,7 +16438,7 @@
       "category": "will_decision",
       "count": 1,
       "path": "core/runtime/action_executor.py",
-      "scope": "<module>.ActionExecutor.execute"
+      "scope": "<module>.ActionExecutor.authorize_action"
     },
     {
       "callee": "core.will.get_will().decide",
@@ -16530,6 +16522,6 @@
     }
   ],
   "description": "Exact AST effect-ownership debt ratchet; refresh only after reviewed change",
-  "inventory_sha256": "7d8658680b547c36e73710897a22ab276c1bdaa9df02f080e5c21ec152f14840",
+  "inventory_sha256": "939c226dfdc3771e42f6cf8fec6e21430b4e7e91937fa2f6a8a4043672b5c7fd",
   "schema_version": 1
 }

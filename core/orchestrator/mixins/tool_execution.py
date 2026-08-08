@@ -327,44 +327,12 @@ class ToolExecutionMixin:
                 risk_level=risk_level,
             )
             if not authority_decision.approved:
-                governance_context.update(
-                    {
-                        "tool": tool_name,
-                        "skill": tool_name,
-                        "authority_origin": _origin,
-                        "effect_scope": effect_scope,
-                        "risk_level": risk_level,
-                        "standing_authority_denial_reason": authority_decision.reason,
-                        "standing_authority_denial_receipt_id": authority_decision.receipt_id,
-                    }
-                )
-                will_reason = ""
-                try:
-                    from core.will import ActionDomain, get_will
-
-                    denial_decision = get_will().decide(
-                        content=f"tool:{tool_name} args:{str(args)[:100]}",
-                        source=_origin,
-                        domain=ActionDomain.TOOL_EXECUTION,
-                        priority=0.7,
-                        context=governance_context,
-                    )
-                    if not denial_decision.is_approved():
-                        will_reason = str(denial_decision.reason or "")
-                except _TOOL_EXECUTION_RECOVERABLE_ERRORS as _will_err:
-                    _record_tool_degradation(
-                        _will_err,
-                        action="kept tool denied after Unified Will denial receipt degraded",
-                        severity="error",
-                    )
                 result = {
                     "ok": False,
                     "status": "standing_authority_denied",
                     "error": f"Standing authority denied: {authority_decision.reason}",
                     "authority_receipt_id": authority_decision.receipt_id,
                 }
-                if will_reason:
-                    result["will_reason"] = will_reason
                 _record_coding_tool_event(
                     result,
                     success=False,
@@ -534,29 +502,32 @@ class ToolExecutionMixin:
         # this outer gate.
         if not _router_owns_governance:
             try:
-                from core.will import ActionDomain, get_will
+                from core.runtime.action_executor import ActionExecutor
+                from core.will import ActionDomain
 
-                _will_decision = get_will().decide(
-                    content=f"tool:{tool_name} args:{str(args)[:100]}",
+                _will_admission = ActionExecutor.authorize_action(
+                    action_name=tool_name,
+                    params=args,
                     source=_origin,
                     domain=ActionDomain.TOOL_EXECUTION,
                     priority=0.7,
                     context=governance_context,
                 )
-                if not _will_decision.is_approved():
+                if not _will_admission.approved:
                     logger.warning(
                         "Unified Will REFUSED tool '%s': %s",
                         tool_name,
-                        _will_decision.reason,
+                        _will_admission.reason,
                     )
                     result = {
                         "ok": False,
-                        "error": f"Will refused: {_will_decision.reason}",
+                        "error": f"Will refused: {_will_admission.reason}",
+                        "will_receipt_id": _will_admission.receipt_id,
                     }
                     _record_coding_tool_event(
                         result,
                         success=False,
-                        error=str(_will_decision.reason),
+                        error=_will_admission.reason,
                     )
                     return result
             except _TOOL_EXECUTION_RECOVERABLE_ERRORS as _will_err:

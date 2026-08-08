@@ -38756,3 +38756,35 @@ continued advancing. The completion envelope remains `809/920` (approximately
 `87.9%`); this closes the CP026 ownership regression, not the broader RLC,
 fusion, release, exhaustive semantic-review, remaining effect-migration, live
 proof, or endurance program.
+
+## Checkpoint 2026-08-08-029: Tool Admission Has One Will Owner
+
+Virtual and pre-runtime tool execution no longer calls Unified Will directly
+from the orchestrator mixin. `ActionExecutor.authorize_action` now owns domain,
+name, parameter, source, priority, and context normalization plus the single
+Will admission. The full ActionExecutor transaction uses that same primitive,
+so tool admission and direct consequential actions cannot drift into different
+decision call shapes. Invalid priorities and malformed decision objects fail
+closed; the returned admission retains its exact decision, authority, reason,
+and receipt lineage for downstream governed execution.
+
+A denied standing-authority lease is now terminal at its signed denial receipt.
+The old path asked Will for a second decision only to restate the same denial,
+creating duplicate refusal telemetry and a second non-owner governance call
+without creating any additional protection. Approved virtual tools still pass
+through Will exactly once. CapabilityEngine-owned registered skills retain their
+existing single normalized governance owner and do not acquire a duplicate
+orchestrator decision.
+
+The complete affected ActionExecutor, orchestrator, Unified Will, standing
+authority, owner-request propagation, and runtime-settings selection passes
+`281/281`; governance-lint self-tests pass `15/15`; canonical smoke passes
+`103/103`; layering, exact effect ownership, affected Ruff, byte compilation,
+and diff hygiene pass. The exact effect inventory falls from 2,215 calls in
+2,066 buckets with 1,947 migration-debt calls to 2,213 calls in 2,065 buckets
+with 1,945 migration-debt calls. The source-bound resident-32B campaign remains
+detached and continued through the full-stack arm without a model-lane
+collision. The completion envelope stays `809/920` (approximately `87.9%`);
+this closes two Will-decision ownership debts, not the remaining effect
+migration, RLC verdict, fusion, release, exhaustive semantic review, live proof,
+or endurance program.

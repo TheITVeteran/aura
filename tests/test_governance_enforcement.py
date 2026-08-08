@@ -163,11 +163,11 @@ class TestWillEnforcementPaths:
         assert "will_receipt_id" in source
 
     def test_tool_execution_has_will_enforcement(self):
-        """Tool execution path must check Will."""
+        """Tool execution path must use the canonical action admission owner."""
         import inspect
         from core.orchestrator.mixins.tool_execution import ToolExecutionMixin
         source = inspect.getsource(ToolExecutionMixin.execute_tool)
-        assert "get_will" in source
+        assert "ActionExecutor.authorize_action" in source
         assert "TOOL_EXECUTION" in source
 
     def test_autonomy_has_will_enforcement(self):

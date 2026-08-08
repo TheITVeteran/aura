@@ -663,12 +663,12 @@ class TestWiringVerification:
         assert "will_decision" in source
 
     def test_will_imported_in_tool_execution(self):
-        """tool_execution.py must import and use the Will."""
+        """Tool execution must route admission through ActionExecutor."""
         import inspect
 
         from core.orchestrator.mixins.tool_execution import ToolExecutionMixin
         source = inspect.getsource(ToolExecutionMixin)
-        assert "get_will" in source
+        assert "ActionExecutor.authorize_action" in source
         assert "TOOL_EXECUTION" in source
 
     def test_will_imported_in_autonomy(self):
