@@ -5140,7 +5140,7 @@ async def test_api_chat_desktop_surface_routes_memory_state_through_cognitive_en
     async def _fake_log_exchange(*_args, **_kwargs):
         return None
 
-    monkeypatch.setattr(chat_routes, "_session_memory_pin_ledger_path", lambda: tmp_path / "pins.jsonl")
+    monkeypatch.setattr(chat_routes, "_session_memory_pin_ledger_path", lambda: tmp_path / "session_memory_pins.jsonl")
     monkeypatch.setattr(chat_routes, "_restore_owner_session_from_request", lambda *_args, **_kwargs: None)
     monkeypatch.setattr(chat_routes, "_notify_user_spoke", lambda *_args, **_kwargs: None)
     monkeypatch.setattr(chat_routes, "_begin_logged_exchange", _fake_begin_exchange)
@@ -5260,7 +5260,7 @@ async def test_api_chat_desktop_memory_state_drift_rebounds_to_canonical_evidenc
     async def _fake_log_exchange(*_args, **_kwargs):
         return None
 
-    monkeypatch.setattr(chat_routes, "_session_memory_pin_ledger_path", lambda: tmp_path / "pins.jsonl")
+    monkeypatch.setattr(chat_routes, "_session_memory_pin_ledger_path", lambda: tmp_path / "session_memory_pins.jsonl")
     monkeypatch.setattr(chat_routes, "_restore_owner_session_from_request", lambda *_args, **_kwargs: None)
     monkeypatch.setattr(chat_routes, "_notify_user_spoke", lambda *_args, **_kwargs: None)
     monkeypatch.setattr(chat_routes, "_begin_logged_exchange", _fake_begin_exchange)

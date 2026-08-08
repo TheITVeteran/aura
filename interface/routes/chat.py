@@ -49,6 +49,11 @@ from core.memory.session_pin_cipher import (
     SessionPinCipher,
     SessionPinCipherError,
 )
+from core.memory.session_pin_ledger import (
+    SESSION_PIN_LEDGER_FILENAME,
+    SessionPinLedger,
+    SessionPinLedgerError,
+)
 from core.reasoning.artifact_synthesis import response_satisfies_artifact_contract
 from core.runtime import resource_psutil as psutil
 from core.runtime.chat_delivery_journal import (
@@ -1445,11 +1450,6 @@ _RECENT_CONVERSATION_USER_CHARS = 800
 _RECENT_CONVERSATION_AURA_CHARS = 1200
 _RECENT_CONVERSATION_RENDERED_CHARS = 6000
 _SESSION_MEMORY_PIN_LEDGER_LIMIT = 500
-_SESSION_MEMORY_PIN_LEDGER_READ_BYTES = 2 * 1024 * 1024
-_SESSION_MEMORY_PIN_LEDGER_LOCK = checked_lock(
-    "chat.session_memory_pin_ledger",
-    reentrant=True,
-)
 _CHAT_BLOCKING_PREFLIGHT_TIMEOUT_S = 2.0
 _CHAT_LIVE_MIND_COLLECTION_TIMEOUT_S = 2.5
 _CHAT_EXPORT_SECTION_TIMEOUT_S = 3.0
@@ -2540,7 +2540,7 @@ def _is_session_memory_context_change_request(user_message: str) -> bool:
 def _session_memory_pin_ledger_path() -> Path:
     from core.config import config
 
-    return config.paths.data_dir / "memory" / "session_memory_pins.jsonl"
+    return config.paths.data_dir / "memory" / SESSION_PIN_LEDGER_FILENAME
 
 
 @lru_cache(maxsize=1)
@@ -2599,25 +2599,16 @@ def _seal_session_memory_pin_record(
 
 
 def _migrate_session_memory_pin_ledger_locked(
-    path: Path,
+    ledger: SessionPinLedger,
     cipher: SessionPinCipher,
-) -> None:
-    """Rewrite legacy plaintext pin rows before any new append or recall."""
+) -> tuple[list[dict[str, str]], bool, int]:
+    """Canonicalize a bounded snapshot before append or recall."""
 
-    if not path.exists():
-        return
-    retained_lines: collections.deque[str] = collections.deque(
-        maxlen=_SESSION_MEMORY_PIN_LEDGER_LIMIT
-    )
-    total_lines = 0
-    with path.open("r", encoding="utf-8", errors="replace") as handle:
-        for line in handle:
-            total_lines += 1
-            retained_lines.append(line.rstrip("\r\n"))
-    raw_lines = list(retained_lines)
+    snapshot = ledger.read_snapshot()
+    raw_lines = list(snapshot.lines)
     migrated: list[dict[str, str]] = []
-    changed = total_lines > len(raw_lines)
-    dropped = max(0, total_lines - len(raw_lines))
+    changed = snapshot.truncated or snapshot.permissions_repair_required
+    dropped = 1 if snapshot.truncated else 0
     for line in raw_lines:
         if not line.strip():
             changed = True
@@ -2688,20 +2679,7 @@ def _migrate_session_memory_pin_ledger_locked(
             )
         )
         changed = True
-    if not changed:
-        return
-    from core.runtime.atomic_writer import atomic_write_text
-
-    payload = "".join(
-        json.dumps(record, ensure_ascii=True, sort_keys=True) + "\n"
-        for record in migrated
-    )
-    atomic_write_text(path, payload, mode=0o600)
-    if dropped:
-        logger.warning(
-            "Dropped %d malformed session-memory ledger row(s) during encrypted migration",
-            dropped,
-        )
+    return migrated, changed, dropped
 
 
 def _append_session_memory_pin_ledger(
@@ -2714,14 +2692,16 @@ def _append_session_memory_pin_ledger(
     principal_surface: str = "",
 ) -> bool:
     try:
-        from core.runtime.atomic_writer import atomic_append_text
-
         path = _session_memory_pin_ledger_path()
         if not str(content or "").strip():
             return False
         cipher = _session_memory_pin_cipher()
-        with _SESSION_MEMORY_PIN_LEDGER_LOCK:
-            _migrate_session_memory_pin_ledger_locked(path, cipher)
+        ledger = SessionPinLedger(path)
+        with ledger.transaction():
+            records, _changed, dropped = _migrate_session_memory_pin_ledger_locked(
+                ledger,
+                cipher,
+            )
             record = _seal_session_memory_pin_record(
                 content,
                 source,
@@ -2730,12 +2710,19 @@ def _append_session_memory_pin_ledger(
                 principal_id=principal_id,
                 principal_surface=principal_surface,
             )
-            atomic_append_text(
-                path,
-                json.dumps(record, ensure_ascii=True, sort_keys=True) + "\n",
+            records.append(record)
+            ledger.commit_records(records[-_SESSION_MEMORY_PIN_LEDGER_LIMIT:])
+        if dropped:
+            logger.warning(
+                "Dropped malformed or truncated session-memory ledger row(s) "
+                "during encrypted migration"
             )
         return True
-    except (*_CHAT_RECOVERABLE_ERRORS, SessionPinCipherError) as exc:
+    except (
+        *_CHAT_RECOVERABLE_ERRORS,
+        SessionPinCipherError,
+        SessionPinLedgerError,
+    ) as exc:
         record_degradation("chat.session_memory_pin", exc)
         logger.debug("Durable session memory pin ledger write skipped: %s", exc)
         return False
@@ -2800,28 +2787,24 @@ def _recall_session_memory_pin_from_ledger(
     try:
         path = _session_memory_pin_ledger_path()
         cipher = _session_memory_pin_cipher()
-        with _SESSION_MEMORY_PIN_LEDGER_LOCK:
-            if not path.exists():
-                return None
-            _migrate_session_memory_pin_ledger_locked(path, cipher)
+        ledger = SessionPinLedger(path)
+        with ledger.transaction():
+            records, changed, dropped = _migrate_session_memory_pin_ledger_locked(
+                ledger,
+                cipher,
+            )
+            if changed:
+                ledger.commit_records(records)
+        if dropped:
+            logger.warning(
+                "Dropped malformed or truncated session-memory ledger row(s) "
+                "during encrypted migration"
+            )
+        if not records:
+            return None
+        for raw in reversed(records[-_SESSION_MEMORY_PIN_LEDGER_LIMIT:]):
             expected_session_id = str(session_id or "")[:64]
-            size = path.stat().st_size
-            with path.open("rb") as handle:
-                if size > _SESSION_MEMORY_PIN_LEDGER_READ_BYTES:
-                    handle.seek(-_SESSION_MEMORY_PIN_LEDGER_READ_BYTES, os.SEEK_END)
-                payload = handle.read(_SESSION_MEMORY_PIN_LEDGER_READ_BYTES + 1)
-        lines = payload.decode("utf-8", errors="replace").splitlines()
-        if size > _SESSION_MEMORY_PIN_LEDGER_READ_BYTES and lines:
-            # The bounded tail may begin in the middle of one JSONL row.
-            lines = lines[1:]
-        for line in reversed(lines[-_SESSION_MEMORY_PIN_LEDGER_LIMIT:]):
-            if not line.strip():
-                continue
-            try:
-                raw = json.loads(line)
-            except json.JSONDecodeError:
-                continue
-            if not isinstance(raw, dict) or raw.get("schema") != SESSION_PIN_ENVELOPE_SCHEMA:
+            if raw.get("schema") != SESSION_PIN_ENVELOPE_SCHEMA:
                 continue
             try:
                 opened = cipher.open(raw)
@@ -2839,7 +2822,11 @@ def _recall_session_memory_pin_from_ledger(
             if recalled:
                 recalled["storage"] = "durable"
                 return recalled
-    except (*_CHAT_RECOVERABLE_ERRORS, SessionPinCipherError) as exc:
+    except (
+        *_CHAT_RECOVERABLE_ERRORS,
+        SessionPinCipherError,
+        SessionPinLedgerError,
+    ) as exc:
         record_degradation("chat.session_memory_pin", exc)
         logger.debug("Durable session memory pin ledger recall skipped: %s", exc)
     return None

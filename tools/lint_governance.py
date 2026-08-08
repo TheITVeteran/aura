@@ -160,6 +160,12 @@ CANONICAL_PRIMITIVE_OWNERS: dict[str, frozenset[str]] = {
             # The ledger accepts no arbitrary runtime action or user path and
             # writes only from its named internal governance scope.
             "core/brain/llm/latent_cortex/verifier_fusion.py",
+            # Encrypted session-memory pins own one fixed JSONL filename and
+            # schema. The owner performs bounded, inode-stable reads and
+            # gateway-mediated atomic replacement inside a named memory-write
+            # scope; runtime callers cannot select a filename or plaintext
+            # payload.
+            "core/memory/session_pin_ledger.py",
             # External-effect transactions are digest-sealed, path-derived
             # records under Aura's data directory. The coordinator accepts no
             # caller-selected file path and writes only from its named scope.

@@ -38721,3 +38721,38 @@ continued advancing independently. The completion envelope stays `809/920`
 (approximately `87.9%`); the bounded chat semantic queue is closed, while the
 broader RLC, fusion, release, exhaustive semantic-review, effect-migration, live
 proof, and endurance program remain open.
+
+## Checkpoint 2026-08-08-028: Encrypted Pins Have One Persistence Owner
+
+The session-memory pin ledger no longer performs atomic writes or appends from
+the HTTP chat route. A dedicated memory-layer owner now holds the fixed
+`session_memory_pins.jsonl` namespace, admits only authenticated envelope rows,
+bounds work to the newest 500 records and 2 MiB, rejects symlinked or unstable
+inodes, verifies owner and single-link identity, repairs legacy permissions to
+`0600`, and serializes each read/transform/commit across threads and processes.
+Every commit executes inside a named `memory_write` scope and traverses the
+canonical FileWriteGateway.
+
+Append and legacy migration are now one atomic transaction. A new pin cannot be
+appended behind a partially migrated file, concurrent processes cannot lose one
+another's update, and a malformed, oversized, permissive, or plaintext legacy
+ledger is reduced to its bounded set of authenticated ciphertext envelopes
+before recall. The chat layer retains semantic identity and encryption policy,
+but owns no filesystem mutation.
+
+This checkpoint also corrects CP026's governance evidence. CP026 reported the
+governance lint green, but the later exact replay found its new migration
+`atomic_write_text` call outside a canonical owner; the older append bypass was
+already baseline debt. CP028 removes both chat-layer primitives, registers the
+fixed-schema memory owner, and refreshes the reviewed ratchet as a net debt
+reduction. The exact inventory now matches at 2,215 recognized calls in 2,066
+buckets with 1,947 migration-debt calls remaining.
+
+Focused encrypted-pin and ledger tests pass `30/30`; governance-lint self-tests
+pass `15/15`; canonical smoke passes `103/103`; layering, exact effect ownership,
+affected Ruff, byte compilation, and diff hygiene pass. No resident model was
+loaded and the source-bound 32B complete-engine campaign remained detached and
+continued advancing. The completion envelope remains `809/920` (approximately
+`87.9%`); this closes the CP026 ownership regression, not the broader RLC,
+fusion, release, exhaustive semantic-review, remaining effect-migration, live
+proof, or endurance program.
