@@ -100,6 +100,39 @@ def test_config_digest_rejects_a_changed_scientific_parameter(tmp_path: Path):
         controller.load_config(config_path)
 
 
+def test_prepare_preserves_the_venv_entrypoint_while_hashing_its_binary(tmp_path: Path):
+    source = _source(tmp_path)
+    model = tmp_path / "model"
+    model.mkdir()
+    (model / "config.json").write_text("{}\n", encoding="utf-8")
+    binary = tmp_path / "python-real"
+    binary.write_bytes(b"runtime")
+    venv_python = tmp_path / "venv/bin/python"
+    venv_python.parent.mkdir(parents=True)
+    venv_python.symlink_to(binary)
+    config, _manifest, _key = controller.build_config(
+        source_root=source,
+        source_commit="a" * 40,
+        model=model,
+        out_dir=tmp_path / "campaign",
+        python=venv_python,
+        arms="full_stack",
+        seed=7,
+        per_domain=1,
+        n_slots=4,
+        max_tokens=64,
+        memory_fraction=0.2,
+        episode_wall_s=20.0,
+        attempt_wall_s=60.0,
+        max_attempts=3,
+        poll_s=1.0,
+        stale_after_s=40.0,
+        retry_backoff_s=1.0,
+    )
+    assert config["python"] == str(venv_python)
+    assert config["python_sha256"] == hashlib.sha256(b"runtime").hexdigest()
+
+
 def test_heartbeat_is_authenticated_and_tamper_evident(tmp_path: Path):
     _source_root, _out, _config_path, config = _prepared(tmp_path)
     heartbeat = controller._signed_heartbeat(

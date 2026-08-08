@@ -284,7 +284,11 @@ def build_config(
 ) -> tuple[dict[str, Any], dict[str, Any], bytes]:
     source_root = source_root.expanduser().resolve(strict=True)
     model = model.expanduser().resolve(strict=True)
-    python = python.expanduser().resolve(strict=True)
+    # Preserve the venv entrypoint for execution. Resolving its symlink to the
+    # Homebrew base binary drops pyvenv.cfg discovery and therefore the exact
+    # dependency environment, even though both paths hash the same executable.
+    python = python.expanduser().absolute()
+    resolved_python = python.resolve(strict=True)
     out_dir = out_dir.expanduser().absolute()
     out_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
     os.chmod(out_dir, 0o700)
@@ -300,7 +304,7 @@ def build_config(
         "source_commit": source_commit,
         "source_manifest_path": str(manifest_path),
         "python": str(python),
-        "python_sha256": _sha_file(python),
+        "python_sha256": _sha_file(resolved_python),
         "model": str(model),
         "model_manifest": build_model_manifest(model),
         "out_dir": str(out_dir / "sweep"),
@@ -481,8 +485,8 @@ def _source_is_current(config: Mapping[str, Any]) -> None:
     if manifest.get("source_commit") != config["source_commit"]:
         raise ControllerError("source_commit_binding_invalid")
     verify_source_manifest(Path(str(config["source_root"])), manifest)
-    python = Path(str(config["python"])).expanduser().resolve(strict=True)
-    if _sha_file(python) != config["python_sha256"]:
+    python = Path(str(config["python"])).expanduser().absolute()
+    if _sha_file(python.resolve(strict=True)) != config["python_sha256"]:
         raise ControllerError("interpreter_identity_drift")
     verify_model_manifest(config["model_manifest"])
 

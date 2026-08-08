@@ -37903,6 +37903,9 @@ not after a verified terminal result. Unit and integration coverage proves
 source injection and weight drift rejection, heartbeat tamper detection,
 scientific-argument preservation, foreign process-group refusal, mandatory OS
 supervision, and a two-attempt durable wall-budget resume. The controller,
-sweep, and incumbent-floor slice passes `47/47`; Ruff and diff hygiene pass.
+venv-entrypoint preservation, sweep, and incumbent-floor slice passes `48/48`;
+Ruff and diff hygiene pass. The venv path is retained for execution while its
+resolved interpreter binary is independently hashed, preventing source
+preparation from silently dropping the installed dependency environment.
 No resident model was loaded by this checkpoint, and no gain, fusion,
 activation, frontier, release, or `WOW Signal` claim is made.
