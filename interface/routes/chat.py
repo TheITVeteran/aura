@@ -6957,6 +6957,7 @@ def _build_live_turn_contract_payload(
             "verifier_guidance",
             "generative_verifier",
             "verifier_probe_max_tokens",
+            "verifier_probe_contract",
             "latent_opt_applied",
             "latent_opt_mode", "latent_opt_loss_trail",
             "latent_opt_attempts",

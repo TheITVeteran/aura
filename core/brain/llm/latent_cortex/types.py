@@ -474,6 +474,11 @@ class CortexConfig:
     # lab/frontier default remains broad; the resident interactive profile may
     # use a shorter, explicitly receipted probe to preserve the answer budget.
     verifier_probe_max_tokens: int = 48
+    # Candidate probes have a separate answer contract because they feed
+    # verification and promotion, while the public decode may remain an exact
+    # vanilla incumbent. Coupling the two either moved the floor or left every
+    # candidate ungradeable.
+    verifier_probe_contract: str = "none"
     # Fresh-context generative challenge lane. It shares the resident
     # checkpoint but imports no solver KV state; generated prose has no
     # authority unless a deterministic witness relation reconstructs.
@@ -733,6 +738,10 @@ class CortexConfig:
             )
         if not integer_in(self.verifier_probe_max_tokens, 16, 512):
             problems.append("verifier_probe_max_tokens outside [16, 512]")
+        if self.verifier_probe_contract not in {"none", "final_answer_v1"}:
+            problems.append(
+                "verifier_probe_contract must be 'none' or 'final_answer_v1'"
+            )
         if type(self.generative_verifier_enabled) is not bool:
             problems.append("generative_verifier_enabled must be boolean")
         if not integer_in(self.generative_verifier_max_atoms, 1, 8):
@@ -1413,6 +1422,7 @@ class EpisodeReceipt:
     # score/proxy trails, and why each proposal was accepted or rejected.
     latent_opt_verifier: dict[str, Any] = field(default_factory=dict)
     verifier_probe_max_tokens: int = 48
+    verifier_probe_contract: str = "none"
     fast_weights_applied: bool = False
     fast_weights_layers: int = 0
     fast_weight_optimization_attempts: int = 0
@@ -1780,6 +1790,7 @@ class EpisodeReceipt:
             "latent_opt_budget_exhausted": self.latent_opt_budget_exhausted,
             "latent_opt_verifier": dict(self.latent_opt_verifier),
             "verifier_probe_max_tokens": self.verifier_probe_max_tokens,
+            "verifier_probe_contract": self.verifier_probe_contract,
             "fast_weights_applied": self.fast_weights_applied,
             "fast_weights_layers": self.fast_weights_layers,
             "fast_weight_optimization_attempts": self.fast_weight_optimization_attempts,

@@ -2845,6 +2845,15 @@ class LatentCortexService:
             or receipt.get("verifier_probe_max_tokens") != configured_probe_tokens
         ):
             errors.append("verifier_probe_profile_mismatch")
+        configured_probe_contract = config.get("verifier_probe_contract", "none")
+        if (
+            "verifier_probe_contract" in config
+            or "verifier_probe_contract" in receipt
+        ) and (
+            configured_probe_contract not in {"none", "final_answer_v1"}
+            or receipt.get("verifier_probe_contract") != configured_probe_contract
+        ):
+            errors.append("verifier_probe_contract_mismatch")
         if receipt.get("decode_termination") not in {
             "eos",
             # The public answer contract completed (one FINAL_ANSWER JSON
@@ -5468,6 +5477,7 @@ class LatentCortexService:
                     "worker_identity",
                     "runtime_integrity",
                     "verifier_probe_max_tokens",
+                    "verifier_probe_contract",
                     "latent_opt_verifier",
                     "last_stage",
                     "stage_timings_s",
@@ -5517,6 +5527,7 @@ class LatentCortexService:
                     "latent_opt_steps",
                     "latent_opt_budget_exhausted",
                     "verifier_probe_max_tokens",
+                    "verifier_probe_contract",
                     "latent_opt_verifier",
                     "fast_weights_applied",
                     "fast_weight_optimization_attempts",

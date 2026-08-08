@@ -66,6 +66,8 @@ def test_the_full_stack_arm_enables_every_pillar_that_was_built():
     assert cfg.generative_verifier_enabled is True
     assert cfg.counterfactual_verifier_enabled is True
     assert cfg.prefix_stability_enabled is True
+    assert cfg.decode_contract == "none"
+    assert cfg.verifier_probe_contract == "final_answer_v1"
     # Adaptive halting: the depth is a ceiling, not a floor.
     assert cfg.recurrence.min_steps == 2
     assert cfg.recurrence.max_steps == 8

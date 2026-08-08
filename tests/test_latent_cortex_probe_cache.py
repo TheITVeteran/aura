@@ -83,6 +83,7 @@ def test_keys_bind_the_exact_probe_ingredients():
     assert base != cache.key(seed_z * 1.001, z, [1, 2], 4)
     assert base != cache.key(seed_z, z, [1, 3], 4)
     assert base != cache.key(seed_z, z, [1, 2], 5)
+    assert base != cache.key(seed_z, z, [1, 2], 4, "final_answer_v1")
 
 
 def test_hit_returns_copy_and_accounts_savings():

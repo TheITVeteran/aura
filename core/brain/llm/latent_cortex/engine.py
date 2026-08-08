@@ -1609,6 +1609,12 @@ class LatentCortexEngine:
         )
 
         probe_tokens = self.config.verifier_probe_max_tokens if max_tokens is None else max_tokens
+        probe_contract = (
+            "final_answer_v1"
+            if "final_answer_v1"
+            in {self.config.decode_contract, self.config.verifier_probe_contract}
+            else "none"
+        )
         probe_cache = getattr(self, "_episode_probe_cache", None)
         cache_key = None
         if use_cache and probe_cache is not None:
@@ -1617,6 +1623,7 @@ class LatentCortexEngine:
                 branch.z,
                 list(bridge_tokens or []),
                 probe_tokens,
+                probe_contract,
             )
             memoized = probe_cache.get(cache_key)
             if memoized is not None:
@@ -1652,6 +1659,7 @@ class LatentCortexEngine:
                 sentence_grace_tokens=0,
                 contract_grace_tokens=0,
                 force_exact_tokens=force_exact_tokens,
+                final_answer_contract=probe_contract == "final_answer_v1",
             )[0]
             execution_failed = False
         finally:
@@ -2445,6 +2453,7 @@ class LatentCortexEngine:
         receipt.decode_bridge_policy = self.config.decode_bridge_policy
         receipt.decode_incumbent_policy = self.config.decode_incumbent_policy
         receipt.verifier_probe_max_tokens = self.config.verifier_probe_max_tokens
+        receipt.verifier_probe_contract = self.config.verifier_probe_contract
         receipt.decode_contract_required = self.config.decode_contract == "final_answer_v1"
         receipt.decode_contract_grace_tokens = (
             self.config.decode_contract_grace_tokens if receipt.decode_contract_required else 0
@@ -4851,7 +4860,10 @@ class LatentCortexEngine:
                 text = self._decode_public_text(probe, receipt=receipt)
                 branch_probe_texts[branch.index] = text
             valid_contract_branches: set[int] | None = None
-            if self.config.decode_contract == "final_answer_v1":
+            if "final_answer_v1" in {
+                self.config.decode_contract,
+                self.config.verifier_probe_contract,
+            }:
                 from core.brain.llm.latent_cortex.answer_contract import (
                     contract_answer_state,
                 )

@@ -480,6 +480,11 @@ def _build_config(
         # the answer to find a claim, not all of it.
         verifier_probe_max_tokens=max(48, min(256, max_tokens // 2)) if full else 48,
         decode_contract="none" if full else decode_contract,
+        # Candidate verification needs a complete, gradeable object even when
+        # the public answer remains the byte-identical vanilla incumbent.
+        # This contract is deliberately separate from decode_contract so the
+        # evidence lane cannot move the product floor.
+        verifier_probe_contract="final_answer_v1" if full else "none",
         decode_contract_grace_tokens=(
             0 if full else (320 if decode_contract != "none" else 0)
         ),

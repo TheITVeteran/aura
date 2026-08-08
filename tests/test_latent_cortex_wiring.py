@@ -1003,6 +1003,7 @@ def test_config_from_job_defaults_are_conservative():
     assert cfg.fast_weights.enabled is False
     assert cfg.decode_incumbent_policy == "vanilla_incumbent"
     assert cfg.verifier_probe_max_tokens == 48
+    assert cfg.verifier_probe_contract == "none"
     assert cfg.verifier_accept_non_regression is False
     assert cfg.prefix_stability_enabled is True
     assert cfg.prefix_stability_samples == 3
@@ -1041,6 +1042,8 @@ def test_config_from_job_rejects_out_of_band_requests():
         config_from_job({"decode_temperature": float("nan")})
     with pytest.raises(ValueError):
         config_from_job({"verifier_probe_max_tokens": 15})
+    with pytest.raises(ValueError, match="verifier_probe_contract"):
+        config_from_job({"verifier_probe_contract": "advisory"})
     with pytest.raises(ValueError, match="JSON boolean"):
         config_from_job({"verifier_accept_non_regression": "true"})
     with pytest.raises(ValueError, match="decode_incumbent_policy"):

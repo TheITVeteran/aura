@@ -17,6 +17,7 @@ Job contract (all optional except the prompt source):
      "latent_opt": false, "fast_weights": false,
      "decode_max_tokens": 512, "decode_temperature": 0.0,
      "verifier_probe_max_tokens": 48,
+     "verifier_probe_contract": "none",
      "verifier_accept_non_regression": false,
      "decode_bridge_policy": "none",
      "decode_incumbent_policy": "vanilla_incumbent",
@@ -145,6 +146,7 @@ _CONFIG_KEYS = {
     "uncertainty_head",
     "update_gate",
     "verifier_accept_non_regression",
+    "verifier_probe_contract",
     "verifier_probe_max_tokens",
 }
 
@@ -263,6 +265,9 @@ def config_from_job(job_config: dict[str, Any] | None) -> CortexConfig:
         decode_contract_grace_tokens=_typed_value(raw, "decode_contract_grace_tokens", 0, int),
         decode_min_tokens=_typed_value(raw, "decode_min_tokens", 0, int),
         verifier_probe_max_tokens=_typed_value(raw, "verifier_probe_max_tokens", 48, int),
+        verifier_probe_contract=_typed_value(
+            raw, "verifier_probe_contract", "none", str
+        ),
         generative_verifier_enabled=_typed_value(raw, "generative_verifier_enabled", True, bool),
         generative_verifier_max_atoms=_typed_value(raw, "generative_verifier_max_atoms", 1, int),
         generative_verifier_max_tokens=_typed_value(
@@ -439,6 +444,7 @@ def handle_latent_reason(
                 ),
             }
         raw_config["decode_contract"] = "final_answer_v1"
+        raw_config.setdefault("verifier_probe_contract", "final_answer_v1")
         raw_config.setdefault(
             "decode_contract_grace_tokens",
             min(int(raw_config.get("decode_max_tokens", 512)), 512),

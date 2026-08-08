@@ -64,8 +64,11 @@ class DecodeProbeCache:
         z: Any,
         bridge_tokens: list[int],
         probe_max_tokens: int,
+        probe_contract: str = "none",
     ) -> str:
-        """Exact-state key: probe output depends on all four ingredients."""
+        """Exact-state key for every input that can change probe output."""
+        if probe_contract not in {"none", "final_answer_v1"}:
+            raise ValueError("probe_contract is invalid")
         hasher = hashlib.sha256()
         _array_digest(hasher, seed_z)
         _array_digest(hasher, z)
@@ -73,6 +76,7 @@ class DecodeProbeCache:
             ",".join(str(int(token)) for token in bridge_tokens).encode("ascii")
         )
         hasher.update(str(int(probe_max_tokens)).encode("ascii"))
+        hasher.update(probe_contract.encode("ascii"))
         return hasher.hexdigest()
 
     # ── Store ───────────────────────────────────────────────────────────
