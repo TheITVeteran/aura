@@ -1759,6 +1759,77 @@ async def test_protected_foreground_history_skips_pending_exchange():
 
 
 @pytest.mark.asyncio
+async def test_protected_foreground_history_is_scoped_to_exact_session():
+    from interface.routes import chat as chat_routes
+
+    first_id = await chat_routes._begin_logged_exchange(
+        "Owner-session question",
+        session_id="owner-session",
+    )
+    await chat_routes._complete_logged_exchange(
+        first_id,
+        "Owner-session question",
+        "Owner-session answer",
+    )
+    second_id = await chat_routes._begin_logged_exchange(
+        "Paired-session secret",
+        session_id="paired-device:other",
+    )
+    await chat_routes._complete_logged_exchange(
+        second_id,
+        "Paired-session secret",
+        "Paired-session answer",
+    )
+
+    history = await chat_routes._build_protected_foreground_history(
+        session_id="owner-session",
+        limit_pairs=4,
+    )
+
+    assert history == [
+        {"role": "user", "content": "Owner-session question"},
+        {"role": "assistant", "content": "Owner-session answer"},
+    ]
+
+
+@pytest.mark.asyncio
+async def test_regenerated_reply_updates_selected_exchange_not_newer_turn():
+    from interface.routes import chat as chat_routes
+
+    selected_id = await chat_routes._begin_logged_exchange(
+        "Regenerate me",
+        session_id="session-a",
+    )
+    await chat_routes._complete_logged_exchange(
+        selected_id,
+        "Regenerate me",
+        "Original answer",
+    )
+    newer_id = await chat_routes._begin_logged_exchange(
+        "A newer concurrent turn",
+        session_id="session-a",
+    )
+    await chat_routes._complete_logged_exchange(
+        newer_id,
+        "A newer concurrent turn",
+        "Newer answer",
+    )
+
+    applied = await chat_routes._apply_regenerated_reply(
+        exchange_id=selected_id,
+        session_id="session-a",
+        reply_text="Replacement answer",
+    )
+
+    assert applied is True
+    by_id = {entry["id"]: entry for entry in chat_routes._conversation_log}
+    assert by_id[selected_id]["aura"] == "Replacement answer"
+    assert by_id[selected_id]["regenerated"] is True
+    assert by_id[newer_id]["aura"] == "Newer answer"
+    assert "regenerated" not in by_id[newer_id]
+
+
+@pytest.mark.asyncio
 async def test_api_chat_warms_cold_lane_before_processing(monkeypatch):
     from interface import server as server_module
 
@@ -3851,20 +3922,129 @@ async def test_session_memory_pin_restart_wording_stays_on_fastpath(monkeypatch,
     )
     chat_routes._session_memory_pins.clear()
 
-    stored = await chat_routes._build_memory_state_fastpath_reply(
-        "Remember this codeword across restart: restart-ledger-921. Just confirm."
-    )
-    chat_routes._session_memory_pins.clear()
-    recalled = await chat_routes._build_memory_state_fastpath_reply(
-        "What codeword did I ask you to remember before restart?"
-    )
-    chat_routes._session_memory_pins.clear()
+    principal_token = chat_routes._CHAT_REQUEST_PRINCIPAL.set("owner:bryan")
+    surface_token = chat_routes._CHAT_REQUEST_SURFACE.set("owner")
+    try:
+        stored = await chat_routes._build_memory_state_fastpath_reply(
+            "Remember this codeword across restart: restart-ledger-921. Just confirm.",
+            session_id="before-restart",
+        )
+        chat_routes._session_memory_pins.clear()
+        recalled = await chat_routes._build_memory_state_fastpath_reply(
+            "What codeword did I ask you to remember before restart?",
+            session_id="after-restart",
+        )
+    finally:
+        chat_routes._CHAT_REQUEST_SURFACE.reset(surface_token)
+        chat_routes._CHAT_REQUEST_PRINCIPAL.reset(principal_token)
+        chat_routes._session_memory_pins.clear()
 
     assert stored is not None
     assert stored[1] == "session_memory_pin"
     assert recalled is not None
     assert recalled[1] == "session_memory_recall"
     assert "restart-ledger-921" in recalled[0]
+
+
+@pytest.mark.asyncio
+async def test_session_memory_pin_cross_session_recall_rejects_other_principal(
+    monkeypatch,
+    tmp_path,
+):
+    from interface.routes import chat as chat_routes
+
+    ledger_path = tmp_path / "session_memory_pins.jsonl"
+    monkeypatch.setattr(chat_routes, "_session_memory_pin_ledger_path", lambda: ledger_path)
+    monkeypatch.setattr(
+        chat_routes.ServiceContainer,
+        "get",
+        staticmethod(lambda _name, default=None: default),
+    )
+    chat_routes._session_memory_pins.clear()
+
+    stored = await chat_routes._store_session_memory_pin(
+        "owner-only launch phrase",
+        "Remember the owner-only launch phrase.",
+        session_id="owner-before-restart",
+        principal_id="owner:bryan",
+        principal_surface="owner",
+    )
+    chat_routes._session_memory_pins.clear()
+
+    paired_recall = await chat_routes._recall_session_memory_pin(
+        session_id="paired-device:device-a",
+        cross_session=True,
+        principal_id="paired:alex",
+        principal_surface="paired_device",
+    )
+    owner_recall = await chat_routes._recall_session_memory_pin(
+        session_id="owner-after-restart",
+        cross_session=True,
+        principal_id="owner:bryan",
+        principal_surface="owner",
+    )
+    chat_routes._session_memory_pins.clear()
+
+    assert stored is True
+    assert paired_recall is None
+    assert owner_recall is not None
+    assert owner_recall["content"] == "owner-only launch phrase"
+
+
+@pytest.mark.asyncio
+async def test_content_recall_does_not_cross_principals_after_restart(
+    monkeypatch,
+    tmp_path,
+):
+    from interface.routes import chat as chat_routes
+
+    monkeypatch.setattr(
+        chat_routes,
+        "_session_memory_pin_ledger_path",
+        lambda: tmp_path / "session_memory_pins.jsonl",
+    )
+    monkeypatch.setattr(
+        chat_routes.ServiceContainer,
+        "get",
+        staticmethod(lambda _name, default=None: default),
+    )
+    chat_routes._session_memory_pins.clear()
+    assert await chat_routes._store_session_memory_pin(
+        "the launch phrase is heliotrope seven",
+        "Remember that the launch phrase is heliotrope seven.",
+        session_id="owner-old",
+        principal_id="owner:bryan",
+        principal_surface="owner",
+    )
+    chat_routes._session_memory_pins.clear()
+
+    principal_token = chat_routes._CHAT_REQUEST_PRINCIPAL.set("paired:guest")
+    surface_token = chat_routes._CHAT_REQUEST_SURFACE.set("paired_device")
+    try:
+        paired_reply = await chat_routes._build_conversation_recall_reply(
+            "What launch phrase did I tell you before the restart?",
+            session_id="paired-device:guest",
+        )
+    finally:
+        chat_routes._CHAT_REQUEST_SURFACE.reset(surface_token)
+        chat_routes._CHAT_REQUEST_PRINCIPAL.reset(principal_token)
+
+    principal_token = chat_routes._CHAT_REQUEST_PRINCIPAL.set("owner:bryan")
+    surface_token = chat_routes._CHAT_REQUEST_SURFACE.set("owner")
+    try:
+        owner_reply = await chat_routes._build_conversation_recall_reply(
+            "What launch phrase did I tell you before the restart?",
+            session_id="owner-new",
+        )
+    finally:
+        chat_routes._CHAT_REQUEST_SURFACE.reset(surface_token)
+        chat_routes._CHAT_REQUEST_PRINCIPAL.reset(principal_token)
+        chat_routes._session_memory_pins.clear()
+
+    assert paired_reply is not None
+    assert "heliotrope" not in paired_reply.casefold()
+    assert owner_reply is not None
+    assert "heliotrope seven" in owner_reply.casefold()
 
 
 @pytest.mark.asyncio
@@ -11869,6 +12049,53 @@ async def test_api_chat_regenerate_desktop_requires_cognitive_engine(monkeypatch
     assert b"desktop_cognitive_engine_unavailable" in response.body
     assert kernel_calls == []
     assert orchestrator_calls == []
+
+
+@pytest.mark.asyncio
+async def test_api_chat_regenerate_requires_session_when_history_is_ambiguous(monkeypatch):
+    from interface.routes import chat as chat_routes
+
+    monkeypatch.setattr(
+        chat_routes,
+        "_restore_owner_session_from_request",
+        lambda *_args, **_kwargs: None,
+    )
+    async with chat_routes._get_convo_lock():
+        chat_routes._conversation_log.extend(
+            [
+                {
+                    "id": "regen-owner",
+                    "user": "Owner question",
+                    "aura": "Owner answer",
+                    "status": "complete",
+                    "session_id": "owner-session",
+                },
+                {
+                    "id": "regen-other",
+                    "user": "Other question",
+                    "aura": "Other answer",
+                    "status": "complete",
+                    "session_id": "other-session",
+                },
+            ]
+        )
+
+    response = await chat_routes.api_chat_regenerate(
+        SimpleNamespace(
+            headers={
+                "X-Aura-Surface": "desktop-ui",
+                "X-Aura-Require-CognitiveEngine": "true",
+            },
+            client=SimpleNamespace(host="test"),
+            url=SimpleNamespace(scheme="http"),
+        ),
+        None,
+        None,
+    )
+
+    payload = json.loads(response.body)
+    assert response.status_code == 409
+    assert payload["error"] == "ambiguous_session"
 
 
 @pytest.mark.asyncio

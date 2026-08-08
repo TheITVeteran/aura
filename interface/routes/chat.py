@@ -149,6 +149,14 @@ _INTERNAL_SURFACE_CONTEXT: ContextVar[str] = ContextVar(
     "aura_internal_surface_context",
     default="",
 )
+_CHAT_REQUEST_PRINCIPAL: ContextVar[str] = ContextVar(
+    "aura_chat_request_principal",
+    default="",
+)
+_CHAT_REQUEST_SURFACE: ContextVar[str] = ContextVar(
+    "aura_chat_request_surface",
+    default="",
+)
 
 
 # ── Request Models ────────────────────────────────────────────
@@ -2263,17 +2271,21 @@ def _append_session_memory_pin_ledger(
     timestamp: str,
     *,
     session_id: str = "",
+    principal_id: str = "",
+    principal_surface: str = "",
 ) -> bool:
     try:
         from core.runtime.atomic_writer import atomic_append_text
 
         path = _session_memory_pin_ledger_path()
         record = {
-            "schema": "aura.session_memory_pin.v1",
+            "schema": "aura.session_memory_pin.v2",
             "content": str(content or "").strip()[:240],
             "source": str(source or "").strip()[:512],
             "timestamp": str(timestamp or ""),
             "session_id": str(session_id or "")[:64],
+            "principal_id": " ".join(str(principal_id or "").strip().split())[:160],
+            "principal_surface": str(principal_surface or "").strip().casefold()[:32],
             "session_memory_pin": True,
             "kind": "explicit_user_memory_pin",
         }
@@ -2293,6 +2305,8 @@ def _append_session_memory_pin_ledger_guarded(
     timestamp: str,
     *,
     session_id: str = "",
+    principal_id: str = "",
+    principal_surface: str = "",
 ) -> bool:
     """Append the session pin ledger without letting fallback logging crash chat."""
 
@@ -2303,12 +2317,21 @@ def _append_session_memory_pin_ledger_guarded(
                 source,
                 timestamp,
                 session_id=session_id,
+                principal_id=principal_id,
+                principal_surface=principal_surface,
             )
         )
     except TypeError as exc:
-        if "session_id" not in str(exc):
+        if not any(name in str(exc) for name in ("session_id", "principal_id", "principal_surface")):
             record_degradation("chat.session_memory_pin", exc)
             logger.debug("Durable session memory pin ledger append failed: %s", exc)
+            return False
+        if principal_id or principal_surface:
+            record_degradation("chat.session_memory_pin", exc)
+            logger.warning(
+                "Principal-bound session memory pin append rejected a legacy writer; "
+                "the identity binding was not discarded."
+            )
             return False
         try:
             return bool(_append_session_memory_pin_ledger(content, source, timestamp))
@@ -2326,7 +2349,11 @@ def _append_session_memory_pin_ledger_guarded(
 
 
 def _recall_session_memory_pin_from_ledger(
-    *, session_id: str = "", cross_session: bool = False
+    *,
+    session_id: str = "",
+    cross_session: bool = False,
+    principal_id: str = "",
+    principal_surface: str = "",
 ) -> dict[str, str] | None:
     try:
         path = _session_memory_pin_ledger_path()
@@ -2345,6 +2372,8 @@ def _recall_session_memory_pin_from_ledger(
                 raw,
                 session_id=expected_session_id,
                 cross_session=cross_session,
+                principal_id=principal_id,
+                principal_surface=principal_surface,
             )
             if recalled:
                 recalled["storage"] = "durable"
@@ -2355,12 +2384,46 @@ def _recall_session_memory_pin_from_ledger(
     return None
 
 
-async def _store_session_memory_pin(content: str, source: str, *, session_id: str = "") -> bool:
+def _chat_memory_identity(
+    *,
+    principal_id: str = "",
+    principal_surface: str = "",
+) -> tuple[str, str]:
+    principal = " ".join(
+        str(principal_id or _CHAT_REQUEST_PRINCIPAL.get() or "").strip().split()
+    )[:160]
+    surface = str(
+        principal_surface or _CHAT_REQUEST_SURFACE.get() or ""
+    ).strip().casefold()[:32]
+    return principal, surface
+
+
+def _cross_session_memory_recall_allowed(user_message: str) -> bool:
+    principal_id, principal_surface = _chat_memory_identity()
+    return bool(
+        principal_surface == "owner"
+        and principal_id
+        and _is_cross_session_memory_recall_request(user_message)
+    )
+
+
+async def _store_session_memory_pin(
+    content: str,
+    source: str,
+    *,
+    session_id: str = "",
+    principal_id: str = "",
+    principal_surface: str = "",
+) -> bool:
     pinned = str(content or "").strip()
     if not pinned:
         return False
     timestamp = datetime.now(tz=UTC).isoformat()
     safe_session_id = str(session_id or "")[:64]
+    safe_principal_id, safe_principal_surface = _chat_memory_identity(
+        principal_id=principal_id,
+        principal_surface=principal_surface,
+    )
     ledger_ok = False
     async with _get_convo_lock():
         _session_memory_pins.append(
@@ -2369,6 +2432,8 @@ async def _store_session_memory_pin(content: str, source: str, *, session_id: st
                 "source": str(source or "").strip()[:512],
                 "timestamp": timestamp,
                 "session_id": safe_session_id,
+                "principal_id": safe_principal_id,
+                "principal_surface": safe_principal_surface,
             }
         )
         if len(_session_memory_pins) > 100:
@@ -2382,6 +2447,8 @@ async def _store_session_memory_pin(content: str, source: str, *, session_id: st
                 source,
                 timestamp,
                 session_id=safe_session_id,
+                principal_id=safe_principal_id,
+                principal_surface=safe_principal_surface,
             )
             return bool(ledger_ok)
         result = memory_facade.add_memory(
@@ -2396,6 +2463,8 @@ async def _store_session_memory_pin(content: str, source: str, *, session_id: st
                 "timestamp": timestamp,
                 "session_id": safe_session_id,
                 "chat_session_id": safe_session_id,
+                "principal_id": safe_principal_id,
+                "principal_surface": safe_principal_surface,
                 "importance": 0.9,
                 "identity_relevant": True,
                 "explicit_memory_request": True,
@@ -2412,6 +2481,8 @@ async def _store_session_memory_pin(content: str, source: str, *, session_id: st
                 source,
                 timestamp,
                 session_id=safe_session_id,
+                principal_id=safe_principal_id,
+                principal_surface=safe_principal_surface,
             )
             return bool(ledger_ok)
         ledger_ok = await asyncio.to_thread(
@@ -2420,6 +2491,8 @@ async def _store_session_memory_pin(content: str, source: str, *, session_id: st
             source,
             timestamp,
             session_id=safe_session_id,
+            principal_id=safe_principal_id,
+            principal_surface=safe_principal_surface,
         )
         if not ledger_ok:
             logger.warning(
@@ -2437,6 +2510,8 @@ async def _store_session_memory_pin(content: str, source: str, *, session_id: st
                 source,
                 timestamp,
                 session_id=safe_session_id,
+                principal_id=safe_principal_id,
+                principal_surface=safe_principal_surface,
             )
         return bool(ledger_ok)
 
@@ -2446,6 +2521,8 @@ def _session_memory_pin_from_record(
     *,
     session_id: str = "",
     cross_session: bool = False,
+    principal_id: str = "",
+    principal_surface: str = "",
 ) -> dict[str, str] | None:
     if not isinstance(item, dict):
         return None
@@ -2453,6 +2530,18 @@ def _session_memory_pin_from_record(
     if not isinstance(metadata, dict):
         metadata = {}
     expected_session_id = str(session_id or "")[:64]
+    expected_principal_id, expected_surface = _chat_memory_identity(
+        principal_id=principal_id,
+        principal_surface=principal_surface,
+    )
+    record_principal_id = " ".join(
+        str(metadata.get("principal_id") or item.get("principal_id") or "")
+        .strip()
+        .split()
+    )[:160]
+    record_surface = str(
+        metadata.get("principal_surface") or item.get("principal_surface") or ""
+    ).strip().casefold()[:32]
     record_session_id = str(
         metadata.get("chat_session_id")
         or metadata.get("session_id")
@@ -2464,6 +2553,10 @@ def _session_memory_pin_from_record(
     # concurrent sessions stay isolated. ``cross_session`` is the explicit
     # opt-in (the user asked about a pin from *before a restart*), which is the
     # only path that may return another session's durable pin.
+    if record_principal_id and record_principal_id != expected_principal_id:
+        return None
+    if cross_session and (expected_surface != "owner" or not expected_principal_id):
+        return None
     if not cross_session and expected_session_id and record_session_id != expected_session_id:
         return None
     content = str(
@@ -2485,18 +2578,30 @@ def _session_memory_pin_from_record(
         "source": str(metadata.get("source_utterance") or metadata.get("source") or "durable_memory")[:512],
         "timestamp": str(metadata.get("timestamp") or ""),
         "session_id": record_session_id,
+        "principal_id": record_principal_id,
+        "principal_surface": record_surface,
         "storage": "durable",
     }
 
 
 async def _recall_durable_session_memory_pin(
-    *, session_id: str = "", cross_session: bool = False
+    *,
+    session_id: str = "",
+    cross_session: bool = False,
+    principal_id: str = "",
+    principal_surface: str = "",
 ) -> dict[str, str] | None:
     safe_session_id = str(session_id or "")[:64]
+    safe_principal_id, safe_principal_surface = _chat_memory_identity(
+        principal_id=principal_id,
+        principal_surface=principal_surface,
+    )
     ledger_recall = await asyncio.to_thread(
         _recall_session_memory_pin_from_ledger,
         session_id=safe_session_id,
         cross_session=cross_session,
+        principal_id=safe_principal_id,
+        principal_surface=safe_principal_surface,
     )
     if ledger_recall:
         return ledger_recall
@@ -2514,6 +2619,8 @@ async def _recall_durable_session_memory_pin(
                 item,
                 session_id=safe_session_id,
                 cross_session=cross_session,
+                principal_id=safe_principal_id,
+                principal_surface=safe_principal_surface,
             )
             if recalled:
                 return recalled
@@ -2524,26 +2631,34 @@ async def _recall_durable_session_memory_pin(
 
 
 async def _recall_session_memory_pin(
-    *, session_id: str = "", cross_session: bool = False
+    *,
+    session_id: str = "",
+    cross_session: bool = False,
+    principal_id: str = "",
+    principal_surface: str = "",
 ) -> dict[str, str] | None:
     safe_session_id = str(session_id or "")[:64]
+    safe_principal_id, safe_principal_surface = _chat_memory_identity(
+        principal_id=principal_id,
+        principal_surface=principal_surface,
+    )
     async with _get_convo_lock():
         for latest in reversed(_session_memory_pins):
-            if (
-                not cross_session
-                and safe_session_id
-                and str(latest.get("session_id") or "")[:64] != safe_session_id
-            ):
-                continue
-            return {
-                "content": str(latest.get("content") or ""),
-                "source": str(latest.get("source") or ""),
-                "timestamp": str(latest.get("timestamp") or ""),
-                "session_id": str(latest.get("session_id") or "")[:64],
-                "storage": "session",
-            }
+            recalled = _session_memory_pin_from_record(
+                {**latest, "session_memory_pin": True},
+                session_id=safe_session_id,
+                cross_session=cross_session,
+                principal_id=safe_principal_id,
+                principal_surface=safe_principal_surface,
+            )
+            if recalled:
+                recalled["storage"] = "session"
+                return recalled
     return await _recall_durable_session_memory_pin(
-        session_id=safe_session_id, cross_session=cross_session
+        session_id=safe_session_id,
+        cross_session=cross_session,
+        principal_id=safe_principal_id,
+        principal_surface=safe_principal_surface,
     )
 
 
@@ -2640,7 +2755,7 @@ async def _build_memory_state_fastpath_reply(
         return "I don't have a pinned session note to compare against yet.", "session_memory_miss"
 
     if _is_session_memory_recall_request(user_message):
-        cross_session = _is_cross_session_memory_recall_request(user_message)
+        cross_session = _cross_session_memory_recall_allowed(user_message)
         remembered = await _recall_session_memory_pin(
             session_id=session_id,
             cross_session=cross_session,
@@ -4354,7 +4469,8 @@ async def _build_conversation_recall_reply(
         # the current session holds it. Losing a fact she demonstrably has,
         # and calling that honesty, is the worse failure.
         durable_pin = await _recall_durable_session_memory_pin(
-            session_id=session_id, cross_session=True
+            session_id=session_id,
+            cross_session=_cross_session_memory_recall_allowed(user_message),
         )
         durable_content = str((durable_pin or {}).get("content") or "").strip()
         if durable_content and _content_recall_matches_pin(user_message, durable_content):
@@ -11309,12 +11425,18 @@ def _protected_foreground_reason(lane: dict[str, Any] | None) -> str:
     return ""
 
 
-async def _build_protected_foreground_history(*, limit_pairs: int = 4) -> list[dict[str, str]]:
+async def _build_protected_foreground_history(
+    *,
+    session_id: str = "",
+    limit_pairs: int = 4,
+) -> list[dict[str, str]]:
+    safe_session_id = str(session_id or "")[:64]
     async with _get_convo_lock():
         completed = [
             entry
             for entry in _conversation_log
             if str(entry.get("status") or "complete").strip().lower() != "pending"
+            and str(entry.get("session_id") or "")[:64] == safe_session_id
         ]
         recent = completed[-max(1, int(limit_pairs)) :]
 
@@ -11461,8 +11583,10 @@ async def _build_protected_foreground_messages(
     *,
     lane: dict[str, Any],
     route: dict[str, Any],
+    session_id: str = "",
 ) -> list[dict[str, str]]:
     history = await _build_protected_foreground_history(
+        session_id=session_id,
         limit_pairs=8 if bool(route.get("deep_handoff", False)) else 6,
     )
     system_prompt = _build_protected_foreground_system_prompt(user_message, lane=lane)
@@ -19895,6 +20019,32 @@ async def api_chat_delivery_status(
     return response
 
 
+async def _apply_regenerated_reply(
+    *,
+    exchange_id: str,
+    session_id: str,
+    reply_text: str,
+) -> bool:
+    """Replace exactly the exchange selected before model execution."""
+
+    async with _get_convo_lock():
+        target_exchange = next(
+            (
+                entry
+                for entry in _conversation_log
+                if str(entry.get("id") or "") == str(exchange_id or "")
+                and str(entry.get("session_id") or "")[:64]
+                == str(session_id or "")[:64]
+            ),
+            None,
+        )
+        if target_exchange is None:
+            return False
+        target_exchange["aura"] = reply_text or "…"
+        target_exchange["regenerated"] = True
+        return True
+
+
 @router.post("/chat/regenerate")
 @_paired_chat_response_boundary
 async def api_chat_regenerate(
@@ -19908,16 +20058,51 @@ async def api_chat_regenerate(
     desktop_requires_cognitive_engine, request_surface = _request_requires_cognitive_engine(request)
     foreground_timeout = _foreground_timeout_for_lane(_collect_conversation_lane_status())
     try:
-        async with _get_convo_lock():
-            if not _conversation_log:
-                return JSONResponse({"error": "no_history", "message": "No conversation to regenerate."}, status_code=400)
-            last_exchange = next(
-                (
-                    entry for entry in reversed(_conversation_log)
-                    if str(entry.get("status") or "complete").strip().lower() != "pending"
-                ),
-                _conversation_log[-1],
+        requested_session_id = str(
+            (getattr(request, "headers", None) or {}).get("X-Aura-Session-ID") or ""
+        ).strip()
+        if len(requested_session_id) > 64:
+            return JSONResponse(
+                {
+                    "error": "invalid_session_id",
+                    "message": "The conversation session identifier is too long.",
+                },
+                status_code=400,
             )
+        async with _get_convo_lock():
+            completed_exchanges = [
+                entry
+                for entry in _conversation_log
+                if str(entry.get("status") or "complete").strip().lower()
+                != "pending"
+            ]
+            if requested_session_id:
+                completed_exchanges = [
+                    entry
+                    for entry in completed_exchanges
+                    if str(entry.get("session_id") or "")[:64]
+                    == requested_session_id
+                ]
+            else:
+                active_sessions = {
+                    str(entry.get("session_id") or "")[:64]
+                    for entry in completed_exchanges
+                }
+                if len(active_sessions) > 1:
+                    return JSONResponse(
+                        {
+                            "error": "ambiguous_session",
+                            "message": (
+                                "More than one conversation is active; identify the "
+                                "session to regenerate with X-Aura-Session-ID."
+                            ),
+                        },
+                        status_code=409,
+                    )
+            if not completed_exchanges:
+                return JSONResponse({"error": "no_history", "message": "No conversation to regenerate."}, status_code=400)
+            last_exchange = completed_exchanges[-1]
+            regen_exchange_id = str(last_exchange.get("id") or "")
             user_msg = last_exchange["user"]
             regen_session_id = str(last_exchange.get("session_id") or "")[:64]
 
@@ -20136,10 +20321,22 @@ async def api_chat_regenerate(
                 )
             response_data["live_turn_contract"] = final_regen_contract
 
-        async with _get_convo_lock():
-            if _conversation_log:
-                _conversation_log[-1]["aura"] = reply_text or "…"
-                _conversation_log[-1]["regenerated"] = True
+        if not await _apply_regenerated_reply(
+            exchange_id=regen_exchange_id,
+            session_id=regen_session_id,
+            reply_text=str(reply_text or ""),
+        ):
+            return JSONResponse(
+                {
+                    "error": "regeneration_target_changed",
+                    "message": (
+                        "The conversation changed while regeneration was running; "
+                        "the new reply was not applied."
+                    ),
+                    "regenerated": False,
+                },
+                status_code=409,
+            )
 
         return JSONResponse(response_data)
     except TimeoutError:
@@ -20266,8 +20463,23 @@ async def api_chat(
     """
     from core.conversation.failure_context import bind_failure_ledger
 
-    with bind_failure_ledger():
-        return await _api_chat_turn(body, request)
+    request_profile = request_access_profile(request)
+    request_session = _chat_turn_session_key(request, body)
+    request_principal = _chat_delivery_principal(
+        request,
+        _authenticated_chat_principal(request),
+        request_session,
+    )
+    principal_token = _CHAT_REQUEST_PRINCIPAL.set(request_principal)
+    surface_token = _CHAT_REQUEST_SURFACE.set(
+        str(request_profile.get("surface") or "").strip().casefold()[:32]
+    )
+    try:
+        with bind_failure_ledger():
+            return await _api_chat_turn(body, request)
+    finally:
+        _CHAT_REQUEST_SURFACE.reset(surface_token)
+        _CHAT_REQUEST_PRINCIPAL.reset(principal_token)
 
 
 async def _api_chat_turn(body: ChatRequest, request: Request):
@@ -21838,6 +22050,7 @@ async def _api_chat_turn(body: ChatRequest, request: Request):
                 body.message,
                 lane=dict(lane or {}),
                 route=route,
+                session_id=_chat_session_id,
             )
             logger.warning(
                 "⚡ Protected foreground lane engaged (%s, tier=%s, budget=%.0fs).",

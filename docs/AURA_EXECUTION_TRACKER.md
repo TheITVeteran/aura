@@ -38114,10 +38114,10 @@ A first-to-last semantic review covered all `24,854` current lines of
 `interface/routes/chat.py`. It found no P0 issue and opened these exact tasks;
 review coverage is not remediation and none is closed by the review receipt:
 
-- **P1:** principal-bind durable memory pins before paired cross-session recall.
-- **P1:** session/principal-filter protected recovery history before it reaches a model prompt.
+- **P1 CLOSED CP011:** principal-bind durable memory pins before paired cross-session recall.
+- **P1 CLOSED CP011:** session-filter protected recovery history before it reaches a model prompt.
 - **P1:** cancel or generation-fence stale turn holders when a chat lock is preempted.
-- **P1:** make regenerate select and update one session-bound exchange by immutable ID.
+- **P1 CLOSED CP011:** make regenerate select and update one session-bound exchange by immutable ID.
 - **P1:** verify every requested desktop/research predicate, including source count,
   recency, actual reading, synthesis, independent opinion, format, and location.
 - **P1:** fail closed when defensive-ingress or conscience pre-gates are unavailable.
@@ -38141,3 +38141,37 @@ effect migrations, the active-code and exhaustive semantic campaigns, live
 proof, fusion admission, release certification, and deferred endurance work
 remain open. No gain, frontier, activation, fusion, release, or `WOW Signal`
 claim is made.
+
+## Checkpoint 2026-08-08-011: Conversation State Belongs to One Principal and Session
+
+Explicit memory pins now carry authenticated principal and surface identity in
+the in-process record, durable JSONL ledger, and canonical memory metadata.
+Cross-session restart recall is available only to an authenticated owner and
+never drops a principal binding to accommodate a legacy writer. A paired
+device keeps continuity through its stable device session, but cannot request
+another principal's durable pin by adding restart wording. Legacy unbound pins
+remain owner-readable for migration compatibility; they are not exposed to a
+paired surface.
+
+Protected foreground recovery now selects completed history from the exact
+chat session instead of the process-global transcript. Regeneration similarly
+requires an explicit session when more than one is active, captures the
+selected immutable exchange ID before model execution, and applies the result
+only if that same `{session_id, exchange_id}` still exists. A concurrent newer
+turn can no longer receive an older turn's regenerated answer.
+
+Adversarial regressions prove owner-versus-paired restart isolation, the exact
+content-recall path that previously forced cross-session access, session-bound
+protected history, ambiguous-session refusal, and concurrent regeneration
+targeting. The relevant focused slice passes `20/20`; the complete conversation
+and desktop-intent suites pass `318/318`; canonical smoke passes `103/103`;
+compile, curated Ruff, diff hygiene, and governance lint pass. Governance
+ownership remains at `2,215` recognized calls in `2,066` buckets with `1,948`
+pre-existing migration-debt calls; this checkpoint adds no ownership debt.
+This closes three items from the current chat semantic remediation queue. It
+does not close the stale-holder preemption, semantic desktop completion,
+defensive fail-closed, event-loop, per-session quality state, durable transcript
+reconstruction, at-rest encryption, or measured-capability items. The resident
+complete-engine experiment and every downstream gain, fusion, activation,
+release, endurance, frontier, and `WOW Signal` claim remain open pending their
+independent evidence.
