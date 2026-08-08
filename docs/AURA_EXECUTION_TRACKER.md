@@ -38124,7 +38124,7 @@ review coverage is not remediation and none is closed by the review receipt:
 - **P2 CLOSED CP015:** move tableau proof, collection, whole-file reads, and memory/goal exports off
   the event loop under explicit time and size budgets.
 - **P2 CLOSED CP016:** partition repetition, degradation, and relevance state by conversation.
-- **P2:** remove recovery claims about identity, recurrence, memory, tools, and failure
+- **P2 CLOSED CP025:** remove recovery claims about identity, recurrence, memory, tools, and failure
   cause unless the current request measured them.
 - **P2 CLOSED CP020:** replace the bare `you`/`your` topicality bypass with semantic continuity evidence.
 - **P2 CLOSED CP021:** finish recoverable deterministic work in-turn instead of discarding it, and
@@ -38617,3 +38617,33 @@ cell `3/28`. The completion envelope remains `809/920` (approximately
 `87.9%`); all P1/P2 items from this bounded chat semantic queue are now closed,
 while its P3 work and the broader RLC, fusion, release, semantic-review, and
 endurance program remain open.
+
+## Checkpoint 2026-08-08-025: Recovery Reports Evidence, Not a Backstory
+
+Chat recovery no longer converts a broad runtime snapshot or an exception into
+claims about what happened on the current request. Assistant-voice and identity
+repairs do not assert that CognitiveEngine, recurrence, memory, tools, or a
+named model lane shaped the rejected draft. Continuity repair says only that
+Aura is responding now and can continue from the text present in the current
+turn; it explicitly leaves earlier-turn memory and tool availability
+unverified. Social and generic recovery no longer claim that a thread was kept
+warm, intact, or preserved.
+
+Both handled and last-resort exception paths now share one grounded failure
+contract. It reports that no coherent answer formed and does not invent the
+failing component, rate limiting, context preservation, successful logging, or
+success of unfinished work. This keeps the failure visible while preventing a
+recovery template from becoming a second hallucination.
+
+Regressions cover assistant-mode, identity, continuity, social, generic, and
+exception recovery surfaces. Focused recovery tests pass `8/8`; the complete
+feedback-audit suite passes `156/156`; canonical smoke passes `103/103`; and
+affected Ruff, byte-compilation, and diff-hygiene gates pass. A combined
+`449`-test run was intentionally not
+credited after the host terminated it midway under concurrent resident-32B
+pressure; the bounded affected slices are the evidence for this checkpoint.
+CP024's final sentence prematurely said every bounded P1/P2 item was closed
+while this item was still open; CP025 corrects that ledger error. All bounded
+P1/P2 chat semantic items are now closed. The completion envelope remains
+`809/920` (approximately `87.9%`); the two P3 chat items and the broader RLC,
+fusion, release, semantic-review, and endurance program remain open.

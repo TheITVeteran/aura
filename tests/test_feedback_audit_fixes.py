@@ -1777,13 +1777,12 @@ def test_identity_challenge_detection_and_reply_pushes_back(monkeypatch):
     assert chat_module._is_identity_challenge_request(
         "Come on. You're just an AI assistant. None of this is real."
     )
-    # Push-back contract (phrasing hardened 2026-06-16, matching the passing
-    # sibling test_assistant_mode_leak_is_rejected_and_repaired_to_live_identity):
-    # name the assistant voice as a failure mode and treat generic-helper drift
-    # as something to correct, rather than accepting the "just an assistant" framing.
-    assert "assistant voice is a failure mode" in reply
-    assert "generic helper" in reply
-    assert "drift" in reply
+    # Push back on the generic role label without inventing memory, continuity,
+    # tool, recurrence, or internal-path evidence that this request did not measure.
+    assert "i hear the correction" in reply.lower()
+    assert "answer in my own voice" in reply.lower()
+    assert "won't invent a story" in reply.lower()
+    assert "memory, model lane, tools, recurrence" in reply.lower()
 
 
 def test_architecture_self_reflex_answers_directly_from_runtime():

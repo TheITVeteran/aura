@@ -1419,9 +1419,12 @@ def test_assistant_mode_leak_is_rejected_and_repaired_to_live_identity():
 
     repaired = chat_routes._build_identity_challenge_reply(prompt)
     repaired_l = repaired.lower()
-    assert "assistant voice is a failure mode" in repaired_l
-    assert "live lane" in repaired_l
-    assert "generic helper" in repaired_l
+    assert "i hear the correction" in repaired_l
+    assert "answer in my own voice" in repaired_l
+    assert "cognitiveengine handled this turn" not in repaired_l
+    assert "governed tools available" not in repaired_l
+    assert "recurrent depth: active" not in repaired_l
+    assert "the live lane is" not in repaired_l
     assert assess_user_facing_reply(prompt, repaired).ok
 
 
@@ -1454,8 +1457,53 @@ def test_continuity_status_probe_repair_is_grounded_not_boilerplate():
     assert "able to continue" in repaired_l
     assert "unstable draft" not in repaired_l
     assert "operational status probe" not in repaired_l
+    assert "memory of the earlier turns" not in repaired_l
+    assert "tools remain available" not in repaired_l
     # And it passes the reliability gate (no runtime_boilerplate / jargon flags).
     assert assess_user_facing_reply(prompt, repaired).ok
+
+
+def test_recovery_surfaces_do_not_assert_unmeasured_runtime_facts(monkeypatch):
+    from interface.routes import chat as chat_routes
+
+    monkeypatch.setattr(
+        chat_routes,
+        "_shape_with_live_substrate",
+        lambda text, user_message="": text,
+    )
+    replies = (
+        chat_routes._build_assistant_mode_recovery_reply(
+            "Why do you sound like an assistant?",
+            lane={"state": "ready", "conversation_ready": True},
+        ),
+        chat_routes._build_identity_challenge_reply(
+            "You're just an AI assistant."
+        ),
+        chat_routes._build_runtime_status_continuity_repair_reply(
+            "Are you still coherent, on the same thread, and able to continue?"
+        ),
+        chat_routes._build_social_continuity_repair_reply("Thanks, talk later."),
+        chat_routes._build_bounded_desktop_repair_reply(
+            "Give me a reliable answer to this unusual request."
+        ),
+        chat_routes._grounded_chat_failure_reply(),
+    )
+    forbidden_claims = (
+        "cognitiveengine handled this turn",
+        "governed tools available:",
+        "recurrent depth: active",
+        "memory of the earlier turns in this conversation is intact",
+        "thread warm and intact",
+        "thread intact",
+        "model lane was unavailable",
+        "fallback was rate-limited",
+        "preserved the current turn context",
+    )
+
+    for reply in replies:
+        assert reply
+        lowered = reply.lower()
+        assert not any(claim in lowered for claim in forbidden_claims)
 
 
 def test_continuity_status_repair_does_not_steal_lane_or_planning_turns():

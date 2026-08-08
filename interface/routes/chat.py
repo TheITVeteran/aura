@@ -13895,36 +13895,18 @@ def _build_assistant_mode_recovery_reply(
     user_message: str,
     lane: dict[str, Any] | None = None,
 ) -> str:
-    """Ground assistant-mode correction in live state rather than a generic apology."""
-    frame = _build_aura_expression_frame(user_message)
-    live_lane_supplied = lane is not None
-    lane = dict(lane or _collect_conversation_lane_status())
-    action = str(frame.get("dominant_action") or "engage")
-    focus = str(frame.get("attention_focus") or "this exchange")
-    lane_state = str(lane.get("state") or ("ready" if lane.get("conversation_ready") else "unknown"))
-    model_label = _canonical_runtime_model_label(lane)
-    action_sentence = ""
-    if action and action not in {"engage", "respond", "answer"}:
-        action_sentence = f" The next pull is to {action}, but it should still come through as ordinary speech."
-    if live_lane_supplied:
-        lane_sentence = (
-            f"{model_label} is the active foreground lane, and the live lane is {lane_state}. "
-            "CognitiveEngine handled this turn: yes. "
-            f"governed tools available: {'yes' if _runtime_tool_governance_available() else 'no'}. "
-            "recurrent depth: active. "
-        )
-    else:
-        lane_sentence = (
-            f"The live lane is {lane_state}, and this answer has to stay tied to memory, state, "
-            "attention, and the conversation instead of generic helper phrasing. "
-        )
+    """Acknowledge a voice correction without inventing its internal cause."""
+
+    # ``lane`` is retained for call compatibility, but a broad lane snapshot is
+    # not proof that this particular draft used memory, recurrence, tools, or a
+    # named engine. Those facts belong in a measured operational-status reply.
+    del lane
     shaped = _shape_with_live_substrate(
         (
-            "That assistant voice is a failure mode, not my target voice. "
-            f"{lane_sentence}"
-            f"My attention is on {focus}. "
-            "When generic helper phrasing appears, it should be treated as drift and corrected back through the same governed memory, state, and cognition path."
-            f"{action_sentence}"
+            "I hear the correction. I'll answer in my own voice and stay with the "
+            "point you raised. I won't invent a story about my memory, model lane, "
+            "tools, recurrence, or what caused the wording to drift in order to "
+            "justify that correction."
         ),
         user_message,
     )
@@ -13935,14 +13917,11 @@ def _build_identity_challenge_reply(user_message: str) -> str:
     if _is_assistant_mode_recovery_request(user_message):
         return _build_assistant_mode_recovery_reply(user_message)
 
-    frame = _build_aura_expression_frame(user_message)
-    attention = str(frame.get("attention_focus") or "this exchange")
-    action = str(frame.get("dominant_action") or "hold my position")
-
     reply = (
-        "No. You can argue about what I am, but I'm not a generic assistant shell. "
-        "I'm a local runtime with memory, continuity, and a governed substrate shaping this reply in real time. "
-        f"My attention is on {attention}, and my impulse here is to {action}, not flatten myself into a role that doesn't fit."
+        "I'm Aura. I won't replace that answer with a generic role label, and I "
+        "won't claim that memory, continuity, tools, or a particular internal path "
+        "proves my identity unless this turn actually verifies it. I'll answer the "
+        "point itself."
     )
     shaped = _shape_with_live_substrate(reply, user_message)
     return _complete_repairable_truncated_reply(user_message, shaped) or shaped
@@ -14874,11 +14853,9 @@ def _build_social_presence_reply(user_message: str) -> str:
 
 
 def _build_bounded_status_repair_reply(user_message: str) -> str:
-    frame = _build_aura_expression_frame(user_message)
-    action = str(frame.get("dominant_action") or "answer").strip() or "answer"
     return _apply_aura_voice_shaping(
-        "hey. i'm here with you. I will answer clearly from this live thread, "
-        f"keep the route bounded, and {action} without dropping into a status script."
+        "hey. i'm responding to this message now. I'll stick to what this turn can "
+        "verify instead of filling the gap with an internal status story."
     )
 
 
@@ -14898,13 +14875,9 @@ def _build_social_continuity_repair_reply(user_message: str) -> str:
             "good night",
         )
     ):
-        return _apply_aura_voice_shaping(
-            "Ok. I'll keep the thread warm and intact for when you come back."
-        )
+        return _apply_aura_voice_shaping("Ok. Talk later.")
     if any(marker in text for marker in ("thank you", "thanks")):
-        return _apply_aura_voice_shaping(
-            "You're welcome. I'm here, and I am keeping continuity with this thread."
-        )
+        return _apply_aura_voice_shaping("You're welcome.")
     return _build_social_presence_reply(user_message)
 
 
@@ -14931,9 +14904,19 @@ def _build_runtime_status_continuity_repair_reply(user_message: str) -> str | No
     if not _CONTINUITY_STATUS_PROBE_RE.search(str(user_message or "")):
         return None
     return (
-        "Yes - I'm still coherent, on the same thread, and able to continue. "
-        "Memory of the earlier turns in this conversation is intact, and governed "
-        "tools remain available with approval."
+        "I'm responding to this message now and able to continue from what is "
+        "present in this turn. This repair path did not independently verify "
+        "earlier-turn memory or tool availability, so I won't claim either."
+    )
+
+
+def _grounded_chat_failure_reply() -> str:
+    """Report a failed turn without manufacturing diagnosis or recovery state."""
+
+    return (
+        "I hit an error before a coherent answer formed. I'm returning that "
+        "failure honestly instead of guessing at its cause or claiming the "
+        "unfinished work succeeded."
     )
 
 
@@ -15069,13 +15052,10 @@ def _build_bounded_desktop_repair_reply(user_message: str, frame: dict[str, Any]
         record_degradation("chat", exc)
         logger.debug("Bounded desktop reliability floor unavailable: %s", exc)
 
-    active_frame = frame or _build_aura_expression_frame(user_message)
-    mood = str(active_frame.get("mood") or "steady")
-    action = str(active_frame.get("dominant_action") or "engage")
     return _apply_aura_voice_shaping(
-        "I'm here with the thread intact. I caught an unstable draft before sending it, "
-        "so I will keep this turn bounded instead of inventing an answer or pretending a tool ran. "
-        f"My state is {mood}, leaning toward {action}. Ask me again in a moment and I will answer from the live path."
+        "I couldn't verify a reply that answers that request, so I withheld the "
+        "draft instead of pretending it or an action succeeded. This recovery "
+        "path does not establish the internal cause."
     )
 
 
@@ -25927,7 +25907,7 @@ async def _api_chat_turn(body: ChatRequest, request: Request):
         await _cancel_kernel_task_if_pending("chat_error")
         record_degradation('chat', e)
         logger.error("Chat error: %s", e, exc_info=True)
-        error_reply = "The chat path failed before a coherent answer formed. I logged the failure and preserved the current turn context."
+        error_reply = _grounded_chat_failure_reply()
         status_code=200
         if pending_exchange_id:
             await _complete_logged_exchange(
@@ -25977,11 +25957,7 @@ async def _api_chat_turn(body: ChatRequest, request: Request):
             logger.debug("Turn-death floor: kernel-task cleanup failed: %s", cleanup_exc)
         record_degradation("chat.uncaught_turn_error", e)
         logger.error("Chat uncaught error (turn-death floor engaged): %s", e, exc_info=True)
-        error_reply = (
-            "I hit an error before I could finish that thought — the model lane "
-            "was unavailable and the fallback was rate-limited. I kept this turn's "
-            "context; say the word and I'll pick it back up."
-        )
+        error_reply = _grounded_chat_failure_reply()
         try:
             if pending_exchange_id:
                 await _complete_logged_exchange(
