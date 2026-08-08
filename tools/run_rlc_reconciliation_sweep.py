@@ -380,10 +380,16 @@ def _build_config(
         # checkable. Zero refutations means zero repair requests means zero
         # promotion candidates, whatever else is fixed upstream.
         #
-        # The probe budget is therefore tied to the decode budget: a candidate
-        # is judged on the same object that would be served. The ceiling is
-        # 512, which is also this battery's decode budget.
-        verifier_probe_max_tokens=min(512, max_tokens) if full else 48,
+        # The probe budget is therefore sized to decompose, not to reproduce.
+        # At 48 tokens a 1500-character answer yielded ONE atom -- a preamble
+        # with nothing checkable. At the full 512 it yielded 19 atoms and found
+        # the refutation, but cost 394-591s per cell against a 150s budget,
+        # because every branch pays it on every episode. Half the decode budget
+        # keeps roughly ten atoms -- an order of magnitude more checkable
+        # surface than the failure mode, and far past the one atom that made
+        # routing impossible -- at half the price. Verification needs enough of
+        # the answer to find a claim, not all of it.
+        verifier_probe_max_tokens=max(48, min(256, max_tokens // 2)) if full else 48,
         decode_contract="none" if full else decode_contract,
         decode_contract_grace_tokens=(
             0 if full else (320 if decode_contract != "none" else 0)
