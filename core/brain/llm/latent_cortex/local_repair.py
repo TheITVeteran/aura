@@ -563,6 +563,54 @@ def _validate_generation_context(value: Any) -> dict[str, Any]:
     return dict(value)
 
 
+def _unrelated_work_unchanged(
+    decomposition: Mapping[str, Any],
+    request: Mapping[str, Any],
+) -> bool:
+    """Later independent work still appears, unchanged and in order.
+
+    Identified by CONTENT past the failure, not by index. Atoms before the
+    failure keep their ordinals because the prefix is byte-identical; atoms
+    after it do not, because the replacement span may decompose into a
+    different number of atoms than the text it replaced. Comparing those by
+    ordinal turned a perfectly preserved sentence into a violation -- measured
+    on the 32B with failed_ordinal 15, atom 16 was spliced back verbatim and
+    still rejected because it had moved to index 17.
+
+    This lives in one place because it did not: the builder and the receipt
+    validator each carried a copy, so changing one produced "local repair
+    admission differs from reconstruction" and killed the episode outright.
+    """
+    ordinal = int(request["failed_atom_ordinal"])
+    observed = decomposition["atoms"]
+    trailing: list[Mapping[str, Any]] = []
+    for preserved in request["preserved_unrelated_atoms"]:
+        index = int(preserved["ordinal"])
+        if index > ordinal:
+            trailing.append(preserved)
+            continue
+        if index >= len(observed) or {
+            "ordinal": index,
+            "atom_id": observed[index]["atom_id"],
+            "kind": observed[index]["kind"],
+            "text_sha256": observed[index]["text_sha256"],
+            "dependency_cues": list(observed[index]["dependency_cues"]),
+        } != preserved:
+            return False
+    cursor = 0
+    observed_tail = observed[ordinal:]
+    for preserved in trailing:
+        while (
+            cursor < len(observed_tail)
+            and observed_tail[cursor]["text_sha256"] != preserved["text_sha256"]
+        ):
+            cursor += 1
+        if cursor >= len(observed_tail):
+            return False
+        cursor += 1
+    return True
+
+
 def _admitted_transaction(
     *,
     request: Mapping[str, Any],
@@ -590,54 +638,7 @@ def _admitted_transaction(
     ]
     prefix_unchanged = observed_prefix == request["preserved_prefix_atoms"]
     ordinal = int(request["failed_atom_ordinal"])
-
-    # Preserved work is identified by CONTENT, not by index.
-    #
-    # Atoms before the failure keep their ordinals, because the prefix is
-    # byte-identical. Atoms after it do not: the replacement span may
-    # decompose into a different number of atoms than the text it replaced, so
-    # everything downstream shifts. Comparing those by ordinal turned a
-    # perfectly preserved sentence into a violation -- measured on the 32B
-    # with failed_ordinal 15, atom 16 was spliced back verbatim and still
-    # rejected unrelated_atom_changed.
-    #
-    # What the guarantee actually means is that later independent work still
-    # appears, unchanged and in the same relative order. That is what is
-    # checked, and it is strictly stronger than the ordinal test for atoms
-    # before the failure, which keep the exact-index comparison.
-    observed = decomposition["atoms"]
-    unrelated_unchanged = True
-    trailing_expected = [
-        preserved
-        for preserved in request["preserved_unrelated_atoms"]
-        if int(preserved["ordinal"]) > ordinal
-    ]
-    for preserved in request["preserved_unrelated_atoms"]:
-        if int(preserved["ordinal"]) > ordinal:
-            continue
-        index = int(preserved["ordinal"])
-        if index >= len(observed) or {
-            "ordinal": index,
-            "atom_id": observed[index]["atom_id"],
-            "kind": observed[index]["kind"],
-            "text_sha256": observed[index]["text_sha256"],
-            "dependency_cues": list(observed[index]["dependency_cues"]),
-        } != preserved:
-            unrelated_unchanged = False
-            break
-    if unrelated_unchanged and trailing_expected:
-        cursor = 0
-        observed_tail = observed[ordinal:]
-        for preserved in trailing_expected:
-            while (
-                cursor < len(observed_tail)
-                and observed_tail[cursor]["text_sha256"] != preserved["text_sha256"]
-            ):
-                cursor += 1
-            if cursor >= len(observed_tail):
-                unrelated_unchanged = False
-                break
-            cursor += 1
+    unrelated_unchanged = _unrelated_work_unchanged(decomposition, request)
     replacement_route = route["routes"][ordinal] if ordinal < len(route["routes"]) else None
     failed_verifier_rechecked = bool(
         replacement_route
@@ -961,26 +962,7 @@ def validate_local_repair_receipt(
             for atom in decomposition["atoms"][:prefix_count]
         ]
         prefix_unchanged = observed_prefix == request["preserved_prefix_atoms"]
-        unrelated_unchanged = all(
-            preserved["ordinal"] < len(decomposition["atoms"])
-            and {
-                "ordinal": preserved["ordinal"],
-                "atom_id": decomposition["atoms"][preserved["ordinal"]][
-                    "atom_id"
-                ],
-                "kind": decomposition["atoms"][preserved["ordinal"]]["kind"],
-                "text_sha256": decomposition["atoms"][preserved["ordinal"]][
-                    "text_sha256"
-                ],
-                "dependency_cues": list(
-                    decomposition["atoms"][preserved["ordinal"]][
-                        "dependency_cues"
-                    ]
-                ),
-            }
-            == preserved
-            for preserved in request["preserved_unrelated_atoms"]
-        )
+        unrelated_unchanged = _unrelated_work_unchanged(decomposition, request)
         ordinal = int(request["failed_atom_ordinal"])
         replacement_route = (
             routes["routes"][ordinal] if ordinal < len(routes["routes"]) else None
