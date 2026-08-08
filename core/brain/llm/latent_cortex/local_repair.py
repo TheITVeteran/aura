@@ -547,7 +547,12 @@ def _validate_generation_context(value: Any) -> dict[str, Any]:
         _SHA256_RE.fullmatch(str(value["prompt_sha256"])) is None
         or type(value["generated_token_count"]) is not int
         or not 1 <= value["generated_token_count"] <= MAX_REPAIR_GENERATION_TOKENS
-        or value["termination"] != "contract_complete"
+        # Repair generation has its own REPLACEMENT_SUFFIX parser and does not
+        # use the unrelated FINAL_ANSWER stop contract. EOS and bounded token
+        # limits are admissible only after parse_local_repair_generation has
+        # accepted the generated suffix.
+        or value["termination"]
+        not in {"eos", "token_limit", "token_limit_sentence_grace"}
         or not isinstance(initial, list)
         or not initial
         or len(initial) > 256
@@ -663,7 +668,6 @@ def _admitted_transaction(
         for atom in decomposition["atoms"][:prefix_count]
     ]
     prefix_unchanged = observed_prefix == request["preserved_prefix_atoms"]
-    ordinal = int(request["failed_atom_ordinal"])
     unrelated_unchanged = _unrelated_work_unchanged(decomposition, request)
     failed_verifier_rechecked, failed_verifier_passed = _failed_verifier_recheck(
         route, request
@@ -984,7 +988,6 @@ def validate_local_repair_receipt(
         ]
         prefix_unchanged = observed_prefix == request["preserved_prefix_atoms"]
         unrelated_unchanged = _unrelated_work_unchanged(decomposition, request)
-        ordinal = int(request["failed_atom_ordinal"])
         rechecked, passed = _failed_verifier_recheck(routes, request)
         no_refutations = not any(
             row["verifier"] in _EXACT_VERIFIERS and row["outcome"] == "refuted"

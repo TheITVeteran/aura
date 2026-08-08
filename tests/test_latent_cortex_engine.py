@@ -531,15 +531,12 @@ def test_exact_refutation_repair_replaces_only_after_confidence_bound_authority(
     def fresh(prompt: str, *_args, **_kwargs):
         assert "PRESERVED_PREFIX_CHARS:" in prompt
         return {
-            "text": (
-                'FINAL_ANSWER: {"replacement_suffix":'
-                '"2 + 2 = 4."}'
-            ),
+            "text": "REPLACEMENT_SUFFIX: 2 + 2 = 4.",
             "context": {
                 "schema": "aura.rlc.fresh_verifier_context.v1",
                 "prompt_token_count": 1,
                 "generated_token_count": 16,
-                "termination": "contract_complete",
+                "termination": "eos",
                 "initial_cache_offsets": [0] * N_LAYERS,
                 "final_cache_offsets": [16] * N_LAYERS,
                 "all_initial_offsets_zero": True,

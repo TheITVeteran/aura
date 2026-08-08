@@ -1,32 +1,23 @@
 #!/usr/bin/env python
-"""Frozen-checkpoint execution-spec sweep for the Recursive Latent Cortex.
+"""Frozen-checkpoint complete-engine sweep for the Recursive Latent Cortex.
 
-The 2026-08-06 directional campaign scored base vanilla 13/28 and base RLC
-5/28 on the same frozen weights. That eight-point deficit exists before any
-optimizer runs, so no adapter can be evaluated honestly until it is explained.
-Two candidate causes were identified from the retained journal, and they are
-separable only by execution, not by more analysis:
+The earlier directional campaigns measured a recurrence mechanism in
+isolation and repeatedly described the result as a property of the RLC. That
+was the wrong experimental object. The architecture's claim is the integrated
+system: persistent workspace, independent branches, controlled recurrence,
+latent optimization, temporary fast weights, verifier-guided local repair,
+adaptive compute, and evidence-bound answer promotion.
 
-  1. Terminal-disposition language. Every recurrent episode injected a block
-     ahead of the answer decode. On 24 of 28 tasks that block read "give only
-     the best bounded answer ... disclose the unresolved part" -- an
-     instruction to answer partially, delivered to the recurrent arms while
-     the vanilla control received nothing at all.
-  2. The recurrent rewrite itself perturbing the residual stream.
+This sweep measures that complete engine against two retained controls:
+ordinary greedy decode and an equal-compute textual self-consistency control.
+Ordinary decode remains the per-task incumbent, so an unpromoted full-stack
+answer must be byte-identical to it. Diagnostic ablations can explain a result
+but can never win the experiment. The sweep performs no optimizer update and
+awards no reasoning, fusion, frontier, or production claim by itself.
 
-This sweep crosses those two factors on frozen weights. It performs no
-optimizer update and awards no claim. It answers one question: can the
-recurrent execution path reach parity with an ordinary decode on this
-checkpoint? Until it can, training against that path is training into a hole.
-
-A third candidate cause surfaced from the sweep's own first cells and is
-crossed here too: the control is completion-limited. At the campaign's decode
-budget the ordinary decode emitted a terminal FINAL_ANSWER on 43% of tasks
-against 96% for an arm instructed to answer briefly, so part of the deficit
-may be a token budget rather than a reasoning result.
-
-All seven arms share one model load -- they differ only in configuration --
-which is what makes the whole sweep affordable.
+Every cell is bound to the exact model, task commitment, decode configuration,
+adapter, and implementation source. A partial, stale, mixed-source, or
+runtime-unmeasured battery is inconclusive rather than a negative result.
 """
 from __future__ import annotations
 
@@ -44,6 +35,7 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO_ROOT))
 
 SWEEP_SCHEMA = "aura.rlc_reconciliation_sweep.v1"
+EVIDENCE_MANIFEST_SCHEMA = "aura.rlc.reconciliation_evidence_manifest.v1"
 
 # (name, recurrent steps or None for ordinary decode, terminal-instruction
 # policy, decode token budget or None for the campaign default).
@@ -89,19 +81,45 @@ ARMS: tuple[Arm, ...] = (
     # Compute-matched control: the full stack measured 164s against vanilla's
     # 63s on the 32B, so three independent samples sit at the same price.
     Arm("vanilla_equal_compute", None, "applied", None, "ordinary_best_of_3"),
-    Arm("full_stack", 8, "applied", None, "full"),
-    # The one divergence from ordinary decode that survives vanilla_incumbent:
-    # bridge tokens, including the 27-token terminal disposition, are still
-    # prepended to the answer decode. The deployed system does this, so the
-    # product arm must too -- but it means the honest floor is "vanilla plus
-    # disposition", not "vanilla". Crossing it here costs one arm; discovering
-    # it after a negative result costs the whole battery again.
-    Arm("full_stack_nodisp", 8, "suppressed", None, "full"),
-    Arm("full_stack_oracle", 8, "applied", None, "full_oracle"),
+    # The product answer starts from the same clean prompt root as vanilla.
+    # Terminal-disposition text changes the decode before any evidence gate and
+    # therefore cannot coexist with a byte-identical incumbent guarantee.
+    Arm("full_stack", 8, "suppressed", None, "full"),
+    Arm("full_stack_disposition", 8, "applied", None, "full"),
+    Arm("full_stack_oracle", 8, "suppressed", None, "full_oracle"),
     # Ablations, meaningful only underneath the full arm.
     Arm("rlc_mechanism", 4, "suppressed", None, "mechanism"),
     Arm("vanilla_long", None, "applied", 1024, "ordinary"),
 )
+
+CONTROL_ARM_NAMES: Final[tuple[str, ...]] = ("vanilla", "vanilla_equal_compute")
+CLAIM_ARM_NAMES: Final[frozenset[str]] = frozenset({"full_stack"})
+DIAGNOSTIC_ARM_NAMES: Final[frozenset[str]] = frozenset(
+    {"full_stack_disposition", "full_stack_oracle", "rlc_mechanism", "vanilla_long"}
+)
+RUNTIME_STACK_ARM_NAMES: Final[frozenset[str]] = frozenset(
+    arm.name for arm in ARMS if arm.profile in {"full", "full_oracle"}
+)
+
+
+def _expand_requested_arms(requested_names: set[str]) -> list[Arm]:
+    """Return an executable experiment, never a treatment without controls.
+
+    A subset restart used to write a manifest containing only ``full_stack``.
+    That made the 56 exact baseline cells already in the journal invisible to
+    grading, and a fresh directory would have run no controls at all. Any
+    request that measures a non-control arm now brings both preregistered
+    controls with it. Exact matching journal cells are skipped normally.
+    """
+
+    by_name = {arm.name: arm for arm in ARMS}
+    unknown = requested_names - set(by_name)
+    if unknown:
+        raise ValueError(f"unknown arms requested: {sorted(unknown)}")
+    expanded = set(requested_names)
+    if expanded - set(CONTROL_ARM_NAMES):
+        expanded.update(CONTROL_ARM_NAMES)
+    return [arm for arm in ARMS if arm.name in expanded]
 
 
 def _now() -> float:
@@ -114,6 +132,31 @@ def _atomic_write(path: Path, payload: str) -> None:
     os.replace(tmp, path)
 
 
+def _persist_runtime_receipt(
+    out_dir: Path,
+    *,
+    arm: str,
+    task_id: str,
+    receipt: dict[str, Any],
+) -> tuple[str, str]:
+    """Persist the complete public receipt outside the append-only journal."""
+
+    canonical = json.dumps(
+        receipt,
+        sort_keys=True,
+        separators=(",", ":"),
+        ensure_ascii=True,
+        allow_nan=False,
+    )
+    digest = hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+    key = hashlib.sha256(f"{arm}:{task_id}".encode()).hexdigest()
+    receipt_dir = out_dir / "runtime_receipts"
+    receipt_dir.mkdir(parents=True, exist_ok=True)
+    path = receipt_dir / f"{key}.json"
+    _atomic_write(path, json.dumps(receipt, indent=1, sort_keys=True) + "\n")
+    return str(path.relative_to(out_dir)), digest
+
+
 def _read_json(path: Path) -> dict[str, Any] | None:
     if not path.exists():
         return None
@@ -121,6 +164,31 @@ def _read_json(path: Path) -> dict[str, Any] | None:
         return json.loads(path.read_text(encoding="utf-8"))
     except (json.JSONDecodeError, OSError):
         return None
+
+
+def _implementation_manifest() -> dict[str, str]:
+    """Hash every executable source file that defines this experiment.
+
+    A git commit alone is insufficient in a shared, potentially dirty worktree.
+    The cell identity therefore commits to the bytes actually imported by the
+    RLC plus this runner/grader. Any implementation change retires old cells.
+    """
+
+    latent_root = REPO_ROOT / "core/brain/llm/latent_cortex"
+    paths = (Path(__file__).resolve(), *sorted(latent_root.glob("*.py")))
+    return {
+        str(path.relative_to(REPO_ROOT)): hashlib.sha256(path.read_bytes()).hexdigest()
+        for path in paths
+    }
+
+
+def _implementation_sha256(manifest: dict[str, str] | None = None) -> str:
+    canonical = json.dumps(
+        manifest if manifest is not None else _implementation_manifest(),
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode("utf-8")
+    return hashlib.sha256(canonical).hexdigest()
 
 
 def decode_fingerprint(
@@ -133,6 +201,7 @@ def decode_fingerprint(
     per_domain: int,
     arm: str = "",
     adapter: str = "",
+    implementation_sha256: str | None = None,
 ) -> str:
     """Identity of the decode configuration every cell in a run must share.
 
@@ -151,6 +220,9 @@ def decode_fingerprint(
             "arm": str(arm),
             "contract": "rlc_reconciliation_decode.v3",
             "episode_wall_s": float(episode_wall_s),
+            "implementation_sha256": (
+                implementation_sha256 or _implementation_sha256()
+            ),
             "max_tokens": int(max_tokens),
             "model": str(model),
             "n_slots": int(n_slots),
@@ -534,6 +606,120 @@ def _route_counts(receipt: dict[str, Any]) -> dict[str, int]:
     return totals
 
 
+def _full_stack_evidence(receipt: dict[str, Any]) -> dict[str, Any]:
+    """Compact, public proof that the named treatment actually ran its stack.
+
+    A configuration test proves only that switches were set. This summary binds
+    the runtime episode to the mechanisms that executed, including conservative
+    non-admission (which is a valid outcome) versus unavailable infrastructure
+    (which is not a measurement of that mechanism).
+    """
+
+    verifier_preflight = receipt.get("verifier_preflight") or {}
+    branch_exchange = receipt.get("branch_exchange") or {}
+    fast_weight_learning = receipt.get("fast_weight_learning") or {}
+    local_repair = receipt.get("local_repair") or {}
+    answer_replacement = receipt.get("answer_replacement") or {}
+    issues: list[str] = []
+
+    def require(condition: bool, issue: str) -> None:
+        if not condition:
+            issues.append(issue)
+
+    require(int(receipt.get("n_slots") or 0) > 0, "workspace_not_measured")
+    require(int(receipt.get("steps_taken") or 0) >= 2, "recurrence_not_executed")
+    require(int(receipt.get("n_branches") or 0) >= 2, "virtual_width_not_executed")
+    isolation = receipt.get("branch_isolation") or {}
+    require(isolation.get("certified") is True, "branch_isolation_not_certified")
+    candidates = isolation.get("candidates") or []
+    require(
+        len(candidates) == int(receipt.get("n_branches") or 0)
+        and all(isinstance(row.get("role"), str) and row["role"] for row in candidates),
+        "branch_roles_not_measured",
+    )
+    require(
+        branch_exchange.get("schema") == "aura.rlc.branch_exchange_trace.v1",
+        "branch_exchange_not_measured",
+    )
+    require(
+        verifier_preflight.get("verifier_admitted") is True,
+        "task_verifier_not_admitted",
+    )
+    require(
+        str(receipt.get("latent_opt_mode") or "") in {"gradient", "control"},
+        "latent_optimization_not_executed",
+    )
+    require(int(receipt.get("latent_opt_attempts") or 0) > 0, "latent_optimization_no_attempt")
+    require(bool(fast_weight_learning), "fast_weight_policy_not_measured")
+    require(
+        fast_weight_learning.get("disposition") != "rejected_verifier_unavailable",
+        "fast_weight_verifier_unavailable",
+    )
+    require(bool(receipt.get("value_of_computation")), "adaptive_controller_not_measured")
+    require(bool(receipt.get("cognitive_action_trace")), "cognitive_actions_not_measured")
+    require(bool(receipt.get("diagnostic_action_selection")), "diagnostics_not_measured")
+    require(bool(local_repair), "local_repair_policy_not_measured")
+    require(bool(answer_replacement), "incumbent_promotion_gate_not_measured")
+    require(receipt.get("params_unchanged") is True, "base_parameters_not_proven_unchanged")
+    if receipt.get("fast_weights_applied") is True:
+        require(receipt.get("fast_weights_erased") is True, "fast_weights_not_proven_erased")
+        require(bool(receipt.get("fast_weight_cleanup")), "fast_weight_cleanup_not_measured")
+
+    return {
+        "valid": not issues,
+        "issues": sorted(set(issues)),
+        "n_slots": int(receipt.get("n_slots") or 0),
+        "cognitive_slot_count": len(receipt.get("cognitive_slots") or []),
+        "steps_taken": int(receipt.get("steps_taken") or 0),
+        "n_branches": int(receipt.get("n_branches") or 0),
+        "exchange_count": len(branch_exchange.get("exchanges") or []),
+        "verifier_admitted": verifier_preflight.get("verifier_admitted") is True,
+        "latent_opt_mode": str(receipt.get("latent_opt_mode") or ""),
+        "latent_opt_attempts": int(receipt.get("latent_opt_attempts") or 0),
+        "latent_opt_accepted_steps": int(receipt.get("latent_opt_steps") or 0),
+        "fast_weight_disposition": str(fast_weight_learning.get("disposition") or ""),
+        "fast_weights_applied": receipt.get("fast_weights_applied") is True,
+        "fast_weights_erased": receipt.get("fast_weights_erased"),
+        "controller_decisions": len(receipt.get("cognitive_action_trace") or []),
+        "repair_requests": len(local_repair.get("requests") or []),
+        "replacement_decision": str(answer_replacement.get("decision") or ""),
+        "params_unchanged": receipt.get("params_unchanged") is True,
+    }
+
+
+def _runtime_receipt_issues(
+    out_dir: Path,
+    cell: dict[str, Any],
+) -> list[str]:
+    """Verify that a compact cell summary reconstructs from its full receipt."""
+
+    relative = cell.get("runtime_receipt_path")
+    expected_sha = cell.get("runtime_receipt_sha256")
+    if not isinstance(relative, str) or not relative:
+        return ["runtime_receipt_absent"]
+    candidate = (out_dir / relative).resolve()
+    receipt_root = (out_dir / "runtime_receipts").resolve()
+    if receipt_root not in candidate.parents or not candidate.is_file():
+        return ["runtime_receipt_path_invalid"]
+    receipt = _read_json(candidate)
+    if not isinstance(receipt, dict):
+        return ["runtime_receipt_unreadable"]
+    canonical = json.dumps(
+        receipt,
+        sort_keys=True,
+        separators=(",", ":"),
+        ensure_ascii=True,
+        allow_nan=False,
+    )
+    observed_sha = hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+    issues: list[str] = []
+    if observed_sha != expected_sha:
+        issues.append("runtime_receipt_digest_mismatch")
+    if cell.get("full_stack_evidence") != _full_stack_evidence(receipt):
+        issues.append("runtime_receipt_summary_mismatch")
+    return issues
+
+
 def _oracle_verifier(task):
     """Ground-truth scorer for the verifier ablation.
 
@@ -559,8 +745,12 @@ def _oracle_verifier(task):
     return _score
 
 
-class EpisodeFault(RuntimeError):
+class EpisodeFault(RuntimeError):  # noqa: N818 - domain term distinguishes a cell fault
     """Infrastructure failed. Never scored as a wrong answer."""
+
+    def __init__(self, message: str, *, receipt: dict[str, Any] | None = None) -> None:
+        super().__init__(message)
+        self.receipt = dict(receipt or {})
 
 
 # A model that cannot finish its answer inside the token budget has failed to
@@ -587,6 +777,78 @@ def _is_policy_failure(reason: str, termination: str) -> bool:
     return any(marker in haystack for marker in _POLICY_FAILURE_MARKERS)
 
 
+def _manifest_integrity_issues(
+    recorded: dict[str, Any] | None,
+    tasks: list[Any] | tuple[Any, ...],
+) -> list[str]:
+    """Validate the evidence envelope before any contained cell is credited."""
+
+    if recorded is None:
+        # Historical artifacts and small unit fixtures predate the envelope.
+        return []
+    if recorded.get("schema") != EVIDENCE_MANIFEST_SCHEMA:
+        return []
+
+    from core.brain.llm.latent_cortex import frontier_tasks as ft
+
+    issues: list[str] = []
+    expected_ids = [task.task_id for task in tasks]
+    recorded_ids = recorded.get("expected_task_ids")
+    if recorded_ids != expected_ids or len(set(recorded_ids or [])) != len(expected_ids):
+        issues.append("task_set_mismatch")
+
+    task_manifest = ft.build_task_manifest(tasks)
+    commitment = ft.build_task_commitment(task_manifest).commitment_sha256
+    if recorded.get("task_commitment_sha256") != commitment:
+        issues.append("task_commitment_mismatch")
+
+    required = recorded.get("required_arms")
+    requested = recorded.get("requested_arms")
+    arm_names = {arm.name for arm in ARMS}
+    if (
+        not isinstance(required, list)
+        or not required
+        or len(set(required)) != len(required)
+        or any(name not in arm_names for name in required)
+    ):
+        issues.append("required_arms_invalid")
+        required_set: set[str] = set()
+    else:
+        required_set = set(required)
+    if (
+        not isinstance(requested, list)
+        or not requested
+        or any(name not in required_set for name in requested)
+    ):
+        issues.append("requested_arms_invalid")
+    if required_set - set(CONTROL_ARM_NAMES) and not set(CONTROL_ARM_NAMES).issubset(
+        required_set
+    ):
+        issues.append("treatment_controls_missing")
+
+    fingerprints = recorded.get("decode_fingerprint")
+    arm_tokens = recorded.get("arm_max_tokens")
+    if not isinstance(fingerprints, dict) or set(fingerprints) != required_set:
+        issues.append("decode_fingerprint_arm_set_mismatch")
+    elif any(
+        not isinstance(value, str)
+        or len(value) != 64
+        or any(ch not in "0123456789abcdef" for ch in value)
+        for value in fingerprints.values()
+    ):
+        issues.append("decode_fingerprint_invalid")
+    if not isinstance(arm_tokens, dict) or set(arm_tokens) != required_set:
+        issues.append("arm_token_budget_set_mismatch")
+
+    implementation = _implementation_manifest()
+    implementation_digest = _implementation_sha256(implementation)
+    if recorded.get("implementation_files") != implementation:
+        issues.append("implementation_file_manifest_mismatch")
+    if recorded.get("implementation_sha256") != implementation_digest:
+        issues.append("implementation_identity_mismatch")
+    return sorted(set(issues))
+
+
 def _run_rlc(
     model,
     config,
@@ -611,6 +873,10 @@ def _run_rlc(
     kwargs: dict[str, Any] = {}
     if verifier is not None:
         kwargs["verifier"] = verifier
+    # The ordinary control stops at exactly max_tokens. The engine default adds
+    # a sentence-completion grace window, which made a retained incumbent longer
+    # than its supposedly identical control on truncated answers.
+    kwargs["decode_sentence_grace_tokens"] = 0
     if objective:
         # The engine derives its verification objective from prompt/messages.
         # Passing token_ids alone -- which this harness did to control the
@@ -636,7 +902,8 @@ def _run_rlc(
         if not _is_policy_failure(reason, termination):
             raise EpisodeFault(
                 f"episode produced no answer: ok={result.ok} "
-                f"reason={reason!r} termination={termination!r}"
+                f"reason={reason!r} termination={termination!r}",
+                receipt=receipt,
             )
         # A policy failure is a real observation: the arm did not answer.
         # It is graded on exactly the text it managed to emit.
@@ -644,7 +911,10 @@ def _run_rlc(
     # decode, this is not an observation of the recurrent path.
     flags = [str(flag) for flag in (receipt.get("honest_flags") or [])]
     if any("fallback" in flag or "vanilla" in flag for flag in flags):
-        raise EpisodeFault(f"episode degraded to an ordinary decode: flags={flags}")
+        raise EpisodeFault(
+            f"episode degraded to an ordinary decode: flags={flags}",
+            receipt=receipt,
+        )
     return text, receipt
 
 
@@ -685,7 +955,12 @@ def main() -> int:
     out_dir = Path(args.out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
 
-    selected = [a for a in ARMS if a.name in {v.strip() for v in args.arms.split(",")}]
+    requested_names = {v.strip() for v in args.arms.split(",") if v.strip()}
+    try:
+        selected = _expand_requested_arms(requested_names)
+    except ValueError as exc:
+        print(str(exc), file=sys.stderr)
+        return 2
     if not selected:
         print("no arms selected", file=sys.stderr)
         return 2
@@ -716,13 +991,24 @@ def main() -> int:
     print(f"{len(tasks)} tasks, commitment {commitment.commitment_sha256[:16]}", flush=True)
 
     if args.self_test:
-        print(json.dumps({"tasks": len(tasks), "arms": [a[0] for a in selected]}, indent=2))
+        print(
+            json.dumps(
+                {
+                    "tasks": len(tasks),
+                    "requested_arms": sorted(requested_names),
+                    "execution_arms": [a.name for a in selected],
+                },
+                indent=2,
+            )
+        )
         return 0
 
     arm_tokens = {
         a.name: (args.max_tokens if a.max_tokens is None else a.max_tokens)
         for a in selected
     }
+    implementation_files = _implementation_manifest()
+    implementation_sha256 = _implementation_sha256(implementation_files)
     fingerprints = {
         name: decode_fingerprint(
             model=args.model,
@@ -733,13 +1019,24 @@ def main() -> int:
             per_domain=args.per_domain,
             arm=name,
             adapter=args.adapter,
+            implementation_sha256=implementation_sha256,
         )
         for name, tokens in arm_tokens.items()
     }
     _atomic_write(
         out_dir / "decode_fingerprint.json",
         json.dumps(
-            {"decode_fingerprint": fingerprints, "arm_max_tokens": arm_tokens},
+            {
+                "schema": EVIDENCE_MANIFEST_SCHEMA,
+                "decode_fingerprint": fingerprints,
+                "arm_max_tokens": arm_tokens,
+                "implementation_files": implementation_files,
+                "implementation_sha256": implementation_sha256,
+                "requested_arms": sorted(requested_names),
+                "required_arms": [a.name for a in selected],
+                "expected_task_ids": [task.task_id for task in tasks],
+                "task_commitment_sha256": commitment.commitment_sha256,
+            },
             indent=1,
             sort_keys=True,
         )
@@ -882,8 +1179,19 @@ def main() -> int:
                 except Exception as exc:  # noqa: BLE001 - recorded, never silent
                     # A harness fault must be visible as a fault. It is never
                     # scored as a wrong answer.
+                    if isinstance(exc, EpisodeFault):
+                        receipt = exc.receipt
                     error = f"{type(exc).__name__}: {exc}"
                     print(f"  !! {arm} {task.domain} {error}", flush=True)
+                receipt_path = ""
+                receipt_sha256 = ""
+                if receipt:
+                    receipt_path, receipt_sha256 = _persist_runtime_receipt(
+                        out_dir,
+                        arm=arm,
+                        task_id=task.task_id,
+                        receipt=receipt,
+                    )
                 journal.append(
                     {
                         "event": "CELL",
@@ -894,6 +1202,8 @@ def main() -> int:
                         "decode_max_tokens": tokens,
                         "recurrent_steps": steps,
                         "arm_profile": spec.profile,
+                        "runtime_receipt_path": receipt_path,
+                        "runtime_receipt_sha256": receipt_sha256,
                         "terminal_instruction_policy": policy,
                         # Latency is a first-class result, not a footnote:
                         # a unified system that answers better but takes ten
@@ -916,6 +1226,11 @@ def main() -> int:
                         ),
                         "answer_replacement_reason": (
                             (receipt.get("answer_replacement") or {}).get("reason")
+                        ),
+                        "full_stack_evidence": (
+                            _full_stack_evidence(receipt)
+                            if spec.profile in {"full", "full_oracle"}
+                            else None
                         ),
                         "text": text,
                         "error": error,
@@ -955,19 +1270,39 @@ def main() -> int:
 
 
 def grade(out_dir: Path, tasks) -> dict[str, Any]:
-    """Score every committed cell and decide whether the path can be trained."""
+    """Grade a complete, paired experiment without letting controls win it.
+
+    The product invariant is stronger than aggregate non-inferiority: ordinary
+    decode owns every task until independently verified evidence promotes a
+    candidate. Therefore a vanilla-right/full-stack-wrong pair is a contract
+    failure, not a scientific finding that recurrence happened to lose.
+    """
     from core.brain.llm.latent_cortex import frontier_tasks as ft
 
+    tasks = tuple(tasks)
     by_id = {t.task_id: t for t in tasks}
     # Grading is bound to the same configuration the cells were produced under.
     # Absent the record (an older run, or a unit test), every cell is admitted.
     recorded = _read_json(out_dir / "decode_fingerprint.json")
+    manifest_issues = _manifest_integrity_issues(recorded, tasks)
     journal = Journal(
         out_dir / "journal.jsonl",
         (recorded or {}).get("decode_fingerprint"),
     )
+    cells = journal.cells()
+    duplicate_cells: list[str] = []
+    unique_cells: dict[tuple[str, str], dict[str, Any]] = {}
+    for cell in cells:
+        key = (str(cell.get("arm") or ""), str(cell.get("task_id") or ""))
+        if key in unique_cells:
+            duplicate_cells.append(f"{key[0]}:{key[1]}")
+            continue
+        unique_cells[key] = cell
+
     arms: dict[str, dict[str, Any]] = {}
-    for cell in journal.cells():
+    scored: dict[str, dict[str, dict[str, Any]]] = {}
+    unknown_task_cells: list[str] = []
+    for cell in unique_cells.values():
         arm = cell["arm"]
         bucket = arms.setdefault(
             arm,
@@ -995,9 +1330,17 @@ def grade(out_dir: Path, tasks) -> dict[str, Any]:
             continue
         task = by_id.get(cell["task_id"])
         if task is None:
+            unknown_task_cells.append(f"{arm}:{cell['task_id']}")
             continue
         result = ft.score_task(task, cell["text"])
         bucket["correct"] += int(result.correct)
+        scored.setdefault(arm, {})[cell["task_id"]] = {
+            "correct": bool(result.correct),
+            "text": str(cell.get("text") or ""),
+            "replacement_decision": str(
+                cell.get("answer_replacement_decision") or ""
+            ),
+        }
         reason = result.reason or "correct"
         bucket["reasons"][reason] = bucket["reasons"].get(reason, 0) + 1
         if cell.get("decode_generated_tokens") is not None:
@@ -1026,18 +1369,83 @@ def grade(out_dir: Path, tasks) -> dict[str, Any]:
             else None
         )
 
+    expected_task_ids = set((recorded or {}).get("expected_task_ids") or [])
+    required_arms = list((recorded or {}).get("required_arms") or [])
+    missing_cells: dict[str, list[str]] = {}
+    if expected_task_ids and required_arms:
+        for arm in required_arms:
+            present = {
+                task_id for candidate_arm, task_id in unique_cells if candidate_arm == arm
+            }
+            missing = sorted(expected_task_ids - present)
+            if missing:
+                missing_cells[arm] = missing
+
+    def claim_eligible(name: str) -> bool:
+        if name in CLAIM_ARM_NAMES:
+            return True
+        # Compatibility for historical fixtures and evidence. Controls and
+        # explicit ablations can never become a claimant.
+        return bool(
+            name.startswith("rlc_")
+            and name != "rlc_mechanism"
+            and "oracle" not in name
+        )
+
     vanilla = arms.get("vanilla", {}).get("correct", 0)
+    equal_compute = arms.get("vanilla_equal_compute", {}).get("correct")
     best_rlc_name, best_rlc = "", -1
     for name, bucket in arms.items():
-        if name == "vanilla":
+        if not claim_eligible(name):
             continue
         if bucket["correct"] > best_rlc:
             best_rlc_name, best_rlc = name, bucket["correct"]
 
+    floor_violations: list[str] = []
+    incumbent_byte_violations: list[str] = []
+    vanilla_rows = scored.get("vanilla", {})
+    for arm, rows in scored.items():
+        if not claim_eligible(arm):
+            continue
+        for task_id, candidate in rows.items():
+            baseline = vanilla_rows.get(task_id)
+            if baseline is None:
+                continue
+            if baseline["correct"] and not candidate["correct"]:
+                floor_violations.append(f"{arm}:{task_id}")
+            if (
+                candidate["replacement_decision"] not in {"replace", ""}
+                and candidate["text"] != baseline["text"]
+            ):
+                incumbent_byte_violations.append(f"{arm}:{task_id}")
+
+    mechanism_issues: dict[str, dict[str, list[str]]] = {}
+    enforce_runtime_evidence = bool(
+        recorded
+        and recorded.get("schema") == EVIDENCE_MANIFEST_SCHEMA
+    )
+    if enforce_runtime_evidence:
+        for (arm, task_id), cell in unique_cells.items():
+            if arm not in RUNTIME_STACK_ARM_NAMES:
+                continue
+            evidence = cell.get("full_stack_evidence")
+            issues = (
+                list(evidence.get("issues") or [])
+                if isinstance(evidence, dict)
+                else ["full_stack_runtime_evidence_absent"]
+            )
+            issues.extend(_runtime_receipt_issues(out_dir, cell))
+            if issues:
+                mechanism_issues.setdefault(arm, {})[task_id] = sorted(set(issues))
+
     # An arm carrying harness faults has not been measured. Concluding either
     # way from it would report a starved budget as a reasoning result.
     faulted = {name: b["errors"] for name, b in arms.items() if b["errors"]}
-    complete = not faulted
+    coverage_complete = not (
+        manifest_issues or missing_cells or duplicate_cells or unknown_task_cells
+    )
+    mechanism_complete = not mechanism_issues
+    complete = not faulted and coverage_complete and mechanism_complete
     # A battery the ordinary decode cannot score on has not measured the
     # recurrent path either: 0 >= 0 satisfies every inequality below, so mutual
     # failure would otherwise be published as parity and promote a model that
@@ -1049,11 +1457,30 @@ def grade(out_dir: Path, tasks) -> dict[str, Any]:
     # The sentinel -1 is smaller than any vanilla score, which would otherwise
     # publish "below ordinary decode" as a finding drawn from no data at all.
     measured_recurrence = best_rlc >= 0
-    reaches_parity = (
-        complete and informative and measured_recurrence and best_rlc >= vanilla
+    floor_holds = not floor_violations and not incumbent_byte_violations
+    reaches_parity = bool(
+        complete
+        and informative
+        and measured_recurrence
+        and floor_holds
+        and best_rlc >= vanilla
+    )
+    beats_equal_compute = bool(
+        reaches_parity
+        and equal_compute is not None
+        and best_rlc > int(equal_compute)
     )
     if not complete:
-        decision = "inconclusive_arms_carry_harness_faults"
+        if manifest_issues:
+            decision = "inconclusive_evidence_manifest_invalid"
+        elif faulted:
+            decision = "inconclusive_arms_carry_harness_faults"
+        elif not coverage_complete:
+            decision = "inconclusive_campaign_incomplete"
+        else:
+            decision = "inconclusive_full_stack_runtime_unmeasured"
+    elif not floor_holds:
+        decision = "invalid_full_stack_violated_vanilla_incumbent"
     elif not measured_recurrence:
         decision = "inconclusive_no_recurrent_arm_measured"
     elif not informative:
@@ -1067,10 +1494,19 @@ def grade(out_dir: Path, tasks) -> dict[str, Any]:
         "schema": SWEEP_SCHEMA,
         "arms": arms,
         "vanilla_correct": vanilla,
+        "vanilla_equal_compute_correct": equal_compute,
         "best_recurrent_arm": best_rlc_name,
         "best_recurrent_correct": best_rlc,
         "arms_complete": complete,
         "faulted_arms": faulted,
+        "coverage_complete": coverage_complete,
+        "evidence_manifest_valid": not manifest_issues,
+        "evidence_manifest_issues": manifest_issues,
+        "missing_cells": missing_cells,
+        "duplicate_cells": sorted(duplicate_cells),
+        "unknown_task_cells": sorted(unknown_task_cells),
+        "full_stack_runtime_measured": mechanism_complete,
+        "full_stack_runtime_issues": mechanism_issues,
         "battery_informative": informative,
         "latency_ratio_vs_ordinary_decode": {
             name: (
@@ -1081,6 +1517,12 @@ def grade(out_dir: Path, tasks) -> dict[str, Any]:
             for name, b in arms.items()
         },
         "reaches_parity_with_ordinary_decode": reaches_parity,
+        "beats_equal_compute_control": beats_equal_compute,
+        "paired_vanilla_floor": {
+            "holds": floor_holds,
+            "right_to_wrong_regressions": sorted(floor_violations),
+            "unpromoted_byte_divergences": sorted(incumbent_byte_violations),
+        },
         "decision": decision,
         "claims": {
             "reasoning_gain_proven": False,

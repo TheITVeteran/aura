@@ -198,18 +198,42 @@ def main() -> int:
         _decide(
             run_dir,
             {
-                "decision": "inconclusive_sweep_arms_carry_harness_faults",
+                "decision": "inconclusive_sweep_invalid_or_incomplete",
                 "summary": (
-                    "One or more arms carried harness faults, so they were not "
-                    "measured. Concluding from them would report an execution "
-                    "failure as a reasoning result. No weights were touched. "
-                    "Fix the fault and re-run launch_sweep.sh; committed cells "
-                    "are skipped."
+                    "The sweep did not produce a complete, runtime-measured "
+                    "full-engine experiment. Missing cells, harness faults, or "
+                    "an unavailable claimed subsystem are unmeasured evidence, "
+                    "not a reasoning loss. No weights were touched."
                 ),
                 "evidence": {
                     "arm_scores": scores,
+                    "sweep_decision": sweep_verdict.get("decision"),
+                    "evidence_manifest_issues": sweep_verdict.get(
+                        "evidence_manifest_issues"
+                    ),
                     "faulted_arms": sweep_verdict.get("faulted_arms"),
+                    "missing_cells": sweep_verdict.get("missing_cells"),
+                    "full_stack_runtime_issues": sweep_verdict.get(
+                        "full_stack_runtime_issues"
+                    ),
                 },
+            },
+        )
+        return 0
+
+    floor = sweep_verdict.get("paired_vanilla_floor") or {}
+    if floor and floor.get("holds") is not True:
+        _decide(
+            run_dir,
+            {
+                "decision": "invalid_full_stack_violated_vanilla_incumbent",
+                "summary": (
+                    "The complete-stack arm violated its task-paired ordinary "
+                    "decode floor. That is a promotion or harness defect, not "
+                    "evidence that the product should train from a worse path. "
+                    "No checkpoint was promoted and no weights were touched."
+                ),
+                "evidence": {"arm_scores": scores, "paired_vanilla_floor": floor},
             },
         )
         return 0

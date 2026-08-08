@@ -37837,3 +37837,43 @@ explicitly false. Focused admission, canary, and recurrent-policy tests pass
 pass. This checkpoint installs the discriminator. It does not claim that a
 checkpoint has passed it, authorize another resident campaign, or alter the
 retained negative result.
+
+## Checkpoint 2026-08-08-001: The Complete Engine Owns the Treatment Claim
+
+The August 7 reconciliation campaign asked a treatment-only recurrence arm to
+stand in for the complete system, could omit both ordinary-decode controls, and
+did not bind its cells to the complete latent-cortex source tree. Its retained
+artifacts are now explicitly rejected as decision evidence. They remain useful
+as a postmortem for answer-only collapse, terminal-disposition confounding, and
+genuine recurrent computation damage; they cannot authorize fusion, activation,
+or a reasoning claim.
+
+The replacement sweep defines `full_stack` as the claimed product: latent
+workspace recurrence, role-isolated branches, exchange instrumentation,
+admitted verification, latent optimization, temporary fast-weight policy,
+adaptive computation, local repair, and confidence-bound answer promotion.
+Any requested treatment automatically expands to immutable `vanilla` and
+`vanilla_equal_compute` controls. Oracle and terminal-disposition variants are
+diagnostic only and cannot win the product claim.
+
+Ordinary decode owns the answer until a promotion is independently justified.
+If no candidate is promoted, the emitted bytes and hard token ceiling must be
+identical to vanilla. A right-to-wrong transition, unpromoted byte divergence,
+missing cell, absent mechanism receipt, changed source digest, or tampered
+runtime receipt invalidates the run rather than being counted as a scientific
+loss. New manifests bind the task commitment, arm set, decode fingerprints,
+token budgets, runner, and every latent-cortex implementation file. Each public
+runtime receipt is stored separately and its canonical digest and compact causal
+summary are independently replayed during grading.
+
+The bounded real-checkpoint 1.5B canary completed all `21/21` cells in `92.5s`
+with zero harness faults, complete runtime measurement, a valid evidence
+manifest, and a clean paired vanilla floor. Vanilla, equal-compute, and
+full-stack all scored `0/7`, so the honest decision is
+`inconclusive_battery_uninformative_ordinary_decode_scored_zero`. This proves the
+corrected experiment and non-regression contract, not a reasoning gain. The
+focused complete-engine, incumbent-floor, reconciliation, checkpoint-admission,
+and recurrent-objective suites pass `178/178`; static checks pass. The next
+bounded step is a fresh source-bound resident-32B complete-engine campaign with
+both controls and an independent detached supervisor. Reasoning gain, frontier
+performance, fusion, activation, release, and `WOW Signal` remain open.

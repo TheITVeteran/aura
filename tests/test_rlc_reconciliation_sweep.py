@@ -21,6 +21,37 @@ if str(TOOLS) not in sys.path:
 import run_rlc_reconciliation_sweep as sweep  # noqa: E402
 
 
+def _write_evidence_manifest(
+    out_dir: Path,
+    tasks,
+    *,
+    required_arms: list[str],
+    requested_arms: list[str] | None = None,
+) -> None:
+    from core.brain.llm.latent_cortex import frontier_tasks as ft
+
+    implementation = sweep._implementation_manifest()
+    task_manifest = ft.build_task_manifest(tasks)
+    commitment = ft.build_task_commitment(task_manifest)
+    fingerprints = {name: "a" * 64 for name in required_arms}
+    (out_dir / "decode_fingerprint.json").write_text(
+        json.dumps(
+            {
+                "schema": sweep.EVIDENCE_MANIFEST_SCHEMA,
+                "decode_fingerprint": fingerprints,
+                "arm_max_tokens": {name: 512 for name in required_arms},
+                "requested_arms": requested_arms or list(required_arms),
+                "required_arms": required_arms,
+                "expected_task_ids": [task.task_id for task in tasks],
+                "task_commitment_sha256": commitment.commitment_sha256,
+                "implementation_files": implementation,
+                "implementation_sha256": sweep._implementation_sha256(implementation),
+            }
+        ),
+        encoding="utf-8",
+    )
+
+
 def test_the_full_stack_arm_enables_every_pillar_that_was_built():
     """Every run before 2026-08-07 measured recurrence with hidden-state
     optimization, fast weights and adaptive halting switched OFF, and reported
@@ -65,6 +96,21 @@ def test_the_battery_leads_with_the_unified_system_not_the_ablation():
     assert by_name["vanilla"].max_tokens == by_name["full_stack"].max_tokens
     # The oracle arm is a diagnostic ceiling and is never promotable.
     assert "oracle" in by_name["full_stack_oracle"].name
+
+
+def test_requesting_a_treatment_always_expands_to_both_controls():
+    expanded = sweep._expand_requested_arms({"full_stack"})
+    assert [arm.name for arm in expanded] == [
+        "vanilla",
+        "vanilla_equal_compute",
+        "full_stack",
+    ]
+
+    controls_only = sweep._expand_requested_arms({"vanilla"})
+    assert [arm.name for arm in controls_only] == ["vanilla"]
+
+    with pytest.raises(ValueError, match="unknown arms"):
+        sweep._expand_requested_arms({"not_a_real_arm"})
 
 
 def test_config_carries_the_arm_policy_and_validates():
@@ -157,7 +203,11 @@ def test_grade_decides_against_the_ordinary_decode_not_against_itself(tmp_path: 
     assert verdict["vanilla_correct"] == len(tasks)
     assert verdict["best_recurrent_correct"] == 0
     assert verdict["reaches_parity_with_ordinary_decode"] is False
-    assert verdict["decision"] == "recurrent_path_below_ordinary_decode"
+    # The product claims an incumbent floor. Falling below a right vanilla
+    # answer therefore invalidates that contract; it is not a negative result
+    # about the complete engine.
+    assert verdict["decision"] == "invalid_full_stack_violated_vanilla_incumbent"
+    assert verdict["paired_vanilla_floor"]["holds"] is False
     # A negative sweep never authorizes downstream work.
     assert verdict["claims"]["fusion_authorized"] is False
     assert verdict["claims"]["reasoning_gain_proven"] is False
@@ -491,6 +541,36 @@ def test_a_cell_from_a_superseded_decode_configuration_is_re_run(tmp_path: Path)
     assert replayed.done == {("vanilla", "task-a")}
 
 
+def test_a_source_change_retires_every_cell_from_the_old_engine(tmp_path: Path):
+    common = dict(
+        model="/models/resident",
+        n_slots=16,
+        max_tokens=320,
+        episode_wall_s=720.0,
+        seed=20260807,
+        per_domain=4,
+        arm="full_stack",
+    )
+    old = sweep.decode_fingerprint(implementation_sha256="a" * 64, **common)
+    current = sweep.decode_fingerprint(implementation_sha256="b" * 64, **common)
+    assert old != current
+
+    path = tmp_path / "journal.jsonl"
+    sweep.Journal(path).append(
+        {
+            "event": "CELL",
+            "arm": "full_stack",
+            "task_id": "task-a",
+            "decode_fingerprint": old,
+            "text": "FINAL_ANSWER: {}",
+            "error": "",
+        }
+    )
+    resumed = sweep.Journal(path, {"full_stack": current})
+    assert resumed.done == set()
+    assert resumed.superseded == 1
+
+
 def test_an_unfingerprinted_journal_is_still_readable(tmp_path: Path):
     """Older runs and unit fixtures carry no fingerprint; they are admitted."""
     path = tmp_path / "journal.jsonl"
@@ -614,6 +694,213 @@ def test_latency_is_reported_beside_accuracy(tmp_path: Path):
     # Ten times the cost for the same score is a reportable result.
     assert verdict["latency_ratio_vs_ordinary_decode"]["full_stack"] == 10.0
     assert verdict["latency_ratio_vs_ordinary_decode"]["vanilla"] == 1.0
+
+
+def test_equal_compute_control_can_never_be_named_the_recurrent_winner(tmp_path: Path):
+    from core.brain.llm.latent_cortex import frontier_tasks as ft
+
+    tasks = ft.generate_task_battery([20260807], difficulty=2)
+    journal = sweep.Journal(tmp_path / "journal.jsonl")
+    for index, task in enumerate(tasks):
+        correct = "FINAL_ANSWER: " + json.dumps(task.reveal_for_verifier()["expected"])
+        wrong = 'FINAL_ANSWER: {"wrong": 1}'
+        for arm, text in (
+            ("vanilla", correct if index == 0 else wrong),
+            ("vanilla_equal_compute", correct),
+            ("full_stack", correct if index == 0 else wrong),
+        ):
+            journal.append(
+                {
+                    "event": "CELL",
+                    "arm": arm,
+                    "task_id": task.task_id,
+                    "domain": task.domain,
+                    "text": text,
+                    "error": "",
+                    "answer_replacement_decision": "retain" if arm == "full_stack" else "",
+                }
+            )
+
+    verdict = sweep.grade(tmp_path, tasks)
+    assert verdict["best_recurrent_arm"] == "full_stack"
+    assert verdict["best_recurrent_correct"] == 1
+    assert verdict["vanilla_equal_compute_correct"] == len(tasks)
+    assert verdict["beats_equal_compute_control"] is False
+
+
+def test_manifest_requires_every_control_and_treatment_cell(tmp_path: Path):
+    from core.brain.llm.latent_cortex import frontier_tasks as ft
+
+    tasks = ft.generate_task_battery([20260807], difficulty=2)
+    required = ["vanilla", "vanilla_equal_compute", "full_stack"]
+    _write_evidence_manifest(
+        tmp_path,
+        tasks,
+        required_arms=required,
+        requested_arms=["full_stack"],
+    )
+    task = tasks[0]
+    correct = "FINAL_ANSWER: " + json.dumps(task.reveal_for_verifier()["expected"])
+    journal = sweep.Journal(tmp_path / "journal.jsonl")
+    for arm in ("vanilla", "vanilla_equal_compute", "full_stack"):
+        journal.append(
+            {
+                "event": "CELL",
+                "arm": arm,
+                "task_id": task.task_id,
+                "domain": task.domain,
+                "decode_fingerprint": "a" * 64,
+                "text": correct,
+                "error": "",
+            }
+        )
+
+    verdict = sweep.grade(tmp_path, tasks)
+    assert verdict["coverage_complete"] is False
+    assert set(verdict["missing_cells"]) == {
+        "vanilla",
+        "vanilla_equal_compute",
+        "full_stack",
+    }
+    assert verdict["decision"] == "inconclusive_campaign_incomplete"
+
+
+def test_manifest_tampering_invalidates_the_campaign(tmp_path: Path):
+    from core.brain.llm.latent_cortex import frontier_tasks as ft
+
+    tasks = ft.generate_task_battery([20260807], difficulty=2)
+    required = ["vanilla", "vanilla_equal_compute", "full_stack"]
+    _write_evidence_manifest(
+        tmp_path,
+        tasks,
+        required_arms=required,
+        requested_arms=["full_stack"],
+    )
+    path = tmp_path / "decode_fingerprint.json"
+    manifest = json.loads(path.read_text(encoding="utf-8"))
+    manifest["task_commitment_sha256"] = "0" * 64
+    manifest["implementation_sha256"] = "1" * 64
+    path.write_text(json.dumps(manifest), encoding="utf-8")
+
+    verdict = sweep.grade(tmp_path, tasks)
+    assert verdict["evidence_manifest_valid"] is False
+    assert verdict["decision"] == "inconclusive_evidence_manifest_invalid"
+    assert verdict["evidence_manifest_issues"] == [
+        "implementation_identity_mismatch",
+        "task_commitment_mismatch",
+    ]
+
+
+def test_claim_manifest_cannot_omit_either_control(tmp_path: Path):
+    from core.brain.llm.latent_cortex import frontier_tasks as ft
+
+    tasks = ft.generate_task_battery([20260807], difficulty=2)
+    _write_evidence_manifest(
+        tmp_path,
+        tasks,
+        required_arms=["vanilla", "full_stack"],
+        requested_arms=["full_stack"],
+    )
+    verdict = sweep.grade(tmp_path, tasks)
+    assert "treatment_controls_missing" in verdict["evidence_manifest_issues"]
+    assert verdict["decision"] == "inconclusive_evidence_manifest_invalid"
+
+
+def test_full_stack_receipt_must_measure_every_claimed_mechanism(tmp_path: Path):
+    valid_receipt = {
+        "n_slots": 16,
+        "cognitive_slots": [],
+        "steps_taken": 3,
+        "n_branches": 2,
+        "branch_isolation": {
+            "certified": True,
+            "candidates": [
+                {"role": "planner"},
+                {"role": "critic"},
+            ],
+        },
+        "branch_exchange": {
+            "schema": "aura.rlc.branch_exchange_trace.v1",
+            "exchanges": [],
+        },
+        "verifier_preflight": {"verifier_admitted": True},
+        "latent_opt_mode": "gradient",
+        "latent_opt_attempts": 4,
+        "latent_opt_steps": 1,
+        "fast_weight_learning": {
+            "disposition": "not_admitted_high_confidence_evidence_absent"
+        },
+        "value_of_computation": {"continue": False},
+        "cognitive_action_trace": [{"action": "halt"}],
+        "diagnostic_action_selection": {"selected": "verify"},
+        "local_repair": {"requests": []},
+        "answer_replacement": {"decision": "retain"},
+        "params_unchanged": True,
+        "fast_weights_applied": False,
+    }
+    evidence = sweep._full_stack_evidence(valid_receipt)
+    assert evidence["valid"] is True
+    assert evidence["issues"] == []
+    path, digest = sweep._persist_runtime_receipt(
+        tmp_path,
+        arm="full_stack",
+        task_id="task-a",
+        receipt=valid_receipt,
+    )
+    cell = {
+        "runtime_receipt_path": path,
+        "runtime_receipt_sha256": digest,
+        "full_stack_evidence": evidence,
+    }
+    assert sweep._runtime_receipt_issues(tmp_path, cell) == []
+
+    receipt_path = tmp_path / path
+    tampered = dict(valid_receipt)
+    tampered["n_slots"] = 8
+    receipt_path.write_text(json.dumps(tampered), encoding="utf-8")
+    assert sweep._runtime_receipt_issues(tmp_path, cell) == [
+        "runtime_receipt_digest_mismatch",
+        "runtime_receipt_summary_mismatch",
+    ]
+
+    invalid = dict(valid_receipt)
+    invalid.pop("local_repair")
+    invalid["fast_weight_learning"] = {
+        "disposition": "rejected_verifier_unavailable"
+    }
+    evidence = sweep._full_stack_evidence(invalid)
+    assert evidence["valid"] is False
+    assert evidence["issues"] == [
+        "fast_weight_verifier_unavailable",
+        "local_repair_policy_not_measured",
+    ]
+
+
+def test_unpromoted_full_stack_output_must_be_byte_identical_to_incumbent(tmp_path: Path):
+    from core.brain.llm.latent_cortex import frontier_tasks as ft
+
+    task = ft.generate_task_battery([20260807], difficulty=2)[0]
+    expected = json.dumps(task.reveal_for_verifier()["expected"])
+    journal = sweep.Journal(tmp_path / "journal.jsonl")
+    journal.append(
+        {
+            "event": "CELL", "arm": "vanilla", "task_id": task.task_id,
+            "domain": task.domain, "text": "FINAL_ANSWER: " + expected, "error": "",
+        }
+    )
+    journal.append(
+        {
+            "event": "CELL", "arm": "full_stack", "task_id": task.task_id,
+            "domain": task.domain, "text": "Reasoning complete.\nFINAL_ANSWER: " + expected,
+            "error": "", "answer_replacement_decision": "retain",
+        }
+    )
+
+    verdict = sweep.grade(tmp_path, [task])
+    assert verdict["paired_vanilla_floor"]["holds"] is False
+    assert verdict["paired_vanilla_floor"]["right_to_wrong_regressions"] == []
+    assert verdict["paired_vanilla_floor"]["unpromoted_byte_divergences"]
+    assert verdict["decision"] == "invalid_full_stack_violated_vanilla_incumbent"
 
 
 def test_the_operator_can_reclaim_the_machine_between_cells(tmp_path: Path):

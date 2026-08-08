@@ -15,6 +15,7 @@ from core.brain.llm.latent_cortex.diagnostic_action_selector import (
 )
 from core.brain.llm.latent_cortex.epistemic_state import OperationKind
 from core.brain.llm.latent_cortex.local_repair import (
+    _validate_generation_context,
     build_local_repair_receipt,
     parse_local_repair_generation,
     prepare_local_repair_requests,
@@ -120,7 +121,7 @@ def _context(prompt_sha256: str) -> dict:
     return {
         "prompt_sha256": prompt_sha256,
         "generated_token_count": 24,
-        "termination": "contract_complete",
+        "termination": "eos",
         "initial_cache_offsets": [0, 0],
         "final_cache_offsets": [80, 80],
         "all_initial_offsets_zero": True,
@@ -375,6 +376,20 @@ def test_the_repair_contract_is_plain_text():
         )
         == "PREFIX the residue is 11."
     )
+
+
+@pytest.mark.parametrize("termination", ["eos", "token_limit", "token_limit_sentence_grace"])
+def test_repair_receipt_accepts_its_own_bounded_generation_terminations(termination: str):
+    context = _context("a" * 64)
+    context["termination"] = termination
+    assert _validate_generation_context(context)["termination"] == termination
+
+
+def test_repair_receipt_rejects_the_unrelated_final_answer_termination():
+    context = _context("a" * 64)
+    context["termination"] = "contract_complete"
+    with pytest.raises(ValueError, match="generation context"):
+        _validate_generation_context(context)
     # The prompt ends on the cue, so the continuation usually omits it.
     assert (
         parse_local_repair_generation(" the residue is 11.", prefix="PREFIX ")

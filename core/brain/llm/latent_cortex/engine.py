@@ -1054,8 +1054,15 @@ class LatentCortexEngine:
         temperature: float = 0.0,
         top_p: float = 1.0,
         sample_seed: int | None = None,
+        final_answer_contract: bool = True,
     ) -> dict[str, Any]:
-        """Generate one verifier witness without importing solver KV state."""
+        """Generate one fresh-context witness without importing solver KV state.
+
+        Most verifier witnesses use the public ``FINAL_ANSWER`` contract. A
+        local repair instead continues from ``REPLACEMENT_SUFFIX:`` and is
+        parsed by its own strict contract, so forcing ``FINAL_ANSWER`` there
+        makes successful termination impossible.
+        """
 
         if sample_seed is None:
             from core.brain.llm.latent_cortex.generative_verifier import (
@@ -1069,7 +1076,7 @@ class LatentCortexEngine:
         tokens = self._encode(prompt, None, None)
         # Internal verifier prompts always require the strict FINAL_ANSWER
         # contract, independently of the user-facing decode profile.
-        contract_extension = min(64, max_tokens)
+        contract_extension = min(64, max_tokens) if final_answer_contract else 0
         required = (len(tokens) + max_tokens + contract_extension) * self.n_layers
         if required + reserve_layer_apps > budget.remaining_layer_apps:
             raise RuntimeError("fresh_verifier_budget_unavailable")
@@ -1098,9 +1105,9 @@ class LatentCortexEngine:
                 temperature=temperature,
                 top_p=top_p,
                 sample_seed=sample_seed,
-                final_answer_contract=True,
+                final_answer_contract=final_answer_contract,
                 sentence_grace_tokens=0,
-                contract_grace_tokens=min(64, max_tokens),
+                contract_grace_tokens=contract_extension,
             )
             text = self.tokenizer.decode(generated)
             final_offsets = [
@@ -5159,27 +5166,25 @@ class LatentCortexEngine:
                         budget,
                         max_tokens=self.config.local_repair_max_tokens,
                         reserve_layer_apps=safety_reserve,
+                        final_answer_contract=False,
                     )
                     generated_context = generated["context"]
                     termination = str(generated_context.get("termination") or "")
                     # A repair that reached its token ceiling with a parseable
-                    # contract line is still a repair. Requiring
-                    # "contract_complete" specifically discarded every candidate
-                    # whose JSON-escaped replacement_suffix ran to the budget --
-                    # measured on the 32B as
+                    # suffix is still a repair. Requiring the unrelated
+                    # FINAL_ANSWER contract discarded every candidate -- measured
+                    # on the 32B as
                     # ('repair_not_executed', 'generation_contract_invalid') on
                     # every episode, which left the arm able to tie ordinary
                     # decode but never to beat it. parse_local_repair_generation
-                    # below is the real gate: it demands exactly one marker, no
-                    # extra material, and a well-formed
-                    # {"replacement_suffix": str} payload. Text that satisfies
-                    # THAT is admissible however sampling happened to stop; text
-                    # that does not is rejected there regardless.
+                    # below is the real gate: it accepts one bounded suffix and
+                    # rejects empty, ambiguous, or prefix-repeating output. Text
+                    # satisfying that contract is admissible however sampling
+                    # happened to stop; invalid text is rejected there regardless.
                     if termination not in {
-                        "contract_complete",
+                        "eos",
                         "token_limit",
                         "token_limit_sentence_grace",
-                        "token_limit_contract_incomplete",
                     }:
                         raise ValueError(
                             f"repair generation terminated {termination!r}"
@@ -6629,24 +6634,26 @@ class LatentCortexEngine:
             and receipt.branch_isolation.get("certified") is not True
         ):
             receipt.flag("branch_isolation_unproven")
-        if ensemble.exchanges:
-            from core.brain.llm.latent_cortex.branch_exchange import (
-                build_branch_exchange_trace,
-            )
+        from core.brain.llm.latent_cortex.branch_exchange import (
+            build_branch_exchange_trace,
+        )
 
-            receipt.branch_exchange = build_branch_exchange_trace(
-                exchanges=ensemble.exchange_receipts,
-                n_branches=len(ensemble.branches),
-                n_slots=int(self.config.workspace.n_slots),
-                comm_slot=int(self.config.branches.comm_slot),
-                exchange_gamma=float(self.config.branches.exchange_gamma),
-                branch_isolation=receipt.branch_isolation,
-                cognitive_slots=receipt.cognitive_slots,
-                exchange_interval=int(self.config.branches.exchange_interval),
-                schedule_hash=receipt.schedule_hash,
-                bytecode_events=receipt.bytecode_events,
-                cognitive_action_trace=receipt.cognitive_action_trace,
-            )
+        # An empty, validated trace proves no declared synchronization point
+        # fired. Leaving the field empty cannot distinguish that valid outcome
+        # from disabled or skipped exchange instrumentation.
+        receipt.branch_exchange = build_branch_exchange_trace(
+            exchanges=ensemble.exchange_receipts,
+            n_branches=len(ensemble.branches),
+            n_slots=int(self.config.workspace.n_slots),
+            comm_slot=int(self.config.branches.comm_slot),
+            exchange_gamma=float(self.config.branches.exchange_gamma),
+            branch_isolation=receipt.branch_isolation,
+            cognitive_slots=receipt.cognitive_slots,
+            exchange_interval=int(self.config.branches.exchange_interval),
+            schedule_hash=receipt.schedule_hash,
+            bytecode_events=receipt.bytecode_events,
+            cognitive_action_trace=receipt.cognitive_action_trace,
+        )
         if receipt.cognitive_operator_trace:
             from core.brain.llm.latent_cortex.correlated_support import (
                 build_correlated_support_receipt,
