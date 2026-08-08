@@ -443,7 +443,12 @@ class KernelInterface:
             try:
                 from core.brain.conversation_outcome import register_reaction
 
-                register_reaction(message)
+                # Same key the amplifier recorded under, so a reaction is
+                # matched to the response it is actually replying to.
+                register_reaction(
+                    message,
+                    conversation_id=getattr(self, "session_id", None) or "user",
+                )
             except (ImportError, AttributeError, RuntimeError, TypeError, ValueError) as exc:
                 _emit_kernel_fault(
                     exc,

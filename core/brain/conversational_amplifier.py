@@ -128,6 +128,7 @@ async def amplify_conversation(
     n: int = 3,
     time_budget_s: float = 20.0,
     revise: bool = True,
+    conversation_id: str = "default",
 ) -> ConversationResult:
     """Generate alternatives, taste-select the best, optionally self-revise.
 
@@ -161,6 +162,7 @@ async def amplify_conversation(
             n=n,
             time_budget_s=time_budget_s,
             revise=revise,
+            conversation_id=conversation_id,
         )
     except asyncio.CancelledError:
         # Cancellation is the caller's decision, not a failure to absorb.
@@ -189,6 +191,7 @@ async def _amplify_conversation_inner(
     n: int = 3,
     time_budget_s: float = 20.0,
     revise: bool = True,
+    conversation_id: str = "default",
 ) -> ConversationResult:
     """The amplification itself. Anything it raises becomes the draft."""
     draft = str(draft or "").strip()
@@ -245,7 +248,9 @@ async def _amplify_conversation_inner(
     try:
         from core.brain.conversation_outcome import record_pending_response
 
-        record_pending_response(best, features)
+        # CP126 dea1d2f1: keyed, so a reply in one conversation cannot be
+        # applied to the response sent in another.
+        record_pending_response(best, features, conversation_id=conversation_id)
     except (ImportError, RuntimeError, AttributeError, TypeError, ValueError) as exc:
         record_degradation("conversational_amplifier_pending", exc)
 

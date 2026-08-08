@@ -189,7 +189,15 @@ def _verified_episode() -> tuple[dict, dict, str, str, list[int], dict]:
             "generation_context": {
                 "prompt_sha256": request["prompt_sha256"],
                 "generated_token_count": 32,
-                "termination": "contract_complete",
+                # NOT "contract_complete": repair generation runs with
+                # final_answer_contract=False and has its own
+                # REPLACEMENT_SUFFIX parser, so it cannot emit the
+                # FINAL_ANSWER contract's termination. This fixture kept the
+                # old value after the contract narrowed and every test in the
+                # file failed on it — see
+                # test_rlc_local_repair.py::test_repair_receipt_rejects_the_unrelated_final_answer_termination,
+                # which pins the rejection deliberately.
+                "termination": "eos",
                 "initial_cache_offsets": [0, 0],
                 "final_cache_offsets": [32, 32],
                 "all_initial_offsets_zero": True,

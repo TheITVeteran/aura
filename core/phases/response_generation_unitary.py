@@ -168,6 +168,22 @@ def _record_response_degradation(
     logger.debug(message, *args, exc)
 
 
+def _taste_conversation_id(state: Any) -> str:
+    """Which conversation this response belongs to, for the taste loop.
+
+    CP126 dea1d2f1: the loop kept ONE process-global pending response. An
+    autonomous turn finishing between a user's answer and their reply
+    consumed the pending entry, and the user's "thanks" then trained the
+    taste model on the autonomous response's features. Any stable per-lane
+    identity fixes that; the session id is used when the state carries one.
+    """
+    for attribute in ("session_id", "conversation_id"):
+        value = getattr(state, attribute, None)
+        if isinstance(value, str) and value.strip():
+            return value.strip()[:64]
+    return "user"
+
+
 class UnitaryResponsePhase(Phase):
     """
     Liberated Response Generation.
@@ -2188,6 +2204,7 @@ class UnitaryResponsePhase(Phase):
                 n=n_candidates,
                 time_budget_s=budget,
                 revise=budget >= 6.0,
+                conversation_id=_taste_conversation_id(state),
             )
         except _RESPONSE_RECOVERABLE_ERRORS as exc:
             _record_response_degradation(exc, "UnitaryResponse: conversational amplifier failed: %s")
