@@ -65,10 +65,27 @@ VALID_STATUSES = {
     "assessed_no_change",
     "superseded",
     "wont_fix",
+    # The code already did the right thing and that was CHECKED against
+    # current source. A distinct claim from "remediated": no change was made
+    # in this pass, so collapsing it into remediated would overstate the work
+    # and lose the fact that the behaviour predates it. Thirteen rows carried
+    # this status and the reader could not recognise it, so thirteen closed
+    # findings counted as open.
+    "verified_already_remediated",
+    # The finding as written describes a wider exploitable scope than the
+    # source supports. Not "wont_fix" (nothing was declined) and not
+    # "assessed_no_change" (the assessment CHANGED what the finding claims).
+    "analyzed_scope_corrected",
 }
 # Statuses that assert the finding required no code change must explain why;
 # an unexplained "assessed" is indistinguishable from a skipped finding.
-STATUSES_REQUIRING_NOTE = {"assessed_no_change", "wont_fix", "superseded"}
+STATUSES_REQUIRING_NOTE = {
+    "assessed_no_change",
+    "wont_fix",
+    "superseded",
+    "verified_already_remediated",
+    "analyzed_scope_corrected",
+}
 
 
 def _sha256_file(path: Path) -> str:
@@ -215,7 +232,13 @@ def cmd_status(args: argparse.Namespace) -> int:
 
     sev_total = Counter(m["severity"] for m in inventory.values())
     sev_closed = Counter(inventory[f]["severity"] for f in closed_ids if f in inventory)
-    status_counts = Counter(e.get("status") for e in ledger.values())
+    # A row with no status is a real condition — a hand-edited or
+    # partially-written entry — and sorting None against str raises. Naming
+    # it keeps the malformed row visible instead of crashing the report that
+    # would have shown it.
+    status_counts = Counter(
+        str(e.get("status") or "(missing status)") for e in ledger.values()
+    )
 
     print("CP126 semantic remediation status")
     print("=" * 58)
@@ -234,6 +257,32 @@ def cmd_status(args: argparse.Namespace) -> int:
     print("  by closure status:")
     for status, count in sorted(status_counts.items()):
         print(f"    {status:<20} {count}")
+
+    # A row whose status is missing or unrecognised is silently excluded from
+    # closed_ids above. Eleven such rows once sat in this ledger carrying a
+    # commit and a passing test each — genuinely fixed findings, reported as
+    # open, for three days. Dropping a malformed row without saying so is the
+    # absence of a check reported as a passed check: the report looked
+    # complete precisely because the rows it could not read were invisible.
+    malformed = [
+        fid
+        for fid, entry in ledger.items()
+        if entry.get("status") not in VALID_STATUSES
+    ]
+    if malformed:
+        print()
+        print(
+            f"  ⚠️  {len(malformed)} ledger row(s) carry no recognised status and are "
+            "NOT counted as closed:"
+        )
+        for fid in sorted(malformed)[:20]:
+            print(f"      {fid}")
+        if len(malformed) > 20:
+            print(f"      … and {len(malformed) - 20} more")
+        print(
+            "  Re-record them with `record --finding <id> --status <status>`; "
+            "the counts above understate progress until you do."
+        )
 
     if args.by_file:
         per_file_total: Counter = Counter()
