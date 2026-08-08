@@ -589,23 +589,55 @@ def _admitted_transaction(
         for atom in decomposition["atoms"][:prefix_count]
     ]
     prefix_unchanged = observed_prefix == request["preserved_prefix_atoms"]
-    unrelated_unchanged = all(
-        preserved["ordinal"] < len(decomposition["atoms"])
-        and {
-            "ordinal": preserved["ordinal"],
-            "atom_id": decomposition["atoms"][preserved["ordinal"]]["atom_id"],
-            "kind": decomposition["atoms"][preserved["ordinal"]]["kind"],
-            "text_sha256": decomposition["atoms"][preserved["ordinal"]][
-                "text_sha256"
-            ],
-            "dependency_cues": list(
-                decomposition["atoms"][preserved["ordinal"]]["dependency_cues"]
-            ),
-        }
-        == preserved
-        for preserved in request["preserved_unrelated_atoms"]
-    )
     ordinal = int(request["failed_atom_ordinal"])
+
+    # Preserved work is identified by CONTENT, not by index.
+    #
+    # Atoms before the failure keep their ordinals, because the prefix is
+    # byte-identical. Atoms after it do not: the replacement span may
+    # decompose into a different number of atoms than the text it replaced, so
+    # everything downstream shifts. Comparing those by ordinal turned a
+    # perfectly preserved sentence into a violation -- measured on the 32B
+    # with failed_ordinal 15, atom 16 was spliced back verbatim and still
+    # rejected unrelated_atom_changed.
+    #
+    # What the guarantee actually means is that later independent work still
+    # appears, unchanged and in the same relative order. That is what is
+    # checked, and it is strictly stronger than the ordinal test for atoms
+    # before the failure, which keep the exact-index comparison.
+    observed = decomposition["atoms"]
+    unrelated_unchanged = True
+    trailing_expected = [
+        preserved
+        for preserved in request["preserved_unrelated_atoms"]
+        if int(preserved["ordinal"]) > ordinal
+    ]
+    for preserved in request["preserved_unrelated_atoms"]:
+        if int(preserved["ordinal"]) > ordinal:
+            continue
+        index = int(preserved["ordinal"])
+        if index >= len(observed) or {
+            "ordinal": index,
+            "atom_id": observed[index]["atom_id"],
+            "kind": observed[index]["kind"],
+            "text_sha256": observed[index]["text_sha256"],
+            "dependency_cues": list(observed[index]["dependency_cues"]),
+        } != preserved:
+            unrelated_unchanged = False
+            break
+    if unrelated_unchanged and trailing_expected:
+        cursor = 0
+        observed_tail = observed[ordinal:]
+        for preserved in trailing_expected:
+            while (
+                cursor < len(observed_tail)
+                and observed_tail[cursor]["text_sha256"] != preserved["text_sha256"]
+            ):
+                cursor += 1
+            if cursor >= len(observed_tail):
+                unrelated_unchanged = False
+                break
+            cursor += 1
     replacement_route = route["routes"][ordinal] if ordinal < len(route["routes"]) else None
     failed_verifier_rechecked = bool(
         replacement_route
