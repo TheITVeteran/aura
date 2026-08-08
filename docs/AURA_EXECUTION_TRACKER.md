@@ -38391,3 +38391,36 @@ resident-32B campaign. The total completion envelope remains honestly at
 `809/920` (approximately `87.9%`): this checkpoint repairs the discriminator
 but does not yet close the empirical RLC, fusion, frontier, release, semantic
 review, live-proof, or endurance obligations.
+
+## Checkpoint 2026-08-08-018: Clean-Source Canary Reconstructs End to End
+
+Published commit `7e3b23e98` passed the complete source-bound 1.5B protocol
+after the CP017 repairs. The fresh battery ran `vanilla`,
+`vanilla_equal_compute`, `full_stack`, and diagnostic `full_stack_oracle` over
+seven held-out domains for `28/28` committed cells. There were no harness
+faults, missing or duplicate cells, unknown tasks, evidence-manifest issues,
+runtime-summary issues, right-to-wrong regressions, or unpromoted byte
+divergences. Both deployable and oracle verifier paths earned decoy-balanced
+admission.
+
+Independent post-run replay opened every full runtime receipt rather than
+trusting `verdict.json`. All `14/14` complete-stack receipts reconstructed a
+complete public causal DAG, passed worker-bound runtime-integrity validation,
+bound the same boot-scoped model-owner PID and exact 1.5B checkpoint, and named
+clean source commit `7e3b23e98d8824178f25e575ce23751f91bc19af`. All 14 decisions
+were neutral `retain` decisions and every returned byte matched the paired
+canonical ordinary artifact exactly. The canary is therefore valid evidence
+that the repaired experiment measures what its arm names claim and preserves
+the per-task vanilla floor.
+
+Every arm scored `0/7`, so the battery is capability-uninformative and the
+grader correctly returned
+`inconclusive_battery_uninformative_ordinary_decode_scored_zero`. This does not
+prove a gain, frontier reasoning, fusion safety, or production activation; it
+authorizes spending resident-32B compute on a fresh immutable complete-engine
+campaign. The next bounded milestone is to prepare that capsule from the exact
+pushed commit, verify launchd/controller/caffeinate/watchdog lineage and its
+first durable source-bound cell, then continue non-model closeout work while it
+runs. The overall completion envelope remains `809/920` (approximately
+`87.9%`) until the empirical RLC and downstream fusion/activation obligations
+actually pass.

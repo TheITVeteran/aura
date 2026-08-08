@@ -151,14 +151,18 @@ and compact causal summary during grading. Missing mechanisms are unmeasured,
 not passing.
 
 Three bounded 1.5B probes exposed the token/text, Hugging Face identity, and
-oracle-admission defects above rather than consuming resident-32B time. The
-latest 28-cell probe completed both controls, `full_stack`, and
-`full_stack_oracle` with zero harness faults, zero incumbent divergences, and
-complete mechanism summaries. It is superseded as final canary evidence because
-the subsequent receipt audit proved its direct process identity and causal DAG
-were incomplete. A clean-commit, source-bound 1.5B canary is therefore still a
-mandatory gate before the resident run. A zero-scoring 1.5B battery remains a
-plumbing result only, never evidence for or against resident-32B capability.
+oracle-admission defects above rather than consuming resident-32B time. A
+fourth probe was deliberately superseded when its full-receipt audit found the
+missing process/cause chain. The final canary ran from published clean commit
+`7e3b23e98` and completed both controls, `full_stack`, and
+`full_stack_oracle`: `28/28` cells, zero harness faults, zero manifest or
+runtime issues, `14/14` complete worker-bound causal DAGs, one exact model-owner
+identity, one exact source commit, and zero incumbent divergences. Every
+complete-stack cell neutrally retained the exact ordinary artifact. All arms
+scored `0/7`, so the honest verdict is
+`inconclusive_battery_uninformative_ordinary_decode_scored_zero`. This proves
+the source-bound experimental plumbing and non-regression floor, not a gain or
+a prediction about resident-32B capability.
 
 Believed correct, do NOT "fix" without evidence: fast weights reporting
 `not_admitted_high_confidence_evidence_absent` — TheSpark specifies adaptation
