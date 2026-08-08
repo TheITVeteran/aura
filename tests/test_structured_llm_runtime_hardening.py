@@ -1,3 +1,4 @@
+import asyncio
 from pathlib import Path
 
 import pytest
@@ -92,3 +93,140 @@ async def test_background_policy_failure_defers_instead_of_running_router(monkey
     assert len(policy_failures) == 1
     assert structured.last_defer_reason == "background_policy_unavailable"
     assert router.calls == []
+
+
+# ─────────────────── CP126: failing is not a request for priority ──────────
+#
+# Three criticals, all reachable from one loop:
+#
+# * after any failure `escalated_tier` became non-empty, and `is_background`
+#   was computed as `not escalated_tier` — so a background task promoted
+#   itself to a foreground lane by failing once, with no scheduler lease and
+#   no user-facing admission decision. The same flag ALSO disabled the
+#   background deferral check, so the failure both took the lane and removed
+#   the gate that would have stopped it;
+# * retries shared no absolute deadline, so `max_retries` bounded the count
+#   and nothing bounded the request;
+# * `json.loads` returns lists, strings, numbers and null; `model_class(**data)`
+#   on any of those raises TypeError, which the validation block did not
+#   catch, so a valid non-object escaped the documented repair path.
+
+
+class _CountingRouter:
+    """Records the lane every attempt asked for."""
+
+    def __init__(self, replies):
+        self._replies = list(replies)
+        self.calls: list[dict] = []
+
+    async def generate_with_meta(self, prompt, **kwargs):
+        self.calls.append(dict(kwargs))
+        reply = self._replies.pop(0) if self._replies else "{}"
+        return {"text": reply, "error_code": ""}
+
+    async def generate(self, prompt, **kwargs):
+        self.calls.append(dict(kwargs))
+        return self._replies.pop(0) if self._replies else "{}"
+
+
+def test_a_failed_attempt_does_not_promote_background_work_to_the_foreground():
+    router = _CountingRouter(["not json at all", '{"action": "t", "priority": 1}'])
+    structured = StructuredLLM(_TaskModel, max_retries=3, llm_router=router)
+
+    asyncio.run(structured.generate("Return a task.", is_background=True))
+
+    lanes = [call.get("is_background") for call in router.calls if "is_background" in call]
+    assert lanes, "the router was never told which lane this was"
+    assert all(lane is True for lane in lanes), (
+        f"a background task promoted itself to the foreground by failing: {lanes}"
+    )
+
+
+def test_a_foreground_request_stays_foreground():
+    router = _CountingRouter(['{"action": "t", "priority": 1}'])
+    structured = StructuredLLM(_TaskModel, max_retries=2, llm_router=router)
+
+    asyncio.run(structured.generate("Return a task.", is_background=False))
+
+    lanes = [call.get("is_background") for call in router.calls if "is_background" in call]
+    assert lanes and all(lane is False for lane in lanes)
+
+
+def test_escalation_no_longer_disables_the_background_gate():
+    """The gate is about the caller, not about how the last attempt went."""
+    structured = StructuredLLM(_TaskModel, max_retries=2, llm_router=_CountingRouter([]))
+
+    assert structured._background_defer_reason(is_background=False) == ""
+    # A background caller still consults the policy — whatever it returns,
+    # the point is that the question is asked at all.
+    assert isinstance(structured._background_defer_reason(is_background=True), str)
+
+
+def test_a_json_list_reaches_the_repair_path_instead_of_escaping():
+    """`[1, 2, 3]` parses fine and then blew up as an uncaught TypeError."""
+    router = _CountingRouter(["[1, 2, 3]", '{"action": "t", "priority": 1}'])
+    structured = StructuredLLM(_TaskModel, max_retries=3, llm_router=router)
+
+    result = asyncio.run(structured.generate("Return a task."))
+
+    assert result is not None, (
+        "a valid JSON array escaped the retry loop; the documented autonomous "
+        "repair never ran"
+    )
+    assert len(router.calls) >= 2, "no repair attempt was made"
+
+
+@pytest.mark.parametrize("root", ['"a string"', "42", "null", "true", "[]"])
+def test_every_non_object_json_root_is_repairable(root):
+    router = _CountingRouter([root, '{"action": "t", "priority": 1}'])
+    structured = StructuredLLM(_TaskModel, max_retries=3, llm_router=router)
+
+    assert asyncio.run(structured.generate("Return a task.")) is not None
+
+
+def test_the_campaign_stops_at_its_deadline_not_at_its_retry_count():
+    """max_retries bounded the count; nothing bounded the request."""
+    import time
+
+    class _SlowRouter:
+        def __init__(self):
+            self.calls = 0
+
+        async def generate_with_meta(self, prompt, **kwargs):
+            self.calls += 1
+            time.sleep(0.05)
+            return {"text": "not json", "error_code": ""}
+
+        async def generate(self, prompt, **kwargs):
+            self.calls += 1
+            time.sleep(0.05)
+            return "not json"
+
+    router = _SlowRouter()
+    structured = StructuredLLM(_TaskModel, max_retries=50, llm_router=router)
+
+    started = time.monotonic()
+    result = asyncio.run(structured.generate("Return a task.", deadline_s=0.15))
+    elapsed = time.monotonic() - started
+
+    assert result is None
+    assert router.calls < 50, (
+        f"all {router.calls} retries ran; the deadline bounded nothing"
+    )
+    assert elapsed < 2.0
+    assert structured.last_defer_reason == "structured_generation_deadline_exhausted"
+
+
+@pytest.mark.parametrize("bad", [None, "soon", float("nan"), float("inf")])
+def test_an_unusable_deadline_falls_back_to_the_declared_default(bad):
+    structured = StructuredLLM(_TaskModel, max_retries=1, llm_router=_CountingRouter([]))
+    assert (
+        structured._campaign_budget_seconds(bad)
+        == StructuredLLM.DEFAULT_CAMPAIGN_BUDGET_S
+    )
+
+
+def test_an_explicit_zero_deadline_means_unbounded_not_the_default():
+    """A caller that means unbounded must be able to say so."""
+    structured = StructuredLLM(_TaskModel, max_retries=1, llm_router=_CountingRouter([]))
+    assert structured._campaign_budget_seconds(0) == 0.0

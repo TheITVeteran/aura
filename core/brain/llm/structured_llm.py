@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import time
 import logging
 import re
 from typing import TypeVar, get_origin
@@ -61,9 +62,52 @@ class StructuredLLM:
         self._llm_router = llm_router if llm_router is not None else ServiceContainer.get("llm_router")
         self.last_defer_reason = ""
 
-    async def generate(self, prompt: str, context: str | None = None) -> T | None:
-        """Generate structured data with autonomous validation repair."""
+    #: Wall-clock ceiling for one generate() campaign across all retries.
+    #: Not a per-attempt timeout: the point is a bound on the REQUEST.
+    DEFAULT_CAMPAIGN_BUDGET_S = 120.0
+
+    def _campaign_budget_seconds(self, requested: float | None) -> float:
+        """The caller's deadline, or the default. Zero means unbounded.
+
+        An explicit zero or negative is honoured as "no bound" rather than
+        silently replaced — a caller that means unbounded should be able to
+        say so, and a caller that passes nonsense should see the default,
+        not a number invented from its nonsense.
+        """
+        if requested is None:
+            return self.DEFAULT_CAMPAIGN_BUDGET_S
+        try:
+            value = float(requested)
+        except (TypeError, ValueError):
+            return self.DEFAULT_CAMPAIGN_BUDGET_S
+        if value != value or value in (float("inf"), float("-inf")):
+            return self.DEFAULT_CAMPAIGN_BUDGET_S
+        return max(0.0, value)
+
+    async def generate(
+        self,
+        prompt: str,
+        context: str | None = None,
+        *,
+        is_background: bool = True,
+        deadline_s: float | None = None,
+    ) -> T | None:
+        """Generate structured data with autonomous validation repair.
+
+        CP126 e08253de: retries shared no absolute deadline, token ceiling or
+        cumulative cost accounting. Each attempt could run a full router
+        generation, so ``max_retries`` multiplied wall-clock and spend with
+        no bound on the REQUEST — only on the count. A caller asking for
+        three retries was asking for three attempts, not for three times
+        however long one attempt happens to take under load.
+
+        The campaign now carries one deadline for all attempts. Exhausting it
+        ends the campaign; it does not start another attempt that cannot
+        finish.
+        """
         self.last_defer_reason = ""
+        started = time.monotonic()
+        budget_s = self._campaign_budget_seconds(deadline_s)
         prompt = str(prompt or "").strip()
         if not prompt:
             self._record_event(
@@ -80,6 +124,23 @@ class StructuredLLM:
         escalated_tier: str | None = None
 
         for attempt in range(self.max_retries):
+            elapsed = time.monotonic() - started
+            if budget_s > 0 and elapsed >= budget_s:
+                self.last_defer_reason = "structured_generation_deadline_exhausted"
+                self._record_event(
+                    "deadline_exhausted",
+                    detail=(
+                        f"campaign budget {budget_s:.1f}s spent after "
+                        f"{attempt} attempt(s)"
+                    ),
+                    severity="warning",
+                    context={
+                        "model_class": self.model_class.__name__,
+                        "attempts_made": attempt,
+                        "elapsed_s": round(elapsed, 3),
+                    },
+                )
+                return None
             logger.info(
                 "🤖 StructuredLLM: Attempt %d/%d for %s",
                 attempt + 1,
@@ -87,7 +148,7 @@ class StructuredLLM:
                 self.model_class.__name__,
             )
 
-            defer_reason = self._background_defer_reason(escalated=bool(escalated_tier))
+            defer_reason = self._background_defer_reason(is_background=is_background)
             if defer_reason:
                 self.last_defer_reason = defer_reason
                 logger.info("⏸️ StructuredLLM: Deferred %s (%s).", self.model_class.__name__, defer_reason)
@@ -100,7 +161,16 @@ class StructuredLLM:
                     context=context,
                     prefer_tier=force_tier,
                     schema=schema,
-                    is_background=not escalated_tier,
+                    # CP126 d6a8c68c: this was `not escalated_tier`, so the
+                    # FIRST failure — a validation error, a router hiccup,
+                    # anything — set escalated_tier and every later attempt
+                    # went out as foreground work. A background task could
+                    # promote itself into the primary or secondary lane by
+                    # failing once, with no scheduler lease and no
+                    # user-facing admission decision. Failing is not a
+                    # request for priority. The lane is whatever the caller
+                    # asked for and stays there.
+                    is_background=is_background,
                 )
             except STRUCTURED_RECOVERABLE_ERRORS as exc:
                 self._record_event(
@@ -132,8 +202,19 @@ class StructuredLLM:
             try:
                 cleaned_text = self._extract_json(response_text)
                 data = json.loads(cleaned_text)
+                if not isinstance(data, dict):
+                    # CP126 d855fd24: json.loads returns lists, strings,
+                    # numbers and null too. `model_class(**data)` on any of
+                    # those raises TypeError, which this block did not catch,
+                    # so a syntactically valid non-object escaped the retry
+                    # loop entirely — the documented autonomous repair path
+                    # was bypassed by the most ordinary malformation there is.
+                    raise TypeError(
+                        "expected a JSON object at the root, got "
+                        f"{type(data).__name__}"
+                    )
                 validated_obj = self.model_class(**data)
-            except (json.JSONDecodeError, ValidationError) as exc:
+            except (json.JSONDecodeError, ValidationError, TypeError) as exc:
                 logger.warning("❌ StructuredLLM: Validation failed on attempt %d: %s", attempt + 1, exc)
                 self._record_event(
                     "validation_failed",
@@ -262,8 +343,19 @@ class StructuredLLM:
 
         return text
 
-    def _background_defer_reason(self, *, escalated: bool = False) -> str:
-        if escalated:
+    def _background_defer_reason(self, *, is_background: bool = True) -> str:
+        """Why background work must wait, or "" when it may proceed.
+
+        CP126 d6a8c68c, second half. The parameter used to be ``escalated``,
+        and any escalation returned "" — skipping the background policy check
+        entirely. Combined with escalation-on-failure, one failed attempt
+        both promoted the lane AND disabled the gate that would have deferred
+        it. A background task could talk its way past admission by failing.
+
+        Whether work is background is a property of the CALLER, not of how
+        badly the last attempt went.
+        """
+        if not is_background:
             return ""
         try:
             from core.runtime.background_policy import (
