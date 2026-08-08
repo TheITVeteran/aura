@@ -77,6 +77,44 @@ async def test_goal_engine_persists_short_and_long_horizon_lifecycle(tmp_path):
 
 
 @pytest.mark.asyncio
+async def test_failed_goal_replan_persists_its_authorizing_receipt(tmp_path, monkeypatch):
+    engine = GoalEngine(db_path=str(tmp_path / "goal_lifecycle.db"))
+    parent = await engine.add_goal(
+        "Inspect the runtime dependency graph",
+        status="in_progress",
+        priority=0.8,
+    )
+    decisions = []
+
+    class Will:
+        def decide(self, **kwargs):
+            decisions.append(kwargs)
+            return SimpleNamespace(
+                receipt_id="goal-replan-will-receipt",
+                reason="approved",
+                is_approved=lambda: True,
+            )
+
+    monkeypatch.setattr("core.will.get_will", lambda: Will())
+
+    failed = await engine.update_goal_status(
+        parent["id"],
+        status="failed",
+        error="dependency probe timed out",
+    )
+
+    assert failed is not None and failed["status"] == "failed"
+    assert len(decisions) == 1
+    assert decisions[0]["source"] == "goal_engine"
+    assert decisions[0]["context"]["parent_goal_id"] == parent["id"]
+    stack = engine.get_subgoal_stack()
+    assert len(stack) == 1
+    assert stack[0]["parent_goal_id"] == parent["id"]
+    assert stack[0]["metadata"]["will_receipt_id"] == "goal-replan-will-receipt"
+    assert "goal-replan-will-receipt" in stack[0]["evidence"]
+
+
+@pytest.mark.asyncio
 async def test_goal_engine_context_block_surfaces_long_horizon_and_recovery_pressure(tmp_path):
     engine = GoalEngine(db_path=str(tmp_path / "goal_lifecycle.db"))
 

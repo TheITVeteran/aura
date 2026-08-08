@@ -417,14 +417,19 @@ class GoalEngine:
         parent_goal_id: str,
         objective: str,
         success_criteria: str = "",
-        priority: float = 0.5
+        priority: float = 0.5,
+        *,
+        evidence: Iterable[Any] | None = None,
+        metadata: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         sub_goal = await self.add_goal(
             name=f"Subgoal: {objective[:40]}",
             objective=objective,
             parent_goal_id=parent_goal_id,
             priority=priority,
-            success_criteria=success_criteria
+            success_criteria=success_criteria,
+            evidence=evidence,
+            metadata=metadata,
         )
         self._subgoals_stack.append(sub_goal)
         self._save_subgoals_stack()
@@ -1131,20 +1136,46 @@ class GoalEngine:
         if normalized_status == GoalStatus.FAILED.value and existing.status != GoalStatus.FAILED.value:
             logger.warning("⚡ [GOAL] Goal failure detected: '%s'. Initiating counterfactual replanning...", existing.objective)
             try:
-                from core.will import ActionDomain, WillOutcome, get_will
-                will = get_will()
-                decision = will.decide(
-                    content=f"defer_and_replan_on_goal_failure:{goal_id}",
+                from core.runtime.action_executor import ActionExecutor
+                from core.will import ActionDomain
+
+                admission = ActionExecutor.authorize_action(
+                    action_name="goal_engine.failure_replan",
+                    params={
+                        "goal_id": existing.id,
+                        "objective": existing.objective[:500],
+                        "failure": str(error or existing.error or "")[:500],
+                    },
                     source="goal_engine",
                     domain=ActionDomain.INITIATIVE,
-                    priority=0.8
+                    priority=0.8,
+                    context={
+                        "source": "goal_engine",
+                        "autonomous": True,
+                        "goal_failure_replan": True,
+                        "parent_goal_id": existing.id,
+                        "effect_scope": "internal_goal_graph_mutation",
+                    },
                 )
-                if decision.outcome in (WillOutcome.PROCEED, WillOutcome.CONSTRAIN):
+                if admission.approved:
                     await self.push_subgoal(
                         parent_goal_id=existing.id,
                         objective=f"Diagnose failure of: '{existing.objective}' and check prerequisites",
                         success_criteria="Verify error causes from logs and repair environment/tools",
-                        priority=existing.priority + 0.1
+                        priority=existing.priority + 0.1,
+                        evidence=[
+                            item
+                            for item in (
+                                str(error or existing.error or "")[:500],
+                                admission.receipt_id,
+                            )
+                            if item
+                        ],
+                        metadata={
+                            "recovery_origin": "failed_goal",
+                            "parent_goal_id": existing.id,
+                            "will_receipt_id": admission.receipt_id,
+                        },
                     )
             except (ImportError, RuntimeError, AttributeError, TypeError, ValueError, OSError) as e:
                 _record_goal_degradation(
