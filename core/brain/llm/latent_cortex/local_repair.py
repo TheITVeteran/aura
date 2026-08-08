@@ -266,6 +266,103 @@ def _repair_requests(
                 raise ValueError("local repair request is duplicated")
             seen.add(request_id)
             repair_requests.append({**request_payload, "request_id": request_id})
+    # Repair follows REFUTATION, not only inter-branch disagreement.
+    #
+    # Every request above descends from a dispute, and a dispute exists only
+    # where two branches' atom sequences differ -- identical branches
+    # short-circuit to decoded_claim_graphs_exactly_equal. So when both
+    # branches are wrong in the SAME way, an exact verifier can refute the
+    # answer and nothing is repaired: measured on the 32B, refuted=1 with
+    # repair_requests=0 and answer replacement reporting
+    # known_refutation_has_no_dominant_repair. The baseline was known wrong,
+    # we knew it, and the machinery had no way to act.
+    #
+    # The Spark states the intended rule directly: when a verifier finds an
+    # error at step 7, invalidate step 7 and its descendants and regenerate
+    # from the last valid state. That is a property of the refutation, not of
+    # a sibling branch happening to disagree. A refuted exact route therefore
+    # yields a repair request on its own, built from the same evidence and
+    # carrying the same closure, with a dispute_sha256 of "" recording that it
+    # arose from a refutation rather than a pair.
+    if not repair_requests:
+        for branch, envelope in sorted(routes.items()):
+            decomposition = decompositions[str(branch)]
+            for route in envelope["routes"]:
+                if (
+                    route["outcome"] != "refuted"
+                    or route["verifier"] not in _EXACT_VERIFIERS
+                ):
+                    continue
+                atom_id = str(route["atom_id"])
+                atom_index = next(
+                    (
+                        index
+                        for index, atom in enumerate(decomposition["atoms"])
+                        if atom["atom_id"] == atom_id
+                    ),
+                    None,
+                )
+                if atom_index is None:
+                    continue
+                invalidated_atoms, invalidated_transitions = _descendant_closure(
+                    decomposition, atom_id
+                )
+                preserved_atoms = [
+                    {
+                        "ordinal": index,
+                        "atom_id": atom["atom_id"],
+                        "kind": atom["kind"],
+                        "text_sha256": atom["text_sha256"],
+                        "dependency_cues": list(atom["dependency_cues"]),
+                    }
+                    for index, atom in enumerate(decomposition["atoms"])
+                    if index < atom_index
+                ]
+                verified_ancestor_routes = [
+                    row["route_sha256"]
+                    for row in envelope["routes"]
+                    if row["verifier"] in _EXACT_VERIFIERS
+                    and row["outcome"] == "verified"
+                ]
+                invalidated_set = set(invalidated_atoms)
+                preserved_unrelated_atoms = [
+                    {
+                        "ordinal": index,
+                        "atom_id": atom["atom_id"],
+                        "kind": atom["kind"],
+                        "text_sha256": atom["text_sha256"],
+                        "dependency_cues": list(atom["dependency_cues"]),
+                    }
+                    for index, atom in enumerate(decomposition["atoms"])
+                    if atom["atom_id"] not in invalidated_set
+                ]
+                request_payload = {
+                    "pair": {"left": int(branch), "right": int(branch)},
+                    "dispute_sha256": "",
+                    "branch": int(branch),
+                    "failed_atom_id": atom_id,
+                    "failed_atom_ordinal": atom_index,
+                    "failed_route_sha256": route["route_sha256"],
+                    "required_verifier": route["verifier"],
+                    "original_decomposition_sha256": decomposition["receipt_sha256"],
+                    "original_source_sha256": decomposition["source_sha256"],
+                    "preserved_prefix_atoms": preserved_atoms,
+                    "verified_ancestor_routes": verified_ancestor_routes,
+                    "preserved_unrelated_atoms": preserved_unrelated_atoms,
+                    "last_valid_atom_id": (
+                        str(decomposition["atoms"][atom_index - 1]["atom_id"])
+                        if atom_index
+                        else ""
+                    ),
+                    "invalidated_atom_ids": invalidated_atoms,
+                    "invalidated_transition_ids": invalidated_transitions,
+                }
+                request_id = _sha(request_payload)
+                if request_id in seen:
+                    continue
+                seen.add(request_id)
+                repair_requests.append({**request_payload, "request_id": request_id})
+
     repair_requests.sort(
         key=lambda row: (
             row["branch"],
