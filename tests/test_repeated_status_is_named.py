@@ -51,7 +51,7 @@ class TestRepeatEscalation:
         for _ in range(2):
             _message(chat_routes)
         third = _message(chat_routes)
-        assert "3th turn in a row" in third or "in a row" in third
+        assert "3rd turn in a row" in third
         assert "worth looking at" in third
 
     def test_streak_count_keeps_climbing(self):

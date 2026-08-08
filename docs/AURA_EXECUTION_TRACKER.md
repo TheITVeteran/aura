@@ -38123,7 +38123,7 @@ review coverage is not remediation and none is closed by the review receipt:
 - **P1 CLOSED CP014:** fail closed when defensive-ingress or conscience pre-gates are unavailable.
 - **P2 CLOSED CP015:** move tableau proof, collection, whole-file reads, and memory/goal exports off
   the event loop under explicit time and size budgets.
-- **P2:** partition repetition, degradation, and relevance state by conversation.
+- **P2 CLOSED CP016:** partition repetition, degradation, and relevance state by conversation.
 - **P2:** remove recovery claims about identity, recurrence, memory, tools, and failure
   cause unless the current request measured them.
 - **P2:** replace the bare `you`/`your` topicality bypass with semantic continuity evidence.
@@ -38303,3 +38303,35 @@ effect calls in `2,066` buckets and `1,948` pre-existing migration-debt calls.
 This closes the first P2 chat item only. Per-conversation quality state and all
 later queue items, the resident complete-engine verdict, fusion, release,
 endurance, frontier, and `WOW Signal` claims remain open.
+
+## Checkpoint 2026-08-08-016: Quality Gates Belong to the Active Conversation
+
+Chat repetition history, same-answer/different-prompt evidence, degraded-status
+repetition, and consecutive quality failures now live in one bounded state
+record per authenticated principal, surface, and canonical conversation
+session. The registry hashes its composite identity, expires inactive records
+after six hours, retains at most 256 records, and preserves a default bucket
+only for direct synchronous tooling. A response or failure in one conversation
+can no longer make a second conversation look stale, irrelevant, or repeatedly
+degraded.
+
+The route binds that canonical conversation identity before cognition and uses
+the same 64-character normalization as the conversation ledger, memory pins,
+and protected recovery history. Paired callers remain bound to their device
+session; owner-supplied sessions are normalized once; host-derived sessions
+retain the existing boot-and-idle epoch boundary. Recent-message relevance now
+filters the shared in-memory exchange ledger by this exact session before it
+constructs topic anchors. Unrelated chats therefore cannot cause a valid reply
+to pass or fail topicality.
+
+Adversarial regressions prove same-session repeat detection, cross-session and
+cross-principal noninterference, isolated lane-status and degradation streaks,
+session-filtered relevance history, bounded registry eviction, and identity
+normalization parity with the ledger. The conversation, reliability, feedback,
+event-loop, and isolation suites pass `523/523`; session/delivery boundary tests
+pass `35/35`; smoke passes `103/103`; Ruff, byte compilation, governance lint,
+layering, and diff hygiene pass. Governance ownership remains at `2,215`
+recognized calls in `2,066` buckets with `1,948` pre-existing migration-debt
+calls and no new debt. This closes only the per-conversation quality-state P2.
+The remaining chat queue, complete-engine verdict, fusion, release, endurance,
+frontier, and `WOW Signal` claims remain open.

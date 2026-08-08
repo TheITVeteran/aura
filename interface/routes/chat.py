@@ -67,6 +67,7 @@ from core.runtime.desktop_task_contract import (
 )
 from core.runtime.errors import describe_error, record_degradation
 from core.runtime.flags import FlagKind, declare
+from core.runtime.lockdep import checked_lock
 from core.runtime.principal_context import (
     relational_principal_scope,
 )
@@ -159,6 +160,11 @@ _CHAT_REQUEST_SURFACE: ContextVar[str] = ContextVar(
     "aura_chat_request_surface",
     default="",
 )
+_CHAT_REQUEST_SESSION: ContextVar[str] = ContextVar(
+    "aura_chat_request_session",
+    default="",
+)
+_CHAT_SESSION_ID_MAX_CHARS = 64
 
 
 # ── Request Models ────────────────────────────────────────────
@@ -3443,11 +3449,138 @@ def _read_repo_probe_reply(user_message: str) -> dict[str, str] | None:
 # Track the last N responses to detect when the cortex is stuck returning the
 # same cached output. This prevents the "Dark Matter" loop where a stale
 # identity prompt produces identical text on every turn.
-_recent_responses: collections.deque = collections.deque(maxlen=12)
-_recent_response_pairs: collections.deque = collections.deque(maxlen=12)  # (user_fp, normalized_response) tuples
+@dataclasses.dataclass
+class _ConversationQualityState:
+    recent_responses: collections.deque[str] = dataclasses.field(
+        default_factory=lambda: collections.deque(maxlen=12)
+    )
+    recent_response_pairs: collections.deque[tuple[str, str]] = dataclasses.field(
+        default_factory=lambda: collections.deque(maxlen=12)
+    )
+    consecutive_degraded_count: int = 0
+    lane_status_fingerprint: str = ""
+    lane_status_repeat_count: int = 0
+    last_access_monotonic: float = dataclasses.field(default_factory=time.monotonic)
+
+
+_CONVERSATION_QUALITY_STATE_LIMIT = 256
+_CONVERSATION_QUALITY_STATE_TTL_S = 6 * 60 * 60.0
+_DEFAULT_CONVERSATION_QUALITY_KEY = "default"
+_conversation_quality_lock = checked_lock(
+    "chat.conversation_quality_state",
+    reentrant=True,
+)
+_conversation_quality_states: collections.OrderedDict[str, _ConversationQualityState] = (
+    collections.OrderedDict(
+        [(_DEFAULT_CONVERSATION_QUALITY_KEY, _ConversationQualityState())]
+    )
+)
+
+
+def _conversation_quality_key(
+    *,
+    session_id: str = "",
+    principal_id: str = "",
+    principal_surface: str = "",
+) -> str:
+    session = " ".join(
+        str(session_id or _CHAT_REQUEST_SESSION.get() or "").strip().split()
+    )[:_CHAT_SESSION_ID_MAX_CHARS]
+    principal = " ".join(
+        str(principal_id or _CHAT_REQUEST_PRINCIPAL.get() or "").strip().split()
+    )[:160]
+    surface = str(
+        principal_surface or _CHAT_REQUEST_SURFACE.get() or ""
+    ).strip().casefold()[:32]
+    if not session and not principal and not surface:
+        return _DEFAULT_CONVERSATION_QUALITY_KEY
+    identity = json.dumps(
+        {"principal": principal, "session": session or "default", "surface": surface},
+        ensure_ascii=True,
+        separators=(",", ":"),
+        sort_keys=True,
+    )
+    return hashlib.sha256(identity.encode("utf-8", errors="replace")).hexdigest()
+
+
+def _conversation_quality_state_locked(
+    *,
+    session_id: str = "",
+    principal_id: str = "",
+    principal_surface: str = "",
+) -> _ConversationQualityState:
+    now = time.monotonic()
+    key = _conversation_quality_key(
+        session_id=session_id,
+        principal_id=principal_id,
+        principal_surface=principal_surface,
+    )
+    stale_keys = [
+        candidate
+        for candidate, state in _conversation_quality_states.items()
+        if candidate != _DEFAULT_CONVERSATION_QUALITY_KEY
+        and (now - state.last_access_monotonic) > _CONVERSATION_QUALITY_STATE_TTL_S
+    ]
+    for stale_key in stale_keys:
+        _conversation_quality_states.pop(stale_key, None)
+    state = _conversation_quality_states.get(key)
+    if state is None:
+        state = _ConversationQualityState()
+        _conversation_quality_states[key] = state
+    state.last_access_monotonic = now
+    _conversation_quality_states.move_to_end(key)
+    while len(_conversation_quality_states) > _CONVERSATION_QUALITY_STATE_LIMIT:
+        oldest_key = next(iter(_conversation_quality_states))
+        if oldest_key == _DEFAULT_CONVERSATION_QUALITY_KEY:
+            _conversation_quality_states.move_to_end(oldest_key)
+            continue
+        _conversation_quality_states.popitem(last=False)
+    return state
+
+
+def _reset_conversation_quality_registry() -> None:
+    """Clear transient per-conversation quality state without changing policy."""
+    with _conversation_quality_lock:
+        default = _conversation_quality_states.get(_DEFAULT_CONVERSATION_QUALITY_KEY)
+        if default is None:
+            default = _ConversationQualityState()
+        default.recent_responses.clear()
+        default.recent_response_pairs.clear()
+        default.consecutive_degraded_count = 0
+        default.lane_status_fingerprint = ""
+        default.lane_status_repeat_count = 0
+        default.last_access_monotonic = time.monotonic()
+        _conversation_quality_states.clear()
+        _conversation_quality_states[_DEFAULT_CONVERSATION_QUALITY_KEY] = default
+
+
+def _increment_conversation_degradation_streak() -> int:
+    with _conversation_quality_lock:
+        state = _conversation_quality_state_locked()
+        state.consecutive_degraded_count += 1
+        return state.consecutive_degraded_count
+
+
+def _set_conversation_degradation_streak(value: int) -> None:
+    with _conversation_quality_lock:
+        state = _conversation_quality_state_locked()
+        state.consecutive_degraded_count = max(0, int(value))
+
+
+def _conversation_degradation_streak() -> int:
+    with _conversation_quality_lock:
+        return _conversation_quality_state_locked().consecutive_degraded_count
+
+
+_default_conversation_quality_state = _conversation_quality_states[
+    _DEFAULT_CONVERSATION_QUALITY_KEY
+]
+# Compatibility handles for direct synchronous tooling and existing tests. Live
+# requests never use this bucket once their principal/session context is bound.
+_recent_responses = _default_conversation_quality_state.recent_responses
+_recent_response_pairs = _default_conversation_quality_state.recent_response_pairs
 _STALE_REPEAT_THRESHOLD = 2  # [STABILITY] Reverting to 2. A single identical repeat is enough to trigger defensive measures.
 _FUZZY_SIMILARITY_THRESHOLD = 0.80  # word-overlap ratio that counts as semantically stale
-_consecutive_degraded_count: int = 0  # tracks degradation streak for proactive recovery
 _DESKTOP_COGNITIVE_REPAIR_RECURRENCE_FLOOR = 0.35
 _DESKTOP_COGNITIVE_REPAIR_COOLDOWN_S = 15 * 60.0
 _desktop_cognitive_repair_lock = threading.Lock()
@@ -3884,8 +4017,16 @@ def _is_contextual_relevance_challenge(user_message: str) -> bool:
 async def _gather_recent_user_messages_for_relevance(current_user_message: str, *, limit: int = 4) -> list[str]:
     recent: list[str] = []
     current = str(current_user_message or "").strip()
+    session_id = str(_CHAT_REQUEST_SESSION.get() or "").strip()[
+        :_CHAT_SESSION_ID_MAX_CHARS
+    ]
     async with _get_convo_lock():
         for entry in reversed(_conversation_log):
+            entry_session_id = str(entry.get("session_id") or "").strip()[
+                :_CHAT_SESSION_ID_MAX_CHARS
+            ]
+            if session_id and entry_session_id != session_id:
+                continue
             user_text = str(entry.get("user") or "").strip()
             if not user_text or user_text == current:
                 continue
@@ -10786,15 +10927,20 @@ def _schedule_recent_response_reasoning_audit(text: str) -> None:
 
 def _record_recent_response(text: str, user_message: str = "") -> None:
     fp = _response_fingerprint(text)
-    if fp:
-        _recent_responses.append(fp)
-    # A real delivered answer ends any degraded-status streak: the escalation
-    # clause must count CONSECUTIVE failures, not lifetime ones.
-    _reset_lane_status_repeat_state()
-    if user_message:
-        response_body = _normalize_response_body(text)[:500]
-        if response_body:
-            _recent_response_pairs.append((_response_fingerprint(user_message), response_body))
+    with _conversation_quality_lock:
+        state = _conversation_quality_state_locked()
+        if fp:
+            state.recent_responses.append(fp)
+        # A real delivered answer ends any degraded-status streak: the escalation
+        # clause must count CONSECUTIVE failures, not lifetime ones.
+        state.lane_status_fingerprint = ""
+        state.lane_status_repeat_count = 0
+        if user_message:
+            response_body = _normalize_response_body(text)[:500]
+            if response_body:
+                state.recent_response_pairs.append(
+                    (_response_fingerprint(user_message), response_body)
+                )
     # Delivery never waits for tableau/numeric proof. The audit is supervised,
     # off-loop, deadline-bound, and backpressured instead of merely being called
     # "non-blocking" while running synchronously.
@@ -10805,12 +10951,13 @@ def _is_stale_repeated_response(text: str) -> bool:
     fp = _response_fingerprint(text)
     if not fp:
         return False
-    # Exact match check
-    exact_count = sum(1 for r in _recent_responses if r == fp)
+    with _conversation_quality_lock:
+        responses = tuple(_conversation_quality_state_locked().recent_responses)
+    exact_count = sum(1 for response in responses if response == fp)
     if exact_count >= _STALE_REPEAT_THRESHOLD:
         return True
     # Fuzzy similarity check — catches "same answer, slightly different wording"
-    fuzzy_count = sum(1 for r in _recent_responses if _fuzzy_similar(fp, r))
+    fuzzy_count = sum(1 for response in responses if _fuzzy_similar(fp, response))
     if fuzzy_count >= _STALE_REPEAT_THRESHOLD:
         logger.debug("Fuzzy stale detection triggered (overlap count=%d).", fuzzy_count)
         return True
@@ -10925,7 +11072,11 @@ def _is_same_answer_different_prompt(user_message: str, text: str) -> bool:
     response_body = _normalize_response_body(text)
     if not user_fp or not response_body:
         return False
-    for prev_user, prev_resp in _recent_response_pairs:
+    with _conversation_quality_lock:
+        response_pairs = tuple(
+            _conversation_quality_state_locked().recent_response_pairs
+        )
+    for prev_user, prev_resp in response_pairs:
         if prev_user == user_fp:
             continue
         if _is_referential_followup_request(prev_user):
@@ -11433,24 +11584,32 @@ def _desktop_required_cognitive_budget(
 # `identical_reply_repeated_x32`) reads as a broken loop even when every
 # individual sentence is true. Naming the repetition is both more honest and
 # more actionable than pretending each occurrence is fresh.
-_LANE_STATUS_REPEAT_STATE: dict[str, Any] = {"fingerprint": "", "count": 0}
 _LANE_STATUS_REPEAT_NOTICE_AFTER = 2
+
+
+def _turn_count_ordinal(count: int) -> str:
+    value = max(0, int(count))
+    suffix = "th"
+    if not 10 <= value % 100 <= 20:
+        suffix = {1: "st", 2: "nd", 3: "rd"}.get(value % 10, "th")
+    return f"{value}{suffix}"
 
 
 def _lane_status_repeat_suffix(message: str) -> str:
     """Honest escalation clause when the same status recurs back-to-back."""
     fingerprint = " ".join(str(message or "").lower().split())[:160]
-    state = _LANE_STATUS_REPEAT_STATE
-    if fingerprint and fingerprint == state.get("fingerprint"):
-        state["count"] = int(state.get("count", 0)) + 1
-    else:
-        state["fingerprint"] = fingerprint
-        state["count"] = 1
-    count = int(state.get("count", 1))
+    with _conversation_quality_lock:
+        state = _conversation_quality_state_locked()
+        if fingerprint and fingerprint == state.lane_status_fingerprint:
+            state.lane_status_repeat_count += 1
+        else:
+            state.lane_status_fingerprint = fingerprint
+            state.lane_status_repeat_count = 1
+        count = state.lane_status_repeat_count
     if count <= _LANE_STATUS_REPEAT_NOTICE_AFTER:
         return ""
     return (
-        f" (This is the {count}th turn in a row I've had to say this — "
+        f" (This is the {_turn_count_ordinal(count)} turn in a row I've had to say this — "
         "the lane is not recovering on its own, so this is worth looking at "
         "rather than retrying.)"
     )
@@ -11458,8 +11617,10 @@ def _lane_status_repeat_suffix(message: str) -> str:
 
 def _reset_lane_status_repeat_state() -> None:
     """A real answer clears the streak — only consecutive failures count."""
-    _LANE_STATUS_REPEAT_STATE["fingerprint"] = ""
-    _LANE_STATUS_REPEAT_STATE["count"] = 0
+    with _conversation_quality_lock:
+        state = _conversation_quality_state_locked()
+        state.lane_status_fingerprint = ""
+        state.lane_status_repeat_count = 0
 
 
 _FOREGROUND_GATE_BOOT_WAIT_S = 90.0
@@ -20984,14 +21145,26 @@ async def api_chat(
         _authenticated_chat_principal(request),
         request_session,
     )
+    supplied_session = str(body.session_id or "").strip()
+    try:
+        paired_session = paired_device_session_id(request)
+    except _CHAT_RECOVERABLE_ERRORS:
+        paired_session = None
+    conversation_session = str(paired_session or supplied_session or "").strip()
+    if not conversation_session:
+        conversation_session = _conversation_session_id(request_session)
     principal_token = _CHAT_REQUEST_PRINCIPAL.set(request_principal)
     surface_token = _CHAT_REQUEST_SURFACE.set(
         str(request_profile.get("surface") or "").strip().casefold()[:32]
+    )
+    session_token = _CHAT_REQUEST_SESSION.set(
+        conversation_session[:_CHAT_SESSION_ID_MAX_CHARS]
     )
     try:
         with bind_failure_ledger():
             return await _api_chat_turn(body, request)
     finally:
+        _CHAT_REQUEST_SESSION.reset(session_token)
         _CHAT_REQUEST_SURFACE.reset(surface_token)
         _CHAT_REQUEST_PRINCIPAL.reset(principal_token)
 
@@ -21112,15 +21285,22 @@ async def _api_chat_turn(body: ChatRequest, request: Request):
         if device_session_id:
             # A paired caller cannot select another device or owner session by
             # supplying an arbitrary body.session_id.
-            _chat_session_id = device_session_id
-        elif body.session_id:
-            _chat_session_id = body.session_id
+            _chat_session_id = str(device_session_id).strip()[
+                :_CHAT_SESSION_ID_MAX_CHARS
+            ]
+        elif str(body.session_id or "").strip():
+            _chat_session_id = str(body.session_id).strip()[
+                :_CHAT_SESSION_ID_MAX_CHARS
+            ]
         else:
             try:
                 _host = (request.client.host if request.client else "default") or "default"
             except _CHAT_RECOVERABLE_ERRORS:
                 _host = "default"
             _chat_session_id = _conversation_session_id(_host)
+        _CHAT_REQUEST_SESSION.set(
+            str(_chat_session_id or "default")[:_CHAT_SESSION_ID_MAX_CHARS]
+        )
 
         if conversation_only_surface:
             scoped_reply = _paired_device_information_scope_reply(
@@ -24499,7 +24679,6 @@ async def _api_chat_turn(body: ChatRequest, request: Request):
                 logger.debug("Affordance intent parse skipped: %s", _aff_exc)
                 _pending_affordance_intents = []
 
-        global _consecutive_degraded_count
         response_confidence = "high"
         is_stale = _is_actionably_stale_response(_semantic_user_message, reply_text)
         is_same_diff = _is_same_answer_different_prompt(_semantic_user_message, reply_text)
@@ -24584,7 +24763,7 @@ async def _api_chat_turn(body: ChatRequest, request: Request):
             or assessment_requires_repair
         ):
             response_confidence = "degraded"
-            _consecutive_degraded_count += 1
+            degradation_streak = _increment_conversation_degradation_streak()
             logger.warning(
                 "⚠️ Response confidence: degraded (stale=%s, same_answer_diff_prompt=%s, off_topic=%s, semantic_glitch=%s, recall_contract=%s, context_contract=%s, memory_state_contract=%s, assessment_requires_repair=%s, assessment=%s, assessment_ok=%s, retryable=%s, hard_failure=%s, reply_len=%d, streak=%d, reason=%s)",
                 is_stale,
@@ -24600,11 +24779,11 @@ async def _api_chat_turn(body: ChatRequest, request: Request):
                 getattr(reply_assessment, "retryable", None),
                 getattr(reply_assessment, "hard_failure", None),
                 len(str(reply_text or "")),
-                _consecutive_degraded_count,
+                degradation_streak,
                 off_topic_reason or semantic_glitch_reason or "",
             )
         else:
-            _consecutive_degraded_count = 0
+            _set_conversation_degradation_streak(0)
 
         hard_final_quality_failed = bool(
             is_off_topic
@@ -24714,7 +24893,7 @@ async def _api_chat_turn(body: ChatRequest, request: Request):
                     )
                 ):
                     response_confidence = "high"
-                    _consecutive_degraded_count = 0
+                    _set_conversation_degradation_streak(0)
                     logger.info("✅ Final reply quality gate repaired degraded output.")
                 else:
                     response_confidence = "degraded"
@@ -24762,7 +24941,7 @@ async def _api_chat_turn(body: ChatRequest, request: Request):
                 reply_source = "cognitive_engine_self_condition_grounding"
                 response_confidence = "high"
                 hard_final_quality_failed = False
-                _consecutive_degraded_count = 0
+                _set_conversation_degradation_streak(0)
                 _live_turn_trace.update(
                     {
                         "cognitive_engine_reply_accepted": True,
@@ -24821,7 +25000,7 @@ async def _api_chat_turn(body: ChatRequest, request: Request):
                 reply_source = "cognitive_engine_identity_continuity_grounding"
                 response_confidence = "high"
                 hard_final_quality_failed = False
-                _consecutive_degraded_count = 0
+                _set_conversation_degradation_streak(0)
                 _live_turn_trace.update(
                     {
                         "cognitive_engine_reply_accepted": True,
@@ -24913,7 +25092,7 @@ async def _api_chat_turn(body: ChatRequest, request: Request):
                 )
                 response_confidence = "high"
                 hard_final_quality_failed = False
-                _consecutive_degraded_count = 0
+                _set_conversation_degradation_streak(0)
                 _live_turn_trace.update(
                     {
                         "cognitive_engine_reply_accepted": True,
@@ -24935,11 +25114,14 @@ async def _api_chat_turn(body: ChatRequest, request: Request):
             )
 
         # Proactive recovery: if 3+ consecutive degraded responses, compact + reset stale deque
-        if _consecutive_degraded_count >= 3:
-            logger.warning("🚨 Degradation streak=%d — triggering proactive compaction + stale reset.", _consecutive_degraded_count)
-            _recent_responses.clear()
-            _recent_response_pairs.clear()
-            _consecutive_degraded_count = 0
+        degradation_streak = _conversation_degradation_streak()
+        if degradation_streak >= 3:
+            logger.warning("🚨 Degradation streak=%d — triggering proactive compaction + stale reset.", degradation_streak)
+            with _conversation_quality_lock:
+                quality_state = _conversation_quality_state_locked()
+                quality_state.recent_responses.clear()
+                quality_state.recent_response_pairs.clear()
+                quality_state.consecutive_degraded_count = 0
             try:
                 live_state = _resolve_live_aura_state()
                 if live_state and hasattr(live_state, "compact"):

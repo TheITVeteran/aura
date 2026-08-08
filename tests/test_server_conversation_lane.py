@@ -232,8 +232,7 @@ def _reset_conversation_log():
         from interface.routes import chat as chat_routes
 
         chat_routes._conversation_log.clear()
-        chat_routes._recent_responses.clear()
-        chat_routes._recent_response_pairs.clear()
+        chat_routes._reset_conversation_quality_registry()
     except (ImportError, AttributeError):
         pass
     yield
@@ -241,8 +240,7 @@ def _reset_conversation_log():
         from interface.routes import chat as chat_routes
 
         chat_routes._conversation_log.clear()
-        chat_routes._recent_responses.clear()
-        chat_routes._recent_response_pairs.clear()
+        chat_routes._reset_conversation_quality_registry()
     except (ImportError, AttributeError):
         pass
 
