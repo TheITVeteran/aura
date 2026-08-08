@@ -10,6 +10,7 @@ import ast
 import asyncio
 import importlib.util
 import logging
+import multiprocessing as mp
 import os
 import shlex
 import shutil
@@ -17,11 +18,13 @@ import signal
 import subprocess
 import sys
 from collections.abc import Callable, Mapping, Sequence
+from dataclasses import dataclass, field
 from enum import StrEnum
 from pathlib import Path
 from typing import IO, Any
 
 from core import governance_context as _governance_context
+from core.runtime.process_privilege import Privilege, ProcessRole, check_spawn
 from core.runtime.shutdown_coordinator import (
     is_shutdown_requested,
     record_shutdown_admission_event,
@@ -85,6 +88,27 @@ class AcceleratorCapability(StrEnum):
     NONE = "none"
     MODEL = "model"
     AUTO = "auto"
+
+
+@dataclass(frozen=True)
+class PythonProcessSpec:
+    """Complete admission contract for one Python multiprocessing child."""
+
+    target: Callable[..., Any]
+    source: str
+    name: str
+    role: ProcessRole
+    accelerator_capability: AcceleratorCapability | str
+    args: tuple[Any, ...] = ()
+    kwargs: Mapping[str, Any] = field(default_factory=dict)
+    requested_privileges: frozenset[Privilege] = field(default_factory=frozenset)
+    daemon: bool = False
+    start_method: str = "spawn"
+    environment_overrides: Mapping[str, str] = field(default_factory=dict)
+
+
+class PythonProcessOwnershipError(RuntimeError):
+    """A Python child could not satisfy the gateway ownership contract."""
 
 
 _ACCELERATOR_IMPORT_ROOTS = frozenset(
@@ -367,7 +391,7 @@ def _register_runtime_hygiene_process(
     kind: str,
     source: str,
     command: Sequence[str] | str,
-) -> None:
+) -> bool:
     """Register gateway-spawned children with runtime hygiene when available."""
 
     try:
@@ -377,15 +401,18 @@ def _register_runtime_hygiene_process(
             command_text = command
         else:
             command_text = " ".join(str(part) for part in command)
-        get_runtime_hygiene().register_process_handle(
+        hygiene = get_runtime_hygiene()
+        hygiene.register_process_handle(
             proc,
             kind=kind,
             name=source or kind,
             source=f"subprocess_gateway:{source or 'unknown'}",
             command=command_text,
         )
+        return bool(hygiene.process_handle_is_registered(proc))
     except (ImportError, RuntimeError, AttributeError, TypeError, ValueError) as exc:
         logger.debug("runtime hygiene registration skipped for subprocess gateway child: %s", exc)
+        return False
 
 
 def governance_runtime_active() -> bool:
@@ -597,6 +624,65 @@ def _open_spawn_stream(path: str | os.PathLike[str], *, text: bool) -> IO[Any]:
         raise
 
 
+def _python_process_entrypoint(
+    target: Callable[..., Any],
+    args: tuple[Any, ...],
+    kwargs: dict[str, Any],
+    environment_overrides: dict[str, str],
+    scrub_secrets: bool,
+) -> None:
+    """Pickle-safe child entrypoint that applies the declared environment."""
+
+    if scrub_secrets:
+        from core.security.structural_redaction import is_sensitive_key
+
+        for key in tuple(os.environ):
+            if is_sensitive_key(key):
+                os.environ.pop(key, None)
+    os.environ.update(environment_overrides)
+    target(*args, **kwargs)
+
+
+def _terminate_and_reap_python_process(
+    process: Any,
+    *,
+    terminate_timeout_s: float = 1.0,
+    kill_timeout_s: float = 1.0,
+) -> bool:
+    """Bounded handle-based termination; never signal an observed PID directly."""
+
+    try:
+        alive = bool(process.is_alive())
+    except (AssertionError, AttributeError, OSError, RuntimeError, ValueError):
+        alive = True
+    if alive:
+        try:
+            process.terminate()
+        except (AttributeError, OSError, RuntimeError, ValueError):
+            pass
+    try:
+        process.join(timeout=max(0.0, float(terminate_timeout_s)))
+    except (AssertionError, AttributeError, OSError, RuntimeError, ValueError):
+        pass
+    try:
+        alive = bool(process.is_alive())
+    except (AssertionError, AttributeError, OSError, RuntimeError, ValueError):
+        alive = True
+    if alive:
+        try:
+            process.kill()
+        except (AttributeError, OSError, RuntimeError, ValueError):
+            pass
+        try:
+            process.join(timeout=max(0.0, float(kill_timeout_s)))
+        except (AssertionError, AttributeError, OSError, RuntimeError, ValueError):
+            pass
+    try:
+        return not bool(process.is_alive())
+    except (AssertionError, AttributeError, OSError, RuntimeError, ValueError):
+        return False
+
+
 def _validate_offline_tooling_bypass(
     *,
     offline_tooling: bool,
@@ -731,6 +817,189 @@ def _require_not_shutting_down(
 
 class SubprocessGateway:
     """Single owner for subprocess execution and spawning."""
+
+    _PYTHON_PROCESS_CONTRACT_ATTRIBUTE = "_aura_python_process_contract"
+
+    def spawn_python_process(
+        self,
+        spec: PythonProcessSpec,
+        *,
+        context: Any | None = None,
+    ) -> Any:
+        """Construct, start, and ownership-commit one multiprocessing child."""
+
+        if not isinstance(spec, PythonProcessSpec):
+            raise TypeError("spec must be a PythonProcessSpec")
+        source = str(spec.source or "").strip()
+        if source in {"", "unknown"} or "\n" in source or "\r" in source:
+            raise ValueError("Python process source must be a specific single-line label")
+        if not callable(spec.target):
+            raise TypeError("Python process target must be callable")
+        if not str(spec.name or "").strip():
+            raise ValueError("Python process name must be non-empty")
+        if not isinstance(spec.role, ProcessRole):
+            raise TypeError("Python process role must be a ProcessRole")
+        if any(
+            not isinstance(privilege, Privilege)
+            for privilege in spec.requested_privileges
+        ):
+            raise TypeError("requested privileges must be Privilege values")
+
+        accelerator = _coerce_accelerator_capability(
+            spec.accelerator_capability,
+            source=source,
+        )
+        if accelerator is AcceleratorCapability.AUTO:
+            raise GovernanceViolation(
+                f"python_process_accelerator_capability_must_be_explicit:{source}"
+            )
+        if (spec.role is ProcessRole.MODEL_WORKER) != (
+            accelerator is AcceleratorCapability.MODEL
+        ):
+            raise GovernanceViolation(
+                f"python_process_role_accelerator_mismatch:{source}"
+            )
+        decision = check_spawn(
+            source,
+            set(spec.requested_privileges),
+            role=spec.role,
+        )
+        if not decision.allowed:
+            denied = ",".join(
+                sorted(privilege.value for privilege in decision.denied)
+            )
+            raise GovernanceViolation(
+                f"python_process_privilege_denied:{source}:{denied}"
+            )
+
+        start_method = str(spec.start_method or "").strip().lower()
+        if start_method not in {"spawn", "forkserver"}:
+            raise ValueError("Python process start_method must be spawn or forkserver")
+        selected_context = context if context is not None else mp.get_context(start_method)
+        try:
+            actual_start_method = str(selected_context.get_start_method()).lower()
+        except (AttributeError, RuntimeError, TypeError, ValueError) as exc:
+            raise ValueError("Python process context must expose its start method") from exc
+        if actual_start_method != start_method:
+            raise GovernanceViolation(
+                f"python_process_start_method_mismatch:{source}:"
+                f"expected={start_method}:actual={actual_start_method}"
+            )
+
+        environment_overrides = {
+            str(key): str(value)
+            for key, value in dict(spec.environment_overrides).items()
+        }
+        try:
+            from core.security.structural_redaction import is_sensitive_key
+        except Exception as exc:  # noqa: BLE001 - security dependency fails closed
+            raise GovernanceViolation(
+                f"python_process_secret_classifier_unavailable:{source}"
+            ) from exc
+        leaked_overrides = sorted(
+            key for key in environment_overrides if is_sensitive_key(key)
+        )
+        secrets_requested = Privilege.SECRETS in spec.requested_privileges
+        if leaked_overrides and not secrets_requested:
+            raise GovernanceViolation(
+                f"python_process_secret_override_denied:{source}:"
+                f"{','.join(leaked_overrides)}"
+            )
+
+        operation = f"subprocess_gateway.spawn_python_process:{source}"
+        _require_not_shutting_down(
+            operation,
+            read_only=False,
+            offline_tooling=False,
+            allow_during_shutdown=False,
+        )
+        contract = {
+            "source": source,
+            "name": str(spec.name),
+            "role": spec.role.name.lower(),
+            "requested_privileges": tuple(
+                sorted(privilege.value for privilege in spec.requested_privileges)
+            ),
+            "accelerator_capability": accelerator.value,
+            "start_method": start_method,
+        }
+        process = selected_context.Process(
+            target=_python_process_entrypoint,
+            args=(
+                spec.target,
+                tuple(spec.args),
+                dict(spec.kwargs),
+                environment_overrides,
+                not secrets_requested,
+            ),
+            name=str(spec.name),
+            daemon=bool(spec.daemon),
+        )
+        setattr(process, self._PYTHON_PROCESS_CONTRACT_ATTRIBUTE, contract)
+        start_attempted = False
+        try:
+            _require_not_shutting_down(
+                operation,
+                read_only=False,
+                offline_tooling=False,
+                allow_during_shutdown=False,
+            )
+            start_attempted = True
+            process.start()
+            registered = _register_runtime_hygiene_process(
+                process,
+                kind="multiprocessing",
+                source=source,
+                command=f"python-multiprocessing:{spec.role.name.lower()}",
+            )
+            if not registered:
+                raise PythonProcessOwnershipError(
+                    f"python_process_registration_failed:{source}"
+                )
+            _require_not_shutting_down(
+                operation,
+                read_only=False,
+                offline_tooling=False,
+                allow_during_shutdown=False,
+                resource_created=True,
+            )
+        except (
+            AssertionError,
+            AttributeError,
+            OSError,
+            RuntimeError,
+            TypeError,
+            ValueError,
+            GovernanceViolation,
+        ):
+            if start_attempted:
+                reaped = _terminate_and_reap_python_process(process)
+                record_shutdown_admission_event(
+                    operation,
+                    resource_kind="multiprocessing",
+                    outcome="reaped" if reaped else "survived",
+                    detail=f"pid={getattr(process, 'pid', None)}",
+                )
+                if reaped or getattr(process, "pid", None) is None:
+                    try:
+                        process.close()
+                    except (AttributeError, OSError, RuntimeError, TypeError, ValueError):
+                        pass
+            raise
+        return process
+
+    @staticmethod
+    def terminate_python_process(
+        process: Any,
+        *,
+        terminate_timeout_s: float = 1.0,
+        kill_timeout_s: float = 1.0,
+    ) -> bool:
+        return _terminate_and_reap_python_process(
+            process,
+            terminate_timeout_s=terminate_timeout_s,
+            kill_timeout_s=kill_timeout_s,
+        )
 
     def run(
         self,
@@ -1605,4 +1874,10 @@ def get_subprocess_gateway() -> SubprocessGateway:
     return _gateway
 
 
-__all__ = ["AcceleratorCapability", "SubprocessGateway", "get_subprocess_gateway"]
+__all__ = [
+    "AcceleratorCapability",
+    "PythonProcessOwnershipError",
+    "PythonProcessSpec",
+    "SubprocessGateway",
+    "get_subprocess_gateway",
+]

@@ -21,7 +21,11 @@ def test_start_failure_marks_process_failed_with_degradation(monkeypatch):
     async def scenario():
         tracker = get_degradation_tracker()
         tracker.reset()
-        monkeypatch.setattr(process_module.mp, "Process", ProcessFactoryUnavailable)
+        context = SimpleNamespace(
+            get_start_method=lambda: "spawn",
+            Process=ProcessFactoryUnavailable,
+        )
+        monkeypatch.setattr(process_module.mp, "get_context", lambda _method: context)
         managed = ManagedProcess(ProcessConfig(name="factory_down", target=_target))
 
         started = await managed.start()

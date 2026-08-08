@@ -111,6 +111,53 @@ def test_subprocess_gateway_requires_accelerator_declaration() -> None:
     assert "accelerator_capability_undeclared" in visitor.violations[0].problem
 
 
+def test_scanner_catches_context_bound_multiprocessing_processes() -> None:
+    tree = ast.parse(
+        textwrap.dedent(
+            """
+            import multiprocessing as mp
+
+            def perform(target) -> None:
+                ctx = mp.get_context("spawn")
+                ctx.Process(target=target)
+                mp.get_context("spawn").Process(target=target)
+            """
+        )
+    )
+
+    buckets = _scan_tree_scoped(tree, "core/synthetic.py")
+
+    assert sum(buckets.values()) == 2
+    assert {key[0] for key in buckets} == {"raw_subprocess"}
+
+
+def test_python_process_gateway_requires_complete_static_contract() -> None:
+    tree = ast.parse(
+        textwrap.dedent(
+            """
+            from core.runtime.subprocess_gateway import (
+                PythonProcessSpec,
+                get_subprocess_gateway,
+            )
+
+            def perform(target) -> None:
+                get_subprocess_gateway().spawn_python_process(
+                    PythonProcessSpec(target=target, source="test")
+                )
+            """
+        )
+    )
+    visitor = _SubprocessDeclarationVisitor(relative_path="core/synthetic.py")
+    visitor.visit(tree)
+
+    assert len(visitor.violations) == 1
+    problem = visitor.violations[0].problem
+    assert "python_process_contract_incomplete" in problem
+    assert "accelerator_capability" in problem
+    assert "requested_privileges" in problem
+    assert "start_method" in problem
+
+
 def test_scanner_recognizes_async_streams_and_their_gateway_owner() -> None:
     tree = ast.parse(
         textwrap.dedent(

@@ -10,13 +10,19 @@ import threading
 import time
 from collections.abc import Callable
 from dataclasses import dataclass, field
-from typing import Any, ClassVar, Protocol, cast
+from typing import Any, ClassVar, Protocol
 
 from core.bus.pipe_control import send_supervisor_stop
 from core.runtime.errors import record_degradation
 from core.runtime.flags import FlagKind, declare
+from core.runtime.process_privilege import Privilege, ProcessRole
 from core.runtime.resource_observation import get_resource_observer
 from core.runtime.shutdown_coordinator import is_shutdown_requested
+from core.runtime.subprocess_gateway import (
+    AcceleratorCapability,
+    PythonProcessSpec,
+    get_subprocess_gateway,
+)
 from core.utils.task_tracker import get_task_tracker
 
 logger = logging.getLogger("Aura.Supervisor")
@@ -74,6 +80,9 @@ class ActorSpec:
     window_seconds: int = 60
     health_timeout: float = 30.0
     grace_period: float = 45.0
+    role: ProcessRole = ProcessRole.COORDINATOR
+    requested_privileges: frozenset[Privilege] = field(default_factory=frozenset)
+    accelerator_capability: AcceleratorCapability = AcceleratorCapability.NONE
 
     def __post_init__(self) -> None:
         if self.target and not self.entry_point:
@@ -93,6 +102,15 @@ class ActorSpec:
             raise ValueError("backoff_factor must be at least 1")
         if self.window_seconds <= 0:
             raise ValueError("window_seconds must be positive")
+        if not isinstance(self.role, ProcessRole):
+            raise TypeError("role must be a ProcessRole")
+        if any(
+            not isinstance(privilege, Privilege)
+            for privilege in self.requested_privileges
+        ):
+            raise TypeError("requested_privileges must contain Privilege values")
+        if not isinstance(self.accelerator_capability, AcceleratorCapability):
+            raise TypeError("accelerator_capability must be an AcceleratorCapability")
         if self.health_timeout <= 0:
             raise ValueError("health_timeout must be positive")
         if self.grace_period < 0:
@@ -294,18 +312,20 @@ class SupervisionTree:
                 child_read, parent_write = ctx.Pipe(duplex=False)
                 parent_pipe = (parent_read, parent_write)
                 child_pipe = (child_read, child_write)
-                proc = cast(
-                    _ProcessHandle,
-                    ctx.Process(
+                proc = get_subprocess_gateway().spawn_python_process(
+                    PythonProcessSpec(
                         target=actor.spec.entry_point,
                         args=(*actor.spec.args, child_pipe),
+                        source=f"actor_supervisor:{name}",
                         name=f"AuraActor:{name}",
+                        role=actor.spec.role,
+                        requested_privileges=actor.spec.requested_privileges,
+                        accelerator_capability=actor.spec.accelerator_capability,
                         daemon=True,
+                        start_method="spawn",
                     ),
+                    context=ctx,
                 )
-                if self._shutting_down or _shutdown_requested():
-                    raise RuntimeError("runtime_shutdown_before_actor_start")
-                proc.start()
                 if self._shutting_down or _shutdown_requested():
                     logger.info(
                         "Actor %s crossed the shutdown boundary during spawn; terminating pid=%s",

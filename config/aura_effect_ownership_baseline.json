@@ -14505,22 +14505,6 @@
       "scope": "<module>._fire_verifiable_pulse"
     },
     {
-      "callee": "multiprocessing.Process",
-      "canonical_owner": false,
-      "category": "raw_subprocess",
-      "count": 1,
-      "path": "core/kernel/shadow_kernel.py",
-      "scope": "<module>.ShadowExecutionPhase._validate_mutation_detailed"
-    },
-    {
-      "callee": "multiprocessing.Process",
-      "canonical_owner": false,
-      "category": "raw_subprocess",
-      "count": 1,
-      "path": "core/ops/process_manager.py",
-      "scope": "<module>.ManagedProcess.start"
-    },
-    {
       "callee": "subprocess.run",
       "canonical_owner": true,
       "category": "raw_subprocess",
@@ -14551,6 +14535,14 @@
       "count": 1,
       "path": "core/runtime/subprocess_gateway.py",
       "scope": "<module>.SubprocessGateway.spawn_async"
+    },
+    {
+      "callee": "selected_context.Process",
+      "canonical_owner": true,
+      "category": "raw_subprocess",
+      "count": 1,
+      "path": "core/runtime/subprocess_gateway.py",
+      "scope": "<module>.SubprocessGateway.spawn_python_process"
     },
     {
       "callee": "<state_gateway>.mutate",
@@ -14625,12 +14617,52 @@
       "scope": "<module>.SandboxOperator.execute_synthesized_tool"
     },
     {
+      "callee": "core.runtime.subprocess_gateway.get_subprocess_gateway().spawn_async",
+      "canonical_owner": false,
+      "category": "subprocess_gateway",
+      "count": 1,
+      "path": "core/adaptation/nightly_lora.py",
+      "scope": "<module>.NightlyLoRATrainer._trigger_lora_training"
+    },
+    {
+      "callee": "core.runtime.subprocess_gateway.get_subprocess_gateway().spawn_async",
+      "canonical_owner": false,
+      "category": "subprocess_gateway",
+      "count": 1,
+      "path": "core/adaptation/safe_optimizer.py",
+      "scope": "<module>.SafeSelfOptimizer._run_training_command"
+    },
+    {
+      "callee": "core.runtime.subprocess_gateway.get_subprocess_gateway().spawn_async",
+      "canonical_owner": false,
+      "category": "subprocess_gateway",
+      "count": 1,
+      "path": "core/adaptation/self_optimizer.py",
+      "scope": "<module>.SelfOptimizer._run_gateway_command"
+    },
+    {
       "callee": "core.runtime.subprocess_gateway.get_subprocess_gateway().run_async",
       "canonical_owner": false,
       "category": "subprocess_gateway",
       "count": 1,
       "path": "core/agency/agency_orchestrator.py",
       "scope": "<module>.AgencyOrchestrator._default_execute"
+    },
+    {
+      "callee": "core.runtime.subprocess_gateway.get_subprocess_gateway().spawn_async",
+      "canonical_owner": false,
+      "category": "subprocess_gateway",
+      "count": 1,
+      "path": "core/agency/sandboxed_modifier.py",
+      "scope": "<module>._default_command_runner"
+    },
+    {
+      "callee": "core.runtime.subprocess_gateway.get_subprocess_gateway().spawn_async",
+      "canonical_owner": false,
+      "category": "subprocess_gateway",
+      "count": 1,
+      "path": "core/agency/tool_orchestrator.py",
+      "scope": "<module>.ToolOrchestrator._launch_worker"
     },
     {
       "callee": "core.runtime.subprocess_gateway.get_subprocess_gateway().run",
@@ -14671,6 +14703,14 @@
       "count": 1,
       "path": "core/architect/shadow_workspace.py",
       "scope": "<module>.ShadowWorkspaceManager.run_command"
+    },
+    {
+      "callee": "core.runtime.subprocess_gateway.get_subprocess_gateway().spawn_async",
+      "canonical_owner": false,
+      "category": "subprocess_gateway",
+      "count": 1,
+      "path": "core/autonomy/content_fetcher.py",
+      "scope": "<module>._run_subprocess"
     },
     {
       "callee": "core.runtime.subprocess_gateway.get_subprocess_gateway().run_async",
@@ -14745,12 +14785,28 @@
       "scope": "<module>.EvidenceProvider._ripgrep"
     },
     {
+      "callee": "core.runtime.subprocess_gateway.get_subprocess_gateway().spawn_python_process",
+      "canonical_owner": false,
+      "category": "subprocess_gateway",
+      "count": 1,
+      "path": "core/brain/llm/mlx_client.py",
+      "scope": "<module>.MLXLocalClient._spawn_worker_blocking"
+    },
+    {
       "callee": "core.runtime.subprocess_gateway.get_subprocess_gateway().run",
       "canonical_owner": false,
       "category": "subprocess_gateway",
       "count": 1,
       "path": "core/brain/llm/mlx_client.py",
       "scope": "<module>._probe_mlx_runtime"
+    },
+    {
+      "callee": "core.runtime.subprocess_gateway.get_subprocess_gateway().spawn_python_process",
+      "canonical_owner": false,
+      "category": "subprocess_gateway",
+      "count": 1,
+      "path": "core/brain/llm/mlx_vision_client.py",
+      "scope": "<module>.MLXVisionClient._spawn_worker_blocking"
     },
     {
       "callee": "core.runtime.subprocess_gateway.get_subprocess_gateway().run",
@@ -14777,6 +14833,54 @@
       "scope": "<module>.CodeTruthEngine._ruff"
     },
     {
+      "callee": "core.runtime.subprocess_gateway.get_subprocess_gateway().spawn_async",
+      "canonical_owner": false,
+      "category": "subprocess_gateway",
+      "count": 1,
+      "path": "core/capabilities/app_registry.py",
+      "scope": "<module>.AppRegistry.discover"
+    },
+    {
+      "callee": "core.runtime.subprocess_gateway.get_subprocess_gateway().spawn_async",
+      "canonical_owner": false,
+      "category": "subprocess_gateway",
+      "count": 1,
+      "path": "core/capabilities/capability_discovery.py",
+      "scope": "<module>.CapabilityDiscovery._discover_network"
+    },
+    {
+      "callee": "core.runtime.subprocess_gateway.get_subprocess_gateway().spawn_async",
+      "canonical_owner": false,
+      "category": "subprocess_gateway",
+      "count": 1,
+      "path": "core/capabilities/clipboard_manager.py",
+      "scope": "<module>.ClipboardManager.get"
+    },
+    {
+      "callee": "core.runtime.subprocess_gateway.get_subprocess_gateway().spawn_async",
+      "canonical_owner": false,
+      "category": "subprocess_gateway",
+      "count": 1,
+      "path": "core/capabilities/clipboard_manager.py",
+      "scope": "<module>.ClipboardManager.set"
+    },
+    {
+      "callee": "core.runtime.subprocess_gateway.get_subprocess_gateway().spawn_async",
+      "canonical_owner": false,
+      "category": "subprocess_gateway",
+      "count": 1,
+      "path": "core/capabilities/document_service.py",
+      "scope": "<module>.DocumentService.open_preview"
+    },
+    {
+      "callee": "core.runtime.subprocess_gateway.get_subprocess_gateway().spawn_async",
+      "canonical_owner": false,
+      "category": "subprocess_gateway",
+      "count": 1,
+      "path": "core/capabilities/file_broker.py",
+      "scope": "<module>.SandboxedFileBroker.reveal_in_finder"
+    },
+    {
       "callee": "core.runtime.subprocess_gateway.get_subprocess_gateway().run_async",
       "canonical_owner": false,
       "category": "subprocess_gateway",
@@ -14785,12 +14889,124 @@
       "scope": "<module>.AppleScriptRunner.run"
     },
     {
+      "callee": "core.runtime.subprocess_gateway.get_subprocess_gateway().spawn_async",
+      "canonical_owner": false,
+      "category": "subprocess_gateway",
+      "count": 1,
+      "path": "core/capabilities/host_automation.py",
+      "scope": "<module>.HostAutomationProvider.click_at"
+    },
+    {
+      "callee": "core.runtime.subprocess_gateway.get_subprocess_gateway().spawn_shell_async",
+      "canonical_owner": false,
+      "category": "subprocess_gateway",
+      "count": 1,
+      "path": "core/capabilities/host_automation.py",
+      "scope": "<module>.HostAutomationProvider.run_command"
+    },
+    {
+      "callee": "core.runtime.subprocess_gateway.get_subprocess_gateway().spawn_async",
+      "canonical_owner": false,
+      "category": "subprocess_gateway",
+      "count": 1,
+      "path": "core/capabilities/host_automation.py",
+      "scope": "<module>.HostAutomationProvider.take_screenshot"
+    },
+    {
+      "callee": "core.runtime.subprocess_gateway.get_subprocess_gateway().spawn_async",
+      "canonical_owner": false,
+      "category": "subprocess_gateway",
+      "count": 3,
+      "path": "core/capabilities/host_automation.py",
+      "scope": "<module>.HostAutomationProvider.type_text"
+    },
+    {
+      "callee": "core.runtime.subprocess_gateway.get_subprocess_gateway().spawn_async",
+      "canonical_owner": false,
+      "category": "subprocess_gateway",
+      "count": 1,
+      "path": "core/capabilities/os_settings.py",
+      "scope": "<module>.OSSettingsAdapter.get_appearance_mode"
+    },
+    {
+      "callee": "core.runtime.subprocess_gateway.get_subprocess_gateway().spawn_async",
+      "canonical_owner": false,
+      "category": "subprocess_gateway",
+      "count": 1,
+      "path": "core/capabilities/os_settings.py",
+      "scope": "<module>.OSSettingsAdapter.get_volume"
+    },
+    {
+      "callee": "core.runtime.subprocess_gateway.get_subprocess_gateway().spawn_async",
+      "canonical_owner": false,
+      "category": "subprocess_gateway",
+      "count": 1,
+      "path": "core/capabilities/os_settings.py",
+      "scope": "<module>.OSSettingsAdapter.get_wallpaper"
+    },
+    {
+      "callee": "core.runtime.subprocess_gateway.get_subprocess_gateway().spawn_async",
+      "canonical_owner": false,
+      "category": "subprocess_gateway",
+      "count": 1,
+      "path": "core/capabilities/post_action_verifier.py",
+      "scope": "<module>.PostActionVerifier._verify_browser_tabs"
+    },
+    {
+      "callee": "core.runtime.subprocess_gateway.get_subprocess_gateway().spawn_async",
+      "canonical_owner": false,
+      "category": "subprocess_gateway",
+      "count": 1,
+      "path": "core/capabilities/post_action_verifier.py",
+      "scope": "<module>.PostActionVerifier._verify_clipboard"
+    },
+    {
+      "callee": "core.runtime.subprocess_gateway.get_subprocess_gateway().spawn_shell_async",
+      "canonical_owner": false,
+      "category": "subprocess_gateway",
+      "count": 1,
+      "path": "core/capabilities/post_action_verifier.py",
+      "scope": "<module>.PostActionVerifier._verify_command"
+    },
+    {
+      "callee": "core.runtime.subprocess_gateway.get_subprocess_gateway().spawn_async",
+      "canonical_owner": false,
+      "category": "subprocess_gateway",
+      "count": 1,
+      "path": "core/capabilities/post_action_verifier.py",
+      "scope": "<module>.PostActionVerifier._verify_wallpaper"
+    },
+    {
+      "callee": "core.runtime.subprocess_gateway.get_subprocess_gateway().spawn_async",
+      "canonical_owner": false,
+      "category": "subprocess_gateway",
+      "count": 1,
+      "path": "core/capabilities/post_action_verifier.py",
+      "scope": "<module>.PostActionVerifier._verify_wallpaper_changed"
+    },
+    {
+      "callee": "core.runtime.subprocess_gateway.get_subprocess_gateway().spawn_async",
+      "canonical_owner": false,
+      "category": "subprocess_gateway",
+      "count": 1,
+      "path": "core/capabilities/self_taught_builder.py",
+      "scope": "<module>._functional_test"
+    },
+    {
       "callee": "core.runtime.subprocess_gateway.get_subprocess_gateway().run_async",
       "canonical_owner": false,
       "category": "subprocess_gateway",
       "count": 1,
       "path": "core/capability_engine.py",
       "scope": "<module>.Shell.run"
+    },
+    {
+      "callee": "core.runtime.subprocess_gateway.get_subprocess_gateway().spawn_async",
+      "canonical_owner": false,
+      "category": "subprocess_gateway",
+      "count": 1,
+      "path": "core/collective/probe_manager.py",
+      "scope": "<module>.ProbeManager.deploy_probe"
     },
     {
       "callee": "core.runtime.subprocess_gateway.get_subprocess_gateway().run",
@@ -14809,6 +15025,54 @@
       "scope": "<module>._spawn_detached"
     },
     {
+      "callee": "core.runtime.subprocess_gateway.get_subprocess_gateway().spawn_shell_async",
+      "canonical_owner": false,
+      "category": "subprocess_gateway",
+      "count": 1,
+      "path": "core/conversation/terminal_chat.py",
+      "scope": "<module>.TerminalFallbackChat._run_shell_command"
+    },
+    {
+      "callee": "core.runtime.subprocess_gateway.get_subprocess_gateway().spawn_async",
+      "canonical_owner": false,
+      "category": "subprocess_gateway",
+      "count": 1,
+      "path": "core/cybernetics/omni_tool.py",
+      "scope": "<module>.OmniTool.spawn_daemon"
+    },
+    {
+      "callee": "core.runtime.subprocess_gateway.get_subprocess_gateway().spawn_shell_async",
+      "canonical_owner": false,
+      "category": "subprocess_gateway",
+      "count": 1,
+      "path": "core/embodiment/voice_presence.py",
+      "scope": "<module>.LinuxTTS.speak"
+    },
+    {
+      "callee": "core.runtime.subprocess_gateway.get_subprocess_gateway().spawn_async",
+      "canonical_owner": false,
+      "category": "subprocess_gateway",
+      "count": 1,
+      "path": "core/embodiment/voice_presence.py",
+      "scope": "<module>.MacOSTTS.speak"
+    },
+    {
+      "callee": "core.runtime.subprocess_gateway.get_subprocess_gateway().spawn_async",
+      "canonical_owner": false,
+      "category": "subprocess_gateway",
+      "count": 1,
+      "path": "core/embodiment/voice_presence.py",
+      "scope": "<module>.WindowsTTS.speak"
+    },
+    {
+      "callee": "core.runtime.subprocess_gateway.get_subprocess_gateway().spawn_async",
+      "canonical_owner": false,
+      "category": "subprocess_gateway",
+      "count": 1,
+      "path": "core/embodiment/world_bridge.py",
+      "scope": "<module>._shell_sandbox_handler"
+    },
+    {
       "callee": "core.runtime.subprocess_gateway.get_subprocess_gateway().run_async",
       "canonical_owner": false,
       "category": "subprocess_gateway",
@@ -14823,6 +15087,22 @@
       "count": 1,
       "path": "core/evaluation/source_attestation.py",
       "scope": "<module>._git"
+    },
+    {
+      "callee": "core.runtime.subprocess_gateway.get_subprocess_gateway().spawn_async",
+      "canonical_owner": false,
+      "category": "subprocess_gateway",
+      "count": 1,
+      "path": "core/evolution/mutate.py",
+      "scope": "<module>._run_tests_async"
+    },
+    {
+      "callee": "core.runtime.subprocess_gateway.get_subprocess_gateway().spawn_async",
+      "canonical_owner": false,
+      "category": "subprocess_gateway",
+      "count": 2,
+      "path": "core/evolution/mutate.py",
+      "scope": "<module>.apply_mutation"
     },
     {
       "callee": "core.runtime.subprocess_gateway.get_subprocess_gateway().run",
@@ -14855,6 +15135,22 @@
       "count": 1,
       "path": "core/factory/test_runner.py",
       "scope": "<module>.TestRunner.run_tests"
+    },
+    {
+      "callee": "core.runtime.subprocess_gateway.get_subprocess_gateway().spawn_async",
+      "canonical_owner": false,
+      "category": "subprocess_gateway",
+      "count": 1,
+      "path": "core/guardians/airlock.py",
+      "scope": "<module>.AirlockProtocol._default_command_runner"
+    },
+    {
+      "callee": "core.runtime.subprocess_gateway.get_subprocess_gateway().spawn_python_process",
+      "canonical_owner": false,
+      "category": "subprocess_gateway",
+      "count": 1,
+      "path": "core/kernel/shadow_kernel.py",
+      "scope": "<module>.ShadowExecutionPhase._validate_mutation_detailed"
     },
     {
       "callee": "core.runtime.subprocess_gateway.get_subprocess_gateway().run",
@@ -14919,6 +15215,14 @@
       "count": 1,
       "path": "core/morphogenesis/native_compiler.py",
       "scope": "<module>.NativeCompilerPlanner.compile"
+    },
+    {
+      "callee": "core.runtime.subprocess_gateway.get_subprocess_gateway().spawn_python_process",
+      "canonical_owner": false,
+      "category": "subprocess_gateway",
+      "count": 1,
+      "path": "core/ops/process_manager.py",
+      "scope": "<module>.ManagedProcess.start"
     },
     {
       "callee": "core.runtime.subprocess_gateway.get_subprocess_gateway().run",
@@ -14993,6 +15297,22 @@
       "scope": "<module>.read_window_elements"
     },
     {
+      "callee": "core.runtime.subprocess_gateway.get_subprocess_gateway().spawn_async",
+      "canonical_owner": false,
+      "category": "subprocess_gateway",
+      "count": 1,
+      "path": "core/perception/screen_perception.py",
+      "scope": "<module>.ScreenPerception._run_osascript"
+    },
+    {
+      "callee": "core.runtime.subprocess_gateway.get_subprocess_gateway().spawn_async",
+      "canonical_owner": false,
+      "category": "subprocess_gateway",
+      "count": 1,
+      "path": "core/perception/screen_perception.py",
+      "scope": "<module>.ScreenPerception._take_screenshot"
+    },
+    {
       "callee": "core.runtime.subprocess_gateway.get_subprocess_gateway().run_async",
       "canonical_owner": false,
       "category": "subprocess_gateway",
@@ -15039,6 +15359,14 @@
       "count": 2,
       "path": "core/resilience/immunity_hyphae.py",
       "scope": "<module>.SignatureRepairRegistry._repair_port_conflict"
+    },
+    {
+      "callee": "core.runtime.subprocess_gateway.get_subprocess_gateway().spawn_async",
+      "canonical_owner": false,
+      "category": "subprocess_gateway",
+      "count": 1,
+      "path": "core/resilience/supervisor.py",
+      "scope": "<module>.SovereignSupervisor._launch_process"
     },
     {
       "callee": "core.runtime.subprocess_gateway.get_subprocess_gateway().run_async",
@@ -15137,6 +15465,14 @@
       "scope": "<module>.host_pressure"
     },
     {
+      "callee": "core.runtime.subprocess_gateway.get_subprocess_gateway().spawn_async",
+      "canonical_owner": false,
+      "category": "subprocess_gateway",
+      "count": 1,
+      "path": "core/runtime/organ_supervisor.py",
+      "scope": "<module>.OrganSupervisor._start_organ"
+    },
+    {
       "callee": "core.runtime.subprocess_gateway.get_subprocess_gateway().run",
       "canonical_owner": false,
       "category": "subprocess_gateway",
@@ -15177,12 +15513,28 @@
       "scope": "<module>._read_pmset"
     },
     {
+      "callee": "core.runtime.subprocess_gateway.get_subprocess_gateway().spawn_async",
+      "canonical_owner": false,
+      "category": "subprocess_gateway",
+      "count": 1,
+      "path": "core/sandbox/bash_daemon.py",
+      "scope": "<module>.PersistentBashSession._start"
+    },
+    {
       "callee": "core.runtime.subprocess_gateway.get_subprocess_gateway().run",
       "canonical_owner": false,
       "category": "subprocess_gateway",
       "count": 1,
       "path": "core/sandbox/macos_sandbox.py",
       "scope": "<module>.MacOSSandbox.execute_command"
+    },
+    {
+      "callee": "core.runtime.subprocess_gateway.get_subprocess_gateway().spawn_async",
+      "canonical_owner": false,
+      "category": "subprocess_gateway",
+      "count": 1,
+      "path": "core/sandbox/runner.py",
+      "scope": "<module>._communicate_process"
     },
     {
       "callee": "core.runtime.subprocess_gateway.get_subprocess_gateway().run",
@@ -15303,6 +15655,14 @@
       "count": 1,
       "path": "core/self_modification/behavioral_gate.py",
       "scope": "<module>.run_behavioral_gate"
+    },
+    {
+      "callee": "core.runtime.subprocess_gateway.get_subprocess_gateway().spawn_async",
+      "canonical_owner": false,
+      "category": "subprocess_gateway",
+      "count": 1,
+      "path": "core/self_modification/boot_validator.py",
+      "scope": "<module>.GhostBootValidator.validate_boot"
     },
     {
       "callee": "core.runtime.subprocess_gateway.get_subprocess_gateway().run_async",
@@ -15441,6 +15801,22 @@
       "scope": "<module>.SafeModificationHarness._workspace_files"
     },
     {
+      "callee": "core.runtime.subprocess_gateway.get_subprocess_gateway().spawn_async",
+      "canonical_owner": false,
+      "category": "subprocess_gateway",
+      "count": 1,
+      "path": "core/self_modification/safe_pipeline.py",
+      "scope": "<module>.SafePipeline._run_shadow"
+    },
+    {
+      "callee": "core.runtime.subprocess_gateway.get_subprocess_gateway().spawn_async",
+      "canonical_owner": false,
+      "category": "subprocess_gateway",
+      "count": 1,
+      "path": "core/self_modification/shadow_runtime.py",
+      "scope": "<module>.ShadowRuntime._run_in_subprocess"
+    },
+    {
       "callee": "core.runtime.subprocess_gateway.get_subprocess_gateway().run",
       "canonical_owner": false,
       "category": "subprocess_gateway",
@@ -15473,6 +15849,14 @@
       "scope": "<module>.ScreenObserver.start_vision"
     },
     {
+      "callee": "core.runtime.subprocess_gateway.get_subprocess_gateway().spawn_python_process",
+      "canonical_owner": false,
+      "category": "subprocess_gateway",
+      "count": 1,
+      "path": "core/senses/sensory_client.py",
+      "scope": "<module>.SensoryLocalClient.start"
+    },
+    {
       "callee": "core.runtime.subprocess_gateway.get_subprocess_gateway().run",
       "canonical_owner": false,
       "category": "subprocess_gateway",
@@ -15498,6 +15882,14 @@
     },
     {
       "callee": "core.runtime.subprocess_gateway.get_subprocess_gateway().run",
+      "canonical_owner": false,
+      "category": "subprocess_gateway",
+      "count": 1,
+      "path": "core/skills/branching_futures.py",
+      "scope": "<module>.BranchingFuturesSkill.execute"
+    },
+    {
+      "callee": "core.runtime.subprocess_gateway.get_subprocess_gateway().spawn_async",
       "canonical_owner": false,
       "category": "subprocess_gateway",
       "count": 1,
@@ -15537,6 +15929,22 @@
       "scope": "<module>.ComputerUseSkill._set_clipboard"
     },
     {
+      "callee": "core.runtime.subprocess_gateway.get_subprocess_gateway().spawn_async",
+      "canonical_owner": false,
+      "category": "subprocess_gateway",
+      "count": 1,
+      "path": "core/skills/internal_sandbox.py",
+      "scope": "<module>.SandboxSkill.execute_code_safely"
+    },
+    {
+      "callee": "core.runtime.subprocess_gateway.get_subprocess_gateway().spawn_async",
+      "canonical_owner": false,
+      "category": "subprocess_gateway",
+      "count": 1,
+      "path": "core/skills/manim_renderer.py",
+      "scope": "<module>.ManimRendererSkill.execute"
+    },
+    {
       "callee": "core.runtime.subprocess_gateway.get_subprocess_gateway().run",
       "canonical_owner": false,
       "category": "subprocess_gateway",
@@ -15553,12 +15961,68 @@
       "scope": "<module>.SovereignNetworkSkill._get_status"
     },
     {
+      "callee": "core.runtime.subprocess_gateway.get_subprocess_gateway().spawn_async",
+      "canonical_owner": false,
+      "category": "subprocess_gateway",
+      "count": 1,
+      "path": "core/skills/sovereign_network.py",
+      "scope": "<module>.SovereignNetworkSkill._perform_audit"
+    },
+    {
+      "callee": "core.runtime.subprocess_gateway.get_subprocess_gateway().spawn_async",
+      "canonical_owner": false,
+      "category": "subprocess_gateway",
+      "count": 1,
+      "path": "core/skills/sovereign_network.py",
+      "scope": "<module>.SovereignNetworkSkill._perform_discovery"
+    },
+    {
       "callee": "core.runtime.subprocess_gateway.get_subprocess_gateway().run_async",
       "canonical_owner": false,
       "category": "subprocess_gateway",
       "count": 1,
       "path": "core/skills/sovereign_network.py",
       "scope": "<module>.SovereignNetworkSkill._perform_recon"
+    },
+    {
+      "callee": "core.runtime.subprocess_gateway.get_subprocess_gateway().spawn_async",
+      "canonical_owner": false,
+      "category": "subprocess_gateway",
+      "count": 1,
+      "path": "core/skills/sovereign_network.py",
+      "scope": "<module>.SovereignNetworkSkill._perform_scan"
+    },
+    {
+      "callee": "core.runtime.subprocess_gateway.get_subprocess_gateway().spawn_async",
+      "canonical_owner": false,
+      "category": "subprocess_gateway",
+      "count": 1,
+      "path": "core/skills/sovereign_terminal.py",
+      "scope": "<module>.SovereignTerminalSkill._open_target"
+    },
+    {
+      "callee": "core.runtime.subprocess_gateway.get_subprocess_gateway().spawn_shell_async",
+      "canonical_owner": false,
+      "category": "subprocess_gateway",
+      "count": 1,
+      "path": "core/skills/sovereign_terminal.py",
+      "scope": "<module>.SovereignTerminalSkill._run_command"
+    },
+    {
+      "callee": "core.runtime.subprocess_gateway.get_subprocess_gateway().spawn_async",
+      "canonical_owner": false,
+      "category": "subprocess_gateway",
+      "count": 1,
+      "path": "core/skills/speak.py",
+      "scope": "<module>.SpeakSkill._speak_with_macos_say"
+    },
+    {
+      "callee": "core.runtime.subprocess_gateway.get_subprocess_gateway().spawn_async",
+      "canonical_owner": false,
+      "category": "subprocess_gateway",
+      "count": 1,
+      "path": "core/skills/test_generator.py",
+      "scope": "<module>.TestGeneratorSkill.execute"
     },
     {
       "callee": "core.runtime.subprocess_gateway.get_subprocess_gateway().spawn",
@@ -15575,6 +16039,30 @@
       "count": 1,
       "path": "core/skills/voice_output.py",
       "scope": "<module>.VoiceOutputSkill._check_piper"
+    },
+    {
+      "callee": "core.runtime.subprocess_gateway.get_subprocess_gateway().spawn_async",
+      "canonical_owner": false,
+      "category": "subprocess_gateway",
+      "count": 2,
+      "path": "core/skills/voice_output.py",
+      "scope": "<module>.VoiceOutputSkill._play_audio"
+    },
+    {
+      "callee": "core.runtime.subprocess_gateway.get_subprocess_gateway().spawn_async",
+      "canonical_owner": false,
+      "category": "subprocess_gateway",
+      "count": 1,
+      "path": "core/skills/voice_output.py",
+      "scope": "<module>.VoiceOutputSkill._try_macos_say"
+    },
+    {
+      "callee": "core.runtime.subprocess_gateway.get_subprocess_gateway().spawn_async",
+      "canonical_owner": false,
+      "category": "subprocess_gateway",
+      "count": 1,
+      "path": "core/skills/voice_output.py",
+      "scope": "<module>.VoiceOutputSkill._try_piper"
     },
     {
       "callee": "core.runtime.subprocess_gateway.get_subprocess_gateway().run_async",
@@ -15601,12 +16089,44 @@
       "scope": "<module>.PlatformRoot._verify_sys_process"
     },
     {
+      "callee": "core.runtime.subprocess_gateway.get_subprocess_gateway().spawn_python_process",
+      "canonical_owner": false,
+      "category": "subprocess_gateway",
+      "count": 1,
+      "path": "core/supervisor/tree.py",
+      "scope": "<module>.SupervisionTree.start_actor"
+    },
+    {
+      "callee": "core.runtime.subprocess_gateway.get_subprocess_gateway().spawn_async",
+      "canonical_owner": false,
+      "category": "subprocess_gateway",
+      "count": 1,
+      "path": "core/tasks/managed_command.py",
+      "scope": "<module>._run_project_command_async"
+    },
+    {
+      "callee": "core.runtime.subprocess_gateway.get_subprocess_gateway().spawn_async",
+      "canonical_owner": false,
+      "category": "subprocess_gateway",
+      "count": 1,
+      "path": "core/tools/computer_use.py",
+      "scope": "<module>.ComputerUseSkill._default_screenshot"
+    },
+    {
       "callee": "core.runtime.subprocess_gateway.get_subprocess_gateway().run",
       "canonical_owner": false,
       "category": "subprocess_gateway",
       "count": 1,
       "path": "core/utils/sandbox_selfmod.py",
       "scope": "<module>._run_cmd"
+    },
+    {
+      "callee": "core.runtime.subprocess_gateway.get_subprocess_gateway().spawn_async",
+      "canonical_owner": false,
+      "category": "subprocess_gateway",
+      "count": 1,
+      "path": "core/voice/local_voice_cortex.py",
+      "scope": "<module>.LocalVoiceCortex._speak_with_system_say"
     },
     {
       "callee": "core.runtime.subprocess_gateway.get_subprocess_gateway().spawn",
@@ -15617,12 +16137,36 @@
       "scope": "<module>._MacOSSayWrapper.speak"
     },
     {
+      "callee": "core.runtime.subprocess_gateway.get_subprocess_gateway().spawn_async",
+      "canonical_owner": false,
+      "category": "subprocess_gateway",
+      "count": 1,
+      "path": "core/voice/voice_session.py",
+      "scope": "<module>.VoiceSessionManager.narrate"
+    },
+    {
       "callee": "core.runtime.subprocess_gateway.get_subprocess_gateway().run_async",
       "canonical_owner": false,
       "category": "subprocess_gateway",
       "count": 1,
       "path": "skills/network_ops.py",
       "scope": "<module>.NetworkOpsSkill._list_interfaces"
+    },
+    {
+      "callee": "core.runtime.subprocess_gateway.get_subprocess_gateway().spawn_async",
+      "canonical_owner": false,
+      "category": "subprocess_gateway",
+      "count": 1,
+      "path": "skills/shell.py",
+      "scope": "<module>.ShellSkill.execute"
+    },
+    {
+      "callee": "core.runtime.subprocess_gateway.get_subprocess_gateway().spawn_async",
+      "canonical_owner": false,
+      "category": "subprocess_gateway",
+      "count": 3,
+      "path": "skills/system_ops.py",
+      "scope": "<module>.SystemOpsSkill.execute"
     },
     {
       "callee": "core.will.get_will().decide",
@@ -16002,6 +16546,6 @@
     }
   ],
   "description": "Exact AST effect-ownership debt ratchet; refresh only after reviewed change",
-  "inventory_sha256": "bbeaadf0d5a39e688d9e1b10eacfc21862acc774227dab614ab1d61eae22cdf4",
+  "inventory_sha256": "ba219c9c2fd65b244f2193bf1a79ae23ec2215e0623649f9de41f55994511408",
   "schema_version": 1
 }

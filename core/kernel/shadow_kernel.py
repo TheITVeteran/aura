@@ -13,8 +13,14 @@ from typing import TYPE_CHECKING, Any
 
 from core.runtime.dynamic_execution_gateway import get_dynamic_execution_gateway
 from core.runtime.errors import record_degradation
+from core.runtime.process_privilege import ProcessRole
 from core.runtime.shutdown_coordinator import is_shutdown_requested
 from core.runtime.shutdown_execution import run_sync_shutdown_callable
+from core.runtime.subprocess_gateway import (
+    AcceleratorCapability,
+    PythonProcessSpec,
+    get_subprocess_gateway,
+)
 from core.security.ast_guard import DEFAULT_SAFE_MODULES, ASTGuard, SecurityViolation
 from core.state.aura_state import AuraState
 
@@ -308,18 +314,23 @@ class ShadowExecutionPhase(Phase):  # type: ignore[misc]
                     "vitality": getattr(test_state, "vitality", 100.0),
                 }
             )
-            process = multiprocessing.Process(
-                target=_sandbox_worker,
-                args=(mutated_code + "\n" + validator_code, serialized_state, result_queue),
+            process_source = "shadow_kernel.sandbox_validation"
+            process = get_subprocess_gateway().spawn_python_process(
+                PythonProcessSpec(
+                    target=_sandbox_worker,
+                    args=(
+                        mutated_code + "\n" + validator_code,
+                        serialized_state,
+                        result_queue,
+                    ),
+                    source=process_source,
+                    name="AuraShadowValidator",
+                    role=ProcessRole.UNTRUSTED_CODE,
+                    requested_privileges=frozenset(),
+                    accelerator_capability=AcceleratorCapability.NONE,
+                    start_method="spawn",
+                )
             )
-            if is_shutdown_requested():
-                return False, "runtime_shutdown"
-            try:
-                process.start()
-            except RuntimeError:
-                if is_shutdown_requested():
-                    return False, "runtime_shutdown"
-                raise
             if is_shutdown_requested():
                 return False, "runtime_shutdown"
 

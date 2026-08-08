@@ -37991,3 +37991,66 @@ pass `35/35`. The exact closeout-bundle regression that exposed the defect
 passes after a fresh `108.20s` repository scan. This closes model-load
 ownership for the current source; it does not authorize fusion or claim that
 the running complete-engine experiment has earned a candidate.
+
+## Checkpoint 2026-08-08-007: Clean-Head Mechanical Closure Is Reproducible
+
+A fresh closeout audit ran from the clean committed tree at
+`faf9a6a6a0796ecbdd2097e9b88b13303fcb64a2` rather than from a mutable working
+directory. It completed in `461.5895s` and passed the repository's production,
+architecture, model-load ownership, resource ownership, governance-ratchet,
+Ruff, diff-hygiene, and source-ledger gates. The audit enumerated `10,394`
+tracked files, `10,335` text files, `6,721` code files, `6,900,640` text lines,
+and `3,034,581` code lines. Its complete line ledger is committed by SHA-256
+`45e04b554a6585ccbefda87bff6a81cae0676afd7088bdb73c65cde403048e71` and its
+file ledger by `20a758ac40bf7e72cb6ab2353b42fa9c10d35df999204b1ae3b362e13ca69122`.
+
+This is a mechanical-source result, not semantic or release closure. The same
+evidence reports `1,878` recognized effect calls that still sit outside their
+canonical owners, while the current semantic ledger still has `6,229` code
+files and `5,218` active-code files awaiting exact current review. Keyword
+findings remain triage candidates rather than automatic defects. Live GUI and
+capability proof, the resident complete-engine RLC verdict, fusion and
+activation admission, release certification, and the deferred endurance soak
+all remain open. The initial scanner identified two direct
+`multiprocessing.Process` construction sites as raw-subprocess debt. Checkpoint
+008 subsequently proved that count incomplete because context-bound
+`ctx.Process(...)` calls were not visible to the scanner; the corrected
+inventory and remediation supersede that narrow count without rewriting this
+checkpoint's evidence.
+
+## Checkpoint 2026-08-08-008: One Owner for Every Python Child Process
+
+Python child creation now has one enforced lifecycle owner. The governance
+scanner recognizes both direct `multiprocessing.Process(...)` and
+context-bound `ctx.Process(...)` construction, and requires every
+`spawn_python_process(...)` call to supply an inline, statically reviewable
+contract: target, source, name, role, requested privileges, accelerator
+capability, and start method. That corrected scanner exposed seven production
+and proof call sites rather than the two previously visible ones. Process
+Manager, Shadow Kernel validation, resident MLX, MLX vision, the sensory
+sidecar, supervised actors, and the person-box live-model probe now all create
+children through `SubprocessGateway`.
+
+The owner rejects undeclared or role-incompatible accelerator use and privilege
+escalation, fences shutdown before and after creation, requires positive
+RuntimeHygiene registration, and reaps any child whose ownership commit fails.
+It uses retained process handles for termination rather than resolving a PID
+that may already have been reused. Child environment overrides are applied in
+the child instead of mutating the parent, and inherited credential-shaped
+variables are removed unless this exact process contract explicitly requests
+and is admitted for `Privilege.SECRETS`; a role's theoretical ability to hold
+secrets is not enough.
+
+The corrected governance inventory has `5` raw-subprocess calls, all inside the
+canonical gateway, and therefore zero raw-subprocess migration debt. It now
+recognizes `2,217` effect calls in `2,068` buckets with `1,951` migration-debt
+calls. That total is intentionally higher than checkpoint 007's `1,878`: the
+scanner now sees `spawn_async`, `spawn_shell_async`, `run_model_blocking`, and
+Python-process gateway calls it previously omitted. The baseline records the
+newly visible debt; it does not call it remediated. Verification is `294`
+focused process, shutdown, model-worker, supervisor, and person-box tests plus
+the canonical `103`-test smoke suite, governance lint, focused Ruff,
+byte-compilation, diff hygiene, and all `20/20` current closeout-rubric checks.
+Kernel-enforced process sandboxing remains separate open work; this checkpoint
+establishes declaration, admission, ownership, shutdown, and auditability
+rather than claiming an OS boundary that does not yet exist.

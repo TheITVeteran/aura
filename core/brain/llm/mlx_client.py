@@ -37,6 +37,7 @@ from core.brain.llm.measured_admission import record_generation
 from core.runtime.atomic_writer import atomic_write_text
 from core.runtime.errors import record_degradation
 from core.runtime.flags import FlagKind, declare
+from core.runtime.process_privilege import Privilege, ProcessRole
 from core.runtime.resource_observation import get_resource_observer
 from core.runtime.shutdown_coordinator import (
     is_shutdown_requested,
@@ -44,7 +45,11 @@ from core.runtime.shutdown_coordinator import (
 )
 from core.runtime.shutdown_execution import run_sync_shutdown_callable_blocking
 from core.runtime.state_ownership import state_root
-from core.runtime.subprocess_gateway import get_subprocess_gateway
+from core.runtime.subprocess_gateway import (
+    AcceleratorCapability,
+    PythonProcessSpec,
+    get_subprocess_gateway,
+)
 from core.utils.concurrency import run_io_bound
 from core.utils.deadlines import Deadline, get_deadline
 from core.utils.memory_monitor import get_memory_pressure_snapshot
@@ -9473,91 +9478,39 @@ class MLXLocalClient:
                 self._worker_capture_launch_authority = (
                     build_worker_capture_launch_authority()
                 )
-                p = ctx.Process(
-                    target=_mlx_worker_loop,
-                    args=(
-                        self.model_path,
-                        self._req_q,
-                        self._res_q,
-                        self.device,
-                        self._substrate_mem,
-                        self._steering_active,
-                        self._cancel_seq,
-                        self._contract_key,
-                        dict(self._worker_capture_launch_authority.challenge),
-                        self._phi_residual_mem,
-                    ),
-                    daemon=True,
-                    name=f"MLXWorker-{os.path.basename(self.model_path)}",
-                )
                 if _shutdown_blocks_model_work(self.model_path, action="worker process start"):
                     raise RuntimeError("runtime_shutdown")
-                p.start()
-                if _runtime_shutdown_requested():
-                    record_shutdown_admission_event(
-                        f"mlx:worker_start:{os.path.basename(self.model_path)}",
-                        resource_kind="mlx_worker",
-                        outcome="crossed",
-                        detail=f"pid={p.pid}",
-                    )
-                    logger.warning(
-                        "🛑 [MLX] Shutdown crossed worker start for %s; terminating pid=%s.",
-                        os.path.basename(self.model_path),
-                        p.pid,
-                    )
-                    self._kill_and_join_blocking(p)
-                    record_shutdown_admission_event(
-                        f"mlx:worker_start:{os.path.basename(self.model_path)}",
-                        resource_kind="mlx_worker",
-                        outcome="reaped" if not p.is_alive() else "survived",
-                        detail=f"pid={p.pid}",
-                    )
-                    raise RuntimeError("runtime_shutdown")
-                try:
-                    from core.runtime.runtime_hygiene import get_runtime_hygiene
-
-                    get_runtime_hygiene().register_process_handle(
-                        p,
-                        kind="multiprocessing",
-                        name=p.name,
-                        source="mlx_local_client.worker_owner",
-                        command=f"MLX worker for {os.path.basename(self.model_path)}",
-                    )
-                    registered = get_runtime_hygiene().process_handle_is_registered(p)
-                except (ImportError, AttributeError, RuntimeError, TypeError, ValueError) as exc:
-                    _record_mlx_degradation(
-                        exc,
-                        action="could not register the spawned worker for shutdown accounting",
-                        severity="error",
-                    )
-                    registered = False
-                if not registered:
-                    # CP126 3a00ef69. This used to log and return the process
-                    # anyway. An unregistered worker is invisible to global
-                    # shutdown and proof accounting while owning ~20GB of
-                    # wired memory, so the failure mode is an orphaned model
-                    # surviving the runtime that spawned it — the exact
-                    # condition the hygiene registry exists to prevent.
-                    #
-                    # Registration is part of the spawn commit: a candidate
-                    # that cannot be tracked is reaped here, where we still
-                    # hold its handle and know its pid.
-                    _record_mlx_degradation(
-                        RuntimeError(
-                            f"worker for {os.path.basename(self.model_path)} could not be "
-                            f"registered for shutdown accounting (pid={p.pid})"
+                p = get_subprocess_gateway().spawn_python_process(
+                    PythonProcessSpec(
+                        target=_mlx_worker_loop,
+                        args=(
+                            self.model_path,
+                            self._req_q,
+                            self._res_q,
+                            self.device,
+                            self._substrate_mem,
+                            self._steering_active,
+                            self._cancel_seq,
+                            self._contract_key,
+                            dict(self._worker_capture_launch_authority.challenge),
+                            self._phi_residual_mem,
                         ),
-                        action="terminated the unregistered worker rather than serving from it",
-                        severity="critical",
-                    )
-                    logger.critical(
-                        "🛑 [MLX] Worker pid=%s for %s is not tracked by runtime hygiene; "
-                        "terminating rather than leaving an untracked model process.",
-                        p.pid,
-                        os.path.basename(self.model_path),
-                    )
-                    self._kill_and_join_blocking(p)
-                    raise RuntimeError("worker_registration_failed")
+                        source="mlx_local_client.worker_owner",
+                        name=f"MLXWorker-{os.path.basename(self.model_path)}",
+                        role=ProcessRole.MODEL_WORKER,
+                        requested_privileges=frozenset(
+                            {
+                                Privilege.FILESYSTEM_READ,
+                                Privilege.FILESYSTEM_WRITE,
+                                Privilege.MODEL_WEIGHTS,
+                            }
+                        ),
+                        accelerator_capability=AcceleratorCapability.MODEL,
+                        daemon=True,
+                        start_method=str(ctx.get_start_method()),
+                    ),
+                    context=ctx,
+                )
                 return p
 
             finally:

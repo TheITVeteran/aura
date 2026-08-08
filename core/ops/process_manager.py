@@ -27,9 +27,8 @@ from datetime import datetime
 from enum import Enum
 from typing import Any
 
-import psutil
-
 from core.runtime.errors import FallbackClassification, Severity, record_degradation
+from core.runtime.process_privilege import Privilege, ProcessRole
 from core.runtime.resource_observation import get_resource_observer
 from core.runtime.shutdown_coordinator import (
     is_shutdown_requested,
@@ -38,6 +37,11 @@ from core.runtime.shutdown_coordinator import (
     shutdown_request_snapshot,
 )
 from core.runtime.shutdown_execution import run_sync_shutdown_callable
+from core.runtime.subprocess_gateway import (
+    AcceleratorCapability,
+    PythonProcessSpec,
+    get_subprocess_gateway,
+)
 from core.utils.task_tracker import get_task_tracker
 
 logger = logging.getLogger("Kernel.ProcessManager")
@@ -148,6 +152,10 @@ class ProcessConfig:
     cpu_limit: float | None = None  # percentage
     memory_limit: int | None = None  # bytes
     priority: int = 0  # Process priority (0 = normal)
+    role: ProcessRole = ProcessRole.COORDINATOR
+    requested_privileges: frozenset[Privilege] = field(default_factory=frozenset)
+    accelerator_capability: AcceleratorCapability = AcceleratorCapability.NONE
+    start_method: str = "spawn"
 
     def __post_init__(self) -> None:
         """Validate configuration."""
@@ -165,6 +173,19 @@ class ProcessConfig:
 
         if self.memory_limit is not None and self.memory_limit <= 0:
             raise ValueError("memory_limit must be positive")
+
+        if not isinstance(self.role, ProcessRole):
+            raise TypeError("role must be a ProcessRole")
+        if any(
+            not isinstance(privilege, Privilege)
+            for privilege in self.requested_privileges
+        ):
+            raise TypeError("requested_privileges must contain Privilege values")
+
+        if not isinstance(self.accelerator_capability, AcceleratorCapability):
+            raise TypeError("accelerator_capability must be an AcceleratorCapability")
+        if self.start_method not in {"spawn", "forkserver"}:
+            raise ValueError("start_method must be spawn or forkserver")
 
 
 @dataclass
@@ -188,7 +209,7 @@ class ManagedProcess:
 
     def __init__(self, config: ProcessConfig):
         self.config = config
-        self.process: mp.Process | None = None
+        self.process: Any | None = None
         self.state = ProcessState.INITIALIZING
         self.stats = ProcessStats(start_time=time.time())
         self.last_restart_attempt: float | None = None
@@ -221,33 +242,29 @@ class ManagedProcess:
             self.state = ProcessState.STARTING
 
         try:
-            process = mp.Process(
-                target=_managed_process_entrypoint,
-                args=(
-                    self.config.target,
-                    self.config.args,
-                    self.config.kwargs,
-                    self.config.memory_limit,
-                    self.config.priority,
+            source = f"process_manager:{self.config.name}"
+            process = get_subprocess_gateway().spawn_python_process(
+                PythonProcessSpec(
+                    target=_managed_process_entrypoint,
+                    args=(
+                        self.config.target,
+                        self.config.args,
+                        self.config.kwargs,
+                        self.config.memory_limit,
+                        self.config.priority,
+                    ),
+                    name=self.config.name,
+                    daemon=self.config.daemon,
+                    source=source,
+                    role=self.config.role,
+                    requested_privileges=self.config.requested_privileges,
+                    accelerator_capability=self.config.accelerator_capability,
+                    start_method=self.config.start_method,
                 ),
-                name=self.config.name,
-                daemon=self.config.daemon,
             )
             with self._lock:
                 self.process = process
 
-            if is_shutdown_requested():
-                record_shutdown_admission_event(
-                    f"process_manager.start:{self.config.name}",
-                    resource_kind="multiprocessing",
-                    outcome="suppressed",
-                    detail="pre_start",
-                )
-                with self._lock:
-                    self.state = ProcessState.STOPPED
-                return False
-
-            process.start()
             if is_shutdown_requested():
                 record_shutdown_admission_event(
                     f"process_manager.start:{self.config.name}",
@@ -416,18 +433,10 @@ class ManagedProcess:
             graceful_timeout = min(graceful_timeout, total_budget * 0.8)
 
         try:
-            if process.pid:
-                try:
-                    psutil.Process(process.pid).terminate()
-                except psutil.NoSuchProcess:
-                    pass
-                except (psutil.AccessDenied, OSError) as exc:
-                    logger.warning(
-                        "psutil terminate failed for %s; using process handle: %s",
-                        self.config.name,
-                        exc,
-                    )
-                    process.terminate()
+            # Signal the retained handle. Looking the child up by PID creates a
+            # reuse race: after a fast exit the same integer can identify an
+            # unrelated process by the time psutil resolves it.
+            process.terminate()
 
             process.join(timeout=graceful_timeout)
             if process.is_alive():

@@ -430,6 +430,7 @@ class TestSensoryClientRecovery(unittest.IsolatedAsyncioTestCase):
         process.is_alive.return_value = True
         ctx = _CallRecorder()
         ctx.Process.return_value = process
+        ctx.get_start_method.return_value = "spawn"
 
         with swap("core.senses.sensory_client.sys.platform", "darwin"), \
              swap("core.senses.sensory_client.mp.get_context", return_value=ctx) as get_context, \
@@ -1972,6 +1973,9 @@ class TestLiveRuntimeFailureIsolation(unittest.IsolatedAsyncioTestCase):
         with tempfile.TemporaryDirectory() as temp_dir, swap(
             "core.agency.private_phenomenology.ServiceContainer.get",
             side_effect=fake_get,
+        ), swap(
+            "core.runtime.background_policy.background_activity_reason",
+            return_value="",
         ), swap.dict(os.environ, {"AURA_PHENOMENOLOGY_USE_LLM": "0"}):
             phenomenology = PrivatePhenomenology(storage_path=str(Path(temp_dir) / "monologue.jsonl"))
             reflection = await phenomenology.reflect({"P": 0.1, "A": 0.2, "D": 0.3}, [{"event": "test"}])
@@ -1997,6 +2001,9 @@ class TestLiveRuntimeFailureIsolation(unittest.IsolatedAsyncioTestCase):
         with tempfile.TemporaryDirectory() as temp_dir, swap(
             "core.agency.private_phenomenology.ServiceContainer.get",
             side_effect=fake_get,
+        ), swap(
+            "core.runtime.background_policy.background_activity_reason",
+            return_value="",
         ), swap.dict(os.environ, {"AURA_PHENOMENOLOGY_USE_LLM": "1"}):
             phenomenology = PrivatePhenomenology(storage_path=str(Path(temp_dir) / "monologue.jsonl"))
             await phenomenology.reflect({"P": 0.1, "A": 0.2, "D": 0.3}, [{"event": "test"}])

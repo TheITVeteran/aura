@@ -416,7 +416,17 @@ _GATEWAY_FACTORIES = {
     "get_will": "will_decision",
 }
 _GATEWAY_METHODS = {
-    "subprocess_gateway": frozenset({"run", "run_async", "spawn"}),
+    "subprocess_gateway": frozenset(
+        {
+            "run",
+            "run_async",
+            "run_model_blocking",
+            "spawn",
+            "spawn_async",
+            "spawn_python_process",
+            "spawn_shell_async",
+        }
+    ),
     "network_gateway": frozenset(
         {"connect_stream", "connect_websocket", "request", "request_async"}
     ),
@@ -569,6 +579,8 @@ class EffectVisitor(ast.NodeVisitor):
         factory = _factory_category(callee)
         if factory:
             return f"<{factory}>"
+        if _is_multiprocessing_context_factory(callee):
+            return "<multiprocessing.context>"
         if callee.endswith("pathlib.Path") or callee == "Path":
             return "<pathlib.Path>"
         if callee.endswith("aiohttp.ClientSession"):
@@ -592,6 +604,12 @@ class EffectVisitor(ast.NodeVisitor):
             return "action_executor"
 
         if _matches_exact(callee, _SUBPROCESS_CALLS):
+            return "raw_subprocess"
+        if method == "Process" and (
+            "<multiprocessing.context>." in callee
+            or "multiprocessing.get_context()." in callee
+            or _looks_multiprocessing_context_receiver(callee)
+        ):
             return "raw_subprocess"
         if _matches_exact(callee, _NETWORK_EXACT_CALLS) or any(
             _strip_project_prefix(callee).startswith(prefix) for prefix in _NETWORK_PREFIXES
@@ -644,6 +662,23 @@ def _factory_category(callee: str) -> str | None:
     stripped = callee.removesuffix("()")
     leaf = stripped.rsplit(".", 1)[-1]
     return _GATEWAY_FACTORIES.get(leaf)
+
+
+def _is_multiprocessing_context_factory(callee: str) -> bool:
+    stripped = _strip_project_prefix(callee.removesuffix("()"))
+    return stripped == "multiprocessing.get_context" or stripped.endswith(
+        ".multiprocessing.get_context"
+    )
+
+
+def _looks_multiprocessing_context_receiver(callee: str) -> bool:
+    if not callee.endswith(".Process"):
+        return False
+    receiver = callee.rsplit(".", 1)[0].removeprefix("self.")
+    leaf = receiver.rsplit(".", 1)[-1].casefold().removeprefix("_")
+    return leaf in {"context", "ctx", "mp_context", "selected_context"} or leaf.endswith(
+        ("_context", "_ctx")
+    )
 
 
 def _callee_uses_factory(callee: str, category: str) -> bool:
@@ -846,6 +881,36 @@ class _SubprocessDeclarationVisitor(EffectVisitor):
             "<subprocess_gateway>." in callee
             or _callee_uses_factory(callee, "subprocess_gateway")
         )
+        if subprocess_gateway_call and method == "spawn_python_process":
+            required = {
+                "accelerator_capability",
+                "name",
+                "requested_privileges",
+                "role",
+                "source",
+                "start_method",
+                "target",
+            }
+            spec = node.args[0] if node.args else None
+            spec_callee = self._resolve_expr(spec.func) if isinstance(spec, ast.Call) else ""
+            declared = {
+                str(keyword.arg)
+                for keyword in getattr(spec, "keywords", ())
+                if keyword.arg is not None
+            }
+            missing = sorted(required - declared)
+            if not isinstance(spec, ast.Call) or not spec_callee.endswith(
+                "PythonProcessSpec"
+            ):
+                missing = sorted(required)
+            if missing:
+                self.violations.append(
+                    ScanProblem(
+                        self.relative_path,
+                        "python_process_contract_incomplete:"
+                        f"{node.lineno}:{callee}:missing={','.join(missing)}",
+                    )
+                )
         if subprocess_gateway_call and method in {
             "run",
             "run_async",

@@ -178,13 +178,16 @@ def test_actor_spawn_failure_closes_pipes_and_enters_bounded_backoff(monkeypatch
             self.pipes: list[tuple[_Pipe, _Pipe]] = []
             self.process = _Process()
 
-        def Pipe(self, *, duplex: bool):
+        def get_start_method(self) -> str:
+            return "spawn"
+
+        def Pipe(self, *, duplex: bool):  # noqa: N802 - multiprocessing test double
             assert duplex is False
             pair = (_Pipe(), _Pipe())
             self.pipes.append(pair)
             return pair
 
-        def Process(self, **_kwargs):
+        def Process(self, **_kwargs):  # noqa: N802 - multiprocessing test double
             return self.process
 
     context = _Context()

@@ -3,15 +3,20 @@ from __future__ import annotations
 import asyncio
 import logging
 import multiprocessing as mp
-import os
 import queue
 import sys
 import threading
 from typing import Any
 
 from core.runtime.errors import record_degradation
+from core.runtime.process_privilege import Privilege, ProcessRole
 from core.runtime.shutdown_coordinator import is_shutdown_requested
 from core.runtime.shutdown_execution import run_sync_shutdown_callable_blocking
+from core.runtime.subprocess_gateway import (
+    AcceleratorCapability,
+    PythonProcessSpec,
+    get_subprocess_gateway,
+)
 
 logger = logging.getLogger("core.senses.sensory_client")
 
@@ -53,39 +58,31 @@ class SensoryLocalClient:
             ctx_name = "spawn" if sys.platform == "darwin" else "forkserver"
             ctx: Any = mp.get_context(ctx_name)
             self._replace_queues(ctx)
-            process = ctx.Process(
-                target=sensory_worker_loop,
-                args=(self._req_q, self._res_q),
-                name="AuraSensoryWorker",
-                daemon=True
-            )
-            self._process = process
-            previous_sidecar_flag = os.environ.get("AURA_MEDIA_SIDECAR_PROCESS")
-            os.environ["AURA_MEDIA_SIDECAR_PROCESS"] = "1"
             try:
-                if is_shutdown_requested():
-                    process = self._process
-                    self._process = None
-                    self._close_queues()
-                    close = getattr(process, "close", None)
-                    if callable(close):
-                        close()
-                    return False
-                process.start()
+                process = get_subprocess_gateway().spawn_python_process(
+                    PythonProcessSpec(
+                        target=sensory_worker_loop,
+                        args=(self._req_q, self._res_q),
+                        source="sensory_client.worker_owner",
+                        name="AuraSensoryWorker",
+                        role=ProcessRole.TOOL_RUNNER,
+                        requested_privileges=frozenset(
+                            {Privilege.FILESYSTEM_READ, Privilege.USER_SURFACE}
+                        ),
+                        accelerator_capability=AcceleratorCapability.NONE,
+                        daemon=True,
+                        start_method=ctx_name,
+                        environment_overrides={"AURA_MEDIA_SIDECAR_PROCESS": "1"},
+                    ),
+                    context=ctx,
+                )
             except RuntimeError:
                 if is_shutdown_requested():
                     self._process = None
                     self._close_queues()
-                    close = getattr(process, "close", None)
-                    if callable(close):
-                        close()
                     return False
                 raise
-            finally:
-                if previous_sidecar_flag is None:
-                    os.environ.pop("AURA_MEDIA_SIDECAR_PROCESS", None)
-                else:
-                    os.environ["AURA_MEDIA_SIDECAR_PROCESS"] = previous_sidecar_flag
+            self._process = process
             if is_shutdown_requested():
                 logger.info("Sensory worker crossed shutdown during spawn; stopping it")
                 await self.stop()

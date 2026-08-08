@@ -14,6 +14,7 @@ from collections.abc import AsyncIterator
 from pathlib import Path
 from typing import Any
 
+from core.runtime.lockdep import LockRank, checked_lock
 from core.runtime.model_lane_control import (
     LaneClaim,
     LaneOwnerObservation,
@@ -25,13 +26,17 @@ from core.runtime.model_lane_control import (
     register_model_lane_owner_adapter,
     unregister_model_lane_owner_adapter,
 )
+from core.runtime.process_privilege import Privilege, ProcessRole
 from core.runtime.resource_observation import get_resource_observer
 from core.runtime.shutdown_coordinator import is_shutdown_requested
 from core.runtime.shutdown_execution import run_sync_shutdown_callable_blocking
+from core.runtime.subprocess_gateway import (
+    AcceleratorCapability,
+    PythonProcessSpec,
+    get_subprocess_gateway,
+)
 
 from .mlx_vision_worker import _mlx_vision_worker_loop
-
-from core.runtime.lockdep import LockRank, checked_lock
 
 logger = logging.getLogger("MLXVisionClient")
 DEFAULT_VISION_MODEL = "mlx-community/Qwen2-VL-2B-Instruct-4bit"
@@ -145,53 +150,34 @@ class MLXVisionClient:
             self._init_done = False
             self._replace_queues(ctx)
 
-            process = ctx.Process(
-                target=_mlx_vision_worker_loop,
-                args=(self.model_path, self._req_q, self._res_q),
-                daemon=True,
-                name="MLX-Vision-Worker",
-            )
-            self._process = process
-            if is_shutdown_requested():
-                process, self._process = self._process, None
-                self._close_queues()
-                close = getattr(process, "close", None)
-                if callable(close):
-                    close()
-                return False
             try:
-                process.start()
+                process = get_subprocess_gateway().spawn_python_process(
+                    PythonProcessSpec(
+                        target=_mlx_vision_worker_loop,
+                        args=(self.model_path, self._req_q, self._res_q),
+                        source="mlx_vision_client.worker_owner",
+                        name="MLX-Vision-Worker",
+                        role=ProcessRole.MODEL_WORKER,
+                        requested_privileges=frozenset(
+                            {
+                                Privilege.FILESYSTEM_READ,
+                                Privilege.FILESYSTEM_WRITE,
+                                Privilege.MODEL_WEIGHTS,
+                            }
+                        ),
+                        accelerator_capability=AcceleratorCapability.MODEL,
+                        daemon=True,
+                        start_method="spawn",
+                    ),
+                    context=ctx,
+                )
             except RuntimeError:
                 if is_shutdown_requested():
                     self._process = None
                     self._close_queues()
-                    close = getattr(process, "close", None)
-                    if callable(close):
-                        close()
                     return False
                 raise
-            if is_shutdown_requested():
-                logger.info("Vision worker crossed shutdown during spawn; terminating it")
-                process.terminate()
-                process.join(timeout=1.0)
-                if process.is_alive():
-                    process.kill()
-                    process.join(timeout=1.0)
-                self._process = None
-                self._close_queues()
-                return False
-            try:
-                from core.runtime.runtime_hygiene import get_runtime_hygiene
-
-                get_runtime_hygiene().register_process_handle(
-                    process,
-                    kind="multiprocessing",
-                    name=process.name,
-                    source="mlx_vision_client.worker_owner",
-                    command=f"MLX vision worker for {self.model_path}",
-                )
-            except (ImportError, AttributeError, RuntimeError, TypeError, ValueError) as exc:
-                logger.debug("Vision worker runtime hygiene registration failed: %s", exc)
+            self._process = process
 
             self._listener_thread = threading.Thread(target=self._listener_loop, daemon=True)
             self._listener_thread.start()

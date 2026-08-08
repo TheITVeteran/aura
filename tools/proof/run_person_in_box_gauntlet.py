@@ -48,7 +48,12 @@ DEFAULT_TASKS = Path(__file__).resolve().parent / "tasks" / "person_box_tasks.ya
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
-from core.runtime.subprocess_gateway import get_subprocess_gateway  # noqa: E402
+from core.runtime.process_privilege import Privilege, ProcessRole  # noqa: E402
+from core.runtime.subprocess_gateway import (  # noqa: E402
+    AcceleratorCapability,
+    PythonProcessSpec,
+    get_subprocess_gateway,
+)
 
 PROOF_ENV = {
     "AURA_FULL_AUTONOMY_PROOF": "1",
@@ -651,7 +656,8 @@ class PersonBoxGauntlet:
         hard_timeout_s: float,
     ) -> dict[str, Any]:
         started = _now()
-        ctx = mp.get_context(os.environ.get("AURA_PERSON_BOX_MP_CONTEXT", "spawn"))
+        start_method = os.environ.get("AURA_PERSON_BOX_MP_CONTEXT", "spawn")
+        ctx = mp.get_context(start_method)
         result_queue = ctx.Queue(maxsize=1)
         config = {
             "out_dir": str(self.out_dir),
@@ -666,12 +672,25 @@ class PersonBoxGauntlet:
             "network": self.network,
             "require_container": self.require_container,
         }
-        proc = ctx.Process(
-            target=_live_model_probe_worker,
-            args=(config, task_id, receipt_id, prompt, result_queue),
-            name="aura_person_box_live_model_probe",
+        proc = _SUBPROCESS_GATEWAY.spawn_python_process(
+            PythonProcessSpec(
+                target=_live_model_probe_worker,
+                args=(config, task_id, receipt_id, prompt, result_queue),
+                source="proof_tooling:person_box.live_model_probe",
+                name="aura_person_box_live_model_probe",
+                role=ProcessRole.MODEL_WORKER,
+                requested_privileges=frozenset(
+                    {
+                        Privilege.FILESYSTEM_READ,
+                        Privilege.FILESYSTEM_WRITE,
+                        Privilege.MODEL_WEIGHTS,
+                    }
+                ),
+                accelerator_capability=AcceleratorCapability.MODEL,
+                start_method=start_method,
+            ),
+            context=ctx,
         )
-        proc.start()
         proc.join(timeout=hard_timeout_s)
         if proc.is_alive():
             proc.terminate()

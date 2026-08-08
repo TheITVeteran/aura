@@ -354,6 +354,9 @@ def test_actor_spawn_is_reaped_when_shutdown_crosses_process_start(
     process = _Process()
 
     class _Context:
+        def get_start_method(self) -> str:
+            return "spawn"
+
         def Pipe(self, *, duplex: bool):  # noqa: N802 - multiprocessing test double
             assert duplex is False
             return _Pipe(), _Pipe()
@@ -415,6 +418,9 @@ async def test_sensory_spawn_is_reaped_when_shutdown_crosses_process_start(
     process = _Process()
 
     class _Context:
+        def get_start_method(self) -> str:
+            return "spawn"
+
         def Queue(self):  # noqa: N802 - multiprocessing test double
             return _Queue()
 
@@ -469,6 +475,9 @@ def test_vision_spawn_is_reaped_when_shutdown_crosses_process_start(
     process = _Process()
 
     class _Context:
+        def get_start_method(self) -> str:
+            return "spawn"
+
         def Queue(self, maxsize: int = 0):  # noqa: N802 - multiprocessing test double
             return _Queue()
 
