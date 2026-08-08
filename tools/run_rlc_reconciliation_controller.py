@@ -28,6 +28,7 @@ from typing import Any, Final
 
 SCHEMA: Final = "aura.rlc_reconciliation_controller.v1"
 SOURCE_SCHEMA: Final = "aura.rlc_reconciliation_source_manifest.v1"
+SOURCE_GIT_SCHEMA: Final = "aura.rlc_reconciliation_source_git_identity.v1"
 HEARTBEAT_SCHEMA: Final = "aura.rlc_reconciliation_controller_heartbeat.v1"
 STATUS_SCHEMA: Final = "aura.rlc_reconciliation_controller_status.v1"
 LAUNCH_SCHEMA: Final = "aura.rlc_reconciliation_controller_launchd.v1"
@@ -126,6 +127,100 @@ def _source_paths(root: Path) -> list[Path]:
             raise ControllerError(f"required_source_missing:{relative}")
         paths.add(relative)
     return sorted(paths, key=lambda item: os.fsencode(item.as_posix()))
+
+
+def _git_bytes(root: Path, *arguments: str) -> bytes:
+    observed = subprocess.run(
+        ["git", "-C", str(root), *arguments],
+        capture_output=True,
+        timeout=15.0,
+        check=False,
+    )
+    if observed.returncode != 0:
+        detail = observed.stderr.decode("utf-8", errors="replace").strip()
+        raise ControllerError(
+            f"source_git_identity_unavailable:{arguments[0]}:{detail}"
+        )
+    return observed.stdout
+
+
+def build_source_git_identity(root: Path, *, source_commit: str) -> dict[str, Any]:
+    """Prove a campaign capsule is one clean detached Git worktree.
+
+    A source manifest proves the bytes the controller chose to hash, but an
+    archive has no independent authority for the commit label attached to
+    those bytes.  The worker's runtime identity is Git-backed too, so accepting
+    an archive here only defers an inevitable source-unbound failure until
+    after an expensive model load.
+    """
+
+    root = root.expanduser().resolve(strict=True)
+    normalized_commit = str(source_commit).strip().lower()
+    if len(normalized_commit) != 40 or any(
+        character not in "0123456789abcdef" for character in normalized_commit
+    ):
+        raise ControllerError("source_commit_invalid")
+    top_level = Path(
+        _git_bytes(root, "rev-parse", "--show-toplevel")
+        .decode("utf-8", errors="strict")
+        .strip()
+    ).expanduser().resolve(strict=True)
+    if top_level != root:
+        raise ControllerError("source_git_root_mismatch")
+    observed_commit = (
+        _git_bytes(root, "rev-parse", "HEAD")
+        .decode("ascii", errors="strict")
+        .strip()
+        .lower()
+    )
+    if observed_commit != normalized_commit:
+        raise ControllerError("source_git_commit_mismatch")
+    branch = (
+        _git_bytes(root, "rev-parse", "--abbrev-ref", "HEAD")
+        .decode("utf-8", errors="strict")
+        .strip()
+    )
+    if branch != "HEAD":
+        raise ControllerError("source_capsule_not_detached")
+    status = _git_bytes(
+        root,
+        "status",
+        "--porcelain=v1",
+        "-z",
+        "--untracked-files=all",
+    )
+    if status:
+        raise ControllerError("source_capsule_dirty")
+    body = {
+        "schema": SOURCE_GIT_SCHEMA,
+        "source_root": str(root),
+        "source_commit": observed_commit,
+        "source_branch": "DETACHED",
+        "workspace_status_sha256": hashlib.sha256(status).hexdigest(),
+    }
+    return {**body, "identity_sha256": _sha(body)}
+
+
+def verify_source_git_identity(
+    root: Path,
+    identity: Mapping[str, Any],
+) -> None:
+    if not isinstance(identity, Mapping):
+        raise ControllerError("source_git_identity_invalid")
+    body = {key: value for key, value in identity.items() if key != "identity_sha256"}
+    if (
+        identity.get("schema") != SOURCE_GIT_SCHEMA
+        or identity.get("identity_sha256") != _sha(body)
+        or identity.get("source_branch") != "DETACHED"
+        or identity.get("workspace_status_sha256") != hashlib.sha256(b"").hexdigest()
+    ):
+        raise ControllerError("source_git_identity_invalid")
+    observed = build_source_git_identity(
+        root,
+        source_commit=str(identity.get("source_commit") or ""),
+    )
+    if observed != dict(identity):
+        raise ControllerError("source_git_identity_drift")
 
 
 def build_source_manifest(root: Path, *, source_commit: str) -> dict[str, Any]:
@@ -232,6 +327,7 @@ def load_config(path: Path) -> dict[str, Any]:
         "campaign_id",
         "source_root",
         "source_commit",
+        "source_git_identity",
         "source_manifest_path",
         "python",
         "python_sha256",
@@ -259,6 +355,10 @@ def load_config(path: Path) -> dict[str, Any]:
         raise ControllerError("controller_attempt_budget_invalid")
     if float(config["stale_after_s"]) <= float(config["episode_wall_s"]):
         raise ControllerError("controller_stale_budget_too_short")
+    if not isinstance(config.get("source_git_identity"), Mapping):
+        raise ControllerError("source_git_identity_invalid")
+    if config["source_git_identity"].get("source_commit") != config["source_commit"]:
+        raise ControllerError("source_git_commit_binding_invalid")
     return config
 
 
@@ -283,6 +383,7 @@ def build_config(
     retry_backoff_s: float,
 ) -> tuple[dict[str, Any], dict[str, Any], bytes]:
     source_root = source_root.expanduser().resolve(strict=True)
+    source_commit = str(source_commit).strip().lower()
     model = model.expanduser().resolve(strict=True)
     # Preserve the venv entrypoint for execution. Resolving its symlink to the
     # Homebrew base binary drops pyvenv.cfg discovery and therefore the exact
@@ -293,6 +394,10 @@ def build_config(
     out_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
     os.chmod(out_dir, 0o700)
     campaign_id = out_dir.name
+    source_git_identity = build_source_git_identity(
+        source_root,
+        source_commit=source_commit,
+    )
     manifest = build_source_manifest(source_root, source_commit=source_commit)
     manifest_path = out_dir / "source_manifest.json"
     key_path = out_dir / ".heartbeat.key"
@@ -302,6 +407,7 @@ def build_config(
         "campaign_id": campaign_id,
         "source_root": str(source_root),
         "source_commit": source_commit,
+        "source_git_identity": source_git_identity,
         "source_manifest_path": str(manifest_path),
         "python": str(python),
         "python_sha256": _sha_file(resolved_python),
@@ -484,6 +590,10 @@ def _source_is_current(config: Mapping[str, Any]) -> None:
     manifest = _read_json(Path(str(config["source_manifest_path"])), role="source_manifest")
     if manifest.get("source_commit") != config["source_commit"]:
         raise ControllerError("source_commit_binding_invalid")
+    verify_source_git_identity(
+        Path(str(config["source_root"])),
+        config["source_git_identity"],
+    )
     verify_source_manifest(Path(str(config["source_root"])), manifest)
     python = Path(str(config["python"])).expanduser().absolute()
     if _sha_file(python.resolve(strict=True)) != config["python_sha256"]:

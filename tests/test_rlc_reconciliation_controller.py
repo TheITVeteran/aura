@@ -5,6 +5,8 @@ import hashlib
 import hmac
 import json
 import os
+import shutil
+import subprocess
 import sys
 from pathlib import Path
 
@@ -26,7 +28,41 @@ def _source(tmp_path: Path) -> Path:
         path = root / relative
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(text, encoding="utf-8")
+    subprocess.run(["git", "init", "-q", str(root)], check=True)
+    subprocess.run(["git", "-C", str(root), "config", "user.name", "Aura Test"], check=True)
+    subprocess.run(
+        ["git", "-C", str(root), "config", "user.email", "aura-test@example.invalid"],
+        check=True,
+    )
+    _commit_source(root, "initial fixture")
+    subprocess.run(["git", "-C", str(root), "checkout", "--detach", "-q"], check=True)
     return root
+
+
+def _commit_source(root: Path, message: str) -> str:
+    subprocess.run(["git", "-C", str(root), "add", "-A"], check=True)
+    subprocess.run(["git", "-C", str(root), "commit", "-q", "-m", message], check=True)
+    return (
+        subprocess.run(
+            ["git", "-C", str(root), "rev-parse", "HEAD"],
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+        .stdout.strip()
+    )
+
+
+def _source_commit(root: Path) -> str:
+    return (
+        subprocess.run(
+            ["git", "-C", str(root), "rev-parse", "HEAD"],
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+        .stdout.strip()
+    )
 
 
 def _prepared(tmp_path: Path):
@@ -40,7 +76,7 @@ def _prepared(tmp_path: Path):
     out = tmp_path / "campaign"
     config, manifest, key = controller.build_config(
         source_root=source,
-        source_commit="a" * 40,
+        source_commit=_source_commit(source),
         model=model,
         out_dir=out,
         python=python,
@@ -60,6 +96,60 @@ def _prepared(tmp_path: Path):
     config_path = out / "controller_config.json"
     controller.write_prepared_campaign(config_path, config, manifest, key)
     return source, out, config_path, controller.load_config(config_path)
+
+
+def test_prepare_binds_one_clean_detached_git_identity(tmp_path: Path):
+    source, _out, _config_path, config = _prepared(tmp_path)
+    identity = config["source_git_identity"]
+    assert identity["schema"] == controller.SOURCE_GIT_SCHEMA
+    assert identity["source_commit"] == _source_commit(source)
+    assert identity["source_branch"] == "DETACHED"
+    assert identity["workspace_status_sha256"] == hashlib.sha256(b"").hexdigest()
+    controller.verify_source_git_identity(source, identity)
+
+
+def test_prepare_rejects_a_commit_label_without_git_authority(tmp_path: Path):
+    source = _source(tmp_path)
+    git_metadata = source / ".git"
+    if git_metadata.is_file():
+        git_metadata.unlink()
+    else:
+        shutil.rmtree(git_metadata)
+    with pytest.raises(controller.ControllerError, match="source_git_identity_unavailable"):
+        controller.build_source_git_identity(source, source_commit="a" * 40)
+
+
+def test_prepare_rejects_dirty_or_branch_attached_source(tmp_path: Path):
+    source = _source(tmp_path)
+    (source / "core/module.py").write_text("VALUE = 2\n", encoding="utf-8")
+    with pytest.raises(controller.ControllerError, match="source_capsule_dirty"):
+        controller.build_source_git_identity(
+            source,
+            source_commit=_source_commit(source),
+        )
+    subprocess.run(["git", "-C", str(source), "restore", "core/module.py"], check=True)
+    branch = (
+        subprocess.run(
+            [
+                "git",
+                "-C",
+                str(source),
+                "for-each-ref",
+                "--format=%(refname:short)",
+                "refs/heads",
+            ],
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+        .stdout.splitlines()[0]
+    )
+    subprocess.run(["git", "-C", str(source), "switch", "-q", branch], check=True)
+    with pytest.raises(controller.ControllerError, match="source_capsule_not_detached"):
+        controller.build_source_git_identity(
+            source,
+            source_commit=_source_commit(source),
+        )
 
 
 def test_source_manifest_detects_execution_source_drift(tmp_path: Path):
@@ -112,7 +202,7 @@ def test_prepare_preserves_the_venv_entrypoint_while_hashing_its_binary(tmp_path
     venv_python.symlink_to(binary)
     config, _manifest, _key = controller.build_config(
         source_root=source,
-        source_commit="a" * 40,
+        source_commit=_source_commit(source),
         model=model,
         out_dir=tmp_path / "campaign",
         python=venv_python,
@@ -268,6 +358,7 @@ if not marker.exists():
 """.lstrip(),
         encoding="utf-8",
     )
+    source_commit = _commit_source(source, "executable retry fixture")
     model = tmp_path / "model"
     model.mkdir()
     (model / "config.json").write_text("{}\n", encoding="utf-8")
@@ -275,7 +366,7 @@ if not marker.exists():
     out = tmp_path / "campaign"
     config, manifest, key = controller.build_config(
         source_root=source,
-        source_commit="b" * 40,
+        source_commit=source_commit,
         model=model,
         out_dir=out,
         python=Path(sys.executable),
