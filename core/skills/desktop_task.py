@@ -24,6 +24,11 @@ from core.runtime.desktop_task_contract import (
     DESKTOP_TASK_ALLOWED_ACTIONS,
     DESKTOP_TASK_RETRY_SAFE_ACTIONS,
 )
+from core.runtime.content_integrity import (
+    contains_paragraph_hashes,
+    paragraph_sha256s,
+    text_sha256,
+)
 from core.runtime.errors import record_degradation
 from core.runtime.os_automation_effects import canonical_app_target, extract_target_paths
 from core.skills.base_skill import BaseSkill
@@ -2059,14 +2064,14 @@ class DesktopTaskSkill(BaseSkill):
                 url = str(
                     item.get("url") or item.get("link") or item.get("uri") or ""
                 ).strip()
-                snippet = str(
+                raw_text = str(
                     item.get("snippet")
                     or item.get("text")
                     or item.get("content")
                     or item.get("summary")
                     or ""
                 ).strip()
-                if not title and not url and not snippet:
+                if not title and not url and not raw_text:
                     continue
                 if url and not DesktopTaskSkill._is_article_url(url):
                     continue
@@ -2074,16 +2079,37 @@ class DesktopTaskSkill(BaseSkill):
                 if not key:
                     continue
                 if key not in merged:
-                    merged[key] = {"title": "", "url": "", "snippet": ""}
+                    merged[key] = {
+                        "title": "",
+                        "url": "",
+                        "snippet": "",
+                        "article_body_chunks": [],
+                    }
                     order.append(key)
                 target = merged[key]
                 if len(title) > len(str(target.get("title") or "")):
                     target["title"] = title[:240]
                 if url:
                     target["url"] = url[:500]
-                cleaned = DesktopTaskSkill._strip_page_chrome(snippet)
-                if len(cleaned) > len(str(target.get("snippet") or "")):
+                cleaned = DesktopTaskSkill._strip_page_chrome(raw_text)
+                evidence_kind = str(item.get("evidence_kind") or "").strip().casefold()
+                fetched_body = evidence_kind == "article_body" and bool(
+                    item.get("fetched", True)
+                )
+                if fetched_body and cleaned:
+                    chunks = target["article_body_chunks"]
+                    if cleaned not in chunks:
+                        chunks.append(cleaned[:1600])
+                elif len(cleaned) > len(str(target.get("snippet") or "")):
                     target["snippet"] = cleaned[:900]
+                for metadata_field in (
+                    "fetched_at",
+                    "document_chars",
+                    "document_sha256",
+                ):
+                    value = item.get(metadata_field)
+                    if value and not target.get(metadata_field):
+                        target[metadata_field] = value
                 published = str(
                     item.get("published_at")
                     or item.get("publication_date")
@@ -2096,9 +2122,21 @@ class DesktopTaskSkill(BaseSkill):
         sources = []
         for key in order:
             source = merged[key]
+            article_body = "\n\n".join(
+                str(chunk) for chunk in source.pop("article_body_chunks", []) if chunk
+            )[:4000]
+            if article_body:
+                source["article_body"] = article_body
+                source["article_body_chars"] = len(article_body)
+                source["article_body_sha256"] = text_sha256(article_body)
+                source["source_evidence_sha256"] = text_sha256(
+                    f"{source.get('url') or source.get('title') or ''}\n{article_body}"
+                )
+                source["read_evidence_kind"] = "fetched_article_body"
+                source["snippet"] = article_body[:1800]
             title = str(source.get("title") or "")
             url = str(source.get("url") or "")
-            snippet = str(source.get("snippet") or "")
+            snippet = article_body or str(source.get("snippet") or "")
             source["reputability"] = DesktopTaskSkill._source_reputability(url, title)
             source["accessible"] = not DesktopTaskSkill._looks_inaccessible(snippet)
             sources.append(source)
@@ -2133,7 +2171,24 @@ class DesktopTaskSkill(BaseSkill):
                     str(current.get("snippet") or "")
                 ):
                     current["snippet"] = source.get("snippet")
-                for field in ("title", "url", "published_at"):
+                if len(str(source.get("article_body") or "")) > len(
+                    str(current.get("article_body") or "")
+                ):
+                    current["article_body"] = source.get("article_body")
+                    current["article_body_chars"] = source.get("article_body_chars")
+                    current["article_body_sha256"] = source.get("article_body_sha256")
+                    current["source_evidence_sha256"] = source.get(
+                        "source_evidence_sha256"
+                    )
+                    current["read_evidence_kind"] = source.get("read_evidence_kind")
+                for field in (
+                    "title",
+                    "url",
+                    "published_at",
+                    "fetched_at",
+                    "document_chars",
+                    "document_sha256",
+                ):
                     if source.get(field) and not current.get(field):
                         current[field] = source[field]
                 current["accessible"] = bool(
@@ -2187,8 +2242,15 @@ class DesktopTaskSkill(BaseSkill):
         usable: list[dict[str, Any]] = []
         for source in sources:
             item = dict(source)
-            read_verified = bool(item.get("accessible")) and bool(
-                str(item.get("snippet") or "").strip()
+            article_body = str(item.get("article_body") or "").strip()
+            article_digest = str(item.get("article_body_sha256") or "").strip()
+            read_verified = bool(
+                item.get("accessible")
+                and item.get("read_evidence_kind") == "fetched_article_body"
+                and len(article_body) >= 120
+                and len(article_body.split()) >= 18
+                and cls._valid_sha256(article_digest)
+                and article_digest == text_sha256(article_body)
             )
             recent_verified, recency_evidence = cls._source_recency_evidence(item)
             item["read_verified"] = read_verified
@@ -2336,7 +2398,9 @@ class DesktopTaskSkill(BaseSkill):
             if not isinstance(item, dict):
                 continue
             title = str(item.get("title") or item.get("url") or "Untitled source").strip()
-            snippet = " ".join(str(item.get("snippet") or "").split())
+            snippet = " ".join(
+                str(item.get("article_body") or item.get("snippet") or "").split()
+            )
             url = str(item.get("url") or "").strip()
             if title:
                 source_titles.append(title[:160])
@@ -2847,6 +2911,18 @@ class DesktopTaskSkill(BaseSkill):
             ):
                 synthesis = model_synthesis
                 research_ctx["desktop_task_research_authored"] = True
+                research_ctx["desktop_task_research_synthesis_sha256"] = text_sha256(
+                    synthesis
+                )
+                research_ctx[
+                    "desktop_task_research_synthesis_source_sha256s"
+                ] = [
+                    str(item.get("source_evidence_sha256") or "")
+                    for item in sources
+                    if self._valid_sha256(
+                        str(item.get("source_evidence_sha256") or "")
+                    )
+                ]
             elif self._objective_requests_authored_synthesis(objective):
                 research_timing_ms["total"] = round(
                     (time.perf_counter() - research_started) * 1000.0,
@@ -2944,7 +3020,8 @@ class DesktopTaskSkill(BaseSkill):
 
         source_lines = "\n".join(
             f"- [{_src_tag(item)}] {str(item.get('title') or item.get('url') or 'source')} "
-            f"({str(item.get('url') or '')}):\n  {str(item.get('snippet') or '')[:900]}"
+            f"({str(item.get('url') or '')}):\n  "
+            f"{str(item.get('article_body') or item.get('snippet') or '')[:1200]}"
             for item in (sources or [])[:5]
             if isinstance(item, dict)
         )
@@ -3443,10 +3520,16 @@ class DesktopTaskSkill(BaseSkill):
             if not isinstance(chars, int) or chars <= 0:
                 return False, "missing rendered PDF character count"
             digest = str(result.get("sha256") or "").strip()
+            expected_body = str(payload.get("body") or "")[:9000]
+            expected_body_digest = text_sha256(expected_body)
+            observed_body_digest = str(result.get("source_body_sha256") or "").strip()
+            if observed_body_digest != expected_body_digest:
+                return False, "rendered PDF is not bound to the requested source body"
             verified = bool(result.get("effect_verified")) and cls._valid_sha256(digest)
             return (
                 verified,
-                f"path={path};bytes={bytes_written};pages={pages};chars={chars};sha256={digest}"
+                f"path={path};bytes={bytes_written};pages={pages};chars={chars};"
+                f"sha256={digest};source_body_sha256={observed_body_digest}"
                 if verified
                 else str(result.get("verification") or "missing persisted PDF verification"),
             )
@@ -3982,8 +4065,6 @@ class DesktopTaskSkill(BaseSkill):
                 )
             )
             visible_source_count = self._requested_visible_source_count(text)
-            if visible_source_count == 0 and self._objective_requests_source_reading(text):
-                visible_source_count = self._requested_research_source_count(text)
             if visible_source_count > 0:
                 opened_source_urls: set[str] = set()
                 for source in (context or {}).get("desktop_task_research_sources") or []:
@@ -4844,8 +4925,35 @@ class DesktopTaskSkill(BaseSkill):
                             description="Aura authored the requested synthesis rather than emitting extraction or a template.",
                             repair_hint="rerun_cortex_authorship_with_semantic_feedback",
                         ),
+                        SemanticPredicate(
+                            predicate_id="synthesis_bound_to_read_sources",
+                            evidence_path="semantic_evidence.research.bound_read_source_count",
+                            operator=PredicateOperator.GREATER_THAN_OR_EQUAL,
+                            expected=required_sources,
+                            description=(
+                                "The authored synthesis receipt is bound to every "
+                                "required fetched article body."
+                            ),
+                            repair_hint="reauthor_synthesis_from_verified_article_bodies",
+                        ),
                     ]
                 )
+                if cls._explicit_pdf_requested(objective):
+                    predicates.append(
+                        SemanticPredicate(
+                            predicate_id="pdf_contains_authored_synthesis",
+                            evidence_path=(
+                                "semantic_evidence.artifacts."
+                                "pdf_contains_authored_synthesis"
+                            ),
+                            operator=PredicateOperator.TRUTHY,
+                            description=(
+                                "The persisted PDF content receipt includes every "
+                                "paragraph of Aura's authored synthesis."
+                            ),
+                            repair_hint="rerender_pdf_with_verified_authored_synthesis",
+                        )
+                    )
             if cls._objective_requests_recent_sources(objective):
                 predicates.append(
                     SemanticPredicate(
@@ -4924,7 +5032,34 @@ class DesktopTaskSkill(BaseSkill):
         read_sources = [item for item in sources if item.get("read_verified") is True]
         recent_sources = [item for item in read_sources if item.get("recency_verified") is True]
         synthesis = str(task_context.get("desktop_task_research_synthesis") or "").strip()
-        authored = task_context.get("desktop_task_research_authored") is True
+        synthesis_digest = str(
+            task_context.get("desktop_task_research_synthesis_sha256") or ""
+        ).strip()
+        synthesis_receipt_valid = bool(
+            synthesis
+            and cls._valid_sha256(synthesis_digest)
+            and synthesis_digest == text_sha256(synthesis)
+        )
+        authored = bool(
+            task_context.get("desktop_task_research_authored") is True
+            and synthesis_receipt_valid
+        )
+        read_source_hashes = {
+            str(item.get("source_evidence_sha256") or "")
+            for item in read_sources
+            if cls._valid_sha256(str(item.get("source_evidence_sha256") or ""))
+        }
+        bound_source_hashes = {
+            str(value)
+            for value in (
+                task_context.get(
+                    "desktop_task_research_synthesis_source_sha256s"
+                )
+                or []
+            )
+            if cls._valid_sha256(str(value))
+        }
+        bound_read_source_count = len(read_source_hashes & bound_source_hashes)
         independent_position = bool(
             authored
             and cls._objective_requests_opinion(objective)
@@ -4937,13 +5072,22 @@ class DesktopTaskSkill(BaseSkill):
             if receipt.get("ok") is True and receipt.get("effect_verified") is True
         ]
         pdf_paths: list[str] = []
+        pdf_contains_authored_synthesis = False
         folder_paths: list[str] = []
+        synthesis_paragraphs = paragraph_sha256s(synthesis)
         for receipt in verified:
             result = receipt.get("result")
             result = result if isinstance(result, Mapping) else {}
             path = str(result.get("path") or "").strip()
             if receipt.get("action") == "render_text_pdf" and path.lower().endswith(".pdf"):
                 pdf_paths.append(path)
+                pdf_contains_authored_synthesis = bool(
+                    pdf_contains_authored_synthesis
+                    or contains_paragraph_hashes(
+                        result.get("source_paragraph_sha256s") or [],
+                        synthesis_paragraphs,
+                    )
+                )
             if receipt.get("action") == "create_folder" and path:
                 folder_paths.append(path)
 
@@ -4999,12 +5143,17 @@ class DesktopTaskSkill(BaseSkill):
                     and cls._research_synthesis_satisfies_objective(objective, synthesis)
                 ),
                 "authored_synthesis": authored,
+                "synthesis_receipt_valid": synthesis_receipt_valid,
+                "bound_read_source_count": bound_read_source_count,
                 "independent_position_present": independent_position,
                 "source_evidence": [
                     {
                         "title": item.get("title"),
                         "url": item.get("url"),
                         "read_verified": item.get("read_verified"),
+                        "read_evidence_kind": item.get("read_evidence_kind"),
+                        "article_body_sha256": item.get("article_body_sha256"),
+                        "source_evidence_sha256": item.get("source_evidence_sha256"),
                         "recency_verified": item.get("recency_verified"),
                         "recency_evidence": item.get("recency_evidence"),
                     }
@@ -5014,6 +5163,7 @@ class DesktopTaskSkill(BaseSkill):
             "artifacts": {
                 "verified_pdf_count": len(pdf_paths),
                 "pdf_paths": pdf_paths,
+                "pdf_contains_authored_synthesis": pdf_contains_authored_synthesis,
                 "requested_folder_verified": requested_folder_verified,
                 "folder_paths": folder_paths,
                 "pdf_in_requested_folder": pdf_in_requested_folder,

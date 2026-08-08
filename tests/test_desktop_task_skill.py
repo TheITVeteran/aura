@@ -6,6 +6,7 @@ from pathlib import Path
 import pytest
 
 from core.skills.desktop_task import DesktopTaskSkill, DesktopTaskStep
+from core.runtime.content_integrity import paragraph_sha256s, text_sha256
 
 #: Derived rather than naming one developer's home directory. The path
 #: is fixture data, so what matters is its shape, not whose machine it is.
@@ -80,6 +81,9 @@ def _fake_computer_use_result(params):
             "pages": 1,
             "chars": len(body),
             "sha256": "0" * 64,
+            "source_body_sha256": text_sha256(body[:9000]),
+            "source_body_chars": len(body[:9000]),
+            "source_paragraph_sha256s": list(paragraph_sha256s(body[:9000])),
             "effect_verified": True,
         }
     if action == "move_file":
@@ -1410,30 +1414,30 @@ async def test_desktop_task_collects_research_before_document_composition(monkey
                         "more intense extreme-weather risks, and adaptation needs for cities."
                     ),
                     "citations": [
-                            {
-                                "title": "Climate assessment",
-                                "url": "https://example.test/climate-assessment",
-                                "snippet": (
-                                    "Observed warming is changing measured risk patterns across "
-                                    "multiple regions and independently maintained climate records."
-                                ),
-                            },
+                        {"title": title, "url": f"https://example.test/{slug}"}
+                        for title, slug in (
+                            ("Climate assessment", "climate-assessment"),
+                            ("Adaptation briefing", "adaptation"),
+                            ("Extreme weather report", "extreme-weather"),
+                        )
+                    ],
+                    "chunks": [
                         {
-                            "title": "Adaptation briefing",
-                            "url": "https://example.test/adaptation",
-                                "snippet": (
-                                    "Cities are adapting infrastructure and emergency plans while "
-                                    "tracking which interventions reduce heat and flood exposure."
-                                ),
-                        },
-                        {
-                            "title": "Extreme weather report",
-                            "url": "https://example.test/extreme-weather",
-                                "snippet": (
-                                    "Heat and precipitation extremes are increasing across the "
-                                    "multi-decade observations analyzed in this report."
-                                ),
-                        },
+                            "title": title,
+                            "url": f"https://example.test/{slug}",
+                            "text": (
+                                "This fetched report documents observed warming, changing "
+                                "extreme-weather risk, and measured adaptation outcomes across "
+                                "multiple regions using independently maintained records."
+                            ),
+                            "evidence_kind": "article_body",
+                            "fetched": True,
+                        }
+                        for title, slug in (
+                            ("Climate assessment", "climate-assessment"),
+                            ("Adaptation briefing", "adaptation"),
+                            ("Extreme weather report", "extreme-weather"),
+                        )
                     ],
                 }
             return _fake_computer_use_result(params)
@@ -2746,9 +2750,26 @@ async def test_collect_research_synthesizes_first_person_opinion_without_hidden_
                 "ok": True,
                 "summary": "Climate findings.",
                 "citations": [
-                        {"title": "A", "url": "https://example-a.org/articles/climate-2026", "snippet": "This article reports observed warming trends across several independently measured climate records."},
-                        {"title": "B", "url": "https://example-b.org/articles/climate-2026", "snippet": "This article documents adaptation programs and their measured effects in several cities."},
-                        {"title": "C", "url": "https://example-c.org/articles/climate-2026", "snippet": "This article analyzes changing extremes using a complete multi-decade weather dataset."},
+                    {
+                        "title": label,
+                        "url": f"https://example-{label.casefold()}.org/articles/climate-2026",
+                    }
+                    for label in ("A", "B", "C")
+                ],
+                "chunks": [
+                    {
+                        "title": label,
+                        "url": f"https://example-{label.casefold()}.org/articles/climate-2026",
+                        "text": (
+                            "This fetched article reports observed warming trends, "
+                            "adaptation programs, and changing extremes across several "
+                            "independently measured multi-decade climate records."
+                        ),
+                        "evidence_kind": "article_body",
+                        "fetched": True,
+                        "published_at": "2026-07-20",
+                    }
+                    for label in ("A", "B", "C")
                 ],
             }
 
@@ -2807,9 +2828,26 @@ async def test_collect_research_model_synthesis_is_explicit_and_memory_guarded(m
                 "ok": True,
                 "summary": "Climate findings.",
                 "citations": [
-                        {"title": "A", "url": "https://example-a.org/articles/climate-2026", "snippet": "This article reports observed warming trends across several independently measured climate records."},
-                        {"title": "B", "url": "https://example-b.org/articles/climate-2026", "snippet": "This article documents adaptation programs and their measured effects in several cities."},
-                        {"title": "C", "url": "https://example-c.org/articles/climate-2026", "snippet": "This article analyzes changing extremes using a complete multi-decade weather dataset."},
+                    {
+                        "title": label,
+                        "url": f"https://example-{label.casefold()}.org/articles/climate-2026",
+                    }
+                    for label in ("A", "B", "C")
+                ],
+                "chunks": [
+                    {
+                        "title": label,
+                        "url": f"https://example-{label.casefold()}.org/articles/climate-2026",
+                        "text": (
+                            "This fetched article reports observed warming trends, "
+                            "adaptation programs, and changing extremes across several "
+                            "independently measured multi-decade climate records."
+                        ),
+                        "evidence_kind": "article_body",
+                        "fetched": True,
+                        "published_at": "2026-07-20",
+                    }
+                    for label in ("A", "B", "C")
                 ],
             }
 
@@ -2916,8 +2954,12 @@ def test_research_sources_join_citations_to_fetched_article_text() -> None:
                     "url": "https://example.test/orca-study",
                     "text": (
                         "Researchers followed resident orcas for six seasons and found "
-                        "stable, socially transmitted hunting specializations across pods."
+                        "stable, socially transmitted hunting specializations across pods. "
+                        "The field observations covered repeated hunts, changing prey, and "
+                        "the transfer of techniques from older animals to juveniles."
                     ),
+                    "evidence_kind": "article_body",
+                    "fetched": True,
                     "published_at": "2026-07-18",
                 }
             ],
@@ -2928,6 +2970,33 @@ def test_research_sources_join_citations_to_fetched_article_text() -> None:
     assert "socially transmitted" in sources[0]["snippet"]
     assert sources[0]["published_at"] == "2026-07-18"
     assert sources[0]["accessible"] is True
+    assert sources[0]["read_evidence_kind"] == "fetched_article_body"
+
+
+def test_search_snippet_is_not_proof_that_an_article_was_read() -> None:
+    sources = DesktopTaskSkill._research_sources_from_result(
+        {
+            "results": [
+                {
+                    "title": "Orca search result",
+                    "url": "https://example.test/orca-result",
+                    "snippet": (
+                        "A long search snippet can contain several sentences and still "
+                        "is not evidence that the linked article body was fetched. " * 3
+                    ),
+                }
+            ]
+        }
+    )
+
+    usable = DesktopTaskSkill._usable_research_sources(
+        sources,
+        require_recent=False,
+        require_read=True,
+    )
+
+    assert usable == []
+    assert sources[0].get("read_evidence_kind") is None
 
 
 @pytest.mark.asyncio
@@ -2952,11 +3021,23 @@ async def test_research_source_shortfall_runs_bounded_replacement_search(monkeyp
                     {
                         "title": f"Orca article {name}",
                         "url": f"https://example.test/orcas/{name}",
-                            "snippet": (
-                                "This recent article reports evidence about orca cognition, "
-                                "culture, and stable cooperative behavior in the wild."
-                            ),
                             "published_at": "2026-07-20",
+                    }
+                    for name in urls
+                ],
+                "chunks": [
+                    {
+                        "title": f"Orca article {name}",
+                        "url": f"https://example.test/orcas/{name}",
+                        "text": (
+                            "Field researchers documented stable cooperative hunting "
+                            "traditions in this population over repeated observations. "
+                            "The article compares learned techniques, social transmission, "
+                            "prey selection, and the survival effects seen across pods."
+                        ),
+                        "evidence_kind": "article_body",
+                        "fetched": True,
+                        "published_at": "2026-07-20",
                     }
                     for name in urls
                 ],
@@ -3007,14 +3088,17 @@ async def test_requested_opinion_rejects_non_opinion_placeholder(monkeypatch):
             return {
                 "ok": True,
                 "summary": "Three sources describe distinct orca cultures.",
-                "citations": [
+                "chunks": [
                     {
                         "title": f"Source {index}",
                         "url": f"https://example.test/orcas/{index}",
-                        "snippet": (
-                            "This article contains enough source-grounded prose to be "
-                            "treated as accessible evidence for the requested synthesis."
+                        "text": (
+                            "This fetched article contains source-grounded reporting about "
+                            "orca social learning, stable hunting traditions, and differences "
+                            "between populations observed across multiple field seasons."
                         ),
+                        "evidence_kind": "article_body",
+                        "fetched": True,
                     }
                     for index in range(3)
                 ],
@@ -3064,17 +3148,27 @@ def test_research_semantic_completion_proves_every_requested_predicate() -> None
         "articles about orcas, read them, and write a synthesis with your own "
         "opinion into a PDF saved inside that Orca Demo folder."
     )
-    sources = [
-        {
+    sources = []
+    for index in range(3):
+        article_body = (
+            "A fetched article body reports repeated observations of socially learned "
+            f"hunting traditions in orca population {index}, with enough detail to bind "
+            "this evidence to the synthesis rather than relying on a search snippet."
+        )
+        sources.append({
             "title": f"Orca evidence {index}",
             "url": f"https://example.test/2026/orcas/{index}",
-            "snippet": "A complete article body with enough grounded reporting to verify that it was read.",
+            "snippet": article_body,
+            "article_body": article_body,
+            "article_body_sha256": text_sha256(article_body),
+            "source_evidence_sha256": text_sha256(
+                f"https://example.test/2026/orcas/{index}\n{article_body}"
+            ),
+            "read_evidence_kind": "fetched_article_body",
             "read_verified": True,
             "recency_verified": True,
             "recency_evidence": "published_at:2026-07-20",
-        }
-        for index in range(3)
-    ]
+        })
     synthesis = (
         "The three reports converge on socially learned hunting traditions while "
         "showing meaningful variation among populations. In my view, that pattern "
@@ -3091,13 +3185,20 @@ def test_research_semantic_completion_proves_every_requested_predicate() -> None
             "action": "render_text_pdf",
             "ok": True,
             "effect_verified": True,
-            "result": {"path": str(_DOCS / "Orca Demo" / "orca_synthesis.pdf")},
+            "result": {
+                "path": str(_DOCS / "Orca Demo" / "orca_synthesis.pdf"),
+                "source_paragraph_sha256s": list(paragraph_sha256s(synthesis)),
+            },
         },
     ]
     context = {
         "desktop_task_research_sources": sources,
         "desktop_task_research_synthesis": synthesis,
         "desktop_task_research_authored": True,
+        "desktop_task_research_synthesis_sha256": text_sha256(synthesis),
+        "desktop_task_research_synthesis_source_sha256s": [
+            item["source_evidence_sha256"] for item in sources
+        ],
     }
 
     evidence = DesktopTaskSkill._semantic_completion_evidence(
@@ -3119,6 +3220,8 @@ def test_research_semantic_completion_proves_every_requested_predicate() -> None
     assert evidence["research"]["read_source_count"] == 3
     assert evidence["research"]["recent_source_count"] == 3
     assert evidence["research"]["independent_position_present"] is True
+    assert evidence["research"]["bound_read_source_count"] == 3
+    assert evidence["artifacts"]["pdf_contains_authored_synthesis"] is True
     assert evidence["artifacts"]["pdf_in_requested_folder"] is True
 
 
@@ -3176,6 +3279,8 @@ def test_research_semantic_completion_rejects_mechanical_only_success() -> None:
         "cross_source_synthesis_present",
         "requested_sources_recent",
         "synthesis_authored_by_cortex",
+        "synthesis_bound_to_read_sources",
+        "pdf_contains_authored_synthesis",
         "independent_position_present",
     }
     assert verdict.next_step == "replace_unreadable_sources_and_read_article_bodies"

@@ -134,6 +134,12 @@ class EnhancedWebSearchSkill(BaseSkill):
                     "url": url,
                     "text": str(item.get("text") or item.get("snippet") or "").strip(),
                     "score": float(item.get("score", 0.0) or 0.0),
+                    "evidence_kind": str(item.get("evidence_kind") or ""),
+                    "fetched": bool(item.get("fetched")),
+                    "fetched_at": item.get("fetched_at"),
+                    "document_chars": item.get("document_chars"),
+                    "document_sha256": str(item.get("document_sha256") or ""),
+                    "published_at": str(item.get("published_at") or ""),
                 }
             )
 
@@ -236,8 +242,13 @@ class EnhancedWebSearchSkill(BaseSkill):
                         force_refresh=force_refresh,
                     )
                     results = res.get("results", [])
+                    evidence = res.get("chunks") or []
                     # format sources
-                    content = res.get("answer") or str([r.get("snippet", "") for r in results])
+                    content = res.get("answer") or "\n\n".join(
+                        str(item.get("text") or "")
+                        for item in evidence
+                        if isinstance(item, dict)
+                    ) or str([r.get("snippet", "") for r in results])
                     # LIVE, 2026-08-03: a search returned text and nothing
                     # asked what it meant, so the result was a blob a later
                     # turn could say nothing about. The comprehension travels
@@ -246,7 +257,11 @@ class EnhancedWebSearchSkill(BaseSkill):
                     return {
                         "ok": True,
                         "content": content,
-                        "sources": results,
+                        # Fetched evidence is the source surface for a reading
+                        # request. Search-result snippets remain a fallback,
+                        # explicitly labelled upstream so they cannot later be
+                        # mistaken for pages that were opened and read.
+                        "sources": evidence or results,
                         **_comprehension_of(results, query=q, answer=content),
                     }
                 

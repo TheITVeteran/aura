@@ -21,6 +21,7 @@ from core.being.welfare_state import WelfareState
 from core.being.welfare_transaction import WelfareTransaction
 from core.runtime.app_target_resolution import resolve_installed_app_target
 from core.runtime.atomic_writer import atomic_write_bytes, atomic_write_text
+from core.runtime.content_integrity import paragraph_sha256s, text_sha256
 from core.runtime.errors import FallbackClassification, record_degradation
 from core.runtime.os_automation_effects import canonical_app_target
 from core.runtime.subprocess_gateway import get_subprocess_gateway
@@ -2470,6 +2471,20 @@ end tell
         if path.suffix.lower() != ".pdf":
             return {"ok": False, "error": "PDF path must end with .pdf."}
 
+        # The renderer is deliberately bounded, so hash the exact bounded body
+        # that is handed to either backend. These hashes let an upstream task
+        # prove the requested synthesis reached this specific persisted PDF
+        # without putting private document text in its audit receipt.
+        max_chars = 9000
+        safe_body = body[:max_chars]
+        payload = dict(payload, body=safe_body)
+        content_evidence = {
+            "source_body_sha256": text_sha256(safe_body),
+            "source_body_chars": len(safe_body),
+            "source_paragraph_sha256s": list(paragraph_sha256s(safe_body)),
+            "source_title_sha256": text_sha256(title),
+        }
+
         # Native Quartz rendering produces a REAL text layer (searchable,
         # extractable, hostile-verifiable). The previous Pillow renderer
         # rasterized every page into one big image: zero extractable
@@ -2478,6 +2493,7 @@ end tell
         if sys.platform == "darwin":
             quartz_result = self._render_text_pdf_quartz(path, title, payload)
             if quartz_result is not None:
+                quartz_result.update(content_evidence)
                 return quartz_result
 
         try:
@@ -2489,9 +2505,6 @@ end tell
         margin = 54
         line_height = 18
         title_height = 28
-        max_chars = 9000
-        safe_body = body[:max_chars]
-
         try:
             font = ImageFont.truetype("/System/Library/Fonts/Supplemental/Arial.ttf", 13)
             title_font = ImageFont.truetype("/System/Library/Fonts/Supplemental/Arial Bold.ttf", 17)
@@ -2568,6 +2581,7 @@ end tell
             "chars": len(safe_body),
             "sha256": self._file_sha256(path),
             "effect_verified": verified,
+            **content_evidence,
             "verification": (
                 "PDF header and persisted content confirmed."
                 if verified

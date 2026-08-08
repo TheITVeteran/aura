@@ -159,6 +159,9 @@ async def test_search_pipeline_retains_successful_search(tmp_path: Path):
 
     assert result["ok"] is True
     assert result["retained"] is True
+    assert result["chunks"][0]["evidence_kind"] == "article_body"
+    assert result["chunks"][0]["fetched"] is True
+    assert len(result["chunks"][0]["document_sha256"]) == 64
     assert retained is not None
     assert semantic_memory.entries
     note, metadata = semantic_memory.entries[0]

@@ -7,6 +7,7 @@ from types import SimpleNamespace
 
 import pytest
 
+from core.runtime.content_integrity import paragraph_sha256s, text_sha256
 from core.runtime.errors import get_degradation_tracker
 from core.skills.computer_use import ComputerUseSkill
 
@@ -1145,6 +1146,10 @@ async def test_computer_use_desktop_file_pdf_and_move_receipts(monkeypatch, tmp_
 
     assert rendered["ok"] is True
     assert rendered["bytes"] > 100
+    assert rendered["source_body_sha256"] == text_sha256(pdf_payload["body"])
+    assert rendered["source_paragraph_sha256s"] == list(
+        paragraph_sha256s(pdf_payload["body"])
+    )
     assert not source_pdf.exists()
     assert moved["ok"] is True
     assert moved["effect_verified"] is True

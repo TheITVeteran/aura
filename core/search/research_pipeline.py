@@ -1037,6 +1037,8 @@ class ResearchSearchPipeline:
                             "title": hit.title,
                             "url": hit.url,
                             "text": pseudo_text,
+                            "evidence_kind": "search_snippet",
+                            "fetched": False,
                             "score": self._score_chunk(
                                 query_tokens,
                                 quoted_phrases,
@@ -1057,6 +1059,13 @@ class ResearchSearchPipeline:
                             "title": page.title,
                             "url": page.url,
                             "text": chunk,
+                            "evidence_kind": "article_body",
+                            "fetched": True,
+                            "fetched_at": page.fetched_at,
+                            "document_chars": len(page.text),
+                            "document_sha256": hashlib.sha256(
+                                page.text.encode("utf-8", errors="replace")
+                            ).hexdigest(),
                             "score": self._score_chunk(
                                 query_tokens,
                                 quoted_phrases,

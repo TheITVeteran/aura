@@ -38118,7 +38118,7 @@ review coverage is not remediation and none is closed by the review receipt:
 - **P1 CLOSED CP011:** session-filter protected recovery history before it reaches a model prompt.
 - **P1 CLOSED CP012:** cancel and generation-fence stale turn holders when a chat lock is preempted.
 - **P1 CLOSED CP011:** make regenerate select and update one session-bound exchange by immutable ID.
-- **P1:** verify every requested desktop/research predicate, including source count,
+- **P1 CLOSED CP013:** verify every requested desktop/research predicate, including source count,
   recency, actual reading, synthesis, independent opinion, format, and location.
 - **P1:** fail closed when defensive-ingress or conscience pre-gates are unavailable.
 - **P2:** move tableau proof, collection, whole-file reads, and memory/goal exports off
@@ -38202,3 +38202,36 @@ turn-holder P1 only; semantic task-completion verification, defensive
 fail-closed behavior, event-loop isolation, per-session quality state, durable
 transcript reconstruction, at-rest encryption, measured capabilities, and all
 broader closeout and scientific obligations remain open.
+
+## Checkpoint 2026-08-08-013: Research Completion Is Bound to What Aura Read and Wrote
+
+Research evidence now distinguishes a fetched article body from a search-result
+snippet at the producer boundary. The search pipeline labels page-derived and
+snippet-derived chunks separately, includes a content digest for the fetched
+document, and the deep-research adapter preserves those fetched chunks instead
+of replacing them with result cards. Desktop research accepts a source as read
+only when it has an accessible fetched-body receipt, enough substantive body
+text, and a matching content digest. A long or polished search snippet cannot
+satisfy that predicate.
+
+Cortex-authored synthesis now carries an exact synthesis digest and the
+identity-plus-content digest of each fetched source supplied to the generation.
+The PDF renderer returns privacy-preserving hashes for its exact bounded source
+body and paragraphs. Desktop effect verification requires the renderer body to
+match the planned body, and semantic completion requires the persisted PDF to
+contain every authored synthesis paragraph. A folder, three links, an unrelated
+PDF, and a separate in-memory opinion can therefore no longer add up to a false
+task completion. Source count, reading, recency, authorship, independent
+position, PDF format, and requested location remain separately inspectable.
+
+The planner also stops opening every fetched article in visible browser tabs
+merely because synthesis required reading; visible source tabs are reserved for
+an explicit request, while governed fetch evidence remains the reading path.
+Focused research, desktop, renderer, and pipeline tests pass `170/170`; smoke
+passes `103/103`; Ruff, byte compilation, governance lint, and diff hygiene
+pass. Governance ownership remains at `2,215` recognized calls in `2,066`
+buckets with `1,948` pre-existing migration-debt calls and no new debt. This
+closes the semantic desktop/research P1 only. The resident complete-engine
+campaign, defensive-ingress P1, remaining chat queue, live exact-app proof,
+fusion admission, release, endurance, frontier, and `WOW Signal` claims remain
+open.
