@@ -31,6 +31,7 @@ from core.utils.exceptions import capture_and_log
 from core.utils.task_tracker import get_task_tracker
 
 from .provider import LLMProvider
+import os
 
 logger = logging.getLogger("LLM.Nucleus")
 
@@ -132,6 +133,65 @@ class NucleusManager(LLMProvider):
         if self._listener_task is None and self.bus is not None:
             self._listener_task = get_task_tracker().create_task(self._listen_for_updates())
 
+
+    async def _adopt_promoted_cortex(self, data: dict[str, Any]) -> None:
+        """Rebind the Cortex lane to a promoted artifact, or do nothing.
+
+        CP126 2a2791b1 + 402a99f0, which are one defect seen from two sides.
+
+        The listener acted on ``data.status == "success"`` alone and
+        immediately unloaded the live Cortex — roughly 20GB of resident
+        weights — with no check that anything had actually been produced.
+        The event bus carries no publisher identity, so anything able to
+        publish could evict her mind at will, and a malformed or duplicated
+        event did it for free.
+
+        Then the reload used ``self.cortex_path``, captured in ``__init__``.
+        So the newly fused model was never bound: the lane unloaded and
+        reloaded the SAME weights, and every optimization run was a no-op
+        that cost a full reload.
+
+        The artifact is the authority. An event claiming success without a
+        loadable ``fused_model`` on disk is not acted on — that check needs
+        no principal, cannot be forged by a publisher, and makes the
+        pointless unload impossible. When the artifact IS there, the lane is
+        rebound to it before unloading, so the reload picks up what was
+        actually promoted.
+        """
+        fused = str(data.get("fused_model") or "").strip()
+        if not fused:
+            _record_nucleus_degradation(
+                ValueError("optimizer success carried no fused_model"),
+                severity="warning",
+                action=(
+                    "ignored an optimizer completion with no promoted artifact; "
+                    "unloading the resident Cortex for nothing is the failure "
+                    "this refuses"
+                ),
+            )
+            return
+
+        artifact = Path(fused)
+        if not artifact.exists():
+            _record_nucleus_degradation(
+                FileNotFoundError(f"promoted cortex artifact missing: {fused}"),
+                severity="warning",
+                action="kept the resident Cortex; the promoted artifact does not exist",
+            )
+            return
+
+        previous = self.cortex_path
+        # Bind BEFORE unloading: the reload reads this, and rebinding after
+        # would reproduce the original bug on the very next load.
+        self.cortex_path = str(artifact)
+        self._adapter_dir = ""
+        logger.info(
+            "🧠 [NUCLEUS] Promoted Cortex artifact adopted (%s -> %s); unloading for reload.",
+            os.path.basename(previous or "unknown"),
+            artifact.name,
+        )
+        await self._unload_model_entry("cortex", reason="optimizer_promoted_artifact")
+
     async def _listen_for_updates(self):
         """Listens for LoRA optimization successes and flags for reload."""
         if not self.bus:
@@ -142,8 +202,7 @@ class NucleusManager(LLMProvider):
                 _, _, event = await sub.get()
                 data = event.get("data", {}) if isinstance(event, dict) else {}
                 if isinstance(data, dict) and data.get("status") == "success":
-                    logger.info("🧠 [NUCLEUS] Optimization detected. Unloading Cortex for reload.")
-                    await self._unload_model_entry("cortex", reason="optimizer_completed")
+                    await self._adopt_promoted_cortex(data)
             except asyncio.CancelledError:
                 raise
             except (OSError, ConnectionError, TimeoutError):
