@@ -19,6 +19,22 @@ DETERMINISTIC_ROUTER_SCHEMA = "aura.rlc.deterministic_verifier_router.v1"
 _ARITH_RE = re.compile(
     r"(?<![\d.])(-?\d{1,12})\s*([+\-*/x×])\s*(-?\d{1,12})\s*=\s*(-?\d{1,12})(?!\d)(?!\.\d)"
 )
+# Modular claims are exactly as checkable as plain integer arithmetic and are
+# a whole task family here ("apply each operation modulo 19"), but they had no
+# route: every modular atom fell through to no_sound_deterministic_route, so
+# nothing was ever verified or refuted and the repair chain that feeds answer
+# promotion could not start. Three surface forms cover how the model writes
+# them; all reduce to the same exact integer check.
+_MOD_INFIX_RE = re.compile(
+    r"(?<![\d.])\(?\s*(-?\d{1,12})\s*([+\-*x×])\s*(-?\d{1,12})\s*\)?\s*"
+    r"(?:mod|%)\s*(\d{1,12})\s*=\s*(-?\d{1,12})(?!\d)(?!\.\d)",
+    re.I,
+)
+_MOD_CONGRUENT_RE = re.compile(
+    r"(?<![\d.])\(?\s*(-?\d{1,12})\s*([+\-*x×])\s*(-?\d{1,12})\s*\)?\s*"
+    r"(?:≡|==|=)\s*(-?\d{1,12})\s*\(?\s*mod\s*(\d{1,12})\s*\)?",
+    re.I,
+)
 _FORMAL_RE = re.compile(r"\b(?:sat|smt|z3|theorem|lemma|proof|prove)\b", re.I)
 _RETRIEVAL_RE = re.compile(r"\b(?:citation|source|according\s+to|retriev|url|doi)\w*\b", re.I)
 _SIMULATION_RE = re.compile(
@@ -89,6 +105,48 @@ def _arithmetic_verdict(fragment: str) -> tuple[RouteOutcome, str, dict[str, Any
     )
 
 
+def _modular_verdict(fragment: str) -> tuple[RouteOutcome, str, dict[str, Any]] | None:
+    """Exact check for `a OP b mod m = c` and `a OP b = c (mod m)`.
+
+    Python's `%` already returns a non-negative result for a positive modulus,
+    which matches the convention these tasks use, so no normalisation of the
+    claimed residue is needed beyond reducing it into range.
+    """
+    claims: list[tuple[int, str, int, int, int, int]] = []
+    for match in _MOD_INFIX_RE.finditer(fragment):
+        left, op, right, modulus, claimed = match.groups()
+        claims.append(
+            (int(left), op, int(right), int(modulus), int(claimed), match.start())
+        )
+    for match in _MOD_CONGRUENT_RE.finditer(fragment):
+        left, op, right, claimed, modulus = match.groups()
+        claims.append(
+            (int(left), op, int(right), int(modulus), int(claimed), match.start())
+        )
+    if not claims:
+        return None
+    failures: list[str] = []
+    for a, op, b, modulus, claimed, position in claims:
+        if modulus == 0:
+            failures.append("zero_modulus")
+            continue
+        operator = "*" if op in {"x", "×"} else op
+        if operator == "+":
+            actual = a + b
+        elif operator == "-":
+            actual = a - b
+        else:
+            actual = a * b
+        if actual % modulus != claimed % modulus:
+            failures.append(f"claim_{position}_mismatch")
+    outcome = RouteOutcome.REFUTED if failures else RouteOutcome.VERIFIED
+    return (
+        outcome,
+        "exact_modular_arithmetic",
+        {"claims_checked": len(claims), "failure_codes": failures},
+    )
+
+
 def _route_atom(
     fragment: str,
     atom: Mapping[str, Any],
@@ -114,6 +172,14 @@ def _route_atom(
                 },
             )
         return RouteOutcome.VERIFIED.value, "python_ast", {"compiled": True}
+
+    # Modular first: "17 + 13 mod 19 = 11" also matches the plain integer
+    # pattern on its "13 mod 19" substring reading, and the plain check would
+    # refute a correct modular claim.
+    modular = _modular_verdict(fragment)
+    if modular is not None:
+        outcome, verifier, detail = modular
+        return outcome.value, verifier, detail
 
     arithmetic = _arithmetic_verdict(fragment)
     if arithmetic is not None:

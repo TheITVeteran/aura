@@ -71,12 +71,21 @@ from core.utils.task_tracker import get_task_tracker
 # Declared flags (migrated from raw os.environ reads so the knobs are
 # inventoried and reportable). STRING kind with the original literal
 # default keeps read semantics byte-identical to os.environ.get.
+# AURA_AGI_MAX_TASKS is read here only as a presence check, and
+# response_generation.py reads it through env_present(), which declares it
+# STRING/"". Declaring it STRING/None here made the two specs contradict on
+# (kind, default), so whichever module imported second raised
+# "already declared ... with a different spec" -- an order-dependent import
+# failure that took two response-generation tests down whenever the selection
+# happened to load both. Sharing env_present's spec removes the contradiction;
+# the consumer below compares against "" instead of None so the presence
+# semantics are unchanged.
 _FLAG_AGI_MAX_TASKS = _declare_flag(
     "AURA_AGI_MAX_TASKS",
     kind=_FlagKind.STRING,
-    default=None,
-    description="Migrated from a raw environment read; see owner for the lane.",
-    owner="flag-migration",
+    default="",
+    description="AGI battery task cap; presence marks a battery run",
+    owner="core.runtime",
 )
 _FLAG_ALLOW_PRE_MODEL_STATE_ONLY_REPLY = _declare_flag(
     "AURA_ALLOW_PRE_MODEL_STATE_ONLY_REPLY",
@@ -5120,7 +5129,7 @@ class UnitaryResponsePhase(Phase):
                 is_test_run = (
                     routing_origin == "test"
                     or routing_origin == "benchmark"
-                    or _FLAG_AGI_MAX_TASKS.value() is not None
+                    or bool(_FLAG_AGI_MAX_TASKS.value())
                     or env_present(
                         "AURA_TESTING",
                         description="Mark a hermetic test runtime",

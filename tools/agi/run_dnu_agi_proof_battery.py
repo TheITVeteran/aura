@@ -43,12 +43,16 @@ from core.runtime.flags import FlagKind as _FlagKind, declare as _declare_flag
 # Declared flags (migrated from raw os.environ reads so the knobs are
 # inventoried and reportable). STRING kind with the original literal
 # default keeps read semantics byte-identical to os.environ.get.
+# Must match the spec response_generation.py declares via env_present()
+# (STRING/""), or whichever module imports second raises "already declared ...
+# with a different spec". The consumer below tests truthiness, so "" and None
+# are indistinguishable here.
 _FLAG_AGI_MAX_TASKS = _declare_flag(
     "AURA_AGI_MAX_TASKS",
     kind=_FlagKind.STRING,
-    default=None,
-    description="Migrated from a raw environment read; see owner for the lane.",
-    owner="flag-migration",
+    default="",
+    description="AGI battery task cap; presence marks a battery run",
+    owner="core.runtime",
 )
 _FLAG_DNU_BASELINE_MAX_TOKENS = _declare_flag(
     "AURA_DNU_BASELINE_MAX_TOKENS",
