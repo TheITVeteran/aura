@@ -1,0 +1,113 @@
+{
+  "schema": "aura.rlc.cp041_research_oracle_closeout.v1",
+  "checkpoint": "CP041",
+  "model": "/Users/bryan/.aura/live-source/models/Qwen2.5-1.5B-Instruct-4bit",
+  "base_commit": "9d5cce2aa49efef1ee2b51d7d0ab3c404b6e53d6",
+  "implementation_sha256": "5a74eeb3664ad374f494f51c879931adcb32e779b50e76b2e3ed5ff90f507656",
+  "task_commitment_sha256": "96727e6cd698ae1b3fc17594e10b0631ca9903fb5623cf8b8708494bbf9b961c",
+  "seed": 20260808,
+  "per_domain": 1,
+  "arms": [
+    "vanilla",
+    "vanilla_equal_compute",
+    "full_stack_oracle"
+  ],
+  "artifact_sha256": {
+    "task_commitment_json": "2ed7779c35d34f1fa355cefe2a7cfd193c4c138e6114af88be9553c085cd57f4",
+    "decode_fingerprint_json": "bb061d71e1e06eeb64b59717fc5ce54be0128f94d319ebda7d3069f909444169",
+    "journal_jsonl": "ccf5a278cdc7948349e0886995ac50eb18ac101fc24289acf9950d57c8e39ec9",
+    "verdict_json": "bab06efde02c752c17d31ac7f529dcf0b7cfaadae5df55deb356e564a6e98b1c"
+  },
+  "mechanical_gates": {
+    "coverage_complete": true,
+    "evidence_manifest_valid": true,
+    "full_stack_runtime_measured": true,
+    "faulted_arms": {},
+    "paired_vanilla_floor_holds": true
+  },
+  "scores": {
+    "vanilla": "0/7",
+    "vanilla_equal_compute": "0/7",
+    "full_stack_oracle": "0/7"
+  },
+  "oracle_cells": [
+    {
+      "domain": "novel_algorithms",
+      "contract_valid_branches": [0, 1],
+      "current_correct": false,
+      "recurrent_correct": false,
+      "decision": "retain",
+      "oracle_receipt_sha256": "75a783bfc15604c07aceededa8dc08145c29feeb47203c1fed4544f3473ec5b9",
+      "runtime_receipt_sha256": "3d93c8459d5cd237e5a410a67a76a1051e4bee5b330ae28f1b2355d32433c409"
+    },
+    {
+      "domain": "mathematics",
+      "contract_valid_branches": [0, 1],
+      "current_correct": false,
+      "recurrent_correct": false,
+      "decision": "retain",
+      "oracle_receipt_sha256": "6c20a1a8f1f5ef10a55809dc222986c3966e922b58cc3fb20bb64e1c0595f141",
+      "runtime_receipt_sha256": "c47fbd19450a7f5085b158866e6f56db8cb9f9da74f451be0a90bd7a37f92103"
+    },
+    {
+      "domain": "coding",
+      "contract_valid_branches": [],
+      "current_correct": null,
+      "recurrent_correct": null,
+      "decision": "candidate_unavailable",
+      "oracle_receipt_sha256": "",
+      "runtime_receipt_sha256": "51c6ce2843e2bb63c1406eaec929b24e081d17f4a7d9480dbb3925cc0cf134d4"
+    },
+    {
+      "domain": "scientific_inference",
+      "contract_valid_branches": [],
+      "current_correct": null,
+      "recurrent_correct": null,
+      "decision": "candidate_unavailable",
+      "oracle_receipt_sha256": "",
+      "runtime_receipt_sha256": "5423ca2594bb36be3e49df96868de062ff2c98886f9a782ee40f0dd7f44ab3bb"
+    },
+    {
+      "domain": "long_horizon_planning",
+      "contract_valid_branches": [],
+      "current_correct": null,
+      "recurrent_correct": null,
+      "decision": "candidate_unavailable",
+      "oracle_receipt_sha256": "",
+      "runtime_receipt_sha256": "f7344f2390509fe9637f35956d7c18b2b55fb18e2cb1c65a3fe6895ace39a2bd"
+    },
+    {
+      "domain": "calibration",
+      "contract_valid_branches": [1],
+      "current_correct": false,
+      "recurrent_correct": false,
+      "decision": "retain",
+      "oracle_receipt_sha256": "ced3db6f63c2874d2fb3f7d69c0bb2cda14b64a9c476b419a77e45c54d729393",
+      "runtime_receipt_sha256": "a72cd9b12e000ae1dffbbb5332391dc5d04443fe9a39fc23ccaf747e0686231d"
+    },
+    {
+      "domain": "misleading_premise",
+      "contract_valid_branches": [0, 1],
+      "current_correct": false,
+      "recurrent_correct": false,
+      "decision": "retain",
+      "oracle_receipt_sha256": "1af4979b0c348d5a29345fe61b35053f7596a7db9a46dffc3e386a8654bdf253",
+      "runtime_receipt_sha256": "eed6e886824f08e01eb1a2aefd5d7beb68641543fa74c573fe7dcc24df84e7df"
+    }
+  ],
+  "conclusion": {
+    "oracle_bridge_causal": true,
+    "valid_recurrent_candidates_correct": 0,
+    "domains_without_valid_recurrent_candidate": [
+      "coding",
+      "scientific_inference",
+      "long_horizon_planning"
+    ],
+    "generation_failure_observed": true,
+    "selection_only_failure_observed": false,
+    "battery_informative_for_gain": false,
+    "reasoning_gain_proven": false,
+    "fusion_authorized": false,
+    "frontier_level_proven": false
+  }
+}

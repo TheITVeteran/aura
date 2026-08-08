@@ -550,6 +550,16 @@ class LatentCortexEngine:
         bounded = getattr(verifier, "observe_with_bounds", None)
         if callable(bounded):
             metered.observe_with_bounds = lambda text: charge(bounded, text)
+        research_oracle = getattr(verifier, "research_oracle_assessment", None)
+        if callable(research_oracle):
+            # This method exists only on the benchmark's hidden-answer scorer.
+            # Preserve it through metering so the diagnostic oracle arm can
+            # distinguish generation failure from selection failure. The
+            # returned receipt remains explicitly research-only.
+            metered.research_oracle_assessment = lambda text: charge(
+                research_oracle,
+                text,
+            )
         return metered
 
     def _token_ends_sentence(self, token: int) -> bool:
@@ -4843,6 +4853,7 @@ class LatentCortexEngine:
         )
         branch_verifier_score: float | None = None
         branch_probe_texts: dict[int, str] = {}
+        research_oracle_candidates: dict[int, str] = {}
         blind_scores: dict[int, float] = {}
         if (
             pending_verifier is not None
@@ -4966,6 +4977,24 @@ class LatentCortexEngine:
                 valid_contract_branches = {
                     index for index, state in contract_states.items() if state["valid"]
                 }
+                if callable(
+                    getattr(
+                        pending_verifier,
+                        "research_oracle_assessment",
+                        None,
+                    )
+                ):
+                    # The deployable blind review needs a complete comparable
+                    # inventory and still fails closed below. The diagnostic
+                    # oracle has exact hidden task truth, so retaining the
+                    # contract-valid subset lets it answer whether ANY valid
+                    # correct candidate was generated without granting that
+                    # subset serving authority.
+                    research_oracle_candidates = {
+                        index: text
+                        for index, text in branch_probe_texts.items()
+                        if index in valid_contract_branches
+                    }
                 if not valid_contract_branches and self.config.allow_vanilla_fallback:
                     receipt.flag("branch_selection_no_contract_valid_candidate")
                     raise RuntimeError("no_contract_valid_latent_branch")
@@ -4979,6 +5008,14 @@ class LatentCortexEngine:
                 verifier = None
                 winner = select_without_task_verifier()
             else:
+                if callable(
+                    getattr(
+                        pending_verifier,
+                        "research_oracle_assessment",
+                        None,
+                    )
+                ):
+                    research_oracle_candidates = dict(branch_probe_texts)
                 from core.brain.llm.latent_cortex.blind_review import (
                     run_decoy_balanced_review,
                 )
@@ -6803,6 +6840,92 @@ class LatentCortexEngine:
                         receipt.flag("confidence_bound_abstention_declined_under_incumbent")
                 receipt.decode_generated_tokens = len(out_tokens)
                 receipt.decode_termination = decode_termination
+                research_oracle = getattr(
+                    pending_verifier,
+                    "research_oracle_assessment",
+                    None,
+                )
+                if callable(research_oracle):
+                    # This is the hidden-answer diagnostic arm, not a serving
+                    # policy. It answers whether recurrence GENERATED a
+                    # correct candidate that the deployable evidence stack did
+                    # not promote. The receipt says so explicitly and the live
+                    # worker never constructs a verifier with this method.
+                    oracle_branch = (
+                        winner.index
+                        if winner.index in research_oracle_candidates
+                        else min(research_oracle_candidates, default=-1)
+                    )
+                    # Hidden-ground-truth selection is the diagnostic
+                    # intervention being measured. Prefer any exact-correct
+                    # valid candidate; otherwise assess the latent winner (or
+                    # first valid survivor) and retain the current output.
+                    for branch_index, candidate_text in sorted(
+                        research_oracle_candidates.items()
+                    ):
+                        try:
+                            assessment = research_oracle(candidate_text)
+                        except (TypeError, ValueError):
+                            continue
+                        if (
+                            isinstance(assessment, Mapping)
+                            and assessment.get("correct") is True
+                        ):
+                            oracle_branch = branch_index
+                            break
+                    recurrent_text = research_oracle_candidates.get(oracle_branch)
+                    if not isinstance(recurrent_text, str) or not recurrent_text:
+                        receipt.flag("research_oracle_selected_candidate_unavailable")
+                    else:
+                        try:
+                            recurrent_tokens = encode_replacement(recurrent_text)
+                            if (
+                                not recurrent_tokens
+                                or self._decode_public_text(
+                                    recurrent_tokens,
+                                    receipt=receipt,
+                                )
+                                != recurrent_text
+                            ):
+                                raise ValueError(
+                                    "research oracle recurrent output binding failed"
+                                )
+                            from core.brain.llm.latent_cortex.research_oracle_arbitration import (
+                                build_research_oracle_arbitration,
+                            )
+
+                            current_text = self._decode_public_text(
+                                out_tokens,
+                                receipt=receipt,
+                            )
+                            (
+                                receipt.research_oracle_arbitration,
+                                oracle_tokens,
+                            ) = build_research_oracle_arbitration(
+                                current_text=current_text,
+                                current_tokens=out_tokens,
+                                recurrent_text=recurrent_text,
+                                recurrent_tokens=recurrent_tokens,
+                                selected_branch=oracle_branch,
+                                assess=research_oracle,
+                            )
+                        except (TypeError, ValueError) as exc:
+                            receipt.flag(
+                                "research_oracle_arbitration_rejected:"
+                                f"{type(exc).__name__}:{str(exc)[:80]}"
+                            )
+                        else:
+                            if (
+                                receipt.research_oracle_arbitration["decision"]
+                                == "replace"
+                            ):
+                                out_tokens = oracle_tokens
+                                if token_logprobs_out is not None:
+                                    token_logprobs_out.clear()
+                                decode_termination = "research_oracle_replacement"
+                                receipt.flag("research_oracle_answer_replaced")
+                            receipt.decode_generated_tokens = len(out_tokens)
+                            receipt.decode_termination = decode_termination
             if decode_termination.startswith("budget_") or decode_termination == "wall_reserve":
                 receipt.flag(f"decode_{decode_termination}")
             stage_started = self._stage_checkpoint(
@@ -6911,7 +7034,9 @@ class LatentCortexEngine:
             output_tokens=out_tokens,
             output_text=output_text,
             output_source=(
-                "resident_model_repair"
+                "research_oracle_candidate"
+                if receipt.decode_termination == "research_oracle_replacement"
+                else "resident_model_repair"
                 if receipt.decode_termination == "confidence_bound_replacement"
                 else "resident_model_decode"
                 if self.tokenizer is not None

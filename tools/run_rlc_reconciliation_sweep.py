@@ -65,9 +65,10 @@ class Arm:
                    the verifier mesh. This is the claim under test -- that
                    reasoning is a unified system rather than one mechanism.
     ``full_oracle`` ``full`` plus a ground-truth verifier. Not a capability
-                   claim and never promotable; it is the verifier ablation,
-                   and it separates a generation ceiling from a selection
-                   ceiling.
+                   claim and never deployable; its research-only arbitration
+                   may expose a correct generated candidate so the verifier
+                   ablation can separate a generation ceiling from a
+                   selection ceiling.
     """
 
     name: str
@@ -825,11 +826,15 @@ class _OracleTaskVerifier:
     """
 
     def __init__(self, task) -> None:
+        from core.brain.llm.latent_cortex import frontier_tasks as ft
         from core.brain.llm.latent_cortex.task_verifiers import EpisodeTaskVerifier
 
         self.task = task
         self._local = EpisodeTaskVerifier(task.public.prompt)
         self.evaluations = self._local.evaluations
+        self._scorer_source_sha256 = hashlib.sha256(
+            Path(ft.__file__).read_bytes()
+        ).hexdigest()
 
     def __call__(self, candidate: str) -> float:
         local_score = self._local(candidate)
@@ -848,6 +853,30 @@ class _OracleTaskVerifier:
     def to_receipt(self, *args, **kwargs):
         return self._local.to_receipt(*args, **kwargs)
 
+    def research_oracle_assessment(self, candidate: str) -> dict[str, Any]:
+        """Return a hidden-answer verdict carrying research authority only."""
+
+        from core.brain.llm.latent_cortex import frontier_tasks as ft
+        from core.brain.llm.latent_cortex.research_oracle_arbitration import (
+            build_research_oracle_assessment,
+        )
+
+        result = ft.score_task(self.task, candidate)
+        public = self.task.public
+        return build_research_oracle_assessment(
+            candidate=candidate,
+            task_id=public.task_id,
+            task_payload_sha256=public.task_payload_sha256,
+            answer_commitment_sha256=public.answer_commitment_sha256,
+            scorer_id=public.scorer_id,
+            scorer_version=public.scorer_version,
+            scorer_source_sha256=self._scorer_source_sha256,
+            parsed=result.parsed,
+            correct=result.correct,
+            reason=result.reason,
+            normalized_answer_sha256=result.normalized_answer_sha256,
+        )
+
 
 def _oracle_verifier(task):
     """Ground-truth scorer for the verifier ablation.
@@ -861,7 +890,9 @@ def _oracle_verifier(task):
     program spends weeks on the wrong half.
 
     An arm using this is a ceiling, never a capability claim, and never
-    promotable -- which is why it is bound to an arm name carrying "oracle".
+    deployable. Its output may be promoted only inside the hash-bound
+    research-oracle arbitration receipt so the measured arm can expose a
+    generated answer the deployable selector missed.
     """
     return _OracleTaskVerifier(task)
 

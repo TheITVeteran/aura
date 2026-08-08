@@ -85,6 +85,14 @@ from core.brain.llm.latent_cortex.output_arbitration import (
     build_output_arbitration_receipt,
     validate_output_arbitration_receipt,
 )
+from core.brain.llm.latent_cortex.research_oracle_arbitration import (
+    RESEARCH_ORACLE_ARBITRATION_SCHEMA,
+    RESEARCH_ORACLE_ASSESSMENT_SCHEMA,
+    build_research_oracle_arbitration,
+    build_research_oracle_assessment,
+    validate_research_oracle_arbitration,
+    validate_research_oracle_assessment,
+)
 from core.brain.llm.latent_cortex.test_time_training import (
     CRITIC_RECALIBRATION_SCHEMA,
     MATCHED_COMPUTE_SCHEMA,
@@ -147,6 +155,8 @@ __all__ = [
     "OUTPUT_ARBITRATION_SCHEMA",
     "OutputCandidate",
     "RecurrenceConfig",
+    "RESEARCH_ORACLE_ARBITRATION_SCHEMA",
+    "RESEARCH_ORACLE_ASSESSMENT_SCHEMA",
     "RouteOutcome",
     "CandidateSource",
     "TransitionKind",
@@ -166,6 +176,8 @@ __all__ = [
     "build_empty_latent_tree_receipt",
     "build_local_repair_receipt",
     "build_output_arbitration_receipt",
+    "build_research_oracle_arbitration",
+    "build_research_oracle_assessment",
     "build_critic_recalibration_receipt",
     "build_matched_compute_receipt",
     "build_pseudo_label_admission",
@@ -189,6 +201,8 @@ __all__ = [
     "validate_disagreement_graph_receipt",
     "validate_local_repair_receipt",
     "validate_output_arbitration_receipt",
+    "validate_research_oracle_arbitration",
+    "validate_research_oracle_assessment",
     "validate_critic_recalibration_receipt",
     "validate_matched_compute_receipt",
     "validate_pseudo_label_admission",

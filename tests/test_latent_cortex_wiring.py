@@ -1665,6 +1665,17 @@ def test_handler_runs_full_episode_on_tiny_model(monkeypatch, tmp_path):
             **answer_contract_args,
         )
     )
+    oracle_tampered = copy.deepcopy(body["receipt"])
+    oracle_tampered["research_oracle_arbitration"] = {
+        "scope": "research_oracle_only"
+    }
+    assert "research_oracle_output_forbidden_in_service" in (
+        LatentCortexService._receipt_contract_errors(
+            oracle_tampered,
+            contract_config,
+            **answer_contract_args,
+        )
+    )
     assert "decode_incumbent_unproven" not in (
         LatentCortexService._receipt_contract_errors(
             body["receipt"],

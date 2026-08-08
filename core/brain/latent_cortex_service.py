@@ -2657,6 +2657,12 @@ class LatentCortexService:
                 )
             except (ImportError, KeyError, TypeError, ValueError):
                 errors.append("answer_replacement_unproven")
+            # Hidden benchmark answers are deliberately unavailable in the
+            # serving trust domain. A research-oracle receipt is valid only in
+            # the frozen reconciliation harness and must never cross into a
+            # live worker response as output authority.
+            if receipt.get("research_oracle_arbitration"):
+                errors.append("research_oracle_output_forbidden_in_service")
             try:
                 from core.brain.llm.latent_cortex.correlated_support import (
                     validate_correlated_support_receipt,

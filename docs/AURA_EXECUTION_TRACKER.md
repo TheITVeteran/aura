@@ -38816,3 +38816,79 @@ detached and no competing model was loaded. The completion envelope stays
 `809/920` (approximately `87.9%`); this closes two immune Will-decision ownership
 debts, not the remaining effect migration, RLC verdict, fusion, release,
 exhaustive semantic review, live proof, or endurance program.
+
+## Checkpoints 2026-08-08-031 through 036: One Admission, One Receipt Lineage
+
+Six bounded governance defects exposed while the resident campaign ran are now
+closed on `main`. CP031 deduplicates repeated welfare-recovery defer signals.
+CP032 preserves one Will receipt lineage instead of manufacturing a second
+decision downstream. CP033 binds autonomous-initiative evidence to the exact
+admission it influenced. CP034 keeps failure-replan authority attached through
+goal recovery. The intervening evidence-chain checkpoint provisions signing
+keys only through its governed owner. CP035 routes value-model actions through
+canonical fail-closed admission, and CP036 applies the same rule to hierarchy
+fallbacks.
+
+These checkpoints reduce duplicate policy telemetry and prevent authority from
+being inferred after the decision that required it. They do not broaden human
+approval requirements, grant unscoped tool authority, or claim that every
+remaining effect owner has migrated. Their pushed commits are `8be691a36`,
+`43612b0c8`, `c74b4ec2a`, `25e5cbd08`, `ec923ef67`, `d5803644c`, and
+`525c7ed25`.
+
+## Checkpoints 2026-08-08-037 through 040: Private Candidates Reach the Verifier
+
+The complete-engine campaign had been producing private candidate material but
+discarding it at four separate contract boundaries. CP037 accepts a repair
+generation that repeats the exact preserved prefix once, while still rejecting
+changed or ambiguous prefixes. CP038 lets a candidate complete its private
+answer contract without changing the public ordinary-decode floor. CP039 gives
+candidate probes their own strict contract instead of imposing it on the public
+incumbent. CP040 adds a bounded fresh-context representation repair for malformed
+private candidates, with exact JSON-object parsing, source commitments, zero
+answer authority, and independent service reconstruction.
+
+The final CP040 1.5B canary proved the repair machinery causal but did not prove
+a capability gain: some malformed candidates became valid, incomplete
+inventories remained excluded, and every public answer retained the ordinary
+incumbent. The pushed commits are `e411a7136`, `c353998e6`, `d737989c2`, and
+`9d5cce2aa`.
+
+## Checkpoint 2026-08-08-041: The Oracle Can Diagnose Generation, Not Serve
+
+The `full_stack_oracle` arm can now perform the intervention its name promised.
+A hidden benchmark scorer emits a task-, scorer-, source-, candidate-, and
+answer-commitment-bound assessment without exposing the answer key. A sealed
+research arbitration replaces the arm's current output only when that output is
+oracle-wrong and the selected contract-valid recurrent candidate is
+oracle-correct. All other cases retain the current output. Every assessment and
+arbitration receipt explicitly has `serving_authority=false`,
+`capability_claim_authority=false`, and
+`research_measurement_authority=true`; the live service rejects any nonempty
+research-oracle receipt.
+
+The deployable selector still requires a complete comparable branch inventory
+and remains fail-closed. The research oracle separately retains the valid
+subset so one malformed branch cannot erase diagnostic evidence from another.
+This separates a product safety policy from the generation-versus-selection
+experiment without weakening either.
+
+The source-byte-bound Qwen2.5-1.5B canary completed `21/21` cells across seven
+domains with no infrastructure faults and the paired ordinary floor intact.
+Vanilla, equal-compute vanilla, and oracle full stack each scored `0/7`, so the
+battery is not an intelligence-gain result. The new oracle evidence is still
+decisive about the observed failure: all contract-valid recurrent candidates
+were wrong; coding, scientific inference, and long-horizon planning produced no
+contract-valid candidate; calibration produced one valid but wrong candidate.
+This is generation/representation failure on this 1.5B battery, not a hidden
+correct answer lost only by selection. The durable compact record is
+`artifacts/closeout/latent_cortex/cp041_research_oracle_1p5b.json`.
+
+Focused RLC contracts pass `274/274`, the post-fix engine/oracle slice passes
+`105/105`, canonical smoke passes `103/103`, and Ruff, Python compilation,
+governance lint, layering, and diff hygiene pass. No live Aura or resident 32B
+process was running during the bounded canary. Reasoning gain, frontier-level
+performance, weight fusion, and `WOW Signal` remain false. The completion
+envelope stays `809/920` (approximately `87.9%`): five causal RLC blockers are
+closed inside an envelope item that remains open until a fresh informative
+resident campaign proves a gain without regressions.

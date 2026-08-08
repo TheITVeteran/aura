@@ -1570,6 +1570,10 @@ class EpisodeReceipt:
     # Independently reconstructable lower-bound > upper-bound authority for
     # promoting a repaired candidate into the user-visible output.
     answer_replacement: dict[str, Any] = field(default_factory=dict)
+    # Hidden-ground-truth arbitration used only by the explicitly diagnostic
+    # oracle research arm. It can alter that arm's measured output but carries
+    # no live serving or capability-claim authority.
+    research_oracle_arbitration: dict[str, Any] = field(default_factory=dict)
     correlated_support: dict[str, Any] = field(default_factory=dict)
     # Latent interpretability/safety telemetry (telemetry.LatentTelemetry).
     latent_telemetry: dict[str, Any] = field(default_factory=dict)
@@ -1857,6 +1861,9 @@ class EpisodeReceipt:
             "diagnostic_action_selection": dict(self.diagnostic_action_selection),
             "local_repair": dict(self.local_repair),
             "answer_replacement": dict(self.answer_replacement),
+            "research_oracle_arbitration": dict(
+                self.research_oracle_arbitration
+            ),
             "correlated_support": dict(self.correlated_support),
             "latent_telemetry": dict(self.latent_telemetry),
             "probe_cache": dict(self.probe_cache),
