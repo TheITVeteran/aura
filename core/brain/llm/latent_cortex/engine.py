@@ -5161,8 +5161,29 @@ class LatentCortexEngine:
                         reserve_layer_apps=safety_reserve,
                     )
                     generated_context = generated["context"]
-                    if generated_context.get("termination") != "contract_complete":
-                        raise ValueError("repair generation contract did not complete")
+                    termination = str(generated_context.get("termination") or "")
+                    # A repair that reached its token ceiling with a parseable
+                    # contract line is still a repair. Requiring
+                    # "contract_complete" specifically discarded every candidate
+                    # whose JSON-escaped replacement_suffix ran to the budget --
+                    # measured on the 32B as
+                    # ('repair_not_executed', 'generation_contract_invalid') on
+                    # every episode, which left the arm able to tie ordinary
+                    # decode but never to beat it. parse_local_repair_generation
+                    # below is the real gate: it demands exactly one marker, no
+                    # extra material, and a well-formed
+                    # {"replacement_suffix": str} payload. Text that satisfies
+                    # THAT is admissible however sampling happened to stop; text
+                    # that does not is rejected there regardless.
+                    if termination not in {
+                        "contract_complete",
+                        "token_limit",
+                        "token_limit_sentence_grace",
+                        "token_limit_contract_incomplete",
+                    }:
+                        raise ValueError(
+                            f"repair generation terminated {termination!r}"
+                        )
                     repaired_candidate = parse_local_repair_generation(
                         generated["text"],
                         prefix=str(repair_request["prefix"]),

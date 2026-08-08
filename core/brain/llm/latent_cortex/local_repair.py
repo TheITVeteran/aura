@@ -420,6 +420,15 @@ def prepare_local_repair_requests(
             if row["route_sha256"] == request["failed_route_sha256"]
         )
         prefix = _request_prefix(request, decomposition, candidate)
+        # Instructions FIRST, data LAST, ending on the contract cue.
+        #
+        # The previous ordering closed with a paragraph of rules, so the most
+        # likely continuation was more rules: the 32B returned
+        # " The replacement_suffix must be a valid JSON string. The preserved
+        # prefix must be byte-identical to..." and terminated
+        # contract_irrecoverable on every episode. The model was completing the
+        # instruction block, not answering it. Ending on "FINAL_ANSWER:" leaves
+        # the JSON object as the only sensible continuation.
         prompt = (
             "Repair only the invalid suffix of a candidate answer. Preserve the "
             "provided prefix byte-for-byte and replace the failed claim plus every "
@@ -427,13 +436,18 @@ def prepare_local_repair_requests(
             f"{request['required_verifier']} refuted the failed claim with evidence "
             f"{json.dumps(route['detail'], sort_keys=True, ensure_ascii=True)}. "
             "Every original atom outside the invalidation set must remain "
-            "byte-identical and in the same order. "
+            "byte-identical and in the same order. Emit one JSON object with the "
+            "single key replacement_suffix and no other text.\n"
             f"Objective: {objective}\n"
             f"INVALIDATED_ATOM_IDS: {request['invalidated_atom_ids']}\n"
+            # The preserved prefix is by definition ORIGINAL_CANDIDATE's first
+            # len(prefix) characters, so repeating it verbatim doubled the
+            # prompt for no information -- ~800 wasted tokens on a
+            # 1500-character answer, taken straight from the generation budget.
+            f"PRESERVED_PREFIX_CHARS: {len(prefix)}"
+            " (the first that many characters of ORIGINAL_CANDIDATE)\n"
             f"ORIGINAL_CANDIDATE:\n{candidate}\n"
-            f"PRESERVED_PREFIX:\n{prefix}\n"
-            'Return exactly FINAL_ANSWER: {"replacement_suffix":"..."} with no '
-            "other keys or trailing text."
+            "FINAL_ANSWER:"
         )
         prepared.append(
             {
@@ -452,10 +466,20 @@ def parse_local_repair_generation(value: Any, *, prefix: str) -> str:
     if not isinstance(value, str) or not isinstance(prefix, str):
         raise TypeError("local repair generation must be text")
     marker = "FINAL_ANSWER:"
-    if value.count(marker) != 1:
+    count = value.count(marker)
+    if count > 1:
         raise ValueError("local repair generation contract marker is invalid")
-    before, encoded = value.split(marker, 1)
-    if before.strip() or not encoded.strip():
+    if count == 0:
+        # The prompt now ends on the contract cue, so a well-behaved model
+        # continues with the JSON object alone and the marker never appears in
+        # the generated text. Requiring it here would reject exactly the
+        # responses the new prompt is designed to elicit.
+        encoded = value
+    else:
+        before, encoded = value.split(marker, 1)
+        if before.strip():
+            raise ValueError("local repair generation contains extra material")
+    if not encoded.strip():
         raise ValueError("local repair generation contains extra material")
     try:
         payload = json.loads(encoded)

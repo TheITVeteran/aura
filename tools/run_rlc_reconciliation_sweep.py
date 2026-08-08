@@ -363,6 +363,16 @@ def _build_config(
         # as a property of recurrence.
         answer_replacement_enabled=full,
         local_repair_enabled=full,
+        # A repair regenerates from the failed atom to the END of the answer,
+        # and it must terminate on the contract or it is discarded. At the
+        # default 128 tokens it never can: these answers run ~450 tokens, so
+        # every repair returned generation_contract_invalid and was thrown
+        # away. Measured on the 32B: refuted=1, repair requests=1,
+        # transactions=[('repair_not_executed', 'generation_contract_invalid')]
+        # -- the chain ran end to end and then dropped its only candidate,
+        # which is why the arm could tie ordinary decode but never beat it.
+        # The repair therefore gets the same room as the answer it replaces.
+        local_repair_max_tokens=min(512, max_tokens) if full else 128,
         # A degraded episode that quietly serves an ordinary decode would make
         # this arm a second copy of the vanilla control wearing the recurrent
         # arm's label -- the worst possible failure here, because it looks like

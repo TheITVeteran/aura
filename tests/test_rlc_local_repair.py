@@ -363,10 +363,24 @@ def test_repair_request_count_is_bounded_before_private_generation():
         )
 
 
+def test_a_bare_json_object_is_accepted_after_the_cue():
+    """The prompt ends on "FINAL_ANSWER:", so the model's continuation is the
+    object alone. The payload rules still apply to it in full."""
+    restored = parse_local_repair_generation(
+        '{"replacement_suffix":"fixed"}', prefix="PREFIX "
+    )
+    assert restored == "PREFIX fixed"
+
+
 @pytest.mark.parametrize(
     "value",
     [
-        '{"replacement_suffix":"fixed"}',
+        # A bare JSON object is now ADMISSIBLE: the repair prompt ends on the
+        # "FINAL_ANSWER:" cue, so a well-behaved model continues with the
+        # object alone and the marker never appears in the generated text.
+        # Requiring it rejected exactly the responses the prompt elicits --
+        # the 32B was returning contract_irrecoverable on every episode by
+        # continuing the instruction block instead of answering it.
         'prefix FINAL_ANSWER: {"replacement_suffix":"fixed"}',
         'FINAL_ANSWER: {"replacement_suffix":""}',
         'FINAL_ANSWER: {"replacement_suffix":"fixed","extra":true}',
