@@ -37928,3 +37928,21 @@ current security-rubric regression. It does not complete the repository-wide
 semantic review, the running resident-32B complete-engine experiment, live GUI
 validation, deferred endurance work, fusion, activation, release, or the
 `WOW Signal` evidence burden.
+
+## Checkpoint 2026-08-08-004: Deleted Review History Is Not Current Source Debt
+
+The append-only semantic ledger treated every receipt for an intentionally
+deleted file as an eternal blocker on `full_semantic_review_current`. Those
+receipts cannot provide current coverage: the completion contract separately
+requires a matching hash receipt for every current text file and every current
+line. Making absent history block that verdict therefore made eventual
+completion impossible without rewriting the audit trail.
+
+Orphan receipts remain reported, including their path, checkpoint, and hash,
+but the status now explicitly declares that they do not block current-tree
+completion. A deletion regression proves that a fully reviewed current tree
+can close while preserving an older orphan receipt. The live ledger still
+returns `full_semantic_review_current=false`: only `458/6,721` current code
+files are fully reviewed, `6,232` remain unreviewed, and `1,391` stale receipts
+still require current review. This checkpoint corrects the denominator model;
+it does not reduce or claim completion of the actual semantic-review burden.

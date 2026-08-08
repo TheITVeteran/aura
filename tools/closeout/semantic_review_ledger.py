@@ -432,17 +432,20 @@ def summarize_semantic_reviews(
         "superseded_stale_review_count": len(superseded_stale_entries),
         "orphan_review_count": len(active_orphan_entries),
         "superseded_orphan_review_count": len(superseded_orphan_entries),
+        "orphan_reviews_block_current_completion": False,
         "stale_reviews": stale_entries[:100],
         "superseded_stale_reviews": superseded_stale_entries[:100],
         "orphan_reviews": active_orphan_entries[:100],
         "superseded_orphan_reviews": superseded_orphan_entries[:100],
         "reviewed_files": reviewed_files,
+        # Orphans are retained historical evidence. They cannot add coverage
+        # for the current tree, so they also cannot invalidate complete,
+        # hash-bound coverage of every current file and line.
         "full_semantic_review_current": (
             bool(current_by_path)
             and fully_reviewed_count == len(current_by_path)
             and reviewed_line_count == total_text_lines
             and not stale_entries
-            and not active_orphan_entries
         ),
         "claim_supported": "semantic_review_coverage_status",
         "claim_not_supported": [

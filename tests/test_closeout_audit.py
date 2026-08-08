@@ -158,6 +158,34 @@ def test_semantic_review_ledger_marks_moved_reviews_superseded(tmp_path):
     assert summary["superseded_orphan_review_count"] == 1
 
 
+def test_semantic_review_ledger_keeps_deleted_receipts_without_blocking_current_tree(tmp_path):
+    removed = tmp_path / "removed.py"
+    current = tmp_path / "current.py"
+    removed.write_text("print('historical')\n", encoding="utf-8")
+    current.write_text("print('current')\n", encoding="utf-8")
+    ledger = tmp_path / "SEMANTIC_REVIEW_LEDGER.jsonl"
+    append_entries(
+        ledger,
+        [build_review_entry(removed, reviewer="codex", checkpoint_id="historical", root=tmp_path)],
+    )
+    removed.unlink()
+    append_entries(
+        ledger,
+        [build_review_entry(current, reviewer="codex", checkpoint_id="current", root=tmp_path)],
+    )
+
+    summary = summarize_semantic_reviews(
+        ledger_path=ledger,
+        tracked_paths=[current],
+        root=tmp_path,
+    )
+
+    assert summary["full_semantic_review_current"] is True
+    assert summary["orphan_review_count"] == 1
+    assert summary["orphan_reviews_block_current_completion"] is False
+    assert summary["orphan_reviews"][0]["file"] == "removed.py"
+
+
 def test_semantic_review_ledger_merges_reviewed_spans(tmp_path):
     sample = tmp_path / "spans.py"
     sample.write_text("a\nb\nc\nd\n", encoding="utf-8")
