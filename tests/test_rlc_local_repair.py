@@ -410,11 +410,25 @@ def test_generation_contract_rejects_empty_or_ambiguous(value: str):
         parse_local_repair_generation(value, prefix="PREFIX ")
 
 
-def test_a_repair_that_repeats_the_prefix_is_rejected():
-    """A suffix is a continuation, not a restatement."""
+def test_an_exact_repeated_prefix_is_normalized_before_repair_admission():
+    """A full-candidate response has one deterministic suffix boundary."""
     prefix = "A" * 120
-    with pytest.raises(ValueError):
-        parse_local_repair_generation(prefix + " more", prefix=prefix)
+    assert (
+        parse_local_repair_generation(prefix + " corrected claim", prefix=prefix)
+        == prefix + "corrected claim"
+    )
+
+
+def test_a_partial_repeated_prefix_is_rejected_as_ambiguous():
+    prefix = "A" * 120
+    with pytest.raises(ValueError, match="partially repeated"):
+        parse_local_repair_generation("A" * 80 + " changed boundary", prefix=prefix)
+
+
+def test_a_prefix_echo_without_a_repair_is_rejected():
+    prefix = "A" * 120
+    with pytest.raises(ValueError, match="payload"):
+        parse_local_repair_generation(prefix, prefix=prefix)
 
 
 

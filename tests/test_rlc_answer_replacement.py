@@ -124,7 +124,7 @@ def _scenario(
                 "generation_context": {
                     "prompt_sha256": requests[0]["prompt_sha256"],
                     "generated_token_count": 16,
-                    "termination": "contract_complete",
+                    "termination": "eos",
                     "initial_cache_offsets": [0, 0],
                     "final_cache_offsets": [16, 16],
                     "all_initial_offsets_zero": True,

@@ -516,11 +516,20 @@ def parse_local_repair_generation(value: Any, *, prefix: str, tail: str = "") ->
     if value.count(marker) > 1:
         raise ValueError("local repair generation contract marker is invalid")
     suffix = (value.split(marker, 1)[1] if marker in value else value).strip()
+    # Resident checkpoints sometimes return the complete repaired candidate
+    # even when asked for only the replacement span. A byte-exact prefix echo
+    # is unambiguous: remove it before the normal decomposition and verifier
+    # gates instead of discarding a potentially valid repair. Partial echoes
+    # remain invalid because guessing their boundary could alter owned text.
+    normalized_prefix = prefix.strip()
+    if prefix and suffix.startswith(prefix):
+        suffix = suffix[len(prefix) :].lstrip()
+    elif normalized_prefix and suffix.startswith(normalized_prefix):
+        suffix = suffix[len(normalized_prefix) :].lstrip()
+    elif len(normalized_prefix) >= 80 and suffix.startswith(normalized_prefix[:80]):
+        raise ValueError("local repair generation partially repeated the preserved prefix")
     if not suffix or len(suffix) > 32_768:
         raise ValueError("local repair generation payload is invalid")
-    head = prefix.strip()[:80]
-    if len(prefix.strip()) >= 80 and suffix.startswith(head):
-        raise ValueError("local repair generation repeated the preserved prefix")
     # The tail is spliced verbatim, so atoms after the invalidated span are
     # preserved by construction instead of by asking the model to retype them.
     return prefix + suffix + tail
