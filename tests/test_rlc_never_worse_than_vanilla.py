@@ -147,3 +147,21 @@ def test_the_floor_and_the_gain_are_not_mutually_exclusive():
         "self.config.answer_replacement_enabled\n                        and latent_decode_authorized"
         not in src
     )
+
+
+def test_every_derived_budget_stays_inside_its_own_bounds():
+    """A derived budget must respect the bound the config declares for it.
+
+    local_repair_max_tokens was computed as min(512, max_tokens), which drops
+    below the declared floor of 32 whenever a caller uses a small decode
+    budget. The engine then raised "invalid CortexConfig" and the episode
+    never ran at all -- a config-validation failure disguised as a cortex
+    failure. Every budget the product arm derives is checked here against a
+    decode budget small enough to expose a one-sided clamp.
+    """
+    for max_tokens in (16, 24, 32, 64, 512, 4096):
+        config = sweep._build_config(8, 16, "applied", max_tokens, profile="full")
+        problems = config.validate()
+        assert problems == [], (
+            f"decode budget {max_tokens} produced an invalid config: {problems}"
+        )
