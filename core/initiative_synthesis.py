@@ -932,18 +932,37 @@ class InitiativeSynthesizer:
         approved = False
         approval_rationale = scored.rationale
         try:
-            from core.will import ActionDomain, get_will
-            decision = get_will().decide(
-                content=str(winner.get("goal", ""))[:200],
-                source=winner.get("source", "synthesis"),
+            from core.runtime.action_executor import ActionExecutor
+            from core.will import ActionDomain
+
+            source = str(winner.get("source") or "initiative_synthesis")
+            metadata = dict(winner.get("metadata") or {})
+            admission = ActionExecutor.authorize_action(
+                action_name="initiative_synthesis.selected_winner",
+                params={
+                    "goal": str(winner.get("goal") or "")[:500],
+                    "source": source,
+                    "triggered_by": str(winner.get("triggered_by") or "")[:160],
+                    "synthesis_fingerprint": str(
+                        metadata.get("synthesis_fingerprint") or ""
+                    )[:160],
+                },
+                source=source,
                 domain=ActionDomain.INITIATIVE,
                 priority=float(winner.get("urgency", 0.5)),
+                context={
+                    "source": source,
+                    "autonomous": True,
+                    "initiative_synthesis": True,
+                    "winner_score": float(scored.final_score),
+                    "arbiter_rationale": str(scored.rationale or "")[:500],
+                },
             )
-            will_receipt = decision.receipt_id
-            approved = decision.is_approved()
+            will_receipt = admission.receipt_id
+            approved = admission.approved
             if not approved:
-                logger.info("Synth: Will refused initiative: %s", decision.reason)
-        except (ImportError, AttributeError, RuntimeError) as e:
+                logger.info("Synth: Will refused initiative: %s", admission.reason)
+        except (ImportError, AttributeError, RuntimeError, TypeError, ValueError) as e:
             record_degradation('initiative_synthesis', e)
             logger.warning("Synth: Will authorization unavailable; blocking initiative: %s", e)
             approval_rationale = (

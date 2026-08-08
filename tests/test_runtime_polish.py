@@ -1939,6 +1939,66 @@ async def test_initiative_synthesis_blocks_when_will_authorization_unavailable(m
     assert "will_authorization_unavailable=RuntimeError" in result.rationale
 
 
+@pytest.mark.asyncio
+async def test_initiative_synthesis_uses_one_evidence_bound_canonical_admission(monkeypatch):
+    from core import initiative_synthesis as synthesis_module
+    from core import will as will_module
+    from core.agency.initiative_arbiter import ScoredInitiative
+
+    synth = synthesis_module.InitiativeSynthesizer()
+    synth.submit("inspect runtime drift", "curiosity_engine", urgency=0.9)
+    scored = ScoredInitiative(
+        initiative={
+            "goal": "inspect runtime drift",
+            "source": "curiosity_engine",
+            "urgency": 0.9,
+            "triggered_by": "coherence",
+            "metadata": {"synthesis_fingerprint": "impulse-fingerprint"},
+        },
+        scores={"resource_cost": 0.1},
+        final_score=0.91,
+        rationale="selected by test arbiter",
+    )
+    arbiter = SimpleNamespace(arbitrate=AsyncRecorderCallable(scored))
+    decisions = []
+
+    class CapturingWill:
+        def decide(self, **kwargs):
+            decisions.append(kwargs)
+            return SimpleNamespace(
+                receipt_id="initiative-will-receipt",
+                reason="approved",
+                is_approved=lambda: True,
+            )
+
+    def _service_get(name, default=None):
+        if name == "initiative_arbiter":
+            return arbiter
+        if name == "internal_simulator":
+            return None
+        return default
+
+    monkeypatch.setattr(synthesis_module.ServiceContainer, "get", _service_get)
+    monkeypatch.setattr(will_module, "get_will", lambda: CapturingWill())
+
+    result = await synth.synthesize(
+        SimpleNamespace(cognition=SimpleNamespace(pending_initiatives=[]))
+    )
+
+    assert result.approved is True
+    assert result.will_receipt_id == "initiative-will-receipt"
+    assert len(decisions) == 1
+    assert decisions[0]["source"] == "curiosity_engine"
+    assert decisions[0]["priority"] == 0.9
+    assert decisions[0]["context"] == {
+        "source": "curiosity_engine",
+        "autonomous": True,
+        "initiative_synthesis": True,
+        "winner_score": 0.91,
+        "arbiter_rationale": "selected by test arbiter",
+    }
+
+
 def test_bryan_model_save_is_debounced(monkeypatch, tmp_path):
     monkeypatch.setattr(user_model_module, "_USER_MODEL_PATH", tmp_path / "user_model.json")
     monkeypatch.setattr(user_model_module, "_SAVE_DEBOUNCE_SECONDS", 10.0)
