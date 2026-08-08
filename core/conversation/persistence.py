@@ -64,6 +64,7 @@ CREATE TABLE IF NOT EXISTS turns (
 );
 
 CREATE INDEX IF NOT EXISTS idx_turns_session ON turns(session_id, created_at);
+CREATE INDEX IF NOT EXISTS idx_turns_session_cid ON turns(session_id, cid);
 CREATE INDEX IF NOT EXISTS idx_sessions_active ON sessions(last_active DESC);
 """
 
@@ -115,6 +116,25 @@ def _safe_limit(value: object, default: int) -> int:
     except (TypeError, ValueError, OverflowError):
         limit = default
     return max(1, min(MAX_QUERY_LIMIT, limit))
+
+
+def _validated_existing_turn_id(
+    row: sqlite3.Row | None,
+    *,
+    expected_role: str,
+    expected_content: str,
+    cid: str,
+) -> str | None:
+    """Return an idempotent match, rejecting identity/content collisions."""
+
+    if row is None:
+        return None
+    if (
+        str(row["role"] or "") != expected_role
+        or str(row["content"] or "") != expected_content
+    ):
+        raise ValueError(f"conversation turn cid conflict: {cid}")
+    return str(row["id"])
 
 
 class ConversationPersistence:
@@ -209,16 +229,24 @@ class ConversationPersistence:
             self._ensure_session_row(con, sid, now)
             if cid:
                 existing = con.execute(
-                    "SELECT id FROM turns WHERE cid = ? ORDER BY created_at ASC, rowid ASC LIMIT 1",
-                    (cid,),
+                    "SELECT id, role, content FROM turns "
+                    "WHERE session_id = ? AND cid = ? "
+                    "ORDER BY created_at ASC, rowid ASC LIMIT 1",
+                    (sid, cid),
                 ).fetchone()
                 if existing is not None:
+                    existing_id = _validated_existing_turn_id(
+                        existing,
+                        expected_role=role,
+                        expected_content=content,
+                        cid=cid,
+                    )
                     con.execute(
                         "UPDATE sessions SET last_active = ? WHERE id = ?",
                         (now, sid),
                     )
                     con.commit()
-                    return str(existing["id"])
+                    return str(existing_id)
             con.execute(
                 "INSERT INTO turns VALUES (?,?,?,?,?,?,?)",
                 (turn_id, sid, role, content, origin, now, cid),
@@ -262,8 +290,16 @@ class ConversationPersistence:
         safe_aura_content = _safe_text(aura_content, max_chars=MAX_CONTENT_CHARS)
         safe_origin = _safe_text(origin, max_chars=MAX_ORIGIN_CHARS)
         safe_cid = _safe_text(cid, max_chars=MAX_CID_CHARS)
-        user_cid = _safe_text(f"{safe_cid}:user", max_chars=MAX_CID_CHARS)
-        aura_cid = _safe_text(f"{safe_cid}:aura", max_chars=MAX_CID_CHARS)
+        user_cid = (
+            _safe_text(f"{safe_cid}:user", max_chars=MAX_CID_CHARS)
+            if safe_cid
+            else ""
+        )
+        aura_cid = (
+            _safe_text(f"{safe_cid}:aura", max_chars=MAX_CID_CHARS)
+            if safe_cid
+            else ""
+        )
         publish_user = False
         publish_aura = False
 
@@ -272,14 +308,23 @@ class ConversationPersistence:
             self._ensure_session_row(con, sid, now)
             existing_user = (
                 con.execute(
-                    "SELECT id FROM turns WHERE cid = ? ORDER BY created_at ASC, rowid ASC LIMIT 1",
-                    (user_cid,),
+                    "SELECT id, role, content FROM turns "
+                    "WHERE session_id = ? AND cid = ? "
+                    "ORDER BY created_at ASC, rowid ASC LIMIT 1",
+                    (sid, user_cid),
                 ).fetchone()
                 if user_cid
                 else None
             )
             if existing_user is not None:
-                user_turn_id = str(existing_user["id"])
+                user_turn_id = str(
+                    _validated_existing_turn_id(
+                        existing_user,
+                        expected_role="user",
+                        expected_content=safe_user_content,
+                        cid=user_cid,
+                    )
+                )
             else:
                 con.execute(
                     "INSERT INTO turns VALUES (?,?,?,?,?,?,?)",
@@ -297,14 +342,23 @@ class ConversationPersistence:
 
             existing_aura = (
                 con.execute(
-                    "SELECT id FROM turns WHERE cid = ? ORDER BY created_at ASC, rowid ASC LIMIT 1",
-                    (aura_cid,),
+                    "SELECT id, role, content FROM turns "
+                    "WHERE session_id = ? AND cid = ? "
+                    "ORDER BY created_at ASC, rowid ASC LIMIT 1",
+                    (sid, aura_cid),
                 ).fetchone()
                 if aura_cid
                 else None
             )
             if existing_aura is not None:
-                aura_turn_id = str(existing_aura["id"])
+                aura_turn_id = str(
+                    _validated_existing_turn_id(
+                        existing_aura,
+                        expected_role="aura",
+                        expected_content=safe_aura_content,
+                        cid=aura_cid,
+                    )
+                )
             else:
                 con.execute(
                     "INSERT INTO turns VALUES (?,?,?,?,?,?,?)",

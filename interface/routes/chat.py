@@ -1688,7 +1688,7 @@ _CHAT_TURN_MEMORY_LOG_QUEUE_LOCK = threading.RLock()
 
 
 def _new_exchange_id() -> str:
-    return uuid.uuid4().hex[:8]
+    return uuid.uuid4().hex
 
 
 def _utc_now_iso() -> str:
@@ -4334,6 +4334,7 @@ async def _recent_completed_conversation_exchanges(
             continue
         exchanges.append(
             {
+                "exchange_id": str(entry.get("id") or ""),
                 "user": _clip_conversation_text(
                     user_text,
                     limit=_RECENT_CONVERSATION_USER_CHARS,
@@ -4357,7 +4358,12 @@ async def _recent_completed_conversation_exchanges(
         limit=max(1, int(limit)),
         session_id=safe_session_id,
     )
-    in_memory_keys = {
+    in_memory_ids = {
+        str(entry.get("exchange_id") or "").strip()
+        for entry in exchanges
+        if str(entry.get("exchange_id") or "").strip()
+    }
+    in_memory_content_keys = {
         (
             str(entry.get("user") or "").strip(),
             str(entry.get("aura") or "").strip(),
@@ -4365,8 +4371,10 @@ async def _recent_completed_conversation_exchanges(
         for entry in exchanges
     }
     merged: list[dict[str, str]] = []
-    seen: set[tuple[str, str]] = set()
+    seen_ids: set[str] = set()
+    seen_legacy_keys: set[tuple[str, str]] = set()
     for entry in durable:
+        exchange_id = str(entry.get("exchange_id") or "").strip()
         user_text = _clip_conversation_text(
             entry.get("user"),
             limit=_RECENT_CONVERSATION_USER_CHARS,
@@ -4380,9 +4388,14 @@ async def _recent_completed_conversation_exchanges(
             continue
         if not user_text and not aura_text:
             continue
-        if key in in_memory_keys or key in seen:
-            continue
-        seen.add(key)
+        if exchange_id:
+            if exchange_id in in_memory_ids or exchange_id in seen_ids:
+                continue
+            seen_ids.add(exchange_id)
+        else:
+            if key in in_memory_content_keys or key in seen_legacy_keys:
+                continue
+            seen_legacy_keys.add(key)
         merged.append(entry)
     merged.extend(exchanges)
     return merged[-max(1, int(limit)) :]
@@ -4404,7 +4417,7 @@ async def _persist_completed_conversation_exchange(
         if not callable(record_exchange) and not callable(record_turn):
             return False
 
-        safe_exchange_id = str(exchange_id or uuid.uuid4().hex[:8])[:64]
+        safe_exchange_id = str(exchange_id or uuid.uuid4().hex)[:64]
         safe_session_id = str(session_id or "")[:64]
 
         def _commit() -> None:
@@ -4466,7 +4479,7 @@ def _load_durable_conversation_exchanges_sync(
     safe_session_id = str(session_id or "")[:64]
     rows: list[dict[str, Any]] = []
     if safe_session_id:
-        history = get_session_history(safe_session_id, limit=max(4, limit * 3))
+        history = get_session_history(safe_session_id, limit=max(8, limit * 6))
         rows.extend(item for item in list(history or []) if isinstance(item, dict))
     else:
         if not callable(get_recent_sessions):
@@ -4480,42 +4493,119 @@ def _load_durable_conversation_exchanges_sync(
             durable_session_id = str(session.get("id") or "").strip()
             if not durable_session_id:
                 continue
-            history = get_session_history(durable_session_id, limit=max(4, limit * 3))
+            history = get_session_history(
+                durable_session_id,
+                limit=max(8, limit * 6),
+            )
             rows.extend(item for item in list(history or []) if isinstance(item, dict))
 
-    exchanges: list[dict[str, str]] = []
-    pending_user: dict[str, Any] | None = None
-    for row in rows:
+    identified: dict[tuple[str, str], dict[str, Any]] = {}
+    legacy_pending: dict[str, tuple[int, dict[str, Any]]] = {}
+    candidates: list[tuple[int, dict[str, str]]] = []
+
+    for position, row in enumerate(rows):
         role = str(row.get("role") or "").strip().lower()
         content = str(row.get("content") or "").strip()
         if not content:
             continue
-        if role == "user":
-            pending_user = row
-            continue
-        if role not in {"aura", "assistant"} or pending_user is None:
-            continue
-        exchanges.append(
-            {
-                "user": _clip_conversation_text(
-                    pending_user.get("content"),
-                    limit=_RECENT_CONVERSATION_USER_CHARS,
-                ),
-                "aura": _clip_conversation_text(
-                    content,
-                    limit=_RECENT_CONVERSATION_AURA_CHARS,
-                ),
-                "timestamp": str(row.get("created_at") or pending_user.get("created_at") or ""),
-                "session_id": str(
-                    row.get("session_id")
-                    or pending_user.get("session_id")
-                    or safe_session_id
-                    or ""
-                )[:64],
-            }
+        row_session_id = str(row.get("session_id") or safe_session_id or "")[:64]
+        cid = str(row.get("cid") or "").strip()
+        exchange_id, separator, cid_side = cid.rpartition(":")
+        canonical_side = "aura" if cid_side == "assistant" else cid_side
+        role_side = "aura" if role == "assistant" else role
+        identified_row = bool(
+            separator
+            and exchange_id
+            and canonical_side in {"user", "aura"}
+            and canonical_side == role_side
         )
-        pending_user = None
-    return exchanges[-limit:]
+
+        if identified_row:
+            key = (row_session_id, exchange_id)
+            state = identified.setdefault(
+                key,
+                {
+                    "exchange_id": exchange_id,
+                    "session_id": row_session_id,
+                    "position": position,
+                    "ambiguous": False,
+                },
+            )
+            existing = state.get(canonical_side)
+            if existing is not None:
+                if str(existing.get("content") or "").strip() != content:
+                    state["ambiguous"] = True
+            else:
+                state[canonical_side] = row
+            state["position"] = max(int(state.get("position") or 0), position)
+            continue
+
+        # A nonempty but unrecognized CID is correlated data whose identity we
+        # do not understand. Never attach it to a neighboring row. Only old
+        # records with no CID at all may use the conservative legacy fallback.
+        if cid:
+            legacy_pending.pop(row_session_id, None)
+            continue
+        if role == "user":
+            legacy_pending[row_session_id] = (position, row)
+            continue
+        if role in {"aura", "assistant"}:
+            pending = legacy_pending.pop(row_session_id, None)
+            if pending is None:
+                continue
+            _user_position, user_row = pending
+            candidates.append(
+                (
+                    position,
+                    {
+                        "user": _clip_conversation_text(
+                            user_row.get("content"),
+                            limit=_RECENT_CONVERSATION_USER_CHARS,
+                        ),
+                        "aura": _clip_conversation_text(
+                            content,
+                            limit=_RECENT_CONVERSATION_AURA_CHARS,
+                        ),
+                        "timestamp": str(
+                            row.get("created_at") or user_row.get("created_at") or ""
+                        ),
+                        "session_id": row_session_id,
+                    },
+                )
+            )
+            continue
+        legacy_pending.pop(row_session_id, None)
+
+    for state in identified.values():
+        user_row = state.get("user")
+        aura_row = state.get("aura")
+        if state.get("ambiguous") or user_row is None or aura_row is None:
+            continue
+        candidates.append(
+            (
+                int(state.get("position") or 0),
+                {
+                    "exchange_id": str(state.get("exchange_id") or ""),
+                    "user": _clip_conversation_text(
+                        user_row.get("content"),
+                        limit=_RECENT_CONVERSATION_USER_CHARS,
+                    ),
+                    "aura": _clip_conversation_text(
+                        aura_row.get("content"),
+                        limit=_RECENT_CONVERSATION_AURA_CHARS,
+                    ),
+                    "timestamp": str(
+                        aura_row.get("created_at")
+                        or user_row.get("created_at")
+                        or ""
+                    ),
+                    "session_id": str(state.get("session_id") or "")[:64],
+                },
+            )
+        )
+
+    candidates.sort(key=lambda item: item[0])
+    return [exchange for _position, exchange in candidates[-limit:]]
 
 
 async def _load_durable_conversation_exchanges(

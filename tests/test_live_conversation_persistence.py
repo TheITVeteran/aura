@@ -66,6 +66,7 @@ async def test_completed_live_exchange_survives_process_memory_clear(monkeypatch
 
     assert exchanges == [
         {
+            "exchange_id": exchange_id,
             "user": "The continuity codeword is restart-echo-742.",
             "aura": "I will retain restart-echo-742 across a process restart.",
             "timestamp": "2.0",
@@ -152,3 +153,122 @@ async def test_recent_context_deduplicates_durable_and_in_memory_exchange(monkey
 
     assert len(exchanges) == 1
     assert exchanges[0]["user"] == "Keep this one copy."
+
+
+def test_durable_reconstruction_joins_interleaved_rows_by_exchange_identity(monkeypatch):
+    persistence = _PersistenceFixture()
+    persistence.rows = [
+        {
+            "role": "user",
+            "content": "question A",
+            "cid": "exchange-a:user",
+            "session_id": persistence.session_id,
+            "created_at": 1.0,
+        },
+        {
+            "role": "user",
+            "content": "question B",
+            "cid": "exchange-b:user",
+            "session_id": persistence.session_id,
+            "created_at": 2.0,
+        },
+        {
+            "role": "aura",
+            "content": "answer A",
+            "cid": "exchange-a:aura",
+            "session_id": persistence.session_id,
+            "created_at": 3.0,
+        },
+        {
+            "role": "aura",
+            "content": "answer B",
+            "cid": "exchange-b:aura",
+            "session_id": persistence.session_id,
+            "created_at": 4.0,
+        },
+    ]
+    monkeypatch.setattr(
+        chat_routes.ServiceContainer,
+        "get",
+        staticmethod(
+            lambda name, default=None: persistence
+            if name == "persistence"
+            else default
+        ),
+    )
+
+    exchanges = chat_routes._load_durable_conversation_exchanges_sync(
+        limit=6,
+        session_id=persistence.session_id,
+    )
+
+    assert [
+        (entry["exchange_id"], entry["user"], entry["aura"])
+        for entry in exchanges
+    ] == [
+        ("exchange-a", "question A", "answer A"),
+        ("exchange-b", "question B", "answer B"),
+    ]
+
+
+def test_durable_reconstruction_does_not_pair_orphaned_correlated_rows(monkeypatch):
+    persistence = _PersistenceFixture()
+    persistence.rows = [
+        {
+            "role": "user",
+            "content": "orphan question",
+            "cid": "exchange-a:user",
+            "session_id": persistence.session_id,
+            "created_at": 1.0,
+        },
+        {
+            "role": "aura",
+            "content": "different orphan answer",
+            "cid": "exchange-b:aura",
+            "session_id": persistence.session_id,
+            "created_at": 2.0,
+        },
+    ]
+    monkeypatch.setattr(
+        chat_routes.ServiceContainer,
+        "get",
+        staticmethod(
+            lambda name, default=None: persistence
+            if name == "persistence"
+            else default
+        ),
+    )
+
+    assert chat_routes._load_durable_conversation_exchanges_sync(
+        limit=6,
+        session_id=persistence.session_id,
+    ) == []
+
+
+def test_durable_reconstruction_retains_cidless_legacy_pair(monkeypatch):
+    persistence = _PersistenceFixture()
+    persistence.record_turn("user", "legacy question", origin="desktop_ui")
+    persistence.record_turn("aura", "legacy answer", origin="desktop_ui")
+    monkeypatch.setattr(
+        chat_routes.ServiceContainer,
+        "get",
+        staticmethod(
+            lambda name, default=None: persistence
+            if name == "persistence"
+            else default
+        ),
+    )
+
+    exchanges = chat_routes._load_durable_conversation_exchanges_sync(
+        limit=6,
+        session_id=persistence.session_id,
+    )
+
+    assert exchanges == [
+        {
+            "user": "legacy question",
+            "aura": "legacy answer",
+            "timestamp": "2.0",
+            "session_id": persistence.session_id,
+        }
+    ]

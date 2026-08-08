@@ -5,6 +5,8 @@ import sys
 import types
 from concurrent.futures import ThreadPoolExecutor
 
+import pytest
+
 from core.conversation import persistence as persistence_module
 from core.conversation.persistence import ConversationPersistence
 
@@ -94,6 +96,71 @@ def test_conversation_persistence_deduplicates_turn_by_cid(monkeypatch, tmp_path
     assert len(history) == 1
     assert history[0]["cid"] == "live-1:user"
     assert len(published) == 1
+
+
+def test_conversation_persistence_scopes_cid_idempotency_to_session(tmp_path):
+    store = ConversationPersistence(tmp_path / "session-scoped-cids.db")
+    first_session = store.start_session()
+    second_session = store.start_session()
+
+    first_id = store.record_turn(
+        "user",
+        "first session",
+        cid="shared-cid:user",
+        session_id=first_session,
+    )
+    second_id = store.record_turn(
+        "user",
+        "second session",
+        cid="shared-cid:user",
+        session_id=second_session,
+    )
+
+    assert first_id != second_id
+    assert store.get_session_history(first_session)[0]["content"] == "first session"
+    assert store.get_session_history(second_session)[0]["content"] == "second session"
+
+
+def test_conversation_persistence_rejects_cid_content_collision(tmp_path):
+    store = ConversationPersistence(tmp_path / "cid-content-collision.db")
+    session_id = store.start_session()
+    original_id = store.record_turn(
+        "user",
+        "original prompt",
+        cid="immutable-exchange:user",
+        session_id=session_id,
+    )
+
+    with pytest.raises(ValueError, match="conversation turn cid conflict"):
+        store.record_turn(
+            "user",
+            "different prompt",
+            cid="immutable-exchange:user",
+            session_id=session_id,
+        )
+
+    history = store.get_session_history(session_id)
+    assert [(row["id"], row["content"]) for row in history] == [
+        (original_id, "original prompt")
+    ]
+
+
+def test_conversation_persistence_without_cid_never_collapses_exchanges(tmp_path):
+    store = ConversationPersistence(tmp_path / "cidless-exchanges.db")
+    session_id = store.start_session()
+
+    first_ids = store.record_exchange("question one", "answer one")
+    second_ids = store.record_exchange("question two", "answer two")
+    history = store.get_session_history(session_id)
+
+    assert set(first_ids).isdisjoint(second_ids)
+    assert [row["content"] for row in history] == [
+        "question one",
+        "answer one",
+        "question two",
+        "answer two",
+    ]
+    assert all(not row["cid"] for row in history)
 
 
 def test_conversation_persistence_exchange_reuses_prelogged_user_by_cid(monkeypatch, tmp_path):

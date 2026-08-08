@@ -38130,7 +38130,7 @@ review coverage is not remediation and none is closed by the review receipt:
 - **P2 CLOSED CP021:** finish recoverable deterministic work in-turn instead of discarding it, and
   keep output-shape failures consistent with the in-band degraded-response contract.
 - **P2 CLOSED CP022:** strip malformed affordance control syntax before any user delivery.
-- **P2:** reconstruct durable transcripts by exchange identity rather than row adjacency.
+- **P2 CLOSED CP023:** reconstruct durable transcripts by exchange identity rather than row adjacency.
 - **P2:** close surface-delivery state on every fast, defensive, conscience, pressure,
   and error return, not only the final quality path.
 - **P3:** encrypt and principal-bind explicit memory pins at rest.
@@ -38555,3 +38555,34 @@ and diff hygiene pass. No resident model was loaded and the active source-bound
 32B campaign was not disturbed. The completion envelope remains `809/920`
 (approximately `87.9%`); this closes one bounded chat P2, not the remaining
 conversation, RLC, fusion, release, semantic-review, or endurance program.
+
+## Checkpoint 2026-08-08-023: Durable Exchanges Rejoin by Identity
+
+Durable transcript reconstruction no longer assigns the last user row to the
+next Aura row. Canonical records are joined by `(session_id, exchange_id)`
+using the `:user` and `:aura` correlation suffixes already written by the live
+chat lane. Interleaved exchanges therefore reconstruct correctly, and an
+orphaned user or Aura side remains incomplete instead of being attached to a
+different exchange. Conflicting duplicate sides are excluded rather than
+resolved by position. Truly legacy rows with no correlation ID retain a
+strict same-session user/Aura fallback so historical continuity is not erased;
+nonempty but unrecognized IDs never enter that fallback.
+
+The same identity now survives the in-memory/durable merge. Identified turns
+deduplicate by exchange ID, so two deliberate exchanges with identical text
+remain two exchanges, while a CID-less legacy copy can still be content-
+deduplicated against its live counterpart. New exchange IDs use the full UUID
+hex rather than a 32-bit prefix. SQLite idempotency is scoped to the session
+and validates both role and content before reusing an existing CID; a retry
+with changed content is an explicit conflict, not a falsely successful write.
+CID-less atomic exchanges no longer share the synthetic IDs `:user` and
+`:aura`, which previously collapsed every later CID-less exchange.
+
+Focused persistence and reconstruction tests pass `17/17`; the complete
+conversation-lane, live-persistence, and persistence-hardening suite passes
+`309/309`; canonical smoke passes `103/103`; Ruff, full Python compilation,
+and diff hygiene pass. The active source-bound resident-32B campaign remained
+detached and advanced into its complete-engine arm. The completion envelope
+stays `809/920` (approximately `87.9%`); this closes one bounded chat P2, not
+the remaining conversation, RLC, fusion, release, semantic-review, or
+endurance program.
