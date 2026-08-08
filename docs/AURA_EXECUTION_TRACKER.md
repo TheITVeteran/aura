@@ -37888,8 +37888,9 @@ fail the file-set check, changed bytes fail per-file verification, and every
 resident model file plus the Python interpreter is hash-bound before each
 attempt.
 
-The controller requires an observed launchd -> `caffeinate -dims` -> controller
-lineage, owns a host-wide reconciliation-model lock and a campaign-local lock,
+The controller requires macOS's observed launchd -> controller -> exact
+`caffeinate -dims` child lineage, owns a host-wide reconciliation-model lock
+and a campaign-local lock,
 and launches the sweep in a new process group. It monitors durable journal,
 status, and log movement out of process. A stalled child is terminated only
 after its process-group identity matches; clean wall-budget exits resume from
@@ -37903,7 +37904,8 @@ not after a verified terminal result. Unit and integration coverage proves
 source injection and weight drift rejection, heartbeat tamper detection,
 scientific-argument preservation, foreign process-group refusal, mandatory OS
 supervision, and a two-attempt durable wall-budget resume. The controller,
-venv-entrypoint preservation, sweep, and incumbent-floor slice passes `48/48`;
+venv-entrypoint preservation, process-lineage topology, sweep, and
+incumbent-floor slice passes `50/50`;
 Ruff and diff hygiene pass. The venv path is retained for execution while its
 resolved interpreter binary is independently hashed, preventing source
 preparation from silently dropping the installed dependency environment.

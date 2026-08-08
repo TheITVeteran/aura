@@ -507,22 +507,54 @@ def _process_record(pid: int) -> tuple[int, str]:
     return int(fields[0]), fields[1]
 
 
+def _process_table() -> list[tuple[int, int, str]]:
+    observed = subprocess.run(
+        ["/bin/ps", "-ww", "-axo", "pid=,ppid=,command="],
+        capture_output=True,
+        text=True,
+        timeout=10.0,
+        check=False,
+    )
+    if observed.returncode != 0:
+        raise ControllerError("process_table_unavailable")
+    rows: list[tuple[int, int, str]] = []
+    for line in observed.stdout.splitlines():
+        fields = line.strip().split(None, 2)
+        if len(fields) == 3 and fields[0].isdigit() and fields[1].isdigit():
+            rows.append((int(fields[0]), int(fields[1]), fields[2]))
+    return rows
+
+
 def _verify_launchd_lineage(config: Mapping[str, Any]) -> dict[str, Any]:
     controller_pid = os.getpid()
-    caffeinate_pid = os.getppid()
-    caffeinate_parent, command = _process_record(caffeinate_pid)
-    required = (
+    controller_parent, controller_command = _process_record(controller_pid)
+    controller_required = (
+        str(Path(str(config["source_root"])) / "tools/run_rlc_reconciliation_controller.py"),
+        str(config["campaign_id"]),
+        "--launchd-supervised",
+    )
+    if controller_parent != 1 or any(
+        value not in controller_command for value in controller_required
+    ):
+        raise ControllerError("controller_launchd_caffeinate_lineage_invalid")
+    caffeinate_required = (
         "/usr/bin/caffeinate",
         "-dims",
         str(config["python"]),
         str(Path(str(config["source_root"])) / "tools/run_rlc_reconciliation_controller.py"),
         str(config["campaign_id"]),
     )
-    if caffeinate_parent != 1 or any(value not in command for value in required):
+    caffeinate_children = [
+        pid
+        for pid, parent, command in _process_table()
+        if parent == controller_pid
+        and all(value in command for value in caffeinate_required)
+    ]
+    if len(caffeinate_children) != 1:
         raise ControllerError("controller_launchd_caffeinate_lineage_invalid")
     return {
         "launchd_pid": 1,
-        "caffeinate_pid": caffeinate_pid,
+        "caffeinate_pid": caffeinate_children[0],
         "controller_pid": controller_pid,
     }
 

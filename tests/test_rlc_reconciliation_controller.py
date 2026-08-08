@@ -169,6 +169,51 @@ def test_launchd_owns_caffeinate_and_the_exact_controller(tmp_path: Path):
     assert payload["StandardOutPath"] == str(out / "controller.log")
 
 
+def test_lineage_requires_launchd_controller_and_exact_caffeinate_child(
+    tmp_path: Path, monkeypatch
+):
+    source, _out, config_path, config = _prepared(tmp_path)
+    controller_command = (
+        f"python {source / 'tools/run_rlc_reconciliation_controller.py'} run "
+        f"--config {config_path} --launchd-supervised"
+    )
+    caffeinate_command = (
+        f"/usr/bin/caffeinate -dims {config['python']} "
+        f"{source / 'tools/run_rlc_reconciliation_controller.py'} run "
+        f"--config {config_path} --launchd-supervised"
+    )
+    monkeypatch.setattr(os, "getpid", lambda: 41)
+    monkeypatch.setattr(controller, "_process_record", lambda _pid: (1, controller_command))
+    monkeypatch.setattr(
+        controller,
+        "_process_table",
+        lambda: [(42, 41, caffeinate_command)],
+    )
+    assert controller._verify_launchd_lineage(config) == {
+        "launchd_pid": 1,
+        "caffeinate_pid": 42,
+        "controller_pid": 41,
+    }
+
+
+def test_lineage_rejects_caffeinate_owned_by_another_process(tmp_path: Path, monkeypatch):
+    source, _out, config_path, config = _prepared(tmp_path)
+    controller_command = (
+        f"python {source / 'tools/run_rlc_reconciliation_controller.py'} run "
+        f"--config {config_path} --launchd-supervised"
+    )
+    caffeinate_command = (
+        f"/usr/bin/caffeinate -dims {config['python']} "
+        f"{source / 'tools/run_rlc_reconciliation_controller.py'} run "
+        f"--config {config_path} --launchd-supervised"
+    )
+    monkeypatch.setattr(os, "getpid", lambda: 41)
+    monkeypatch.setattr(controller, "_process_record", lambda _pid: (1, controller_command))
+    monkeypatch.setattr(controller, "_process_table", lambda: [(42, 99, caffeinate_command)])
+    with pytest.raises(controller.ControllerError, match="lineage_invalid"):
+        controller._verify_launchd_lineage(config)
+
+
 def plistlib_loads(payload: bytes):
     import plistlib
 
