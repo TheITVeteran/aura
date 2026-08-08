@@ -151,6 +151,15 @@ heartbeat and durable cell journal, survive process rotation, and have an
 independent OS-level watchdog. The first durable cell and exact process lineage
 must be verified before calling the campaign unattended.
 
+`tools/run_rlc_reconciliation_controller.py` is that lifecycle owner. Its
+launchd entrypoint is mandatory; direct execution is rejected. It verifies the
+exact source-file set, every source digest, every resident model file, and the
+interpreter before each bounded attempt. It holds both a campaign lock and the
+host-wide reconciliation-model lock, and only signals the exact child process
+group it created. The HMAC heartbeat, controller status, append-only attempt
+ledger, sweep journal, and launch receipt are the minimum evidence set for an
+unattended run.
+
 Run the claimed `full_stack` arm and both automatically included controls. The
 `full_stack_oracle` arm may be added as a diagnostic ceiling; it cannot satisfy
 the gain claim. Never reuse a cell whose task, decode, model, adapter, or source

@@ -37877,3 +37877,32 @@ and recurrent-objective suites pass `178/178`; static checks pass. The next
 bounded step is a fresh source-bound resident-32B complete-engine campaign with
 both controls and an independent detached supervisor. Reasoning gain, frontier
 performance, fusion, activation, release, and `WOW Signal` remain open.
+
+## Checkpoint 2026-08-08-002: Resident Evaluation Survives Its Launching Session
+
+The corrected complete-engine sweep now has a dedicated unattended controller
+instead of the rejected campaign's ad hoc `nohup` scripts. Preparation binds the
+exact source commit and an exact SHA-256 inventory of every executable Python
+file and runtime configuration in the immutable capsule. Newly injected modules
+fail the file-set check, changed bytes fail per-file verification, and every
+resident model file plus the Python interpreter is hash-bound before each
+attempt.
+
+The controller requires an observed launchd -> `caffeinate -dims` -> controller
+lineage, owns a host-wide reconciliation-model lock and a campaign-local lock,
+and launches the sweep in a new process group. It monitors durable journal,
+status, and log movement out of process. A stalled child is terminated only
+after its process-group identity matches; clean wall-budget exits resume from
+the journal, while crashes use a bounded retry budget. Yielding releases the
+model at a cell boundary without discarding any committed cell.
+
+Progress is published as an atomic HMAC-SHA-256 heartbeat whose private key is
+mode `0600`; status and launch receipts are separately digest-bound. The
+launchd job restarts the lightweight controller after an unsuccessful exit but
+not after a verified terminal result. Unit and integration coverage proves
+source injection and weight drift rejection, heartbeat tamper detection,
+scientific-argument preservation, foreign process-group refusal, mandatory OS
+supervision, and a two-attempt durable wall-budget resume. The controller,
+sweep, and incumbent-floor slice passes `47/47`; Ruff and diff hygiene pass.
+No resident model was loaded by this checkpoint, and no gain, fusion,
+activation, frontier, release, or `WOW Signal` claim is made.
