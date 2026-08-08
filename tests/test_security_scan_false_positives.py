@@ -19,10 +19,11 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "tools"))
 from security_scan import (  # noqa: E402
     SECRET_PATTERNS,
     _is_cli_flag_literal,
+    _is_repeated_credential_fixture,
     _is_schema_identifier_literal,
     _is_symbolic_word_literal,
+    _scan_text_literals,
 )
-
 
 # ------------------------------------------------- real keys still detected
 
@@ -56,6 +57,20 @@ def test_a_key_at_the_start_of_a_line_is_still_detected():
         pattern.search("sk-live-abcdefghijklmnopqrstuvwxyz0123")
         for pattern in SECRET_PATTERNS
     )
+
+
+def test_a_repeated_character_redaction_fixture_is_not_a_secret():
+    fixture = "sk-" + ("a" * 24)
+    assert _is_repeated_credential_fixture(fixture)
+    assert _scan_text_literals(f'# fixture: "{fixture}"', "sample.py") == []
+
+
+def test_repeated_fixture_exclusion_does_not_hide_mixed_content_keys():
+    secret = "sk-live-9fQz2LmXv7Rb4TpW8dYc1KhN"
+    assert not _is_repeated_credential_fixture(secret)
+    assert _scan_text_literals(f'# leaked: "{secret}"', "sample.py") == [
+        {"kind": "secret_like_literal", "file": "sample.py", "line": 1}
+    ]
 
 
 # ------------------------------------------------------ structural literals

@@ -37911,3 +37911,20 @@ resolved interpreter binary is independently hashed, preventing source
 preparation from silently dropping the installed dependency environment.
 No resident model was loaded by this checkpoint, and no gain, fusion,
 activation, frontier, release, or `WOW Signal` claim is made.
+
+## Checkpoint 2026-08-08-003: Secret Fixtures Cannot Desensitize the Release Gate
+
+The release security scan failed on a zero-entropy redaction fixture embedded
+in a source comment. Removing the example would have made this checkout green
+without repairing the scanner, while ignoring comments would have hidden real
+credentials pasted there. The raw-literal scanner now classifies credential-
+prefixed bodies made from one repeated character as fixtures by value. It still
+scans comments and tests and still reports mixed-content secret-shaped values.
+
+Positive and negative scanner regressions pass `32/32`. The scanner examines
+`3,190` files with zero findings, smoke passes `103/103`, and the independent
+enterprise closeout rubric returns all `20/20` criteria green. This closes the
+current security-rubric regression. It does not complete the repository-wide
+semantic review, the running resident-32B complete-engine experiment, live GUI
+validation, deferred endurance work, fusion, activation, release, or the
+`WOW Signal` evidence burden.

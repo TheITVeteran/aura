@@ -2,11 +2,10 @@
 """Lightweight local security scan for Aura release gates."""
 from __future__ import annotations
 
-import json
-import re
 import ast
+import json
 import math
-import shutil
+import re
 import sys
 import time
 from pathlib import Path
@@ -106,8 +105,23 @@ def _scan_text_literals(text: str, rel: str) -> list[dict]:
     findings: list[dict] = []
     for pattern in SECRET_PATTERNS:
         for match in pattern.finditer(text):
+            if _is_repeated_credential_fixture(match.group(0)):
+                continue
             findings.append({"kind": "secret_like_literal", "file": rel, "line": _line(text, match.start())})
     return findings
+
+
+def _is_repeated_credential_fixture(literal: str) -> bool:
+    """Exclude credential-shaped fixtures whose body has zero information.
+
+    Security fixtures commonly exercise redaction with a published prefix and
+    one character repeated.  The prefix makes raw regex matching useful, but a
+    uniform body cannot be issued credential material.  This remains based on
+    the value rather than its file or comment context, so mixed-content secrets
+    are still reported everywhere, including comments and tests.
+    """
+    match = re.fullmatch(r"(?:sk-|AIza)([A-Za-z0-9_-])\1{19,}", literal)
+    return match is not None
 
 
 def _scan_python_ast(text: str, rel: str) -> list[dict]:
