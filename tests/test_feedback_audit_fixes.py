@@ -1839,18 +1839,49 @@ def test_capability_reflex_stays_runtime_grounded(monkeypatch):
     from interface.routes import chat as chat_route
 
     class DummyCapabilityEngine:
-        active_skills = {"web_search", "memory_ops", "system_proprioception"}
+        def iter_tool_catalog(self, *, include_inactive=True):
+            yield from (
+                {"name": "web_search", "available": True},
+                {"name": "memory_ops", "available": True},
+                {"name": "system_proprioception", "available": False},
+            )
+
+        def get_catalog_health(self):
+            return {"ready": True}
+
+        async def execute(self, *_args, **_kwargs):
+            return {"ok": True}
+
+    class DummyAuthority:
+        def is_ready(self):
+            return True
+
+    class DummyWill:
+        def decide(self, *_args, **_kwargs):
+            return SimpleNamespace(allowed=True)
+
+    def fake_get(name, default=None):
+        if name == "capability_engine":
+            return DummyCapabilityEngine()
+        if name == "authority_gateway":
+            return DummyAuthority()
+        if name == "unified_will":
+            return DummyWill()
+        return default
 
     monkeypatch.setattr(
         chat_route.ServiceContainer,
         "get",
-        staticmethod(lambda name, default=None: DummyCapabilityEngine() if name == "capability_engine" else default),
+        staticmethod(fake_get),
     )
 
     reply = chat_route._build_capability_reply("What can you do?")
 
-    assert "live self-report" in reply
-    assert "active skill surfaces" in reply
+    assert "3 registered entries" in reply
+    assert "2 entries explicitly marked available" in reply
+    assert "web_search" in reply and "memory_ops" in reply
+    assert "system_proprioception" not in reply
+    assert "both measured ready" in reply
     assert "assist with a wide range of tasks" not in reply
 
 

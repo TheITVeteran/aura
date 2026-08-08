@@ -1657,6 +1657,21 @@ def test_requested_operational_runtime_terms_are_allowed_in_desktop_diagnostic()
     assert "pseudo_internal_jargon" not in assessment.reasons
 
 
+def test_foreground_is_not_misread_as_a_pseudo_memory_field():
+    from core.conversation.response_reliability import assess_user_facing_reply
+
+    assessment = assess_user_facing_reply(
+        "From the live desktop path, what tools and memory operations are available?",
+        (
+            "CognitiveEngine handled this foreground turn. The measured catalog includes "
+            "web research and memory operations, while current execution still depends on "
+            "catalog health, Will/Authority, and effect receipts."
+        ),
+    )
+
+    assert "pseudo_internal_jargon" not in assessment.reasons
+
+
 def test_requested_operational_runtime_terms_reject_unbounded_tool_readiness():
     from core.conversation.response_reliability import assess_user_facing_reply
 

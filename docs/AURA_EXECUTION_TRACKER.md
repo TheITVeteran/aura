@@ -38134,7 +38134,7 @@ review coverage is not remediation and none is closed by the review receipt:
 - **P2 CLOSED CP024:** close surface-delivery state on every fast, defensive, conscience, pressure,
   and error return, not only the final quality path.
 - **P3 CLOSED CP026:** encrypt and principal-bind explicit memory pins at rest.
-- **P3:** report capability availability only from a measured catalog/health snapshot.
+- **P3 CLOSED CP027:** report capability availability only from a measured catalog/health snapshot.
 
 The resident complete-engine RLC experiment, these chat remediations, remaining
 effect migrations, the active-code and exhaustive semantic campaigns, live
@@ -38681,3 +38681,43 @@ the `3,193`-file local security scan, affected Ruff, byte-compilation, and
 diff-hygiene gates pass. The completion envelope remains `809/920`
 (approximately `87.9%`); one bounded P3 chat item and the broader RLC, fusion,
 release, semantic-review, and endurance program remain open.
+
+## Checkpoint 2026-08-08-027: Capability Availability Is a Measurement
+
+Capability answers no longer turn a missing catalog into a static list of
+desktop, browser, file, terminal, memory, repair, and Program DNA claims. A
+single bounded snapshot now keeps registered entries, entries explicitly
+marked available, catalog health, Will/Authority wiring, truncation, and the
+measurement failure reason separate. Missing, blocked, malformed, or
+materialized-only catalogs produce an explicit unverified answer and no
+substitute inventory. Legacy catalog mappings count as available only when an
+explicit boolean or a recognized ready/available/active state says so; absent,
+loading, unknown, and disabled states cannot pass by default.
+
+Measured catalog availability is no longer described as current execution
+readiness when catalog health or the governance spine is not ready. Scenario
+examples are assembled only from categories present in the measured snapshot.
+The compact `what can you do` reflex uses the same evidence instead of counting
+an `active_skills` container and attaching hardcoded claims. A direct helper
+cannot claim that CognitiveEngine or Cortex handled a turn; the post-engine
+route may attach those facts only when its own trace and lane snapshot establish
+them.
+
+The integration work also repaired two quality-gate false positives that were
+discarding correct inventories: `foreground` no longer matches the standalone
+word `field`, and explicit `live desktop path` / `desktop UI path` requests may
+name CognitiveEngine without being treated as unrequested internal jargon.
+Regressions cover explicit and legacy availability, bounded/truncated catalogs,
+materialized-catalog refusal, memory-pressure refusal, unhealthy catalog owners,
+post-engine evidence binding, no-measurement fast paths, and the jargon boundary.
+
+Focused capability and conversation tests pass `17/17`; the complete affected
+desktop-intent, feedback-audit, and chat-reliability suites pass `371/371`;
+canonical smoke passes `103/103`; affected byte-compilation and diff hygiene
+pass. A full conversation-lane attempt was not credited because the host
+terminated it after 33 tests under concurrent resident-32B pressure without a
+terminal pytest result. The active source-bound campaign remained detached and
+continued advancing independently. The completion envelope stays `809/920`
+(approximately `87.9%`); the bounded chat semantic queue is closed, while the
+broader RLC, fusion, release, exhaustive semantic-review, effect-migration, live
+proof, and endurance program remain open.

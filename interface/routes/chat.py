@@ -10212,7 +10212,11 @@ async def _run_cognitive_engine_chat_turn(
                     completed_inventory,
                 )
             if _capability_inventory_reply_is_inadequate(visible, text):
-                grounded_inventory = _build_grounded_capability_inventory_reply(visible)
+                grounded_inventory = _build_grounded_capability_inventory_reply(
+                    visible,
+                    cognitive_engine_handled=True,
+                    model_label=_canonical_runtime_model_label(lane),
+                )
                 if grounded_inventory and not _capability_inventory_reply_is_inadequate(
                     visible,
                     grounded_inventory,
@@ -10387,7 +10391,11 @@ async def _run_cognitive_engine_chat_turn(
                             }
                         )
                     return retry_reply
-            grounded_inventory = _build_grounded_capability_inventory_reply(visible)
+            grounded_inventory = _build_grounded_capability_inventory_reply(
+                visible,
+                cognitive_engine_handled=True,
+                model_label=_canonical_runtime_model_label(lane),
+            )
             if grounded_inventory and not _capability_inventory_reply_is_inadequate(
                 visible,
                 grounded_inventory,
@@ -10501,7 +10509,11 @@ async def _run_cognitive_engine_chat_turn(
                             getattr(_devoiced_assessment, "reasons", ()) or ()
                         )
             if require_engine and capability_inventory_contract:
-                grounded_inventory = _build_grounded_capability_inventory_reply(visible)
+                grounded_inventory = _build_grounded_capability_inventory_reply(
+                    visible,
+                    cognitive_engine_handled=True,
+                    model_label=_canonical_runtime_model_label(lane),
+                )
                 if grounded_inventory and not _capability_inventory_reply_is_inadequate(
                     visible,
                     grounded_inventory,
@@ -10534,7 +10546,11 @@ async def _run_cognitive_engine_chat_turn(
                 and capability_inventory_contract
                 and set(getattr(assessment, "reasons", ()) or ()) == {"truncated_tail"}
             ):
-                grounded_inventory = _build_grounded_capability_inventory_reply(visible)
+                grounded_inventory = _build_grounded_capability_inventory_reply(
+                    visible,
+                    cognitive_engine_handled=True,
+                    model_label=_canonical_runtime_model_label(lane),
+                )
                 if grounded_inventory and not _capability_inventory_reply_is_inadequate(
                     visible,
                     grounded_inventory,
@@ -14559,6 +14575,68 @@ _CAPABILITY_EXAMPLE_PRIORITY = {
 
 _CAPABILITY_CATALOG_MAX_ITEMS = 256
 _CAPABILITY_CATALOG_READ_BUDGET_S = 0.35
+_CAPABILITY_CATALOG_UNVERIFIED_MARKER = "could not verify a current capability catalog"
+
+
+@dataclasses.dataclass(frozen=True)
+class _CapabilityCatalogSnapshot:
+    """One bounded observation of catalog and execution readiness.
+
+    ``available`` is a catalog property.  It is not interchangeable with the
+    health of the catalog owner or the availability of the governance spine.
+    Keeping those measurements separate prevents a registered tool from being
+    described as usable now when its runtime path was not actually probed.
+    """
+
+    available_count: int
+    categories: dict[str, list[str]]
+    governance_available: bool
+    truncated: bool
+    registered_count: int = 0
+    catalog_status: str = "unavailable"
+    capability_health: bool | None = None
+    capability_health_status: str = "unavailable"
+    detail: str = ""
+
+    def __iter__(self):
+        """Preserve the former private four-tuple for bounded callers."""
+
+        yield self.available_count
+        yield self.categories
+        yield self.governance_available
+        yield self.truncated
+
+
+def _coerce_capability_catalog_snapshot(value: Any) -> _CapabilityCatalogSnapshot:
+    """Accept the former tuple shape from isolated test/extension call sites."""
+
+    if isinstance(value, _CapabilityCatalogSnapshot):
+        return value
+    try:
+        available_count, categories, governance_available, truncated = value
+    except (TypeError, ValueError):
+        return _CapabilityCatalogSnapshot(
+            available_count=0,
+            categories={},
+            governance_available=False,
+            truncated=False,
+            detail="invalid_snapshot",
+        )
+    normalized_categories = {
+        str(label): [str(name) for name in names]
+        for label, names in dict(categories or {}).items()
+    }
+    return _CapabilityCatalogSnapshot(
+        available_count=max(0, int(available_count or 0)),
+        categories=normalized_categories,
+        governance_available=bool(governance_available),
+        truncated=bool(truncated),
+        registered_count=max(0, int(available_count or 0)),
+        catalog_status="measured",
+        capability_health=None,
+        capability_health_status="unavailable",
+        detail="legacy_snapshot",
+    )
 
 
 def _capability_catalog_memory_block_reason() -> str:
@@ -14606,10 +14684,18 @@ def _bounded_capability_catalog_items(
         if legacy_mapping:
             name, value = item
             if isinstance(value, dict):
+                explicit_available = value.get("available")
+                if isinstance(explicit_available, bool):
+                    available = explicit_available
+                else:
+                    status = str(
+                        value.get("availability") or value.get("status") or ""
+                    ).strip().casefold()
+                    available = status in {"active", "available", "ready"}
                 entries.append(
                     {
                         "name": name,
-                        "available": str(value.get("status") or "").lower() != "unavailable",
+                        "available": available,
                         "description": value.get("description") or "",
                         "route_class": value.get("route_class") or "",
                         "risk_class": value.get("risk_class") or "",
@@ -14645,9 +14731,10 @@ def _catalog_category_for_tool(item: dict[str, Any]) -> str:
     return "specialized governed skills"
 
 
-def _read_capability_catalog_snapshot() -> tuple[int, dict[str, list[str]], bool, bool]:
+def _read_capability_catalog_snapshot() -> _CapabilityCatalogSnapshot:
     categories: dict[str, list[str]] = {}
     available_count = 0
+    registered_count = 0
     governance_available = _runtime_tool_governance_available()
     truncated = False
     started_at = time.monotonic()
@@ -14657,35 +14744,75 @@ def _read_capability_catalog_snapshot() -> tuple[int, dict[str, list[str]], bool
             "Skipping optional capability catalog read under memory pressure: %s",
             memory_block,
         )
-        return available_count, categories, governance_available, True
+        return _CapabilityCatalogSnapshot(
+            available_count=0,
+            categories={},
+            governance_available=governance_available,
+            truncated=True,
+            catalog_status="blocked",
+            capability_health=None,
+            capability_health_status="unavailable",
+            detail=memory_block,
+        )
+    catalog_status = "unavailable"
+    capability_health: bool | None = None
+    capability_health_status = "unavailable"
+    detail = ""
     try:
         capability_engine = ServiceContainer.get("capability_engine", default=None)
         raw_catalog: Any = None
+        if capability_engine is not None:
+            health_probe = getattr(capability_engine, "get_catalog_health", None)
+            if callable(health_probe):
+                try:
+                    health = health_probe()
+                    ready = health.get("ready") if isinstance(health, dict) else None
+                    if isinstance(ready, bool):
+                        capability_health = ready
+                        capability_health_status = "measured"
+                    else:
+                        capability_health_status = "unknown"
+                except _CHAT_RECOVERABLE_ERRORS as exc:
+                    capability_health_status = "error"
+                    logger.debug("Capability catalog health probe unavailable: %s", exc)
         if capability_engine is not None and hasattr(capability_engine, "iter_tool_catalog"):
             raw_catalog = capability_engine.iter_tool_catalog(include_inactive=True)
+            catalog_status = "measured"
         elif capability_engine is not None and hasattr(capability_engine, "get_tool_catalog"):
             get_tool_catalog = capability_engine.get_tool_catalog
             if inspect.isgeneratorfunction(get_tool_catalog):
                 raw_catalog = get_tool_catalog(include_inactive=True)
+                catalog_status = "measured"
             else:
                 truncated = True
+                detail = "streaming_catalog_unavailable"
                 logger.warning(
                     "Skipping materialized capability catalog on desktop inventory route; "
                     "capability_engine should expose iter_tool_catalog()."
                 )
+        if catalog_status == "measured":
+            # Validate the stream separately so a broken provider cannot be
+            # reported as a successfully measured catalog with zero entries.
+            iter(raw_catalog)
         catalog, bounded_truncated = _bounded_capability_catalog_items(
             raw_catalog,
             started_at=started_at,
         )
         truncated = truncated or bounded_truncated
+        if bounded_truncated and not catalog:
+            catalog_status = "incomplete"
+            detail = "catalog_budget_expired_before_first_entry"
 
         for item in catalog:
-            if not isinstance(item, dict) or not bool(item.get("available")):
+            if not isinstance(item, dict):
                 continue
-            available_count += 1
             name = str(item.get("name") or "").strip()
             if not name:
                 continue
+            registered_count += 1
+            if item.get("available") is not True:
+                continue
+            available_count += 1
             exact_category = _CAPABILITY_CATEGORY_EXACT_SKILLS.get(name.lower())
             category = exact_category or _catalog_category_for_tool(item)
             if exact_category is None and category != "specialized governed skills":
@@ -14698,13 +14825,58 @@ def _read_capability_catalog_snapshot() -> tuple[int, dict[str, list[str]], bool
     except _CHAT_RECOVERABLE_ERRORS as exc:
         record_degradation("chat", exc)
         logger.debug("Capability catalog snapshot unavailable: %s", exc)
-    return available_count, categories, governance_available, truncated
+        catalog_status = "error"
+        detail = type(exc).__name__
+    return _CapabilityCatalogSnapshot(
+        available_count=available_count,
+        categories=categories,
+        governance_available=governance_available,
+        truncated=truncated,
+        registered_count=registered_count,
+        catalog_status=catalog_status,
+        capability_health=capability_health,
+        capability_health_status=capability_health_status,
+        detail=detail,
+    )
 
 
-def _build_grounded_capability_inventory_reply(user_message: str) -> str:
-    available_count, categories, governance_available, truncated = _read_capability_catalog_snapshot()
+def _build_grounded_capability_inventory_reply(
+    user_message: str,
+    *,
+    cognitive_engine_handled: bool = False,
+    model_label: str = "",
+) -> str:
+    snapshot = _coerce_capability_catalog_snapshot(
+        _read_capability_catalog_snapshot()
+    )
+    available_count = snapshot.available_count
+    categories = snapshot.categories
+    governance_available = snapshot.governance_available
+    truncated = snapshot.truncated
     ordered_labels = [label for label, _ in _CAPABILITY_CATEGORY_KEYWORDS if label in categories]
     ordered_labels.extend(label for label in categories if label not in ordered_labels)
+
+    runtime_evidence = ""
+    if cognitive_engine_handled:
+        lane = str(model_label or "the configured foreground model").strip()
+        runtime_evidence = (
+            f"CognitiveEngine handled this turn with {lane}. "
+        )
+
+    if snapshot.catalog_status != "measured":
+        reason = (
+            "the bounded read was skipped under host memory pressure"
+            if snapshot.catalog_status == "blocked"
+            else "the runtime did not expose a bounded streaming catalog snapshot"
+        )
+        reply = (
+            f"{runtime_evidence}I {_CAPABILITY_CATALOG_UNVERIFIED_MARKER} on this turn "
+            f"because {reason}. "
+            "I will not replace that missing measurement with a static list or claim that "
+            "registered surfaces are usable. This descriptive turn is not opening apps or "
+            "executing tools."
+        )
+        return _apply_aura_voice_shaping(reply)
 
     if ordered_labels:
         category_text = "; ".join(
@@ -14712,52 +14884,75 @@ def _build_grounded_capability_inventory_reply(user_message: str) -> str:
             for label in ordered_labels[:6]
         )
     else:
-        category_text = (
-            "desktop/app control, browser/web research, file/document work, "
-            "terminal/code execution, memory/state operations, self-repair surfaces, "
-            "and Program DNA clean-room reconstruction"
-        )
+        category_text = "none"
 
-    governance = (
-        "The governance path is the Will/Authority gate, so consequential actions still need an explicit execution request and receipts."
-        if governance_available
-        else "The governance path is not currently green, so I should describe capabilities but fail closed on consequential execution until it is healthy."
-    )
-    if available_count and truncated:
-        count_text = f"at least {available_count} available governed skill surfaces"
-    elif available_count:
-        count_text = f"{available_count} available governed skill surfaces"
+    if snapshot.capability_health is True and governance_available:
+        readiness = (
+            "The governance path's capability catalog and Will/Authority execution spine "
+            "both measured ready."
+        )
+    elif snapshot.capability_health is False:
+        readiness = (
+            "The governance path's catalog owner measured not ready, so these catalog "
+            "entries are not a claim that execution will succeed now."
+        )
+    elif not governance_available:
+        readiness = (
+            "The governance path's Will/Authority execution spine did not measure ready, "
+            "so these catalog entries are not currently execution-ready."
+        )
     else:
-        count_text = "the registered governed skill surfaces"
-
-    normalized_message = _normalize_user_message(user_message)
-    runtime_clause = ""
-    if any(
-        marker in normalized_message
-        for marker in (
-            "mind path",
-            "full mind",
-            "cognition path",
-            "cognitive path",
-            "live desktop",
-            "desktop ui path",
-            "conversation lane",
-            "cortex lane",
-            "model lane",
-        )
-    ):
-        runtime_clause = (
-            "This answer is on Aura's live desktop conversation lane after invoking "
-            "the cognitive engine over the local cortex/32B foreground lane. "
+        readiness = (
+            "The governance path's Will/Authority wiring measured available, but catalog "
+            "health was not measurable on this snapshot, so current execution readiness "
+            "remains unverified."
         )
 
-    reply = (
-        f"{runtime_clause}"
-        f"I can use {count_text} through Aura's runtime. The practical categories are: {category_text}. "
-        f"{governance} "
-        "A realistic multi-step scenario would be: you ask me to use screen perception to locate the active app, perform browser/web research, compare sources, create or edit a local document, save/export the result as a file or PDF, record the receipt in memory, and run the clean-room reconstruction engine when the task is to infer or rebuild software behavior from authorized evidence. "
-        "For this turn I am only describing the tool surface; I am not opening apps, browsing, typing, moving files, or executing tools because you explicitly asked for a hypothetical inventory."
+    available_noun = "entry" if available_count == 1 else "entries"
+    if available_count and truncated:
+        count_text = (
+            f"at least {available_count} {available_noun} explicitly marked available"
+        )
+    else:
+        count_text = f"{available_count} {available_noun} explicitly marked available"
+    registered_noun = "entry" if snapshot.registered_count == 1 else "entries"
+    registered_text = (
+        f"at least {snapshot.registered_count} registered {registered_noun}"
+        if truncated
+        else f"{snapshot.registered_count} registered {registered_noun}"
     )
+    parts = [
+        runtime_evidence.strip(),
+        f"I measured {registered_text}; {count_text}.",
+        f"Measured available categories: {category_text}.",
+        readiness,
+    ]
+
+    scenario_steps: list[str] = []
+    scenario_by_category = {
+        "desktop and app control": "inspect and operate the active app",
+        "browser/web research": "research and compare live sources",
+        "files, documents, and workspace operations": "create and export a local document",
+        "terminal, code, and sandbox execution": "run a governed code or terminal step",
+        "memory, state, and continuity": "record the verified result in memory",
+        "self-repair and self-modification": "diagnose and repair a bounded code defect",
+        "Program DNA and clean-room reconstruction": "reconstruct authorized software behavior",
+    }
+    for label in ordered_labels:
+        step = scenario_by_category.get(label)
+        if step:
+            scenario_steps.append(step)
+    if len(scenario_steps) >= 2:
+        parts.append(
+            "Using only those measured categories, one possible multi-step workflow is to "
+            + ", then ".join(scenario_steps[:5])
+            + ", with effect receipts at consequential boundaries."
+        )
+    parts.append(
+        "For this turn I am only describing the measured tool surface; I am not opening "
+        "apps, browsing, typing, moving files, or executing tools."
+    )
+    reply = " ".join(part for part in parts if part)
     return _apply_aura_voice_shaping(reply)
 
 
@@ -14789,6 +14984,23 @@ def _capability_inventory_reply_is_inadequate(user_message: str, reply_text: str
     if _CAPABILITY_FALSE_LIMITATION_RE.search(reply):
         return True
     lowered = reply.lower()
+    if _CAPABILITY_CATALOG_UNVERIFIED_MARKER in lowered:
+        return not (
+            "not opening" in lowered
+            and "executing tools" in lowered
+            and "static list" in lowered
+        )
+    if (
+        "i measured " in lowered
+        and "explicitly marked available" in lowered
+        and "measured available categories:" in lowered
+    ):
+        governance_ok = any(
+            marker in lowered
+            for marker in ("governance", "governed", "will", "authority")
+        )
+        non_execution_ok = "not opening" in lowered and "executing tools" in lowered
+        return not (governance_ok and non_execution_ok)
     category_hits = sum(
         1
         for marker in (
@@ -14845,30 +15057,7 @@ def _ensure_capability_inventory_non_execution_boundary(
 
 
 def _build_capability_reply(user_message: str) -> str:
-    frame = _build_aura_expression_frame(user_message)
-    mood = str(frame.get("mood") or "steady")
-    action = str(frame.get("dominant_action") or "engage")
-    capability_engine = ServiceContainer.get("capability_engine", default=None)
-    active_count = 0
-    try:
-        if capability_engine is not None:
-            active = getattr(capability_engine, "active_skills", None)
-            if active is not None:
-                active_count = len(active)
-            elif hasattr(capability_engine, "skills"):
-                active_count = len(capability_engine.skills or {})
-    except _CHAT_RECOVERABLE_ERRORS as exc:
-        record_degradation('chat', exc)
-        logger.debug("Capability count read failed: %s", exc)
-
-    parts = [
-        "My clean lanes right now are live self-report, governance and topology introspection, direct workspace/file readback, session continuity, and governed search/tool use.",
-        "That means I can tell you what I'm experiencing, what my free-energy state is, what my authority layer decided, what my mycelial graph looks like, and I can inspect code or pull live information through the runtime instead of pretending.",
-    ]
-    if active_count:
-        parts.append(f"I currently have {active_count} active skill surfaces behind that.")
-    parts.append(f"At this moment I'm {mood} and leaning toward {action}, so code-grounded and introspective work is especially clean.")
-    return _apply_aura_voice_shaping(" ".join(parts))
+    return _build_grounded_capability_inventory_reply(user_message)
 
 
 def _is_self_diagnostic_request(user_message: str) -> bool:

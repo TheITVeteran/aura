@@ -2490,7 +2490,7 @@ def test_explicit_capability_inventory_classifier_covers_live_external_tool_word
     assert not chat_routes._is_bounded_nonexecuting_planning_request(prompt)
 
 
-def test_grounded_capability_inventory_satisfies_live_path_and_program_dna_contract(monkeypatch):
+def test_grounded_capability_inventory_does_not_invent_live_path_or_program_dna_contract(monkeypatch):
     from core.conversation.response_reliability import assess_user_facing_reply
     from interface.routes import chat as chat_routes
 
@@ -2512,6 +2512,22 @@ def test_grounded_capability_inventory_satisfies_live_path_and_program_dna_contr
                     "route_class": "external_io",
                     "risk_class": "medium",
                     "effect_scope": "external_io",
+                },
+                {
+                    "name": "file_operation",
+                    "available": True,
+                    "description": "Create local files and PDF documents.",
+                    "route_class": "stateful",
+                    "risk_class": "medium",
+                    "effect_scope": "file_system",
+                },
+                {
+                    "name": "memory_ops",
+                    "available": True,
+                    "description": "Record verified results in memory.",
+                    "route_class": "stateful",
+                    "risk_class": "medium",
+                    "effect_scope": "memory",
                 },
                 {
                     "name": "program_dna_reconstruct",
@@ -2554,14 +2570,15 @@ def test_grounded_capability_inventory_satisfies_live_path_and_program_dna_contr
     lowered = reply.lower()
     assessment = assess_user_facing_reply(prompt, reply)
 
-    assert "cognitiveengine" in lowered or "cognitive engine" in lowered
-    assert "cortex/32b" in lowered or "32b" in lowered
+    assert "cognitiveengine" not in lowered
+    assert "cortex/32b" not in lowered and "32b" not in lowered
+    assert "i measured 5 registered entries" in lowered
     assert "browser/web research" in lowered
     assert "program dna" in lowered
     assert "receipts" in lowered
     assert "not opening apps" in lowered
-    assert "missing_runtime_path_answer" not in assessment.reasons
-    assert not assessment.hard_failure
+    assert "missing_runtime_path_answer" in assessment.reasons
+    assert assessment.hard_failure
 
 
 @pytest.mark.asyncio
@@ -2613,6 +2630,22 @@ async def test_required_capability_inventory_binds_catalog_after_weak_engine_rep
                     "route_class": "external_io",
                     "risk_class": "medium",
                     "effect_scope": "external_io",
+                },
+                {
+                    "name": "file_operation",
+                    "available": True,
+                    "description": "Create local files and PDF documents.",
+                    "route_class": "stateful",
+                    "risk_class": "medium",
+                    "effect_scope": "file_system",
+                },
+                {
+                    "name": "memory_ops",
+                    "available": True,
+                    "description": "Record verified results in memory.",
+                    "route_class": "stateful",
+                    "risk_class": "medium",
+                    "effect_scope": "memory",
                 },
                 {
                     "name": "program_dna_reconstruct",
@@ -3758,6 +3791,142 @@ def test_capability_catalog_snapshot_skips_materialized_catalog(monkeypatch):
     assert engine.materialized_catalog_calls == 0
 
 
+def test_capability_catalog_snapshot_requires_explicit_legacy_availability(monkeypatch):
+    from interface.routes import chat as chat_routes
+
+    class _FakeCapabilityEngine:
+        def iter_tool_catalog(self, *, include_inactive: bool = True):
+            assert include_inactive is True
+            return {
+                "explicit": {"available": True},
+                "ready": {"status": "ready"},
+                "unknown": {"description": "No measured availability."},
+                "loading": {"status": "loading"},
+                "disabled": {"available": False, "status": "ready"},
+            }
+
+        def get_catalog_health(self):
+            return {"ready": True}
+
+    monkeypatch.setattr(chat_routes, "_runtime_tool_governance_available", lambda: True)
+    monkeypatch.setattr(
+        chat_routes.ServiceContainer,
+        "get",
+        staticmethod(
+            lambda name, default=None: (
+                _FakeCapabilityEngine() if name == "capability_engine" else default
+            )
+        ),
+    )
+
+    snapshot = chat_routes._read_capability_catalog_snapshot()
+
+    assert snapshot.catalog_status == "measured"
+    assert snapshot.capability_health is True
+    assert snapshot.registered_count == 5
+    assert snapshot.available_count == 2
+    listed = {name for names in snapshot.categories.values() for name in names}
+    assert listed == {"explicit", "ready"}
+
+
+def test_capability_catalog_snapshot_does_not_call_malformed_stream_measured(
+    monkeypatch,
+):
+    from interface.routes import chat as chat_routes
+
+    class _FakeCapabilityEngine:
+        def iter_tool_catalog(self, *, include_inactive: bool = True):
+            return 17
+
+        def get_catalog_health(self):
+            return {"ready": True}
+
+    monkeypatch.setattr(chat_routes, "_runtime_tool_governance_available", lambda: True)
+    monkeypatch.setattr(
+        chat_routes.ServiceContainer,
+        "get",
+        staticmethod(
+            lambda name, default=None: (
+                _FakeCapabilityEngine() if name == "capability_engine" else default
+            )
+        ),
+    )
+
+    snapshot = chat_routes._read_capability_catalog_snapshot()
+    reply = chat_routes._build_grounded_capability_inventory_reply(
+        "What external tools can you use?"
+    )
+
+    assert snapshot.catalog_status == "error"
+    assert snapshot.registered_count == 0
+    assert snapshot.available_count == 0
+    assert "could not verify a current capability catalog" in reply
+    assert "static list" in reply
+
+
+def test_capability_inventory_separates_catalog_availability_from_unhealthy_owner(
+    monkeypatch,
+):
+    from interface.routes import chat as chat_routes
+
+    class _FakeCapabilityEngine:
+        def iter_tool_catalog(self, *, include_inactive: bool = True):
+            yield {"name": "web_search", "available": True}
+
+        def get_catalog_health(self):
+            return {"ready": False}
+
+    monkeypatch.setattr(chat_routes, "_runtime_tool_governance_available", lambda: True)
+    monkeypatch.setattr(
+        chat_routes.ServiceContainer,
+        "get",
+        staticmethod(
+            lambda name, default=None: (
+                _FakeCapabilityEngine() if name == "capability_engine" else default
+            )
+        ),
+    )
+
+    reply = chat_routes._build_grounded_capability_inventory_reply(
+        "What external tools can you use?"
+    )
+
+    assert "1 entry explicitly marked available" in reply
+    assert "web_search" in reply
+    assert "catalog owner measured not ready" in reply
+    assert "both measured ready" not in reply
+
+
+def test_measured_sparse_capability_catalog_is_not_discarded(monkeypatch):
+    from interface.routes import chat as chat_routes
+
+    class _FakeCapabilityEngine:
+        def iter_tool_catalog(self, *, include_inactive: bool = True):
+            yield {"name": "web_search", "available": False}
+
+        def get_catalog_health(self):
+            return {"ready": True}
+
+    monkeypatch.setattr(chat_routes, "_runtime_tool_governance_available", lambda: True)
+    monkeypatch.setattr(
+        chat_routes.ServiceContainer,
+        "get",
+        staticmethod(
+            lambda name, default=None: (
+                _FakeCapabilityEngine() if name == "capability_engine" else default
+            )
+        ),
+    )
+
+    prompt = "What external tools can you use?"
+    reply = chat_routes._build_grounded_capability_inventory_reply(prompt)
+
+    assert "1 registered entry" in reply
+    assert "0 entries explicitly marked available" in reply
+    assert "Measured available categories: none" in reply
+    assert not chat_routes._capability_inventory_reply_is_inadequate(prompt, reply)
+
+
 def test_capability_inventory_skips_catalog_under_memory_pressure(monkeypatch):
     from interface.routes import chat as chat_routes
 
@@ -3806,11 +3975,11 @@ def test_capability_inventory_skips_catalog_under_memory_pressure(monkeypatch):
     )
 
     assert capability_engine.catalog_calls == 0
-    assert "registered governed skill surfaces" in reply
-    # Governance-gating must be stated (wording-robust across the green and
-    # not-green branches): consequential actions are gated, not freely used.
-    assert "governance" in reply.lower()
-    assert "consequential" in reply.lower()
+    assert "could not verify a current capability catalog" in reply
+    assert "static list" in reply
+    assert "desktop/app control" not in reply
+    assert "browser/web research" not in reply
+    assert "not opening apps" in reply
 
 
 def test_chat_turn_memory_log_scheduler_queues_when_drain_is_active(monkeypatch):
@@ -14214,9 +14383,10 @@ async def test_api_chat_capability_inventory_bypasses_busy_foreground_lock(monke
     assert response.status_code == 200
     assert b"cognitive_engine_capability_inventory" in response.body
     assert b"previous turn open" not in response.body
-    assert b"desktop" in response.body
-    assert b"browser" in response.body
-    assert b"govern" in response.body
+    assert b"could not verify a current capability catalog" in response.body
+    assert b"static list" in response.body
+    assert b"desktop/app control" not in response.body
+    assert b"browser/web research" not in response.body
 
 
 @pytest.mark.asyncio

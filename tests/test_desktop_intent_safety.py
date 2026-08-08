@@ -120,7 +120,7 @@ def test_bounded_capability_inventory_repair_handles_failed_desktop_engine(
     assert "computer_use" in reply
     assert "web_search" in reply
     assert "will/authority" in lowered
-    assert "hypothetical inventory" in lowered
+    assert "measured tool surface" in lowered
     assert "assistant" not in lowered
 
 

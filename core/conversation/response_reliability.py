@@ -5193,7 +5193,7 @@ def _reply_has_pseudo_internal_jargon(reply_text: Any) -> bool:
         return True
     reply = _normalize(raw)
     return bool(
-        "field" in reply
+        re.search(r"\bfield\b", reply)
         and any(marker in reply for marker in ("memory", "cognitive", "neural", "trauma", "temperature"))
         and not any(marker in reply for marker in ("conversation", "thread", "attention", "focus", "with you"))
     )
@@ -6188,6 +6188,9 @@ def _has_camelcase_internal_jargon(user_message: Any, reply_text: Any) -> bool:
             "cognitive path",
             "desktop route",
             "live desktop route",
+            "desktop path",
+            "live desktop path",
+            "desktop ui path",
             "conversation lane",
             "model lane",
             "what path are you using",
