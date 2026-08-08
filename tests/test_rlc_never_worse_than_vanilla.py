@@ -78,6 +78,7 @@ def test_ordinary_decode_owns_the_answer_until_something_beats_it():
     full = sweep._build_config(8, 16, "applied", 512, profile="full")
     assert full.decode_incumbent_policy == "vanilla_incumbent"
     assert full.answer_replacement_enabled is True
+    assert full.decode_bridge_policy == "assistant_answer_v4"
 
 
 def test_the_ablation_is_allowed_to_break_the_floor():

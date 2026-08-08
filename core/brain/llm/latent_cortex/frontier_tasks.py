@@ -22,7 +22,7 @@ from fractions import Fraction
 from types import MappingProxyType
 from typing import Any, NoReturn, cast
 
-from core.brain.frontier_evidence_v5 import canonical_json_bytes
+from core.brain.canonical_json import canonical_json_bytes
 from core.brain.llm.latent_cortex.response_contracts import (
     ResponseContractError,
     parse_response_contract,

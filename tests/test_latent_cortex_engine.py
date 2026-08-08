@@ -1429,8 +1429,11 @@ def test_bridge_policies_produce_distinct_hashable_cues(tiny_model):
     v3 = LatentCortexEngine(
         tiny_model, RecordingTokenizer(), config=_config(decode_bridge_policy="assistant_answer_v3")
     )._decode_bridge_tokens()
-    assert v1 and v2 and v3
-    assert len({tuple(v1), tuple(v2), tuple(v3)}) == 3
+    v4 = LatentCortexEngine(
+        tiny_model, RecordingTokenizer(), config=_config(decode_bridge_policy="assistant_answer_v4")
+    )._decode_bridge_tokens()
+    assert v1 and v2 and v3 and v4
+    assert len({tuple(v1), tuple(v2), tuple(v3), tuple(v4)}) == 4
     with pytest.raises(ValueError):
         LatentCortexEngine(
             tiny_model, RecordingTokenizer(), config=_config(decode_bridge_policy="bogus")
@@ -1637,3 +1640,36 @@ def test_suppressed_terminal_instruction_leaves_the_decode_prefix_empty(tiny_mod
     assert composition["terminal_instruction_tokens"] == 0
     assert receipt["decode_prefix_token_count"] == 0
     assert receipt["decode_bridge_applied"] is False
+
+
+def test_candidate_bridge_never_conditions_the_vanilla_incumbent(tiny_model):
+    """Candidate completion help cannot silently change the protected floor."""
+    import mlx.core as mx
+
+    class CandidateTokenizer:
+        eos_token_id = 0
+
+        def encode(self, text, **kwargs):
+            return [ord(character) % 128 for character in text][:24]
+
+        def decode(self, ids):
+            return " ".join(str(token) for token in ids)
+
+    mx.random.seed(20260808)
+    engine = LatentCortexEngine(
+        tiny_model,
+        CandidateTokenizer(),
+        config=_config(
+            decode_bridge_policy="assistant_answer_v4",
+            decode_incumbent_policy="vanilla_incumbent",
+            terminal_instruction_policy="suppressed",
+        ),
+    )
+    receipt = engine.reason(token_ids=PROMPT_TOKENS).receipt.to_dict()
+
+    composition = receipt["decode_prefix_composition"]
+    assert composition["candidate_probe_bridge_tokens"] > 0
+    assert composition["policy_bridge_tokens"] == 0
+    assert receipt["decode_prefix_token_count"] == 0
+    assert receipt["decode_bridge_applied"] is False
+    assert receipt["decode_bridge_token_count"] == 0

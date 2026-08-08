@@ -97,10 +97,15 @@ _ASSISTANT_ANSWER_BRIDGE_V3 = (
     "\nFinal answer (do not quote or repeat the request; answer each part "
     "directly and finish the complete response):\n"
 )
+_ASSISTANT_ANSWER_BRIDGE_V4 = (
+    "\nProduce the complete candidate answer now. Be concise, omit preamble, "
+    "and end with the exact final-answer contract requested by the user.\n"
+)
 _BRIDGE_TEXT_BY_POLICY = {
     "assistant_answer_v1": _ASSISTANT_ANSWER_BRIDGE,
     "assistant_answer_v2": _ASSISTANT_ANSWER_BRIDGE_V2,
     "assistant_answer_v3": _ASSISTANT_ANSWER_BRIDGE_V3,
+    "assistant_answer_v4": _ASSISTANT_ANSWER_BRIDGE_V4,
 }
 # Decode discipline: at most this many consecutive pure-newline tokens are
 # admitted before newline-family logits are masked for the next sample. Two
@@ -6231,6 +6236,15 @@ class LatentCortexEngine:
             final_fusion_audit = None
             final_decode_transaction = None
             latent_decode_authorized = self.config.decode_incumbent_policy == "latent"
+            public_bridge_tokens = list(bridge_tokens) if latent_decode_authorized else []
+            effective_terminal_instruction_tokens = (
+                list(terminal_instruction_tokens) if latent_decode_authorized else []
+            )
+            effective_terminal_instruction_policy = (
+                self.config.terminal_instruction_policy
+                if latent_decode_authorized
+                else "suppressed"
+            )
             heterogeneous_decode_applied = bool(
                 heterogeneous_fusion_context is not None and latent_decode_authorized
             )
@@ -6391,15 +6405,23 @@ class LatentCortexEngine:
                     cancel_check=cancel_check,
                     decode_authority="vanilla_incumbent",
                 )
-            receipt.decode_prefix_token_count = len(bridge_tokens)
+            receipt.decode_prefix_token_count = len(public_bridge_tokens)
             receipt.decode_prefix_composition = {
-                "policy_bridge_tokens": policy_bridge_token_count,
-                "terminal_instruction_tokens": len(terminal_instruction_tokens),
-                "terminal_instruction_policy": self.config.terminal_instruction_policy,
+                "policy_bridge_tokens": (
+                    policy_bridge_token_count if latent_decode_authorized else 0
+                ),
+                "candidate_probe_bridge_tokens": policy_bridge_token_count,
+                "terminal_instruction_tokens": len(
+                    effective_terminal_instruction_tokens
+                ),
+                "terminal_instruction_policy": effective_terminal_instruction_policy,
+                "configured_terminal_instruction_policy": (
+                    self.config.terminal_instruction_policy
+                ),
             }
-            if bridge_tokens:
+            if public_bridge_tokens:
                 serialized_bridge = json.dumps(
-                    bridge_tokens,
+                    public_bridge_tokens,
                     separators=(",", ":"),
                     allow_nan=False,
                 ).encode("ascii")
@@ -6432,7 +6454,7 @@ class LatentCortexEngine:
                     decode_logits = self._apply_decode_bridge(
                         cache,
                         budget,
-                        bridge_tokens,
+                        public_bridge_tokens,
                     )
                     receipt.decode_bridge_logits_digest = _logits_digest(decode_logits)
                     stage_started = self._stage_checkpoint(
@@ -6732,9 +6754,9 @@ class LatentCortexEngine:
         output_text = self._decode_public_text(out_tokens, receipt=receipt)
         receipt.terminal_disposition = finalize_terminal_disposition_receipt(
             terminal_decision,
-            instruction_tokens=terminal_instruction_tokens,
-            instruction_policy=self.config.terminal_instruction_policy,
-            full_bridge_tokens=bridge_tokens,
+            instruction_tokens=effective_terminal_instruction_tokens,
+            instruction_policy=effective_terminal_instruction_policy,
+            full_bridge_tokens=public_bridge_tokens,
             output_tokens=out_tokens,
             output_text=output_text,
             output_source=(

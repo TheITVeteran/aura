@@ -81,6 +81,11 @@ def test_symbolic_critic_identity_is_disjoint_from_neural_generator():
     assert validated["runtime_state_audit"]["trainable_parameter_count"] == 0
     assert validated["generator_identity"]["logical_parameter_count"] == 32_000_000_000
     assert validated["source_identity"]["dependency_audit"]["passed"] is True
+    source_paths = {
+        row["path"] for row in validated["source_identity"]["source_files"]
+    }
+    assert "core/brain/canonical_json.py" in source_paths
+    assert "core/brain/frontier_evidence_v5.py" not in source_paths
     assert (
         validated["critic_function_sha256"]
         != validated["generator_identity"]["function_sha256"]

@@ -404,7 +404,11 @@ def _build_config(
         # breaks the floor the whole design depends on.
         decode_repetition_penalty=1.0 if full else 1.25,
         decode_repetition_window=72,
-        decode_bridge_policy="none",
+        # The protected public answer remains the byte-identical vanilla
+        # incumbent. This bridge is consumed only by latent candidate probes,
+        # where the 32B otherwise spends its 256-token evidence budget on
+        # preamble and never reaches the requested terminal answer contract.
+        decode_bridge_policy=("assistant_answer_v4" if full else "none"),
         # The deployed system runs "vanilla_incumbent": every subsystem still
         # executes and is receipted, but the public answer decodes from the
         # clean prompt root, and a latent answer only takes over when an

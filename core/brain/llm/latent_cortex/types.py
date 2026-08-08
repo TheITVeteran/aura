@@ -793,8 +793,9 @@ class CortexConfig:
             "assistant_answer_v1",
             "assistant_answer_v2",
             "assistant_answer_v3",
+            "assistant_answer_v4",
         }:
-            problems.append("decode_bridge_policy must be none or an assistant_answer_v1-v3 policy")
+            problems.append("decode_bridge_policy must be none or an assistant_answer_v1-v4 policy")
         if self.terminal_instruction_policy not in {"applied", "suppressed"}:
             problems.append("terminal_instruction_policy must be applied or suppressed")
         if not (

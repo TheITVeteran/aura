@@ -13,7 +13,6 @@ import copy
 import hashlib
 import hmac
 import itertools
-import json
 import math
 import random
 import re
@@ -25,6 +24,8 @@ from typing import Any
 
 from cryptography.exceptions import InvalidSignature
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
+
+from core.brain.canonical_json import canonical_json_bytes
 
 PROTOCOL_VERSION = 5
 MAX_CHALLENGE_LIFETIME_S = 3_600.0
@@ -140,18 +141,6 @@ def _require_bounded_structure(payload: Any, *, role: str) -> None:
         elif isinstance(node, (list, tuple)):
             for value in node:
                 stack.append((value, depth + 1))
-
-
-def canonical_json_bytes(value: Any) -> bytes:
-    """Canonical bytes used for every v5 hash and signature."""
-
-    return json.dumps(
-        value,
-        ensure_ascii=True,
-        allow_nan=False,
-        separators=(",", ":"),
-        sort_keys=True,
-    ).encode("utf-8")
 
 
 def sha256_json(value: Any) -> str:

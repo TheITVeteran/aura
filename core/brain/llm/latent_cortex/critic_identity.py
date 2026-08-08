@@ -38,10 +38,10 @@ _CRITIC_SOURCE_FILES = (
     "core/brain/llm/latent_cortex/output_quality.py",
     "core/brain/llm/latent_cortex/response_contracts.py",
     "core/brain/llm/latent_cortex/frontier_tasks.py",
-    "core/brain/frontier_evidence_v5.py",
+    "core/brain/canonical_json.py",
 )
 _ALLOWED_INTERNAL_IMPORTS = {
-    "core.brain.frontier_evidence_v5",
+    "core.brain.canonical_json",
     "core.brain.llm.latent_cortex.atomic_decomposition",
     "core.brain.llm.latent_cortex.deterministic_verifier_router",
     "core.brain.llm.latent_cortex.fast_weight_learning",
