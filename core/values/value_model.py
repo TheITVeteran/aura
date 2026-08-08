@@ -371,21 +371,46 @@ class BoundedValueModel:
         if not judgment.permitted:
             return judgment  # already refusing; Will only tightens, never loosens
         try:
-            from core.governance.will import ActionDomain, get_will
-            decision = get_will().decide(
-                content=f"value_model:{action.description}",
+            from core.governance.will import ActionDomain
+            from core.runtime.action_executor import ActionExecutor
+
+            admission = ActionExecutor.authorize_action(
+                action_name="value_model.action_judgment",
+                params={
+                    "description": action.description[:500],
+                    "domain": action.domain,
+                    "impact": action.impact,
+                    "reversible": action.reversible,
+                    "confirmed": action.confirmed,
+                },
                 source="value_model",
                 domain=ActionDomain.STATE_MUTATION,
                 priority=0.5,
-                context={"constitutional_flags": judgment.constitutional_flags,
-                         "requires_confirmation": judgment.requires_confirmation},
+                context={
+                    "source": "value_model",
+                    "constitutional_flags": list(judgment.constitutional_flags),
+                    "requires_confirmation": judgment.requires_confirmation,
+                    "affects_privacy": action.affects_privacy,
+                    "self_modifying": action.self_modifying,
+                    "governed": action.governed,
+                },
             )
-            if not decision.is_approved():
+            if not admission.approved:
                 judgment.permitted = False
                 judgment.recommendation = "refuse"
-                judgment.reasons.append(f"Will declined: {decision.reason}")
+                judgment.reasons.append(f"Will declined: {admission.reason}")
         except (ImportError, AttributeError, RuntimeError, OSError, ValueError, TypeError) as exc:
-            record_degradation("value_model", exc, severity="debug")
+            record_degradation(
+                "value_model",
+                exc,
+                severity="degraded",
+                action="refused value-model action because Will authorization was unavailable",
+            )
+            judgment.permitted = False
+            judgment.recommendation = "refuse"
+            judgment.reasons.append(
+                f"Will authorization unavailable: {type(exc).__name__}"
+            )
         return judgment
 
     @staticmethod

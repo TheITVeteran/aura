@@ -132,10 +132,9 @@ def test_strained_user_plus_high_stakes_slows_down(vm, monkeypatch, tmp_path):
 # ── Will anchoring ──────────────────────────────────────────────────────────
 
 def test_evaluate_with_will_can_only_tighten(vm, monkeypatch):
-    import core.values.value_model as vmod
-
     class _Decision:
         reason = "policy veto"
+        receipt_id = "value-model-refusal"
 
         def is_approved(self):
             return False
@@ -144,14 +143,57 @@ def test_evaluate_with_will_can_only_tighten(vm, monkeypatch):
         def decide(self, **kw):
             return _Decision()
 
-    monkeypatch.setattr(vmod, "get_will", lambda: _Will(), raising=False)
-    # Patch the lazily-imported symbol path used inside evaluate_with_will.
-    import core.governance.will as will_mod
-    monkeypatch.setattr(will_mod, "get_will", lambda: _Will())
+    monkeypatch.setattr("core.will.get_will", lambda: _Will())
 
     j = vm.evaluate_with_will(ActionDescriptor("reversible safe edit", reversible=True))
     assert j.permitted is False
     assert any("Will declined" in r for r in j.reasons)
+
+
+def test_evaluate_with_will_fails_closed_when_authority_is_unavailable(vm, monkeypatch):
+    def unavailable():
+        raise RuntimeError("will offline")
+
+    monkeypatch.setattr("core.will.get_will", unavailable)
+
+    j = vm.evaluate_with_will(ActionDescriptor("reversible safe edit", reversible=True))
+
+    assert j.permitted is False
+    assert j.recommendation == "refuse"
+    assert any("authorization unavailable" in reason for reason in j.reasons)
+
+
+def test_evaluate_with_will_binds_action_evidence_to_one_admission(vm, monkeypatch):
+    decisions = []
+
+    class _Decision:
+        reason = "approved"
+        receipt_id = "value-model-approval"
+
+        def is_approved(self):
+            return True
+
+    class _Will:
+        def decide(self, **kwargs):
+            decisions.append(kwargs)
+            return _Decision()
+
+    monkeypatch.setattr("core.will.get_will", lambda: _Will())
+    action = ActionDescriptor(
+        "edit a reversible local preference",
+        domain="preference",
+        reversible=True,
+        confirmed=False,
+        impact=0.2,
+    )
+
+    j = vm.evaluate_with_will(action)
+
+    assert j.permitted is True
+    assert len(decisions) == 1
+    assert decisions[0]["source"] == "value_model"
+    assert decisions[0]["context"]["source"] == "value_model"
+    assert "edit a reversible local preference" in decisions[0]["content"]
 
 
 # ── VALUE store adapter for intentional retrieval ───────────────────────────
