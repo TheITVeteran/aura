@@ -38083,3 +38083,61 @@ migration debt at zero and `1,950` total calls still awaiting canonical
 ownership. This closes the identified state-publication defect; it does not
 claim the remaining effect migrations, semantic review, live proof, resident
 RLC verdict, fusion, release certification, or deferred endurance work.
+
+## Checkpoint 2026-08-08-010: Desktop Steps Inherit One Real Decision
+
+`computer_use` and `web_interlocutor` no longer invoke the desktop gateway as
+non-owner call sites or mint local-internal tool receipts from source strings.
+Their low-level AppleScript, screen-perception, and visible keyboard steps must
+inherit the existing CapabilityEngine/ActionExecutor governance lease. A
+background interlocutor task keeps the copied initiating lease and its run ID
+is attached to transport logs; it does not convert background execution into a
+new approval prompt.
+
+`ActionExecutor.request_desktop_transport` is now the sole synchronous desktop
+transport owner. Aura.app's native `NSAppleScript` route moved behind the same
+gateway, preserving its TCC identity without bypassing governance or
+provenance. A failed native execution is never replayed through `osascript`,
+which prevents duplicate effects. If provenance evaluation raises, or its
+required handler is absent after governance becomes live, the gateway returns
+a structured refusal rather than assuming the turn is trusted.
+
+The focused desktop, content-provenance, web-interlocutor, computer-use, and
+ActionExecutor suite passes `145/145`; canonical smoke passes `103/103` and
+governance, focused Ruff, byte-compilation, and diff hygiene pass. The effect
+inventory now recognizes `2,215` calls in `2,066` buckets with desktop-gateway
+migration debt at zero and `1,948` total migration-debt calls remaining.
+
+### Current Chat Semantic Remediation Queue
+
+A first-to-last semantic review covered all `24,854` current lines of
+`interface/routes/chat.py`. It found no P0 issue and opened these exact tasks;
+review coverage is not remediation and none is closed by the review receipt:
+
+- **P1:** principal-bind durable memory pins before paired cross-session recall.
+- **P1:** session/principal-filter protected recovery history before it reaches a model prompt.
+- **P1:** cancel or generation-fence stale turn holders when a chat lock is preempted.
+- **P1:** make regenerate select and update one session-bound exchange by immutable ID.
+- **P1:** verify every requested desktop/research predicate, including source count,
+  recency, actual reading, synthesis, independent opinion, format, and location.
+- **P1:** fail closed when defensive-ingress or conscience pre-gates are unavailable.
+- **P2:** move tableau proof, collection, whole-file reads, and memory/goal exports off
+  the event loop under explicit time and size budgets.
+- **P2:** partition repetition, degradation, and relevance state by conversation.
+- **P2:** remove recovery claims about identity, recurrence, memory, tools, and failure
+  cause unless the current request measured them.
+- **P2:** replace the bare `you`/`your` topicality bypass with semantic continuity evidence.
+- **P2:** finish recoverable deterministic work in-turn instead of discarding it, and
+  keep output-shape failures consistent with the in-band degraded-response contract.
+- **P2:** strip malformed affordance control syntax before any user delivery.
+- **P2:** reconstruct durable transcripts by exchange identity rather than row adjacency.
+- **P2:** close surface-delivery state on every fast, defensive, conscience, pressure,
+  and error return, not only the final quality path.
+- **P3:** encrypt and principal-bind explicit memory pins at rest.
+- **P3:** report capability availability only from a measured catalog/health snapshot.
+
+The resident complete-engine RLC experiment, these chat remediations, remaining
+effect migrations, the active-code and exhaustive semantic campaigns, live
+proof, fusion admission, release certification, and deferred endurance work
+remain open. No gain, frontier, activation, fusion, release, or `WOW Signal`
+claim is made.

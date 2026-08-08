@@ -169,14 +169,6 @@
       "scope": "<module>.async_main"
     },
     {
-      "callee": "core.runtime.desktop_action_gateway.get_desktop_action_gateway().run_applescript",
-      "canonical_owner": false,
-      "category": "desktop_action_gateway",
-      "count": 1,
-      "path": "core/capabilities/web_interlocutor.py",
-      "scope": "<module>._run_governed_applescript"
-    },
-    {
       "callee": "core.runtime.desktop_action_gateway.get_desktop_action_gateway().run_applescript_async",
       "canonical_owner": true,
       "category": "desktop_action_gateway",
@@ -186,11 +178,11 @@
     },
     {
       "callee": "core.runtime.desktop_action_gateway.get_desktop_action_gateway().run_applescript",
-      "canonical_owner": false,
+      "canonical_owner": true,
       "category": "desktop_action_gateway",
       "count": 1,
-      "path": "core/skills/computer_use.py",
-      "scope": "<module>.ComputerUseSkill._run_applescript"
+      "path": "core/runtime/action_executor.py",
+      "scope": "<module>.ActionExecutor.request_desktop_transport"
     },
     {
       "callee": "core.runtime.atomic_writer.atomic_write_text",
@@ -16538,6 +16530,6 @@
     }
   ],
   "description": "Exact AST effect-ownership debt ratchet; refresh only after reviewed change",
-  "inventory_sha256": "710784841b2cd4480e21bdf8c3dce9384067a88b3484418a2195a2148baf786f",
+  "inventory_sha256": "aa60121d4949e106de6c963ddcf0ddd617501a019a7e278095dda8f812736e98",
   "schema_version": 1
 }

@@ -21,7 +21,6 @@ from core.being.welfare_state import WelfareState
 from core.being.welfare_transaction import WelfareTransaction
 from core.runtime.app_target_resolution import resolve_installed_app_target
 from core.runtime.atomic_writer import atomic_write_bytes, atomic_write_text
-from core.runtime.desktop_action_gateway import get_desktop_action_gateway
 from core.runtime.errors import FallbackClassification, record_degradation
 from core.runtime.os_automation_effects import canonical_app_target
 from core.runtime.subprocess_gateway import get_subprocess_gateway
@@ -377,34 +376,13 @@ class ComputerUseSkill(BaseSkill):
         return message or "AppleScript execution failed."
 
     def _run_applescript(self, script: str, *, timeout: int = 10) -> str:
+        from core.runtime.action_executor import ActionExecutor
+
         timeout_s = max(1, int(timeout or 10))
-        if os.environ.get("AURA_COMPUTER_USE_NATIVE_APPLESCRIPT") == "1":
-            try:
-                from Foundation import NSAppleScript
-
-                apple_script = NSAppleScript.alloc().initWithSource_(script)
-                success, error_info = apple_script.executeAndReturnError_(None)
-                if success:
-                    return str(success.stringValue() or "").strip()
-                msg = ""
-                err_num = ""
-                if error_info:
-                    msg = str(error_info.get("NSAppleScriptErrorMessage") or "")
-                    err_num = str(error_info.get("NSAppleScriptErrorNumber") or "")
-
-                err_str = (
-                    f"{msg} ({err_num})"
-                    if err_num
-                    else msg or "AppleScript native execution failed."
-                )
-                raise RuntimeError(self._normalize_script_error(err_str))
-            except (ImportError, AttributeError) as _exc:
-                logger.debug("Suppressed %s in core.skills.computer_use: %s", type(_exc).__name__, _exc)
-
-        result = get_desktop_action_gateway().run_applescript(
-            script,
+        result = ActionExecutor.request_desktop_transport(
+            script=script,
             source="computer_use",
-            timeout=timeout_s,
+            timeout_s=timeout_s,
         )
         if not result.get("ok"):
             stderr = str(result.get("stderr") or result.get("stdout") or "")

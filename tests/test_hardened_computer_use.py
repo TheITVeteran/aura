@@ -1022,24 +1022,26 @@ async def test_computer_use_clock_falls_back_when_permission_probe_times_out(mon
 
 
 def test_computer_use_applescript_runner_uses_bounded_desktop_gateway_by_default(monkeypatch):
+    from core.runtime.action_executor import ActionExecutor
+
     skill = ComputerUseSkill()
     run_call = {}
 
-    class FakeDesktopActionGateway:
-        def run_applescript(self, script, *, source, timeout):
-            run_call.update(
-                {
-                    "script": script,
-                    "source": source,
-                    "timeout": timeout,
-                }
-            )
-            return {"ok": True, "stdout": "menu clock", "stderr": "", "exit_code": 0}
+    def request_desktop_transport(*, script, source, timeout_s):
+        run_call.update(
+            {
+                "script": script,
+                "source": source,
+                "timeout": timeout_s,
+            }
+        )
+        return {"ok": True, "stdout": "menu clock", "stderr": "", "exit_code": 0}
 
     monkeypatch.delenv("AURA_COMPUTER_USE_NATIVE_APPLESCRIPT", raising=False)
     monkeypatch.setattr(
-        "core.skills.computer_use.get_desktop_action_gateway",
-        lambda: FakeDesktopActionGateway(),
+        ActionExecutor,
+        "request_desktop_transport",
+        request_desktop_transport,
     )
 
     assert skill._run_applescript('return "menu clock"', timeout=6) == "menu clock"

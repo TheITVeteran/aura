@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 import shutil
 import subprocess
 from typing import Any
@@ -43,28 +44,42 @@ def _refuse_if_untrusted_context(operation: str, source: str) -> dict[str, Any] 
     that arrives in an unfamiliar shape gets mishandled into a crash, and a
     security control whose failure mode is a traceback gets turned off.
 
-    Fails OPEN on its own error, deliberately and with a recorded degradation:
-    a provenance lookup that breaks must not take out desktop control on a
-    turn that read nothing. The degradation is the signal that the control
-    stopped covering this path.
+    The check fails closed. A broken provenance service cannot establish that
+    the current turn is trusted, so lookup failure cannot be treated as a clean
+    turn.
     """
     try:
         from core.security.content_provenance import describe_untrusted_context
         from core.security.rule_of_two import get_rule_of_two_registry
 
         handler = get_rule_of_two_registry().get("desktop_automation")
-        if handler is None or not handler.violates_now():
+        if handler is None:
+            if governance_runtime_active():
+                raise RuntimeError("desktop_automation rule-of-two handler is not installed")
+            return None
+        if not handler.violates_now():
             return None
         why = describe_untrusted_context() or "this turn read untrusted content"
     except (ImportError, AttributeError, RuntimeError, TypeError, ValueError) as exc:
         record_degradation(
             "desktop_action_gateway",
             exc,
-            severity="warning",
-            action="proceeded without the untrusted-context check; rule-of-two is not covering this path",
+            severity="degraded",
+            action="refused desktop control because the untrusted-context check was unavailable",
             enforce_failure_policy=False,
         )
-        return None
+        return {
+            "ok": False,
+            "stdout": "",
+            "stderr": (
+                "Desktop control is unavailable because the content-provenance "
+                f"guard could not establish a trusted context: {type(exc).__name__}."
+            ),
+            "exit_code": 125,
+            "refused": "provenance_guard_unavailable",
+            "operation": operation,
+            "source": source,
+        }
 
     record_degradation(
         "desktop_action_gateway",
@@ -122,6 +137,10 @@ class DesktopActionGateway:
                 allowed_domains=self._allowed_domains,
             )
 
+        native_result = _run_native_applescript(script) if _native_enabled() else None
+        if native_result is not None:
+            return native_result
+
         if shutil.which("osascript") is None:
             return {
                 "ok": False,
@@ -178,6 +197,72 @@ class DesktopActionGateway:
             source=source,
             timeout=timeout,
         )
+
+
+def _native_enabled() -> bool:
+    return os.environ.get("AURA_COMPUTER_USE_NATIVE_APPLESCRIPT") == "1"
+
+
+def _native_applescript_error_types() -> tuple[type[BaseException], ...]:
+    errors: list[type[BaseException]] = list(_DESKTOP_ACTION_RECOVERABLE_ERRORS)
+    try:
+        import objc
+
+        errors.append(objc.error)
+    except ImportError:
+        pass
+    return tuple(errors)
+
+
+def _run_native_applescript(script: str) -> dict[str, Any] | None:
+    """Use Aura.app's native Apple-event identity when PyObjC is available.
+
+    Bridge absence falls back to the bounded ``osascript`` transport. An
+    execution error is terminal because replaying a stateful script through a
+    second transport could apply the effect twice.
+    """
+    try:
+        from Foundation import NSAppleScript
+    except (ImportError, AttributeError):
+        return None
+
+    try:
+        apple_script = NSAppleScript.alloc().initWithSource_(script)
+        descriptor, error_info = apple_script.executeAndReturnError_(None)
+        if descriptor is not None:
+            return {
+                "ok": True,
+                "stdout": str(descriptor.stringValue() or "").strip(),
+                "stderr": "",
+                "exit_code": 0,
+                "transport": "native_nsapplescript",
+            }
+        message = ""
+        error_number = ""
+        if error_info:
+            message = str(error_info.get("NSAppleScriptErrorMessage") or "")
+            error_number = str(error_info.get("NSAppleScriptErrorNumber") or "")
+        detail = f"{message} ({error_number})" if error_number else message
+        return {
+            "ok": False,
+            "stdout": "",
+            "stderr": detail or "AppleScript native execution failed.",
+            "exit_code": int(error_number) if error_number.lstrip("-").isdigit() else -2,
+            "transport": "native_nsapplescript",
+        }
+    except _native_applescript_error_types() as exc:
+        record_degradation(
+            "desktop_action_gateway.native_applescript",
+            exc,
+            action="returned failed native desktop action receipt without replaying the effect",
+        )
+        return {
+            "ok": False,
+            "stdout": "",
+            "stderr": str(exc),
+            "exit_code": -2,
+            "transport": "native_nsapplescript",
+        }
 
 
 def _coerce_script(script: str) -> str:

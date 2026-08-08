@@ -32,7 +32,7 @@ from dataclasses import asdict, dataclass, field
 from typing import Any, Protocol
 
 from core.capabilities.browser_controller import get_browser_controller
-from core.runtime.desktop_action_gateway import get_desktop_action_gateway
+from core.runtime.action_executor import ActionExecutor
 from core.runtime.errors import record_degradation
 from core.runtime.gateways import MemoryWriteRequest
 from core.runtime.lockdep import LockRank, checked_async_lock
@@ -102,38 +102,38 @@ def _caller_authority(principal: str, run_id: str) -> Any:
         _ACTIVE_CALLER_AUTHORITY.reset(token)
 
 
-def _effect_constraints(source: str) -> dict[str, Any]:
-    """Constraints stamped onto every visible-action scope this module opens."""
+def _effect_source(source: str) -> str:
+    """Bind low-level transport logs to the visible exchange that owns them."""
+
     authority = _ACTIVE_CALLER_AUTHORITY.get() or {}
-    return {
-        "effect_site": source,
-        "user_visible_browser_action": True,
-        # Empty rather than a plausible default: an action taken outside a run
-        # has no initiating caller, and inventing one would be the defect.
-        "initiating_principal": authority.get("principal", ""),
-        "interlocutor_run_id": authority.get("run_id", ""),
-    }
+    run_id = str(authority.get("run_id") or "").strip()
+    return f"{source}:run={run_id}" if run_id else source
+
+
+@contextlib.contextmanager
+def _existing_tool_scope(source: str) -> Any:
+    """Assert the session's real action receipt without minting a replacement."""
+
+    from core.governance_context import require_governance
+
+    token = require_governance(
+        f"web_interlocutor.{source}",
+        strict=True,
+        allowed_domains=("environment_action", "external_action", "tool_execution"),
+    )
+    yield token
 
 
 def _run_governed_applescript(script: str, *, source: str, timeout: float) -> dict[str, Any]:
-    from core.governance_context import local_internal_governed_scope
-
-    with local_internal_governed_scope(
-        source, domain="tool_execution", constraints=_effect_constraints(source)
-    ):
-        return get_desktop_action_gateway().run_applescript(
-            script,
-            source=source,
-            timeout=timeout,
-        )
+    return ActionExecutor.request_desktop_transport(
+        script=script,
+        source=_effect_source(source),
+        timeout_s=timeout,
+    )
 
 
 def _call_in_governed_tool_scope(source: str, func: Any, *args: Any, **kwargs: Any) -> Any:
-    from core.governance_context import local_internal_governed_scope
-
-    with local_internal_governed_scope(
-        source, domain="tool_execution", constraints=_effect_constraints(source)
-    ):
+    with _existing_tool_scope(source):
         return func(*args, **kwargs)
 
 
@@ -1591,13 +1591,7 @@ end tell
         url, title = await asyncio.to_thread(self._current_tab_info)
         try:
             from core.perception.screen_perception import get_screen_perception
-            from core.governance_context import local_internal_governed_scope
-
-            with local_internal_governed_scope(
-                "web_interlocutor.screen_perception_snapshot",
-                domain="tool_execution",
-                constraints=_effect_constraints("web_interlocutor.screen_perception_snapshot"),
-            ):
+            with _existing_tool_scope("screen_perception_snapshot"):
                 perception = get_screen_perception()
                 snap = await perception.capture(save_screenshot=True, include_layout=True)
                 # CP126 408696bd: the screenshot is a means to OCR text, not an
@@ -1659,15 +1653,10 @@ end tell
         if not self._screen_scene_targeting_enabled:
             return []
         try:
-            from core.governance_context import local_internal_governed_scope
             from core.perception.screen_perception import get_screen_perception
 
             url, _title = await asyncio.to_thread(self._current_tab_info)
-            with local_internal_governed_scope(
-                "web_interlocutor.screen_target_candidates",
-                domain="tool_execution",
-                constraints=_effect_constraints("web_interlocutor.screen_target_candidates"),
-            ):
+            with _existing_tool_scope("screen_target_candidates"):
                 scene = await get_screen_perception().analyze_current_scene(
                     query="visible AI chat prompt composer text input",
                     role_hint="text_input",
@@ -1804,13 +1793,7 @@ end tell
 
     async def _visible_keyboard_send_message(self, text: str, *, reason: str) -> dict[str, Any]:
         try:
-            from core.governance_context import local_internal_governed_scope
-
-            with local_internal_governed_scope(
-                "web_interlocutor.visible_keyboard_send_message",
-                domain="tool_execution",
-                constraints=_effect_constraints("web_interlocutor.visible_keyboard_send_message"),
-            ):
+            with _existing_tool_scope("visible_keyboard_send_message"):
                 await asyncio.to_thread(self._dismiss_common_popups)
                 await asyncio.to_thread(self._send_escape_to_browser)
                 try:

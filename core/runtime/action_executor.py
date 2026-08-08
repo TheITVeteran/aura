@@ -102,6 +102,48 @@ class ActionExecutor:
     """Execute, observe, and receipt one consequential action."""
 
     @classmethod
+    def request_desktop_transport(
+        cls,
+        *,
+        script: str,
+        source: str,
+        timeout_s: float = 15.0,
+    ) -> dict[str, Any]:
+        """Run bounded desktop IO inside an existing action decision.
+
+        CapabilityEngine or ``execute`` owns the Will decision, welfare
+        accounting, and final effect verification. Internal desktop steps
+        reuse that receipt instead of manufacturing authority per script.
+        """
+        source_text = str(source or "").strip()
+        if not source_text.startswith(("computer_use", "web_interlocutor.")):
+            raise ValueError(
+                "desktop transport source must be owned by computer_use or web_interlocutor"
+            )
+        require_governance(
+            "action_executor.request_desktop_transport",
+            strict=True,
+            allowed_domains=(
+                ActionDomain.ENVIRONMENT_ACTION.value,
+                ActionDomain.EXTERNAL_ACTION.value,
+                ActionDomain.TOOL_EXECUTION.value,
+            ),
+        )
+        result = get_desktop_action_gateway().run_applescript(
+            script,
+            source=source_text,
+            timeout=timeout_s,
+        )
+        if not isinstance(result, Mapping):
+            return {
+                "ok": False,
+                "stdout": "",
+                "stderr": "desktop_gateway_returned_non_mapping_result",
+                "exit_code": -2,
+            }
+        return dict(result)
+
+    @classmethod
     async def request_network_transport(
         cls,
         *,

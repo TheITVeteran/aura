@@ -31,6 +31,8 @@ recreate the problem with more confidence behind it.
 
 from __future__ import annotations
 
+from types import SimpleNamespace
+
 import pytest
 
 from core.security.content_provenance import (
@@ -310,6 +312,36 @@ class TestTheDesktopGateActuallyRefuses:
 
         assert set(refusal) >= {"ok", "stdout", "stderr", "exit_code"}
         assert isinstance(refusal["exit_code"], int)
+
+    def test_a_broken_provenance_guard_refuses_instead_of_assuming_trust(self, monkeypatch):
+        import core.security.rule_of_two as rule_of_two
+        from core.runtime.desktop_action_gateway import _refuse_if_untrusted_context
+
+        monkeypatch.setattr(
+            rule_of_two,
+            "get_rule_of_two_registry",
+            lambda: (_ for _ in ()).throw(RuntimeError("registry unavailable")),
+        )
+
+        refusal = _refuse_if_untrusted_context("run_applescript", "test")
+
+        assert refusal is not None
+        assert refusal["ok"] is False
+        assert refusal["refused"] == "provenance_guard_unavailable"
+        assert refusal["exit_code"] == 125
+
+    def test_a_missing_handler_refuses_once_governance_is_live(self, monkeypatch):
+        import core.runtime.desktop_action_gateway as gateway
+        import core.security.rule_of_two as rule_of_two
+
+        monkeypatch.setattr(rule_of_two, "get_rule_of_two_registry", lambda: SimpleNamespace(get=lambda _name: None))
+        monkeypatch.setattr(gateway, "governance_runtime_active", lambda: True)
+
+        refusal = gateway._refuse_if_untrusted_context("run_applescript", "test")
+
+        assert refusal is not None
+        assert refusal["ok"] is False
+        assert refusal["refused"] == "provenance_guard_unavailable"
 
 
 class TestSelfModificationRefusesUnderUntrustedContext:
