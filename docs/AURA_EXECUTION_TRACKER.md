@@ -38120,7 +38120,7 @@ review coverage is not remediation and none is closed by the review receipt:
 - **P1 CLOSED CP011:** make regenerate select and update one session-bound exchange by immutable ID.
 - **P1 CLOSED CP013:** verify every requested desktop/research predicate, including source count,
   recency, actual reading, synthesis, independent opinion, format, and location.
-- **P1:** fail closed when defensive-ingress or conscience pre-gates are unavailable.
+- **P1 CLOSED CP014:** fail closed when defensive-ingress or conscience pre-gates are unavailable.
 - **P2:** move tableau proof, collection, whole-file reads, and memory/goal exports off
   the event loop under explicit time and size budgets.
 - **P2:** partition repetition, degradation, and relevance state by conversation.
@@ -38235,3 +38235,33 @@ closes the semantic desktop/research P1 only. The resident complete-engine
 campaign, defensive-ingress P1, remaining chat queue, live exact-app proof,
 fusion admission, release, endurance, frontier, and `WOW Signal` claims remain
 open.
+
+## Checkpoint 2026-08-08-014: Unknown Chat Safety Is Not Permission
+
+The defensive ingress facade now treats the firewall, injection detector, and
+ICE/immune inspection path as required measurements. Each failure is recorded
+and produces a typed, retryable `security_preflight_unavailable` decision;
+searching or conversational content cannot reach cognition merely because one
+of those evaluators raised. A definitive hostile-input block still takes
+precedence, so an unavailable enforcement write cannot turn a known refusal
+into an availability response.
+
+The public chat route now fails closed with a bounded `503` when defensive
+ingress raises, returns its unavailable decision, or the conscience evaluator
+is missing, raises, or returns a malformed verdict. The response states that
+the request was neither processed nor acted on, exposes no exception detail,
+and is marked retryable. Refusal and fresh-authorization responses retain their
+existing semantics. Every early gate response records route delivery so the
+surface does not remain falsely marked as waiting for an answer.
+
+Adversarial regressions cover each unavailable defensive organ, route-level
+defensive failure, route-level conscience failure, no exception disclosure,
+no cognition admission, and early delivery settlement. The direct gate slice
+passes `13/13`; the broader conversation, reliability, defensive, and desktop-
+intent suites pass `496/496`; smoke passes `103/103`; Ruff, byte compilation,
+governance lint, and diff hygiene pass. Governance ownership remains at `2,215`
+recognized calls in `2,066` buckets with `1,948` pre-existing migration-debt
+calls and no new debt. This closes the final P1 in the current chat semantic
+queue. Its P2/P3 items, the resident complete-engine campaign, active-code and
+exhaustive semantic review, live proof, fusion, release, endurance, frontier,
+and `WOW Signal` claims remain open.

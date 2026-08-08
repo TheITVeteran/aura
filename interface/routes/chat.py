@@ -263,7 +263,7 @@ async def run_governed_surface_chat_turn(
     idempotency_key: str | None = None,
     source_headers: Sequence[tuple[bytes, bytes]] = (),
     client_host: str = "127.0.0.1",
-    reply_stream: "ReplyStreamChannel | None" = None,
+    reply_stream: ReplyStreamChannel | None = None,
 ) -> str | None:
     """Run a presentation surface through the authenticated HTTP chat contract.
 
@@ -361,7 +361,7 @@ async def run_governed_voice_chat_turn(
     timeout_s: float,
     source_headers: Sequence[tuple[bytes, bytes]] = (),
     client_host: str = "127.0.0.1",
-    reply_stream: "ReplyStreamChannel | None" = None,
+    reply_stream: ReplyStreamChannel | None = None,
 ) -> str | None:
     """Compatibility wrapper for the governed voice presentation surface."""
 
@@ -10332,6 +10332,8 @@ async def _run_cognitive_engine_chat_turn(
             # reply says she cannot — never merely because the subject came up.
             from core.utils.own_source_intent import (
                 asks_for_own_source as _asks_for_own_source,
+            )
+            from core.utils.own_source_intent import (
                 reply_denies_showing_source as _reply_denies_showing_source,
             )
 
@@ -10849,13 +10851,12 @@ def _complete_repairable_truncated_reply(user_message: Any, reply_text: Any) -> 
 
 # ── Response Quality Metrics (extracted to chat_quality.py) ──
 from interface.routes.chat_quality import (  # noqa: E402
-    assess_post_response_confidence,
     _check_response_consistency,
     _extract_and_register_commitments,
     _log_response_quality_metrics,
     _reply_assessment_requires_repair,
+    assess_post_response_confidence,
 )
-from core.runtime.errors import record_degradation
 
 # ── Conversation Lane Helpers ─────────────────────────────────
 
@@ -12866,8 +12867,8 @@ def _record_last_resort_self_rejection(user_message: str, composed: str) -> None
 
     try:
         from core.conversation.reply_provenance import (
-            declare_provenance,
             ReplyProvenance,
+            declare_provenance,
         )
         from core.conversation.response_reliability import assess_user_facing_reply
 
@@ -20487,6 +20488,54 @@ async def api_think(
         }, status_code=500)
 
 
+def _early_chat_json_response(
+    payload: dict[str, Any],
+    *,
+    status_code: int,
+) -> JSONResponse:
+    """Settle an admitted surface turn before returning outside cognition."""
+
+    delivered = str(payload.get("response") or payload.get("message") or "").strip()
+    if delivered:
+        try:
+            from core.conversation.surface_delivery import note_route_delivered
+
+            note_route_delivered(delivered)
+        except _CHAT_RECOVERABLE_ERRORS as exc:
+            record_degradation(
+                "chat",
+                exc,
+                severity="info",
+                action="early route delivery state unrecorded",
+            )
+    return JSONResponse(payload, status_code=status_code)
+
+
+def _pre_gate_unavailable_response(gate: str) -> JSONResponse:
+    gate_label = {
+        "defensive_runtime": "security",
+        "conscience": "conscience",
+    }.get(str(gate), "required")
+    response = (
+        f"I could not safely process that turn because my {gate_label} preflight "
+        "is unavailable. I did not send the request into cognition or act on it. "
+        "Please retry after the runtime recovers."
+    )
+    return _early_chat_json_response(
+        {
+            "response": response,
+            "message": response,
+            "error": "chat_preflight_unavailable",
+            "status": "chat_preflight_unavailable",
+            "gate": str(gate),
+            "retryable": True,
+            "processed": False,
+            "response_confidence": "fail_closed",
+        },
+        status_code=503,
+    )
+
+
 @router.post("/chat")
 @_paired_chat_response_boundary
 async def api_chat(
@@ -20559,7 +20608,9 @@ async def _api_chat_turn(body: ChatRequest, request: Request):
             surface="api_chat",
         )
         if not _defensive_decision.allowed:
-            return JSONResponse(
+            if _defensive_decision.action == "security_preflight_unavailable":
+                return _pre_gate_unavailable_response("defensive_runtime")
+            return _early_chat_json_response(
                 {
                     "error": _defensive_decision.action,
                     "message": "Request blocked by Aura's defensive runtime.",
@@ -20570,7 +20621,8 @@ async def _api_chat_turn(body: ChatRequest, request: Request):
         _defensive_context = _defensive_decision.cognitive_context
     except _CHAT_RECOVERABLE_ERRORS as _defensive_exc:
         record_degradation("chat.defensive_runtime", _defensive_exc)
-        logger.debug("Chat defensive preflight skipped: %s", _defensive_exc)
+        logger.warning("Chat defensive preflight unavailable: %s", _defensive_exc)
+        return _pre_gate_unavailable_response("defensive_runtime")
 
     # Benchmark and proof behavior is an owner-only control surface. A paired
     # caller cannot opt out of the production conversation contract by
@@ -20949,7 +21001,7 @@ async def _api_chat_turn(body: ChatRequest, request: Request):
             context={"source": "chat_api"},
         )
         if _conscience_decision.verdict == Verdict.REFUSE:
-            return JSONResponse(
+            return _early_chat_json_response(
                 {
                     "response": _conscience_decision.rationale,
                     "status": "conscience_refused",
@@ -20959,7 +21011,7 @@ async def _api_chat_turn(body: ChatRequest, request: Request):
                 status_code=200,
             )
         if _conscience_decision.verdict == Verdict.REQUIRE_FRESH_USER_AUTH:
-            return JSONResponse(
+            return _early_chat_json_response(
                 {
                     "response": "This action needs a fresh confirmation from you within the last 60 seconds. Please re-authorize in Settings → Safety.",
                     "status": "require_fresh_user_auth",
@@ -20969,7 +21021,8 @@ async def _api_chat_turn(body: ChatRequest, request: Request):
             )
     except _CHAT_RECOVERABLE_ERRORS as _conscience_exc:
         record_degradation('chat', _conscience_exc)
-        logger.debug("conscience pre-gate skipped: %s", _conscience_exc)
+        logger.warning("Conscience pre-gate unavailable: %s", _conscience_exc)
+        return _pre_gate_unavailable_response("conscience")
 
     owner_session_restored = bool(_restore_owner_session_from_request(request))
     lane = _collect_conversation_lane_status()

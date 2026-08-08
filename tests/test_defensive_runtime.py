@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import pytest
+
 from core.security.defensive_runtime import (
     defensive_status,
     ensure_defensive_runtime_active,
@@ -34,6 +36,38 @@ def test_hostile_local_ingress_reaches_cognition_with_defensive_context():
     assert decision.action in {"block", "sanitize", "flag"}
     assert "[Security context]" in decision.cognitive_context
     assert "untrusted data" in decision.cognitive_context
+
+
+@pytest.mark.parametrize(
+    ("target", "expected_gate"),
+    (
+        ("core.security.enforcement.install_default_enforcement", "firewall"),
+        ("core.security.threat_detectors.get_threat_detectors", "injection_detector"),
+        ("core.security.ice_sentinel.get_ice_sentinel", "ice_or_immune"),
+    ),
+)
+def test_required_ingress_gate_failure_is_not_treated_as_allow(
+    monkeypatch,
+    target,
+    expected_gate,
+):
+    def unavailable(*_args, **_kwargs):
+        raise RuntimeError("sensitive internal detail")
+
+    monkeypatch.setattr(target, unavailable)
+
+    decision = inspect_chat_ingress(
+        "A harmless ordinary message.",
+        origin="127.0.0.1",
+        trusted_local=True,
+        surface="desktop-ui",
+    )
+
+    assert decision.allowed is False
+    assert decision.action == "security_preflight_unavailable"
+    assert decision.status_code == 503
+    assert expected_gate in decision.reasons[0]
+    assert "sensitive internal detail" not in decision.reasons[0]
 
 
 def test_outbound_network_respects_security_config(monkeypatch):

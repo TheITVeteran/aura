@@ -54,6 +54,7 @@ def inspect_chat_ingress(
 
     reasons: list[str] = []
     events: list[dict[str, Any]] = []
+    unavailable_gates: list[str] = []
     action = "allow"
 
     try:
@@ -70,6 +71,7 @@ def inspect_chat_ingress(
     except (ImportError, AttributeError, RuntimeError, TypeError, ValueError) as exc:
         record_degradation("defensive_runtime", exc)
         logger.debug("Defensive runtime firewall preflight skipped: %s", exc)
+        unavailable_gates.append("firewall")
 
     try:
         from core.security.threat_detectors import get_threat_detectors
@@ -85,6 +87,7 @@ def inspect_chat_ingress(
     except (ImportError, AttributeError, RuntimeError, TypeError, ValueError) as exc:
         record_degradation("defensive_runtime", exc)
         logger.debug("Defensive runtime detector preflight skipped: %s", exc)
+        unavailable_gates.append("injection_detector")
 
     try:
         from core.security.ice_sentinel import get_ice_sentinel
@@ -116,6 +119,7 @@ def inspect_chat_ingress(
     except (ImportError, AttributeError, RuntimeError, TypeError, ValueError) as exc:
         record_degradation("defensive_runtime", exc)
         logger.debug("Defensive runtime ICE preflight skipped: %s", exc)
+        unavailable_gates.append("ice_or_immune")
 
     if action == "block" and not trusted_local:
         try:
@@ -129,6 +133,18 @@ def inspect_chat_ingress(
             action="blocked_intrusion",
             status_code=403,
             reasons=reasons or ["defensive runtime blocked hostile ingress"],
+            threat_events=events,
+        )
+
+    if unavailable_gates:
+        unavailable = sorted(set(unavailable_gates))
+        return IngressDecision(
+            allowed=False,
+            action="security_preflight_unavailable",
+            status_code=503,
+            reasons=[
+                "required defensive preflight unavailable: " + ", ".join(unavailable)
+            ],
             threat_events=events,
         )
 
