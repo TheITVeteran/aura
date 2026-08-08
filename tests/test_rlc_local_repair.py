@@ -139,8 +139,7 @@ def _admitted_receipt() -> tuple[dict, dict, dict]:
     )
     request = requests[0]
     repaired = parse_local_repair_generation(
-        'FINAL_ANSWER: {"replacement_suffix":'
-        '"Therefore 2 + 2 = 4. Thus 10 + 1 = 11."}',
+        "REPLACEMENT_SUFFIX: Therefore 2 + 2 = 4. Thus 10 + 1 = 11.",
         prefix=request["prefix"],
     )
     receipt = build_local_repair_receipt(
@@ -363,33 +362,45 @@ def test_repair_request_count_is_bounded_before_private_generation():
         )
 
 
-def test_a_bare_json_object_is_accepted_after_the_cue():
-    """The prompt ends on "FINAL_ANSWER:", so the model's continuation is the
-    object alone. The payload rules still apply to it in full."""
-    restored = parse_local_repair_generation(
-        '{"replacement_suffix":"fixed"}', prefix="PREFIX "
+def test_the_repair_contract_is_plain_text():
+    """The contract used to demand FINAL_ANSWER: {"replacement_suffix": "..."},
+    which requires JSON-escaping a multi-line answer full of quotes and
+    newlines. The 32B could not do it -- every episode failed with "local
+    repair generation JSON is invalid", so every repair candidate was
+    discarded and the arm could tie ordinary decode but never beat it. The
+    escaping was never part of the reasoning under test."""
+    assert (
+        parse_local_repair_generation(
+            "REPLACEMENT_SUFFIX: the residue is 11.", prefix="PREFIX "
+        )
+        == "PREFIX the residue is 11."
     )
-    assert restored == "PREFIX fixed"
+    # The prompt ends on the cue, so the continuation usually omits it.
+    assert (
+        parse_local_repair_generation(" the residue is 11.", prefix="PREFIX ")
+        == "PREFIX the residue is 11."
+    )
 
 
 @pytest.mark.parametrize(
     "value",
     [
-        # A bare JSON object is now ADMISSIBLE: the repair prompt ends on the
-        # "FINAL_ANSWER:" cue, so a well-behaved model continues with the
-        # object alone and the marker never appears in the generated text.
-        # Requiring it rejected exactly the responses the prompt elicits --
-        # the 32B was returning contract_irrecoverable on every episode by
-        # continuing the instruction block instead of answering it.
-        'prefix FINAL_ANSWER: {"replacement_suffix":"fixed"}',
-        'FINAL_ANSWER: {"replacement_suffix":""}',
-        'FINAL_ANSWER: {"replacement_suffix":"fixed","extra":true}',
-        'FINAL_ANSWER: {"replacement_suffix":"fixed"} trailing',
+        "   ",
+        "REPLACEMENT_SUFFIX:",
+        "REPLACEMENT_SUFFIX: a REPLACEMENT_SUFFIX: b",
     ],
 )
-def test_generation_contract_rejects_ambiguous_or_extra_material(value: str):
-    with pytest.raises(ValueError, match="local repair generation"):
-        parse_local_repair_generation(value, prefix="kept ")
+def test_generation_contract_rejects_empty_or_ambiguous(value: str):
+    with pytest.raises(ValueError):
+        parse_local_repair_generation(value, prefix="PREFIX ")
+
+
+def test_a_repair_that_repeats_the_prefix_is_rejected():
+    """A suffix is a continuation, not a restatement."""
+    prefix = "A" * 120
+    with pytest.raises(ValueError):
+        parse_local_repair_generation(prefix + " more", prefix=prefix)
+
 
 
 def test_validator_rejects_tampered_invalidation_and_authority():

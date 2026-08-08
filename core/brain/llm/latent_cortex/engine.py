@@ -5217,7 +5217,16 @@ class LatentCortexEngine:
                         if "budget" in str(exc).lower()
                         else "generation_failed"
                     )
-                except (ImportError, OSError, OverflowError, TypeError, ValueError):
+                except (ImportError, OSError, OverflowError, TypeError, ValueError) as exc:
+                    # Record WHAT failed. "generation_contract_invalid" alone
+                    # cost several diagnostic rounds because it covers the
+                    # termination check, the contract parse, and the
+                    # decomposition rebuild, which have entirely different
+                    # fixes.
+                    receipt.flag(
+                        f"local_repair_generation_rejected:{type(exc).__name__}:"
+                        f"{str(exc)[:80]}"
+                    )
                     repair_failures[request_id] = "generation_contract_invalid"
             receipt.local_repair = build_local_repair_receipt(
                 disagreement_graph=receipt.disagreement_graph,
