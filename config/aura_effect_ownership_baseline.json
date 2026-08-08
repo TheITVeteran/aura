@@ -16189,14 +16189,6 @@
       "canonical_owner": false,
       "category": "will_decision",
       "count": 1,
-      "path": "core/agency/agency_bus.py",
-      "scope": "<module>.AgencyBus.submit"
-    },
-    {
-      "callee": "core.governance.will.get_will().decide",
-      "canonical_owner": false,
-      "category": "will_decision",
-      "count": 1,
       "path": "core/agency/hierarchical_agency.py",
       "scope": "<module>.HierarchicalAgency._governance"
     },
@@ -16498,6 +16490,6 @@
     }
   ],
   "description": "Exact AST effect-ownership debt ratchet; refresh only after reviewed change",
-  "inventory_sha256": "cdc4cbaf2e62ba9ca09423473ad6d643814f1b0400ec0833bd6ee9b64178ed0a",
+  "inventory_sha256": "465f7b4795469ee59133bab8430edee4c4a8c8000875bb1a6bc6fe186cfe5a53",
   "schema_version": 1
 }

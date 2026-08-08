@@ -484,7 +484,11 @@ class AutonomyMixin:
         from core.agency_bus import AgencyBus
 
         if not AgencyBus.get().submit(
-            {"origin": "orchestrator_boredom", "priority_class": "boredom"}
+            {
+                "origin": "orchestrator_boredom",
+                "priority_class": "boredom",
+                "will_receipt": _will_decision.receipt_id,
+            }
         ):
             return
         logger.info("🥱 BOREDOM TRIGGERED: Generating curiosity impulse.")

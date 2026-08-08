@@ -72,33 +72,57 @@ class AgencyBus:
         """
         now = time.time()
         priority_class = str(proposal.get("priority_class", "impulse"))
+        origin = str(proposal.get("origin") or "").strip()
+        if not origin or origin.casefold() == "unknown":
+            logger.warning("🚌 AgencyBus REJECTED: autonomous proposal has no attributable origin")
+            return False
 
         # Will receipt enforcement: autonomous output must be causally gated.
         receipt_id = proposal.get("will_receipt")
+        issuing_will = None
         if not receipt_id:
             try:
-                from core.governance.will import ActionDomain, get_will
+                from core.governance.will import ActionDomain
+                from core.runtime.action_executor import ActionExecutor
 
-                origin = str(proposal.get('origin', 'agency_bus_auto'))
-                _auto_decision = get_will().decide(
-                    content=f"agency_bus_auto:{origin}",
+                admission = ActionExecutor.authorize_action(
+                    action_name="agency_bus.autonomous_output",
+                    params={
+                        "origin": origin,
+                        "priority_class": priority_class,
+                        "proposal_text": str(proposal.get("text") or "")[:500],
+                    },
                     source=origin,
                     domain=ActionDomain.INITIATIVE,
                     priority=0.4,
+                    context={
+                        "source": origin,
+                        "autonomous": True,
+                        "agency_bus": True,
+                        "priority_class": priority_class,
+                    },
                 )
-                if not _auto_decision.is_approved():
-                    logger.debug("🚌 AgencyBus: Will denied auto-receipt for %s: %s", origin, _auto_decision.reason)
+                if not admission.approved:
+                    logger.debug(
+                        "🚌 AgencyBus: Will denied auto-receipt for %s: %s",
+                        origin,
+                        admission.reason,
+                    )
                     return False
-                receipt_id = _auto_decision.receipt_id
+                receipt_id = admission.receipt_id
+                issuing_will = admission.authority
                 proposal["will_receipt"] = receipt_id
-            except (ImportError, AttributeError, RuntimeError) as _will_err:
+            except (ImportError, AttributeError, RuntimeError, TypeError, ValueError) as _will_err:
                 logger.warning("🚌 AgencyBus REJECTED: Will unavailable for receipt acquisition: %s", _will_err)
                 return False
 
         try:
-            from core.governance.will import get_will
+            if issuing_will is None:
+                from core.governance.will import get_will
 
-            if not get_will().verify_receipt(str(receipt_id)):
+                issuing_will = get_will()
+
+            if not issuing_will.verify_receipt(str(receipt_id)):
                 logger.warning("🚌 AgencyBus REJECTED: invalid will_receipt %s", receipt_id)
                 return False
         except (ImportError, AttributeError, RuntimeError) as _will_err:
