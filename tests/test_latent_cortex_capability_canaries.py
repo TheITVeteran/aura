@@ -130,16 +130,32 @@ def test_text_battery_covers_protected_behaviors():
         def encode(self, text, add_special_tokens=False):
             return [(hash(word) % 96) + 1 for word in text.split()]
 
+    from collections import Counter
+
+    from core.brain.llm.latent_cortex.capability_canaries import (
+        PROTECTED_BEHAVIORS,
+        _behavior_of,
+    )
+
     canaries = CapabilityCanaries(WordTokenizer(), vocab_size=128)
     names = {s.name for s in canaries.sequences}
-    assert names == {
-        "prose_coherence",
-        "instruction_following",
-        "tool_call_syntax",
-        "identity_continuity",
-        "factual_calibration",
-        "basic_reasoning",
-    }
+
+    # CP126 4c677b81: this used to assert the battery was EXACTLY six strings,
+    # one per behavior — pinning in place the thing the finding is about. One
+    # public trivial string cannot cover a broad behavior; preserving it says
+    # nothing about the paraphrase beside it.
+    per_behavior = Counter(_behavior_of(name) for name in names)
+    assert set(per_behavior) == set(PROTECTED_BEHAVIORS), (
+        f"battery covers {sorted(per_behavior)}, claimed {sorted(PROTECTED_BEHAVIORS)}"
+    )
+    thin = [behavior for behavior, count in per_behavior.items() if count < 2]
+    assert not thin, (
+        f"these behaviors rest on a single memorized string: {thin}; a ΔW that "
+        "preserves exactly that string passes while the behavior regresses"
+    )
+    assert any(name.endswith("_heldout") for name in names), (
+        "no held-out probe; every item is one a threshold could be tuned on"
+    )
     for sequence in canaries.sequences:
         assert sequence.total_tokens <= 24
         assert len(sequence.continuation_tokens) >= 1

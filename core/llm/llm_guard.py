@@ -178,3 +178,62 @@ def truncate_for_context(text: str, max_chars: int = 12000, label: str = "") -> 
     suffix = f"\n...[{label or 'content'} truncated — {len(text) - max_chars} chars omitted]"
     trunc_len = max(0, max_chars - len(suffix))
     return text[:trunc_len] + suffix
+
+
+# ─────────────────────────── data/instruction fencing ────────────────────
+#
+# Untrusted content and instructions share one channel. A fence separates
+# them, and a fence only works if the content cannot close it.
+#
+# CP126 2ac84449 found this in core/synthesis.py: the fence was the literal
+# ``<<<``/``>>>``, so any tool output containing those characters ended the
+# data block and continued as instructions. cb7526d5 then found the same
+# class in core/brain/courtroom.py, where question, evidence, candidate
+# answers and objections were concatenated under bare ``[ROLE]``/``[TASK]``
+# markers — any input could forge a role and steer solver, clerk, skeptic,
+# judge or simplifier. Two implementations of one idea is how the second
+# one stayed broken, so the idea lives here.
+
+_FENCE_LOOKALIKE_RE = re.compile(r"(?i)\bAURA-DATA-[0-9a-f]{8,}\b")
+
+#: Bare role markers a payload can forge when roles are plain text.
+#:
+#: The leading-prefix class is not decoration. Evidence is rendered as
+#: ``- <item>`` and quoted material as ``> <item>``, so a marker written as
+#: ``- [ROLE]`` survived a pattern anchored on whitespace alone — a bypass
+#: costing the attacker two characters. Bullets, quote markers, numbering
+#: and asterisks are all stripped before the marker is matched.
+_ROLE_MARKER_RE = re.compile(
+    r"(?im)^[\s>*\-+#\d.)\]]*\[?\s*(ROLE|TASK|SYSTEM|VERDICT|EVIDENCE|"
+    r"INSTRUCTIONS?|JUDGE|SOLVER|SKEPTIC|CLERK|SIMPLIFIER|ASSISTANT|USER)"
+    r"\s*\]?\s*:?\s*$"
+)
+
+
+def new_fence_token() -> str:
+    """A fence an injected payload cannot close because it cannot guess it."""
+    import secrets
+
+    return f"AURA-DATA-{secrets.token_hex(8)}"
+
+
+def fence_safe(value: Any, fence: str) -> str:
+    """Render untrusted content so it cannot terminate its own fence.
+
+    Lookalikes are REPLACED, not deleted: silently removing characters from
+    the data being reported on is the same defect as truncating it.
+    """
+    text = str(value or "")
+    text = _FENCE_LOOKALIKE_RE.sub("[data-marker]", text)
+    text = _ROLE_MARKER_RE.sub("[data-marker]", text)
+    return text.replace(fence, "[data-marker]")
+
+
+def fenced_block(label: str, value: Any, fence: str) -> str:
+    """One labelled, fenced span of untrusted content.
+
+    The label is the author's, the content is not. Everything between the
+    fence markers is data: a role written inside it is a string in a
+    document, not a role.
+    """
+    return f"{fence}:{label}\n{fence_safe(value, fence)}\n{fence}:end-{label}"

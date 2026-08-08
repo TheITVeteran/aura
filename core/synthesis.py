@@ -905,29 +905,27 @@ _MAX_HISTORY_TURNS = 40
 _MAX_TOOL_RESULTS_CHARS = 6000
 
 
-_FENCE_LOOKALIKE_RE = re.compile(r"(?i)\bAURA-DATA-[0-9a-f]{8,}\b")
 _SAFE_DATE_RE = re.compile(r"^[A-Za-z0-9 ,:/\-+.]{1,64}$")
 
 
 def _new_fence_token() -> str:
     """A fence an injected payload cannot close because it cannot guess it.
 
-    CP126 2ac84449: the fence was the literal ``<<<``/``>>>``, so any tool
-    output or user message containing those characters could end the data block
-    and continue as instructions. The old mitigation deleted the marker from
-    the content, which silently altered the data being reported on.
+    CP126 2ac84449 found this here; cb7526d5 found the same class in the
+    courtroom. The implementation now lives in core.llm.llm_guard so there
+    is one of it — two copies of a boundary check is how the second copy
+    stayed broken while the first was fixed.
     """
-    import secrets
+    from core.llm.llm_guard import new_fence_token
 
-    return f"AURA-DATA-{secrets.token_hex(8)}"
+    return new_fence_token()
 
 
 def _fence_safe(value: Any, fence: str) -> str:
     """Render untrusted content so it cannot terminate its own fence."""
-    text = str(value or "")
-    # Neutralise anything shaped like a fence token, including this request's.
-    text = _FENCE_LOOKALIKE_RE.sub("[data-marker]", text)
-    return text.replace(fence, "[data-marker]")
+    from core.llm.llm_guard import fence_safe
+
+    return fence_safe(value, fence)
 
 
 def _safe_context_date(context: dict[str, Any] | None) -> str:

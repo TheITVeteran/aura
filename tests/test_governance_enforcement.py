@@ -202,12 +202,60 @@ class TestWillEnforcementPaths:
         source = inspect.getsource(VolitionEngine.tick)
         assert "get_will" in source
 
-    def test_initiative_synthesis_uses_will(self):
-        """InitiativeSynthesizer must authorize through Will."""
-        import inspect
+    def test_initiative_synthesis_refuses_what_will_refuses(self):
+        """Behavioural, not textual.
+
+        This asserted that the literal string "get_will" appeared in the
+        source of `synthesize`. The method now authorizes through
+        `ActionExecutor.authorize_action`, which is the SAME Will and a
+        better-governed route — and the test failed, because it was
+        checking spelling rather than enforcement.
+
+        A grep for a helper name cannot tell an enforced gate from a
+        mentioned one. This drives the real method with a Will that refuses
+        and asserts nothing gets through.
+        """
+        import asyncio
+        from unittest import mock
+
         from core.initiative_synthesis import InitiativeSynthesizer
-        source = inspect.getsource(InitiativeSynthesizer.synthesize)
-        assert "get_will" in source
+
+        synthesizer = InitiativeSynthesizer()
+
+        class _Refused:
+            approved = False
+            receipt_id = "receipt-refused"
+            reason = "prohibited by standing directive"
+
+        with mock.patch(
+            "core.runtime.action_executor.ActionExecutor.authorize_action",
+            return_value=_Refused(),
+        ) as authorize:
+            result = asyncio.run(synthesizer.synthesize(object()))
+
+        assert result.winner is None, (
+            "an initiative Will refused was returned as an authorized action"
+        )
+        if authorize.called:
+            assert result.approved is False
+
+    def test_initiative_synthesis_blocks_when_will_is_unreachable(self):
+        """An unavailable authority is not a granted one."""
+        import asyncio
+        from unittest import mock
+
+        from core.initiative_synthesis import InitiativeSynthesizer
+
+        synthesizer = InitiativeSynthesizer()
+
+        with mock.patch(
+            "core.runtime.action_executor.ActionExecutor.authorize_action",
+            side_effect=RuntimeError("will service down"),
+        ):
+            result = asyncio.run(synthesizer.synthesize(object()))
+
+        assert result.winner is None
+        assert result.approved is False
 
 
 # ---------------------------------------------------------------------------

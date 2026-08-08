@@ -147,6 +147,14 @@ class FastWeightsConfig:
     canary_max_effective_delta_rms: float = 0.05
     canary_rescale_attempts: int = 2
     canary_max_tokens: int = 24
+    # CP126: the likelihood battery is a fingerprint, not a postcondition. The
+    # generated battery decodes under the adapted function and CHECKS what
+    # came out. It is an order of magnitude more expensive — greedy decode
+    # re-runs the forward pass per token — so its cost is reserved up front
+    # rather than discovered as a mid-episode overrun. Turning it off is a
+    # deliberate choice to run on fingerprints only, and the receipt grades
+    # such an episode FINGERPRINT_ONLY rather than passed.
+    canary_generated_enabled: bool = True
 
 
 @dataclass
@@ -828,6 +836,8 @@ class CortexConfig:
             problems.append("fast_weights.max_wrapped_layers outside [1, 64]")
         if type(self.fast_weights.canary_enabled) is not bool:
             problems.append("fast_weights.canary_enabled must be boolean")
+        if type(self.fast_weights.canary_generated_enabled) is not bool:
+            problems.append("fast_weights.canary_generated_enabled must be boolean")
         if (
             not finite(self.fast_weights.canary_max_logprob_drop)
             or not 0.0 < self.fast_weights.canary_max_logprob_drop <= 10.0

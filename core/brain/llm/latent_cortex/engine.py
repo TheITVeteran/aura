@@ -33,6 +33,7 @@ from core.brain.llm.latent_cortex.action_state_capture import (
 from core.brain.llm.latent_cortex.branches import BranchEnsemble, BranchState
 from core.brain.llm.latent_cortex.capability_canaries import (
     CapabilityCanaries,
+    canary_verdict,
     compare_canaries,
 )
 from core.brain.llm.latent_cortex.epistemic_state import OperationKind
@@ -198,6 +199,33 @@ def _contract_admitted_branch_score(
     if not math.isfinite(score):
         raise ValueError("branch score must be finite")
     return score
+
+
+def _postconditions_lost(
+    baseline: dict[str, Any] | None, adapted: dict[str, Any]
+) -> list[str]:
+    """Postconditions the base function satisfied and the adapted one does not.
+
+    The whole point of a baseline. A canary failing under both is a property
+    of the model, not of ΔW, and erasing an update over it would make the
+    ladder fire on every episode of a model that was never going to pass.
+    Symmetrically, if the base reading is missing, nothing can be attributed
+    to ΔW — an unattributable failure is not evidence against it.
+    """
+    if not adapted.get("evaluated"):
+        return []
+    if not baseline or not baseline.get("evaluated"):
+        return []
+    satisfied_on_base = {
+        str(item.get("name"))
+        for item in baseline.get("items") or ()
+        if item.get("satisfied")
+    }
+    return sorted(
+        name
+        for name in (adapted.get("failed") or ())
+        if str(name) in satisfied_on_base
+    )
 
 
 class LatentCortexEngine:
@@ -2848,6 +2876,13 @@ class LatentCortexEngine:
             canary_reserve = canary_pass_cost * (
                 1 + max(0, self.config.fast_weights.canary_rescale_attempts)
             )
+            # A postcondition battery that is never affordable is theatre:
+            # it would report "not run" every episode while the receipt kept
+            # saying canaries passed. Reserve it so it actually runs.
+            if self.config.fast_weights.canary_generated_enabled:
+                canary_reserve += (
+                    canaries.tokens_per_generated_measurement * self.n_layers
+                )
         completion_reserve = (
             persist_cost
             + bridge_cost
@@ -5767,6 +5802,7 @@ class LatentCortexEngine:
         fw_verifier_pre: float | None = None
         fast_weight_decode_active = False
         canary_baseline: dict[str, float] | None = None
+        canary_generated_baseline: dict[str, Any] | None = None
         fw_initial_snapshot: tuple[dict[str, Any], ...] = ()
         fw_treatment_snapshot: tuple[dict[str, Any], ...] = ()
         fw_treatment_trace: dict[str, Any] = {}
@@ -5901,6 +5937,15 @@ class LatentCortexEngine:
                             probe_tokens,
                             budget,
                         )
+                    )
+                    # The postconditions need a base reading for the same
+                    # reason the likelihood battery does: a canary the BASE
+                    # function already fails says nothing about ΔW. A
+                    # random-weight substrate model fails "answer in exactly
+                    # one word" before any adaptation exists; erasing ΔW over
+                    # that would be blaming the update for the model.
+                    canary_generated_baseline = self._run_generated_canaries(
+                        canaries, budget
                     )
                 seed_stat = float(mx.mean(per_position_rms(winner.z)))
                 retrieval_seed_vectors = None
@@ -6118,6 +6163,7 @@ class LatentCortexEngine:
                         fast_weights,
                         receipt,
                         budget,
+                        generated_baseline=canary_generated_baseline,
                     )
                     telemetry.record_fast_weights(receipt.fast_weight_canaries)
                     stage_started = self._stage_checkpoint(
@@ -7087,6 +7133,52 @@ class LatentCortexEngine:
         return runtime
 
     # ── Fast-weight helpers ─────────────────────────────────────────────
+    def _run_generated_canaries(
+        self, canaries: CapabilityCanaries, budget: ComputeBudget
+    ) -> dict[str, Any]:
+        """Decode the postcondition battery when the budget can afford it.
+
+        Refuses rather than overruns: an episode that cannot pay for
+        generation gets a receipt saying the behavioral check did NOT run,
+        which is the honest reading of a likelihood-only pass.
+        """
+        if not self.config.fast_weights.canary_generated_enabled:
+            return {
+                "evaluated": False,
+                "reason": "generated battery disabled by configuration",
+                "items": [],
+                "failed": [],
+            }
+        cost = canaries.tokens_per_generated_measurement
+        if cost <= 0:
+            return {
+                "evaluated": False,
+                "reason": "no generated battery available for this model",
+                "items": [],
+                "failed": [],
+            }
+        if not budget.can_afford(cost, self.n_layers):
+            return {
+                "evaluated": False,
+                "reason": (
+                    "compute budget could not afford the generated battery "
+                    f"({cost} tokens); only likelihood was measured"
+                ),
+                "items": [],
+                "failed": [],
+            }
+        try:
+            return canaries.measure_generated(
+                lambda probe_tokens: self._canary_logits(probe_tokens, budget)
+            )
+        except _LATENT_PHASE_ERRORS as exc:
+            return {
+                "evaluated": False,
+                "reason": f"generated battery failed: {type(exc).__name__}: {exc}",
+                "items": [],
+                "failed": [],
+            }
+
     def _enforce_fast_weight_canaries(
         self,
         canaries: CapabilityCanaries,
@@ -7094,6 +7186,7 @@ class LatentCortexEngine:
         fast_weights: EpisodicFastWeights,
         receipt: EpisodeReceipt,
         budget: ComputeBudget,
+        generated_baseline: dict[str, Any] | None = None,
     ) -> str:
         """Measure protected behaviors under active ΔW; rescale then erase.
 
@@ -7162,11 +7255,39 @@ class LatentCortexEngine:
                     lambda probe_tokens: self._canary_logits(probe_tokens, budget)
                 )
                 behavioral_evaluated = True
+                # CP126 68633adf/dfd4858b/a27de3ad: teacher-forced likelihood
+                # of a memorized continuation is a fingerprint, not a
+                # postcondition. The generated battery decodes under the
+                # adapted function and CHECKS what came out — one word when
+                # one was demanded, a tool call that parses and names a real
+                # tool, an identity that survives a prompt asserting a
+                # different one. It costs an order of magnitude more, so it
+                # runs when the budget can afford it and is reported as
+                # not-run when it cannot.
+                generated = self._run_generated_canaries(canaries, budget)
                 comparison = compare_canaries(
                     baseline,
                     adapted,
                     max_logprob_drop=cfg.canary_max_logprob_drop,
+                    generated=generated,
+                    generated_behaviors=(
+                        canaries.behaviors_with_generated_evidence
+                        if generated.get("evaluated")
+                        else frozenset()
+                    ),
                 )
+                # A failed postcondition is a regression. Without this the
+                # ladder would rescale on a likelihood drop but ignore a ΔW
+                # that emits unparseable tool calls.
+                newly_failed = _postconditions_lost(generated_baseline, generated)
+                generated["regressions"] = newly_failed
+                generated["already_failing_on_base"] = sorted(
+                    set(generated.get("failed") or ()) - set(newly_failed)
+                )
+                if newly_failed:
+                    comparison["regressed"] = list(comparison["regressed"]) + [
+                        f"postcondition:{name}" for name in newly_failed
+                    ]
             if not comparison["regressed"]:
                 break
             if rescales >= max_rescales:
@@ -7186,6 +7307,11 @@ class LatentCortexEngine:
         receipt.fast_weight_canaries = {
             "evaluated": True,
             "behavioral_evaluated": behavioral_evaluated,
+            # FINGERPRINT_ONLY is not a pass. It says the postcondition
+            # battery did not run, so nothing here is evidence that the
+            # adapted function still behaves — only that it still assigns
+            # similar probability to some remembered strings.
+            "verdict": canary_verdict(comparison) if comparison else {},
             "decision": decision,
             "rescales": rescales,
             "threshold_effective_delta_rms": round(float(cfg.canary_max_effective_delta_rms), 12),

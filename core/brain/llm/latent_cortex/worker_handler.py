@@ -243,6 +243,9 @@ def config_from_job(job_config: dict[str, Any] | None) -> CortexConfig:
             max_wrapped_layers=_typed_value(raw, "fast_weights_max_layers", 8, int),
             export_candidates=_typed_value(raw, "fast_weights_export_candidates", False, bool),
             canary_enabled=_typed_value(raw, "fast_weights_canary", True, bool),
+            canary_generated_enabled=_typed_value(
+                raw, "fast_weights_canary_generated", True, bool
+            ),
             canary_max_logprob_drop=_typed_value(raw, "fast_weights_canary_max_drop", 0.5, float),
             canary_max_effective_delta_rms=_typed_value(
                 raw, "fast_weights_canary_max_delta_rms", 0.05, float
