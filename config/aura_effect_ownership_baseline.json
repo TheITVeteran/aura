@@ -14553,14 +14553,6 @@
       "scope": "<module>.ActionExecutor._dispatch"
     },
     {
-      "callee": "<state_gateway>.mutate",
-      "canonical_owner": false,
-      "category": "state_gateway",
-      "count": 1,
-      "path": "core/state/state_repository.py",
-      "scope": "<module>.StateRepository.commit"
-    },
-    {
       "callee": "core.runtime.subprocess_gateway.get_subprocess_gateway().run",
       "canonical_owner": false,
       "category": "subprocess_gateway",
@@ -16546,6 +16538,6 @@
     }
   ],
   "description": "Exact AST effect-ownership debt ratchet; refresh only after reviewed change",
-  "inventory_sha256": "ba219c9c2fd65b244f2193bf1a79ae23ec2215e0623649f9de41f55994511408",
+  "inventory_sha256": "710784841b2cd4480e21bdf8c3dce9384067a88b3484418a2195a2148baf786f",
   "schema_version": 1
 }

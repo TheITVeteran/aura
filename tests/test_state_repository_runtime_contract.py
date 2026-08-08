@@ -1,7 +1,9 @@
 import asyncio
+import json
 import logging
 import sqlite3
 from types import SimpleNamespace
+from unittest.mock import AsyncMock
 
 import pytest
 
@@ -28,6 +30,22 @@ class FailingTracker:
         raise RuntimeError(f"{name}: loop unavailable")
 
 
+def _allowing_state_gate():
+    async def approve_state_mutation(*_args, **_kwargs):
+        decision = SimpleNamespace(
+            receipt_id="state-test-receipt",
+            domain="state_mutation",
+            source="state-test",
+            constraints={},
+        )
+        return True, "approved_by_test", decision
+
+    return SimpleNamespace(
+        approve_state_mutation=approve_state_mutation,
+        record_external_decision=lambda **_kwargs: None,
+    )
+
+
 def test_state_scheduler_closes_unscheduled_awaitable():
     awaitable = ClosingAwaitable()
 
@@ -35,6 +53,167 @@ def test_state_scheduler_closes_unscheduled_awaitable():
 
     assert task is None
     assert awaitable.closed is True
+
+
+@pytest.mark.asyncio
+async def test_strict_owner_commit_queues_real_transition_without_dummy_gateway_marker(
+    monkeypatch,
+) -> None:
+    from core.state.aura_state import AuraState
+
+    repo = StateRepository(is_vault_owner=True)
+    repo._current = AuraState.default()
+    enqueue = AsyncMock()
+    monkeypatch.setattr(repo, "_enqueue_owner_commit", enqueue)
+    monkeypatch.setenv("AURA_STRICT_RUNTIME", "1")
+    monkeypatch.setattr(
+        "core.state.state_gateway.get_state_gateway",
+        lambda: (_ for _ in ()).throw(AssertionError("dummy gateway marker is forbidden")),
+    )
+    candidate = repo._current.derive("real-transition", origin="test")
+
+    returned = await repo.commit(candidate, "real-transition", trace_id="trace-real")
+
+    assert returned is candidate
+    enqueue.assert_awaited_once()
+    payload = enqueue.await_args.args[0]
+    assert payload["state"] is candidate
+    assert payload["cause"] == "real-transition"
+    assert payload["trace_id"] == "trace-real"
+
+
+@pytest.mark.asyncio
+async def test_state_commit_admission_failure_never_publishes_or_persists(
+    monkeypatch,
+) -> None:
+    from core.state.aura_state import AuraState
+
+    async def fail_admission(*_args, **_kwargs):
+        raise RuntimeError("constitution unavailable")
+
+    gate = SimpleNamespace(approve_state_mutation=fail_admission)
+    monkeypatch.setattr("core.constitution.get_constitutional_core", lambda: gate)
+    repo = StateRepository(is_vault_owner=True)
+    original = AuraState.default()
+    repo._current = original
+    repo._shm = object()
+    repo._commit_to_db = AsyncMock()
+    repo._sync_to_shm = AsyncMock()
+    candidate = original.derive("rejected", origin="test")
+
+    committed = await repo._process_commit(candidate, "rejected")
+
+    assert committed is False
+    assert repo._current is original
+    assert repo.get_runtime_status()["failed_commit_count"] == 1
+    assert "governance_unavailable:RuntimeError" in repo.get_runtime_status()[
+        "last_commit_error"
+    ]
+    assert repo.get_runtime_status()["last_commit_at"] == 0.0
+    repo._commit_to_db.assert_not_awaited()
+    repo._sync_to_shm.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_state_commit_persistence_failure_keeps_previous_visible_state(
+    monkeypatch,
+) -> None:
+    from core.state.aura_state import AuraState
+
+    gate = _allowing_state_gate()
+    monkeypatch.setattr("core.constitution.get_constitutional_core", lambda: gate)
+    repo = StateRepository(is_vault_owner=True)
+    original = AuraState.default()
+    repo._current = original
+    repo._shm = object()
+    repo._commit_to_db = AsyncMock(side_effect=OSError("disk unavailable"))
+    repo._sync_to_shm = AsyncMock()
+    candidate = original.derive("not-durable", origin="test")
+
+    with pytest.raises(OSError, match="disk unavailable"):
+        await repo._process_commit(candidate, "not-durable")
+
+    assert repo._current is original
+    assert repo.get_runtime_status()["failed_commit_count"] == 1
+    assert "persistence_failed:OSError" in repo.get_runtime_status()["last_commit_error"]
+    assert repo.get_runtime_status()["last_commit_at"] == 0.0
+    repo._sync_to_shm.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_state_commit_persists_before_shm_and_memory_publication(monkeypatch) -> None:
+    from core.state.aura_state import AuraState
+
+    gate = _allowing_state_gate()
+    monkeypatch.setattr("core.constitution.get_constitutional_core", lambda: gate)
+    repo = StateRepository(is_vault_owner=True)
+    original = AuraState.default()
+    repo._current = original
+    repo._shm = object()
+    events: list[str] = []
+
+    async def persist(state, serialized):
+        assert repo._current is original
+        payload = json.loads(serialized)
+        assert payload["transition_cause"] == "durable"
+        assert payload["updated_at"] == state.updated_at
+        events.append("db")
+
+    async def publish_shm(*_args):
+        assert repo._current is original
+        events.append("shm")
+
+    repo._commit_to_db = persist
+    repo._sync_to_shm = publish_shm
+    candidate = original.derive("durable", origin="test")
+
+    committed = await repo._process_commit(candidate, "durable")
+
+    assert committed is True
+    assert events == ["db", "shm"]
+    assert repo._current is candidate
+    assert repo.get_runtime_status()["failed_commit_count"] == 0
+    assert repo.get_runtime_status()["last_commit_error"] == ""
+    assert repo.get_runtime_status()["last_commit_at"] > 0.0
+
+
+@pytest.mark.asyncio
+async def test_state_commit_transactions_cannot_interleave(monkeypatch) -> None:
+    from core.state.aura_state import AuraState
+
+    gate = _allowing_state_gate()
+    monkeypatch.setattr("core.constitution.get_constitutional_core", lambda: gate)
+    repo = StateRepository(is_vault_owner=True)
+    original = AuraState.default()
+    first = original.derive("first", origin="test")
+    second = first.derive("second", origin="test")
+    repo._current = original
+    entered_first = asyncio.Event()
+    release_first = asyncio.Event()
+    persisted: list[int] = []
+
+    async def persist(state, _serialized):
+        persisted.append(state.version)
+        if state is first:
+            entered_first.set()
+            await release_first.wait()
+
+    repo._commit_to_db = persist
+    first_task = asyncio.create_task(repo._process_commit(first, "first"))
+    await asyncio.wait_for(entered_first.wait(), timeout=1.0)
+    second_task = asyncio.create_task(repo._process_commit(second, "second"))
+    await asyncio.sleep(0)
+
+    assert persisted == [first.version]
+    assert repo._current is original
+
+    release_first.set()
+    first_result, second_result = await asyncio.gather(first_task, second_task)
+
+    assert first_result is True
+    assert second_result is True
+    assert persisted == [first.version, second.version]
+    assert repo._current is second
 
 
 def test_shutdown_commit_bus_quieting_is_limited_to_state_vault_shutdown() -> None:

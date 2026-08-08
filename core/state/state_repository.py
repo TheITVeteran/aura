@@ -211,6 +211,7 @@ class StateRepository:
         self.is_vault_owner = is_vault_owner
         self._current: AuraState | None = None
         self._lock: asyncio.Lock | None = None
+        self._commit_transaction_lock: asyncio.Lock | None = None
         self._mutation_queue_maxsize = 32
         self._mutation_queue: asyncio.Queue = asyncio.Queue(maxsize=self._mutation_queue_maxsize)
         self._is_processing = False
@@ -223,6 +224,9 @@ class StateRepository:
         self._commit_counter = 0  # Tracks commits for prune/VACUUM scheduling
         self._last_commit_at = 0.0
         self._last_commit_duration_ms = 0.0
+        self._failed_commit_count = 0
+        self._last_commit_failure_at = 0.0
+        self._last_commit_error = ""
         self._last_serialization_ms = 0.0
         self._last_consumer_activity_at = 0.0
         self._repair_count = 0
@@ -241,6 +245,18 @@ class StateRepository:
                 f"StateRepository:{'Owner' if self.is_vault_owner else 'Proxy'}"
             )
         return self._lock
+
+    @property
+    def commit_transaction_lock(self) -> Any:
+        """Serialize admission, persistence, and publication as one commit."""
+
+        if self._commit_transaction_lock is None:
+            from core.utils.concurrency import get_robust_lock
+
+            self._commit_transaction_lock = get_robust_lock(
+                f"StateRepositoryCommit:{'Owner' if self.is_vault_owner else 'Proxy'}"
+            )
+        return self._commit_transaction_lock
 
     async def _ensure_db(self) -> aiosqlite.Connection:
         """Return the repository-owned connection, opening it once when needed.
@@ -448,22 +464,6 @@ class StateRepository:
         self, new_state: AuraState, cause: str, trace_id: str | None = None
     ) -> AuraState:
         """Queue a state transition for atomic owner-side processing."""
-        if os.environ.get("AURA_STRICT_RUNTIME") == "1":
-            from core.runtime.gateways import StateMutationRequest
-            from core.state.state_gateway import get_state_gateway
-
-            gw = get_state_gateway()
-            try:
-                await gw.mutate(
-                    StateMutationRequest(
-                        key="aura_state_commit",
-                        new_value={"version": getattr(new_state, "version", 0)},
-                        cause=cause,
-                    )
-                )
-            except PermissionError as exc:
-                raise RuntimeError(f"Strict Runtime: Direct state mutation blocked: {exc}") from exc
-
         trace_id = trace_id or f"trace_{int(time.time() * 1000)}"
         if self.is_vault_owner:
             await self._enqueue_owner_commit(
@@ -1094,8 +1094,15 @@ class StateRepository:
         finally:
             logger.info("🧠 Mutation consumer exiting.")
 
-    async def _process_commit(self, new_state: AuraState, cause: str):
-        """Internal atomic processing of a commit. - [UNIFICATION OPTIMIZED]"""
+    async def _process_commit(self, new_state: AuraState, cause: str) -> bool:
+        """Admit, persist, and publish one state transition atomically."""
+
+        async with self.commit_transaction_lock:
+            return await self._process_commit_transaction(new_state, cause)
+
+    async def _process_commit_transaction(self, new_state: AuraState, cause: str) -> bool:
+        """Run one serialized owner-side commit without exposing partial state."""
+
         commit_started = time.perf_counter()
         governance_decision = None
         try:
@@ -1118,45 +1125,25 @@ class StateRepository:
                 )
             )
             if not approved:
+                self._record_commit_failure(f"governance_denied:{reason or 'unspecified'}")
                 logger.warning(
                     "🚫 [STATE] ConstitutionalCore blocked state mutation (origin=%s cause=%s reason=%s)",
                     getattr(new_state, "transition_origin", "system"),
                     cause,
                     reason,
                 )
-                return
+                return False
         except _STATE_BOUNDARY_ERRORS as exc:
-            _record_state_degradation(exc)
-            logger.debug("Constitutional state gate unavailable: %s", exc)
-
-        # 1. Serialize OUTSIDE the lock (O(n) walk) - Offload to thread
-        try:
-            start_ser = time.perf_counter()
-            if self._should_use_bounded_db_snapshot(new_state, cause):
-                serialized_data = await asyncio.to_thread(
-                    self._serialize_transport_snapshot, new_state
-                )
-            else:
-                serialized_data = await asyncio.to_thread(self._serialize, new_state)
-                payload_bytes = len(serialized_data.encode("utf-8"))
-                if payload_bytes > self.DB_PAYLOAD_MAX_BYTES:
-                    logger.warning(
-                        "⚠️ [STATE] Full DB payload overflow: %d bytes exceeds budget %d. "
-                        "Persisting bounded hot snapshot instead.",
-                        payload_bytes,
-                        self.DB_PAYLOAD_MAX_BYTES,
-                    )
-                    serialized_data = await asyncio.to_thread(
-                        self._serialize_transport_snapshot, new_state
-                    )
-            ser_ms = (time.perf_counter() - start_ser) * 1000
-            self._last_serialization_ms = ser_ms
-            if ser_ms > 20:
-                logger.warning("📉 [STATE] Heavy Serialization Detected: %.2fms", ser_ms)
-        except _STATE_BOUNDARY_ERRORS as e:
-            _record_state_degradation(e)
-            logger.error("🛑 [STATE] Serialization failed: %s", e)
-            return
+            self._record_commit_failure(
+                f"governance_unavailable:{type(exc).__name__}: {exc}"
+            )
+            _record_state_degradation(
+                exc,
+                action="state commit refused because constitutional admission was unavailable",
+                severity="critical",
+            )
+            logger.error("Constitutional state gate unavailable; state commit refused: %s", exc)
+            return False
 
         async with self.lock:
             current = self._current
@@ -1183,15 +1170,80 @@ class StateRepository:
                         self._current.version,
                         cause,
                     )
-                    return
+                    return False
 
             new_state.transition_cause = cause
             new_state.updated_at = time.time()
 
-            # --- ATOMIC MEMORY UPDATE ---
+        # Serialize only after version rebasing and transition metadata are final,
+        # so the durable JSON agrees with the indexed database columns.
+        try:
+            start_ser = time.perf_counter()
+            if self._should_use_bounded_db_snapshot(new_state, cause):
+                serialized_data = await asyncio.to_thread(
+                    self._serialize_transport_snapshot, new_state
+                )
+            else:
+                serialized_data = await asyncio.to_thread(self._serialize, new_state)
+                payload_bytes = len(serialized_data.encode("utf-8"))
+                if payload_bytes > self.DB_PAYLOAD_MAX_BYTES:
+                    logger.warning(
+                        "⚠️ [STATE] Full DB payload overflow: %d bytes exceeds budget %d. "
+                        "Persisting bounded hot snapshot instead.",
+                        payload_bytes,
+                        self.DB_PAYLOAD_MAX_BYTES,
+                    )
+                    serialized_data = await asyncio.to_thread(
+                        self._serialize_transport_snapshot, new_state
+                    )
+            ser_ms = (time.perf_counter() - start_ser) * 1000
+            self._last_serialization_ms = ser_ms
+            if ser_ms > 20:
+                logger.warning("📉 [STATE] Heavy Serialization Detected: %.2fms", ser_ms)
+        except _STATE_BOUNDARY_ERRORS as e:
+            self._record_commit_failure(f"serialization_failed:{type(e).__name__}: {e}")
+            _record_state_degradation(e)
+            logger.error("🛑 [STATE] Serialization failed: %s", e)
+            return False
+
+        # Persist DB + publish SHM inline within the single
+        # consumer instead of spawning unbounded write tasks. The queue already
+        # gives us async decoupling from foreground chat, and inline writes keep
+        # long uptimes from degenerating into thousands of pending DB/SHM tasks.
+        try:
+            if governance_decision is not None:
+                from core.governance_context import governed_scope
+
+                async with governed_scope(governance_decision):
+                    await self._commit_to_db(new_state, serialized_data)
+                    if self._shm:
+                        try:
+                            await self._sync_to_shm(new_state, serialized_data)
+                        except _STATE_BOUNDARY_ERRORS as exc:
+                            _record_state_degradation(exc)
+                            logger.warning("⚠️ [STATE] SHM propagation failed: %s", exc)
+            else:
+                await self._commit_to_db(new_state, serialized_data)
+                if self._shm:
+                    try:
+                        await self._sync_to_shm(new_state, serialized_data)
+                    except _STATE_BOUNDARY_ERRORS as exc:
+                        _record_state_degradation(exc)
+                        logger.warning("⚠️ [STATE] SHM propagation failed: %s", exc)
+        except _STATE_BOUNDARY_ERRORS as exc:
+            self._record_commit_failure(f"persistence_failed:{type(exc).__name__}: {exc}")
+            _record_state_degradation(exc)
+            logger.error("🛑 [STATE] Vault persistence failed: %s", exc)
+            raise  # Fail closed on critical state mutation failure
+        finally:
+            self._last_commit_duration_ms = (time.perf_counter() - commit_started) * 1000.0
+
+        async with self.lock:
             self._current = new_state
+            self._last_commit_at = time.time()
+            self._last_commit_error = ""
             logger.debug(
-                "💾 [STATE] Memory state updated to v%d. Releasing lock for IO.", new_state.version
+                "💾 [STATE] Durable state v%d published to memory.", new_state.version
             )
 
         try:
@@ -1227,38 +1279,12 @@ class StateRepository:
         except _STATE_BOUNDARY_ERRORS as exc:
             _record_state_degradation(exc)
             logger.debug("Initiative proposal audit skipped: %s", exc)
+        return True
 
-        # 2. PROCEED OUTSIDE LOCK: publish SHM + DB inline within the single
-        # consumer instead of spawning unbounded write tasks. The queue already
-        # gives us async decoupling from foreground chat, and inline writes keep
-        # long uptimes from degenerating into thousands of pending DB/SHM tasks.
-        try:
-            if governance_decision is not None:
-                from core.governance_context import governed_scope
-
-                async with governed_scope(governance_decision):
-                    if self._shm:
-                        try:
-                            await self._sync_to_shm(new_state, serialized_data)
-                        except _STATE_BOUNDARY_ERRORS as exc:
-                            _record_state_degradation(exc)
-                            logger.warning("⚠️ [STATE] SHM propagation failed: %s", exc)
-                    await self._commit_to_db(new_state, serialized_data)
-            else:
-                if self._shm:
-                    try:
-                        await self._sync_to_shm(new_state, serialized_data)
-                    except _STATE_BOUNDARY_ERRORS as exc:
-                        _record_state_degradation(exc)
-                        logger.warning("⚠️ [STATE] SHM propagation failed: %s", exc)
-                await self._commit_to_db(new_state, serialized_data)
-        except _STATE_BOUNDARY_ERRORS as exc:
-            _record_state_degradation(exc)
-            logger.error("🛑 [STATE] Vault persistence failed: %s", exc)
-            raise  # Fail closed on critical state mutation failure
-        finally:
-            self._last_commit_at = time.time()
-            self._last_commit_duration_ms = (time.perf_counter() - commit_started) * 1000.0
+    def _record_commit_failure(self, reason: str) -> None:
+        self._failed_commit_count += 1
+        self._last_commit_failure_at = time.time()
+        self._last_commit_error = str(reason or "unknown")[:512]
 
     @staticmethod
     def _is_user_facing_origin(origin: Any) -> bool:
@@ -1314,6 +1340,9 @@ class StateRepository:
             "current_version": int(getattr(self._current, "version", 0) or 0),
             "last_commit_at": float(self._last_commit_at or 0.0),
             "last_commit_duration_ms": float(self._last_commit_duration_ms or 0.0),
+            "failed_commit_count": int(self._failed_commit_count),
+            "last_commit_failure_at": float(self._last_commit_failure_at or 0.0),
+            "last_commit_error": str(self._last_commit_error),
             "last_serialization_ms": float(self._last_serialization_ms or 0.0),
             "last_consumer_activity_at": float(self._last_consumer_activity_at or 0.0),
             "repair_count": int(self._repair_count),

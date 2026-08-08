@@ -38054,3 +38054,32 @@ byte-compilation, diff hygiene, and all `20/20` current closeout-rubric checks.
 Kernel-enforced process sandboxing remains separate open work; this checkpoint
 establishes declaration, admission, ownership, shutdown, and auditability
 rather than claiming an OS boundary that does not yet exist.
+
+## Checkpoint 2026-08-08-009: State Commit Means Durable Commit
+
+The owner-side state repository no longer emits a synthetic
+`aura_state_commit` gateway mutation before queuing the real transition. That
+marker neither persisted nor governed the candidate Aura state and made strict
+runtime telemetry look safer than the operation it purported to represent.
+The actual transition is now the only operation admitted and measured.
+
+Admission, version validation, durable database persistence, shared-memory
+propagation, and in-process publication now execute inside one serialized
+transaction. Constitutional-gate failures refuse the transition instead of
+falling through. Database failure leaves both shared memory and the visible
+in-process state unchanged; shared-memory failure remains an explicit degraded
+replica after the database has become authoritative. A commit timestamp is
+published only after durable success, while failed attempts have separate
+count, timestamp, and bounded error telemetry.
+
+Regression coverage proves strict-mode queuing without the dummy marker,
+fail-closed constitutional admission, persistence rollback of visible state,
+database-before-replica-before-memory ordering, and exclusion between
+concurrent commit attempts. The complete repository contract passes `22/22`,
+the broader state/effect selection passes `50/50`, and the canonical smoke,
+governance, Ruff, byte-compilation, and diff-hygiene gates pass. The governance
+inventory now recognizes `2,216` calls in `2,067` buckets with state-gateway
+migration debt at zero and `1,950` total calls still awaiting canonical
+ownership. This closes the identified state-publication defect; it does not
+claim the remaining effect migrations, semantic review, live proof, resident
+RLC verdict, fusion, release certification, or deferred endurance work.
