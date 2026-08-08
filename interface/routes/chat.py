@@ -25,7 +25,7 @@ from collections.abc import Callable, Sequence
 from contextlib import AbstractContextManager
 from contextvars import ContextVar
 from datetime import UTC, datetime
-from functools import wraps
+from functools import lru_cache, wraps
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -43,6 +43,12 @@ from core.brain.live_mind_contract import (
 from core.brain.llm.cloud_errors import cloud_call_error_types
 from core.brain.llm.latent_cortex.output_quality import evaluate_latent_output
 from core.container import ServiceContainer
+from core.memory.session_pin_cipher import (
+    SESSION_PIN_ENVELOPE_SCHEMA,
+    SESSION_PIN_INDEX_CONTENT,
+    SessionPinCipher,
+    SessionPinCipherError,
+)
 from core.reasoning.artifact_synthesis import response_satisfies_artifact_contract
 from core.runtime import resource_psutil as psutil
 from core.runtime.chat_delivery_journal import (
@@ -1440,6 +1446,10 @@ _RECENT_CONVERSATION_AURA_CHARS = 1200
 _RECENT_CONVERSATION_RENDERED_CHARS = 6000
 _SESSION_MEMORY_PIN_LEDGER_LIMIT = 500
 _SESSION_MEMORY_PIN_LEDGER_READ_BYTES = 2 * 1024 * 1024
+_SESSION_MEMORY_PIN_LEDGER_LOCK = checked_lock(
+    "chat.session_memory_pin_ledger",
+    reentrant=True,
+)
 _CHAT_BLOCKING_PREFLIGHT_TIMEOUT_S = 2.0
 _CHAT_LIVE_MIND_COLLECTION_TIMEOUT_S = 2.5
 _CHAT_EXPORT_SECTION_TIMEOUT_S = 3.0
@@ -2533,6 +2543,167 @@ def _session_memory_pin_ledger_path() -> Path:
     return config.paths.data_dir / "memory" / "session_memory_pins.jsonl"
 
 
+@lru_cache(maxsize=1)
+def _session_memory_pin_cipher() -> SessionPinCipher:
+    """Resolve the Keychain-custodied pin cipher once per runtime."""
+
+    return SessionPinCipher.from_system()
+
+
+def _session_memory_pin_binding(
+    *,
+    session_id: str = "",
+    principal_id: str = "",
+    principal_surface: str = "",
+    inherit_context: bool = True,
+) -> tuple[str, str]:
+    if inherit_context:
+        principal, surface = _chat_memory_identity(
+            principal_id=principal_id,
+            principal_surface=principal_surface,
+        )
+    else:
+        principal = " ".join(str(principal_id or "").strip().split())[:160]
+        surface = str(principal_surface or "").strip().casefold()[:32]
+    if principal and surface:
+        return principal, surface
+    safe_session_id = str(session_id or "")[:64]
+    if safe_session_id and not principal:
+        digest = hashlib.sha256(safe_session_id.encode("utf-8")).hexdigest()
+        return f"session:{digest}", "session"
+    return "", ""
+
+
+def _seal_session_memory_pin_record(
+    content: str,
+    source: str,
+    timestamp: str,
+    *,
+    session_id: str = "",
+    principal_id: str = "",
+    principal_surface: str = "",
+) -> dict[str, str]:
+    safe_principal_id, safe_surface = _session_memory_pin_binding(
+        session_id=session_id,
+        principal_id=principal_id,
+        principal_surface=principal_surface,
+    )
+    return _session_memory_pin_cipher().seal(
+        content=content,
+        source=source,
+        timestamp=timestamp,
+        session_id=str(session_id or "")[:64],
+        principal_id=safe_principal_id,
+        principal_surface=safe_surface,
+    )
+
+
+def _migrate_session_memory_pin_ledger_locked(
+    path: Path,
+    cipher: SessionPinCipher,
+) -> None:
+    """Rewrite legacy plaintext pin rows before any new append or recall."""
+
+    if not path.exists():
+        return
+    retained_lines: collections.deque[str] = collections.deque(
+        maxlen=_SESSION_MEMORY_PIN_LEDGER_LIMIT
+    )
+    total_lines = 0
+    with path.open("r", encoding="utf-8", errors="replace") as handle:
+        for line in handle:
+            total_lines += 1
+            retained_lines.append(line.rstrip("\r\n"))
+    raw_lines = list(retained_lines)
+    migrated: list[dict[str, str]] = []
+    changed = total_lines > len(raw_lines)
+    dropped = max(0, total_lines - len(raw_lines))
+    for line in raw_lines:
+        if not line.strip():
+            changed = True
+            continue
+        try:
+            record = json.loads(line)
+        except json.JSONDecodeError:
+            changed = True
+            dropped += 1
+            continue
+        if not isinstance(record, dict):
+            changed = True
+            dropped += 1
+            continue
+        if record.get("schema") == SESSION_PIN_ENVELOPE_SCHEMA:
+            # Opening before preserving the row prevents a forged or corrupt
+            # envelope from surviving migration as apparently valid state.
+            try:
+                cipher.open(record)
+            except SessionPinCipherError:
+                changed = True
+                dropped += 1
+                continue
+            canonical_envelope = {
+                key: str(record.get(key) or "")
+                for key in (
+                    "schema",
+                    "key_id",
+                    "record_id",
+                    "nonce_b64",
+                    "ciphertext_b64",
+                )
+            }
+            if canonical_envelope != record:
+                changed = True
+            migrated.append(canonical_envelope)
+            continue
+        if record.get("schema") != "aura.session_memory_pin.v2":
+            changed = True
+            dropped += 1
+            continue
+        content = str(record.get("content") or "").strip()
+        if not content:
+            changed = True
+            dropped += 1
+            continue
+        session_id = str(record.get("session_id") or "")[:64]
+        principal_id, surface = _session_memory_pin_binding(
+            session_id=session_id,
+            principal_id=str(record.get("principal_id") or ""),
+            principal_surface=str(record.get("principal_surface") or ""),
+            inherit_context=False,
+        )
+        if not principal_id or not surface:
+            # Preserve the information under encryption without assigning an
+            # unowned historical record to the next caller who happens to ask.
+            digest = hashlib.sha256(line.encode("utf-8")).hexdigest()
+            principal_id = f"legacy-unbound:{digest}"
+            surface = "legacy_unbound"
+        migrated.append(
+            cipher.seal(
+                content=content,
+                source=str(record.get("source") or ""),
+                timestamp=str(record.get("timestamp") or ""),
+                session_id=session_id,
+                principal_id=principal_id,
+                principal_surface=surface,
+            )
+        )
+        changed = True
+    if not changed:
+        return
+    from core.runtime.atomic_writer import atomic_write_text
+
+    payload = "".join(
+        json.dumps(record, ensure_ascii=True, sort_keys=True) + "\n"
+        for record in migrated
+    )
+    atomic_write_text(path, payload, mode=0o600)
+    if dropped:
+        logger.warning(
+            "Dropped %d malformed session-memory ledger row(s) during encrypted migration",
+            dropped,
+        )
+
+
 def _append_session_memory_pin_ledger(
     content: str,
     source: str,
@@ -2546,22 +2717,25 @@ def _append_session_memory_pin_ledger(
         from core.runtime.atomic_writer import atomic_append_text
 
         path = _session_memory_pin_ledger_path()
-        record = {
-            "schema": "aura.session_memory_pin.v2",
-            "content": str(content or "").strip()[:240],
-            "source": str(source or "").strip()[:512],
-            "timestamp": str(timestamp or ""),
-            "session_id": str(session_id or "")[:64],
-            "principal_id": " ".join(str(principal_id or "").strip().split())[:160],
-            "principal_surface": str(principal_surface or "").strip().casefold()[:32],
-            "session_memory_pin": True,
-            "kind": "explicit_user_memory_pin",
-        }
-        if not record["content"]:
+        if not str(content or "").strip():
             return False
-        atomic_append_text(path, json.dumps(record, ensure_ascii=False, sort_keys=True) + "\n")
+        cipher = _session_memory_pin_cipher()
+        with _SESSION_MEMORY_PIN_LEDGER_LOCK:
+            _migrate_session_memory_pin_ledger_locked(path, cipher)
+            record = _seal_session_memory_pin_record(
+                content,
+                source,
+                timestamp,
+                session_id=session_id,
+                principal_id=principal_id,
+                principal_surface=principal_surface,
+            )
+            atomic_append_text(
+                path,
+                json.dumps(record, ensure_ascii=True, sort_keys=True) + "\n",
+            )
         return True
-    except _CHAT_RECOVERABLE_ERRORS as exc:
+    except (*_CHAT_RECOVERABLE_ERRORS, SessionPinCipherError) as exc:
         record_degradation("chat.session_memory_pin", exc)
         logger.debug("Durable session memory pin ledger write skipped: %s", exc)
         return False
@@ -2625,14 +2799,17 @@ def _recall_session_memory_pin_from_ledger(
 ) -> dict[str, str] | None:
     try:
         path = _session_memory_pin_ledger_path()
-        if not path.exists():
-            return None
-        expected_session_id = str(session_id or "")[:64]
-        size = path.stat().st_size
-        with path.open("rb") as handle:
-            if size > _SESSION_MEMORY_PIN_LEDGER_READ_BYTES:
-                handle.seek(-_SESSION_MEMORY_PIN_LEDGER_READ_BYTES, os.SEEK_END)
-            payload = handle.read(_SESSION_MEMORY_PIN_LEDGER_READ_BYTES + 1)
+        cipher = _session_memory_pin_cipher()
+        with _SESSION_MEMORY_PIN_LEDGER_LOCK:
+            if not path.exists():
+                return None
+            _migrate_session_memory_pin_ledger_locked(path, cipher)
+            expected_session_id = str(session_id or "")[:64]
+            size = path.stat().st_size
+            with path.open("rb") as handle:
+                if size > _SESSION_MEMORY_PIN_LEDGER_READ_BYTES:
+                    handle.seek(-_SESSION_MEMORY_PIN_LEDGER_READ_BYTES, os.SEEK_END)
+                payload = handle.read(_SESSION_MEMORY_PIN_LEDGER_READ_BYTES + 1)
         lines = payload.decode("utf-8", errors="replace").splitlines()
         if size > _SESSION_MEMORY_PIN_LEDGER_READ_BYTES and lines:
             # The bounded tail may begin in the middle of one JSONL row.
@@ -2644,17 +2821,25 @@ def _recall_session_memory_pin_from_ledger(
                 raw = json.loads(line)
             except json.JSONDecodeError:
                 continue
+            if not isinstance(raw, dict) or raw.get("schema") != SESSION_PIN_ENVELOPE_SCHEMA:
+                continue
+            try:
+                opened = cipher.open(raw)
+            except SessionPinCipherError as exc:
+                record_degradation("chat.session_memory_pin", exc)
+                continue
             recalled = _session_memory_pin_from_record(
-                raw,
+                {**opened, "session_memory_pin": True},
                 session_id=expected_session_id,
                 cross_session=cross_session,
                 principal_id=principal_id,
                 principal_surface=principal_surface,
+                allow_plaintext=True,
             )
             if recalled:
                 recalled["storage"] = "durable"
                 return recalled
-    except _CHAT_RECOVERABLE_ERRORS as exc:
+    except (*_CHAT_RECOVERABLE_ERRORS, SessionPinCipherError) as exc:
         record_degradation("chat.session_memory_pin", exc)
         logger.debug("Durable session memory pin ledger recall skipped: %s", exc)
     return None
@@ -2696,7 +2881,8 @@ async def _store_session_memory_pin(
         return False
     timestamp = datetime.now(tz=UTC).isoformat()
     safe_session_id = str(session_id or "")[:64]
-    safe_principal_id, safe_principal_surface = _chat_memory_identity(
+    safe_principal_id, safe_principal_surface = _session_memory_pin_binding(
+        session_id=safe_session_id,
         principal_id=principal_id,
         principal_surface=principal_surface,
     )
@@ -2715,6 +2901,15 @@ async def _store_session_memory_pin(
         if len(_session_memory_pins) > 100:
             _session_memory_pins.pop(0)
     try:
+        sealed_record = await asyncio.to_thread(
+            _seal_session_memory_pin_record,
+            pinned,
+            source,
+            timestamp,
+            session_id=safe_session_id,
+            principal_id=safe_principal_id,
+            principal_surface=safe_principal_surface,
+        )
         memory_facade = ServiceContainer.get("memory_facade", default=None)
         if memory_facade is None or not hasattr(memory_facade, "add_memory"):
             ledger_ok = await asyncio.to_thread(
@@ -2728,19 +2923,14 @@ async def _store_session_memory_pin(
             )
             return bool(ledger_ok)
         result = memory_facade.add_memory(
-            f"Session memory pin: {pinned[:240]}",
+            SESSION_PIN_INDEX_CONTENT,
             metadata={
                 "source": "session_memory_pin",
                 "family": "episodic",
                 "kind": "explicit_user_memory_pin",
                 "session_memory_pin": True,
-                "session_memory_pin_content": pinned[:240],
-                "source_utterance": str(source or "").strip()[:512],
-                "timestamp": timestamp,
-                "session_id": safe_session_id,
-                "chat_session_id": safe_session_id,
-                "principal_id": safe_principal_id,
-                "principal_surface": safe_principal_surface,
+                "session_memory_pin_envelope": sealed_record,
+                "session_memory_pin_envelope_schema": SESSION_PIN_ENVELOPE_SCHEMA,
                 "importance": 0.9,
                 "identity_relevant": True,
                 "explicit_memory_request": True,
@@ -2776,7 +2966,7 @@ async def _store_session_memory_pin(
                 "canonical memory remains authoritative."
             )
         return True
-    except _CHAT_RECOVERABLE_ERRORS as exc:
+    except (*_CHAT_RECOVERABLE_ERRORS, SessionPinCipherError) as exc:
         record_degradation("chat.session_memory_pin", exc)
         logger.debug("Durable session memory pin write skipped: %s", exc)
         if not ledger_ok:
@@ -2799,14 +2989,36 @@ def _session_memory_pin_from_record(
     cross_session: bool = False,
     principal_id: str = "",
     principal_surface: str = "",
+    allow_plaintext: bool = False,
 ) -> dict[str, str] | None:
     if not isinstance(item, dict):
         return None
     metadata = item.get("metadata")
     if not isinstance(metadata, dict):
         metadata = {}
+    envelope = metadata.get("session_memory_pin_envelope") or item.get(
+        "session_memory_pin_envelope"
+    )
+    if envelope is not None:
+        if not isinstance(envelope, dict):
+            return None
+        try:
+            opened = _session_memory_pin_cipher().open(envelope)
+        except SessionPinCipherError as exc:
+            record_degradation("chat.session_memory_pin", exc)
+            return None
+        item = {**opened, "session_memory_pin": True}
+        metadata = {}
+        allow_plaintext = True
+    if not allow_plaintext:
+        # Durable plaintext pins predate the encrypted store. They remain
+        # ineligible for recall so a copied database row cannot bypass the
+        # principal-bound envelope contract. The JSONL migration preserves
+        # usable legacy rows under encryption.
+        return None
     expected_session_id = str(session_id or "")[:64]
-    expected_principal_id, expected_surface = _chat_memory_identity(
+    expected_principal_id, expected_surface = _session_memory_pin_binding(
+        session_id=expected_session_id,
         principal_id=principal_id,
         principal_surface=principal_surface,
     )
@@ -2829,7 +3041,11 @@ def _session_memory_pin_from_record(
     # concurrent sessions stay isolated. ``cross_session`` is the explicit
     # opt-in (the user asked about a pin from *before a restart*), which is the
     # only path that may return another session's durable pin.
-    if record_principal_id and record_principal_id != expected_principal_id:
+    if not expected_principal_id or not expected_surface:
+        return None
+    if not record_principal_id or not record_surface:
+        return None
+    if record_principal_id != expected_principal_id or record_surface != expected_surface:
         return None
     if cross_session and (expected_surface != "owner" or not expected_principal_id):
         return None
@@ -2851,8 +3067,13 @@ def _session_memory_pin_from_record(
         return None
     return {
         "content": content[:240],
-        "source": str(metadata.get("source_utterance") or metadata.get("source") or "durable_memory")[:512],
-        "timestamp": str(metadata.get("timestamp") or ""),
+        "source": str(
+            metadata.get("source_utterance")
+            or metadata.get("source")
+            or item.get("source")
+            or "durable_memory"
+        )[:512],
+        "timestamp": str(metadata.get("timestamp") or item.get("timestamp") or ""),
         "session_id": record_session_id,
         "principal_id": record_principal_id,
         "principal_surface": record_surface,
@@ -2868,7 +3089,8 @@ async def _recall_durable_session_memory_pin(
     principal_surface: str = "",
 ) -> dict[str, str] | None:
     safe_session_id = str(session_id or "")[:64]
-    safe_principal_id, safe_principal_surface = _chat_memory_identity(
+    safe_principal_id, safe_principal_surface = _session_memory_pin_binding(
+        session_id=safe_session_id,
         principal_id=principal_id,
         principal_surface=principal_surface,
     )
@@ -2920,7 +3142,8 @@ async def _recall_session_memory_pin(
     principal_surface: str = "",
 ) -> dict[str, str] | None:
     safe_session_id = str(session_id or "")[:64]
-    safe_principal_id, safe_principal_surface = _chat_memory_identity(
+    safe_principal_id, safe_principal_surface = _session_memory_pin_binding(
+        session_id=safe_session_id,
         principal_id=principal_id,
         principal_surface=principal_surface,
     )
@@ -2932,6 +3155,7 @@ async def _recall_session_memory_pin(
                 cross_session=cross_session,
                 principal_id=safe_principal_id,
                 principal_surface=safe_principal_surface,
+                allow_plaintext=True,
             )
             if recalled:
                 recalled["storage"] = "session"
@@ -2987,9 +3211,10 @@ async def _build_memory_state_fastpath_reply(
                 session_id=session_id,
             )
             logger.info(
-                "🧷 Pinned %r and left the reply to the mind: this turn asks "
-                "for more than the memory template can answer.",
-                deferred_pin[:80],
+                "🧷 Pinned an explicit memory item (chars=%d) and left "
+                "the reply to the mind: this turn asks for more than the memory "
+                "template can answer.",
+                len(deferred_pin),
             )
         return None
     session_pin = _extract_session_memory_pin_request(user_message)

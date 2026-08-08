@@ -38133,7 +38133,7 @@ review coverage is not remediation and none is closed by the review receipt:
 - **P2 CLOSED CP023:** reconstruct durable transcripts by exchange identity rather than row adjacency.
 - **P2 CLOSED CP024:** close surface-delivery state on every fast, defensive, conscience, pressure,
   and error return, not only the final quality path.
-- **P3:** encrypt and principal-bind explicit memory pins at rest.
+- **P3 CLOSED CP026:** encrypt and principal-bind explicit memory pins at rest.
 - **P3:** report capability availability only from a measured catalog/health snapshot.
 
 The resident complete-engine RLC experiment, these chat remediations, remaining
@@ -38647,3 +38647,37 @@ while this item was still open; CP025 corrects that ledger error. All bounded
 P1/P2 chat semantic items are now closed. The completion envelope remains
 `809/920` (approximately `87.9%`); the two P3 chat items and the broader RLC,
 fusion, release, semantic-review, and endurance program remain open.
+
+## Checkpoint 2026-08-08-026: Explicit Memory Pins Are Ciphertext at Rest
+
+Explicit user memory pins no longer persist their content, source utterance,
+session ID, principal ID, or surface in plaintext. A dedicated AES-256-GCM
+envelope protects those fields, and the data-encryption key is created and
+write-confirmed only in macOS Keychain. The generic memory index receives a
+searchable non-secret marker plus the authenticated envelope; the dedicated
+JSONL ledger receives only the envelope. Keychain outage or incomplete
+principal binding leaves the pin transient in process and reports that durable
+storage did not accept it instead of writing an unowned plaintext record.
+
+The encrypted body binds content to its exact principal, surface, and session.
+Same-session recall derives the same pseudonymous principal from the session
+when no authenticated principal is available. Cross-session recall still
+requires the authenticated owner surface and matching owner principal. Copied,
+tampered, wrong-key, malformed, plaintext-only, or differently bound records
+are ineligible for recall.
+
+Before any append or recall, a bounded migration rewrites legacy v2 ledger rows
+to ciphertext under their existing binding. A legacy row with no recoverable
+owner is encrypted under a non-recallable legacy binding rather than assigned
+to the next caller; malformed and unauthenticated rows are removed. Migration
+also strips undeclared envelope fields so injected plaintext cannot survive
+beside valid ciphertext. A read-only scan found no existing explicit-pin
+plaintext records in Aura's current memory data roots.
+
+Cipher and desktop-intent suites pass `34/34`; focused conversation-lane pin
+and migration tests pass `15/15`; the complete feedback-audit suite passes
+`156/156`; canonical smoke passes `103/103`; layering, governance lint,
+the `3,193`-file local security scan, affected Ruff, byte-compilation, and
+diff-hygiene gates pass. The completion envelope remains `809/920`
+(approximately `87.9%`); one bounded P3 chat item and the broader RLC, fusion,
+release, semantic-review, and endurance program remain open.

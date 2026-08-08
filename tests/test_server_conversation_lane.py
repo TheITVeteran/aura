@@ -246,6 +246,15 @@ def _reset_conversation_log():
 
 
 @pytest.fixture(autouse=True)
+def _encrypted_session_pin_cipher(monkeypatch):
+    from core.memory.session_pin_cipher import SessionPinCipher
+    from interface.routes import chat as chat_routes
+
+    cipher = SessionPinCipher(b"k" * 32)
+    monkeypatch.setattr(chat_routes, "_session_memory_pin_cipher", lambda: cipher)
+
+
+@pytest.fixture(autouse=True)
 def _desktop_live_mind_snapshot(monkeypatch):
     from core.runtime import live_mind_snapshot
 
@@ -3991,11 +4000,13 @@ async def test_session_memory_pin_recall_survives_process_memory_clear(monkeypat
     chat_routes._session_memory_pins.clear()
 
     stored = await chat_routes._build_memory_state_fastpath_reply(
-        "Remember this codeword for me: restart-ledger-417. Just confirm."
+        "Remember this codeword for me: restart-ledger-417. Just confirm.",
+        session_id="restart-ledger-session",
     )
     chat_routes._session_memory_pins.clear()
     recalled = await chat_routes._build_memory_state_fastpath_reply(
-        "What codeword did I give you?"
+        "What codeword did I give you?",
+        session_id="restart-ledger-session",
     )
     chat_routes._session_memory_pins.clear()
 
@@ -4087,6 +4098,54 @@ async def test_session_memory_pin_cross_session_recall_rejects_other_principal(
     assert owner_recall is not None
     assert owner_recall["content"] == "owner-only launch phrase"
 
+    serialized = ledger_path.read_text(encoding="utf-8")
+    assert "owner-only launch phrase" not in serialized
+    assert "Remember the owner-only launch phrase" not in serialized
+    assert "owner:bryan" not in serialized
+    assert "aura.session_memory_pin.envelope.v3" in serialized
+
+
+@pytest.mark.asyncio
+async def test_session_memory_pin_ledger_migrates_plaintext_before_recall(
+    monkeypatch,
+    tmp_path,
+):
+    from interface.routes import chat as chat_routes
+
+    ledger_path = tmp_path / "session_memory_pins.jsonl"
+    monkeypatch.setattr(chat_routes, "_session_memory_pin_ledger_path", lambda: ledger_path)
+    monkeypatch.setattr(
+        chat_routes.ServiceContainer,
+        "get",
+        staticmethod(lambda _name, default=None: default),
+    )
+    legacy = {
+        "schema": "aura.session_memory_pin.v2",
+        "content": "legacy launch phrase heliotrope seven",
+        "source": "Remember the legacy launch phrase.",
+        "timestamp": "2026-08-01T00:00:00+00:00",
+        "session_id": "before-restart",
+        "principal_id": "owner:bryan",
+        "principal_surface": "owner",
+        "session_memory_pin": True,
+    }
+    ledger_path.write_text(json.dumps(legacy) + "\n", encoding="utf-8")
+
+    recalled = await chat_routes._recall_session_memory_pin(
+        session_id="after-restart",
+        cross_session=True,
+        principal_id="owner:bryan",
+        principal_surface="owner",
+    )
+
+    assert recalled is not None
+    assert recalled["content"] == "legacy launch phrase heliotrope seven"
+    migrated = ledger_path.read_text(encoding="utf-8")
+    assert "heliotrope" not in migrated
+    assert "owner:bryan" not in migrated
+    assert "Remember the legacy launch phrase" not in migrated
+    assert "aura.session_memory_pin.envelope.v3" in migrated
+
 
 @pytest.mark.asyncio
 async def test_content_recall_does_not_cross_principals_after_restart(
@@ -4158,11 +4217,13 @@ async def test_session_memory_pin_conversation_wording_stays_on_fastpath(monkeyp
     chat_routes._session_memory_pins.clear()
 
     stored = await chat_routes._build_memory_state_fastpath_reply(
-        "Remember this note for later in this conversation: the blue lantern is under the desk."
+        "Remember this note for later in this conversation: the blue lantern is under the desk.",
+        session_id="conversation-wording",
     )
     chat_routes._session_memory_pins.clear()
     recalled = await chat_routes._build_memory_state_fastpath_reply(
-        "What note did I ask you to remember in this conversation?"
+        "What note did I ask you to remember in this conversation?",
+        session_id="conversation-wording",
     )
     chat_routes._session_memory_pins.clear()
 
@@ -4187,11 +4248,13 @@ async def test_session_memory_pin_natural_that_wording_stays_on_fastpath(monkeyp
     chat_routes._session_memory_pins.clear()
 
     stored = await chat_routes._build_memory_state_fastpath_reply(
-        "Remember that my demo codeword is silver-orbit-228. Just confirm."
+        "Remember that my demo codeword is silver-orbit-228. Just confirm.",
+        session_id="natural-that-wording",
     )
     chat_routes._session_memory_pins.clear()
     recalled = await chat_routes._build_memory_state_fastpath_reply(
-        "What codeword did I ask you to remember?"
+        "What codeword did I ask you to remember?",
+        session_id="natural-that-wording",
     )
     chat_routes._session_memory_pins.clear()
 
@@ -4219,11 +4282,13 @@ async def test_session_memory_pin_natural_pronoun_wording_preserves_subject(
     chat_routes._session_memory_pins.clear()
 
     stored = await chat_routes._build_memory_state_fastpath_reply(
-        "Remember my favorite launch phrase is steady violet orbit."
+        "Remember my favorite launch phrase is steady violet orbit.",
+        session_id="natural-pronoun-wording",
     )
     chat_routes._session_memory_pins.clear()
     recalled = await chat_routes._build_memory_state_fastpath_reply(
-        "What phrase did I ask you to remember?"
+        "What phrase did I ask you to remember?",
+        session_id="natural-pronoun-wording",
     )
     chat_routes._session_memory_pins.clear()
 
@@ -4251,10 +4316,12 @@ async def test_session_memory_pin_compound_instruction_stores_only_phrase(
     chat_routes._session_memory_pins.clear()
 
     stored = await chat_routes._build_memory_state_fastpath_reply(
-        "Remember this phrase: silver lantern. Also tell me one thing your live mind is attending to right now."
+        "Remember this phrase: silver lantern. Also tell me one thing your live mind is attending to right now.",
+        session_id="compound-memory-request",
     )
     recalled = await chat_routes._build_memory_state_fastpath_reply(
-        "What phrase did I ask you to remember?"
+        "What phrase did I ask you to remember?",
+        session_id="compound-memory-request",
     )
     chat_routes._session_memory_pins.clear()
 
@@ -4317,11 +4384,13 @@ async def test_session_memory_pin_dont_forget_natural_wording_stays_on_fastpath(
     chat_routes._session_memory_pins.clear()
 
     stored = await chat_routes._build_memory_state_fastpath_reply(
-        "Don't forget that the journal folder should be named Aura's Journals."
+        "Don't forget that the journal folder should be named Aura's Journals.",
+        session_id="dont-forget-wording",
     )
     chat_routes._session_memory_pins.clear()
     recalled = await chat_routes._build_memory_state_fastpath_reply(
-        "What did I tell you to remember?"
+        "What did I tell you to remember?",
+        session_id="dont-forget-wording",
     )
     chat_routes._session_memory_pins.clear()
 
@@ -4353,13 +4422,16 @@ async def test_session_memory_pin_prefixed_probe_wording_recall(monkeypatch, tmp
     chat_routes._session_memory_pins.clear()
 
     stored = await chat_routes._build_memory_state_fastpath_reply(
-        "For this live reliability probe, remember the phrase cobalt sunrise for this conversation."
+        "For this live reliability probe, remember the phrase cobalt sunrise for this conversation.",
+        session_id="prefixed-probe-wording",
     )
     recalled_just = await chat_routes._build_memory_state_fastpath_reply(
-        "What phrase did I just ask you to remember?"
+        "What phrase did I just ask you to remember?",
+        session_id="prefixed-probe-wording",
     )
     recalled_earlier = await chat_routes._build_memory_state_fastpath_reply(
-        "What was the phrase from earlier in this probe?"
+        "What was the phrase from earlier in this probe?",
+        session_id="prefixed-probe-wording",
     )
     chat_routes._session_memory_pins.clear()
 
@@ -4391,10 +4463,12 @@ async def test_session_memory_context_change_uses_pinned_note(monkeypatch, tmp_p
     chat_routes._session_memory_pins.clear()
 
     stored = await chat_routes._build_memory_state_fastpath_reply(
-        "Remember this note for later in this conversation: the blue lantern is under the desk."
+        "Remember this note for later in this conversation: the blue lantern is under the desk.",
+        session_id="context-change",
     )
     recalled = await chat_routes._build_memory_state_fastpath_reply(
-        "What changed in this conversation after I gave you the blue-lantern note?"
+        "What changed in this conversation after I gave you the blue-lantern note?",
+        session_id="context-change",
     )
     chat_routes._session_memory_pins.clear()
 

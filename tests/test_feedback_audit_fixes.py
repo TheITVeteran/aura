@@ -1,4 +1,5 @@
 import asyncio
+import hashlib
 import json
 import logging
 import time
@@ -2611,9 +2612,18 @@ def test_session_memory_pin_extracts_codeword_and_strips_confirmation_instructio
     )
 
 
+def _install_test_session_pin_cipher(monkeypatch, chat_route):
+    from core.memory.session_pin_cipher import SessionPinCipher
+
+    cipher = SessionPinCipher(b"k" * 32)
+    monkeypatch.setattr(chat_route, "_session_memory_pin_cipher", lambda: cipher)
+    return cipher
+
+
 def test_session_memory_pin_round_trip(monkeypatch, tmp_path):
     from interface.routes import chat as chat_route
 
+    _install_test_session_pin_cipher(monkeypatch, chat_route)
     monkeypatch.setattr(
         chat_route,
         "_session_memory_pin_ledger_path",
@@ -2622,8 +2632,12 @@ def test_session_memory_pin_round_trip(monkeypatch, tmp_path):
 
     async def run():
         chat_route._session_memory_pins.clear()
-        await chat_route._store_session_memory_pin("ember-vault-93", "remember this phrase")
-        return await chat_route._recall_session_memory_pin()
+        await chat_route._store_session_memory_pin(
+            "ember-vault-93",
+            "remember this phrase",
+            session_id="round-trip",
+        )
+        return await chat_route._recall_session_memory_pin(session_id="round-trip")
 
     remembered = asyncio.run(run())
 
@@ -2634,6 +2648,7 @@ def test_session_memory_pin_round_trip(monkeypatch, tmp_path):
 def test_session_memory_pin_isolation_by_session_id(monkeypatch, tmp_path):
     from interface.routes import chat as chat_route
 
+    _install_test_session_pin_cipher(monkeypatch, chat_route)
     monkeypatch.setattr(
         chat_route,
         "_session_memory_pin_ledger_path",
@@ -2675,6 +2690,7 @@ def test_session_memory_pin_survives_restart_cross_session(monkeypatch, tmp_path
     """
     from interface.routes import chat as chat_route
 
+    _install_test_session_pin_cipher(monkeypatch, chat_route)
     monkeypatch.setattr(
         chat_route,
         "_session_memory_pin_ledger_path",
@@ -2731,6 +2747,7 @@ def test_session_memory_pin_survives_restart_cross_session(monkeypatch, tmp_path
 def test_session_memory_pin_writes_durable_memory(monkeypatch, tmp_path):
     from interface.routes import chat as chat_route
 
+    cipher = _install_test_session_pin_cipher(monkeypatch, chat_route)
     monkeypatch.setattr(
         chat_route,
         "_session_memory_pin_ledger_path",
@@ -2751,21 +2768,35 @@ def test_session_memory_pin_writes_durable_memory(monkeypatch, tmp_path):
 
     async def run():
         chat_route._session_memory_pins.clear()
-        await chat_route._store_session_memory_pin("ember-vault-93", "remember this phrase")
+        await chat_route._store_session_memory_pin(
+            "ember-vault-93",
+            "remember this phrase",
+            session_id="durable-write",
+        )
 
     asyncio.run(run())
 
     assert writes
-    assert writes[0][0] == "Session memory pin: ember-vault-93"
+    assert writes[0][0] == "Encrypted explicit user memory pin"
     assert writes[0][1]["source"] == "session_memory_pin"
     assert writes[0][1]["explicit_memory_request"] is True
-    assert writes[0][1]["session_memory_pin_content"] == "ember-vault-93"
-    assert "session_id" in writes[0][1]
+    envelope = writes[0][1]["session_memory_pin_envelope"]
+    assert "ember-vault-93" not in json.dumps(writes[0], sort_keys=True)
+    assert cipher.open(envelope)["content"] == "ember-vault-93"
 
 
 def test_session_memory_pin_recalls_from_durable_memory_when_cache_empty(monkeypatch, tmp_path):
     from interface.routes import chat as chat_route
 
+    cipher = _install_test_session_pin_cipher(monkeypatch, chat_route)
+    envelope = cipher.seal(
+        content="ember-vault-93",
+        source="remember this phrase",
+        timestamp="2026-06-07T12:00:00+00:00",
+        session_id="durable-recall",
+        principal_id="session:" + hashlib.sha256(b"durable-recall").hexdigest(),
+        principal_surface="session",
+    )
     monkeypatch.setattr(
         chat_route,
         "_session_memory_pin_ledger_path",
@@ -2777,11 +2808,11 @@ def test_session_memory_pin_recalls_from_durable_memory_when_cache_empty(monkeyp
             assert "session memory pin" in query
             return [
                 {
-                    "content": "Session memory pin: ember-vault-93",
+                    "content": "Encrypted explicit user memory pin",
                     "metadata": {
                         "source": "session_memory_pin",
                         "session_memory_pin": True,
-                        "timestamp": "2026-06-07T12:00:00+00:00",
+                        "session_memory_pin_envelope": envelope,
                     },
                 }
             ]
@@ -2794,7 +2825,7 @@ def test_session_memory_pin_recalls_from_durable_memory_when_cache_empty(monkeyp
 
     async def run():
         chat_route._session_memory_pins.clear()
-        return await chat_route._recall_session_memory_pin()
+        return await chat_route._recall_session_memory_pin(session_id="durable-recall")
 
     remembered = asyncio.run(run())
 

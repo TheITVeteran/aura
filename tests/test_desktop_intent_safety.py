@@ -12,9 +12,12 @@ INVENTORY_PROMPT = (
 
 
 @pytest.fixture(autouse=True)
-def _reset_chat_route_state():
+def _reset_chat_route_state(monkeypatch):
+    from core.memory.session_pin_cipher import SessionPinCipher
     from interface.routes import chat as chat_routes
 
+    cipher = SessionPinCipher(b"k" * 32)
+    monkeypatch.setattr(chat_routes, "_session_memory_pin_cipher", lambda: cipher)
     chat_routes._conversation_log.clear()
     chat_routes._session_memory_pins.clear()
     yield
@@ -558,7 +561,8 @@ async def test_session_memory_pin_does_not_overclaim_when_durable_write_fails(
     monkeypatch.setattr(chat_routes, "_append_session_memory_pin_ledger", lambda *_args: False)
 
     result = await chat_routes._build_memory_state_fastpath_reply(
-        "Remember this phrase for later in this session: ember-vault-93"
+        "Remember this phrase for later in this session: ember-vault-93",
+        session_id="durable-failure",
     )
 
     assert result is not None
@@ -566,6 +570,42 @@ async def test_session_memory_pin_does_not_overclaim_when_durable_write_fails(
     assert status == "session_memory_pin_transient"
     assert "durable memory storage did not accept the write" in reply
     assert "durable session memory" not in reply
+
+
+@pytest.mark.asyncio
+async def test_session_memory_pin_without_principal_or_session_never_persists(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path,
+) -> None:
+    from interface.routes import chat as chat_routes
+
+    facade_calls = []
+
+    class MemoryFacade:
+        async def add_memory(self, *_args, **_kwargs):
+            facade_calls.append(True)
+            return True
+
+    ledger_path = tmp_path / "session_memory_pins.jsonl"
+    monkeypatch.setattr(chat_routes, "_session_memory_pin_ledger_path", lambda: ledger_path)
+    monkeypatch.setattr(
+        chat_routes.ServiceContainer,
+        "get",
+        staticmethod(
+            lambda name, default=None: MemoryFacade()
+            if name == "memory_facade"
+            else default
+        ),
+    )
+
+    stored = await chat_routes._store_session_memory_pin(
+        "unowned secret",
+        "Remember the unowned secret.",
+    )
+
+    assert stored is False
+    assert facade_calls == []
+    assert not ledger_path.exists()
 
 
 @pytest.mark.asyncio
@@ -590,11 +630,15 @@ async def test_session_memory_pin_handles_memory_facade_exception_truthfully(
     monkeypatch.setattr(
         chat_routes,
         "_append_session_memory_pin_ledger",
-        lambda content, source, timestamp: ledger_calls.append((content, source, timestamp)) or True,
+        lambda content, source, timestamp, **_kwargs: ledger_calls.append(
+            (content, source, timestamp)
+        )
+        or True,
     )
 
     result = await chat_routes._build_memory_state_fastpath_reply(
-        "Remember this phrase for later in this session: ember-vault-93"
+        "Remember this phrase for later in this session: ember-vault-93",
+        session_id="facade-exception",
     )
 
     assert result is not None
@@ -623,10 +667,12 @@ async def test_codeword_memory_fastpath_round_trips_without_model_lane(
     )
 
     set_result = await chat_routes._build_memory_state_fastpath_reply(
-        "Remember this codeword for me: amber-45873. Just confirm you have it."
+        "Remember this codeword for me: amber-45873. Just confirm you have it.",
+        session_id="codeword-round-trip",
     )
     recall_result = await chat_routes._build_memory_state_fastpath_reply(
-        "What codeword did I just give you?"
+        "What codeword did I just give you?",
+        session_id="codeword-round-trip",
     )
 
     assert set_result is not None
