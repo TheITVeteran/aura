@@ -29,7 +29,17 @@ LOCAL_REPAIR_SCHEMA = "aura.rlc.local_repair.v1"
 MAX_REPAIR_REQUESTS = 8
 MAX_REPAIR_GENERATION_TOKENS = 576
 _SHA256_RE = re.compile(r"[0-9a-f]{64}\Z")
-_EXACT_VERIFIERS = {"exact_integer_arithmetic", "python_ast", "json_parser"}
+# exact_modular_arithmetic is exactly as sound as exact_integer_arithmetic
+# -- same integer check, one extra reduction -- so a modular refutation
+# must be repairable too. Omitting it meant a refuted modular claim
+# produced no repair request, and therefore no promotion candidate, on a
+# task family whose prompts literally say "modulo 19".
+_EXACT_VERIFIERS = {
+    "exact_integer_arithmetic",
+    "exact_modular_arithmetic",
+    "python_ast",
+    "json_parser",
+}
 _ALLOWED_FAILURES = {
     "budget_unavailable",
     "generation_failed",

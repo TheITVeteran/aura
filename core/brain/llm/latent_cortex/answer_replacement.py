@@ -39,8 +39,16 @@ MAX_REPLACEMENT_OUTPUT_TOKENS = 1024
 # decode limit (8192) plus its contract-completion grace (4096).  It is not a
 # replacement candidate and must not inherit the narrower promotion ceiling.
 MAX_BASELINE_EVIDENCE_TOKENS = 12_288
-_REFUTATION_VERIFIERS = {"exact_integer_arithmetic", "python_ast", "json_parser"}
-_SEMANTIC_EXACT_VERIFIERS = {"exact_integer_arithmetic"}
+_REFUTATION_VERIFIERS = {
+    "exact_integer_arithmetic",
+    "exact_modular_arithmetic",
+    "python_ast",
+    "json_parser",
+}
+_SEMANTIC_EXACT_VERIFIERS = {
+    "exact_integer_arithmetic",
+    "exact_modular_arithmetic",
+}
 _SHA256_RE = re.compile(r"[0-9a-f]{64}\Z")
 _FULL_INTEGER_ARITHMETIC_RE = re.compile(
     r"\s*-?\d{1,12}\s*[+\-*/x×]\s*-?\d{1,12}\s*=\s*-?\d{1,12}\s*[.!?]?\s*\Z"

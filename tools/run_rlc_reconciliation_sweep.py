@@ -368,6 +368,22 @@ def _build_config(
         # arm's label -- the worst possible failure here, because it looks like
         # a result. Let it fault visibly instead.
         allow_vanilla_fallback=False,
+        # Verify the answer, not a preview of it.
+        #
+        # The default probe budget is 48 tokens. Every verification surface --
+        # atomic decomposition, the deterministic router, the disagreement
+        # graph, local repair, and therefore answer promotion -- runs on these
+        # branch probes rather than on the decoded answer. Measured on the
+        # 32B: a 1500-character answer decomposed to ONE atom covering 48
+        # characters, "To solve this combinatorics problem, we need to ", and
+        # every route came back unknown because a preamble contains nothing
+        # checkable. Zero refutations means zero repair requests means zero
+        # promotion candidates, whatever else is fixed upstream.
+        #
+        # The probe budget is therefore tied to the decode budget: a candidate
+        # is judged on the same object that would be served. The ceiling is
+        # 512, which is also this battery's decode budget.
+        verifier_probe_max_tokens=min(512, max_tokens) if full else 48,
         decode_contract="none" if full else decode_contract,
         decode_contract_grace_tokens=(
             0 if full else (320 if decode_contract != "none" else 0)

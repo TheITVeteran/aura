@@ -27,7 +27,12 @@ _METHOD_OPERATION = {
     "regenerate_from_prefix": OperationKind.REGENERATE_FROM_PREFIX,
     "specialized_verifier": OperationKind.CHECK_ASSUMPTION,
 }
-_EXACT_VERIFIERS = {"exact_integer_arithmetic", "python_ast", "json_parser"}
+_EXACT_VERIFIERS = {
+    "exact_integer_arithmetic",
+    "exact_modular_arithmetic",
+    "python_ast",
+    "json_parser",
+}
 _ROUTE_METHOD = {
     "formal_solver": "prove",
     "source_retrieval": "retrieve",

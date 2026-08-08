@@ -60,11 +60,13 @@ _ZERO_SHA256 = "0" * 64
 _SHA256_RE = re.compile(r"[0-9a-f]{64}\Z")
 _EXACT_VERIFIERS = {
     "exact_integer_arithmetic",
+    "exact_modular_arithmetic",
     "python_ast",
     "json_parser",
 }
 _ERROR_CLASSES = {
     "exact_integer_arithmetic": "reasoning.exact_integer_arithmetic",
+    "exact_modular_arithmetic": "reasoning.exact_modular_arithmetic",
     "python_ast": "structured_generation.python_syntax",
     "json_parser": "structured_generation.json_syntax",
 }
