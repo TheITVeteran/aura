@@ -968,6 +968,9 @@ class AgencyCore:
             logger.warning("🧠 Spatial Empathy Watcher: Global workspace not found. Empathy disabled.")
             return
 
+        from core.brain.initiative_engine import _proactivity_suppressed_now
+        from core.governance_context import local_internal_governed_scope
+
         async def _handle_spatial_empathy(wi):
             try:
                 if isinstance(wi.content, dict):
@@ -980,12 +983,34 @@ class AgencyCore:
                 payload = {}
 
             if payload.get("intent") == "seek_connection" and payload.get("action") == "read_ambient_screen":
+                # CP126 16e9dc54. Reading the person's screen is the most
+                # invasive thing this process does, and it was triggered by
+                # ANY global-workspace payload carrying two matching strings.
+                # The workspace has no publisher identity, so nothing
+                # established who asked, whether it was allowed, or that the
+                # capture was governed — and unlike a user-requested read,
+                # nobody is present to see it happen.
+                #
+                # Reading unprompted requires the same permission as speaking
+                # unprompted: a quiet window means she is not observing
+                # either. And the capture goes through the governed lane so
+                # it produces a receipt, rather than reaching for the skill
+                # directly and leaving no trace.
+                if _proactivity_suppressed_now():
+                    logger.info(
+                        "👀 Spatial Empathy: quiet window in force — not reading the screen."
+                    )
+                    return
                 logger.info("👀 Spatial Empathy: Soul requested connection. Checking user context non-blockingly.")
                 try:
                     from skills.computer_use import ComputerUseSkill
                     skill = ComputerUseSkill()
 
-                    screen_context = await asyncio.to_thread(skill.read_screen_text)
+                    with local_internal_governed_scope(
+                        "agency_core.spatial_empathy_screen_read",
+                        domain="environment_action",
+                    ):
+                        screen_context = await asyncio.to_thread(skill.read_screen_text)
 
                     if screen_context and "Text on screen" in screen_context:
                         self.on_visual_change(f"User is currently viewing: {screen_context[:150]}...")
