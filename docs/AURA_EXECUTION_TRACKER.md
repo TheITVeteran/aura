@@ -38335,3 +38335,59 @@ recognized calls in `2,066` buckets with `1,948` pre-existing migration-debt
 calls and no new debt. This closes only the per-conversation quality-state P2.
 The remaining chat queue, complete-engine verdict, fusion, release, endurance,
 frontier, and `WOW Signal` claims remain open.
+
+## Checkpoint 2026-08-08-017: The Vanilla Floor Is One Causal Artifact
+
+The yielded resident complete-engine campaign reached 73 committed cells but
+is rejected before grading. Two `full_stack` cells declared `retain` or
+`abstain` while returning bytes different from their paired `vanilla` cell.
+The control used MLX's serving decoder; the RLC independently regenerated a
+nominal incumbent through its custom decoder. Similar settings were not the
+same execution. The same receipts carried no usable checkpoint/process/source
+ownership chain, and a subsequent full-receipt audit showed their causal DAGs
+were incomplete at ingress and runtime integrity. The run remains preserved
+with `YIELD`; none of its partial scores can authorize training, fusion,
+activation, a negative mechanism conclusion, or `WOW Signal`.
+
+Ordinary decode now produces one immutable canonical incumbent artifact. Its
+private body retains the exact public text and non-EOS token sequence; its
+public receipt commits the exact prompt-token hash, output text/token hashes,
+decode and stop policy, cryptographic checkpoint, model layer count,
+termination, generated and prompt token counts, transformer-layer accounting,
+and receipt digest. The full stack validates that artifact against its own
+prompt, tokenizer, checkpoint, architecture, and decode budget before spending
+recurrent compute. A neutral decision returns those exact tokens and commits a
+no-mutation KV transaction identifying ordinary decode as the authority; it
+cannot regenerate a substitute.
+
+MLX's terminal stream semantics are now represented correctly: an EOS response
+ends generation but its private stop-token id is not inserted into the public
+answer token sequence. Hugging Face snapshot identity also recognizes the
+standard symlink-to-blob layout without weakening the general no-follow file
+gateway: model identity resolves only the final artifact link, reads the
+resolved regular file through the stable gateway, and checks the link identity
+before and after the read.
+
+The sweep process now attests itself as the actual model owner after the exact
+adapter stack is loaded. Every full-stack receipt binds a boot-scoped signed
+worker identity, PID, model and serving stack, source file, request payload,
+clean runtime/source identity, pre/post engine measurements, and complete
+causal DAG. A cell with an unbound source, incomplete DAG, unadmitted oracle,
+missing artifact, changed checkpoint, or unverifiable runtime integrity is an
+infrastructure fault, never a scored answer. The oracle diagnostic now combines
+candidate-local decoy calibration with answer-key scoring only for terminal
+task outputs, so it earns admission without leaking answer-key authority into
+the product arm.
+
+Focused incumbent, reconciliation, causal-receipt, runtime-integrity,
+Hugging-Face identity, engine, and wiring suites pass `271/271`; curated Ruff
+and diff hygiene pass. Three bounded 1.5B probes found the EOS, snapshot
+identity, oracle admission, and process-causality gaps before resident compute
+was spent. The latest pre-identity probe completed 28 cells with no harness
+fault and an exact vanilla floor, but is intentionally superseded because its
+post-run receipt audit found the missing process/cause chain. A fresh canary
+from the clean published commit remains required, followed by a new immutable
+resident-32B campaign. The total completion envelope remains honestly at
+`809/920` (approximately `87.9%`): this checkpoint repairs the discriminator
+but does not yet close the empirical RLC, fusion, frontier, release, semantic
+review, live-proof, or endurance obligations.

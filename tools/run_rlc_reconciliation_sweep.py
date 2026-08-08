@@ -28,6 +28,7 @@ import json
 import os
 import sys
 import time
+import uuid
 from pathlib import Path
 from typing import Any, Final
 
@@ -553,7 +554,12 @@ def _run_vanilla_best_of(
     return winner[1][0]
 
 
-def _run_vanilla(model, tokenizer, rendered: str, max_tokens: int) -> str:
+def _run_vanilla(
+    model,
+    tokenizer,
+    prompt_tokens: list[int],
+    max_tokens: int,
+) -> tuple[str, list[int], str]:
     """Ordinary greedy decode -- the control the recurrent arms must beat.
 
     It stops on the same rule the recurrent arms stop on
@@ -568,13 +574,30 @@ def _run_vanilla(model, tokenizer, rendered: str, max_tokens: int) -> str:
     from core.brain.llm.latent_cortex.answer_contract import is_contract_complete
 
     pieces: list[str] = []
+    output_tokens: list[int] = []
+    termination = "token_limit"
     for response in stream_generate(
-        model, tokenizer, prompt=rendered, max_tokens=max_tokens
+        model, tokenizer, prompt=prompt_tokens, max_tokens=max_tokens
     ):
         pieces.append(response.text)
+        # MLX emits one final response for both EOS and length termination.
+        # Its EOS response carries the stop-token id but deliberately exposes
+        # no stop-token text. The engine's native decoder likewise excludes
+        # EOS from its public token sequence, so binding that id would make a
+        # truthful streamed answer fail its own token/text identity check.
+        if response.finish_reason != "stop":
+            output_tokens.append(int(response.token))
+        if response.finish_reason == "stop":
+            termination = "eos"
+        elif response.finish_reason == "length":
+            termination = "token_limit"
         if "}" in response.text and is_contract_complete("".join(pieces)):
+            termination = "contract_complete"
             break
-    return "".join(pieces)
+    text = tokenizer.decode(output_tokens)
+    if text != "".join(pieces):
+        raise RuntimeError("ordinary decode token/text round trip differs")
+    return text, output_tokens, termination
 
 
 def _episode_verifier(task):
@@ -620,7 +643,41 @@ def _full_stack_evidence(receipt: dict[str, Any]) -> dict[str, Any]:
     fast_weight_learning = receipt.get("fast_weight_learning") or {}
     local_repair = receipt.get("local_repair") or {}
     answer_replacement = receipt.get("answer_replacement") or {}
+    incumbent = receipt.get("incumbent_artifact") or {}
+    incumbent_binding = incumbent.get("binding") or {}
+    incumbent_output = incumbent.get("output") or {}
+    baseline_decode = answer_replacement.get("baseline_decode") or {}
     issues: list[str] = []
+
+    try:
+        from core.brain.llm.latent_cortex.incumbent_artifact import (
+            validate_incumbent_receipt,
+        )
+
+        validate_incumbent_receipt(
+            incumbent,
+            checkpoint_fingerprint=str(receipt.get("checkpoint_fingerprint") or ""),
+            checkpoint_fingerprint_method=str(
+                receipt.get("checkpoint_fingerprint_method") or ""
+            ),
+        )
+        incumbent_valid = True
+    except (KeyError, TypeError, ValueError):
+        incumbent_valid = False
+
+    try:
+        from core.brain.llm.latent_cortex.causal_receipt import (
+            validate_causal_receipt,
+        )
+
+        validate_causal_receipt(
+            receipt.get("causal_receipt"),
+            worker_receipt=receipt,
+            require_complete=True,
+        )
+        causal_identity_valid = True
+    except (KeyError, TypeError, ValueError):
+        causal_identity_valid = False
 
     def require(condition: bool, issue: str) -> None:
         if not condition:
@@ -660,6 +717,26 @@ def _full_stack_evidence(receipt: dict[str, Any]) -> dict[str, Any]:
     require(bool(receipt.get("diagnostic_action_selection")), "diagnostics_not_measured")
     require(bool(local_repair), "local_repair_policy_not_measured")
     require(bool(answer_replacement), "incumbent_promotion_gate_not_measured")
+    require(causal_identity_valid, "causal_runtime_identity_not_measured")
+    require(
+        (receipt.get("runtime_identity") or {}).get("identity_bound") is True,
+        "source_runtime_identity_not_bound",
+    )
+    require(incumbent_valid, "canonical_incumbent_not_measured")
+    require(
+        incumbent_binding.get("checkpoint_fingerprint")
+        == receipt.get("checkpoint_fingerprint")
+        and receipt.get("checkpoint_fingerprint_method") == "sha256"
+        and int(receipt.get("checkpoint_file_count") or 0) > 0,
+        "cryptographic_checkpoint_binding_not_measured",
+    )
+    require(
+        incumbent_output.get("text_sha256") == baseline_decode.get("text_sha256")
+        and incumbent_output.get("tokens_sha256")
+        == baseline_decode.get("tokens_sha256")
+        and incumbent_output.get("token_count") == baseline_decode.get("token_count"),
+        "promotion_baseline_differs_from_canonical_incumbent",
+    )
     require(receipt.get("params_unchanged") is True, "base_parameters_not_proven_unchanged")
     if receipt.get("fast_weights_applied") is True:
         require(receipt.get("fast_weights_erased") is True, "fast_weights_not_proven_erased")
@@ -683,6 +760,8 @@ def _full_stack_evidence(receipt: dict[str, Any]) -> dict[str, Any]:
         "controller_decisions": len(receipt.get("cognitive_action_trace") or []),
         "repair_requests": len(local_repair.get("requests") or []),
         "replacement_decision": str(answer_replacement.get("decision") or ""),
+        "incumbent_receipt_sha256": str(incumbent.get("receipt_sha256") or ""),
+        "checkpoint_fingerprint": str(receipt.get("checkpoint_fingerprint") or ""),
         "params_unchanged": receipt.get("params_unchanged") is True,
     }
 
@@ -720,6 +799,42 @@ def _runtime_receipt_issues(
     return issues
 
 
+class _OracleTaskVerifier:
+    """Answer-key diagnostic with an independently calibrated review surface.
+
+    The hidden answer key is only consulted for complete task answers. Blind
+    admission controls deliberately contain no FINAL_ANSWER contract, so they
+    are evaluated by the same deterministic candidate-local verifier used by
+    the deployable arm. This proves the scorer can discriminate before the
+    answer key receives authority; an answer-key-only closure scores every
+    decoy zero and is correctly rejected.
+    """
+
+    def __init__(self, task) -> None:
+        from core.brain.llm.latent_cortex.task_verifiers import EpisodeTaskVerifier
+
+        self.task = task
+        self._local = EpisodeTaskVerifier(task.public.prompt)
+        self.evaluations = self._local.evaluations
+
+    def __call__(self, candidate: str) -> float:
+        local_score = self._local(candidate)
+        if "FINAL_ANSWER:" not in candidate:
+            return local_score
+        from core.brain.llm.latent_cortex import frontier_tasks as ft
+
+        try:
+            return 1.0 if ft.score_task(self.task, candidate).correct else 0.0
+        except Exception:  # noqa: BLE001 - a scorer fault grants no authority
+            return 0.0
+
+    def fast_weight_learning_evidence(self, *args, **kwargs):
+        return self._local.fast_weight_learning_evidence(*args, **kwargs)
+
+    def to_receipt(self, *args, **kwargs):
+        return self._local.to_receipt(*args, **kwargs)
+
+
 def _oracle_verifier(task):
     """Ground-truth scorer for the verifier ablation.
 
@@ -734,15 +849,7 @@ def _oracle_verifier(task):
     An arm using this is a ceiling, never a capability claim, and never
     promotable -- which is why it is bound to an arm name carrying "oracle".
     """
-    from core.brain.llm.latent_cortex import frontier_tasks as ft
-
-    def _score(candidate: str) -> float:
-        try:
-            return 1.0 if ft.score_task(task, candidate).correct else 0.0
-        except Exception:  # noqa: BLE001 - a scorer fault is not a signal
-            return 0.0
-
-    return _score
+    return _OracleTaskVerifier(task)
 
 
 class EpisodeFault(RuntimeError):  # noqa: N818 - domain term distinguishes a cell fault
@@ -849,6 +956,104 @@ def _manifest_integrity_issues(
     return sorted(set(issues))
 
 
+def _bind_sweep_runtime_identity(
+    receipt: dict[str, Any],
+    *,
+    config,
+    budget,
+    wall_clock_s: float,
+    verifier,
+    objective: str,
+    domain: str,
+    incumbent_artifact,
+    worker_identity: dict[str, Any] | None,
+    runtime_identity: dict[str, Any] | None,
+) -> None:
+    if not isinstance(worker_identity, dict) or not worker_identity:
+        raise EpisodeFault("sweep worker identity is absent", receipt=receipt)
+    if not isinstance(runtime_identity, dict) or not runtime_identity:
+        raise EpisodeFault("sweep source/runtime identity is absent", receipt=receipt)
+    for field in (
+        "worker_boot_id",
+        "worker_pid",
+        "worker_model_path",
+        "worker_model_parameter_count",
+        "worker_model_stored_parameter_element_count",
+        "worker_model_parameter_count_basis",
+        "worker_source_sha256",
+        "worker_affective_steering_active",
+        "worker_affective_steering_alpha",
+    ):
+        receipt[field] = worker_identity[field]
+    receipt["worker_identity"] = dict(worker_identity)
+    receipt["runtime_identity"] = dict(runtime_identity)
+    from core.brain.llm.latent_cortex.runtime_identity import (
+        latent_request_payload_sha256,
+    )
+
+    request_messages = [{"role": "user", "content": objective}] if objective else None
+    receipt["request_payload_sha256"] = latent_request_payload_sha256(
+        prompt=None,
+        messages=request_messages,
+        domain=domain,
+        config=dataclasses.asdict(config),
+        budget={
+            "max_layer_apps": budget.max_layer_apps,
+            "wall_clock_s": wall_clock_s,
+        },
+        runtime_controls={
+            "surface": "rlc_reconciliation_sweep",
+            "incumbent_receipt_sha256": str(
+                (getattr(incumbent_artifact, "receipt", {}) or {}).get(
+                    "receipt_sha256",
+                    "",
+                )
+            ),
+        },
+        verifier_guidance=True if verifier is not None else None,
+    )
+    from core.brain.llm.latent_cortex.runtime_integrity import (
+        bind_worker_runtime_integrity,
+        runtime_integrity_safe,
+    )
+
+    receipt["runtime_integrity"] = bind_worker_runtime_integrity(
+        receipt.get("runtime_integrity") or {},
+        worker_identity=worker_identity,
+    )
+    if not runtime_integrity_safe(
+        receipt["runtime_integrity"],
+        require_worker=True,
+        expected_episode_id=receipt["episode_id"],
+        expected_input_tokens_sha256=receipt["input_tokens_sha256"],
+        expected_worker_identity=worker_identity,
+        expected_fast_weights_applied=receipt.get("fast_weights_applied") is True,
+        expected_checkpoint_fingerprint=receipt["checkpoint_fingerprint"],
+        expected_checkpoint_method=receipt["checkpoint_fingerprint_method"],
+        expected_checkpoint_file_count=receipt["checkpoint_file_count"],
+    ):
+        raise EpisodeFault("sweep worker runtime integrity is unproven", receipt=receipt)
+    from core.brain.llm.latent_cortex.causal_receipt import (
+        build_causal_receipt,
+        validate_causal_receipt,
+    )
+
+    receipt["causal_receipt"] = build_causal_receipt(receipt)
+    try:
+        validate_causal_receipt(
+            receipt["causal_receipt"],
+            worker_receipt=receipt,
+            require_complete=True,
+        )
+    except (TypeError, ValueError) as exc:
+        raise EpisodeFault(
+            f"sweep causal receipt is incomplete: {exc}",
+            receipt=receipt,
+        ) from exc
+    if runtime_identity.get("identity_bound") is not True:
+        raise EpisodeFault("sweep source/runtime identity is unbound", receipt=receipt)
+
+
 def _run_rlc(
     model,
     config,
@@ -858,11 +1063,21 @@ def _run_rlc(
     wall_clock_s: float = 720.0,
     verifier=None,
     objective: str = "",
+    model_path: str = "",
+    incumbent_artifact=None,
+    worker_identity: dict[str, Any] | None = None,
+    runtime_identity: dict[str, Any] | None = None,
+    domain: str = "general",
 ) -> tuple[str, dict[str, Any]]:
     from core.brain.llm.latent_cortex.engine import LatentCortexEngine
     from core.brain.llm.latent_cortex.types import ComputeBudget
 
-    engine = LatentCortexEngine(model, config=config, tokenizer=tokenizer)
+    engine = LatentCortexEngine(
+        model,
+        config=config,
+        tokenizer=tokenizer,
+        model_path=model_path or None,
+    )
     # The default 120s episode wall clock is smaller than these episodes take:
     # the 2026-08-06 campaign's median recurrent episode ran 298s. Left at the
     # default, every recurrent cell terminates budget_exhausted with no text --
@@ -877,6 +1092,8 @@ def _run_rlc(
     # a sentence-completion grace window, which made a retained incumbent longer
     # than its supposedly identical control on truncated answers.
     kwargs["decode_sentence_grace_tokens"] = 0
+    if incumbent_artifact is not None:
+        kwargs["incumbent_artifact"] = incumbent_artifact
     if objective:
         # The engine derives its verification objective from prompt/messages.
         # Passing token_ids alone -- which this harness did to control the
@@ -890,6 +1107,19 @@ def _run_rlc(
     else:
         result = engine.reason(token_ids=prompt_tokens, budget=budget, **kwargs)
     receipt = result.receipt.to_dict()
+    if model_path:
+        _bind_sweep_runtime_identity(
+            receipt,
+            config=config,
+            budget=budget,
+            wall_clock_s=wall_clock_s,
+            verifier=verifier,
+            objective=objective,
+            domain=domain,
+            incumbent_artifact=incumbent_artifact,
+            worker_identity=worker_identity,
+            runtime_identity=runtime_identity,
+        )
     # Latency has to be attributable, or "make it faster" is guesswork. The
     # engine's own phase accounting is preferred; the wall time is the floor.
     receipt.setdefault("episode_wall_s", time.monotonic() - episode_started)
@@ -1078,6 +1308,49 @@ def main() -> int:
         print(f"memory envelope: {envelope.to_receipt()}", flush=True)
         model, tokenizer = load(args.model)
         print("model loaded", flush=True)
+        from core.brain.llm.latent_cortex.governance import (
+            checkpoint_file_fingerprint,
+        )
+        from core.brain.llm.latent_cortex.incumbent_artifact import (
+            build_incumbent_artifact,
+            incumbent_artifact_from_value,
+            incumbent_artifact_to_value,
+            validate_incumbent_artifact,
+        )
+
+        checkpoint = checkpoint_file_fingerprint(args.model)
+        if (
+            checkpoint.get("method") != "sha256"
+            or not isinstance(checkpoint.get("fingerprint"), str)
+            or len(checkpoint["fingerprint"]) != 64
+        ):
+            print(
+                "resident checkpoint lacks a cryptographic file fingerprint",
+                file=sys.stderr,
+            )
+            return 2
+        tasks_by_id = {task.task_id: task for task in tasks}
+        incumbent_by_task: dict[str, Any] = {}
+        vanilla_latency_by_task: dict[str, float] = {}
+        for cell in journal.cells():
+            if cell.get("arm") != "vanilla" or cell.get("error"):
+                continue
+            task = tasks_by_id.get(str(cell.get("task_id") or ""))
+            if task is None:
+                continue
+            artifact = incumbent_artifact_from_value(
+                cell.get("incumbent_artifact") or {}
+            )
+            incumbent_by_task[task.task_id] = validate_incumbent_artifact(
+                artifact,
+                input_tokens=_render_prompt(tokenizer, task),
+                checkpoint_fingerprint=checkpoint["fingerprint"],
+                checkpoint_fingerprint_method=checkpoint["method"],
+                max_tokens=int(cell.get("decode_max_tokens") or args.max_tokens),
+                n_layers=len(model.model.layers),
+                decode=lambda values: tokenizer.decode(list(values)),
+            )
+            vanilla_latency_by_task[task.task_id] = float(cell.get("latency_s") or 0.0)
         if args.adapter:
             from core.brain.llm.latent_cortex.resident_adapter_loader import (
                 load_resident_adapter,
@@ -1102,6 +1375,25 @@ def main() -> int:
                 f"slot scoping preserved)",
                 flush=True,
             )
+
+        from core.brain.llm.latent_cortex.runtime_identity import (
+            build_worker_identity,
+            collect_latent_runtime_identity,
+        )
+        from core.brain.llm.latent_cortex.worker_capture_identity import (
+            build_worker_capture_identity,
+        )
+
+        signing_identity = build_worker_capture_identity(worker_boot_id=uuid.uuid4().hex)
+        worker_identity = build_worker_identity(
+            model,
+            model_path=args.model,
+            worker_boot_id=signing_identity.public_identity["worker_boot_id"],
+            worker_source_path=Path(__file__).resolve(),
+            worker_action_capture_identity=signing_identity.public_identity,
+            tokenizer=tokenizer,
+        )
+        runtime_identity = collect_latent_runtime_identity(REPO_ROOT)
 
         for spec in selected:
             arm, steps, policy = spec.name, spec.steps, spec.policy
@@ -1135,6 +1427,7 @@ def main() -> int:
                 error = ""
                 receipt: dict[str, Any] = {}
                 text = ""
+                cell_incumbent = None
                 try:
                     if config is None and spec.profile == "ordinary_best_of_3":
                         text = _run_vanilla_best_of(
@@ -1145,12 +1438,25 @@ def main() -> int:
                             samples=3,
                         )
                     elif config is None:
-                        text = _run_vanilla(
+                        prompt_tokens = _render_prompt(tokenizer, task)
+                        text, output_tokens, termination = _run_vanilla(
                             model,
                             tokenizer,
-                            _render_prompt_text(tokenizer, task),
+                            prompt_tokens,
                             tokens,
                         )
+                        if arm == "vanilla":
+                            cell_incumbent = build_incumbent_artifact(
+                                input_tokens=prompt_tokens,
+                                output_tokens=output_tokens,
+                                output_text=text,
+                                checkpoint_fingerprint=checkpoint["fingerprint"],
+                                checkpoint_fingerprint_method=checkpoint["method"],
+                                max_tokens=tokens,
+                                n_layers=len(model.model.layers),
+                                termination=termination,
+                            )
+                            incumbent_by_task[task.task_id] = cell_incumbent
                     else:
                         # The verifier ablation. An oracle arm is a
                         # diagnostic ceiling that separates a generation
@@ -1163,6 +1469,15 @@ def main() -> int:
                             verifier = _episode_verifier(task)
                         elif spec.profile == "full_oracle":
                             verifier = _oracle_verifier(task)
+                        incumbent = (
+                            incumbent_by_task.get(task.task_id)
+                            if spec.profile in {"full", "full_oracle"}
+                            else None
+                        )
+                        if spec.profile in {"full", "full_oracle"} and incumbent is None:
+                            raise EpisodeFault(
+                                "paired canonical ordinary-decode incumbent is absent"
+                            )
                         text, receipt = _run_rlc(
                             model,
                             config,
@@ -1170,6 +1485,11 @@ def main() -> int:
                             tokenizer,
                             wall_clock_s=args.episode_wall_s,
                             verifier=verifier,
+                            model_path=args.model,
+                            incumbent_artifact=incumbent,
+                            worker_identity=worker_identity,
+                            runtime_identity=runtime_identity,
+                            domain=task.domain,
                             objective=(
                                 task.public.prompt
                                 if spec.profile in {"full", "full_oracle"}
@@ -1192,6 +1512,14 @@ def main() -> int:
                         task_id=task.task_id,
                         receipt=receipt,
                     )
+                incremental_latency_s = time.monotonic() - cell_started
+                if arm == "vanilla" and not error:
+                    vanilla_latency_by_task[task.task_id] = incremental_latency_s
+                paired_incumbent_latency_s = (
+                    vanilla_latency_by_task.get(task.task_id, 0.0)
+                    if spec.profile in {"full", "full_oracle"}
+                    else 0.0
+                )
                 journal.append(
                     {
                         "event": "CELL",
@@ -1232,9 +1560,22 @@ def main() -> int:
                             if spec.profile in {"full", "full_oracle"}
                             else None
                         ),
+                        "incumbent_artifact": (
+                            incumbent_artifact_to_value(cell_incumbent)
+                            if cell_incumbent is not None
+                            else None
+                        ),
                         "text": text,
                         "error": error,
-                        "latency_s": time.monotonic() - cell_started,
+                        # A product request pays for the ordinary incumbent and
+                        # the incremental full-stack search. The experiment
+                        # reuses the exact paired artifact for causal identity,
+                        # but does not pretend that generating it was free.
+                        "latency_s": (
+                            incremental_latency_s + paired_incumbent_latency_s
+                        ),
+                        "incremental_latency_s": incremental_latency_s,
+                        "paired_incumbent_latency_s": paired_incumbent_latency_s,
                         "decode_prefix_token_count": receipt.get("decode_prefix_token_count"),
                         "decode_prefix_composition": receipt.get("decode_prefix_composition"),
                         "decode_termination": receipt.get("decode_termination"),

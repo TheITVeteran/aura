@@ -2222,6 +2222,7 @@ class LatentCortexEngine:
         capture_decode_logprobs: bool = False,
         decode_sentence_grace_tokens: int | None = None,
         sample_seed: int | None = None,
+        incumbent_artifact: Any | None = None,
         episode_id: str | None = None,
         action_continuation_capture: Callable[[Any], None] | None = None,
         action_continuation_restore: Any | None = None,
@@ -2420,6 +2421,36 @@ class LatentCortexEngine:
         receipt.checkpoint_fingerprint = self.invariant.file_receipt.get("fingerprint", "")
         receipt.checkpoint_fingerprint_method = self.invariant.file_receipt.get("method", "")
         receipt.checkpoint_file_count = int(self.invariant.file_receipt.get("files", 0) or 0)
+        validated_incumbent = None
+        if incumbent_artifact is not None:
+            if self.config.decode_incumbent_policy != "vanilla_incumbent":
+                raise ValueError(
+                    "an incumbent artifact requires decode_incumbent_policy=vanilla_incumbent"
+                )
+            if self.tokenizer is None:
+                raise ValueError("an incumbent artifact requires the serving tokenizer")
+            from core.brain.llm.latent_cortex.incumbent_artifact import (
+                validate_incumbent_artifact,
+            )
+
+            validated_incumbent = validate_incumbent_artifact(
+                incumbent_artifact,
+                input_tokens=tokens,
+                checkpoint_fingerprint=receipt.checkpoint_fingerprint,
+                checkpoint_fingerprint_method=receipt.checkpoint_fingerprint_method,
+                max_tokens=(
+                    decode_max_tokens
+                    if decode_max_tokens is not None
+                    else self.config.decode_max_tokens
+                ),
+                n_layers=self.n_layers,
+                decode=lambda values: self._decode_public_text(list(values), receipt=receipt),
+            )
+            receipt.incumbent_artifact = dict(validated_incumbent.receipt)
+            budget.charge_layer_apps(
+                int(validated_incumbent.receipt["compute"]["transformer_layer_apps"]),
+                operation="bound_incumbent_generation",
+            )
 
         failure_reason = ""
         continuation_captured_only = False
@@ -2457,6 +2488,7 @@ class LatentCortexEngine:
                     token_logprobs_out=(decode_token_logprobs if capture_decode_logprobs else None),
                     decode_sentence_grace_tokens=decode_sentence_grace_tokens,
                     sample_seed=sample_seed,
+                    incumbent_artifact=validated_incumbent,
                     transient_cleanup_registry=transient_cleanup_registry,
                     action_continuation_capture=action_continuation_capture,
                     action_continuation_restore=action_continuation_restore,
@@ -2731,6 +2763,7 @@ class LatentCortexEngine:
         token_logprobs_out: list[float] | None = None,
         decode_sentence_grace_tokens: int | None = None,
         sample_seed: int | None = None,
+        incumbent_artifact: Any | None = None,
         transient_cleanup_registry: list[Any] | None = None,
         action_continuation_capture: Callable[[Any], None] | None = None,
         action_continuation_restore: Any | None = None,
@@ -6312,15 +6345,39 @@ class LatentCortexEngine:
                             "accepted_probe_not_output_under_incumbent_policy"
                         )
                 kv_state_tree.restore_boundary(cache, kv_state_tree.root_sha256)
-                final_decode_transaction = kv_state_tree.begin_speculation(
-                    cache,
-                    start=0,
-                    end=self.n_layers,
-                    purpose="final_vanilla_incumbent_decode",
-                    branch_index=winner.index,
-                    parent_sha256=kv_state_tree.root_sha256,
-                )
-                decode_logits = prompt_tail_logits
+                if incumbent_artifact is not None:
+                    out_tokens = list(incumbent_artifact.tokens)
+                    decode_termination = str(
+                        incumbent_artifact.receipt["output"]["termination"]
+                    )
+                    final_decode_transaction = kv_state_tree.begin_speculation(
+                        cache,
+                        start=0,
+                        end=self.n_layers,
+                        purpose="bind_canonical_incumbent_artifact",
+                        branch_index=winner.index,
+                        parent_sha256=kv_state_tree.root_sha256,
+                    )
+                    # The artifact was generated on the paired ordinary lane;
+                    # this transaction binds its selection without pretending
+                    # that the RLC regenerated or mutated those bytes.
+                    final_decode_transaction.observe_mutation(cache)
+                    winner.kv_boundary_sha256 = final_decode_transaction.commit(
+                        label="bound_vanilla_incumbent_output",
+                        authority="canonical_ordinary_decode_artifact",
+                        latent_sha256="",
+                        final=True,
+                    )
+                else:
+                    final_decode_transaction = kv_state_tree.begin_speculation(
+                        cache,
+                        start=0,
+                        end=self.n_layers,
+                        purpose="final_vanilla_incumbent_decode",
+                        branch_index=winner.index,
+                        parent_sha256=kv_state_tree.root_sha256,
+                    )
+                    decode_logits = prompt_tail_logits
                 receipt.first_logits_digest = (
                     receipt.decode_incumbent_prompt_logits_sha256
                 )
@@ -6391,7 +6448,7 @@ class LatentCortexEngine:
                     )
             elif latent_decode_authorized:
                 decode_logits = slot_logits
-            if not heterogeneous_decode_applied:
+            if not heterogeneous_decode_applied and incumbent_artifact is None:
                 out_tokens, decode_termination = self._decode(
                     cache,
                     budget,

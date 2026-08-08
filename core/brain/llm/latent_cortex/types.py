@@ -1442,6 +1442,10 @@ class EpisodeReceipt:
     decode_contract_grace_used_tokens: int = 0
     decode_incumbent_policy: str = "latent"
     decode_incumbent_prompt_logits_sha256: str = ""
+    # Exact ordinary-decode artifact retained by the RLC output floor. Empty
+    # means the episode regenerated its incumbent internally and therefore
+    # cannot claim byte identity with a separately measured control.
+    incumbent_artifact: dict[str, Any] = field(default_factory=dict)
     # Times the decode sampler masked a pure-newline token because the run
     # already held _MAX_NEWLINE_RUN — a sampling constraint, never text
     # editing; nonzero values reveal the model still trying to babble.
@@ -1795,6 +1799,7 @@ class EpisodeReceipt:
             "decode_incumbent_prompt_logits_sha256": (
                 self.decode_incumbent_prompt_logits_sha256
             ),
+            "incumbent_artifact": dict(self.incumbent_artifact),
             "decode_newline_suppressions": self.decode_newline_suppressions,
             "decode_repetition_penalty_applied": self.decode_repetition_penalty_applied,
             "verifier_guidance": dict(self.verifier_guidance),

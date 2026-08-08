@@ -807,7 +807,52 @@ def test_claim_manifest_cannot_omit_either_control(tmp_path: Path):
 
 
 def test_full_stack_receipt_must_measure_every_claimed_mechanism(tmp_path: Path):
+    from core.brain.llm.latent_cortex.causal_receipt import build_causal_receipt
+    from core.brain.llm.latent_cortex.incumbent_artifact import (
+        build_incumbent_artifact,
+    )
+    from core.brain.llm.latent_cortex.runtime_integrity import (
+        bind_worker_runtime_integrity,
+    )
+    from tests.fixtures.rlc_runtime_integrity import (
+        complete_worker_identity,
+        engine_runtime_integrity,
+    )
+
+    incumbent = build_incumbent_artifact(
+        input_tokens=[1, 2, 3],
+        output_tokens=[4, 5],
+        output_text="answer",
+        checkpoint_fingerprint="a" * 64,
+        checkpoint_fingerprint_method="sha256",
+        max_tokens=16,
+        n_layers=8,
+        termination="contract_complete",
+    ).receipt
+    episode_id = "full-stack-evidence-test"
+    input_sha256 = "9" * 64
+    worker_identity = complete_worker_identity(model_path="/models/test-32b")
+    runtime_integrity = bind_worker_runtime_integrity(
+        engine_runtime_integrity(
+            episode_id=episode_id,
+            input_tokens_sha256=input_sha256,
+            checkpoint_fingerprint="a" * 64,
+            checkpoint_file_count=1,
+        ),
+        worker_identity=worker_identity,
+    )
     valid_receipt = {
+        "episode_id": episode_id,
+        "request_payload_sha256": "8" * 64,
+        "input_tokens_sha256": input_sha256,
+        "input_token_count": 3,
+        "runtime_identity": {"identity_bound": True},
+        "worker_identity": worker_identity,
+        "runtime_integrity": runtime_integrity,
+        "worker_boot_id": worker_identity["worker_boot_id"],
+        "worker_pid": worker_identity["worker_pid"],
+        "worker_model_path": worker_identity["worker_model_path"],
+        "worker_source_sha256": worker_identity["worker_source_sha256"],
         "n_slots": 16,
         "cognitive_slots": [],
         "steps_taken": 3,
@@ -823,8 +868,18 @@ def test_full_stack_receipt_must_measure_every_claimed_mechanism(tmp_path: Path)
             "schema": "aura.rlc.branch_exchange_trace.v1",
             "exchanges": [],
         },
+        "recurrent_grounding": {"bound": True},
+        "loop_stability": {"stable": True},
+        "kv_state_tree": {"root_sha256": "7" * 64},
+        "selected_branch": 0,
         "verifier_preflight": {"verifier_admitted": True},
+        "verifier_fusion": {"measured": True},
+        "neural_uncertainty": {"measured": True},
+        "mistake_locator": {"measured": True},
+        "update_acceptance": {"measured": True},
+        "verified_best_state": {"measured": True},
         "latent_opt_mode": "gradient",
+        "latent_opt_applied": True,
         "latent_opt_attempts": 4,
         "latent_opt_steps": 1,
         "fast_weight_learning": {
@@ -834,13 +889,32 @@ def test_full_stack_receipt_must_measure_every_claimed_mechanism(tmp_path: Path)
         "cognitive_action_trace": [{"action": "halt"}],
         "diagnostic_action_selection": {"selected": "verify"},
         "local_repair": {"requests": []},
-        "answer_replacement": {"decision": "retain"},
+        "answer_replacement": {
+            "decision": "retain",
+            "baseline_decode": {
+                "text_sha256": incumbent["output"]["text_sha256"],
+                "tokens_sha256": incumbent["output"]["tokens_sha256"],
+                "token_count": incumbent["output"]["token_count"],
+            },
+        },
+        "incumbent_artifact": incumbent,
+        "checkpoint_fingerprint": "a" * 64,
+        "checkpoint_fingerprint_method": "sha256",
+        "checkpoint_file_count": 1,
         "params_unchanged": True,
         "fast_weights_applied": False,
+        "budget": {"spent_layer_apps": 64},
+        "halting_reason": "fixed_point",
+        "halting": {"stopped": True},
+        "terminal_disposition": {"language": {"output_text_sha256": "6" * 64}},
+        "decode_generated_tokens": 2,
+        "decode_termination": "contract_complete",
     }
+    valid_receipt["causal_receipt"] = build_causal_receipt(valid_receipt)
+    assert valid_receipt["causal_receipt"]["missing_required_stages"] == []
     evidence = sweep._full_stack_evidence(valid_receipt)
-    assert evidence["valid"] is True
     assert evidence["issues"] == []
+    assert evidence["valid"] is True
     path, digest = sweep._persist_runtime_receipt(
         tmp_path,
         arm="full_stack",
@@ -868,12 +942,31 @@ def test_full_stack_receipt_must_measure_every_claimed_mechanism(tmp_path: Path)
     invalid["fast_weight_learning"] = {
         "disposition": "rejected_verifier_unavailable"
     }
+    invalid["causal_receipt"] = build_causal_receipt(invalid)
     evidence = sweep._full_stack_evidence(invalid)
     assert evidence["valid"] is False
     assert evidence["issues"] == [
         "fast_weight_verifier_unavailable",
         "local_repair_policy_not_measured",
     ]
+
+
+def test_oracle_diagnostic_is_admitted_but_only_answer_keys_task_outputs():
+    from core.brain.llm.latent_cortex import frontier_tasks as ft
+    from core.brain.llm.latent_cortex.blind_review import run_decoy_preflight
+
+    task = ft.generate_task_battery([202608081], difficulty=2)[0]
+    verifier = sweep._oracle_verifier(task)
+    preflight = run_decoy_preflight(
+        verifier,
+        episode_id="oracle-admission-test",
+        objective_sha256="a" * 64,
+    )
+    assert preflight["verifier_admitted"] is True
+
+    expected = json.dumps(task.reveal_for_verifier()["expected"])
+    assert verifier("FINAL_ANSWER: " + expected) == 1.0
+    assert verifier('FINAL_ANSWER: {"definitely": "wrong"}') == 0.0
 
 
 def test_unpromoted_full_stack_output_must_be_byte_identical_to_incumbent(tmp_path: Path):

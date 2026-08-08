@@ -40,7 +40,7 @@ answer until a gain gate promotes something, and requires every arm to declare
 which side of the floor it sits on. The mechanism ablation is the only arm
 permitted below it.
 
-## Ten defects fixed today, in dependency order
+## Fourteen defects fixed today, in dependency order
 
 Each masked the next; none was visible until its predecessor was fixed.
 
@@ -80,6 +80,34 @@ Each masked the next; none was visible until its predecessor was fixed.
    same lower-bound-dominance rule repairs use.
 10. **That coupling in three places, only one fixed** — caught by the wiring
     and verified-best tests.
+11. **A second decode was called the incumbent.** The ordinary arm used
+    `mlx_lm.stream_generate`, while the RLC regenerated its supposed incumbent
+    through a separate custom decoder after recurrent computation. Identical
+    exposed sampler settings did not make those two executions the same causal
+    artifact: two retained cells returned different bytes. The floor now
+    carries one immutable ordinary-decode artifact into the RLC and binds its
+    prompt tokens, output tokens and text, decode policy, checkpoint, layer
+    count, termination, compute, and receipt digest.
+12. **EOS was counted as public output.** MLX's final streamed response carries
+    the EOS token id but exposes no EOS text. Including that private stop token
+    made a truthful answer fail token/text reconstruction. The control now
+    mirrors the engine's public-token contract: EOS terminates but is not part
+    of the answer.
+13. **Standard Hugging Face snapshots looked unidentified.** Their tokenizer,
+    config, and weight files are symlinks into an immutable blob store. The
+    general stable-read boundary correctly rejects links, so the runtime
+    identity code mistakenly declared tokenizer and quantization identity
+    absent. Model-artifact identity now resolves only the final snapshot link,
+    reads the resolved regular file through the no-follow gateway, and proves
+    that the link did not change around the read.
+14. **The evaluator was not the measured worker.** Direct sweep episodes had a
+    checkpoint fingerprint but empty worker/process/source identity, leaving
+    the causal DAG incomplete at ingress and runtime integrity. The sweep now
+    creates a boot-scoped signing identity after the exact adapter stack is
+    loaded, binds the process and serving stack into every episode's measured
+    runtime-integrity proof, commits the exact request and source/runtime
+    identity, reconstructs the causal DAG, and rejects the cell unless that DAG
+    is complete.
 
 ## Current status
 
@@ -89,6 +117,15 @@ identity did not bind the complete latent-cortex implementation, and failed
 episodes could be counted as wrong treatment answers rather than infrastructure
 faults. Its retained files remain a postmortem; they cannot authorize training,
 fusion, activation, or a capability claim.
+
+The 2026-08-08 run at
+`/Users/bryan/.aura/rlc-complete-engine-32b-20260808-1241b33a2` is also rejected
+evidence and remains yielded at 73 committed cells. It did run the complete
+stack rather than recurrence alone, but two retained full-stack outputs were
+not byte-identical to their paired ordinary incumbent, and direct runtime
+receipts had no cryptographic checkpoint/worker ownership chain. Its partial
+scores are diagnostic only; they are not a negative or positive capability
+result and may not be resumed under the repaired implementation.
 
 The replacement experiment tests the product that Aura actually claims:
 
@@ -113,12 +150,15 @@ the complete public runtime receipt separately and re-verifies both its digest
 and compact causal summary during grading. Missing mechanisms are unmeasured,
 not passing.
 
-The bounded 1.5B complete-engine canary finished 21/21 cells in 92.5 seconds
-with zero harness faults. It measured the complete runtime, accepted the source
-manifest, and held the paired vanilla floor with zero byte divergences. All
-three arms scored 0/7, so the canary is correctly
-`inconclusive_battery_uninformative_ordinary_decode_scored_zero`: it proves the
-experiment and non-regression plumbing, not a reasoning gain.
+Three bounded 1.5B probes exposed the token/text, Hugging Face identity, and
+oracle-admission defects above rather than consuming resident-32B time. The
+latest 28-cell probe completed both controls, `full_stack`, and
+`full_stack_oracle` with zero harness faults, zero incumbent divergences, and
+complete mechanism summaries. It is superseded as final canary evidence because
+the subsequent receipt audit proved its direct process identity and causal DAG
+were incomplete. A clean-commit, source-bound 1.5B canary is therefore still a
+mandatory gate before the resident run. A zero-scoring 1.5B battery remains a
+plumbing result only, never evidence for or against resident-32B capability.
 
 Believed correct, do NOT "fix" without evidence: fast weights reporting
 `not_admitted_high_confidence_evidence_absent` — TheSpark specifies adaptation
@@ -176,8 +216,12 @@ fingerprint differs.
    protocol run, ~1GB. It found most of the ten defects above in minutes. Its
    known limit: it validates plumbing, not capability — it never reaches the
    token cap, and its output contains nothing a deterministic router can check.
-4. Run the bounded gates, publish the exact commit to `main`, then create the
-   immutable resident-32B campaign capsule and verify its detached lifecycle.
+4. Require every claimed cell to carry a canonical incumbent artifact, a
+   complete worker-bound runtime-integrity proof, a bound clean-source runtime
+   identity, and an independently reconstructable complete causal DAG.
+5. Run the bounded gates, publish the exact commit to `main`, rerun the 1.5B
+   protocol from that clean commit, then create the immutable resident-32B
+   campaign capsule and verify its detached lifecycle.
 
 ## Standing rule
 

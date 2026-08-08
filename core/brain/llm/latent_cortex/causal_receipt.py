@@ -175,6 +175,7 @@ _STAGES = (
             "decode_bridge_logits_digest",
             "decode_incumbent_policy",
             "decode_incumbent_prompt_logits_sha256",
+            "incumbent_artifact",
             "heterogeneous_decode",
             "answer_replacement",
             "terminal_disposition",

@@ -20,8 +20,6 @@ from __future__ import annotations
 
 import inspect
 
-import pytest
-
 from core.brain.llm.latent_cortex.types import EpisodeReceipt, WeightIntegrityProof
 
 
@@ -253,6 +251,43 @@ class TestServingStackIdentity:
         identity = _tokenizer_identity(tmp_path, gaps)
         assert "tokenizer.json" in identity
         assert len(identity["tokenizer.json"]) == 64
+        assert gaps == []
+
+    def test_huggingface_snapshot_symlinks_are_stably_digested(self, tmp_path):
+        import json
+
+        from core.brain.llm.latent_cortex.runtime_identity import (
+            _quantization_identity,
+            _tokenizer_identity,
+        )
+
+        blobs = tmp_path / "blobs"
+        snapshot = tmp_path / "snapshots" / "revision"
+        blobs.mkdir()
+        snapshot.mkdir(parents=True)
+        tokenizer_blob = blobs / "tokenizer"
+        config_blob = blobs / "config"
+        tokenizer_blob.write_text("{}", encoding="utf-8")
+        config_blob.write_text(
+            json.dumps(
+                {
+                    "quantization": {"bits": 4, "group_size": 64},
+                    "torch_dtype": "bfloat16",
+                    "model_type": "qwen2",
+                }
+            ),
+            encoding="utf-8",
+        )
+        (snapshot / "tokenizer.json").symlink_to(tokenizer_blob)
+        (snapshot / "config.json").symlink_to(config_blob)
+
+        gaps: list[str] = []
+        tokenizer = _tokenizer_identity(snapshot, gaps)
+        quantization = _quantization_identity(snapshot, gaps)
+
+        assert tokenizer["tokenizer.json"]
+        assert quantization["bits"] == 4
+        assert quantization["config_sha256"]
         assert gaps == []
 
     def test_quantization_layout_is_captured(self, tmp_path):

@@ -40,6 +40,43 @@ def _stable_sha256(path: str | Path, *, max_bytes: int) -> str:
     return hashlib.sha256(read_stable_bytes(path, max_bytes=max_bytes)).hexdigest()
 
 
+def _stable_model_artifact_bytes(path: str | Path, *, max_bytes: int) -> bytes:
+    """Read a model artifact while preserving Hugging Face snapshot identity.
+
+    Hugging Face snapshots intentionally contain symlinks into the immutable
+    blob store. The general file gateway correctly rejects symlinks, but
+    treating that standard checkpoint layout as absent evidence made every
+    downloaded model's tokenizer and quantization identity incomplete. Resolve
+    only the final artifact link, read the resolved regular file through the
+    no-follow gateway, then prove the link itself did not change around the
+    read. Arbitrary application/state reads retain the stricter no-link rule.
+    """
+
+    target = Path(path).expanduser()
+    if not target.is_symlink():
+        return read_stable_bytes(target, max_bytes=max_bytes)
+    before = os.lstat(target)
+    link_before = os.readlink(target)
+    resolved = target.resolve(strict=True)
+    payload = read_stable_bytes(resolved, max_bytes=max_bytes)
+    after = os.lstat(target)
+    if (
+        os.readlink(target) != link_before
+        or before.st_dev != after.st_dev
+        or before.st_ino != after.st_ino
+        or before.st_mtime_ns != after.st_mtime_ns
+        or before.st_ctime_ns != after.st_ctime_ns
+    ):
+        raise OSError(f"model artifact symlink changed during read: {target}")
+    return payload
+
+
+def _stable_model_artifact_sha256(path: str | Path, *, max_bytes: int) -> str:
+    return hashlib.sha256(
+        _stable_model_artifact_bytes(path, max_bytes=max_bytes)
+    ).hexdigest()
+
+
 def canonical_model_path(model_path: str | Path) -> str:
     return os.path.realpath(os.path.expanduser(str(model_path)))
 
@@ -493,7 +530,10 @@ def _tokenizer_identity(model_path: str | Path, gaps: list[str]) -> dict[str, An
         ):
             candidate = root / filename
             if candidate.is_file():
-                identity[filename] = _stable_sha256(candidate, max_bytes=32 * 1024 * 1024)
+                identity[filename] = _stable_model_artifact_sha256(
+                    candidate,
+                    max_bytes=32 * 1024 * 1024,
+                )
                 found = True
         if not found:
             gaps.append("tokenizer:no_tokenizer_artifacts_found")
@@ -546,8 +586,11 @@ def _quantization_identity(model_path: str | Path, gaps: list[str]) -> dict[str,
         if not config_path.is_file():
             gaps.append("quantization:no_config")
             return identity
-        with config_path.open("r", encoding="utf-8") as handle:
-            config = json.load(handle)
+        config_bytes = _stable_model_artifact_bytes(
+            config_path,
+            max_bytes=4 * 1024 * 1024,
+        )
+        config = json.loads(config_bytes.decode("utf-8"))
         if not isinstance(config, dict):
             gaps.append("quantization:config_not_an_object")
             return identity
@@ -562,8 +605,8 @@ def _quantization_identity(model_path: str | Path, gaps: list[str]) -> dict[str,
             config.get("torch_dtype") or config.get("dtype") or ""
         )
         identity["model_type"] = str(config.get("model_type") or "")
-        identity["config_sha256"] = _stable_sha256(config_path, max_bytes=4 * 1024 * 1024)
-    except (OSError, ValueError, TypeError, RuntimeError) as exc:
+        identity["config_sha256"] = hashlib.sha256(config_bytes).hexdigest()
+    except (OSError, UnicodeDecodeError, ValueError, TypeError, RuntimeError) as exc:
         gaps.append(f"quantization:{type(exc).__name__}")
     return identity
 
