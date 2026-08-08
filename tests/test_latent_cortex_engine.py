@@ -956,6 +956,101 @@ def test_no_contract_valid_branch_falls_back_before_verifier_selection(
     assert result.receipt.branch_selection_admitted is False
 
 
+def test_contract_invalid_private_branches_are_repaired_before_verifier_selection(
+    tiny_model,
+    monkeypatch,
+):
+    class ProbeTokenizer:
+        eos_token_id = None
+
+        @staticmethod
+        def encode(_text, **_kwargs):
+            return [5]
+
+        @staticmethod
+        def decode(tokens):
+            values = list(tokens)
+            if values == [100]:
+                return "The first private candidate says four."
+            if values == [101]:
+                return "The second private candidate also says four."
+            return 'FINAL_ANSWER: {"answer": 4}'
+
+    engine = LatentCortexEngine(
+        tiny_model,
+        ProbeTokenizer(),
+        config=_config(
+            verifier_probe_contract="final_answer_v1",
+            allow_vanilla_fallback=False,
+            branches=BranchConfig(n_branches=2, exchange_interval=2),
+            local_repair_max_attempts=2,
+            local_repair_max_tokens=64,
+            generative_verifier_enabled=False,
+            counterfactual_verifier_enabled=False,
+            prefix_stability_enabled=False,
+        ),
+    )
+    monkeypatch.setattr(
+        engine,
+        "_decode_probe",
+        lambda branch, *_args, **_kwargs: [100 + branch.index],
+    )
+
+    def fresh(_prompt: str, *_args, **_kwargs):
+        return {
+            "text": 'FINAL_ANSWER: {"answer": 4}',
+            "context": {
+                "schema": "aura.rlc.fresh_verifier_context.v1",
+                "prompt_token_count": 1,
+                "generated_token_count": 12,
+                "termination": "contract_complete",
+                "initial_cache_offsets": [0] * N_LAYERS,
+                "final_cache_offsets": [12] * N_LAYERS,
+                "all_initial_offsets_zero": True,
+                "solver_context_imported": False,
+                "parameter_relation": "shared_resident_checkpoint",
+            },
+        }
+
+    monkeypatch.setattr(engine, "_fresh_verifier_generation", fresh)
+    result = engine.reason(
+        prompt="Compute two plus two.",
+        verifier=lambda _text: 0.5,
+        budget=ComputeBudget(max_layer_apps=500_000, wall_clock_s=30.0),
+    )
+
+    assert result.ok
+    assert result.receipt.contract_repair["request_count"] == 2
+    assert result.receipt.contract_repair["admitted_count"] == 2
+    assert result.receipt.contract_repair["answer_selection_effect"] == "none"
+    assert all(row["valid"] is True for row in result.receipt.branch_contract)
+    assert all(
+        row["original_contract_reason"] == "no_marker"
+        for row in result.receipt.contract_repair["requests"]
+    )
+    assert "branch_selection_contract_inventory_incomplete" not in (
+        result.receipt.honest_flags
+    )
+
+    from core.brain.latent_cortex_service import LatentCortexService
+
+    service_config = {
+        "decode_contract": "none",
+        "verifier_probe_contract": "final_answer_v1",
+        "local_repair_enabled": True,
+        "local_repair_max_attempts": 2,
+        "local_repair_max_tokens": 64,
+    }
+    receipt = result.receipt.to_dict()
+    assert "contract_repair_unproven" not in (
+        LatentCortexService._receipt_contract_errors(receipt, service_config)
+    )
+    receipt["contract_repair"]["admitted_count"] = 1
+    assert "contract_repair_unproven" in (
+        LatentCortexService._receipt_contract_errors(receipt, service_config)
+    )
+
+
 def test_production_episode_refuses_secondary_vanilla_decode(tiny_model):
     bad = LayerSchedule(ops=(StageOp(0, 7, 2),))
     engine = LatentCortexEngine(

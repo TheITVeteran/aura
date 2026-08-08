@@ -4868,6 +4868,87 @@ class LatentCortexEngine:
                     contract_answer_state,
                 )
 
+                original_branch_probe_texts = dict(branch_probe_texts)
+                from core.brain.llm.latent_cortex.contract_repair import (
+                    build_contract_repair_receipt,
+                    parse_contract_repair_generation,
+                    prepare_contract_repair_requests,
+                )
+
+                contract_repair_limit = (
+                    self.config.local_repair_max_attempts
+                    if self.config.local_repair_enabled
+                    else 0
+                )
+                contract_repair_requests = prepare_contract_repair_requests(
+                    branch_candidates=original_branch_probe_texts,
+                    objective=verification_objective,
+                    max_requests=contract_repair_limit,
+                )
+                contract_repairs: dict[str, dict[str, Any]] = {}
+                contract_repair_failures: dict[str, str] = {}
+                for request in contract_repair_requests:
+                    request_id = str(request["request_id"])
+                    try:
+                        generated = self._fresh_verifier_generation(
+                            str(request["prompt"]),
+                            budget,
+                            max_tokens=self.config.local_repair_max_tokens,
+                            reserve_layer_apps=safety_reserve,
+                        )
+                        repaired_candidate = parse_contract_repair_generation(
+                            generated["text"]
+                        )
+                        generated_context = generated["context"]
+                        context = {
+                            "prompt_sha256": request["prompt_sha256"],
+                            "generated_token_count": generated_context[
+                                "generated_token_count"
+                            ],
+                            "termination": generated_context["termination"],
+                            "initial_cache_offsets": generated_context[
+                                "initial_cache_offsets"
+                            ],
+                            "final_cache_offsets": generated_context[
+                                "final_cache_offsets"
+                            ],
+                            "all_initial_offsets_zero": generated_context[
+                                "all_initial_offsets_zero"
+                            ],
+                            "solver_context_imported": generated_context[
+                                "solver_context_imported"
+                            ],
+                            "parameter_relation": generated_context[
+                                "parameter_relation"
+                            ],
+                        }
+                        contract_repairs[request_id] = {
+                            "candidate": repaired_candidate,
+                            "generation_context": context,
+                        }
+                        branch_probe_texts[int(request["branch"])] = repaired_candidate
+                    except RuntimeError as exc:
+                        contract_repair_failures[request_id] = (
+                            "budget_unavailable"
+                            if "budget" in str(exc).lower()
+                            else "generation_failed"
+                        )
+                    except (ImportError, OSError, OverflowError, TypeError, ValueError) as exc:
+                        receipt.flag(
+                            "contract_repair_generation_rejected:"
+                            f"{type(exc).__name__}:{str(exc)[:80]}"
+                        )
+                        contract_repair_failures[request_id] = (
+                            "generation_contract_invalid"
+                        )
+                receipt.contract_repair = build_contract_repair_receipt(
+                    branch_candidates=original_branch_probe_texts,
+                    objective=verification_objective,
+                    generated_repairs=contract_repairs,
+                    execution_failures=contract_repair_failures,
+                    max_requests=contract_repair_limit,
+                    max_tokens=self.config.local_repair_max_tokens,
+                )
                 contract_states = {
                     index: contract_answer_state(text)
                     for index, text in sorted(branch_probe_texts.items())
@@ -4888,55 +4969,67 @@ class LatentCortexEngine:
                 if not valid_contract_branches and self.config.allow_vanilla_fallback:
                     receipt.flag("branch_selection_no_contract_valid_candidate")
                     raise RuntimeError("no_contract_valid_latent_branch")
-            from core.brain.llm.latent_cortex.blind_review import (
-                run_decoy_balanced_review,
+            contract_inventory_incomplete = (
+                valid_contract_branches is not None
+                and len(valid_contract_branches) != len(ensemble.branches)
             )
-
-            try:
-                (
-                    blind_scores,
-                    receipt.blind_review,
-                    receipt.decoy_verification,
-                ) = run_decoy_balanced_review(
-                    branch_probe_texts,
-                    pending_verifier,
-                    episode_id=receipt.episode_id,
-                    objective_sha256=receipt.input_tokens_sha256,
-                    isolation_receipt=ensemble.isolation_receipt(runner.cache_discipline_receipt()),
-                )
-            except Exception as exc:
-                receipt.flag(f"branch_decoy_review_failed:{type(exc).__name__}")
+            if contract_inventory_incomplete:
+                receipt.flag("branch_selection_contract_inventory_incomplete")
                 branch_probe_texts = {}
                 verifier = None
                 winner = select_without_task_verifier()
             else:
-                if receipt.decoy_verification["selection_admitted"]:
-                    verifier = pending_verifier
-                    if valid_contract_branches is not None:
-                        if not valid_contract_branches:
-                            receipt.flag("branch_selection_no_contract_valid_candidate")
-                        else:
-                            invalid_count = len(ensemble.branches) - len(
-                                valid_contract_branches
-                            )
-                            if invalid_count:
-                                receipt.flag(
-                                    f"branch_selection_contract_rejected:{invalid_count}"
-                                )
-                    winner = ensemble.select(
-                        score_fn=lambda branch: _contract_admitted_branch_score(
-                            branch.index,
-                            blind_scores,
-                            valid_contract_branches,
-                        )
+                from core.brain.llm.latent_cortex.blind_review import (
+                    run_decoy_balanced_review,
+                )
+
+                try:
+                    (
+                        blind_scores,
+                        receipt.blind_review,
+                        receipt.decoy_verification,
+                    ) = run_decoy_balanced_review(
+                        branch_probe_texts,
+                        pending_verifier,
+                        episode_id=receipt.episode_id,
+                        objective_sha256=receipt.input_tokens_sha256,
+                        isolation_receipt=ensemble.isolation_receipt(
+                            runner.cache_discipline_receipt()
+                        ),
                     )
-                    selection_basis = "task_verifier"
-                    if math.isfinite(float(winner.score)):
-                        branch_verifier_score = float(winner.score)
-                else:
-                    receipt.flag("branch_verifier_decoy_calibration_failed")
+                except Exception as exc:
+                    receipt.flag(f"branch_decoy_review_failed:{type(exc).__name__}")
+                    branch_probe_texts = {}
                     verifier = None
                     winner = select_without_task_verifier()
+                else:
+                    if receipt.decoy_verification["selection_admitted"]:
+                        verifier = pending_verifier
+                        if valid_contract_branches is not None:
+                            if not valid_contract_branches:
+                                receipt.flag("branch_selection_no_contract_valid_candidate")
+                            else:
+                                invalid_count = len(ensemble.branches) - len(
+                                    valid_contract_branches
+                                )
+                                if invalid_count:
+                                    receipt.flag(
+                                        f"branch_selection_contract_rejected:{invalid_count}"
+                                    )
+                        winner = ensemble.select(
+                            score_fn=lambda branch: _contract_admitted_branch_score(
+                                branch.index,
+                                blind_scores,
+                                valid_contract_branches,
+                            )
+                        )
+                        selection_basis = "task_verifier"
+                        if math.isfinite(float(winner.score)):
+                            branch_verifier_score = float(winner.score)
+                    else:
+                        receipt.flag("branch_verifier_decoy_calibration_failed")
+                        verifier = None
+                        winner = select_without_task_verifier()
         else:
             if pending_verifier is not None and self.tokenizer is not None:
                 receipt.flag("branch_verifier_skipped_budget")

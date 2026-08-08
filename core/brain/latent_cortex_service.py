@@ -2698,10 +2698,41 @@ class LatentCortexService:
             receipt.get(field)
             for field in (
                 "branch_contract",
+                "contract_repair",
                 "blind_review",
                 "decoy_verification",
             )
         ):
+            contract_repair_expected = bool(receipt.get("contract_repair")) or (
+                config.get("decode_contract") == "final_answer_v1"
+                or config.get("verifier_probe_contract") == "final_answer_v1"
+            )
+            if contract_repair_expected:
+                try:
+                    from core.brain.llm.latent_cortex.contract_repair import (
+                        validate_contract_repair_receipt,
+                    )
+                    from core.brain.llm.latent_cortex.worker_handler import (
+                        config_from_job,
+                    )
+
+                    executed_config = config_from_job(config)
+                    contract_repair = validate_contract_repair_receipt(
+                        receipt.get("contract_repair")
+                    )
+                    expected_requests = (
+                        executed_config.local_repair_max_attempts
+                        if executed_config.local_repair_enabled
+                        else 0
+                    )
+                    if (
+                        contract_repair["max_requests"] != expected_requests
+                        or contract_repair["max_tokens"]
+                        != executed_config.local_repair_max_tokens
+                    ):
+                        raise ValueError("contract repair policy differs")
+                except (ImportError, TypeError, ValueError):
+                    errors.append("contract_repair_unproven")
             try:
                 from core.brain.llm.latent_cortex.blind_review import (
                     validate_blind_review_receipt,

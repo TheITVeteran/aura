@@ -1341,6 +1341,10 @@ class EpisodeReceipt:
     # why the others did not — selection is auditable against the contract,
     # not just a scalar score. Empty when no verifier probes ran.
     branch_contract: list[dict[str, Any]] = field(default_factory=list)
+    # Fresh-context representation repair for malformed private branch probes.
+    # This can add a contract-valid candidate but owns no correctness or
+    # public-answer authority.
+    contract_repair: dict[str, Any] = field(default_factory=dict)
     verifier_preflight: dict[str, Any] = field(default_factory=dict)
     blind_review: dict[str, Any] = field(default_factory=dict)
     decoy_verification: dict[str, Any] = field(default_factory=dict)
@@ -1765,6 +1769,7 @@ class EpisodeReceipt:
                 for s in self.branch_scores
             ],
             "branch_contract": [dict(row) for row in self.branch_contract],
+            "contract_repair": dict(self.contract_repair),
             "verifier_preflight": dict(self.verifier_preflight),
             "blind_review": dict(self.blind_review),
             "decoy_verification": dict(self.decoy_verification),

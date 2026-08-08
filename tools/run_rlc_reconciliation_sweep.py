@@ -440,6 +440,11 @@ def _build_config(
         # as a property of recurrence.
         answer_replacement_enabled=full,
         local_repair_enabled=full,
+        # Both private branches must have a chance to become gradeable. A
+        # one-attempt ceiling made an invalid first branch consume the entire
+        # repair budget while the second branch remained permanently outside
+        # the verifier and promotion pools.
+        local_repair_max_attempts=2 if full else 1,
         # A repair regenerates from the failed atom to the END of the answer,
         # and it must terminate on the contract or it is discarded. At the
         # default 128 tokens it never can: these answers run ~450 tokens, so
