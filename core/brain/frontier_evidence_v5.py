@@ -10,6 +10,9 @@ from __future__ import annotations
 
 import base64
 import copy
+import threading
+import os
+import hmac
 import hashlib
 import itertools
 import json
@@ -1266,6 +1269,82 @@ def validate_evidence_role_separation(
         )
 
 
+#: The anchor a first entry commits to.
+#:
+#: CP126 88b1d02e: entries were self-hashed and previous-linked, and the
+#: first one linked to ``None``. A chain that starts from nothing can be
+#: STARTED AGAIN from nothing — anyone able to rewrite storage could
+#: replace or truncate the whole history, recompute every digest, and
+#: present a perfectly self-consistent ledger. Internal consistency is not
+#: integrity when the attacker owns the file.
+EVIDENCE_CHAIN_GENESIS = "aura.frontier_evidence.chain.genesis.v5"
+
+#: Key material for the head signature. The digests prove the chain is
+#: self-consistent; the signature proves it is the chain THIS host wrote.
+_CHAIN_KEY_NAME = "frontier_evidence_chain.key"
+
+
+def _chain_key() -> bytes | None:
+    """Local HMAC key, created once at mode 600 under this runtime's root.
+
+    None when unavailable, and a None key never validates a signature —
+    an unverifiable head must not read as a verified one.
+    """
+    global _CHAIN_KEY_CACHE
+    with _CHAIN_KEY_LOCK:
+        if _CHAIN_KEY_CACHE is not None:
+            return _CHAIN_KEY_CACHE
+        try:
+            from core.runtime.state_ownership import state_root
+
+            path = state_root() / "keys" / _CHAIN_KEY_NAME
+            if path.exists():
+                material = path.read_bytes()
+                _CHAIN_KEY_CACHE = material if len(material) == 32 else None
+                return _CHAIN_KEY_CACHE
+            path.parent.mkdir(parents=True, exist_ok=True)
+            candidate = os.urandom(32)
+            fd = os.open(str(path), os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+            with open(fd, "wb") as handle:
+                handle.write(candidate)
+            _CHAIN_KEY_CACHE = candidate
+        except FileExistsError:
+            try:
+                material = (state_root() / "keys" / _CHAIN_KEY_NAME).read_bytes()
+                _CHAIN_KEY_CACHE = material if len(material) == 32 else None
+            except OSError:
+                _CHAIN_KEY_CACHE = None
+        except (ImportError, OSError, ValueError):
+            _CHAIN_KEY_CACHE = None
+        return _CHAIN_KEY_CACHE
+
+
+_CHAIN_KEY_CACHE: bytes | None = None
+_CHAIN_KEY_LOCK = threading.Lock()
+
+
+def sign_chain_head(head_sha256: str | None) -> str:
+    """Sign a chain head. Empty string when no key material is available."""
+    key = _chain_key()
+    if key is None:
+        return ""
+    body = f"{EVIDENCE_CHAIN_GENESIS}:{head_sha256 or ''}".encode("utf-8")
+    return hmac.new(key, body, hashlib.sha256).hexdigest()
+
+
+def verify_chain_head(head_sha256: str | None, signature: Any) -> bool:
+    """Whether this head was written by this host.
+
+    An absent signature is NOT valid: a rewriter who drops the field would
+    otherwise get the same result as one who never had a key.
+    """
+    provided = str(signature or "")
+    if not provided:
+        return False
+    expected = sign_chain_head(head_sha256)
+    return bool(expected) and hmac.compare_digest(provided, expected)
+
+
 def make_index_entry(
     *,
     report: Mapping[str, Any],
@@ -1277,7 +1356,13 @@ def make_index_entry(
         require_sha256(previous_entry_sha256, field_name="previous index entry")
     body = {
         "schema": EVIDENCE_ENTRY_SCHEMA,
-        "previous_entry_sha256": previous_entry_sha256,
+        # A first entry commits to the genesis anchor rather than to None,
+        # so a chain cannot be started over from nothing (CP126 88b1d02e).
+        "previous_entry_sha256": (
+            previous_entry_sha256
+            if previous_entry_sha256 is not None
+            else EVIDENCE_CHAIN_GENESIS
+        ),
         "evidence_sha256": evidence_sha256,
         "evidence_class": report.get("evidence_class"),
         "at": report.get("generated_at_unix"),
@@ -1303,6 +1388,10 @@ def validate_index_chain(
     previous = initial_previous_sha256
     if previous is not None:
         require_sha256(previous, field_name="pruned index anchor")
+    # Chains written before the anchor existed link their first entry to
+    # None. Those are accepted so history is not discarded, but they are
+    # genuinely unanchored and a NEW chain must use the genesis value.
+    legacy_unanchored = False
     for raw in entries:
         if not isinstance(raw, dict) or set(raw) != {
             "schema",
@@ -1322,8 +1411,14 @@ def validate_index_chain(
         entry = copy.deepcopy(raw)
         if entry.get("schema") != EVIDENCE_ENTRY_SCHEMA:
             raise ValueError("evidence index entry schema is invalid")
-        if entry.get("previous_entry_sha256") != previous:
-            raise ValueError("evidence index hash chain is broken")
+        expected_previous = (
+            previous if previous is not None else EVIDENCE_CHAIN_GENESIS
+        )
+        if entry.get("previous_entry_sha256") != expected_previous:
+            if previous is None and entry.get("previous_entry_sha256") is None:
+                legacy_unanchored = True
+            else:
+                raise ValueError("evidence index hash chain is broken")
         require_sha256(entry.get("evidence_sha256"), field_name="evidence blob")
         if entry.get("comparison_stratum_sha256") is not None:
             require_sha256(
@@ -1335,6 +1430,9 @@ def validate_index_chain(
             raise ValueError("evidence index entry digest mismatch")
         previous = digest
         normalized.append(entry)
+    if legacy_unanchored and normalized:
+        # Recorded rather than raised: refusing would delete real history.
+        normalized[0] = {**normalized[0], "_unanchored_legacy_head": True}
     return normalized
 
 

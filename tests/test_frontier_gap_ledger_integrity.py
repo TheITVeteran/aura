@@ -117,8 +117,16 @@ def test_concurrent_adds_keep_the_hash_chain_intact():
 
     assert not errors, errors
     assert len(ledger.runs) == 8
-    # Every entry must chain to its predecessor, in order.
-    previous = None
+    # Every entry must chain to its predecessor, in order — and the FIRST
+    # one chains to the genesis anchor, not to None (CP126 88b1d02e). A
+    # chain that starts from nothing can be started again from nothing, so
+    # anyone able to rewrite storage could replace or truncate the whole
+    # history, recompute every digest, and present a self-consistent
+    # ledger. Internal consistency is not integrity when the attacker owns
+    # the file.
+    from core.brain.frontier_evidence_v5 import EVIDENCE_CHAIN_GENESIS
+
+    previous = EVIDENCE_CHAIN_GENESIS
     for entry in ledger.runs:
         assert entry["previous_entry_sha256"] == previous
         previous = entry["entry_sha256"]
@@ -230,3 +238,60 @@ def test_solver_exceptions_do_not_leak_detail_into_retained_evidence():
 
 def test_capability_evidence_class_constant_is_stable():
     assert CAPABILITY_EVIDENCE_CLASS
+
+
+# ── CP126 88b1d02e: a chain that starts from nothing can be rebuilt ──────
+
+
+def test_a_first_entry_commits_to_the_genesis_anchor():
+    from core.brain.frontier_evidence_v5 import EVIDENCE_CHAIN_GENESIS, make_index_entry
+
+    entry = make_index_entry(
+        report={"evidence_class": "x", "generated_at_unix": 1.0},
+        evidence_sha256="a" * 64,
+        previous_entry_sha256=None,
+    )
+    assert entry["previous_entry_sha256"] == EVIDENCE_CHAIN_GENESIS
+
+
+def test_a_rebuilt_chain_no_longer_starts_from_nothing():
+    """The attack: recompute every digest from a fresh start."""
+    from core.brain.frontier_evidence_v5 import (
+        EVIDENCE_ENTRY_SCHEMA,
+        sha256_json,
+        validate_index_chain,
+    )
+
+    body = {
+        "schema": EVIDENCE_ENTRY_SCHEMA,
+        "previous_entry_sha256": None,   # the pre-fix start
+        "evidence_sha256": "b" * 64,
+        "evidence_class": "forged",
+        "at": 1.0,
+        "battery_version": "v5",
+        "challenge_id": "c",
+        "comparison_stratum_sha256": None,
+        "overall_gap": 0.0,
+        "overall_candidate_score": 0.0,
+        "effective_n": 1,
+    }
+    forged = [{**body, "entry_sha256": sha256_json(body)}]
+
+    # Accepted (real pre-anchor history exists and must not be deleted) —
+    # but marked, so an unanchored head can never pass as an anchored one.
+    validated = validate_index_chain(forged, max_entries=10)
+    assert validated[0].get("_unanchored_legacy_head") is True
+
+
+def test_an_unsigned_head_is_not_a_verified_head():
+    """Dropping the signature must not look the same as having no key."""
+    from core.brain.frontier_evidence_v5 import sign_chain_head, verify_chain_head
+
+    head = "c" * 64
+    signature = sign_chain_head(head)
+    if not signature:
+        return  # no key material on this host; nothing to assert
+    assert verify_chain_head(head, signature) is True
+    assert verify_chain_head(head, "") is False
+    assert verify_chain_head(head, None) is False
+    assert verify_chain_head("d" * 64, signature) is False
