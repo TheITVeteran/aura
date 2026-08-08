@@ -167,14 +167,43 @@ class ContextCoordinator:
             logger.debug("Reliability record failed: %s", e)
 
     def record_action_in_history(self, tool_name: str, result: Any):
+        """Keep the outcome, not the buffer.
+
+        ``str(result)`` on a screen read put the whole accessibility tree
+        into conversation history — where it is re-read on every later turn,
+        unlabelled, as something Aura apparently said. A perception is
+        retained as an Observation and recorded here as evidence; the memory
+        of what was seen lives in ObservationMemory, which can answer
+        follow-up questions about it, and does not crowd the history.
+        """
+        from core.perception.observation_evidence import frame_tool_result
+
+        framed = frame_tool_result(result, "")
+        body = framed if framed else str(result)
         self.orch.conversation_history.append({
             "role": "internal",
-            "content": f"[SKILL OUTPUT: {tool_name}]\n{str(result)}"
+            "content": f"[SKILL OUTPUT: {tool_name}]\n{body}"
         })
 
     def inject_shortcut_results(self, message: str, result: dict) -> str:
-        summary = str(result.get("summary", result.get("result", result)))[:800]
-        return f"{message}\n\n[DIRECT RESULT]: {summary}\n\nSynthesize this result for the user."
+        """One implementation, in the orchestrator, for every caller.
+
+        This was a second copy that still carried the original defect:
+        ``result.get("summary", result.get("result", result))`` stringifies
+        the entire dict when a skill returns no summary — which is exactly
+        what computer_use does. Two renderings of the same thing means one
+        of them keeps the bug after the other is fixed.
+
+        Bound to the mixin function, not to ``self.orch``: an orchestrator
+        that happens not to carry the mixin would otherwise fall back to
+        raising, and a coordinator whose only job is rendering must not be
+        able to fail at rendering.
+        """
+        from core.orchestrator.mixins.message_pipeline import MessagePipelineMixin
+
+        return MessagePipelineMixin._inject_shortcut_results(
+            self.orch, message, result
+        )
 
     def post_process_response(self, text: str) -> str:
         return text.strip()

@@ -440,7 +440,6 @@ class MessagePipelineMixin:
 
     #: Result keys that hold a PERCEPTION — something looked at, not a value
     #: computed. These are evidence and must be framed as such.
-    _PERCEPTION_KEYS = ("text", "screen_text", "accessibility_text")
 
     def _inject_shortcut_results(self, message: str, result: dict) -> str:
         """Attach a skill's result to the turn, framed for what it IS.
@@ -463,37 +462,22 @@ class MessagePipelineMixin:
         attributed, paired with the request — so she answers the question
         instead of continuing a buffer. Everything else keeps its summary.
         """
-        if isinstance(result, dict):
-            for key in self._PERCEPTION_KEYS:
-                capture = result.get(key)
-                if isinstance(capture, str) and capture.strip():
-                    try:
-                        from core.perception.observation_evidence import (
-                            Observation,
-                            ObservationKind,
-                            remember_observation,
-                        )
+        try:
+            from core.perception.observation_evidence import frame_tool_result
 
-                        observation = remember_observation(
-                            Observation(
-                                kind=ObservationKind.SCREEN_TEXT,
-                                capture=capture,
-                                request=str(message or ""),
-                                source=str(result.get("active_app") or ""),
-                            )
-                        )
-                        return f"{message}\n\n{observation.for_reasoning()}"
-                    except (ImportError, AttributeError, TypeError, ValueError) as exc:
-                        record_degradation(
-                            "message_pipeline",
-                            exc,
-                            severity="warning",
-                            action=(
-                                "attached a raw perception without its evidence "
-                                "frame; the reply may echo the capture"
-                            ),
-                        )
-                    break
+            framed = frame_tool_result(result, str(message or ""))
+            if framed:
+                return f"{message}\n\n{framed}"
+        except (ImportError, AttributeError, TypeError, ValueError) as exc:
+            record_degradation(
+                "message_pipeline",
+                exc,
+                severity="warning",
+                action=(
+                    "attached a raw perception without its evidence frame; "
+                    "the reply may echo the capture"
+                ),
+            )
 
         # A non-perception result. Never stringify the whole dict: an
         # unlabelled blob is what the model reproduces.

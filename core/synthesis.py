@@ -968,7 +968,28 @@ def _readable_mood(context: dict[str, Any] | None) -> float | None:
     return max(0.0, min(1.0, mood))
 
 
-def _render_tool_results(tool_results: list[Any]) -> tuple[str, int]:
+def _frame_perception(result: Any, request: str) -> str | None:
+    """A capture, rendered as evidence. None when the result is not one."""
+    try:
+        from core.perception.observation_evidence import frame_tool_result
+
+        return frame_tool_result(result, request)
+    except (ImportError, AttributeError, TypeError, ValueError) as exc:
+        record_degradation(
+            "synthesis",
+            exc,
+            severity="warning",
+            action=(
+                "rendered a perception as a raw tool result; the reply may "
+                "echo the capture instead of describing it"
+            ),
+        )
+        return None
+
+
+def _render_tool_results(
+    tool_results: list[Any], request: str = ""
+) -> tuple[str, int]:
     """Render results whole-or-not-at-all, and say how many were left out.
 
     CP126 08551d41: the block was ``str(tool_results)[:6000]``, so the cut
@@ -977,12 +998,21 @@ def _render_tool_results(tool_results: list[Any]) -> tuple[str, int]:
     presenting the remains as the complete output. A result is now included
     entire or not at all, and the count of what was dropped travels with it so
     the reply cannot silently describe a truncated world as a whole one.
+
+    A PERCEPTION is not rendered as a result at all. ``repr()`` of a screen
+    read is the raw accessibility tree wrapped in dict syntax, and a model
+    handed a wall of unlabelled text continues it — which is exactly what
+    the live turn did, repeatedly, including after the shortcut injector was
+    fixed, because THIS is the lane it went through. A capture goes to her
+    reasoning as an Observation: labelled as something looked at, attributed,
+    and paired with what was asked.
     """
     rendered: list[str] = []
     used = 0
     dropped = 0
     for index, result in enumerate(tool_results or []):
-        chunk = f"[{index}] {result!r}"
+        framed = _frame_perception(result, request)
+        chunk = f"[{index}] {framed}" if framed else f"[{index}] {result!r}"
         if used + len(chunk) + 1 > _MAX_TOOL_RESULTS_CHARS:
             dropped += 1
             continue
@@ -1080,7 +1110,9 @@ class ConversationalSynthesizer:
             # Construct the prompt for the LLM
             # We want Aura to digest the raw data and speak naturally.
             
-            results_str, dropped_results = _render_tool_results(tool_results)
+            results_str, dropped_results = _render_tool_results(
+                tool_results, user_message
+            )
             verification = _tool_result_verification(tool_results)
             # CP126 2ac84449 / cad2edd5: untrusted content shares the
             # instruction channel. The fence is now per-request and

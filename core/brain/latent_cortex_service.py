@@ -263,6 +263,8 @@ class LatentCortexService:
         self._last_success_at = 0.0
         self._last_latency_s = 0.0
         self._last_allocation: dict[str, Any] = {}
+        # Which controller decision has already had an outcome recorded.
+        self._controller_outcome_recorded_for: str | None = None
         self._last_replay_sft_publication: dict[str, Any] = {}
         logger.info("🧠 LatentCortexService initialized (Recursive Latent Cortex)")
 
@@ -3464,6 +3466,75 @@ class LatentCortexService:
                 return f"messages_too_large:{total_chars}"
         return ""
 
+
+    def _teach_controller_this_arm_failed(self, reason: str) -> None:
+        """Tell the bandit about the arms that did NOT work.
+
+        CP126 d4a5bb97. Controller learning lived only on the success path,
+        so a failed, timed-out, invalid-receipt or quality-rejected arm
+        produced no outcome at all. The bandit therefore saw only the
+        episodes that worked — a costly arm that fails often could never be
+        learned as costly, because its failures were invisible while its
+        occasional successes were not. Selection bias, in a component whose
+        entire job is choosing between arms.
+
+        The outcome is recorded as ``checked=False``: this is an execution
+        failure, not an independent grade of the answer. That distinction is
+        the same one the success path already makes — a refusal is real
+        evidence that the arm did not deliver, and it is not evidence about
+        correctness.
+        """
+        decision = None
+        try:
+            allocation = getattr(self, "_last_allocation", None)
+            if isinstance(allocation, dict):
+                decision = allocation.get("execution_controller")
+        except (AttributeError, TypeError):
+            decision = None
+        if not isinstance(decision, dict) or not decision.get("decision_id"):
+            return
+        # One decision, one outcome. A refusal that fires twice for the same
+        # episode must not weight the arm twice. Keyed by decision id rather
+        # than a flag on the dict: that dict is spread into the receipt, and a
+        # bookkeeping key would become part of a published payload.
+        decision_id = str(decision.get("decision_id") or "")
+        if decision_id and decision_id == getattr(
+            self, "_controller_outcome_recorded_for", None
+        ):
+            return
+        self._controller_outcome_recorded_for = decision_id
+        try:
+            from core.brain.llm.latent_cortex.execution_controller import (
+                get_execution_controller,
+            )
+
+            get_execution_controller().record_outcome(
+                bucket=str(decision.get("bucket") or ""),
+                arm=str(decision.get("arm") or "base"),
+                verified_score=0.0,
+                success=False,
+                checked=False,
+                wall_clock_s=0.0,
+                decision_id=decision_id,
+            )
+        except (
+            ImportError,
+            AttributeError,
+            RuntimeError,
+            TypeError,
+            ValueError,
+            OSError,
+        ) as exc:
+            record_degradation(
+                "latent_cortex_service",
+                exc,
+                severity="warning",
+                action=(
+                    "the execution controller did not learn that this arm failed; "
+                    f"its statistics remain biased toward successes ({reason})"
+                ),
+            )
+
     def _record_failure(
         self, reason: str, *, stage: str = "", evidence: dict[str, Any] | None = None
     ) -> dict[str, Any]:
@@ -3480,6 +3551,7 @@ class LatentCortexService:
         """
         self._failure_streak += 1
         self._last_refusal = str(reason or "unknown")
+        self._teach_controller_this_arm_failed(self._last_refusal)
         receipt: dict[str, Any] = {
             "schema": "aura.latent_cortex.refusal_receipt.v1",
             "refusal_id": f"refusal-{uuid.uuid4().hex[:12]}",
@@ -5219,6 +5291,9 @@ class LatentCortexService:
                     # that produced it — a caller-asserted bucket/arm could
                     # credit any arm, including recording a base execution as
                     # a treatment.
+                    self._controller_outcome_recorded_for = str(
+                        controller_decision.get("decision_id") or ""
+                    )
                     outcome_recorded = get_execution_controller().record_outcome(
                         bucket=str(controller_decision.get("bucket") or ""),
                         arm=str(controller_decision.get("arm") or "base"),

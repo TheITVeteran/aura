@@ -59,6 +59,29 @@ def _record_state_machine_degradation(
     )
 
 
+def _frame_perception(result, request: str) -> str | None:
+    """A capture, rendered as evidence. None when the result is not one.
+
+    Recognition lives in core.perception.observation_evidence so that every
+    lane that turns a tool result into prompt text agrees on what a
+    perception is. Four lanes did not agree, and the disagreement is the
+    whole reason a screen read reached the user verbatim three times.
+    """
+    try:
+        from core.perception.observation_evidence import frame_tool_result
+
+        return frame_tool_result(result, request)
+    except (ImportError, AttributeError, TypeError, ValueError) as exc:
+        _record_state_machine_degradation(
+            exc,
+            action=(
+                "summarized a perception as a raw result; the reply may echo "
+                "the capture instead of describing it"
+            ),
+        )
+        return None
+
+
 class StateMachine:
     """Executes deterministic paths based on classified intent."""
 
@@ -1368,8 +1391,17 @@ class StateMachine:
                 final_response = result["message"]
                 logger.debug("SKILL: Used skill message bypass.")
             else:
-                # 2026 COGNITIVE UPGRADE: Smart context extraction for summarization
-                if isinstance(result, dict):
+                # A perception is framed as evidence, never summarized as a
+                # blob. `result.get("content", result.get("message", str(result)))`
+                # falls through to the whole dict for computer_use, which
+                # returns {"ok": True, "text": <accessibility tree>} — and a
+                # "Raw Data Snippet" of unlabelled screen rows is reproduced,
+                # not summarized. Measured live three times across three lanes.
+                framed_observation = _frame_perception(result, str(user_input or ""))
+                if framed_observation:
+                    content_to_summarize = framed_observation
+                    source_context = ""
+                elif isinstance(result, dict):
                     # Prioritize key content fields to avoid dict metadata noise
                     content_to_summarize = result.get("content", result.get("message", str(result)))
                     source_context = (

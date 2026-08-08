@@ -826,3 +826,55 @@ def get_observation_memory() -> ObservationMemory:
 def remember_observation(observation: Observation) -> Observation:
     """Retain a perception so she can refer to it after the turn that made it."""
     return get_observation_memory().record(observation)
+
+
+#: Keys under which a capture arrives from the perception skills. computer_use
+#: returns ``{"ok": True, "text": <accessibility dump>}``; host_automation and
+#: the desktop task lane use their own names for the same thing.
+PERCEPTION_KEYS: tuple[str, ...] = (
+    "text",
+    "screen_text",
+    "accessibility_text",
+    "observation",
+)
+
+
+def observation_from_result(result: Any, request: str = "") -> Observation | None:
+    """Recognise a perception in a tool result, or return None.
+
+    Aura has more than one lane that turns a tool result into prompt text —
+    the shortcut injector and the synthesis renderer — and each had its own
+    idea of how to render one. The synthesis lane used ``repr(result)``, so
+    a screen read reached the model as ``{'ok': True, 'text': '<4000 chars
+    of accessibility tree>'}`` and the model reproduced it. Fixing the
+    injector alone did not change that, because the live turn went through
+    the other lane.
+
+    Recognition belongs in ONE place, next to the type that models it, so a
+    third lane cannot quietly invent a fourth rendering.
+    """
+    if not isinstance(result, dict):
+        return None
+    for key in PERCEPTION_KEYS:
+        capture = result.get(key)
+        if isinstance(capture, str) and capture.strip():
+            return Observation(
+                kind=ObservationKind.SCREEN_TEXT,
+                capture=capture,
+                request=str(request or ""),
+                source=str(result.get("active_app") or result.get("source") or ""),
+            )
+        # Only the first perception-shaped key decides. A result carrying
+        # `text` decides on `text`, even if empty — falling through would
+        # let an unrelated key stand in for the capture that failed.
+        if capture is not None:
+            return None
+    return None
+
+
+def frame_tool_result(result: Any, request: str = "") -> str | None:
+    """Render a perception as evidence, retaining it; None if it is not one."""
+    observation = observation_from_result(result, request)
+    if observation is None:
+        return None
+    return remember_observation(observation).for_reasoning()
