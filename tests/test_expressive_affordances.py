@@ -12,6 +12,7 @@ from core.cognition.expressive_affordances import (
     Affordance,
     AffordanceRegistry,
     get_affordance_registry,
+    sanitize_affordance_control_syntax,
 )
 
 
@@ -57,6 +58,38 @@ def test_strip_intents_leaves_clean_prose():
     cleaned = reg.strip_intents("Here it is ⟦affordance:show_sketch prompt=\"x\"⟧ for you.")
     assert "affordance" not in cleaned
     assert "Here it is" in cleaned and "for you." in cleaned
+
+
+def test_visibility_sanitizer_strips_unknown_and_malformed_controls():
+    cases = (
+        ("Before ⟦affordance:teleport target=moon⟧ after.", "Before after."),
+        (
+            'Before ⟦affordance:show_sketch prompt="an orca at sea" after.',
+            "Before after.",
+        ),
+        (
+            "Before [[affordance:show_sketch prompt=orca]] after.",
+            "Before after.",
+        ),
+        (
+            "Before <<affordance:show_sketch prompt=orca>> after.",
+            "Before after.",
+        ),
+    )
+    for raw, expected in cases:
+        result = sanitize_affordance_control_syntax(raw)
+        assert result.text == expected
+        assert result.changed is True
+        assert result.removed_controls == 1
+        assert "affordance:" not in result.text.lower()
+
+
+def test_visibility_sanitizer_preserves_plain_prose_and_brackets():
+    raw = "A normal [square-bracketed] answer about affordances."
+    result = sanitize_affordance_control_syntax(raw)
+    assert result.text == raw
+    assert result.changed is False
+    assert result.removed_controls == 0
 
 
 def test_realize_is_fail_open_on_realizer_error():
@@ -133,6 +166,19 @@ def test_chat_lane_passes_through_plain_replies():
         _realize_expressive_affordances("Just a normal answer.", "hi")
     )
     assert clean == "Just a normal answer."
+    assert realized == []
+
+
+def test_chat_lane_strips_unknown_control_without_running_it():
+    from interface.routes.chat import _realize_expressive_affordances
+
+    clean, realized = asyncio.run(
+        _realize_expressive_affordances(
+            "I can show that. ⟦affordance:unknown_machine target=desk⟧ Done.",
+            "Can you show me?",
+        )
+    )
+    assert clean == "I can show that. Done."
     assert realized == []
 
 

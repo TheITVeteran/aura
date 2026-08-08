@@ -606,6 +606,85 @@ async def test_route_keeps_strict_http_failure_for_benchmark_output_shape(
     assert payload["delivery_state"] == DeliveryState.FAILED.value
 
 
+@pytest.mark.asyncio
+async def test_route_strips_malformed_affordance_control_before_journaling(
+    monkeypatch: pytest.MonkeyPatch,
+    journal: ChatDeliveryJournal,
+) -> None:
+    from interface.routes import chat as chat_mod
+
+    _patch_route_identity(monkeypatch, journal)
+
+    @chat_mod._paired_chat_response_boundary
+    async def handler(*, body, request):
+        return JSONResponse(
+            {
+                "response": (
+                    'I can show that. ⟦affordance:show_sketch prompt="an orca" Done.'
+                ),
+                "status": "ok",
+                "response_confidence": "high",
+            }
+        )
+
+    body = chat_mod.ChatRequest(message="show me", session_id="session-1")
+    request = _request("route-malformed-affordance")
+    response = await handler(body=body, request=request)
+    payload = _payload(response)
+
+    assert response.status_code == 200
+    assert payload["response"] == "I can show that. Done."
+    assert payload["status"] == "chat_affordance_control_sanitized"
+    assert payload["response_confidence"] == "degraded"
+
+    replay = await handler(body=body, request=request)
+    replay_payload = _payload(replay)
+    assert replay_payload["response"] == "I can show that. Done."
+    assert "affordance:" not in str(replay_payload).lower()
+
+
+@pytest.mark.asyncio
+async def test_route_fails_in_band_when_affordance_visibility_cannot_be_verified(
+    monkeypatch: pytest.MonkeyPatch,
+    journal: ChatDeliveryJournal,
+) -> None:
+    from core.cognition import expressive_affordances
+    from interface.routes import chat as chat_mod
+
+    _patch_route_identity(monkeypatch, journal)
+
+    def fail_sanitization(_text: str):
+        raise RuntimeError("sanitizer unavailable")
+
+    monkeypatch.setattr(
+        expressive_affordances,
+        "sanitize_affordance_control_syntax",
+        fail_sanitization,
+    )
+
+    @chat_mod._paired_chat_response_boundary
+    async def handler(*, body, request):
+        return JSONResponse(
+            {
+                "response": "Draft ⟦affordance:show_sketch prompt=orca⟧",
+                "status": "ok",
+                "response_confidence": "high",
+            }
+        )
+
+    response = await handler(
+        body=chat_mod.ChatRequest(message="show me", session_id="session-1"),
+        request=_request("route-affordance-sanitizer-failed"),
+    )
+    payload = _payload(response)
+
+    assert response.status_code == 200
+    assert payload["status"] == "chat_affordance_visibility_unavailable"
+    assert payload["response_confidence"] == "failed"
+    assert "affordance:" not in str(payload).lower()
+    assert payload["delivery_state"] == DeliveryState.FAILED.value
+
+
 def test_request_contract_binds_method_and_path(monkeypatch: pytest.MonkeyPatch) -> None:
     from interface.routes import chat as chat_mod
 

@@ -38129,7 +38129,7 @@ review coverage is not remediation and none is closed by the review receipt:
 - **P2 CLOSED CP020:** replace the bare `you`/`your` topicality bypass with semantic continuity evidence.
 - **P2 CLOSED CP021:** finish recoverable deterministic work in-turn instead of discarding it, and
   keep output-shape failures consistent with the in-band degraded-response contract.
-- **P2:** strip malformed affordance control syntax before any user delivery.
+- **P2 CLOSED CP022:** strip malformed affordance control syntax before any user delivery.
 - **P2:** reconstruct durable transcripts by exchange identity rather than row adjacency.
 - **P2:** close surface-delivery state on every fast, defensive, conscience, pressure,
   and error return, not only the final quality path.
@@ -38526,3 +38526,32 @@ resident model was loaded and the active source-bound 32B campaign was not
 disturbed. Signed-app proof remains open. The completion envelope stays
 `809/920` (approximately `87.9%`); this closes one bounded P2, not the remaining
 chat, RLC, fusion, release, semantic-review, or endurance program.
+
+## Checkpoint 2026-08-08-022: Private Affordance Controls Never Become Prose
+
+Affordance execution remains strict, but the user-delivery boundary no longer
+assumes that only a valid, known Unicode control can reach it. The shared
+sanitizer recognizes known and unknown affordance names, Unicode and ASCII
+bracket forms, and incomplete controls whose closing delimiter is missing. It
+removes the private control while preserving surrounding natural language;
+ordinary bracketed prose and discussion of affordances remain unchanged.
+
+The same sanitizer now runs both before realization and at the final paired
+chat boundary. The final pass happens before terminal-state calculation,
+durable journaling, replay, or user delivery, so a missed parser case cannot be
+persisted as a completed answer. A stripped draft is explicitly degraded. If
+the sanitizer itself is unavailable and the response still contains a private
+control marker, the route replaces the draft with an in-band failed response
+rather than failing open or exposing execution syntax. Control-free prose is
+not discarded merely because the sanitizer could not be imported.
+
+Regressions cover unknown controls, malformed quoted controls, alternate ASCII
+delimiters, preservation of ordinary brackets, realization-path cleanup,
+final-boundary cleanup before journal replay, and sanitizer failure with a
+private marker. Focused tests pass `46/46`; the wider delivery, envelope,
+human-level, reliability, rendering, formatting, and affordance suite passes
+`293/293`; canonical smoke passes `103/103`; Ruff, full Python compilation,
+and diff hygiene pass. No resident model was loaded and the active source-bound
+32B campaign was not disturbed. The completion envelope remains `809/920`
+(approximately `87.9%`); this closes one bounded chat P2, not the remaining
+conversation, RLC, fusion, release, semantic-review, or endurance program.

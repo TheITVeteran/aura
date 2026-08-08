@@ -577,6 +577,16 @@ def _chat_delivery_state_for_response(
     return DeliveryState.COMPLETED
 
 
+def _contains_private_affordance_control_syntax(value: Any) -> bool:
+    """Recognize private affordance controls without parsing or executing them."""
+
+    text = str(value or "")
+    lowered = text.casefold()
+    if "affordance:" not in lowered:
+        return False
+    return any(marker in text for marker in ("⟦", "[[", "<<", "["))
+
+
 def _chat_delivery_payload(
     payload: dict[str, Any],
     admission: DeliveryAdmission,
@@ -1189,6 +1199,65 @@ def _paired_chat_response_boundary(handler: Callable[..., Any]) -> Callable[...,
                     "response_confidence": "failed",
                 }
                 response.status_code = 500 if strict_output_status else 200
+
+            try:
+                from core.cognition.expressive_affordances import (
+                    sanitize_affordance_control_syntax,
+                )
+
+                affordance_sanitization = sanitize_affordance_control_syntax(
+                    str(payload.get("response") or "")
+                )
+                if affordance_sanitization.changed:
+                    record_degradation(
+                        "chat.affordance_visibility_boundary",
+                        ValueError(
+                            "private affordance control syntax reached final delivery"
+                        ),
+                        severity="warning",
+                        action=(
+                            "stripped private affordance syntax before journaling "
+                            "and delivery"
+                        ),
+                        extra={
+                            "removed_controls": affordance_sanitization.removed_controls,
+                            "malformed_controls": affordance_sanitization.malformed_controls,
+                        },
+                    )
+                    payload["response"] = (
+                        affordance_sanitization.text
+                        or "I wasn't able to realize that action in this turn."
+                    )
+                    if str(payload.get("response_confidence") or "").casefold() not in {
+                        "failed",
+                        "failed_closed",
+                    }:
+                        payload["response_confidence"] = "degraded"
+                    if str(payload.get("status") or "").casefold() in {"", "ok"}:
+                        payload["status"] = "chat_affordance_control_sanitized"
+            except (ImportError, AttributeError, RuntimeError, TypeError, ValueError) as exc:
+                unsafe_control_visible = _contains_private_affordance_control_syntax(
+                    payload.get("response")
+                )
+                record_degradation(
+                    "chat.affordance_visibility_boundary",
+                    exc,
+                    severity="warning",
+                    action=(
+                        "replaced the response because private control visibility could "
+                        "not be verified"
+                        if unsafe_control_visible
+                        else "kept control-free prose after the affordance sanitizer failed"
+                    ),
+                )
+                if unsafe_control_visible:
+                    payload["response"] = (
+                        "I couldn't verify that the action control stayed private, so I "
+                        "did not deliver that draft."
+                    )
+                    payload["status"] = "chat_affordance_visibility_unavailable"
+                    payload["response_confidence"] = "failed"
+                    response.status_code = 500 if strict_output_status else 200
 
             terminal_state = _chat_delivery_state_for_response(
                 payload,
@@ -10854,24 +10923,27 @@ async def _realize_expressive_affordances(
     Returns (clean_reply, realized_results). The tags are stripped from the
     user-visible prose and each chosen affordance is realized through its
     governed subsystem; the caller attaches results (image paths, artifacts,
-    media requests, scenario models) to the response payload. Fail-open: on
-    any error the original reply passes through unchanged.
+    media requests, scenario models) to the response payload. Realization
+    failures keep the prose but never expose private control syntax.
     """
-    if not reply_text or "⟦affordance:" not in reply_text:
+    if not reply_text:
         return reply_text, []
     try:
-        from core.cognition.expressive_affordances import get_affordance_registry
+        from core.cognition.expressive_affordances import (
+            get_affordance_registry,
+            sanitize_affordance_control_syntax,
+        )
 
         registry = get_affordance_registry()
         intents = registry.parse_intents(reply_text)
+        clean = sanitize_affordance_control_syntax(reply_text).text
         if not intents:
-            return reply_text, []
+            return clean, []
         realized: list[dict[str, Any]] = []
         ctx = {"last_user_message": user_message}
         for intent in intents[:3]:  # bounded: at most three actions per turn
             result = await registry.realize(intent, ctx)
             realized.append(result)
-        clean = registry.strip_intents(reply_text)
         # Fold each affordance's spoken line into the reply so the voice
         # narrates what it did ("does it look like this?").
         spoken = [str(r.get("spoken") or "").strip() for r in realized if r.get("spoken")]
@@ -10881,7 +10953,20 @@ async def _realize_expressive_affordances(
     except _CHAT_RECOVERABLE_ERRORS as exc:
         record_degradation("chat", exc)
         logger.debug("Affordance realization skipped: %s", exc)
-        return reply_text, []
+        try:
+            from core.cognition.expressive_affordances import (
+                sanitize_affordance_control_syntax,
+            )
+
+            return sanitize_affordance_control_syntax(reply_text).text, []
+        except _CHAT_RECOVERABLE_ERRORS:
+            if _contains_private_affordance_control_syntax(reply_text):
+                return (
+                    "I couldn't verify that the action control stayed private, so I "
+                    "did not deliver that draft.",
+                    [],
+                )
+            return reply_text, []
 
 
 def _audit_recent_response_reasoning_sync(text: str) -> None:

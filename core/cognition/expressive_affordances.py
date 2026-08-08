@@ -40,6 +40,28 @@ _INTENT_RE = re.compile(
     re.IGNORECASE,
 )
 _ARG_RE = re.compile(r"([a-z_]+)=(\"[^\"]*\"|[^\s⟧]+)", re.IGNORECASE)
+# Execution is strict; visibility is conservative. These patterns also catch
+# unknown names, alternate brackets, and partial controls that cannot execute
+# but still must never become user-facing prose.
+_CONTROL_SPAN_RE = re.compile(
+    r"(?:"
+    r"⟦\s*affordance\s*:[^⟧]{0,4096}⟧"
+    r"|\[\[\s*affordance\s*:[^\]]{0,4096}\]\]"
+    r"|<<\s*affordance\s*:[^>]{0,4096}>>"
+    r"|\[\s*affordance\s*:[^\]]{0,4096}\]"
+    r")",
+    re.IGNORECASE | re.DOTALL,
+)
+_CONTROL_HEAD_RE = re.compile(
+    r"(?:⟦|\[\[|<<|\[)\s*affordance\s*:\s*[a-z_][a-z0-9_-]*"
+    r"(?:\s+[a-z_][a-z0-9_]*=(?:\"[^\"]*\"|'[^']*'|[^\s⟧\]>]+))*"
+    r"\s*(?:⟧|\]\]|>>|\])?",
+    re.IGNORECASE,
+)
+_CONTROL_START_RE = re.compile(
+    r"(?:⟦|\[\[|<<|\[)\s*affordance\s*:",
+    re.IGNORECASE,
+)
 
 
 @dataclass(frozen=True)
@@ -49,6 +71,16 @@ class AffordanceIntent:
     name: str
     args: dict[str, str]
     raw: str
+
+
+@dataclass(frozen=True)
+class AffordanceSanitization:
+    """Result of enforcing the private-control/user-prose boundary."""
+
+    text: str
+    changed: bool
+    removed_controls: int
+    malformed_controls: int
 
 
 @dataclass
@@ -130,7 +162,7 @@ class AffordanceRegistry:
     @staticmethod
     def strip_intents(text: str) -> str:
         """Remove intent tags from user-visible prose (the result speaks for them)."""
-        return _INTENT_RE.sub("", text or "").replace("  ", " ").strip()
+        return sanitize_affordance_control_syntax(text).text
 
     async def realize(
         self, intent: AffordanceIntent, context: dict[str, Any] | None = None
@@ -159,6 +191,37 @@ class AffordanceRegistry:
                 action=f"skipped affordance '{intent.name}' after realizer error",
             )
             return {"ok": False, "affordance": intent.name, "reason": f"error:{type(exc).__name__}"}
+
+
+def sanitize_affordance_control_syntax(text: str) -> AffordanceSanitization:
+    """Strip complete and malformed affordance controls from visible prose.
+
+    Complete spans are removed first. A malformed control then loses only its
+    control head and parseable key/value arguments, preserving surrounding
+    natural language whenever possible. The final start-marker pass guarantees
+    that no executable-looking prefix survives.
+    """
+
+    original = str(text or "")
+    complete = list(_CONTROL_SPAN_RE.finditer(original))
+    cleaned = _CONTROL_SPAN_RE.sub("", original)
+    partial = list(_CONTROL_HEAD_RE.finditer(cleaned))
+    cleaned = _CONTROL_HEAD_RE.sub("", cleaned)
+    residual = list(_CONTROL_START_RE.finditer(cleaned))
+    cleaned = _CONTROL_START_RE.sub("", cleaned)
+    if complete or partial or residual:
+        cleaned = cleaned.replace("⟦", "").replace("⟧", "")
+        cleaned = re.sub(r"[ \t]{2,}", " ", cleaned)
+        cleaned = re.sub(r"[ \t]+\n", "\n", cleaned)
+        cleaned = re.sub(r"\n[ \t]+", "\n", cleaned)
+    cleaned = cleaned.strip()
+    removed = len(complete) + len(partial) + len(residual)
+    return AffordanceSanitization(
+        text=cleaned,
+        changed=cleaned != original.strip(),
+        removed_controls=removed,
+        malformed_controls=len(partial) + len(residual),
+    )
 
 
 _REGISTRY: AffordanceRegistry | None = None
