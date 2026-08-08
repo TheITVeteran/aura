@@ -505,6 +505,17 @@ def _episode_verifier(task):
     return EpisodeTaskVerifier(task.public.prompt)
 
 
+def _route_counts(receipt: dict[str, Any]) -> dict[str, int]:
+    """Aggregate deterministic-route outcomes across branches for one cell."""
+    selection = receipt.get("diagnostic_action_selection") or {}
+    routes = selection.get("candidate_routes") or {}
+    totals: dict[str, int] = {}
+    for envelope in routes.values():
+        for key, value in (envelope.get("counts") or {}).items():
+            totals[key] = totals.get(key, 0) + int(value)
+    return totals
+
+
 def _oracle_verifier(task):
     """Ground-truth scorer for the verifier ablation.
 
@@ -872,6 +883,22 @@ def main() -> int:
                         "steps_taken": receipt.get("steps_taken"),
                         "halted_early": receipt.get("halted_early"),
                         "phase_latency_s": receipt.get("phase_latency_s"),
+                        # Whether the promotion chain actually fired, recorded
+                        # per cell so the battery answers it directly. Every
+                        # link in that chain has been zero at some point
+                        # tonight -- probe budget, routing, verifier
+                        # allowlists, dispute-only repair -- and diagnosing it
+                        # meant separate 32B probe runs each time.
+                        "route_counts": _route_counts(receipt),
+                        "repair_requests": len(
+                            (receipt.get("local_repair") or {}).get("requests") or []
+                        ),
+                        "answer_replacement_decision": (
+                            (receipt.get("answer_replacement") or {}).get("decision")
+                        ),
+                        "answer_replacement_reason": (
+                            (receipt.get("answer_replacement") or {}).get("reason")
+                        ),
                         "text": text,
                         "error": error,
                         "latency_s": time.monotonic() - cell_started,
