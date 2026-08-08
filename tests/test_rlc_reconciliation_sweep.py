@@ -228,6 +228,16 @@ def test_disposition_injection_is_real_when_applied_and_absent_when_suppressed()
     With no tokenizer the engine cannot encode the disposition at all, so a
     test that omits one proves nothing -- both arms trivially report zero.
     """
+    import mlx.core as mx
+
+    # Seed explicitly. The tiny model has random weights, so whether it emits
+    # EOS on the first token depends on global MLX RNG state -- which earlier
+    # tests in the same process have already advanced. Run alone this passed;
+    # run inside the suite it raised "episode produced no answer", failing a
+    # 29-minute gate for a reason that had nothing to do with the code under
+    # test. The assertions below are about prefix composition and never about
+    # the generated text, so determinism is all this needs.
+    mx.random.seed(20260807)
     model = _tiny_model()
 
     applied_config = sweep._build_config(2, 4, "applied", 8, decode_contract="none")
