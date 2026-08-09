@@ -39584,3 +39584,14 @@ This checkpoint implements the missing causal path but does not infer a result
 before a fresh run. Reasoning gain, training gain, resident-32B gain, frontier
 performance, fusion, activation, and `WOW Signal` remain false. The completion
 envelope remains `809/920` (approximately `87.9%`).
+
+## Checkpoint 2026-08-08-062: Promotion Evidence Replays Its Alpha
+
+The CP061 broad gate exposed a stale native-promotion fixture: its synthetic
+exact interaction included a positive lower bound and exact sign-flip p-value
+but omitted the preregistered alpha that the production evidence gate now
+requires. The fixture now carries the original `1/20` alpha explicitly; it
+does not relax or default the production validator. All six positive,
+negative, unmeasured, tamper, and semantic-replay cases pass. This is test
+contract maintenance, not new reasoning evidence, so the completion envelope
+and all capability claims remain unchanged.

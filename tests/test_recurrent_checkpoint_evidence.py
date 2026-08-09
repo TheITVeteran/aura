@@ -74,6 +74,7 @@ def _grade() -> dict[str, object]:
         "interaction": {
             "lower": {"numerator": 1, "denominator": 10},
             "one_sided_exact_sign_flip_p": {"numerator": 1, "denominator": 100},
+            "alpha": {"numerator": 1, "denominator": 20},
         },
     }
     return _seal(body, "grade_sha256")
