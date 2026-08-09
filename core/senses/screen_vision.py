@@ -1,10 +1,10 @@
-from core.runtime.errors import record_degradation
-from core.runtime.service_registry import get_runtime_service
 import base64
 import io
 import logging
 import os
 
+from core.runtime.errors import record_degradation
+from core.runtime.service_registry import get_runtime_service
 
 # Aura Imports
 try:
@@ -56,6 +56,15 @@ class LocalVision:
 
     async def capture_screen(self):
         """Take a screenshot of the primary monitor."""
+        from core.security.screen_capture_policy import (
+            evaluate_screen_capture_admission,
+            evaluate_screen_capture_admission_async,
+        )
+
+        admission = await evaluate_screen_capture_admission_async()
+        if not admission.allowed:
+            logger.info("👁️ Screen capture skipped: %s", admission.public_error)
+            return None
         try:
             from core.security.permission_guard import PermissionType
 
@@ -73,6 +82,11 @@ class LocalVision:
         
         def _safe_screenshot():
             try:
+                # The foreground may change while the async permission probe
+                # is in flight.  Re-check in the same thread and immediately
+                # before the backend acquires pixels.
+                if not evaluate_screen_capture_admission().allowed:
+                    return None
                 if not _screen_capture_preflight():
                     logger.info("👁️ Screen capture preflight denied for LocalVision.")
                     return None

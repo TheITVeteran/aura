@@ -127,6 +127,14 @@ class ComputerUseSkill:
         # the primary path. (docs/SETTINGS_WIRING_AUDIT.md)
         if not screen_allowed():
             raise PermissionError("screen_permission_denied: permissions.screen is disabled")
+        from core.security.screen_capture_policy import (
+            require_screen_capture_admission_async,
+        )
+
+        # Re-check foreground privacy immediately before either backend.  The
+        # setting check above keeps the historical error contract; this gate
+        # additionally covers private and unverifiable foreground contexts.
+        await require_screen_capture_admission_async()
         errors: list[str] = []
         temp_path: str | None = None
         try:

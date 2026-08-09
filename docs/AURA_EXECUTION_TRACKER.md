@@ -40721,3 +40721,51 @@ frozen CP093 pilot is unchanged; its completed closed-book cells expose
 selective promotion mechanics but no ground-truth score. No reasoning-gain,
 frontier, fusion, activation, or `WOW Signal` claim is made. The completion
 envelope remains `809/920` (approximately `87.9%`).
+
+## Checkpoint 2026-08-09-097: Desktop Privacy Is a Capture Boundary
+
+The companion privacy rule was structurally correct in its own loop but was
+not universal. Direct screenshots, accessibility-tree reads, continuous
+vision, the isolated sensory worker, and the signed native bridge could reach
+different permission decisions. Some paths omitted the live
+`permissions.screen` setting, and an explicit request could proceed when the
+foreground metadata was unknown. That made caller choice, rather than one
+lowest-level invariant, determine whether the user's screen was private.
+
+Every desktop-content read now crosses one privacy-safe admission contract
+before content acquisition and again at direct pixel backends where the
+foreground can change between planning and capture. The contract checks the
+runtime screen setting before even probing foreground metadata, refuses known
+private/incognito and password-manager contexts, fails closed when the
+foreground is unknown, and requires a readable title for browsers that support
+private windows. Its receipts contain only a stable reason and never the app or
+window title. Native AppKit/Quartz metadata avoids a subprocess on the common
+path; a bounded read-only AppleScript probe completes missing metadata.
+
+The same boundary now protects `computer_use`, host screenshot/OCR,
+`ScreenPerception` pixels and accessibility text, `LocalVision`, the continuous
+buffer, the sensory sidecar, the body screen sensor, `NativePyAutoGUI`, and the
+signed Aura launcher. Continuous public frames are invalidated as soon as a
+private foreground is observed so stale public imagery cannot be reported as
+the current screen.
+
+Privacy/direct-capture contracts pass `103/103`; the expanded policy/ambient
+set passes `86/86`; broader screen and companion regressions pass `226/226`.
+Canonical smoke passes `103/103`; Ruff, Python byte compilation, Swift
+type-check, and diff hygiene pass. Compact evidence is
+`artifacts/closeout/companion/cp097_universal_screen_capture_boundary.json`.
+
+The next companion milestone is not a pair of scripted demonstrations. Voice
+and text in the native surface must reach the same general conversation,
+research, tool, file, memory, and follow-up context as the full window. It must
+show a typing state and truthful runtime phase events while longer work
+continues, and reduce avoidable latency through warm reuse, parallel work,
+deduplication, contention control, and streaming. Latency thresholds are
+diagnostic SLOs, not deadlines that terminate valid work. Camera authority,
+truthful body telemetry, companion-only capture, worker readiness, event-loop
+isolation, provenance, durable autonomous opt-in, general visual-detail proof,
+and rebuilt-app live proof remain open. The frozen CP093 campaign is unchanged
+at `21/28` committed cells with its resource-dominating ordinary control
+active; no scored reasoning-gain, frontier, fusion, activation, or `WOW Signal`
+claim is made. The completion envelope remains `809/920` (approximately
+`87.9%`).

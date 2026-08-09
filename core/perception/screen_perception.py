@@ -20,8 +20,8 @@ from typing import Any
 
 from core.container import ServiceContainer
 from core.runtime.errors import record_degradation
-from core.runtime.subprocess_gateway import get_subprocess_gateway
 from core.runtime.state_ownership import state_root
+from core.runtime.subprocess_gateway import get_subprocess_gateway
 
 logger = logging.getLogger("Aura.ScreenPerception")
 
@@ -51,6 +51,9 @@ class ScreenSnapshot:
     modal_text: str = ""
     has_loading: bool = False       # spinner/progress bar detected
     timestamp: float = field(default_factory=time.time)
+    capture_denied: bool = False
+    unavailable_reason: str = ""
+    capture_admission: dict[str, str | bool] = field(default_factory=dict)
 
 
 class ScreenPerception:
@@ -250,6 +253,17 @@ class ScreenPerception:
         snap = ScreenSnapshot()
         self._capture_count += 1
 
+        from core.security.screen_capture_policy import (
+            evaluate_screen_capture_admission_async,
+        )
+
+        admission = await evaluate_screen_capture_admission_async()
+        snap.capture_admission = admission.to_receipt()
+        if not admission.allowed:
+            snap.capture_denied = True
+            snap.unavailable_reason = admission.public_error
+            return snap
+
         if save_screenshot:
             active = await self.get_active_window()
             summary = {
@@ -442,6 +456,13 @@ end tell''',
 
     async def _take_screenshot(self) -> str:
         """Take a screenshot and return the file path."""
+        from core.security.screen_capture_policy import (
+            evaluate_screen_capture_admission_async,
+        )
+
+        admission = await evaluate_screen_capture_admission_async()
+        if not admission.allowed:
+            return ""
         save_path = await asyncio.to_thread(
             self._prepare_screenshot_path,
             self._capture_count,

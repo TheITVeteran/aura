@@ -642,15 +642,10 @@ class TestThePrivacyRuleHoldsForEveryCaller:
 
         assert ComputerUseSkill.__new__(ComputerUseSkill).read_screen_text() == "SCREEN"
 
-    def test_an_unknown_foreground_does_not_block_an_explicit_request(
+    def test_an_unknown_foreground_blocks_even_an_explicit_request(
         self, monkeypatch
     ):
-        """Empty means "cannot tell", and the caller decides.
-
-        An explicit request proceeds — the person asked. The ambient loop
-        refuses. Both are right for their context, and screen_context does
-        not make that policy.
-        """
+        """Intent cannot prove that an unidentified foreground is non-private."""
         from core.skills.computer_use import ComputerUseSkill
 
         monkeypatch.setattr(
@@ -660,7 +655,10 @@ class TestThePrivacyRuleHoldsForEveryCaller:
             ComputerUseSkill, "_read_screen_text_macos", lambda self: "SCREEN"
         )
 
-        assert ComputerUseSkill.__new__(ComputerUseSkill).read_screen_text() == "SCREEN"
+        result = ComputerUseSkill.__new__(ComputerUseSkill).read_screen_text()
+
+        assert "refused" in result
+        assert result != "SCREEN"
 
 
 class TestTheFastPathIsCausalInTheAnswerLane:

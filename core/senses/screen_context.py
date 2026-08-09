@@ -18,6 +18,7 @@ would make the cheap gate expensive enough to skip.
 from __future__ import annotations
 
 import subprocess
+import sys
 
 from core.runtime.errors import record_degradation
 from core.runtime.subprocess_gateway import get_subprocess_gateway
@@ -41,15 +42,58 @@ end tell
 """
 
 
+def _native_frontmost_window_hint() -> tuple[str, str]:
+    """Read foreground metadata in-process when macOS exposes it.
+
+    The application PID from ``NSWorkspace`` is used to select the matching
+    Quartz window.  Taking the first global window can attribute another
+    application's title to the foreground app, which is unsafe for a privacy
+    decision.
+    """
+
+    if sys.platform != "darwin":
+        return "", ""
+    try:
+        import Quartz
+        from AppKit import NSWorkspace
+
+        application = NSWorkspace.sharedWorkspace().frontmostApplication()
+        if application is None:
+            return "", ""
+        app = str(application.localizedName() or "").strip()
+        pid = int(application.processIdentifier())
+        options = Quartz.kCGWindowListOptionOnScreenOnly
+        try:
+            options |= Quartz.kCGWindowListExcludeDesktopElements
+        except AttributeError:
+            pass
+        windows = Quartz.CGWindowListCopyWindowInfo(
+            options,
+            Quartz.kCGNullWindowID,
+        ) or []
+        for window in windows:
+            if int(window.get("kCGWindowOwnerPID", 0) or 0) != pid:
+                continue
+            if int(window.get("kCGWindowLayer", 0) or 0) != 0:
+                continue
+            return app, str(window.get("kCGWindowName") or "").strip()
+        return app, ""
+    except (ImportError, AttributeError, OSError, RuntimeError, TypeError, ValueError):
+        return "", ""
+
+
 def frontmost_window_hint() -> tuple[str, str]:
     """(app, title) for the frontmost window, or ("", "") when unknown.
 
-    An unknown foreground returns EMPTY rather than raising, and callers must
-    treat empty as "cannot tell". Whether that means allow or refuse is the
-    caller's decision: the ambient loop refuses, an explicit user request
-    proceeds, and both are right for their context. This function does not
-    make that policy — it only reports.
+    An unknown foreground returns EMPTY rather than raising.  This function
+    reports metadata rather than making policy; the universal capture policy
+    treats unknown as refusal because intent cannot prove a foreground is
+    non-private.
     """
+    native = _native_frontmost_window_hint()
+    if native[0] and native[1]:
+        return native
+
     try:
         # Through the gateway, not raw: every process this runtime spawns is
         # accounted for in one place, and a read of the frontmost window is
@@ -62,22 +106,30 @@ def frontmost_window_hint() -> tuple[str, str]:
             source="screen_context.frontmost_window",
             accelerator_capability="none",
         )
-    except (OSError, subprocess.SubprocessError) as exc:
+    except (
+        OSError,
+        RuntimeError,
+        TimeoutError,
+        TypeError,
+        ValueError,
+        subprocess.SubprocessError,
+    ) as exc:
         record_degradation(
             "screen_context",
             exc,
             severity="debug",
             action="frontmost window unknown; the privacy gate had nothing to check",
         )
-        return "", ""
+        return native
     if completed.returncode != 0:
         # Accessibility permission not granted is the common case here, and
         # it is not an error worth escalating: the caller finds out it cannot
         # read the screen either, one step later.
-        return "", ""
+        return native
     raw = str(completed.stdout or "").strip()
     app, _, title = raw.partition("|")
-    return app.strip(), title.strip()
+    resolved = app.strip(), title.strip()
+    return resolved if any(resolved) else native
 
 
 __all__ = ["frontmost_window_hint"]

@@ -379,6 +379,19 @@ def invoke_native_desktop_bridge(
         _require_effect_governance(command)
 
     command_name = str(command or "probe").lower()
+    if command_name == "screenshot":
+        from core.security.screen_capture_policy import (
+            evaluate_screen_capture_admission,
+        )
+
+        admission = evaluate_screen_capture_admission()
+        if not admission.allowed:
+            return {
+                "ok": False,
+                "error": admission.public_error,
+                "capture_admission": admission.to_receipt(),
+                "bridge_transport": "policy_refusal",
+            }
     resident_timeout = (
         max(0.25, float(timeout))
         if command_name.startswith("request_")
@@ -556,6 +569,9 @@ class NativePyAutoGUI:
         return _Point(int(result.get("x", 0)), int(result.get("y", 0)))
 
     def screenshot(self) -> Any:
+        from core.security.screen_capture_policy import require_screen_capture_admission
+
+        require_screen_capture_admission()
         from PIL import Image
 
         fd, raw_path = tempfile.mkstemp(prefix="aura-screen-", suffix=".png")

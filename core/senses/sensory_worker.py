@@ -3,6 +3,7 @@ import os
 import queue
 
 from core.runtime.errors import record_degradation
+from core.security.screen_capture_policy import evaluate_screen_capture_admission
 
 # Configure logging for the worker
 logging.basicConfig(level=logging.INFO)
@@ -58,6 +59,17 @@ def sensory_worker_loop(request_queue, response_queue):
 
             if cmd == "init_vision":
                 try:
+                    admission = evaluate_screen_capture_admission()
+                    if not admission.allowed:
+                        _safe_put(
+                            response_queue,
+                            {
+                                "status": "error",
+                                "msg": admission.reason.value,
+                                "capture_admission": admission.to_receipt(),
+                            },
+                        )
+                        continue
                     if not _screen_capture_preflight_allowed():
                         _safe_put(response_queue, {"status": "error", "msg": "screen_permission_inactive"})
                         continue
@@ -77,6 +89,17 @@ def sensory_worker_loop(request_queue, response_queue):
                     continue
                 if not _screen_capture_preflight_allowed():
                     _safe_put(response_queue, {"status": "error", "msg": "screen_permission_inactive"})
+                    continue
+                admission = evaluate_screen_capture_admission()
+                if not admission.allowed:
+                    _safe_put(
+                        response_queue,
+                        {
+                            "status": "error",
+                            "msg": admission.reason.value,
+                            "capture_admission": admission.to_receipt(),
+                        },
+                    )
                     continue
                 with mss.mss() as sct:
                     monitor = sct.monitors[1]

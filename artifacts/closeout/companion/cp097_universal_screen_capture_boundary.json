@@ -1,0 +1,76 @@
+{
+  "schema": "aura.closeout.companion.cp097.v1",
+  "checkpoint": "CP097",
+  "date": "2026-08-09",
+  "finding": {
+    "classification": "desktop_privacy_policy_was_caller_local",
+    "detail": "Ambient observation refused known private windows, but direct screenshots, accessibility reads, continuous vision, the sensory sidecar, and the signed native bridge did not all share that rule. Several paths also omitted the live permissions.screen setting, and an unknown browser title could be treated as permission."
+  },
+  "repair": {
+    "single_capture_admission_policy": true,
+    "runtime_screen_setting_checked_before_foreground_probe": true,
+    "private_and_password_manager_contexts_refused": true,
+    "unknown_foreground_fails_closed": true,
+    "browser_without_verifiable_title_fails_closed": true,
+    "denial_receipts_omit_app_and_title": true,
+    "native_in_process_foreground_probe_preferred": true,
+    "bounded_applescript_metadata_fallback": true,
+    "accessibility_text_is_governed_like_pixels": true,
+    "continuous_frames_invalidated_on_private_transition": true,
+    "per_frame_sidecar_recheck": true,
+    "signed_native_bridge_recheck": true,
+    "covered_boundaries": [
+      "computer_use screenshot and pyautogui fallback",
+      "host_automation screenshot and OCR",
+      "screen_perception accessibility and screenshot",
+      "LocalVision",
+      "ContinuousSensoryBuffer",
+      "sensory_worker",
+      "ScreenSensor",
+      "NativePyAutoGUI",
+      "AuraLauncher native screenshot command"
+    ]
+  },
+  "verification": {
+    "privacy_and_direct_capture_contracts": "103 passed",
+    "expanded_policy_and_ambient_contracts": "86 passed",
+    "broader_screen_and_companion_regressions": "226 passed",
+    "ruff": "passed",
+    "python_byte_compile": "passed",
+    "swift_typecheck": "passed with one unrelated pre-existing selector-style warning",
+    "canonical_smoke": "103 passed",
+    "diff_hygiene": "passed",
+    "negative_controls": [
+      "disabled runtime setting prevents even the foreground metadata probe",
+      "private foreground prevents every tested backend call",
+      "unknown foreground cannot be overridden by an explicit request",
+      "a browser with an unreadable title is not assumed public",
+      "a sidecar initialized on a public window rechecks before a later private frame",
+      "native bridge policy refusal occurs before resident or one-shot transport",
+      "private app and title never appear in a denial receipt"
+    ]
+  },
+  "campaign_boundary": {
+    "active_campaign": "cp093-wow-pilot-20260809",
+    "campaign_source_commit": "6fc714b90a8b471d2f5b17e87c742a6c306c3675",
+    "campaign_mutated": false,
+    "observed_progress": "21/28 committed; resource-dominating ordinary control active",
+    "scientific_verdict": "pending"
+  },
+  "remaining_companion_work": [
+    "unify browser camera state with canonical runtime camera authority and measured hardware state",
+    "replace permanently-disabled body camera telemetry with truthful state and provenance",
+    "make companion-only camera capture independent of the hidden full-window webview",
+    "treat vision-worker initialization errors as failed readiness and prove recovery",
+    "move blocking camera work off the event loop and attach source, time, device, and privacy provenance",
+    "prove general visual detail and calibrated abstention across lighting, motion, occlusion, distance, and multiple people",
+    "provide durable-opt-in autonomous camera observation through the same governed sensory policy",
+    "route arbitrary companion text and voice turns through canonical conversation, research, tools, files, and memory",
+    "preserve multi-turn referents and active research context across companion follow-ups",
+    "stream truthful job-phase events and a typing state instead of canned progress phrases",
+    "reduce time to first progress, first useful result, and completion by removing duplicate inference, cold connections, serializable waits, and telemetry contention",
+    "treat latency targets as diagnostic SLOs rather than task-killing deadlines",
+    "prove paraphrased event research and paper-collection workflows end to end",
+    "prove live voice, native chat, highlighting, camera, hide, and restart continuity after an app rebuild"
+  ]
+}

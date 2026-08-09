@@ -1,15 +1,16 @@
-from core.runtime.errors import record_degradation
-from core.media.safe_imports import cv2_main_process_blocked
 import asyncio
 import logging
 import os
 import time
 from collections import deque
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any
 
+from core.media.safe_imports import cv2_main_process_blocked
 from core.runtime.boot_safety import main_process_camera_policy
+from core.runtime.errors import record_degradation
 from core.runtime.shutdown_coordinator import is_shutdown_requested
+from core.security.screen_capture_policy import evaluate_screen_capture_admission_async
 from core.utils.task_tracker import get_task_tracker
 
 logger = logging.getLogger(__name__)
@@ -61,7 +62,7 @@ class ContinuousSensoryBuffer:
         self.frame_buffer = deque(maxlen=6)
         self._capture_task = None
         self._is_active = False
-        self.cap: Optional[Any] = None
+        self.cap: Any | None = None
 
         from core.config import get_config
 
@@ -123,6 +124,17 @@ class ContinuousSensoryBuffer:
             logger.info("👁️ Continuous Sensory Buffer Offline.")
 
     async def _screen_permission_active(self) -> bool:
+        admission = await evaluate_screen_capture_admission_async()
+        if not admission.allowed:
+            now = time.monotonic()
+            if (
+                self._screen_permission_notice_at <= 0.0
+                or (now - self._screen_permission_notice_at)
+                >= self._screen_permission_notice_interval_s
+            ):
+                logger.info("👁️ [VISION] Continuous screen buffer deferred: %s.", admission.public_error)
+                self._screen_permission_notice_at = now
+            return False
         try:
             from core.container import ServiceContainer
             from core.security.permission_guard import PermissionType
@@ -206,6 +218,14 @@ class ContinuousSensoryBuffer:
                         continue
 
                 if self.sct and self.monitor:
+                    admission = await evaluate_screen_capture_admission_async()
+                    if not admission.allowed:
+                        # A prior public frame must not masquerade as the
+                        # current private screen.  Invalidate the rolling
+                        # context as soon as the foreground becomes denied.
+                        self.frame_buffer.clear()
+                        await asyncio.sleep(2.0)
+                        continue
                     async with self._capture_lock:
                         # v27 Hardening: Strict 10s timeout for system screenshot calls
                         try:
@@ -215,7 +235,7 @@ class ContinuousSensoryBuffer:
                                 ),
                                 timeout=10.0
                             )
-                        except asyncio.TimeoutError:
+                        except TimeoutError:
                             logger.error("👁️ [VISION] Screenshot capture timed out after 10s. Skipping frame.")
                             sct_img = None
 

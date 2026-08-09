@@ -48,7 +48,6 @@ from __future__ import annotations
 
 import json
 import math
-import re
 import time
 from dataclasses import dataclass, field
 from enum import StrEnum
@@ -57,48 +56,9 @@ from typing import Any
 
 from core.runtime.errors import record_degradation
 from core.runtime.lockdep import checked_lock
+from core.security.screen_capture_policy import is_private_screen_context
 
 AMBIENT_SCHEMA = "aura.perception.ambient_presence.v1"
-
-#: Never observed. Matched against the frontmost window's title and the app
-#: name, and a match means the capture is not taken at all.
-#:
-#: Deliberately broad, and deliberately biased toward refusing: a false
-#: positive costs one skipped observation, a false negative reads something
-#: the person explicitly marked private.
-_PRIVATE_WINDOW_MARKERS: tuple[str, ...] = (
-    "incognito",
-    "private browsing",
-    "private window",
-    "inprivate",
-    "guest",
-    "1password",
-    "bitwarden",
-    "keychain access",
-    "keeper",
-    "lastpass",
-    "dashlane",
-    "authenticator",
-    "banking",
-    "password",
-)
-
-#: Apps whose whole purpose is holding secrets. Never read regardless of title.
-_PRIVATE_APPS: frozenset[str] = frozenset(
-    {
-        "1password",
-        "1password 7",
-        "bitwarden",
-        "keychain access",
-        "keeper password manager",
-        "lastpass",
-        "dashlane",
-        "gpg keychain",
-        "secretive",
-    }
-)
-
-_PRIVATE_RE = re.compile("|".join(re.escape(m) for m in _PRIVATE_WINDOW_MARKERS), re.I)
 
 #: How long a context stays "the same thing" before a re-read is worth paying
 #: for even when the title has not changed — a long document being scrolled is
@@ -160,11 +120,7 @@ class ScreenContext:
         both consulted because a private tab shows in the title and a
         password manager shows in the app.
         """
-        app = self.app.strip().lower()
-        if app in _PRIVATE_APPS:
-            return True
-        haystack = f"{self.app} {self.title}"
-        return bool(_PRIVATE_RE.search(haystack))
+        return is_private_screen_context(self.app, self.title)
 
 
 @dataclass

@@ -88,6 +88,54 @@ private func bridgeAutomationProbe() -> [String: Any] {
     ]
 }
 
+private func bridgeScreenCaptureAdmission() -> (Bool, String) {
+    guard let application = NSWorkspace.shared.frontmostApplication else {
+        return (false, "foreground_unknown")
+    }
+    let appName = (application.localizedName ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+    guard !appName.isEmpty else {
+        return (false, "foreground_unknown")
+    }
+
+    let privateApps: Set<String> = [
+        "1password", "1password 7", "bitwarden", "keychain access",
+        "keeper password manager", "lastpass", "dashlane", "gpg keychain",
+        "secretive",
+    ]
+    let privateMarkers = [
+        "incognito", "private browsing", "private window", "inprivate", "guest",
+        "1password", "bitwarden", "keychain access", "keeper", "lastpass",
+        "dashlane", "authenticator", "banking", "password",
+    ]
+    let privateBrowsingApps: Set<String> = [
+        "arc", "brave browser", "firefox", "google chrome", "microsoft edge",
+        "opera", "safari", "vivaldi",
+    ]
+
+    var title = ""
+    let options: CGWindowListOption = [.optionOnScreenOnly, .excludeDesktopElements]
+    let windows = CGWindowListCopyWindowInfo(options, kCGNullWindowID) as? [[String: Any]] ?? []
+    for window in windows {
+        let ownerPID = (window[kCGWindowOwnerPID as String] as? NSNumber)?.int32Value ?? 0
+        let layer = (window[kCGWindowLayer as String] as? NSNumber)?.intValue ?? 0
+        if ownerPID == application.processIdentifier && layer == 0 {
+            title = (window[kCGWindowName as String] as? String ?? "")
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            break
+        }
+    }
+
+    let loweredApp = appName.lowercased()
+    let combined = "\(appName) \(title)".lowercased()
+    if privateApps.contains(loweredApp) || privateMarkers.contains(where: combined.contains) {
+        return (false, "private_foreground")
+    }
+    if privateBrowsingApps.contains(loweredApp) && title.isEmpty {
+        return (false, "browser_title_unknown")
+    }
+    return (true, "none")
+}
+
 private func bridgeActivateForPermissionPrompt() {
     NSRunningApplication.current.activate(options: [.activateAllWindows])
 }
@@ -163,6 +211,18 @@ private func nativeDesktopBridgeResult(payload: [String: Any]) -> ([String: Any]
         let location = CGEvent(source: nil)?.location ?? .zero
         return (["ok": true, "x": location.x, "y": location.y], 0)
     case "screenshot":
+        let admission = bridgeScreenCaptureAdmission()
+        guard admission.0 else {
+            return ([
+                "ok": false,
+                "error": "screen_capture_refused",
+                "capture_admission": [
+                    "schema": "aura.security.screen_capture_admission.v1",
+                    "allowed": false,
+                    "reason": admission.1,
+                ],
+            ], 2)
+        }
         guard let path = payload["path"] as? String, !path.isEmpty else {
             return (["ok": false, "error": "screen_capture_unavailable"], 2)
         }

@@ -2858,6 +2858,18 @@ end tell
                 }
 
             if action == "inspect_screen":
+                from core.security.screen_capture_policy import (
+                    evaluate_screen_capture_admission_async,
+                )
+
+                admission = await evaluate_screen_capture_admission_async()
+                if not admission.allowed:
+                    return {
+                        "ok": False,
+                        "status": "screen_capture_refused",
+                        "error": admission.public_error,
+                        "capture_admission": admission.to_receipt(),
+                    }
                 blocked = await self._require_permissions(
                     "inspecting the frontmost screen and focused UI element",
                     "ACCESSIBILITY",
@@ -2939,6 +2951,19 @@ end tell
                 }
 
             if action == "read_screen_text":
+                from core.security.screen_capture_policy import (
+                    evaluate_screen_capture_admission_async,
+                )
+
+                admission = await evaluate_screen_capture_admission_async()
+                if not admission.allowed:
+                    return {
+                        "ok": False,
+                        "status": "screen_capture_refused",
+                        "error": admission.public_error,
+                        "text": "",
+                        "capture_admission": admission.to_receipt(),
+                    }
                 blocked = await self._require_permissions(
                     "reading text from the frontmost macOS app",
                     "ACCESSIBILITY",
@@ -4545,20 +4570,15 @@ end tell
     @staticmethod
     def _refuse_private_window() -> str:
         try:
-            from core.perception.ambient_presence import is_private_context
-            from core.senses.screen_context import frontmost_window_hint
+            from core.security.screen_capture_policy import (
+                evaluate_screen_capture_admission,
+            )
 
-            app, title = frontmost_window_hint()
+            admission = evaluate_screen_capture_admission()
         except (ImportError, AttributeError, RuntimeError, TypeError, ValueError):
-            return ""
-        try:
-            if is_private_context(app, title):
-                # The refusal names neither the app nor the title: a message
-                # reading "refused: Chase Bank — Incognito" has published the
-                # thing the refusal existed to protect.
-                return "[screen read refused: a private window is in the foreground]"
-        except (TypeError, ValueError):
-            return ""
+            return "[screen read refused: foreground privacy could not be verified]"
+        if not admission.allowed:
+            return f"[screen read refused: {admission.public_error}]"
         return ""
 
     def read_screen_text(self) -> str:
@@ -4580,6 +4600,14 @@ end tell
     @staticmethod
     def _screen_snapshot_result(snapshot: Any) -> dict[str, Any]:
         """Convert structured screen perception into a computer_use result."""
+
+        capture_denied = bool(getattr(snapshot, "capture_denied", False))
+        unavailable_reason = str(
+            getattr(snapshot, "unavailable_reason", "") or ""
+        ).strip()
+        capture_admission = dict(
+            getattr(snapshot, "capture_admission", {}) or {}
+        )
 
         accessibility_text = str(getattr(snapshot, "accessibility_text", "") or "").strip()
         screen_text = str(getattr(snapshot, "screen_text", "") or "").strip()
@@ -4630,7 +4658,7 @@ end tell
             text_hash = hashlib.sha256(text.encode()).hexdigest()[:16]
 
         return {
-            "ok": bool(text),
+            "ok": bool(text) and not capture_denied,
             # Knowing every window on the desk IS a reading of the screen, even
             # when no text could be lifted off it. Calling that "limited" told
             # the caller to distrust the one part that was complete.
@@ -4660,6 +4688,9 @@ end tell
             "modal_text": str(getattr(snapshot, "modal_text", "") or "").strip(),
             "has_loading": bool(getattr(snapshot, "has_loading", False)),
             "timestamp": float(getattr(snapshot, "timestamp", 0.0) or 0.0),
+            "capture_denied": capture_denied,
+            "error": unavailable_reason if capture_denied else "",
+            "capture_admission": capture_admission,
         }
 
     def read_menu_clock(self) -> str:
@@ -4677,6 +4708,9 @@ end tell
 
     def _read_screen_text_macos(self) -> str:
         """Use macOS Accessibility API to extract text from the frontmost app with anti-hang limits."""
+        refusal = self._refuse_private_window()
+        if refusal:
+            return refusal
         # `entire contents of frontApp` walks the ENTIRE accessibility tree.
         # On a browser or an IDE that is thousands of elements and routinely
         # outruns any sane timeout, so the 6s budget meant this effectively

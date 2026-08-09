@@ -1133,6 +1133,20 @@ class HostAutomationProvider:
             Receipt with save_path as result.
         """
         start = time.time()
+        from core.security.screen_capture_policy import (
+            evaluate_screen_capture_admission_async,
+        )
+
+        admission = await evaluate_screen_capture_admission_async()
+        if not admission.allowed:
+            return AutomationReceipt(
+                action="take_screenshot",
+                target="",
+                adapter="screen_capture_policy",
+                success=False,
+                error=admission.public_error,
+                duration_ms=(time.time() - start) * 1000,
+            )
         if not save_path:
             ts = time.strftime("%Y%m%d_%H%M%S")
             unique = f"{time.time_ns() % 1_000_000_000:09d}"
