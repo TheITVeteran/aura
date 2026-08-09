@@ -39595,3 +39595,26 @@ does not relax or default the production validator. All six positive,
 negative, unmeasured, tamper, and semantic-replay cases pass. This is test
 contract maintenance, not new reasoning evidence, so the completion envelope
 and all capability claims remain unchanged.
+
+## Checkpoint 2026-08-09-063: Solver Gain Has an Independent Admission Path
+
+The first CP062-source canary stopped during its initial complete-engine probe,
+before bootstrap or adapter mutation. The engine emitted the new
+`objective_program_solution`, but checkpoint admission still required answer
+replacement schema v3 and allowed only branch or repair sources. No scientific
+result can be inferred from that infrastructure failure.
+
+Admission now recognizes schema v4 but does not accept the new source by name
+alone. A solver replacement must uniquely select `objective-program`, use the
+sentinel branch `-1`, carry a valid solver transaction digest, identify the
+`exact_objective_program` verifier, reconstruct a closed `[1,1]` interval with
+the `objective_program_exact_complete` basis, and dominate the incumbent. A
+forged source with a rehashed but invalid transaction status is rejected.
+
+Focused admission, replacement, and objective-verifier contracts pass `46/46`;
+canonical smoke passes `103/103`; Ruff, compilation, and diff hygiene pass.
+Compact evidence is
+`artifacts/closeout/latent_cortex/cp063_solver_admission_contract.json`.
+Reasoning gain, training gain, resident-32B gain, frontier performance, fusion,
+activation, and `WOW Signal` remain false. The completion envelope remains
+`809/920` (approximately `87.9%`).

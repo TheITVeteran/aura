@@ -187,7 +187,7 @@ def _validate_full_engine_episode_evidence(
     decision = replacement.get("decision")
     flags = {str(flag) for flag in receipt.get("honest_flags") or []}
     if (
-        replacement.get("schema") != "aura.rlc.answer_replacement.v3"
+        replacement.get("schema") != "aura.rlc.answer_replacement.v4"
         or replacement.get("authority") != "confidence_bound_answer_replacement"
         or not _is_sha256(replacement.get("receipt_sha256"))
         or replacement["receipt_sha256"]
@@ -221,13 +221,37 @@ def _validate_full_engine_episode_evidence(
             if isinstance(row, Mapping)
             and row.get("request_id") == selected_request_id
         ]
+        source = accepted.get("source")
+        objective_solution_valid = True
+        if source == "objective_program_solution":
+            objective_solution_valid = bool(
+                selected_request_id == "objective-program"
+                and len(selected_rows) == 1
+                and selected_rows[0].get("branch") == -1
+                and selected_rows[0].get("transaction_status")
+                == "objective_program_solution"
+                and _is_sha256(selected_rows[0].get("transaction_sha256"))
+                and selected_rows[0].get("required_verifier")
+                == "exact_objective_program"
+                and selected_rows[0].get("same_verifier_class") is True
+                and isinstance(selected_rows[0].get("replacement_quality"), Mapping)
+                and selected_rows[0]["replacement_quality"].get("basis")
+                == "objective_program_exact_complete"
+                and selected_rows[0]["replacement_quality"].get("lower_bound") == 1.0
+                and selected_rows[0]["replacement_quality"].get("upper_bound") == 1.0
+            )
         if (
-            accepted.get("source")
-            not in {"branch_candidate", "repaired_candidate"}
+            source
+            not in {
+                "branch_candidate",
+                "objective_program_solution",
+                "repaired_candidate",
+            }
             or accepted.get("binding_status") != "exact_text_token_roundtrip"
             or any(accepted.get(key) != value for key, value in output_binding.items())
             or len(selected_rows) != 1
             or selected_rows[0].get("dominates") is not True
+            or not objective_solution_valid
         ):
             _fail("recurrent_checkpoint_full_engine_replacement_invalid")
     elif (

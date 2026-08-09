@@ -600,6 +600,9 @@ def _full_engine_report(
     adapter_label: str,
     ordinary: dict[str, object],
     outcomes: dict[tuple[str, int], bool],
+    *,
+    replacement_source: str = "branch_candidate",
+    objective_solver_valid: bool = True,
 ) -> dict[str, object]:
     ordinary_rows = {
         (row["task_id"], row["depth"]): row for row in ordinary["records"]
@@ -640,7 +643,7 @@ def _full_engine_report(
                 "token_count": ordinary_row["token_count"],
             }
             accepted = {
-                "source": "branch_candidate" if replaces else "baseline_decode",
+                "source": replacement_source if replaces else "baseline_decode",
                 "text_sha256": hashlib.sha256(full_text.encode("utf-8")).hexdigest(),
                 "tokens_sha256": _canonical_digest(full_tokens),
                 "token_count": len(full_tokens),
@@ -649,14 +652,41 @@ def _full_engine_report(
                 ),
             }
             replacement_body = {
-                "schema": "aura.rlc.answer_replacement.v3",
+                "schema": "aura.rlc.answer_replacement.v4",
                 "authority": "confidence_bound_answer_replacement",
                 "decision": "replace" if replaces else "retain",
-                "selected_request_id": "branch-0" if replaces else "",
+                "selected_request_id": (
+                    "objective-program"
+                    if replaces and replacement_source == "objective_program_solution"
+                    else "branch-0"
+                    if replaces
+                    else ""
+                ),
                 "baseline_decode": baseline,
                 "accepted_output": accepted,
                 "candidates": (
-                    [{"request_id": "branch-0", "dominates": True}]
+                    [
+                        {
+                            "request_id": "objective-program",
+                            "branch": -1,
+                            "transaction_status": (
+                                "objective_program_solution"
+                                if objective_solver_valid
+                                else "forged_solution"
+                            ),
+                            "transaction_sha256": "d" * 64,
+                            "required_verifier": "exact_objective_program",
+                            "same_verifier_class": True,
+                            "replacement_quality": {
+                                "basis": "objective_program_exact_complete",
+                                "lower_bound": 1.0,
+                                "upper_bound": 1.0,
+                            },
+                            "dominates": True,
+                        }
+                    ]
+                    if replaces and replacement_source == "objective_program_solution"
+                    else [{"request_id": "branch-0", "dominates": True}]
                     if replaces
                     else []
                 ),
@@ -724,6 +754,47 @@ def _full_engine_report(
         depths=ordinary["depths"],
         records=records,
     )
+
+
+def test_full_engine_evidence_accepts_only_bound_objective_solver_authority():
+    task_a, task_b = tuple(task.task_id for task in _TASKS)
+    ordinary_outcomes = {
+        (task_a, 1): True,
+        (task_a, 2): True,
+        (task_b, 1): False,
+        (task_b, 2): False,
+    }
+    ordinary = _ordinary_report_for_adapter("objective-solver", ordinary_outcomes)
+    solver_outcomes = {**ordinary_outcomes, (task_b, 2): True}
+
+    report = _full_engine_report(
+        "objective-solver",
+        ordinary,
+        solver_outcomes,
+        replacement_source="objective_program_solution",
+    )
+    replaced = [
+        row
+        for row in report["records"]
+        if row["episode_receipt"]["answer_replacement"]["decision"] == "replace"
+    ]
+    assert len(replaced) == 1
+    assert (
+        replaced[0]["episode_receipt"]["answer_replacement"]["accepted_output"]["source"]
+        == "objective_program_solution"
+    )
+
+    with pytest.raises(
+        RecurrentCheckpointAdmissionError,
+        match="full_engine_replacement_invalid",
+    ):
+        _full_engine_report(
+            "forged-objective-solver",
+            ordinary,
+            solver_outcomes,
+            replacement_source="objective_program_solution",
+            objective_solver_valid=False,
+        )
 
 
 def test_full_engine_admission_requires_floor_preservation_and_verified_gain():

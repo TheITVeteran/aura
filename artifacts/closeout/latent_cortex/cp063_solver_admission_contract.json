@@ -1,0 +1,41 @@
+{
+  "schema": "aura.closeout.rlc.cp063.v1",
+  "checkpoint": "CP063",
+  "failed_campaign": {
+    "campaign": "aura-cp062-v4-canary-095fde138-s2026080811",
+    "source_commit": "095fde138",
+    "phase": "initial_complete_engine_probe",
+    "training_started": false,
+    "scientific_result_produced": false,
+    "failure": "recurrent_checkpoint_full_engine_evidence_invalid",
+    "root_cause": "independent admission recognized answer-replacement schema v3 and branch/repair sources but not schema v4 objective_program_solution evidence"
+  },
+  "repair": {
+    "answer_replacement_schema": "aura.rlc.answer_replacement.v4",
+    "accepted_source": "objective_program_solution",
+    "required_request_id": "objective-program",
+    "required_branch": -1,
+    "required_transaction_status": "objective_program_solution",
+    "required_verifier": "exact_objective_program",
+    "required_quality_basis": "objective_program_exact_complete",
+    "required_quality_interval": [1.0, 1.0],
+    "requires_valid_transaction_sha256": true,
+    "requires_dominance": true
+  },
+  "verification": {
+    "focused_contracts": {"passed": 46, "failed": 0},
+    "canonical_smoke": {"passed": 103, "failed": 0},
+    "forged_solver_authority_rejected": true,
+    "ruff": "pass",
+    "py_compile": "pass",
+    "diff_check": "pass"
+  },
+  "claims": {
+    "reasoning_gain_proven": false,
+    "training_gain_proven": false,
+    "resident_32b_gain_proven": false,
+    "frontier_level_proven": false,
+    "fusion_allowed": false,
+    "wow_signal": false
+  }
+}
