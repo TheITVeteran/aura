@@ -82,7 +82,40 @@ def test_observable_completion_eos_prevents_late_answer_cherry_pick() -> None:
     )
     assert observed["optimization_token_count"] == 2
     assert observed["termination"] == "eos_token"
+    assert observed["terminal_token_id"] == 99
+    assert observed["full_token_count"] == 3
+    assert observed["response_text"] == "unfinished"
+    assert "<|im_end|>" not in observed["response_text"]
     assert "FINAL_ANSWER" not in observed["response_text"]
+
+
+def test_observable_completion_excludes_rendered_eos_after_fenced_json() -> None:
+    bundle = build_tokenizer_bundle_identity(
+        tokenizer_class="test.EosTokenizer",
+        tokenizer_files=tokenizer_file_bindings_from_bytes(
+            {
+                "tokenizer.json": b"{}",
+                "tokenizer_config.json": b"{}",
+            }
+        ),
+        chat_template=None,
+        special_token_map={"eos_token_id": 99},
+        encode_options={},
+        decode_options={},
+        implementation_source_sha256="8" * 64,
+    )
+    answer = '```json\n{"trace":[0,0,1],"value":1}\n```'
+    observed = observable_completion_from_trace(
+        token_ids=[10, 99, 11],
+        streaming_deltas=(answer, "<|im_end|>", " unreachable"),
+        tokenizer_bundle=bundle,
+    )
+
+    assert observed["response_text"] == answer
+    assert observed["full_token_count"] == 3
+    assert observed["optimization_token_count"] == 2
+    assert observed["termination"] == "eos_token"
+    assert observed["terminal_token_id"] == 99
 
 
 def test_observable_completion_rejects_tampered_boundary() -> None:

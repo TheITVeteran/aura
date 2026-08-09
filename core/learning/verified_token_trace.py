@@ -180,19 +180,23 @@ def observable_completion_from_trace(
     termination = "fixed_token_budget"
     terminal_token_id: int | None = None
     for index, (token_id, delta) in enumerate(zip(tokens, deltas, strict=True)):
+        if eos_token_id is not None and token_id == eos_token_id:
+            # EOS is an optimized stopping action, not user-visible text. Some
+            # tokenizers render it as a control-token string during incremental
+            # decode; admitting that rendering changes the answer a user sees
+            # and can make an otherwise valid structured response unparseable.
+            token_count = index + 1
+            termination = "eos_token"
+            terminal_token_id = eos_token_id
+            break
         response_parts.append(delta)
         state = contract_answer_state("".join(response_parts))
         if state.get("valid") is True:
             token_count = index + 1
             termination = "contract_complete"
             break
-        if eos_token_id is not None and token_id == eos_token_id:
-            token_count = index + 1
-            termination = "eos_token"
-            terminal_token_id = eos_token_id
-            break
 
-    response_text = "".join(deltas[:token_count])
+    response_text = "".join(response_parts)
     body = {
         "schema": OBSERVABLE_COMPLETION_SCHEMA,
         "full_token_count": len(tokens),

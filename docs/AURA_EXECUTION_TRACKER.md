@@ -39292,3 +39292,30 @@ checkpoint, and tokenizer selections pass `113/113`; Ruff, compilation, and
 diff hygiene pass. Reasoning gain, frontier performance, fusion, activation,
 and `WOW Signal` remain false. The completion envelope remains `809/920`
 (approximately `87.9%`). A fresh published-source two-stage canary is next.
+
+## Checkpoint 2026-08-08-053: EOS Is a Stopping Action, Not Visible Text
+
+The first CP052 two-stage canary completed all eight supervised bootstrap
+updates, then exposed a tokenizer-boundary defect in its on-policy samples.
+Several generated responses contained plausible fenced process JSON followed
+by the tokenizer's rendered `<|im_end|>` control token. The observable-prefix
+receipt counted EOS correctly as an optimized terminal action, but also copied
+its decoded rendering into the user-visible response. Strict process grading
+therefore rejected answers that the production stream should have ended before
+displaying.
+
+Observable reconstruction now detects the source-bound EOS token before
+appending its streaming delta. EOS still counts toward the optimization-token
+boundary and remains recorded as the terminal token, while its rendering and
+all later deltas are excluded from response text. Ordinary non-EOS tokens that
+complete an answer contract remain visible. Regression coverage binds all
+three properties: full causal traces remain retained, policy credit includes
+the stopping action, and visible text contains neither EOS control syntax nor
+post-termination output.
+
+This repairs the evidence channel; it does not convert the interrupted canary
+into capability evidence. Reasoning gain, frontier performance, fusion,
+activation, and `WOW Signal` remain false. The completion envelope remains
+`809/920` (approximately `87.9%`). A fresh source-bound CP052 two-stage canary
+must now demonstrate reward variance, optimizer updates, and strict disjoint
+free-generation improvement.
