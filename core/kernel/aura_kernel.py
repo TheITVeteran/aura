@@ -121,6 +121,20 @@ class _NullInstrumentation:
         return True, 0, ""
 
 
+def _begin_pass_run(label: str) -> None:
+    """Number this tick's passes from 1, or do nothing if unavailable.
+
+    Wrapped rather than trusting ``_pass_instrumentation`` to be total: a
+    debugging aid must never be the reason a tick fails.
+    """
+    try:
+        begin = getattr(_pass_instrumentation(), "begin_run", None)
+        if begin is not None:
+            begin(label)
+    except Exception:  # noqa: BLE001 — a debug aid may never break a tick
+        logger.debug("pass run label %s not recorded", label, exc_info=True)
+
+
 def _record_pass(
     name: str,
     ordinal: int,
@@ -1199,6 +1213,13 @@ class AuraKernel:
             # Phases that only belong in background autonomous ticks.
             # Running them during a user-facing (priority) tick blocks the response
             # for up to 60s per phase and is never needed for conversation.
+            #
+            # Pass numbering restarts here. It used to be monotonic for the
+            # process, which made AURA_PASS_BISECT_LIMIT=5 mean "the first
+            # five passes since boot" — right on the first tick and total
+            # silence on every tick after it. The documented behaviour, and
+            # the only useful one, is per-tick.
+            _begin_pass_run(f"kernel_tick/{'priority' if priority else 'background'}")
             for phase in self._phases:
                 phase_name = phase.__class__.__name__
 

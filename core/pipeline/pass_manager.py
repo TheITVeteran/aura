@@ -37,6 +37,7 @@ that is already written and load-bearing gets bisect and timing by asking
 
 from __future__ import annotations
 
+import contextvars
 import logging
 import threading
 import time
@@ -47,6 +48,14 @@ from typing import Any, Generic, Protocol, TypeVar
 logger = logging.getLogger("Aura.PassManager")
 
 Unit = TypeVar("Unit")
+
+#: Pass numbering for the turn currently being served. A one-element list so
+#: the counter can be bumped without rebinding the ContextVar on every pass.
+#: ``None`` until :meth:`PassInstrumentation.begin_run` is called on this
+#: task, where numbering falls back to the process-wide counter.
+_RUN_ORDINAL: contextvars.ContextVar[list[int] | None] = contextvars.ContextVar(
+    "aura_pass_run_ordinal", default=None
+)
 
 
 # ══════════════════════════════════════════════════════════════════════
@@ -301,18 +310,47 @@ class PassInstrumentation:
 
     # ── the hooks themselves ──────────────────────────────────────────
     def next_ordinal(self) -> int:
+        """The next pass number, scoped to the current run if there is one."""
+        counter = _RUN_ORDINAL.get()
+        if counter is not None:
+            counter[0] += 1
+            return counter[0]
         with self._lock:
             self._ordinal += 1
             return self._ordinal
 
-    def reset_ordinals(self) -> None:
-        """Restart pass numbering.
+    def begin_run(self, label: str = "") -> None:
+        """Restart pass numbering for the turn about to be served.
 
-        Bisect compares ordinals against a limit, so repeated runs of the
-        same pipeline must start from the same number or the limit means
-        something different every time. Only :func:`bisect_pipeline` calls
-        this; the live tick loop's numbering is monotonic for the process.
+        Bisect compares an ordinal against a limit, so "the first N passes"
+        only means anything if every turn starts counting at the same place.
+        Process-monotonic numbering made ``AURA_PASS_BISECT_LIMIT=5`` mean
+        "the first five passes since boot": correct on the first turn, total
+        silence on every turn after it — worse than not having the knob.
+        Documented behaviour is per-turn, so numbering is per-turn.
+
+        The counter lives in a ContextVar rather than on the instrumentation,
+        so it is scoped to the asyncio task serving this turn. Two turns in
+        flight number their own passes instead of interleaving into one
+        sequence, and no caller has to remember to close a scope.
         """
+        _RUN_ORDINAL.set([0])
+        if self._trace and label:
+            logger.info("🔬 BISECT begin run %s", label)
+
+    def reset_ordinals(self) -> None:
+        """Restart pass numbering, whichever counter is in force.
+
+        Both counters, deliberately. Resetting only the process-wide one
+        would silently do nothing in any context where :meth:`begin_run` has
+        been called — and since a ContextVar set outside a task outlives the
+        call that set it, that is most contexts once a turn has been served.
+        A reset that quietly stops resetting is how bisect would come to
+        report the wrong boundary pass.
+        """
+        counter = _RUN_ORDINAL.get()
+        if counter is not None:
+            counter[0] = 0
         with self._lock:
             self._ordinal = 0
 
@@ -505,6 +543,9 @@ class PassManager(Generic[Unit]):
     def run(self, unit: Unit, am: AnalysisManager[Unit] | None = None) -> PreservedAnalyses:
         manager = am if am is not None else AnalysisManager()
         instrumentation = get_instrumentation()
+        # One run, one numbering. A bisect limit is meaningless if the second
+        # run of the same pipeline starts counting where the first left off.
+        instrumentation.begin_run(self.name)
         overall = PreservedAnalyses.all()
 
         for p in self._passes:

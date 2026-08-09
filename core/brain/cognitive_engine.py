@@ -98,6 +98,76 @@ def get_container() -> _RuntimeServiceAdapter:
     return _RUNTIME_SERVICE_ADAPTER
 
 
+class _NullPassInstrumentation:
+    """So the phase loop's contract holds even with no instrumentation."""
+
+    @staticmethod
+    def should_run(name: str) -> tuple[bool, int, str]:
+        return True, 0, ""
+
+
+def _pass_instrumentation() -> Any:
+    """The pass seam, or a no-op.
+
+    Degrades to a no-op and never to a broken turn: an unavailable debugging
+    aid must not be able to stop Aura answering.
+    """
+    try:
+        from core.pipeline.pass_manager import get_instrumentation
+
+        return get_instrumentation()
+    except Exception:  # noqa: BLE001 — a debug aid may never break a turn
+        logger.debug("pass instrumentation unavailable", exc_info=True)
+        return _NullPassInstrumentation()
+
+
+def _begin_pass_run(label: str) -> None:
+    """Number this turn's passes from 1, or do nothing if unavailable.
+
+    Wrapped rather than trusting ``_pass_instrumentation`` to be total: a
+    debugging aid must never be the reason a turn fails, and the whole point
+    of this seam is that it is on the path every answer takes.
+    """
+    try:
+        begin = getattr(_pass_instrumentation(), "begin_run", None)
+        if begin is not None:
+            begin(label)
+    except Exception:  # noqa: BLE001 — a debug aid may never break a turn
+        logger.debug("pass run label %s not recorded", label, exc_info=True)
+
+
+def _record_legacy_pass(
+    name: str,
+    ordinal: int,
+    duration_s: float,
+    *,
+    skipped: bool,
+    reason: str = "",
+    error: str = "",
+) -> None:
+    """Announce one legacy-pipeline phase to the shared pass record.
+
+    Same ledger the kernel tick writes to, so `AURA_PASS_TRACE=1` and
+    `flag_report()` describe the pipeline that is actually serving traffic
+    rather than the one that mostly is not.
+    """
+    try:
+        from core.pipeline.pass_manager import PassRecord, get_instrumentation
+
+        get_instrumentation().after_pass(
+            PassRecord(
+                name=f"legacy_pipeline/{name}",
+                ordinal=ordinal,
+                duration_s=duration_s,
+                skipped=skipped,
+                reason=reason,
+                error=error,
+            )
+        )
+    except Exception:  # noqa: BLE001 — recording a pass may never break a turn
+        logger.debug("pass record dropped for %s", name, exc_info=True)
+
+
 def _bounded_float(value: Any, default: float = 0.0, *, lower: float = 0.0, upper: float = 1.0) -> float:
     try:
         parsed = float(value)
@@ -2222,17 +2292,51 @@ class CognitiveEngine:
         if not success:
             try:
                 async with asyncio.timeout(cycle_timeout):
+                    _begin_pass_run("legacy_pipeline")
                     for phase in self._phases:
-                        # Pass through kwargs like is_background if phases support it
-                        temp_state = await phase.execute(
-                            temp_state,
-                            objective=objective,
-                            context=context,
-                            **kwargs,
+                        phase_name = phase.__class__.__name__
+                        # [PASS INSTRUMENTATION] AURA_PASS_BISECT_LIMIT and
+                        # AURA_PASS_TRACE existed only in pass_manager and the
+                        # kernel tick — and chat drives THIS loop, not the
+                        # kernel, by roughly 479 turns to 3. The documented way
+                        # to find which phase ruined an answer therefore did
+                        # nothing on the path that produces almost every
+                        # answer. Same seam, same flag, same ordinals.
+                        run_it, ordinal, reason = _pass_instrumentation().should_run(
+                            f"legacy_pipeline/{phase_name}"
+                        )
+                        if not run_it:
+                            _record_legacy_pass(
+                                phase_name, ordinal, 0.0, skipped=True, reason=reason
+                            )
+                            continue
+                        started_at = time.perf_counter()
+                        try:
+                            # Pass through kwargs like is_background if phases support it
+                            temp_state = await phase.execute(
+                                temp_state,
+                                objective=objective,
+                                context=context,
+                                **kwargs,
+                            )
+                        except BaseException as phase_exc:
+                            _record_legacy_pass(
+                                phase_name,
+                                ordinal,
+                                time.perf_counter() - started_at,
+                                skipped=False,
+                                error=f"{type(phase_exc).__name__}: {phase_exc}",
+                            )
+                            raise
+                        _record_legacy_pass(
+                            phase_name,
+                            ordinal,
+                            time.perf_counter() - started_at,
+                            skipped=False,
                         )
                         # Marked after the phase returns, so a phase that timed
                         # out mid-execution is not recorded as having run.
-                        record_phase(phase.__class__.__name__)
+                        record_phase(phase_name)
 
                     state = temp_state
                     record_response_path(

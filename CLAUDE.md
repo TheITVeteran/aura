@@ -81,9 +81,14 @@ make layering     # DEPS include-rule gate; baseline in config/ only shrinks
 
 ## Debugging entry points worth knowing
 
-- `AURA_PASS_BISECT_LIMIT=N` runs only the first N cognitive phases —
-  binary-search N to find which phase ruined an answer. `AURA_PASS_TRACE=1`
-  announces each one.
+- `AURA_PASS_BISECT_LIMIT=N` runs only the first N cognitive phases of each
+  turn — binary-search N to find which phase ruined an answer.
+  `AURA_PASS_TRACE=1` announces each one. Numbering restarts per turn, so N
+  means the same thing on turn 40 as on turn 1, and both phase loops honour
+  it: the legacy pipeline in `core/brain/cognitive_engine.py` (which serves
+  chat) and `AuraKernel.tick`. Records from both land in the one
+  `get_instrumentation().report()`, prefixed `legacy_pipeline/` or
+  `kernel_tick/`.
 - `runtime_health_report()["integrity"]` carries taint, lockdep splats,
   PSI, the OOM shed order, sanitizer findings, the last verifier report,
   telemetry limit violations, and unsupported claims.
