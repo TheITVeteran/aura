@@ -544,7 +544,8 @@ def _validated_recovery_files(previous_sweep: Path) -> tuple[int, list[Path]]:
             receipt_path = (previous_sweep / relative).resolve(strict=True)
             if previous_sweep.resolve() not in receipt_path.parents:
                 raise ControllerError("recovery_runtime_receipt_path_invalid")
-            if _sha_file(receipt_path) != record.get("runtime_receipt_sha256"):
+            receipt = _read_json(receipt_path, role="recovery_runtime_receipt")
+            if _sha(receipt) != record.get("runtime_receipt_sha256"):
                 raise ControllerError("recovery_runtime_receipt_hash_mismatch")
             required.add(receipt_path)
     if cells == 0:

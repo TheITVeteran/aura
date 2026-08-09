@@ -248,6 +248,12 @@ def test_recovery_copies_only_fingerprint_valid_evidence(tmp_path: Path):
         encoding="utf-8",
     )
     (previous_sweep / "task_commitment.json").write_text("{}\n", encoding="utf-8")
+    fixture_receipt = {"schema": "fixture", "nested": {"value": 1}}
+    receipt_path = previous_sweep / "runtime_receipts/task-a.json"
+    receipt_path.parent.mkdir()
+    receipt_path.write_text(
+        json.dumps(fixture_receipt, indent=1) + "\n", encoding="utf-8"
+    )
     journal = (
         json.dumps(
             {
@@ -255,6 +261,8 @@ def test_recovery_copies_only_fingerprint_valid_evidence(tmp_path: Path):
                 "arm": "vanilla",
                 "task_id": "task-a",
                 "decode_fingerprint": fingerprint,
+                "runtime_receipt_path": "runtime_receipts/task-a.json",
+                "runtime_receipt_sha256": controller._sha(fixture_receipt),
             },
             sort_keys=True,
         )
@@ -267,7 +275,7 @@ def test_recovery_copies_only_fingerprint_valid_evidence(tmp_path: Path):
     recovered_root = tmp_path / "recovered"
     recovered_config_path = recovered_root / "controller_config.json"
 
-    receipt = controller.recover_campaign(
+    recovery_receipt = controller.recover_campaign(
         previous_config_path,
         out_dir=recovered_root,
         output=recovered_config_path,
@@ -275,12 +283,21 @@ def test_recovery_copies_only_fingerprint_valid_evidence(tmp_path: Path):
     )
 
     recovered = controller.load_config(recovered_config_path)
-    assert receipt["preserved_cells"] == 1
-    assert receipt["scientific_parameters_changed"] is False
+    assert recovery_receipt["preserved_cells"] == 1
+    assert recovery_receipt["scientific_parameters_changed"] is False
     assert recovered["source_root"] == str(source)
     assert recovered["source_commit"] == previous_config["source_commit"]
     assert recovered["controller_program"] == str(controller_program)
     assert (recovered_root / "sweep/journal.jsonl").read_text() == journal
+    assert json.loads(
+        (recovered_root / "sweep/runtime_receipts/task-a.json").read_text()
+    ) == fixture_receipt
+    copied_receipt = next(
+        item
+        for item in recovery_receipt["copied_files"]
+        if item["relative_path"] == "runtime_receipts/task-a.json"
+    )
+    assert copied_receipt["sha256"] == hashlib.sha256(receipt_path.read_bytes()).hexdigest()
     assert not (recovered_root / "sweep/status.json").exists()
     assert not (recovered_root / "sweep/verdict.json").exists()
     assert previous_root != recovered_root
