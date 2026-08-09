@@ -1,5 +1,6 @@
 import asyncio
 import builtins
+import contextlib
 import json
 import os
 import sys
@@ -130,16 +131,52 @@ def test_media_safe_imports_allows_cv2_in_sidecar_darwin(monkeypatch):
     assert safe_imports.cv2_main_process_blocked() is False
 
 
-def test_sensory_sidecar_marks_media_process_boundary():
-    client_source = (config.paths.project_root / "core/senses/sensory_client.py").read_text(
-        encoding="utf-8"
+def test_sensory_sidecar_marks_media_process_boundary(monkeypatch):
+    """The child must be marked as the media sidecar, however it is spawned.
+
+    This asserted the literal line ``os.environ["AURA_MEDIA_SIDECAR_PROCESS"]
+    = "1"`` in the client source. Child-process spawning was then centralised
+    behind the subprocess gateway, which takes the marker as
+    ``environment_overrides`` — a strictly better arrangement — and the test
+    failed for the improvement. A test that punishes a correct refactor is
+    worse than no test: it teaches people to route around it.
+
+    What actually matters is the property: the spawned worker gets the
+    marker, and it is the marker ``safe_imports`` reads. Both are checked
+    against behaviour now, so the client is free to spawn however it likes.
+    """
+    from core.media import safe_imports
+    from core.senses import sensory_client
+
+    # The client hands the marker to whatever spawns the child.
+    captured: dict[str, object] = {}
+
+    class _Gateway:
+        def spawn_python_process(self, spec, context=None):
+            captured["overrides"] = dict(getattr(spec, "environment_overrides", {}) or {})
+            raise RuntimeError("spawn intercepted: the spec is what is under test")
+
+    monkeypatch.setattr(sensory_client, "get_subprocess_gateway", _Gateway)
+    client = sensory_client.SensoryLocalClient()
+    with contextlib.suppress(RuntimeError):
+        asyncio.run(client.start())
+
+    assert captured.get("overrides", {}).get("AURA_MEDIA_SIDECAR_PROCESS") == "1", (
+        "the sensory worker is spawned without the media-sidecar marker; "
+        "cv2 would be blocked in the child that exists to run it"
     )
+
+    # The worker sets it for itself too, so a directly-launched worker is
+    # marked as well — and it is the same key safe_imports consults.
     worker_source = (config.paths.project_root / "core/senses/sensory_worker.py").read_text(
         encoding="utf-8"
     )
+    assert "AURA_MEDIA_SIDECAR_PROCESS" in worker_source
 
-    assert 'os.environ["AURA_MEDIA_SIDECAR_PROCESS"] = "1"' in client_source
-    assert 'os.environ["AURA_MEDIA_SIDECAR_PROCESS"] = "1"' in worker_source
+    monkeypatch.setattr(safe_imports.sys, "platform", "darwin")
+    monkeypatch.setenv("AURA_MEDIA_SIDECAR_PROCESS", "1")
+    monkeypatch.delenv("AURA_ALLOW_INPROCESS_CV2_WITH_STT", raising=False)
+    assert safe_imports.cv2_main_process_blocked() is False
 
 
 @pytest.mark.asyncio
