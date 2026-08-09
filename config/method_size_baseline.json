@@ -1,7 +1,7 @@
 {
   "threshold_lines": 400,
   "tracked": 71,
-  "total_lines": 66303,
+  "total_lines": 66232,
   "functions": {
     "core/brain/cognitive_engine.py::CognitiveEngine._direct_desktop_quick_reply": {
       "lines": 971,
@@ -324,9 +324,9 @@
       "returns": 1
     },
     "interface/routes/chat.py::_api_chat_turn": {
-      "lines": 4635,
-      "complexity": 738,
-      "returns": 125
+      "lines": 4564,
+      "complexity": 714,
+      "returns": 116
     },
     "interface/routes/chat.py::_build_live_turn_contract_payload": {
       "lines": 759,

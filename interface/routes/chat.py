@@ -21755,6 +21755,142 @@ async def api_chat(
         _CHAT_REQUEST_PRINCIPAL.reset(principal_token)
 
 
+def _requested_output_contract_result(
+    turn_trace: dict[str, Any],
+    *,
+    user_message: str,
+    reply_text: Any,
+) -> tuple[str, bool]:
+    """Apply the requested-output contract and say whether it holds.
+
+    `turn_trace` is the same dict the enforcement writes its verdict into —
+    passed by reference, so this behaves identically to the closure it
+    replaces. The two-value return is the reason a caller wants this at all:
+    the enforced text, and whether the contract was satisfied, which are
+    separate questions the trace answers in three separate keys.
+    """
+    final_text = _enforce_final_requested_output_contract(
+        turn_trace,
+        user_message=user_message,
+        reply_text=str(reply_text or ""),
+    )
+    evaluated = bool(turn_trace.get("final_requested_output_contract_evaluated"))
+    required = bool(turn_trace.get("final_requested_output_contract_required"))
+    satisfied = bool(turn_trace.get("final_requested_output_contract_satisfied"))
+    return final_text, bool(evaluated and (not required or satisfied))
+
+
+async def _background_retry_generate(message: str, *, timeout_s: float) -> str:
+    """One bounded background retry of a turn the foreground gave up on.
+
+    Lifted out of `_api_chat_turn`, where it closed over nothing but the
+    foreground timeout. Everything else it needs it resolves itself, which
+    is why it was extractable: the retry deliberately runs on the BACKGROUND
+    lane with cloud fallback off, so it shares no state with the foreground
+    turn that queued it.
+
+    Returns "" when nothing usable came back — the caller treats an empty
+    string as "no continuation", so a failed retry must not raise into the
+    scheduler.
+    """
+    try:
+        gate = ServiceContainer.get("inference_gate", default=None)
+        if gate and hasattr(gate, "generate"):
+            result = await asyncio.wait_for(
+                gate.generate(
+                    message,
+                    context={
+                        "origin": "background_retry",
+                        "is_background": True,
+                        "foreground_request": False,
+                        "background_retry": True,
+                        "prefer_tier": "primary",
+                        "allow_cloud_fallback": False,
+                    },
+                    timeout=timeout_s,
+                ),
+                timeout=timeout_s,
+            )
+            if isinstance(result, str):
+                return result.strip()
+            for attr in ("content", "text", "response"):
+                value = getattr(result, attr, None)
+                if isinstance(value, str) and value.strip():
+                    return value.strip()
+            if isinstance(result, dict):
+                return str(
+                    result.get("content")
+                    or result.get("text")
+                    or result.get("response")
+                    or ""
+                ).strip()
+    except _CHAT_RECOVERABLE_ERRORS as retry_exc:
+        record_degradation("chat", retry_exc)
+        logger.debug("Background retry call failed: %s", retry_exc)
+    return ""
+
+
+def _runtime_shutdown_response(
+    checkpoint: str,
+    *,
+    slot_acquired: bool,
+    error: BaseException | None = None,
+) -> JSONResponse:
+    """The 503 a turn returns when the runtime is going down under it.
+
+    Module scope with `slot_acquired` passed in, rather than nested and
+    closing over `foreground_slot_acquired`. That was the only thing it took
+    from the turn, and one boolean is a cheaper contract than a closure.
+    """
+    outcome = "reaped" if slot_acquired else "suppressed"
+    record_shutdown_admission_event(
+        "chat.foreground_turn",
+        resource_kind="foreground_turn",
+        outcome=outcome,
+        detail=f"checkpoint={checkpoint}",
+    )
+    logger.info(
+        "Foreground chat stopped by runtime shutdown "
+        "(checkpoint=%s error_type=%s).",
+        checkpoint,
+        type(error).__name__ if error is not None else "none",
+    )
+    return JSONResponse(
+        {
+            "response": (
+                "The runtime is shutting down, so I stopped this turn cleanly "
+                "before starting more cognitive work."
+            ),
+            "status": "runtime_shutdown",
+            "checkpoint": checkpoint,
+            "response_confidence": "not_generated",
+        },
+        status_code=503,
+        headers={"Retry-After": "1"},
+    )
+
+
+def _json_safe_payload(value: Any, *, _depth: int = 0) -> Any:
+    """Bounded JSON-safe projection of a skill result for the wire.
+
+    Module scope, not nested inside `_api_chat_turn`. It captures nothing
+    from the turn — it was simply defined where it was first needed, which
+    is one of the ways a 4,635-line function gets that way.
+    """
+    if _depth > 6:
+        return str(value)[:200]
+    if isinstance(value, dict):
+        return {
+            str(k)[:80]: _json_safe_payload(v, _depth=_depth + 1)
+            for k, v in list(value.items())[:40]
+        }
+    if isinstance(value, (list, tuple)):
+        return [_json_safe_payload(v, _depth=_depth + 1) for v in list(value)[:40]]
+    if isinstance(value, (str, int, float, bool)) or value is None:
+        return value if not isinstance(value, str) else value[:2000]
+    return str(value)[:500]
+
+
 async def _api_chat_turn(body: ChatRequest, request: Request):
     # Reject oversized messages before processing
     if len(body.message.encode('utf-8', errors='replace')) > MAX_CHAT_MESSAGE_BYTES:
@@ -22285,21 +22421,11 @@ async def _api_chat_turn(body: ChatRequest, request: Request):
         )
 
     def _enforce_main_requested_output_contract(reply_text: Any) -> tuple[str, bool]:
-        final_text = _enforce_final_requested_output_contract(
+        return _requested_output_contract_result(
             _live_turn_trace,
             user_message=_semantic_user_message,
-            reply_text=str(reply_text or ""),
+            reply_text=reply_text,
         )
-        evaluated = bool(
-            _live_turn_trace.get("final_requested_output_contract_evaluated")
-        )
-        required = bool(
-            _live_turn_trace.get("final_requested_output_contract_required")
-        )
-        satisfied = bool(
-            _live_turn_trace.get("final_requested_output_contract_satisfied")
-        )
-        return final_text, bool(evaluated and (not required or satisfied))
 
     def _remaining_foreground_budget(*, reserve: float = 0.0) -> float:
         elapsed = time.monotonic() - request_started_at
@@ -22325,41 +22451,12 @@ async def _api_chat_turn(body: ChatRequest, request: Request):
             record_degradation("chat", exc)
             logger.debug("KernelInterface task cleanup observed exception after %s: %s", reason, exc)
 
-    def _runtime_shutdown_response(
-        checkpoint: str,
-        *,
-        error: BaseException | None = None,
-    ) -> JSONResponse:
-        outcome = "reaped" if foreground_slot_acquired else "suppressed"
-        record_shutdown_admission_event(
-            "chat.foreground_turn",
-            resource_kind="foreground_turn",
-            outcome=outcome,
-            detail=f"checkpoint={checkpoint}",
-        )
-        logger.info(
-            "Foreground chat stopped by runtime shutdown "
-            "(checkpoint=%s error_type=%s).",
-            checkpoint,
-            type(error).__name__ if error is not None else "none",
-        )
-        return JSONResponse(
-            {
-                "response": (
-                    "The runtime is shutting down, so I stopped this turn cleanly "
-                    "before starting more cognitive work."
-                ),
-                "status": "runtime_shutdown",
-                "checkpoint": checkpoint,
-                "response_confidence": "not_generated",
-            },
-            status_code=503,
-            headers={"Retry-After": "1"},
-        )
 
     try:
         if is_shutdown_requested():
-            return _runtime_shutdown_response("pre_admission")
+            return _runtime_shutdown_response(
+                "pre_admission", slot_acquired=foreground_slot_acquired
+            )
         try:
             from core.runtime.foreground_guard import begin_foreground_turn
 
@@ -22437,7 +22534,9 @@ async def _api_chat_turn(body: ChatRequest, request: Request):
             foreground_slot_acquired = True
             logger.info("Foreground chat reservation acquired")
             if is_shutdown_requested():
-                return _runtime_shutdown_response("foreground_reserved")
+                return _runtime_shutdown_response(
+                    "foreground_reserved", slot_acquired=foreground_slot_acquired
+                )
         except TimeoutError:
             held = getattr(_foreground_chat_lock, "held_duration", 0.0)
             if held > _FOREGROUND_CHAT_LOCK_PREEMPT_AFTER_S:
@@ -22520,20 +22619,6 @@ async def _api_chat_turn(body: ChatRequest, request: Request):
 
         _desktop_exec_state = {"attempted": False, "result": None}
 
-        def _json_safe_payload(value: Any, *, _depth: int = 0) -> Any:
-            """Bounded JSON-safe projection of a skill result for the wire."""
-            if _depth > 6:
-                return str(value)[:200]
-            if isinstance(value, dict):
-                return {
-                    str(k)[:80]: _json_safe_payload(v, _depth=_depth + 1)
-                    for k, v in list(value.items())[:40]
-                }
-            if isinstance(value, (list, tuple)):
-                return [_json_safe_payload(v, _depth=_depth + 1) for v in list(value)[:40]]
-            if isinstance(value, (str, int, float, bool)) or value is None:
-                return value if not isinstance(value, str) else value[:2000]
-            return str(value)[:500]
 
         async def _run_desktop_objective_tracked(
             message: str, *, cognitive_reply: str
@@ -24146,7 +24231,10 @@ async def _api_chat_turn(body: ChatRequest, request: Request):
         reply_source = ""
         if not is_benchmark and desktop_requires_cognitive_engine:
             if is_shutdown_requested():
-                return _runtime_shutdown_response("before_cognitive_engine")
+                return _runtime_shutdown_response(
+                    "before_cognitive_engine",
+                    slot_acquired=foreground_slot_acquired,
+                )
             cognitive_budget = _desktop_required_cognitive_budget(
                 foreground_timeout=foreground_timeout,
                 elapsed_s=time.monotonic() - request_started_at,
@@ -26195,37 +26283,10 @@ async def _api_chat_turn(body: ChatRequest, request: Request):
             enqueue(_chat_session_id, _original_user_message, reason="outer_timeout")
 
             async def _retry_call(msg: str, **kwargs) -> str:
-                timeout_s = float(kwargs.get("timeout", foreground_timeout))
-                try:
-                    gate2 = ServiceContainer.get("inference_gate", default=None)
-                    if gate2 and hasattr(gate2, "generate"):
-                        result = await asyncio.wait_for(
-                            gate2.generate(
-                                msg,
-                                context={
-                                    "origin": "background_retry",
-                                    "is_background": True,
-                                    "foreground_request": False,
-                                    "background_retry": True,
-                                    "prefer_tier": "primary",
-                                    "allow_cloud_fallback": False,
-                                },
-                                timeout=timeout_s,
-                            ),
-                            timeout=timeout_s,
-                        )
-                        if isinstance(result, str):
-                            return result.strip()
-                        for attr in ("content", "text", "response"):
-                            val = getattr(result, attr, None)
-                            if isinstance(val, str) and val.strip():
-                                return val.strip()
-                        if isinstance(result, dict):
-                            return str(result.get("content") or result.get("text") or result.get("response") or "").strip()
-                except _CHAT_RECOVERABLE_ERRORS as _retry_exc:
-                    record_degradation('chat', _retry_exc)
-                    logger.debug("Background retry call failed: %s", _retry_exc)
-                return ""
+                return await _background_retry_generate(
+                    msg,
+                    timeout_s=float(kwargs.get("timeout", foreground_timeout)),
+                )
 
             schedule_background_retry(
                 _chat_session_id,
@@ -26347,7 +26408,11 @@ async def _api_chat_turn(body: ChatRequest, request: Request):
         }, status_code=status_code)
     except Exception as e:  # noqa: BLE001 — last-resort turn-death floor
         if is_shutdown_requested():
-            return _runtime_shutdown_response("exception_after_shutdown", error=e)
+            return _runtime_shutdown_response(
+                "exception_after_shutdown",
+                slot_acquired=foreground_slot_acquired,
+                error=e,
+            )
         # A turn must NEVER surface as HTTP 500. Exceptions outside
         # _CHAT_RECOVERABLE_ERRORS still reached the global handler and killed
         # the turn with a 500 — observed live during the soak: the local 32B
