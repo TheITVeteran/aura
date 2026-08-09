@@ -42,6 +42,11 @@ def _allow(monkeypatch):
     monkeypatch.setattr(
         "core.senses.screen_context.frontmost_window_hint", lambda: ("Terminal", "zsh")
     )
+    # highlight() now enforces its own rate limit, so the module global is a
+    # real piece of cross-test state: without this reset the SECOND case in
+    # the file refuses for being too soon after the first and every assertion
+    # about a different refusal reason becomes accidentally true.
+    monkeypatch.setattr("core.perception.screen_highlight._LAST_HIGHLIGHT_AT", 0.0)
 
 
 def _run(**kwargs):

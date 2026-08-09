@@ -16,18 +16,19 @@ from typing import TYPE_CHECKING, Any
 from pydantic import BaseModel, Field, field_validator
 
 from core.dialogue.referents import resolve_second_person
+from core.runtime.content_integrity import (
+    contains_paragraph_hashes,
+    paragraph_sha256s,
+    text_sha256,
+)
 from core.runtime.desktop_objective_intent import (
+    asks_to_be_shown_where,
     looks_like_desktop_objective,
     looks_like_screen_observation,
 )
 from core.runtime.desktop_task_contract import (
     DESKTOP_TASK_ALLOWED_ACTIONS,
     DESKTOP_TASK_RETRY_SAFE_ACTIONS,
-)
-from core.runtime.content_integrity import (
-    contains_paragraph_hashes,
-    paragraph_sha256s,
-    text_sha256,
 )
 from core.runtime.errors import record_degradation
 from core.runtime.os_automation_effects import canonical_app_target, extract_target_paths
@@ -5296,6 +5297,37 @@ class DesktopTaskSkill(BaseSkill):
             "captured_now": False,
         }
 
+    async def _attach_pointing(
+        self, objective: str, payload: dict[str, Any]
+    ) -> dict[str, Any]:
+        """If she was asked to POINT, try to; either way say which happened.
+
+        "Where is the submit button?" is answered better by a rectangle than
+        by a paragraph, and the overlay path existed with no caller — every
+        such question got the paragraph because nothing ever asked for the
+        rectangle.
+
+        The refusal is carried on the payload as deliberately as the success.
+        A highlight that did not draw must reach the answer as a fact, or she
+        says "I've highlighted it" over a screen with no highlight on it,
+        which sends the person hunting for a box that was never there.
+        """
+        needle = asks_to_be_shown_where(objective)
+        if not needle:
+            return payload
+        try:
+            from core.perception.screen_highlight import highlight
+
+            result = await highlight(needle, requested=True)
+        except (ImportError, AttributeError, RuntimeError, OSError, TypeError, ValueError):
+            # Pointing is an enhancement to an answer she already has. It
+            # never costs her the answer.
+            return payload
+        payload["highlight"] = result.to_dict()
+        payload["pointed_at"] = result.matched_text if result.shown else ""
+        payload["pointing_refused_because"] = "" if result.shown else result.reason
+        return payload
+
     async def execute(self, params: Any, context: dict[str, Any]) -> dict[str, Any]:
         if isinstance(params, dict):
             params = DesktopTaskParams(**params)
@@ -5336,7 +5368,7 @@ class DesktopTaskSkill(BaseSkill):
         # question about NOW with a fact about THEN is answering wrong.
         ambient = self._ambient_answer(objective, params)
         if ambient is not None:
-            return ambient
+            return await self._attach_pointing(objective, ambient)
 
         task_context = dict(context or {})
         task_context.setdefault("objective", objective)

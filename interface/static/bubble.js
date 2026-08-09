@@ -60,11 +60,37 @@
     return speaking;
   }
 
+  /*
+   * Hand a queued rectangle to the host, which owns the AppKit surface a web
+   * page cannot reach. The server popped it for us, so it is drawn once or
+   * not at all; if there is no host bridge we are in a browser tab, where
+   * there is nothing to draw over and dropping it is correct.
+   */
+  function forwardHighlight(highlight) {
+    if (!highlight) return;
+    const bridge = window.webkit?.messageHandlers?.auraBubble;
+    if (!bridge) return;
+    bridge.postMessage({
+      action: "highlight",
+      rect: {
+        x: highlight.x,
+        y: highlight.y,
+        width: highlight.width,
+        height: highlight.height,
+      },
+      seconds: highlight.seconds,
+    });
+  }
+
   async function poll() {
     let speaking = false;
     try {
-      const state = await api("/api/ambient/state");
+      // surface=bubble marks us as a host that can actually draw, and is what
+      // lets her refuse to claim she pointed at something when no bubble is
+      // listening. It is also what collects the rectangle.
+      const state = await api("/api/ambient/state?surface=bubble");
       speaking = render(state);
+      forwardHighlight(state && state.highlight);
       backoffMs = 0;
     } catch (error) {
       // Stay on screen showing whatever she last said rather than blanking:

@@ -48,7 +48,6 @@ from __future__ import annotations
 
 import re
 import time
-from collections.abc import Mapping
 from dataclasses import dataclass, field
 from enum import StrEnum
 from typing import Any
@@ -102,6 +101,17 @@ _PRIVATE_RE = re.compile("|".join(re.escape(m) for m in _PRIVATE_WINDOW_MARKERS)
 #: for even when the title has not changed — a long document being scrolled is
 #: the same window and different content.
 _RESTALE_AFTER_S = 90.0
+
+#: How recently the bubble must have polled for it to count as a surface that
+#: can actually draw. Comfortably longer than its 4s idle cadence, short
+#: enough that a launcher which quit is noticed before she claims to have
+#: pointed at something on a screen nobody is drawing on.
+_SURFACE_ALIVE_S = 15.0
+
+#: A queued highlight that nobody collected is stale — the screen has moved on
+#: and a rectangle drawn around where something USED to be is worse than no
+#: rectangle. Roughly two idle polls.
+_HIGHLIGHT_TTL_S = 10.0
 
 
 class PresenceMode(StrEnum):
@@ -204,6 +214,12 @@ class AmbientPresence:
         self._private_skips = 0
         self._running = False
         self._last_spoke_at = 0.0
+        #: A rectangle waiting for the bubble to collect and draw, and when
+        #: that surface was last known to be alive. Both live here rather
+        #: than in the route because "can anything actually draw right now"
+        #: must be answerable BEFORE she claims to have pointed at something.
+        self._pending_highlight: dict[str, float] | None = None
+        self._last_surface_poll_at = 0.0
         #: She does not speak twice in quick succession. Unsolicited comment
         #: is a budget, not a feature, and the budget is deliberately small.
         self._min_speech_gap_s = 180.0
@@ -261,6 +277,76 @@ class AmbientPresence:
         with self._lock:
             self._bubble_position = (float(x), float(y))
             return self._bubble_position
+
+    # ── pointing at things ───────────────────────────────────────────────
+
+    def note_surface_poll(self, surface: str = "") -> None:
+        """The bubble just polled, so something exists that can draw.
+
+        Only the bubble counts. The restrained chat window reads the same
+        state endpoint, and treating its one read on open as "a drawing
+        surface is attached" would let her claim to have pointed at something
+        when no overlay host was listening.
+        """
+        if str(surface).strip().lower() != "bubble":
+            return
+        with self._lock:
+            self._last_surface_poll_at = time.time()
+
+    def drawing_surface_attached(self) -> bool:
+        """Is there a live host that could put a rectangle on the screen?
+
+        Asked BEFORE she says she pointed at something. Without this the
+        overlay path returns "drawn" into a void — the honest answer when
+        nothing is listening is that she could not point, and then she
+        describes the location in words instead.
+        """
+        with self._lock:
+            last = self._last_surface_poll_at
+        return bool(last) and (time.time() - last) < _SURFACE_ALIVE_S
+
+    def request_highlight(
+        self, x: float, y: float, width: float, height: float, seconds: float
+    ) -> bool:
+        """Queue a rectangle for the bubble to draw. False if nothing can.
+
+        False is not a failure to be retried — it is the answer. The caller
+        turns it into "I could not point at it, here is where it is in
+        words", which is a true sentence, where a claimed highlight nobody
+        drew is not.
+        """
+        if not self.drawing_surface_attached():
+            return False
+        if self.mode is PresenceMode.HIDDEN:
+            # Hidden means she is not on this person's screen at all, and an
+            # overlay is the most present thing she can put there.
+            return False
+        with self._lock:
+            self._pending_highlight = {
+                "x": float(x),
+                "y": float(y),
+                "width": float(width),
+                "height": float(height),
+                "seconds": float(seconds),
+                "queued_at": time.time(),
+            }
+        return True
+
+    def take_highlight(self) -> dict[str, float] | None:
+        """Collect the queued rectangle, exactly once.
+
+        Popped rather than read so a rectangle is never drawn twice, and
+        dropped when stale: the screen has moved on, and a box around where
+        something used to be points at the wrong thing with full confidence.
+        """
+        with self._lock:
+            pending = self._pending_highlight
+            self._pending_highlight = None
+        if pending is None:
+            return None
+        if time.time() - float(pending.get("queued_at", 0.0)) > _HIGHLIGHT_TTL_S:
+            return None
+        return pending
 
     # ── the loop ─────────────────────────────────────────────────────────
 
@@ -460,9 +546,22 @@ class AmbientPresence:
 
     # ── what the UI reads ────────────────────────────────────────────────
 
-    def state(self) -> dict[str, Any]:
+    def state(self, *, surface: str = "") -> dict[str, Any]:
+        """What the surface should render.
+
+        ``surface`` names who is asking. Only the bubble collects a queued
+        highlight, because only the bubble has a host that can draw one — and
+        a rectangle handed to the wrong reader is a rectangle nobody draws.
+        """
+        self.note_surface_poll(surface)
+        highlight = (
+            self.take_highlight()
+            if str(surface).strip().lower() == "bubble"
+            else None
+        )
         with self._lock:
             return {
+                "highlight": highlight,
                 "schema": AMBIENT_SCHEMA,
                 "mode": self._mode.value,
                 "has_utterance": bool(self._pending_utterance),

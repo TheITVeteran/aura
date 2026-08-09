@@ -2777,6 +2777,12 @@ def _start_ambient_presence() -> None:
         return
     try:
         from core.perception.ambient_presence import get_ambient_presence
+        from core.perception.desktop_overlay import install_desktop_overlay
+
+        # The seam that lets her POINT at something rather than only describe
+        # where it is. Without it every highlight refuses, which is honest but
+        # is the lesser half of the capability.
+        install_desktop_overlay()
 
         interval = _env_float(
             "AURA_AMBIENT_INTERVAL_S", 6.0, minimum=2.0, maximum=120.0

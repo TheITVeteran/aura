@@ -203,6 +203,15 @@ async def highlight(
     if _suppressed():
         # The same suppression that stops her speaking stops her drawing.
         return HighlightResult(shown=False, reason="proactivity is suppressed")
+    if rate_limited():
+        # Enforced HERE rather than left to callers. The limiter existed and
+        # was exported and tested, and nothing on the drawing path called it,
+        # so "repeated highlights are rate limited" was true of the helper and
+        # false of the feature. A rectangle that reappears faster than the eye
+        # settles is not pointing, it is flickering.
+        return HighlightResult(
+            shown=False, reason="a highlight was drawn a moment ago"
+        )
 
     from core.perception.ambient_presence import is_private_context
     from core.senses.screen_context import frontmost_window_hint

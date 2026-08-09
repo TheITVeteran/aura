@@ -353,4 +353,72 @@ def looks_like_screen_observation(user_message: str) -> bool:
     return not _contains_desktop_objective_term(sanitized_text, _MUTATING_ACTION_TERMS)
 
 
-__all__ = ["looks_like_desktop_objective", "looks_like_screen_observation"]
+#: Ways of asking to be SHOWN where something is, rather than told. The
+#: capture is the thing to point at, and it is deliberately taken verbatim:
+#: the accessibility tree is searched for this literal text, so paraphrasing
+#: it here would move the rectangle off the thing the person named.
+_POINT_REQUEST_RE = re.compile(
+    r"\b(?:"
+    r"where\s+(?:is|are|'s)\s+"
+    r"|show\s+me\s+(?:where\s+)?"
+    r"|point\s+(?:at|to)\s+"
+    r"|highlight\s+"
+    r"|which\s+one\s+is\s+"
+    r")(?:the\s+|my\s+|that\s+|a\s+)?(?P<needle>[^,.?!;]{2,60})",
+    re.IGNORECASE,
+)
+
+#: Trailing phrases that are part of the ASKING, not part of the thing. "the
+#: submit button on my screen" is a request to point at "the submit button";
+#: searching the accessibility tree for the whole phrase finds nothing.
+_POINT_NEEDLE_TAILS: tuple[str, ...] = (
+    "on my screen",
+    "on the screen",
+    "on screen",
+    "in the window",
+    "right now",
+    "please",
+    "is",
+    "at",
+)
+
+
+def asks_to_be_shown_where(user_message: str) -> str:
+    """The thing she is being asked to POINT at, or "" when she is not.
+
+    "Which one is the failing test?" has a better answer than a paragraph
+    describing where to look, and the difference between the two is a
+    question this predicate answers.
+
+    Returns the needle rather than a bool because the caller needs it: the
+    overlay is placed by searching the accessibility tree for this literal
+    text, and a bool would leave every caller re-deriving it differently.
+    """
+    text = str(user_message or "").strip()
+    if not text:
+        return ""
+    match = _POINT_REQUEST_RE.search(text)
+    if not match:
+        return ""
+    needle = str(match.group("needle") or "").strip()
+    # Strip the asking off the tail, repeatedly: "the submit button on my
+    # screen please" sheds two.
+    changed = True
+    while changed and needle:
+        changed = False
+        lowered = needle.lower()
+        for tail in _POINT_NEEDLE_TAILS:
+            if lowered.endswith(" " + tail) or lowered == tail:
+                needle = needle[: len(needle) - len(tail)].strip()
+                changed = True
+                break
+    # Two characters is the floor locate_on_screen enforces anyway; returning
+    # a one-character needle would match half the window.
+    return needle if len(needle) >= 2 else ""
+
+
+__all__ = [
+    "asks_to_be_shown_where",
+    "looks_like_desktop_objective",
+    "looks_like_screen_observation",
+]

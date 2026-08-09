@@ -22,7 +22,6 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
 from core.runtime.errors import record_degradation
-
 from interface.auth import _require_internal
 
 logger = logging.getLogger("Aura.Server.Ambient")
@@ -48,10 +47,17 @@ def _presence() -> Any:
 
 
 @router.get("/api/ambient/state")
-async def ambient_state() -> JSONResponse:
-    """What the bubble should show. Safe to poll."""
+async def ambient_state(surface: str = "") -> JSONResponse:
+    """What the surface should show. Safe to poll.
+
+    ``surface`` names the caller — the bubble passes ``surface=bubble``. It
+    does two things, and both are about the overlay rather than the message:
+    it marks the bubble as a live host that can draw, and it collects a queued
+    highlight exactly once. The restrained chat window reads the same endpoint
+    without a surface and so never takes a rectangle it cannot draw.
+    """
     try:
-        return JSONResponse(_presence().state())
+        return JSONResponse(_presence().state(surface=surface))
     except _AMBIENT_ERRORS as exc:
         record_degradation(
             "ambient_routes", exc, severity="warning",
