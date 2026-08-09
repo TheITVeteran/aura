@@ -117,25 +117,83 @@ def test_latent_bridge_status_matches_its_wiring():
         )
 
 
-def test_main15_controller_declares_that_it_is_not_wired():
-    callers = _production_call_sites(
-        "build_main15_closed_loop", "core/being/closed_loop_controller.py"
-    )
-    module = (ROOT / "core" / "being" / "closed_loop_controller.py").read_text(
-        encoding="utf-8"
+#: Capabilities that are BUILT, correct, and deliberately not wired, each
+#: with a reason that is about the runtime rather than the code. Being on
+#: this list is a tracked state, not an excuse: the test below fails the
+#: moment a module joins it without being added here.
+_TRACKED_UNWIRED: dict[str, str] = {
+    "core/brain/cross_tier_verifier.py": (
+        "weak generator / strong verifier needs the 72B tier, and the MLX "
+        "hot-swap makes loading it expensive enough that no live path calls "
+        "it. The technique is real and the implementation is sound; what is "
+        "missing is a model lane, not code."
+    ),
+    "core/brain/compute_router.py": (
+        "routes across tiers that the live runtime does not currently keep "
+        "resident together."
+    ),
+    "core/self_modification/lineage.py": (
+        "heritable variation + selection at the ORGANISM level. It is "
+        "registered as a `lineage_manager` service and nothing resolves the "
+        "key, which the module itself calls out as the worse signal: "
+        "registration reads as integration. Parked deliberately — organism "
+        "reproduction is a decision about what Aura is, not a wiring task."
+    ),
+}
+
+
+def test_no_module_is_unwired_without_being_tracked():
+    """The invariant is not "nothing is unwired" — it is "nothing is unwired
+    QUIETLY".
+
+    This replaces a test that named ONE module, which could only ever catch
+    that one. core/being/closed_loop_controller.py was deleted along with
+    activation_coupler.py and continuum_adapter.py, which existed only to
+    serve it: all three duplicated capabilities that ARE live elsewhere —
+    residual steering in mlx_worker, action policy in policy_coupler — so
+    the cluster made the system look like it had two closed loops when it
+    had one.
+
+    What survives is different in kind. A capability blocked on a model lane
+    is parked, not dead, and deleting it would lose real work to make a test
+    green. So the rule is that being unwired must be DECLARED in the module
+    and ENUMERATED here with a reason — anything else is accumulation.
+    """
+    declaring = set(_modules_declaring_unwired())
+    untracked = sorted(declaring - set(_TRACKED_UNWIRED))
+
+    assert not untracked, (
+        f"these modules declare themselves unwired and are not tracked: "
+        f"{untracked}. Wire it, delete it, or add it to _TRACKED_UNWIRED "
+        "with the reason — substantial, tested and uninvoked reads exactly "
+        "like working from the outside."
     )
 
-    if callers:
-        assert "NOT WIRED INTO THE LIVE RESPONSE PATH" not in module, (
-            f"build_main15_closed_loop() now has production callers ({callers}); "
-            "the module still declares itself unwired."
-        )
-    else:
-        assert "NOT WIRED INTO THE LIVE RESPONSE PATH" in module, (
-            "build_main15_closed_loop() has no production caller. The module "
-            "must say so: substantial, tested and uninvoked reads exactly like "
-            "working from the outside."
-        )
+
+def test_every_tracked_unwired_module_still_exists():
+    """A stale entry hides the fact that the register stopped being real."""
+    missing = [name for name in _TRACKED_UNWIRED if not (ROOT / name).exists()]
+
+    assert not missing, (
+        f"_TRACKED_UNWIRED names modules that are gone: {missing}. Remove the "
+        "entry; a register listing things that do not exist cannot be trusted "
+        "about the things that do."
+    )
+
+
+def test_every_tracked_unwired_module_says_so_in_its_own_docstring():
+    """The register and the module must agree.
+
+    If only the register says it, a reader opening the file learns nothing.
+    If only the module says it, nobody is counting.
+    """
+    declaring = set(_modules_declaring_unwired())
+    silent = sorted(set(_TRACKED_UNWIRED) - declaring)
+
+    assert not silent, (
+        f"tracked as unwired but no longer declaring it: {silent}. Either it "
+        "got wired — say so and remove it here — or the honesty was deleted."
+    )
 
 
 def test_the_call_site_scanner_actually_finds_calls():
@@ -367,11 +425,7 @@ def test_the_declarations_cover_the_subsystems_that_were_found_unwired():
     (not fine).
     """
     declaring = set(_modules_declaring_unwired())
-    for expected in (
-        "core/being/closed_loop_controller.py",
-        "core/brain/cross_tier_verifier.py",
-        "core/brain/compute_router.py",
-    ):
+    for expected in _TRACKED_UNWIRED:
         assert expected in declaring, (
             f"{expected} no longer declares its wiring status. It was found "
             "substantial, tested and uninvoked; if that changed, say so."
