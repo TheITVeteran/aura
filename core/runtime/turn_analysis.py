@@ -200,6 +200,126 @@ _USER_MESSAGE_BLOCK = re.compile(
 )
 
 
+#: Words that belong to more than one lane, and what tells them apart.
+#:
+#: The lane lists below are a first-match ``elif`` chain, so a token in an
+#: earlier list always wins. "schedule" sits in _PLANNING_PATTERNS, which is
+#: checked before _TECHNICAL_PATTERNS, so "help me schedule these jobs to
+#: minimise makespan" routed to planning — a calendar lane, for a
+#: combinatorial optimisation question.
+#:
+#: CP093 fixed that word. The problem is the SHAPE: every polysemous term is
+#: another individual patch, and the failure is silent because a wrong lane
+#: still produces a fluent answer.
+#:
+#: So an ambiguous term does not vote on its own. It votes for a lane only
+#: when that lane's discriminator is also present, and when nothing
+#: discriminates it ABSTAINS — the term is removed from consideration and
+#: the remaining signals decide. Abstaining is the important half: the old
+#: behaviour was to let an unresolved token pick the lane by list order,
+#: which is a coin flip wearing a rule's clothes.
+_AMBIGUOUS_TERMS: dict[str, dict[str, tuple[str, ...]]] = {
+    r"\bschedule\b|\bscheduling\b": {
+        "technical": (
+            r"\bmakespan\b", r"\bresource alloc", r"\bdependenc", r"\bjobs?\b",
+            r"\bthroughput\b", r"\boptimi[sz]", r"\bcpu\b", r"\bqueue\b",
+            r"\bworkers?\b", r"\bparalleli[sz]", r"\blatency\b", r"\bcron\b",
+            r"\bconstraints?\b", r"\bnp-?hard\b", r"\bheuristic\b",
+        ),
+        "planning": (
+            r"\bcalendar\b", r"\bmeeting\b", r"\bappointment\b", r"\bnext week\b",
+            r"\btomorrow\b", r"\binvite\b", r"\bavailability\b", r"\bmy day\b",
+        ),
+    },
+    r"\bprioriti[sz]e\b|\bpriority\b": {
+        "technical": (
+            r"\bqueue\b", r"\bheap\b", r"\bthreads?\b", r"\bnice(?:ness)?\b",
+            r"\bpreempt", r"\bscheduler\b", r"\binterrupt\b",
+        ),
+        "planning": (
+            r"\bbacklog\b", r"\broadmap\b", r"\bwhich (?:one|task|feature)\b",
+            r"\bfirst\b", r"\bmilestone\b",
+        ),
+    },
+    r"\bperformance\b": {
+        "technical": (
+            r"\blatency\b", r"\bthroughput\b", r"\bprofil", r"\bbenchmark\b",
+            r"\bmemory\b", r"\bcpu\b", r"\bslow\b", r"\boptimi[sz]",
+        ),
+        "emotional": (
+            r"\bmy performance\b", r"\breview\b", r"\bfeedback\b",
+            r"\bmanager\b", r"\bappraisal\b",
+        ),
+    },
+    r"\bmemory\b": {
+        "technical": (
+            r"\bleak\b", r"\brss\b", r"\ballocat", r"\bheap\b", r"\bgb\b",
+            r"\bmb\b", r"\bgarbage collect", r"\boom\b",
+        ),
+        "philosophical": (
+            r"\bremember\b", r"\brecall\b", r"\bforget\b", r"\byour memory\b",
+            r"\bepisodic\b", r"\bcontinuity\b",
+        ),
+    },
+    r"\bincident\b|\bbreach\b": {
+        "critical": (
+            r"\bsecurity\b", r"\battack", r"\bcompromis", r"\bunauthori[sz]",
+            r"\bexfiltrat", r"\bintrusion\b", r"\bdata\b",
+        ),
+        "casual": (
+            r"\bbreach of (?:contract|trust|etiquette)\b", r"\bminor incident\b",
+        ),
+    },
+}
+
+
+def _resolve_ambiguous_lane(text: str) -> tuple[str | None, set[str]]:
+    """(lane, abstained_terms) for the ambiguous words present.
+
+    A resolved lane is returned only when exactly one lane's discriminators
+    fire — two lanes both discriminating is not a resolution, it is a
+    genuinely mixed request, and picking one would be the same coin flip
+    with extra steps.
+
+    ``abstained_terms`` are the ambiguous patterns present but unresolved.
+    The caller must drop them from lane voting so they cannot decide by
+    list order.
+    """
+    resolved: set[str] = set()
+    abstained: set[str] = set()
+    for term_pattern, lanes in _AMBIGUOUS_TERMS.items():
+        if not re.search(term_pattern, text, re.IGNORECASE):
+            continue
+        hits = {
+            lane
+            for lane, discriminators in lanes.items()
+            if any(re.search(d, text, re.IGNORECASE) for d in discriminators)
+        }
+        if len(hits) == 1:
+            resolved.add(next(iter(hits)))
+        else:
+            abstained.add(term_pattern)
+    if len(resolved) == 1:
+        return next(iter(resolved)), abstained
+    return None, abstained
+
+
+def _matches_any_excluding(
+    text: str, patterns: tuple[str, ...], abstained: set[str]
+) -> bool:
+    """Match, ignoring patterns an ambiguous term abstained on.
+
+    Without this the abstention is cosmetic: "schedule" would still be in
+    _PLANNING_PATTERNS and would still win the elif chain.
+    """
+    for pattern in patterns:
+        if any(pattern in term for term in abstained):
+            continue
+        if re.search(pattern, text, re.IGNORECASE):
+            return True
+    return False
+
+
 def _matches_any(text: str, patterns: tuple[str, ...]) -> bool:
     return any(re.search(pattern, text, re.IGNORECASE) for pattern in patterns)
 
@@ -347,15 +467,21 @@ def analyze_turn(
     else:
         intent_type = "CHAT"
 
+    # Ambiguity is resolved BEFORE the chain, because the chain resolves by
+    # list order and list order is not evidence about what was meant.
+    disambiguated, abstained = _resolve_ambiguous_lane(lower)
+
     if is_deep_mind_probe:
         semantic_mode = "philosophical"
-    elif _matches_any(lower, _CRITICAL_PATTERNS):
+    elif disambiguated:
+        semantic_mode = disambiguated
+    elif _matches_any_excluding(lower, _CRITICAL_PATTERNS, abstained):
         semantic_mode = "critical"
-    elif _matches_any(lower, _PLANNING_PATTERNS):
+    elif _matches_any_excluding(lower, _PLANNING_PATTERNS, abstained):
         semantic_mode = "planning"
-    elif _matches_any(lower, _TECHNICAL_PATTERNS):
+    elif _matches_any_excluding(lower, _TECHNICAL_PATTERNS, abstained):
         semantic_mode = "technical"
-    elif _matches_any(lower, _PHILOSOPHICAL_PATTERNS):
+    elif _matches_any_excluding(lower, _PHILOSOPHICAL_PATTERNS, abstained):
         semantic_mode = "philosophical"
     elif requires_live_voice or _matches_any(lower, _STANCE_PATTERNS):
         semantic_mode = "emotional"
