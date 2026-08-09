@@ -113,6 +113,10 @@ class AdvancedCognitionRuntime:
                     self.ontology.model_for(domain) is None or grounded.confidence < 0.45
                 )
 
+            # Outside the observation lock on purpose: this fsyncs, and a
+            # blocking write under a lock is how the runtime freezes.
+            self.grounding.save()
+
             model = self.ontology.ingest([obs]) if needs_model else None
             current_model = model or self.ontology.model_for(domain)
             result = {

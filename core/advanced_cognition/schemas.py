@@ -28,7 +28,16 @@ def canonical_json(value: Any) -> str:
       Keys are stringified first, sorted on that, and a collision is an error
       rather than a silent overwrite.
     """
-    def clean(v: Any) -> Any:
+    def clean(v: Any, _seen: frozenset[int] = frozenset()) -> Any:
+        # A self-referential mapping or list — which a caller can assemble by
+        # accident and which arrives here from arbitrary observation state —
+        # recursed until the stack ran out, INSIDE Observation.__post_init__.
+        # The reflex path constructs an Observation from whatever it was
+        # handed, so the crash landed there.
+        if isinstance(v, (Mapping, list, tuple, set, frozenset)):
+            if id(v) in _seen:
+                return "<cycle>"
+            _seen = _seen | {id(v)}
         if isinstance(v, Mapping):
             cleaned: dict[str, Any] = {}
             for key in v:
@@ -38,14 +47,14 @@ def canonical_json(value: Any) -> str:
                         f"canonical_json: mapping keys collapse to duplicate "
                         f"string form {skey!r}; identity would be ambiguous"
                     )
-                cleaned[skey] = clean(v[key])
+                cleaned[skey] = clean(v[key], _seen)
             return {k: cleaned[k] for k in sorted(cleaned)}
         if isinstance(v, (set, frozenset)):
             # Sort by canonical form so element order cannot leak into the hash.
-            return sorted((clean(x) for x in v), key=lambda x: json.dumps(
+            return sorted((clean(x, _seen) for x in v), key=lambda x: json.dumps(
                 x, ensure_ascii=False, sort_keys=True, separators=(",", ":"), default=str))
         if isinstance(v, (list, tuple)):
-            return [clean(x) for x in v]
+            return [clean(x, _seen) for x in v]
         if isinstance(v, float):
             if math.isnan(v) or math.isinf(v):
                 return str(v)

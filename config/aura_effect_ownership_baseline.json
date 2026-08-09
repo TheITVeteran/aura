@@ -3249,6 +3249,14 @@
       "scope": "<module>._write_ontology_state"
     },
     {
+      "callee": "core.runtime.file_write_gateway.get_file_write_gateway().write_text",
+      "canonical_owner": false,
+      "category": "file_write_gateway",
+      "count": 1,
+      "path": "core/advanced_cognition/physical_grounding.py",
+      "scope": "<module>.PhysicalGroundingEngine.save"
+    },
+    {
       "callee": "core.runtime.file_write_gateway.get_file_write_gateway().append_text",
       "canonical_owner": false,
       "category": "file_write_gateway",
@@ -16482,6 +16490,6 @@
     }
   ],
   "description": "Exact AST effect-ownership debt ratchet; refresh only after reviewed change",
-  "inventory_sha256": "8a3859e5db4099ab4ca6b453c01031964f296f19d7d0846fc7ee2333e476fb79",
+  "inventory_sha256": "9e0656d61429c532a2f9ecf5fcdcfb0536b9f9155b5981bc8d2550b928f0d449",
   "schema_version": 1
 }
