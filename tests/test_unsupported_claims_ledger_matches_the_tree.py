@@ -162,6 +162,44 @@ def test_entry_twelve_states_the_objective(ledger):
     assert "not proven" in entry
 
 
+# ────────────────────── 14: detail claims are tempered, not just measured
+
+
+def test_measured_frame_conditions_still_remove_unsupportable_claims():
+    """Entry 14 rests on the tempering being CAUSAL.
+
+    If `temper_reading` ever stops clearing the fields — becoming a pure
+    annotation — the entry's "removed before anything consumes them" is
+    false in Aura's favour, and a confident count over a blurred frame
+    reaches consumers again.
+    """
+    import numpy as np
+
+    from core.perception.frame_quality import assess_frame, temper_reading
+
+    row = np.linspace(60, 200, 640)
+    smooth = np.stack([np.tile(row, (480, 1))] * 3, axis=-1).astype(np.uint8)
+    quality = assess_frame(smooth)
+    assert not quality.supports_detail, "the blurred fixture stopped being blurred"
+
+    tempered = temper_reading({"faces_detected": 2}, quality)
+
+    assert tempered["faces_detected"] is None, (
+        "frame quality is measured but no longer removes the claim; "
+        "CLAIMS_NOT_SUPPORTED.md entry 14 overstates what is enforced"
+    )
+
+
+def test_entry_fourteen_separates_safety_from_accuracy(ledger):
+    entry = _entry(ledger, "## 14. General Visual Detail Perception")
+
+    assert "not proven" in entry
+    assert "accuracy" in entry, (
+        "the entry must be explicit that bounding the damage from a wrong "
+        "answer is not the same as measuring how often it is right"
+    )
+
+
 # ──────────────────────────────────────────── the ledger stays honest
 
 

@@ -498,11 +498,18 @@ class VisionSystem:
                     if save_path:
                         cv2.imwrite(save_path, frame)
                     _, buffer = cv2.imencode('.jpg', frame)
+                    # Measure the conditions while the pixels are still
+                    # here. `analyze` receives base64 and a path; by then
+                    # the array is gone, and re-decoding to assess it would
+                    # need cv2 in a process that may not have it.
+                    from core.perception.frame_quality import assess_frame
+
                     return {
                         "type": "image",
                         "data": base64.b64encode(buffer).decode('utf-8'),
                         "path": save_path,
-                        "timestamp": time.time()
+                        "timestamp": time.time(),
+                        "frame_quality": assess_frame(frame).to_dict(),
                     }
                 else:
                     path = save_path or f"capture_{int(time.time())}.mp4"
@@ -574,7 +581,33 @@ class VisionSystem:
                         'or occluded to tell, use null for that field.',
                         images=[image_b64],
                     )
-                    return _parse_vision_reading(description)
+                    reading = _parse_vision_reading(description)
+                    # A model's confidence is not evidence about the
+                    # physical conditions it was looking at. It will answer
+                    # "two people at a desk" for a motion-blurred frame of a
+                    # dim room in exactly the same tone it uses for a sharp
+                    # one, so the counts get checked against what the pixels
+                    # could actually carry.
+                    measured = capture_data.get("frame_quality")
+                    if isinstance(measured, dict) and measured.get("limits"):
+                        from core.perception.frame_quality import (
+                            FrameQuality,
+                            temper_reading,
+                        )
+
+                        reading = temper_reading(
+                            reading,
+                            FrameQuality(
+                                mean_luminance=float(measured.get("mean_luminance", 0.0)),
+                                dark_fraction=float(measured.get("dark_fraction", 0.0)),
+                                bright_fraction=float(measured.get("bright_fraction", 0.0)),
+                                sharpness=float(measured.get("sharpness", 0.0)),
+                                uniformity=float(measured.get("uniformity", 0.0)),
+                                pixels=int(measured.get("pixels", 0)),
+                                limits=tuple(measured.get("limits") or ()),
+                            ),
+                        )
+                    return reading
         except (ImportError, AttributeError, RuntimeError) as e:
             record_degradation('sensory_integration', e)
             logger.debug("Vision analysis via brain failed: %s", e)

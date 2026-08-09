@@ -213,3 +213,39 @@ and the runtime disagree, the runtime is right.
   **What would change this status**: the weight learner enabled and governed
   as an ordinary constitutive mechanism, with evidence that it improves the
   organism rather than destabilising it over a sustained run.
+
+## 14. General Visual Detail Perception
+
+* **Status**: `not proven`
+* **Rationale**: Aura can describe what a camera sees, and she now abstains
+  honestly when she cannot. Neither of those is evidence that her visual
+  detail perception is *general* across lighting, occlusion, motion,
+  distance, and multiple people.
+
+  What is now true and checked:
+
+  - The frame's physical conditions are **measured** rather than inferred
+    from the model's tone (`core/perception/frame_quality.py`: luminance and
+    clipping, Laplacian-variance sharpness, resolvable pixel count, and
+    uniformity for a covered lens).
+  - Detail claims the pixels could not have carried are **removed** before
+    anything consumes them, with the measured reason attached
+    (`temper_reading`). A confident "two people" over a motion-blurred frame
+    becomes `faces_detected: None`, not `2`.
+  - "Observed and empty", "observed but cannot tell", and "never observed"
+    are three distinguishable outcomes rather than the same zeros.
+
+  What is **not** established is the model's accuracy under those
+  conditions. The tempering layer bounds the damage from a wrong answer; it
+  does not measure how often the answer is right. No benchmark has been run
+  over a labelled set spanning low light, partial occlusion, motion, varying
+  subject distance, and multi-person scenes, so the accuracy is unknown
+  rather than good or bad. Absent that, "general detail perception" is a
+  capability that has been made safe to be wrong about, not one that has
+  been shown to work.
+
+  **What would change this status**: a labelled evaluation across those five
+  condition axes with per-axis accuracy, run against the resident vision
+  model, plus a negative control confirming the tempering layer does not
+  simply suppress every hard case into abstention. A pass rate with no null
+  is not a verdict.
