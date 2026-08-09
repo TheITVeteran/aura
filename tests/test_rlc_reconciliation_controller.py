@@ -191,6 +191,53 @@ def test_config_digest_rejects_a_changed_scientific_parameter(tmp_path: Path):
         controller.load_config(config_path)
 
 
+def test_external_controller_program_is_hashed_without_changing_scientific_source(
+    tmp_path: Path,
+):
+    source = _source(tmp_path)
+    controller_program = tmp_path / "lifecycle-controller.py"
+    controller_program.write_text("print('lifecycle')\n", encoding="utf-8")
+    model = tmp_path / "model"
+    model.mkdir()
+    (model / "config.json").write_text("{}\n", encoding="utf-8")
+    (model / "model.safetensors").write_bytes(b"weights")
+    config, manifest, key = controller.build_config(
+        source_root=source,
+        source_commit=_source_commit(source),
+        model=model,
+        out_dir=tmp_path / "campaign",
+        python=Path(sys.executable),
+        arms="full_stack",
+        seed=7,
+        per_domain=1,
+        difficulty=2,
+        n_slots=4,
+        max_tokens=64,
+        memory_fraction=0.2,
+        episode_wall_s=20.0,
+        attempt_wall_s=60.0,
+        max_attempts=3,
+        poll_s=1.0,
+        stale_after_s=40.0,
+        retry_backoff_s=1.0,
+        controller_program=controller_program,
+    )
+    config_path = tmp_path / "campaign/controller_config.json"
+    controller.write_prepared_campaign(config_path, config, manifest, key)
+
+    assert controller._controller_program(config) == controller_program
+    assert config["controller_program_sha256"] == hashlib.sha256(
+        controller_program.read_bytes()
+    ).hexdigest()
+    payload = plistlib_loads(controller._launch_payload(config_path, config))
+    assert payload["ProgramArguments"][3] == str(controller_program)
+    assert payload["WorkingDirectory"] == str(source)
+
+    controller_program.write_text("print('changed')\n", encoding="utf-8")
+    with pytest.raises(controller.ControllerError, match="controller_program_identity_drift"):
+        controller._source_is_current(config)
+
+
 def test_controller_rejects_a_non_contamination_safe_task_registry(tmp_path: Path):
     _source_root, _out, config_path, _config = _prepared(tmp_path)
     document = json.loads(config_path.read_text(encoding="utf-8"))
@@ -352,6 +399,67 @@ def test_sweep_command_preserves_complete_engine_parameters(tmp_path: Path):
     assert command[command.index("--episode-wall-s") + 1] == "20.0"
     assert command[command.index("--max-wall-s") + 1] == "60.0"
     assert command[command.index("--model") + 1] == config["model"]
+
+
+def test_fresh_retry_does_not_inherit_stale_progress_from_prior_attempt():
+    snapshot = {"last_progress_unix": 100.0}
+
+    assert controller._progress_is_stale(
+        snapshot,
+        attempt_started_unix=1_000.0,
+        process_activity_unix=1_000.0,
+        observed_unix=1_001.0,
+        stale_after_s=40.0,
+    ) is False
+
+
+def test_process_group_activity_keeps_a_long_attempt_live():
+    snapshot = {"last_progress_unix": 100.0}
+
+    assert controller._progress_is_stale(
+        snapshot,
+        attempt_started_unix=1_000.0,
+        process_activity_unix=1_030.0,
+        observed_unix=1_060.0,
+        stale_after_s=40.0,
+    ) is False
+
+
+def test_attempt_without_progress_still_becomes_stale():
+    snapshot = {"last_progress_unix": 100.0}
+
+    assert controller._progress_is_stale(
+        snapshot,
+        attempt_started_unix=1_000.0,
+        process_activity_unix=1_000.0,
+        observed_unix=1_041.0,
+        stale_after_s=40.0,
+    ) is True
+
+
+def test_process_group_activity_sums_exact_group_members(monkeypatch):
+    monkeypatch.setattr(
+        subprocess,
+        "run",
+        lambda *args, **kwargs: subprocess.CompletedProcess(
+            args[0],
+            0,
+            stdout=(
+                "17 1:02.50 100 R\n"
+                "17 1-00:00:01.25 200 S\n"
+                "99 9:00.00 999 R\n"
+            ),
+            stderr="",
+        ),
+    )
+
+    assert controller._process_group_activity(17) == {
+        "available": True,
+        "member_count": 2,
+        "cpu_seconds": 86_463.75,
+        "rss_kib": 300,
+        "states": ["R", "S"],
+    }
 
 
 def test_exact_group_termination_refuses_a_foreign_process_group(monkeypatch):

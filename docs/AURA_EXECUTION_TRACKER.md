@@ -40769,3 +40769,39 @@ at `21/28` committed cells with its resource-dominating ordinary control
 active; no scored reasoning-gain, frontier, fusion, activation, or `WOW Signal`
 claim is made. The completion envelope remains `809/920` (approximately
 `87.9%`).
+
+## Checkpoint 2026-08-09-098: Long Compute Is Progress, Not A Timeout
+
+The frozen CP093 pilot reached `21/28` durable cells and entered its first
+resource-dominating ordinary control. That control was still consuming model
+compute, but it emits no scientific cell until the complete resource target is
+met. The lifecycle controller recognized only journal/status/log file movement,
+so it killed healthy work after the stale window. Worse, every retry inherited
+the old timestamp and died immediately; launchd then restarted the exhausted
+controller and created a bounded but wasteful restart storm. The exact campaign
+job was unloaded and the 21-cell journal was preserved byte-for-byte.
+
+Liveness is now measured outside the scientific runner. The controller samples
+the exact sweep process group's cumulative CPU time, resident memory, member
+count, and process states and signs them into the authenticated heartbeat.
+Measured CPU advancement refreshes wedge detection while a genuinely inactive
+group still becomes stale. Each new attempt also receives an attempt-local
+progress origin, so prior status can never immediately kill a fresh retry.
+This is a diagnostic safety boundary, not a deadline: long valid work continues
+as long as measured execution progresses.
+
+The immutable scientific source and lifecycle controller are now independently
+path- and SHA-256-bound. A repaired controller can supervise the original frozen
+sweep without changing its implementation manifest, task commitment, arm
+configuration, model, seeds, decode fingerprints, or journal. This preserves
+all 21 cells rather than mutating the capsule or rerunning completed inference.
+
+Focused controller/sweep contracts pass `76/76`; Ruff and Python byte
+compilation pass; the scientific sweep diff is empty. Compact evidence is
+`artifacts/closeout/latent_cortex/cp098_campaign_liveness_recovery.json`.
+The next gate is a detached recovery using the original CP092 scientific source,
+the CP098 lifecycle controller, the exact 21-cell journal, and verified moving
+process-group heartbeats through the first resource-control commit. No scored
+reasoning gain, frontier result, fusion authority, activation authority, or
+`WOW Signal` is claimed, and the completion envelope remains `809/920`
+(approximately `87.9%`).

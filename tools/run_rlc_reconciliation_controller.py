@@ -320,6 +320,13 @@ def _config_body(config: Mapping[str, Any]) -> dict[str, Any]:
     return {key: value for key, value in config.items() if key != "config_sha256"}
 
 
+def _controller_program(config: Mapping[str, Any]) -> Path:
+    configured = config.get("controller_program")
+    if configured:
+        return Path(str(configured)).expanduser().absolute()
+    return Path(str(config["source_root"])) / "tools/run_rlc_reconciliation_controller.py"
+
+
 def load_config(path: Path) -> dict[str, Any]:
     config = _read_json(path.expanduser().resolve(strict=True), role="controller_config")
     if config.get("schema") != SCHEMA or config.get("config_sha256") != _sha(_config_body(config)):
@@ -366,6 +373,8 @@ def load_config(path: Path) -> dict[str, Any]:
         raise ControllerError("source_git_identity_invalid")
     if config["source_git_identity"].get("source_commit") != config["source_commit"]:
         raise ControllerError("source_git_commit_binding_invalid")
+    if "controller_program" in config and "controller_program_sha256" not in config:
+        raise ControllerError("controller_program_identity_incomplete")
     return config
 
 
@@ -390,6 +399,7 @@ def build_config(
     stale_after_s: float,
     retry_backoff_s: float,
     task_registry_version: str = CLAIM_TASK_REGISTRY_VERSION,
+    controller_program: Path | None = None,
 ) -> tuple[dict[str, Any], dict[str, Any], bytes]:
     if type(difficulty) is not int or difficulty not in {1, 2, 3}:
         raise ControllerError("controller_difficulty_invalid")
@@ -411,6 +421,11 @@ def build_config(
         source_root,
         source_commit=source_commit,
     )
+    controller_program = (
+        controller_program.expanduser().resolve(strict=True)
+        if controller_program is not None
+        else source_root / "tools/run_rlc_reconciliation_controller.py"
+    )
     manifest = build_source_manifest(source_root, source_commit=source_commit)
     manifest_path = out_dir / "source_manifest.json"
     key_path = out_dir / ".heartbeat.key"
@@ -422,6 +437,8 @@ def build_config(
         "source_commit": source_commit,
         "source_git_identity": source_git_identity,
         "source_manifest_path": str(manifest_path),
+        "controller_program": str(controller_program),
+        "controller_program_sha256": _sha_file(controller_program),
         "python": str(python),
         "python_sha256": _sha_file(resolved_python),
         "model": str(model),
@@ -544,6 +561,83 @@ def _progress_snapshot(config: Mapping[str, Any], log_path: Path) -> dict[str, A
     }
 
 
+def _parse_ps_cpu_time(value: str) -> float:
+    day_parts = value.strip().split("-", 1)
+    days = 0
+    clock = day_parts[0]
+    if len(day_parts) == 2:
+        days = int(day_parts[0])
+        clock = day_parts[1]
+    parts = clock.split(":")
+    if len(parts) == 2:
+        hours = 0
+        minutes, seconds = parts
+    elif len(parts) == 3:
+        hours, minutes, seconds = parts
+    else:
+        raise ValueError("invalid process CPU time")
+    return (
+        days * 86_400
+        + int(hours) * 3_600
+        + int(minutes) * 60
+        + float(seconds)
+    )
+
+
+def _process_group_activity(process_group: int) -> dict[str, Any]:
+    observed = subprocess.run(
+        ["/bin/ps", "-axo", "pgid=,time=,rss=,state="],
+        capture_output=True,
+        text=True,
+        timeout=10.0,
+        check=False,
+    )
+    if observed.returncode != 0:
+        return {"available": False, "member_count": 0}
+    cpu_seconds = 0.0
+    rss_kib = 0
+    states: list[str] = []
+    members = 0
+    for line in observed.stdout.splitlines():
+        fields = line.strip().split()
+        if len(fields) != 4 or not fields[0].isdigit():
+            continue
+        if int(fields[0]) != process_group:
+            continue
+        try:
+            cpu_seconds += _parse_ps_cpu_time(fields[1])
+            rss_kib += int(fields[2])
+        except ValueError:
+            return {"available": False, "member_count": members}
+        states.append(fields[3])
+        members += 1
+    return {
+        "available": members > 0,
+        "member_count": members,
+        "cpu_seconds": round(cpu_seconds, 2),
+        "rss_kib": rss_kib,
+        "states": sorted(states),
+    }
+
+
+def _progress_is_stale(
+    snapshot: Mapping[str, Any],
+    *,
+    attempt_started_unix: float,
+    process_activity_unix: float,
+    observed_unix: float,
+    stale_after_s: float,
+) -> bool:
+    """Judge this attempt only from progress it had an opportunity to make."""
+
+    effective_progress_unix = max(
+        float(snapshot.get("last_progress_unix") or 0.0),
+        float(attempt_started_unix),
+        float(process_activity_unix),
+    )
+    return observed_unix - effective_progress_unix > stale_after_s
+
+
 def _sweep_command(config: Mapping[str, Any]) -> list[str]:
     return [
         str(config["python"]),
@@ -617,6 +711,15 @@ def _source_is_current(config: Mapping[str, Any]) -> None:
     python = Path(str(config["python"])).expanduser().absolute()
     if _sha_file(python.resolve(strict=True)) != config["python_sha256"]:
         raise ControllerError("interpreter_identity_drift")
+    controller_program = _controller_program(config).resolve(strict=True)
+    expected_controller_sha256 = config.get("controller_program_sha256")
+    if expected_controller_sha256 is not None:
+        if _sha_file(controller_program) != expected_controller_sha256:
+            raise ControllerError("controller_program_identity_drift")
+    elif controller_program != (
+        Path(str(config["source_root"])) / "tools/run_rlc_reconciliation_controller.py"
+    ).resolve(strict=True):
+        raise ControllerError("controller_program_identity_incomplete")
     verify_model_manifest(config["model_manifest"])
 
 
@@ -657,8 +760,9 @@ def _process_table() -> list[tuple[int, int, str]]:
 def _verify_launchd_lineage(config: Mapping[str, Any]) -> dict[str, Any]:
     controller_pid = os.getpid()
     controller_parent, controller_command = _process_record(controller_pid)
+    controller_program = str(_controller_program(config))
     controller_required = (
-        str(Path(str(config["source_root"])) / "tools/run_rlc_reconciliation_controller.py"),
+        controller_program,
         str(config["campaign_id"]),
         "--launchd-supervised",
     )
@@ -670,7 +774,7 @@ def _verify_launchd_lineage(config: Mapping[str, Any]) -> dict[str, Any]:
         "/usr/bin/caffeinate",
         "-dims",
         str(config["python"]),
-        str(Path(str(config["source_root"])) / "tools/run_rlc_reconciliation_controller.py"),
+        controller_program,
         str(config["campaign_id"]),
     )
     caffeinate_children = [
@@ -745,8 +849,16 @@ def run(config_path: Path, *, launchd_supervised: bool = False) -> int:
                     },
                 )
                 reason = ""
+                last_cpu_seconds = -1.0
+                process_activity_unix = started
                 while process.poll() is None:
                     snapshot = _progress_snapshot(config, log_path)
+                    observed_unix = time.time()
+                    process_activity = _process_group_activity(process.pid)
+                    cpu_seconds = float(process_activity.get("cpu_seconds") or 0.0)
+                    if process_activity.get("available") and cpu_seconds > last_cpu_seconds:
+                        process_activity_unix = observed_unix
+                        last_cpu_seconds = cpu_seconds
                     heartbeat = _signed_heartbeat(
                         config,
                         {
@@ -754,16 +866,21 @@ def run(config_path: Path, *, launchd_supervised: bool = False) -> int:
                             "sweep_pid": process.pid,
                             "sweep_process_group": process.pid,
                             "attempt": attempt,
-                            "observed_unix": time.time(),
+                            "observed_unix": observed_unix,
+                            "attempt_started_unix": started,
+                            "process_activity_unix": process_activity_unix,
+                            "process_group_activity": process_activity,
                             "lineage": lineage,
                             **snapshot,
                         },
                     )
                     _atomic_json(heartbeat_path, heartbeat)
-                    if (
-                        snapshot["last_progress_unix"] > 0
-                        and time.time() - float(snapshot["last_progress_unix"])
-                        > float(config["stale_after_s"])
+                    if _progress_is_stale(
+                        snapshot,
+                        attempt_started_unix=started,
+                        process_activity_unix=process_activity_unix,
+                        observed_unix=observed_unix,
+                        stale_after_s=float(config["stale_after_s"]),
                     ):
                         reason = "progress_stalled"
                         _terminate_exact_group(process)
@@ -814,7 +931,7 @@ def _launch_payload(config_path: Path, config: Mapping[str, Any]) -> bytes:
             "/usr/bin/caffeinate",
             "-dims",
             str(config["python"]),
-            str(Path(str(config["source_root"])) / "tools/run_rlc_reconciliation_controller.py"),
+            str(_controller_program(config)),
             "run",
             "--config",
             str(config_path.expanduser().resolve(strict=True)),

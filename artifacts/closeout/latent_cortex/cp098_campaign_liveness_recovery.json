@@ -1,0 +1,34 @@
+{
+  "schema": "aura.closeout.latent_cortex_campaign_liveness.v1",
+  "checkpoint": "CP098",
+  "incident": {
+    "campaign_id": "cp093-wow-pilot-20260809",
+    "committed_cells_preserved": 21,
+    "journal_sha256": "b7aec6081364ae760e6ac3d6a29f716b65de49122367a1e7e548fe909c4f5386",
+    "failure": "A healthy resource-dominating control cell exceeded the file-progress stale window. The controller killed it, then inherited the stale timestamp on every retry while launchd kept restarting the exhausted controller.",
+    "scientific_result": "unscored_and_incomplete",
+    "campaign_unloaded_before_repair": true
+  },
+  "repair": {
+    "scientific_sweep_changed": false,
+    "journal_changed": false,
+    "process_group_activity": "Exact process-group CPU time, resident memory, member count, and states are sampled by the lifecycle controller and signed into its heartbeat.",
+    "attempt_local_grace": "Every attempt starts with its own progress origin; status from a prior attempt cannot immediately stale-kill a fresh child.",
+    "split_identity": "The immutable scientific source and lifecycle controller program have separate paths and SHA-256 identities, allowing a controller-only recovery without rewriting cell fingerprints.",
+    "stale_policy": "The stale threshold remains a wedge detector. It is not a task deadline and does not terminate work while measured compute continues."
+  },
+  "verification": {
+    "focused_tests": "76 passed",
+    "ruff": "pass",
+    "python_compile": "pass",
+    "scientific_sweep_diff": "empty",
+    "canonical_smoke": "103 passed"
+  },
+  "claims_withheld": [
+    "reasoning_gain",
+    "frontier_reasoning",
+    "fusion_authority",
+    "activation_authority",
+    "WOW Signal"
+  ]
+}
