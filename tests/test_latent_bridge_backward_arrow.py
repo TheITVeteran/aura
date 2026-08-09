@@ -20,6 +20,7 @@ transport that closes it and the wiring at both ends.
 from __future__ import annotations
 
 import ast
+import asyncio
 import inspect
 import multiprocessing as mp
 from pathlib import Path
@@ -218,3 +219,66 @@ class TestBothEndsAreWired:
         assert "await self._drain_latent_readouts()" in source, (
             "an un-awaited injection can land in the middle of the next turn"
         )
+
+
+class TestTheInjectionLegAgainstARealSubstrate:
+    """Transport is half the loop. This is the half that changes state.
+
+    Everything above proves bytes cross the process boundary. None of it
+    proves the parent turns them into substrate movement — and "the channel
+    works" while nothing moves is precisely the shape of the bug this whole
+    module is a correction for.
+    """
+
+    def test_readouts_move_the_substrate_they_name_and_nothing_else(self):
+        import multiprocessing as mp
+
+        import numpy as np
+
+        from core.brain.llm.mlx_client import MLXLocalClient
+        from core.consciousness.latent_readout_channel import (
+            create_channel,
+            publish_deltas,
+        )
+        from core.consciousness.liquid_substrate import LiquidSubstrate
+        from core.runtime.service_registry import register_runtime_service
+
+        async def _exercise():
+            substrate = LiquidSubstrate()
+            register_runtime_service("conscious_substrate", substrate)
+
+            # Only the attributes the drain touches; constructing a real
+            # client would load a model.
+            client = object.__new__(MLXLocalClient)
+            client._latent_readout_mem = create_channel(mp.get_context("spawn"))
+            client._latent_readout_seen = None
+
+            before = np.array(substrate.x[:8], dtype=float).copy()
+
+            baseline = await client._drain_latent_readouts()
+            assert baseline == 0.0, "a fresh reader injected the worker's history"
+
+            publish_deltas(client._latent_readout_mem, {0: 0.30, 1: -0.20, 4: 0.25})
+            injected = await client._drain_latent_readouts()
+            after = np.array(substrate.x[:8], dtype=float)
+
+            idle = await client._drain_latent_readouts()
+            return before, after, injected, idle, client
+
+        before, after, injected, idle, client = asyncio.run(
+            asyncio.wait_for(_exercise(), timeout=60)
+        )
+        moved = abs(after - before)
+
+        assert injected > 0.0, "nothing reached the substrate"
+        for index in (0, 1, 4):
+            assert moved[index] > 0.0, (
+                f"substrate neuron {index} did not move; the readout named it"
+            )
+        for index in (2, 3, 5, 6, 7):
+            assert moved[index] == 0.0, (
+                f"substrate neuron {index} moved and no readout named it — the "
+                "stimulus vector is smearing across neurons"
+            )
+        assert idle == 0.0, "an idle worker still produced an injection"
+        assert client._latent_injections == 1
