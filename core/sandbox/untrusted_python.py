@@ -62,9 +62,10 @@ import subprocess
 import sys
 import sysconfig
 import tempfile
+from collections.abc import Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Sequence
+from typing import Any
 
 from core.runtime.atomic_writer import atomic_write_text
 from core.runtime.errors import record_degradation
@@ -587,6 +588,9 @@ def _spawn(
             capture_output=True,
             cwd=str(scratch),
             env=env,
+            # Executing generated Python is an effect even when the kernel
+            # confines every write to this ephemeral scratch directory.
+            read_only=False,
             source=f"sandbox.untrusted_python.{source}",
             accelerator_capability="auto",
         )

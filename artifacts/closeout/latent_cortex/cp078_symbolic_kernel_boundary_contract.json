@@ -1,0 +1,29 @@
+{
+  "schema": "aura.closeout.rlc_checkpoint.v1",
+  "checkpoint": "CP078",
+  "subject": "symbolic compute kernel-boundary contract",
+  "claim_level": "source_and_host_contract",
+  "changes": {
+    "kernel_boundary_required": true,
+    "kernel_boundary_receipted": true,
+    "network_denial_receipted": true,
+    "ambient_user_data_denial_receipted": true,
+    "ephemeral_write_scope_receipted": true,
+    "ast_gate_classified_advisory": true,
+    "generated_code_execution_read_only": false
+  },
+  "verification": {
+    "focused_tests": "37/37 passed",
+    "canonical_smoke": "103/103 passed",
+    "diff_check": "passed",
+    "first_smoke_invocation": "invalid_environment_system_python_missing_numpy",
+    "authoritative_smoke_interpreter": "/Users/bryan/.aura/live-source/.venv/bin/python"
+  },
+  "claims": {
+    "reasoning_gain_proven": false,
+    "resident_32b_gain_proven": false,
+    "frontier_level_proven": false,
+    "fusion_authorized": false,
+    "wow_signal_authorized": false
+  }
+}

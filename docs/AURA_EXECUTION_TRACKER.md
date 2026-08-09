@@ -40086,3 +40086,32 @@ This admits the resident-32B control calibration as the next capability-bearing
 experiment; it does not prove reasoning gain, resident-32B gain, frontier
 performance, fusion, activation, or a `WOW Signal`. The completion envelope
 remains `809/920` (approximately `87.9%`).
+
+## Checkpoint 2026-08-09-078: Symbolic Compute Reports Its Kernel Boundary
+
+The host-wide suite exposed three stale contracts left behind when
+`SymbolicSandbox` moved from the shared constrained-process implementation to
+the stronger `core.sandbox.untrusted_python` execution boundary. The runtime
+already required a macOS Seatbelt or equivalent kernel sandbox and refused to
+execute when none was available, but its compact receipt omitted the explicit
+`os_sandbox` and bound fields while the tests still asserted the former
+non-sandboxed design.
+
+The result now records the actual kernel boundary, network denial, ambient
+user-data denial, ephemeral scratch write scope, resource-limit enforcement,
+and advisory AST gate. The subprocess gateway call explicitly declares
+`read_only=False`: executing generated Python remains a governed effect even
+when every write is kernel-confined and ephemeral. The replacement regression
+exercises the boundary call behaviorally instead of asserting identity with
+the retired constrained-process helpers.
+
+The symbolic and untrusted-execution selection passes `37/37`; canonical smoke
+passes `103/103`; diff hygiene passes. The first smoke invocation selected
+system Python and failed collection because that interpreter lacked NumPy; it
+was rerun authoritatively with the repository venv first on `PATH`. Compact
+evidence is
+`artifacts/closeout/latent_cortex/cp078_symbolic_kernel_boundary_contract.json`.
+This hardens CP074's same-episode machine-compute path. It does not prove a
+reasoning gain, resident-32B gain, frontier result, fusion authority, or
+`WOW Signal`, and the completion envelope remains `809/920` (approximately
+`87.9%`).

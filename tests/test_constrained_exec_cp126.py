@@ -24,7 +24,6 @@ from core.runtime.constrained_exec import (
     scrubbed_env,
 )
 
-
 # --- the containment claim is honest -------------------------------------
 
 
@@ -246,11 +245,27 @@ def test_the_sandbox_operator_uses_the_shared_primitives():
     assert sandbox_operator._reap_process_group is reap_process_group
 
 
-def test_the_symbolic_sandbox_uses_the_shared_primitives():
-    from core.brain import symbolic_sandbox
+def test_the_symbolic_sandbox_requires_the_kernel_boundary(monkeypatch):
+    from core.brain.symbolic_sandbox import SymbolicSandbox
+    from core.sandbox import untrusted_python
 
-    assert symbolic_sandbox.ISOLATION_LEVEL is ISOLATION_LEVEL
-    assert symbolic_sandbox.scrubbed_env is scrubbed_env
+    observed: dict[str, object] = {}
+
+    def _run(code, **kwargs):
+        observed.update({"code": code, **kwargs})
+        return untrusted_python.SandboxOutcome(
+            status="ok",
+            stdout="4\n",
+            sandboxed=True,
+            boundary="seatbelt",
+        )
+
+    monkeypatch.setattr(untrusted_python, "run_untrusted_script", _run)
+    result = asyncio.run(SymbolicSandbox().run("print(2 + 2)"))
+
+    assert result.ok is True
+    assert observed["require_boundary"] is True
+    assert observed["source"] == "symbolic_cognition"
 
 
 def test_the_symbolic_sandbox_result_carries_the_bound():
@@ -260,8 +275,13 @@ def test_the_symbolic_sandbox_result_carries_the_bound():
     payload = result.to_dict()
 
     assert payload["ok"] is True
-    assert payload["isolation"]["os_sandbox"] is False
-    assert payload["isolation"]["resource_limits_enforced"] is False
+    assert payload["isolation"]["os_sandbox"] is True
+    assert payload["isolation"]["sandboxed"] is True
+    assert payload["isolation"]["kernel_boundary"]
+    assert payload["isolation"]["network_denied"] is True
+    assert payload["isolation"]["user_data_denied"] is True
+    assert payload["isolation"]["resource_limits_enforced"] is True
+    assert payload["isolation"]["static_gate"] == "ast_denylist_advisory"
 
 
 def test_the_symbolic_sandbox_result_omits_the_generated_code():
@@ -282,9 +302,9 @@ def test_executing_python_is_not_labeled_read_only():
     """CP126 23199cb8: the authority label must describe the effect."""
     import inspect
 
-    from core.brain.symbolic_sandbox import SymbolicSandbox
+    from core.sandbox import untrusted_python
 
-    source = inspect.getsource(SymbolicSandbox.run)
+    source = inspect.getsource(untrusted_python._spawn)
     code = "\n".join(
         line for line in source.splitlines()
         if line.strip() and not line.strip().startswith("#")

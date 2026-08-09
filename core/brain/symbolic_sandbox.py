@@ -197,10 +197,16 @@ class SymbolicSandbox:
             isolation = {
                 "isolation_level": f"kernel:{outcome.boundary}",
                 "kernel_boundary": outcome.boundary,
+                "os_sandbox": outcome.sandboxed,
                 "sandboxed": outcome.sandboxed,
                 "network_denied": outcome.sandboxed,
                 "user_data_denied": outcome.sandboxed,
                 "resource_limits_enforced": outcome.sandboxed,
+                "static_gate": "ast_denylist_advisory",
+                "bound": (
+                    "kernel policy denies network and ambient user-data access; "
+                    "execution and writes are confined to an ephemeral scratch directory"
+                ),
             }
             return SandboxResult(
                 ok=outcome.ok and outcome.sandboxed,
