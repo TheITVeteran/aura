@@ -47,6 +47,7 @@ that comments on everything is a companion you turn off.
 from __future__ import annotations
 
 import json
+import math
 import re
 import time
 from dataclasses import dataclass, field
@@ -223,6 +224,9 @@ class AmbientPresence:
         #: than in the route because "can anything actually draw right now"
         #: must be answerable BEFORE she claims to have pointed at something.
         self._pending_highlight: dict[str, float] | None = None
+        self._pending_bubble_move: dict[str, float | int] | None = None
+        self._bubble_move_sequence = 0
+        self._bubble_move_acks: dict[int, tuple[float, float]] = {}
         self._last_surface_poll_at = 0.0
         #: She does not speak twice in quick succession. Unsolicited comment
         #: is a budget, not a feature, and the budget is deliberately small.
@@ -238,6 +242,8 @@ class AmbientPresence:
                 # Hidden means hidden: the queued thought goes too, rather
                 # than waiting to appear the moment she is unhidden.
                 self._pending_utterance = ""
+                self._pending_highlight = None
+                self._pending_bubble_move = None
         return resolved
 
     @property
@@ -288,6 +294,96 @@ class AmbientPresence:
         with self._lock:
             self._bubble_position = (float(x), float(y))
             return self._bubble_position
+
+    def request_bubble_move(self, x: float, y: float) -> int | None:
+        """Ask the attached native bubble to move, without pretending it did.
+
+        ``move_bubble`` records a position the host already reached. This is
+        the opposite direction: cognition requests a destination, the native
+        host clamps and applies it, and its ordinary did-move callback records
+        the measured position. The command is one-shot so a poll retry cannot
+        make the panel jump repeatedly.
+        """
+        try:
+            target_x = float(x)
+            target_y = float(y)
+        except (TypeError, ValueError):
+            return None
+        if not (math.isfinite(target_x) and math.isfinite(target_y)):
+            return None
+        if self.mode is not PresenceMode.BUBBLE or not self.drawing_surface_attached():
+            return None
+        with self._lock:
+            self._bubble_move_sequence += 1
+            sequence = self._bubble_move_sequence
+            self._pending_bubble_move = {
+                "x": target_x,
+                "y": target_y,
+                "sequence": sequence,
+                "queued_at": time.time(),
+            }
+        return sequence
+
+    def take_bubble_move(self) -> dict[str, float | int] | None:
+        """Collect one host movement command exactly once."""
+        with self._lock:
+            command = self._pending_bubble_move
+            self._pending_bubble_move = None
+        if command is None:
+            return None
+        if time.time() - float(command.get("queued_at", 0.0)) > _HIGHLIGHT_TTL_S:
+            return None
+        return command
+
+    def acknowledge_bubble_move(
+        self, *, sequence: int, x: float, y: float
+    ) -> bool:
+        """Record AppKit's measured post-move origin for one command.
+
+        The launcher, not cognition, owns screen clamping. Consequently the
+        requested coordinates are never accepted as evidence that the panel
+        moved: only the origin AppKit reports after ``setFrameOrigin`` closes
+        this receipt.
+        """
+        try:
+            ack_sequence = int(sequence)
+            measured_x = float(x)
+            measured_y = float(y)
+        except (TypeError, ValueError):
+            return False
+        if ack_sequence <= 0 or not (
+            math.isfinite(measured_x) and math.isfinite(measured_y)
+        ):
+            return False
+        with self._lock:
+            if ack_sequence > self._bubble_move_sequence:
+                return False
+            self._bubble_move_acks[ack_sequence] = (measured_x, measured_y)
+            # Movement is serialized by the desktop executor, but retain a
+            # small bounded set so a delayed acknowledgement can never grow
+            # this process for the life of the app.
+            while len(self._bubble_move_acks) > 16:
+                self._bubble_move_acks.pop(min(self._bubble_move_acks))
+        return True
+
+    async def wait_for_bubble_move(
+        self, sequence: int, *, timeout_s: float = 5.0
+    ) -> tuple[float, float] | None:
+        """Wait for a native acknowledgement, bounded by the bubble cadence."""
+        import asyncio
+
+        try:
+            expected = int(sequence)
+        except (TypeError, ValueError):
+            return None
+        deadline = time.monotonic() + max(0.05, min(float(timeout_s), 10.0))
+        while time.monotonic() < deadline:
+            with self._lock:
+                measured = self._bubble_move_acks.pop(expected, None)
+                if measured is not None:
+                    return measured
+            await asyncio.sleep(0.05)
+        return None
 
     async def persist_bubble_position(self) -> bool:
         """Write the parked position so it survives a restart.
@@ -373,7 +469,7 @@ class AmbientPresence:
         surface is attached" would let her claim to have pointed at something
         when no overlay host was listening.
         """
-        if str(surface).strip().lower() != "bubble":
+        if str(surface).strip().lower() != "native-bubble":
             return
         with self._lock:
             self._last_surface_poll_at = time.time()
@@ -650,14 +746,14 @@ class AmbientPresence:
         a rectangle handed to the wrong reader is a rectangle nobody draws.
         """
         self.note_surface_poll(surface)
-        highlight = (
-            self.take_highlight()
-            if str(surface).strip().lower() == "bubble"
-            else None
-        )
+        normalized_surface = str(surface).strip().lower()
+        native_bubble = normalized_surface == "native-bubble"
+        highlight = self.take_highlight() if native_bubble else None
+        bubble_move = self.take_bubble_move() if native_bubble else None
         with self._lock:
             return {
                 "highlight": highlight,
+                "bubble_move": bubble_move,
                 "schema": AMBIENT_SCHEMA,
                 "mode": self._mode.value,
                 "has_utterance": bool(self._pending_utterance),

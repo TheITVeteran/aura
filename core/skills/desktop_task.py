@@ -3479,6 +3479,22 @@ class DesktopTaskSkill(BaseSkill):
                 if verified
                 else str(result.get("verification") or "missing frontmost app confirmation"),
             )
+        if action == "move_aura_bubble":
+            position = result.get("position")
+            sequence = result.get("sequence")
+            verified = (
+                bool(result.get("effect_verified"))
+                and isinstance(position, list)
+                and len(position) == 2
+                and isinstance(sequence, int)
+                and sequence > 0
+            )
+            return (
+                verified,
+                str(result.get("effect_evidence") or result.get("verification") or "").strip()
+                if verified
+                else "missing native companion movement acknowledgement",
+            )
         if action == "open_url":
             url = str(result.get("url") or "").strip()
             valid_url = url.startswith(("http://", "https://"))

@@ -40680,3 +40680,44 @@ diagnostic ablation rather than a claim-bearing substitute. No
 reasoning gain, frontier result, fusion authority, activation authority, or
 `WOW Signal` is claimed, and the completion envelope remains `809/920`
 (approximately `87.9%`).
+
+## Checkpoint 2026-08-09-096: The Native Companion Has Measured Agency
+
+The companion shell was visually present but its interaction contract was
+still split. A person could drag the bubble, while Aura had no governed action
+that could move her own surface. The dormant AppKit panel retained a 520-point
+transparent hit-test area around a 40-point mark. The restrained chat used the
+same `/api/chat` URL but not the canonical desktop delivery headers,
+idempotency fence, or durable result recovery. The first movement draft also
+returned success when a command was queued rather than when AppKit moved.
+
+The native panel now sizes itself to measured visible content, remains icon-only
+while idle, grows to bounded scrollable speech, and preserves the restrained
+transcript across close/reopen. Its chat uses the same CognitiveEngine-required,
+idempotent durable delivery contract as the full desktop and recovers an
+in-flight turn after a timeout or window close instead of duplicating it.
+
+`move_aura_bubble` is now a canonical `computer_use` and `desktop_task` action
+with `foreground_desktop_control` scope. Aura may choose screen coordinates,
+but the command is accepted only while a native host is live. AppKit clamps the
+destination to a visible display, reports its measured origin with an exact
+command sequence, and only that acknowledgement closes the effect receipt and
+persists the position. Browser previews, stale hosts, hidden mode, non-finite
+coordinates, missing acknowledgements, and cross-command acknowledgement all
+fail honestly.
+
+Focused native companion, route, persistence, pointing, and governance
+contracts pass `72/72`; canonical smoke passes; Ruff, Python byte compilation,
+JavaScript syntax, Swift parsing, and diff hygiene pass. Compact evidence is
+`artifacts/closeout/companion/cp096_native_companion_control.json`.
+
+The camera audit remains open and explicit: universal private-window refusal
+and the runtime screen-permission kill switch must move to every lowest capture
+boundary; camera state authority and truthful body telemetry must be unified;
+companion-only capture, vision-worker readiness, event-loop isolation,
+provenance, autonomous opt-in, general visual-detail benchmarks, dynamic-page
+revision, bounded public research, and a rebuilt-app live proof remain. The
+frozen CP093 pilot is unchanged; its completed closed-book cells expose
+selective promotion mechanics but no ground-truth score. No reasoning-gain,
+frontier, fusion, activation, or `WOW Signal` claim is made. The completion
+envelope remains `809/920` (approximately `87.9%`).

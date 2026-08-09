@@ -38,6 +38,15 @@ def test_one_click_makes_it_desktop_control() -> None:
     )
 
 
+def test_moving_her_native_bubble_is_visible_desktop_control() -> None:
+    assert _scope([{"action": "move_aura_bubble", "x": 300, "y": 200}]) == (
+        "foreground_desktop_control"
+    )
+    assert resolve_execution_effect_scope(
+        "computer_use", {"action": "move_aura_bubble", "x": 300, "y": 200}
+    ) == "foreground_desktop_control"
+
+
 def test_one_write_makes_it_file_io() -> None:
     """The widest step governs: a plan is as consequential as its worst step."""
     assert _scope([{"action": "click"}, {"action": "write_text_file"}]) == "desktop_file_io"

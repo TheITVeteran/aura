@@ -106,7 +106,8 @@ class ComputerUseParams(BaseModel):
             "click|type|hotkey|scroll|inspect_screen|read_screen_text|read_menu_clock|open_app|open_url|"
             "dismiss_popup|inspect_browser_page|"
             "run_command|set_clipboard|get_clipboard|wait|run_applescript|write_text_file|"
-            "render_text_pdf|move_file|create_folder|fetch_topic_image|system_control"
+            "render_text_pdf|move_file|create_folder|fetch_topic_image|system_control|"
+            "move_aura_bubble"
         ),
     )
     target: str = Field(
@@ -137,7 +138,8 @@ def _image_suffix_from_bytes(raw: bytes) -> str:
 class ComputerUseSkill(BaseSkill):
     name = "computer_use"
     description = (
-        "Directly control the computer: click, type, read screen text, run commands, open apps."
+        "Directly control the computer and Aura's own desktop surface: click, type, "
+        "read screen text, run commands, open apps, or move her companion bubble."
     )
     input_model = ComputerUseParams
     metabolic_cost = 2
@@ -2803,6 +2805,58 @@ end tell
             capture_and_log(e, {"module": __name__, "stage": "mycelial_pulse"})
 
         try:
+            if action == "move_aura_bubble":
+                from core.perception.ambient_presence import get_ambient_presence
+                from core.perception.desktop_overlay import get_desktop_overlay
+
+                overlay = get_desktop_overlay()
+                if overlay is None:
+                    return {
+                        "ok": False,
+                        "status": "companion_surface_unavailable",
+                        "error": "Aura's native companion surface is not registered.",
+                        "effect_verified": False,
+                    }
+                sequence = overlay.move_to(x=params.x, y=params.y)
+                if not sequence:
+                    return {
+                        "ok": False,
+                        "status": "companion_surface_unavailable",
+                        "error": (
+                            "Aura's companion bubble is not visible or its native host "
+                            "is not currently polling."
+                        ),
+                        "effect_verified": False,
+                    }
+                measured = await get_ambient_presence().wait_for_bubble_move(
+                    sequence, timeout_s=6.0
+                )
+                if measured is None:
+                    return {
+                        "ok": False,
+                        "status": "companion_move_unacknowledged",
+                        "error": (
+                            "The native host did not acknowledge the companion movement."
+                        ),
+                        "sequence": sequence,
+                        "effect_verified": False,
+                    }
+                measured_x, measured_y = measured
+                verification = (
+                    f"native_companion_origin=({measured_x:.1f},{measured_y:.1f});"
+                    f"command_sequence={sequence}"
+                )
+                return {
+                    "ok": True,
+                    "action": action,
+                    "requested_position": [params.x, params.y],
+                    "position": [measured_x, measured_y],
+                    "sequence": sequence,
+                    "effect_verified": True,
+                    "effect_evidence": verification,
+                    "verification": verification,
+                }
+
             if action == "inspect_screen":
                 blocked = await self._require_permissions(
                     "inspecting the frontmost screen and focused UI element",

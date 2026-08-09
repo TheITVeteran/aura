@@ -267,6 +267,7 @@ def _computer_use_scope(params: dict[str, Any]) -> str | None:
     if action in {
         "click",
         "hotkey",
+        "move_aura_bubble",
         "open_app",
         "open_url",
         "run_applescript",
@@ -350,6 +351,7 @@ _DESKTOP_ACTION_SCOPES: dict[str, str] = {
     "wait": "read_only",
     "click": "foreground_desktop_control",
     "hotkey": "foreground_desktop_control",
+    "move_aura_bubble": "foreground_desktop_control",
     "open_app": "foreground_desktop_control",
     "open_url": "foreground_desktop_control",
     "run_applescript": "foreground_desktop_control",

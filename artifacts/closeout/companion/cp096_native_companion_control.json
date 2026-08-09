@@ -1,0 +1,63 @@
+{
+  "schema": "aura.closeout.companion.cp096.v1",
+  "checkpoint": "CP096",
+  "date": "2026-08-09",
+  "finding": {
+    "classification": "native_companion_surface_incomplete_and_unverified",
+    "detail": "The bubble could be dragged by the person, but Aura had no governed action that could move it. The native panel retained a 520-point transparent hit-test surface while dormant, companion chat did not use the durable desktop delivery contract, and a queued move had no measured AppKit acknowledgement."
+  },
+  "repair": {
+    "native_panel_matches_measured_visible_content": true,
+    "dormant_native_hit_target_points": [56, 56],
+    "message_height_is_bounded_and_scrollable": true,
+    "aura_move_action": "move_aura_bubble",
+    "effect_scope": "foreground_desktop_control",
+    "native_surface_liveness_required": true,
+    "one_shot_host_command": true,
+    "appkit_clamps_to_visible_screen": true,
+    "exact_sequence_acknowledgement_required": true,
+    "measured_post_move_origin_is_effect_evidence": true,
+    "position_persists_after_native_acknowledgement": true,
+    "companion_chat_uses_canonical_cognitive_engine": true,
+    "companion_chat_uses_idempotent_durable_delivery": true,
+    "pending_turn_recovers_after_close_or_timeout": true,
+    "restrained_transcript_survives_close_and_reopen": true
+  },
+  "verification": {
+    "affected_contracts": "72 passed",
+    "canonical_smoke": "passed",
+    "ruff": "passed",
+    "python_byte_compile": "passed",
+    "javascript_syntax": "passed",
+    "swift_parse": "passed",
+    "diff_hygiene": "passed",
+    "negative_controls": [
+      "browser preview cannot consume native host commands",
+      "hidden or absent native bubble refuses movement",
+      "non-finite coordinates are rejected",
+      "unacknowledged movement cannot report success",
+      "a later movement acknowledgement cannot close an earlier receipt",
+      "native panel never exceeds the bounded visible-content envelope"
+    ]
+  },
+  "campaign_boundary": {
+    "active_campaign": "cp093-wow-pilot-20260809",
+    "campaign_source_commit": "6fc714b90a8b471d2f5b17e87c742a6c306c3675",
+    "campaign_mutated": false,
+    "observed_progress": "21/28 committed; closed-book complete-system 7/7",
+    "scientific_verdict": "pending"
+  },
+  "remaining_companion_work": [
+    "enforce incognito and private-window refusal at every lowest-level screen capture boundary",
+    "enforce the runtime screen permission at every continuous and on-demand capture boundary",
+    "unify browser camera state with the canonical runtime camera authority and verify hardware state before reporting success",
+    "replace the permanently-disabled body camera sensor with truthful live state and provenance",
+    "make camera capture self-contained when only the native companion surface is open",
+    "treat vision worker initialization errors as failed readiness and prove crash recovery",
+    "prove general camera detail perception across lighting, occlusion, motion, distance, multiple people, and calibrated abstention",
+    "move synchronous camera operations off the event loop and preserve source, time, monitor, and privacy provenance",
+    "make governed autonomous camera observation available under durable opt-in",
+    "add visual and semantic page-revision detection plus bounded autonomous public research",
+    "prove live native movement, chat recovery, highlighting, voice, camera, hide, and restart continuity after app rebuild"
+  ]
+}

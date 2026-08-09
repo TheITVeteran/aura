@@ -1389,6 +1389,7 @@ final class AuraLauncherDelegate: NSObject, NSApplicationDelegate,
     private var bubblePanel: NSPanel?
     private var bubbleWebView: WKWebView?
     private var bubbleFrameObserver: Any?
+    private var pendingBubbleMoveSequence: Int?
     private var companionPanel: NSPanel?
     private var companionWebView: WKWebView?
     private var overlayWindow: NSWindow?
@@ -2755,7 +2756,10 @@ final class AuraLauncherDelegate: NSObject, NSApplicationDelegate,
     /// Present the bubble. Idempotent; safe to call on every window close.
     private func showBubble() {
         if bubblePanel == nil {
-            let size = NSSize(width: 520, height: 64)
+            // The page reports its measured pill size after load. Starting at
+            // the icon footprint prevents an invisible 520pt web view from
+            // intercepting clicks over the person's desktop while Aura is idle.
+            let size = NSSize(width: 56, height: 56)
             let config = WKWebViewConfiguration()
             // The page talks back through this handler for "open the chat
             // window" — the only intent the bubble has that the web layer
@@ -2828,7 +2832,7 @@ final class AuraLauncherDelegate: NSObject, NSApplicationDelegate,
     /// must still show her. The session's 1s timeout is the bound: a runtime
     /// that is not answering cannot be allowed to mean no bubble at all.
     private func restoreBubbleOrigin(_ done: @escaping (NSPoint?) -> Void) {
-        guard let url = URL(string: "http://127.0.0.1:8000/api/ambient/state?surface=bubble")
+        guard let url = URL(string: "http://127.0.0.1:8000/api/ambient/state?surface=restore")
         else {
             DispatchQueue.main.async { done(nil) }
             return
@@ -2918,15 +2922,20 @@ final class AuraLauncherDelegate: NSObject, NSApplicationDelegate,
             queue: .main
         ) { [weak self] _ in
             guard let self, let moved = self.bubblePanel else { return }
-            let origin = moved.frame.origin
-            // Tell the page, which debounces and persists it. The position
-            // is hers to remember, not the launcher's to own.
-            let script = """
-            window.dispatchEvent(new CustomEvent('aura-bubble-moved', \
-            { detail: { x: \(origin.x), y: \(origin.y) } }));
-            """
-            self.bubbleWebView?.evaluateJavaScript(script, completionHandler: nil)
+            let sequence = self.pendingBubbleMoveSequence ?? 0
+            self.pendingBubbleMoveSequence = nil
+            self.reportBubbleOrigin(moved.frame.origin, sequence: sequence)
         }
+    }
+
+    private func reportBubbleOrigin(_ origin: NSPoint, sequence: Int = 0) {
+        // The page persists every measured move. A nonzero sequence also
+        // closes the cognition-side receipt for an Aura-requested movement.
+        let script = """
+        window.dispatchEvent(new CustomEvent('aura-bubble-moved', \
+        { detail: { x: \(origin.x), y: \(origin.y), sequence: \(sequence) } }));
+        """
+        bubbleWebView?.evaluateJavaScript(script, completionHandler: nil)
     }
 
     private func openNativeDesktopWindow() {
@@ -2966,7 +2975,7 @@ final class AuraLauncherDelegate: NSObject, NSApplicationDelegate,
         // of surface, and routing it through the dismissal path would tell the
         // runtime she had been sent away every time someone opened her.
         orderBubbleOut()
-        hideCompanionChat()
+        hideCompanionChat(restoringBubble: false)
         postAmbientMode("window")
         desktopWindow?.center()
         desktopWindow?.makeKeyAndOrderFront(nil)
@@ -2997,7 +3006,7 @@ final class AuraLauncherDelegate: NSObject, NSApplicationDelegate,
             showCompanionChat()
         case "expand":
             // They asked for the full desktop explicitly.
-            hideCompanionChat()
+            hideCompanionChat(restoringBubble: false)
             openNativeDesktopWindow()
             NSApp.activate(ignoringOtherApps: true)
         case "close":
@@ -3011,11 +3020,52 @@ final class AuraLauncherDelegate: NSObject, NSApplicationDelegate,
                 height: (rect["height"] as? Double) ?? 0,
                 seconds: (body["seconds"] as? Double) ?? 3.0
             )
+        case "move":
+            guard let panel = bubblePanel else { return }
+            let sequence = (body["sequence"] as? Int) ?? 0
+            let requested = NSPoint(
+                x: (body["x"] as? Double) ?? panel.frame.origin.x,
+                y: (body["y"] as? Double) ?? panel.frame.origin.y
+            )
+            pendingBubbleMoveSequence = sequence > 0 ? sequence : nil
+            panel.setFrameOrigin(clampToScreen(requested, size: panel.frame.size))
+            // AppKit does not emit didMove when the requested origin already
+            // equals the clamped origin. Close that no-op command with the
+            // measured frame rather than leaving cognition waiting forever.
+            DispatchQueue.main.async { [weak self, weak panel] in
+                guard let self, let panel,
+                      self.pendingBubbleMoveSequence == sequence,
+                      sequence > 0 else { return }
+                self.pendingBubbleMoveSequence = nil
+                self.reportBubbleOrigin(panel.frame.origin, sequence: sequence)
+            }
+        case "resize":
+            resizeBubblePanel(
+                width: (body["width"] as? Double) ?? 56,
+                height: (body["height"] as? Double) ?? 56
+            )
         case "hide":
             hideBubble()
         default:
             break
         }
+    }
+
+    /// Make the native hit-test surface exactly as large as visible content.
+    ///
+    /// CSS pointer-events do not make transparent AppKit window area disappear;
+    /// the NSPanel itself can still sit over another app. Resizing the host is
+    /// therefore a functional desktop contract, not a visual optimization.
+    private func resizeBubblePanel(width: Double, height: Double) {
+        guard let panel = bubblePanel else { return }
+        let target = NSSize(
+            width: max(48, min(520, width)),
+            height: max(48, min(190, height))
+        )
+        guard abs(panel.frame.width - target.width) > 0.5
+                || abs(panel.frame.height - target.height) > 0.5 else { return }
+        let origin = clampToScreen(panel.frame.origin, size: target)
+        panel.setFrame(NSRect(origin: origin, size: target), display: true, animate: false)
     }
 
     // MARK: - Highlight overlay
@@ -3129,16 +3179,26 @@ final class AuraLauncherDelegate: NSObject, NSApplicationDelegate,
             companionWebView = webView
         }
 
-        companionWebView?.load(
-            URLRequest(url: companionURL(), cachePolicy: .reloadIgnoringLocalCacheData)
-        )
+        // Keep one loaded page for the life of the native host. Reloading on
+        // every open erased the restrained transcript and created a fresh chat
+        // session, so a follow-up could lose the thing it referred to.
+        if companionWebView?.url == nil {
+            companionWebView?.load(
+                URLRequest(url: companionURL(), cachePolicy: .reloadIgnoringLocalCacheData)
+            )
+        }
+        orderBubbleOut()
+        postAmbientMode("window")
         // makeKey, because this one is for typing into.
         companionPanel?.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
     }
 
-    private func hideCompanionChat() {
+    private func hideCompanionChat(restoringBubble: Bool = true) {
         companionPanel?.orderOut(nil)
+        if restoringBubble && !desktopWindowIsVisible() {
+            showBubble()
+        }
     }
 
     private func companionOrigin(for size: NSSize) -> NSPoint {

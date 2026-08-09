@@ -16,7 +16,7 @@ The launcher owns that AppKit surface, and the only channel to it is the
 WebKit message handler on the bubble's page. So the rectangle travels:
 
     screen_highlight  →  this service  →  AmbientPresence queue
-                      →  /api/ambient/state?surface=bubble  (the bubble polls)
+                      →  /api/ambient/state?surface=native-bubble  (the bubble polls)
                       →  window.webkit.messageHandlers.auraBubble
                       →  AuraLauncher.showHighlight
 
@@ -92,6 +92,21 @@ class BubbleOverlay:
             return bool(get_ambient_presence().drawing_surface_attached())
         except (ImportError, AttributeError, RuntimeError, TypeError, ValueError):
             return False
+
+    def move_to(self, *, x: float, y: float) -> int | None:
+        """Request native movement and return its acknowledgement sequence."""
+        try:
+            from core.perception.ambient_presence import get_ambient_presence
+
+            return get_ambient_presence().request_bubble_move(x=x, y=y)
+        except (ImportError, AttributeError, RuntimeError, TypeError, ValueError) as exc:
+            record_degradation(
+                "desktop_overlay",
+                exc,
+                severity="warning",
+                action="companion movement not queued; the bubble stayed where it was",
+            )
+            return None
 
 
 def install_desktop_overlay() -> bool:

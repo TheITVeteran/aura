@@ -70,6 +70,26 @@ def test_position_round_trips(client):
     assert body["position"] == [12.0, 34.0]
 
 
+def test_native_movement_acknowledges_the_measured_position(client, monkeypatch):
+    api, presence = client
+    presence.state(surface="native-bubble")
+    sequence = presence.request_bubble_move(900.0, 700.0)
+    assert sequence == 1
+
+    async def _persisted():
+        return True
+
+    monkeypatch.setattr(presence, "persist_bubble_position", _persisted)
+    body = api.post(
+        "/api/ambient/position",
+        json={"x": 812.0, "y": 664.0, "sequence": sequence},
+    ).json()
+
+    assert body["acknowledged"] is True
+    assert body["position"] == [812.0, 664.0]
+    assert body["sequence"] == sequence
+
+
 def test_recall_reports_not_fresh_rather_than_empty_truth(client):
     from core.perception.observation_evidence import get_observation_memory
 

@@ -57,7 +57,10 @@ html, body {
   backdrop-filter: blur(18px) saturate(140%);
   -webkit-backdrop-filter: blur(18px) saturate(140%);
   box-shadow: 0 6px 22px rgba(0,0,0,0.42);
-  max-width: calc(100vw - 16px);
+  /* AppKit resizes the native panel to this measured content. Keeping this
+     independent of the current viewport lets a 40px dormant panel grow again
+     when a message arrives. */
+  max-width: 504px;
   /* The drag handle IS the pill. macOS moves the panel from here. */
   -webkit-app-region: drag;
   transition: padding 140ms ease, background 200ms ease;
@@ -133,11 +136,9 @@ html, body {
   font-size: 13px;
   line-height: 1.35;
   max-width: 460px;
-  max-height: 3.4em;
-  overflow: hidden;
-  display: -webkit-box;
-  -webkit-line-clamp: 2;
-  -webkit-box-orient: vertical;
+  max-height: 9.5em;
+  overflow-y: auto;
+  overflow-wrap: anywhere;
   cursor: pointer;
 }
 #pill.dormant #say, #pill.dormant #close { display: none; }

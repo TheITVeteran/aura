@@ -3353,7 +3353,17 @@ class CapabilityEngine(AuraBaseModule):
         action = str((params or {}).get("action") or "").strip().lower()
         if action in {"get_clipboard", "read_menu_clock", "read_screen_text", "wait"}:
             return "read_only"
-        if action in {"click", "hotkey", "open_app", "open_url", "run_applescript", "scroll", "set_clipboard", "type"}:
+        if action in {
+            "click",
+            "hotkey",
+            "move_aura_bubble",
+            "open_app",
+            "open_url",
+            "run_applescript",
+            "scroll",
+            "set_clipboard",
+            "type",
+        }:
             return "foreground_desktop_control"
         if action in {"move_file", "render_text_pdf", "write_text_file"}:
             return "desktop_file_io"

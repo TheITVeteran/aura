@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 """Shared live desktop task contract.
 
 The chat planner, response-generation prompt, and desktop_task executor all
@@ -7,6 +5,8 @@ consume this list. Keeping it in one lightweight runtime module prevents the
 live UI from advertising a narrower or stale action surface than the executor
 can actually govern and verify.
 """
+
+from __future__ import annotations
 
 from typing import Any
 
@@ -31,6 +31,10 @@ DESKTOP_TASK_ALLOWED_ACTIONS: tuple[str, ...] = (
     "create_folder",
     "fetch_topic_image",
     "system_control",
+    # The main window and companion bubble are one Aura surface. This action
+    # lets her reposition the native bubble through the same governed desktop
+    # plan used for every other visible effect.
+    "move_aura_bubble",
     # Native app scripting, preferred over keystrokes wherever an app has a
     # scripting interface. Typing into a window depends on focus surviving
     # from one step to the next, and on a real desktop it does not: live
@@ -54,6 +58,7 @@ DESKTOP_TASK_RETRY_SAFE_ACTIONS: frozenset[str] = frozenset(
         "create_folder",
         "get_clipboard",
         "inspect_screen",
+        "move_aura_bubble",
         "open_app",
         "read_menu_clock",
         "read_screen_text",

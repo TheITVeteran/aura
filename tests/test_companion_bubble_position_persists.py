@@ -127,7 +127,10 @@ def test_the_launcher_restores_the_position_before_showing_her():
     )
     assert "bubble_position" in source
 
-    showing = source.split("private func showBubble()", 1)[1][:3000]
+    showing = source.split("private func showBubble()", 1)[1]
+    next_declaration = showing.find("\n    private func ")
+    if next_declaration != -1:
+        showing = showing[:next_declaration]
     restore_at = showing.find("restoreBubbleOrigin")
     order_at = showing.find("orderFront")
     assert restore_at != -1 and order_at != -1

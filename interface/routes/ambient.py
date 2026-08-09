@@ -34,6 +34,7 @@ _AMBIENT_ERRORS = (ImportError, AttributeError, RuntimeError, TypeError, ValueEr
 class BubblePosition(BaseModel):
     x: float = Field(default=0.0)
     y: float = Field(default=0.0)
+    sequence: int = Field(default=0, ge=0)
 
 
 class RecallRequest(BaseModel):
@@ -50,8 +51,9 @@ def _presence() -> Any:
 async def ambient_state(surface: str = "") -> JSONResponse:
     """What the surface should show. Safe to poll.
 
-    ``surface`` names the caller — the bubble passes ``surface=bubble``. It
-    does two things, and both are about the overlay rather than the message:
+    ``surface`` names the caller — only the AppKit-hosted bubble passes
+    ``surface=native-bubble``. It does two things, and both are about the
+    overlay rather than the message:
     it marks the bubble as a live host that can draw, and it collects a queued
     highlight exactly once. The restrained chat window reads the same endpoint
     without a surface and so never takes a rectangle it cannot draw.
@@ -102,8 +104,22 @@ async def ambient_position(payload: BubblePosition) -> JSONResponse:
     try:
         presence = _presence()
         x, y = presence.move_bubble(payload.x, payload.y)
+        acknowledged = bool(
+            payload.sequence
+            and presence.acknowledge_bubble_move(
+                sequence=payload.sequence, x=x, y=y
+            )
+        )
         persisted = await presence.persist_bubble_position()
-        return JSONResponse({"ok": True, "position": [x, y], "persisted": persisted})
+        return JSONResponse(
+            {
+                "ok": True,
+                "position": [x, y],
+                "persisted": persisted,
+                "acknowledged": acknowledged,
+                "sequence": payload.sequence,
+            }
+        )
     except _AMBIENT_ERRORS as exc:
         record_degradation("ambient_routes", exc, severity="debug",
                            action="bubble position not retained")

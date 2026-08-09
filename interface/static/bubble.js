@@ -35,6 +35,10 @@
   let lastRendered = "";
   let timer = null;
 
+  function hostBridge() {
+    return window.webkit?.messageHandlers?.auraBubble || null;
+  }
+
   async function api(path, options) {
     const response = await fetch(path, {
       cache: "no-store",
@@ -92,7 +96,7 @@
    */
   function forwardHighlight(highlight) {
     if (!highlight) return;
-    const bridge = window.webkit?.messageHandlers?.auraBubble;
+    const bridge = hostBridge();
     if (!bridge) return;
     bridge.postMessage({
       action: "highlight",
@@ -106,15 +110,43 @@
     });
   }
 
+  function forwardMove(command) {
+    const bridge = hostBridge();
+    if (!bridge || !command) return;
+    bridge.postMessage({
+      action: "move",
+      x: command.x,
+      y: command.y,
+      sequence: command.sequence,
+    });
+  }
+
+  function reportMeasuredSize() {
+    const bridge = hostBridge();
+    if (!bridge) return;
+    const rect = pill.getBoundingClientRect();
+    bridge.postMessage({
+      action: "resize",
+      width: Math.ceil(rect.width + 16),
+      height: Math.ceil(rect.height + 16),
+    });
+  }
+
   async function poll() {
+    timer = null;
     let speaking = false;
     try {
-      // surface=bubble marks us as a host that can actually draw, and is what
+      // native-bubble marks a WebKit host that can actually draw, and is what
       // lets her refuse to claim she pointed at something when no bubble is
       // listening. It is also what collects the rectangle.
-      const state = await api("/api/ambient/state?surface=bubble");
+      const surface = hostBridge() ? "native-bubble" : "browser-preview";
+      const state = await api(`/api/ambient/state?surface=${surface}`);
+      if (state && state.available === false) {
+        throw new Error("ambient state unavailable");
+      }
       speaking = render(state);
       forwardHighlight(state && state.highlight);
+      forwardMove(state && state.bubble_move);
       backoffMs = 0;
     } catch (error) {
       // Stay on screen showing whatever she last said rather than blanking:
@@ -124,6 +156,14 @@
     }
     const next = backoffMs || (speaking ? ACTIVE_POLL_MS : IDLE_POLL_MS);
     timer = window.setTimeout(poll, next);
+  }
+
+
+  if (window.ResizeObserver) {
+    const observer = new ResizeObserver(reportMeasuredSize);
+    observer.observe(pill);
+  } else {
+    window.addEventListener("load", reportMeasuredSize, { once: true });
   }
 
   function openChat() {
@@ -200,7 +240,11 @@
     moveTimer = window.setTimeout(() => {
       api("/api/ambient/position", {
         method: "POST",
-        body: JSON.stringify({ x: detail.x || 0, y: detail.y || 0 }),
+        body: JSON.stringify({
+          x: Number.isFinite(detail.x) ? detail.x : 0,
+          y: Number.isFinite(detail.y) ? detail.y : 0,
+          sequence: Number.isInteger(detail.sequence) ? detail.sequence : 0,
+        }),
       }).catch(() => {});
     }, 400);
   });

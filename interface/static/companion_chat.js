@@ -16,11 +16,120 @@
   const thinking = document.getElementById("thinking");
   const expand = document.getElementById("expand");
 
-  // One session for the life of the window, so a follow-up ("what about the
-  // other one?") has its antecedent. A fresh id per message would make every
-  // turn the first turn.
-  const sessionId = `companion-${Date.now().toString(36)}`;
+  const REQUEST_TIMEOUT_MS = 240000;
+  const DELIVERY_TIMEOUT_MS = 360000;
+  const DELIVERY_POLL_MS = 750;
+  const PENDING_KEY = "aura-companion-pending-v1";
   let inFlight = false;
+
+  function idempotencyKey() {
+    const id = window.crypto?.randomUUID?.()
+      || `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 14)}`;
+    return `aura-companion-${id}`;
+  }
+
+  function chatHeaders(key = "") {
+    const headers = {
+      "Content-Type": "application/json",
+      "X-Aura-Surface": "desktop-ui",
+      "X-Aura-Desktop-Request": "same-origin",
+      "X-Aura-Require-CognitiveEngine": "true",
+    };
+    if (key) headers["X-Idempotency-Key"] = key;
+    return headers;
+  }
+
+  function replyEnvelope(payload) {
+    if (payload?.result && typeof payload.result === "object") return payload.result;
+    return payload && typeof payload === "object" ? payload : {};
+  }
+
+  function replyText(payload) {
+    const data = replyEnvelope(payload);
+    return String(data.response ?? data.reply ?? data.message ?? "").trim();
+  }
+
+  function storePending(item) {
+    try { localStorage.setItem(PENDING_KEY, JSON.stringify(item)); } catch (_error) {}
+  }
+
+  function clearPending(key) {
+    try {
+      const saved = JSON.parse(localStorage.getItem(PENDING_KEY) || "null");
+      if (!saved || saved.key === key) localStorage.removeItem(PENDING_KEY);
+    } catch (_error) {
+      try { localStorage.removeItem(PENDING_KEY); } catch (_ignored) {}
+    }
+  }
+
+  async function jsonFetch(path, options, timeoutMs) {
+    const controller = new AbortController();
+    const timeout = window.setTimeout(() => controller.abort(), timeoutMs);
+    try {
+      const response = await fetch(path, {
+        cache: "no-store",
+        credentials: "same-origin",
+        ...options,
+        signal: controller.signal,
+      });
+      const payload = await response.json();
+      return { response, payload };
+    } finally {
+      window.clearTimeout(timeout);
+    }
+  }
+
+  async function deliveryStatus(key) {
+    return jsonFetch(
+      `/api/chat/delivery/${encodeURIComponent(key)}`,
+      { headers: chatHeaders() },
+      10000,
+    );
+  }
+
+  async function awaitDelivery(key) {
+    const deadline = Date.now() + DELIVERY_TIMEOUT_MS;
+    while (Date.now() < deadline) {
+      const { response, payload } = await deliveryStatus(key);
+      if (response.ok && (payload.terminal || payload.delivery_status === "terminal")) {
+        return payload;
+      }
+      if (response.status !== 202 && response.status !== 404 && response.status !== 503) {
+        throw new Error(`delivery ${response.status}`);
+      }
+      const retry = Math.max(100, Number(payload.retry_after_ms) || DELIVERY_POLL_MS);
+      await new Promise((resolve) => window.setTimeout(resolve, retry));
+    }
+    throw new Error("reply is still running; it will be recovered when this window opens again");
+  }
+
+  async function sendDurably(item) {
+    try {
+      const { response, payload } = await jsonFetch(
+        "/api/chat",
+        {
+          method: "POST",
+          headers: chatHeaders(item.key),
+          body: JSON.stringify({ message: item.message }),
+        },
+        REQUEST_TIMEOUT_MS,
+      );
+      if (response.ok && response.status !== 202) return payload;
+      if (response.status !== 202) {
+        const detail = replyText(payload) || payload.status || `chat ${response.status}`;
+        throw new Error(detail);
+      }
+    } catch (error) {
+      // Aborting the HTTP wait does not mean the fenced backend turn stopped.
+      // Resolve the durable receipt before allowing another send.
+      if (error?.name !== "AbortError") {
+        const probe = await deliveryStatus(item.key).catch(() => null);
+        if (!probe || probe.response.status === 404) throw error;
+        if (probe.response.ok && probe.payload.terminal) return probe.payload;
+      }
+    }
+    return awaitDelivery(item.key);
+  }
 
   function bubble(text, kind) {
     const node = document.createElement("div");
@@ -51,21 +160,16 @@
     autoGrow();
     busy(true);
 
+    const item = { message: text, key: idempotencyKey(), queuedAt: Date.now() };
+    storePending(item);
     try {
-      const response = await fetch("/api/chat", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ message: text, session_id: sessionId }),
-      });
-      if (!response.ok) throw new Error(`chat ${response.status}`);
-      const data = await response.json();
-      const reply = String(
-        data.response ?? data.reply ?? data.message ?? ""
-      ).trim();
+      const data = await sendDurably(item);
+      const reply = replyText(data);
       // An empty reply is reported as one. Rendering nothing would leave the
       // window looking like the message was never sent, and the person would
       // send it again.
-      bubble(reply || "(she returned nothing for that turn)", reply ? "her" : "err");
+      bubble(reply || "Aura completed the turn without a deliverable reply.", reply ? "her" : "err");
+      clearPending(item.key);
     } catch (error) {
       // The failure is shown in the transcript rather than swallowed: a
       // message that vanishes is indistinguishable from one she ignored.
@@ -118,6 +222,20 @@
     } catch (error) {
       /* an empty transcript is a fine starting state */
     }
-    input.focus();
+    try {
+      const pending = JSON.parse(localStorage.getItem(PENDING_KEY) || "null");
+      if (pending?.message && pending?.key) {
+        busy(true);
+        const recovered = await sendDurably(pending);
+        const reply = replyText(recovered);
+        bubble(reply || "Aura completed the recovered turn without a deliverable reply.", reply ? "her" : "err");
+        clearPending(pending.key);
+      }
+    } catch (error) {
+      bubble(`The earlier turn is not settled yet: ${error.message}`, "err");
+    } finally {
+      busy(false);
+      input.focus();
+    }
   })();
 })();

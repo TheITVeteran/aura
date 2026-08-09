@@ -44,7 +44,7 @@ def presence():
 @pytest.fixture
 def attached(presence):
     """A presence with a live bubble polling it."""
-    presence.note_surface_poll("bubble")
+    presence.note_surface_poll("native-bubble")
     return presence
 
 
@@ -60,7 +60,7 @@ def test_no_surface_means_no_highlight(presence):
 
 def test_a_stale_surface_does_not_count_as_attached(presence, monkeypatch):
     """A launcher that quit ten minutes ago is not somewhere to draw."""
-    presence.note_surface_poll("bubble")
+    presence.note_surface_poll("native-bubble")
     monkeypatch.setattr(
         "core.perception.ambient_presence._SURFACE_ALIVE_S", 0.0
     )
@@ -78,7 +78,7 @@ def test_only_the_bubble_counts_as_a_drawing_surface(presence):
     presence.note_surface_poll("companion")
     assert presence.drawing_surface_attached() is False
 
-    presence.note_surface_poll("bubble")
+    presence.note_surface_poll("native-bubble")
     assert presence.drawing_surface_attached() is True
 
 
@@ -95,7 +95,7 @@ def test_hidden_means_she_does_not_draw_either(attached):
 def test_a_queued_rectangle_reaches_the_polling_bubble(attached):
     assert attached.request_highlight(12, 34, 200, 50, 2.5) is True
 
-    state = attached.state(surface="bubble")
+    state = attached.state(surface="native-bubble")
 
     assert state["highlight"] is not None
     assert state["highlight"]["x"] == 12
@@ -106,8 +106,8 @@ def test_a_queued_rectangle_reaches_the_polling_bubble(attached):
 def test_a_rectangle_is_drawn_once_not_every_poll(attached):
     attached.request_highlight(12, 34, 200, 50, 2.5)
 
-    assert attached.state(surface="bubble")["highlight"] is not None
-    assert attached.state(surface="bubble")["highlight"] is None, (
+    assert attached.state(surface="native-bubble")["highlight"] is not None
+    assert attached.state(surface="native-bubble")["highlight"] is None, (
         "the same rectangle would be redrawn on every poll, forever"
     )
 
@@ -121,7 +121,7 @@ def test_the_chat_window_cannot_swallow_the_rectangle(attached):
     attached.request_highlight(12, 34, 200, 50, 2.5)
 
     assert attached.state()["highlight"] is None
-    assert attached.state(surface="bubble")["highlight"] is not None
+    assert attached.state(surface="native-bubble")["highlight"] is not None
 
 
 def test_a_stale_rectangle_is_dropped_rather_than_drawn(attached, monkeypatch):
@@ -129,7 +129,7 @@ def test_a_stale_rectangle_is_dropped_rather_than_drawn(attached, monkeypatch):
     attached.request_highlight(12, 34, 200, 50, 2.5)
     monkeypatch.setattr("core.perception.ambient_presence._HIGHLIGHT_TTL_S", -1.0)
 
-    assert attached.state(surface="bubble")["highlight"] is None
+    assert attached.state(surface="native-bubble")["highlight"] is None
 
 
 def test_polling_the_state_is_what_marks_the_surface_alive(presence):
@@ -140,7 +140,7 @@ def test_polling_the_state_is_what_marks_the_surface_alive(presence):
     """
     assert presence.drawing_surface_attached() is False
 
-    presence.state(surface="bubble")
+    presence.state(surface="native-bubble")
 
     assert presence.drawing_surface_attached() is True
 
@@ -184,7 +184,7 @@ def test_show_rect_reports_honestly_when_nothing_can_draw(monkeypatch):
 def test_show_rect_queues_when_a_surface_is_listening(monkeypatch):
     fresh = AmbientPresence()
     fresh.set_mode(PresenceMode.BUBBLE)
-    fresh.note_surface_poll("bubble")
+    fresh.note_surface_poll("native-bubble")
     monkeypatch.setattr(
         "core.perception.ambient_presence.get_ambient_presence", lambda: fresh
     )
@@ -308,7 +308,7 @@ def test_the_bubble_forwards_the_rectangle_to_its_host():
 
     source = Path("interface/static/bubble.js").read_text(encoding="utf-8")
 
-    assert "surface=bubble" in source, (
+    assert "native-bubble" in source, (
         "without the surface name nothing marks the bubble as able to draw"
     )
     assert 'action: "highlight"' in source, (
