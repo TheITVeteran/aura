@@ -1,0 +1,34 @@
+{
+ "checkpoint": "CP079",
+ "created_utc": "2026-08-09T10:39:45Z",
+ "parent_source_commit": "d2fb516fe7d50c9d11b11db979877dbc0abf1a31",
+ "subject": "resident-32B WOW pilot fail-closed handoff",
+ "contracts": {
+  "calibration": "complete control-only evidence, informative ordinary baseline, below ceiling",
+  "campaign_identity": "same immutable source, model, interpreter, difficulty, budget, slots, and token envelope",
+  "host_admission": "stable idle host with no live Aura, model worker, training, pytest, or reconciliation owner",
+  "independence": "calibration and pilot seeds must differ",
+  "pilot": "complete-engine runtime evidence must be complete and fault-free",
+  "restart": "attach to durable existing campaign state without reinstalling or resetting it",
+  "supervision": "launchd plus caffeinate with authenticated moving status"
+ },
+ "verification": {
+  "focused": "34 passed",
+  "smoke": "103 passed",
+  "ruff": "passed",
+  "compile": "passed",
+  "diff_hygiene": "passed"
+ },
+ "files": {
+  "tests/test_rlc_wow_pilot_handoff.py": "0a95649b2dc7a3e5fc2ee359a2d0245b80a744c7e3d084352c412f4e0fefa776",
+  "tools/run_rlc_wow_pilot_handoff.py": "6554b829291fad53568a80c09a090e24ec18f4921391716af942bf2848a4e962"
+ },
+ "claims": {
+  "reasoning_gain_proven": false,
+  "resident_32b_gain_proven": false,
+  "frontier_level_proven": false,
+  "fusion_authorized": false,
+  "wow_signal": false
+ },
+ "next": "freeze CP079 source, prepare and install the resident-32B control-to-complete-engine pilot chain"
+}

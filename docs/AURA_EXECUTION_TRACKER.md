@@ -40115,3 +40115,32 @@ This hardens CP074's same-episode machine-compute path. It does not prove a
 reasoning gain, resident-32B gain, frontier result, fusion authority, or
 `WOW Signal`, and the completion envelope remains `809/920` (approximately
 `87.9%`).
+
+## Checkpoint 2026-08-09-079: The WOW Pilot Has an Independent Handoff
+
+The resident-model controller could recover one reconciliation campaign, but
+the scientific transition from control calibration to a disjoint-seed
+complete-engine treatment still depended on this interactive task remaining
+available. A silent task loss could therefore leave valid calibration evidence
+unused, while a naive relaunch could reset a campaign that was already moving.
+
+The new handoff is an independently launchd-owned and caffeinate-held
+coordinator. It binds both prepared controller configs, verifies identical
+immutable source, model, interpreter, task difficulty, sample count, slot
+count, token budget, and memory envelope, and requires disjoint seeds. It waits
+for a stably idle host rather than competing with Aura, pytest, a model worker,
+another reconciliation run, or resident training. Calibration advances only
+when every control cell and evidence manifest is complete, no faults or runtime
+issues exist, and ordinary decode is above floor but below ceiling. On restart
+it attaches to durable existing controller state instead of reinstalling the
+launch agent. A completed pilot must likewise contain measured, fault-free
+complete-engine evidence.
+
+Every authenticated handoff status keeps reasoning gain, resident-32B gain,
+frontier performance, fusion authority, and `WOW Signal` false. Even a positive
+pilot only admits the powered preregistered campaign and independent replay; it
+cannot award the final claim. The handoff and campaign-controller contracts
+pass `34/34`; canonical smoke passes `103/103`; Ruff, compilation, formatting,
+and diff hygiene pass. Compact evidence is
+`artifacts/closeout/latent_cortex/cp079_wow_pilot_handoff_contract.json`.
+The completion envelope remains `809/920` (approximately `87.9%`).
