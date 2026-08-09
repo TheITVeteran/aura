@@ -40273,3 +40273,27 @@ is `artifacts/closeout/latent_cortex/cp083_incumbent_resource_binding.json`.
 The repaired real-checkpoint rerun remains the next gate. No gain, frontier,
 fusion, activation, or `WOW Signal` claim is awarded, and the completion
 envelope remains `809/920` (approximately `87.9%`).
+
+## Checkpoint 2026-08-09-084: The Complete Ledger Survives a Real Checkpoint
+
+The disjoint-seed CP083 rerun from immutable pushed source completed all
+`21/21` planned cells against Qwen2.5 1.5B. All seven complete-system receipts
+reconstruct with `accounting_complete=true`, valid model profiles and
+information envelopes, zero unknown operations, zero runtime-evidence issues,
+and structural compute estimates from `5.996e12` to `1.228e13` FLOPs per task.
+The incumbent substitution is therefore proven on the actual MLX execution
+path rather than only by fixtures.
+
+The capability outcome is separately and honestly negative for this vehicle:
+ordinary decode, preliminary best-of-three, and the complete system all scored
+`0/7`, so the battery is below the 1.5B checkpoint's useful measurement floor.
+The verdict remains
+`inconclusive_battery_uninformative_ordinary_decode_scored_zero`; no parser,
+score, prompt, or threshold was changed after observing it.
+
+External campaign hashes and compact findings are recorded in
+`artifacts/closeout/latent_cortex/cp084_real_checkpoint_complete_ledger.json`.
+This admits resident-32B difficulty calibration and the disjoint complete-system
+pilot. It does not prove an equal-compute advantage, reasoning gain, frontier
+performance, fusion authority, activation, or `WOW Signal`, and the completion
+envelope remains `809/920` (approximately `87.9%`).

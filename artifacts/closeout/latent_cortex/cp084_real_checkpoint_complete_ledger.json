@@ -1,0 +1,50 @@
+{
+  "schema": "aura.closeout.latent_cortex.cp084.v1",
+  "checkpoint": "2026-08-09-084",
+  "title": "A real checkpoint reconstructs every complete-system resource receipt",
+  "campaign": {
+    "source_commit": "859f0450fafc40ece5fd04d1c47d997f85f7acb6",
+    "model": "Qwen2.5-1.5B-Instruct-4bit",
+    "seed": 20260981,
+    "difficulty": 1,
+    "tasks": 7,
+    "committed_cells": 21,
+    "harness_faults": 0,
+    "complete_system_receipts": 7,
+    "resource_accounting_complete": 7,
+    "resource_unknown_operation_count": 0,
+    "information_accounting_complete": 7,
+    "runtime_evidence_issue_count": 0,
+    "decision": "inconclusive_battery_uninformative_ordinary_decode_scored_zero",
+    "scores": {
+      "vanilla": "0/7",
+      "preliminary_best_of_3": "0/7",
+      "complete_system_closed_book": "0/7"
+    },
+    "complete_system_structural_flops_range": {
+      "minimum": 5996429873013,
+      "maximum": 12278389045863
+    },
+    "latency_median_seconds": {
+      "vanilla": 0.4,
+      "preliminary_best_of_3": 1.2,
+      "complete_system_closed_book": 7.1
+    },
+    "artifact_sha256": {
+      "verdict.json": "79f25513f8a754fede5523b557a7312b6bdffd600e1c777be31a49600191de48",
+      "decode_fingerprint.json": "98ad0a369e9fd24b2b715f0effa72840215b352f1756fe293b0552af5b5fad95",
+      "task_commitment.json": "efc1e917d2d7efb04345e980d7f0e70f3e227711c97d69ced56b1759d2b281ac",
+      "journal.jsonl": "d498af6279eeecc9fa4cec18500e91f6f8f28c96829868f956a68cb0364da90b",
+      "status.json": "46b63c60dbe75d41051fcb9822924f8edbc84b55f3dbe1eb66074839f5bf1f83"
+    }
+  },
+  "claims": {
+    "real_checkpoint_ledger_validated": true,
+    "battery_informative": false,
+    "equal_compute_control_proven": false,
+    "reasoning_gain_proven": false,
+    "frontier_level_proven": false,
+    "fusion_authorized": false,
+    "wow_signal": false
+  }
+}
