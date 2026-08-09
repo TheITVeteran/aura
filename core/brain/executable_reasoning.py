@@ -32,6 +32,26 @@ _MAX_OBJECTIVE_CHARS = 12_000
 _MAX_STDOUT_CHARS = 32_000
 _MIN_GENERATION_WINDOW_S = 2.0
 
+EXECUTABLE_STRATEGIES = (
+    "reference_enumeration_or_simulation",
+    "independent_constraint_formulation",
+    "decomposition_with_independent_crosscheck",
+)
+_STRATEGY_GUIDANCE = {
+    "reference_enumeration_or_simulation": (
+        "Implement the simplest exhaustive enumeration or literal state simulation. "
+        "Avoid clever shortcuts and avoid assertions."
+    ),
+    "independent_constraint_formulation": (
+        "Translate every stated requirement into a separate executable predicate, "
+        "enumerate bounded candidates, and derive the result from the admitted set."
+    ),
+    "decomposition_with_independent_crosscheck": (
+        "Implement two structurally different pure computations, compare their derived "
+        "payloads, and print only when they agree. Do not compare against a literal answer."
+    ),
+}
+
 _NO_EXECUTION = re.compile(
     r"\b(?:without\s+(?:executing|running)|do\s+not\s+(?:execute|run)|"
     r"must\s+not\s+(?:execute|run))\b",
@@ -88,14 +108,33 @@ def _sha256(text: str) -> str:
     return hashlib.sha256(text.encode("utf-8", "replace")).hexdigest()
 
 
-def _program_prompt(objective: str, response_contract: str) -> str:
+def _program_prompt(
+    objective: str,
+    response_contract: str,
+    *,
+    strategy: str,
+    excluded_program_sha256s: tuple[str, ...],
+    excluded_candidate_sha256s: tuple[str, ...],
+    prior_failure_class: str,
+) -> str:
     contract = str(response_contract or "").strip()
     output_rule = (
         "Print exactly one line beginning FINAL_ANSWER: followed by one JSON "
-        f"object satisfying this public response contract: {contract}"
+        "object. Build a payload value, serialize it with json.dumps using strict JSON, "
+        f"and satisfy this public response contract: {contract}"
         if contract
         else "Print only the final answer that should be returned to the user."
     )
+    prior = ""
+    if excluded_program_sha256s or excluded_candidate_sha256s:
+        prior = (
+            "A public verifier rejected earlier computations. Their source and output "
+            "are withheld to prevent anchoring. Do not reproduce them; use the assigned "
+            "independent strategy.\n"
+            f"PRIOR_FAILURE_CLASS: {prior_failure_class or 'public_verifier_refuted'}\n"
+            f"EXCLUDED_PROGRAM_SHA256: {','.join(excluded_program_sha256s[-6:])}\n"
+            f"EXCLUDED_CANDIDATE_SHA256: {','.join(excluded_candidate_sha256s[-6:])}\n"
+        )
     return (
         "Solve the task by authoring a self-contained pure-Python scratch program.\n"
         "The program will run in an isolated, network-denied sandbox with no files, "
@@ -107,6 +146,9 @@ def _program_prompt(objective: str, response_contract: str) -> str:
         "Never assert a literal expected final answer, expected full sequence, or checksum. "
         "Assertions may check only generic invariants computed from the candidate itself, "
         "such as length, uniqueness, constraints, or an independently recomputed score.\n"
+        f"Assigned independent strategy: {strategy}. "
+        f"{_STRATEGY_GUIDANCE.get(strategy, 'Use an independent pure computation.')}\n"
+        f"{prior}"
         f"{output_rule}\n"
         "Return exactly one fenced Python code block and no prose.\n\n"
         "TASK:\n"
@@ -143,9 +185,15 @@ def _restart_prompt(
     )
 
 
-def _contract_valid(candidate: str, response_contract: str) -> bool:
+def _normalize_contract_candidate(
+    candidate: str,
+    response_contract: str,
+) -> tuple[str, bool]:
+    """Canonicalize generated values without inventing or selecting values."""
+
     if not response_contract:
-        return bool(candidate.strip())
+        normalized = candidate.strip()
+        return normalized, False
     try:
         from core.brain.llm.latent_cortex.frontier_tasks import parse_final_answer
         from core.brain.llm.latent_cortex.response_contracts import (
@@ -155,9 +203,22 @@ def _contract_valid(candidate: str, response_contract: str) -> bool:
 
         contract = parse_response_contract(response_contract)
         payload = parse_final_answer(candidate)
-        return bool(validate_response_payload(payload, contract)["valid"])
+        if validate_response_payload(payload, contract)["valid"]:
+            return candidate.strip(), False
     except (KeyError, TypeError, ValueError):
-        return False
+        pass
+    try:
+        from core.brain.llm.latent_cortex.contract_repair import (
+            parse_contract_repair_generation,
+        )
+
+        normalized = parse_contract_repair_generation(
+            candidate,
+            response_contract=response_contract,
+        )
+        return normalized, normalized != candidate.strip()
+    except (KeyError, TypeError, ValueError):
+        return "", False
 
 
 def _execution_failure_class(execution: Any) -> str:
@@ -197,10 +258,17 @@ async def derive_executable_candidate(
     deadline: float,
     response_contract: str = "",
     explicitly_enabled: bool = False,
+    strategy: str = EXECUTABLE_STRATEGIES[0],
+    excluded_program_sha256s: tuple[str, ...] = (),
+    excluded_candidate_sha256s: tuple[str, ...] = (),
+    prior_failure_class: str = "",
+    max_generation_attempts: int = 2,
 ) -> ExecutableReasoningResult:
     """Generate, execute, and receipt one bounded program-of-thought attempt."""
 
     started = time.monotonic()
+    if type(max_generation_attempts) is not int or not 1 <= max_generation_attempts <= 2:
+        raise ValueError("max_generation_attempts must be 1 or 2")
     base_receipt: dict[str, Any] = {
         "schema": EXECUTABLE_REASONING_SCHEMA,
         "status": "not_applicable",
@@ -213,6 +281,9 @@ async def derive_executable_candidate(
         "candidate_chars": 0,
         "candidate_sha256": "",
         "contract_valid": False,
+        "strategy": str(strategy),
+        "excluded_program_count": len(excluded_program_sha256s),
+        "excluded_candidate_count": len(excluded_candidate_sha256s),
     }
     if not should_use_executable_reasoning(
         objective,
@@ -234,12 +305,19 @@ async def derive_executable_candidate(
     execution: Any = None
     program = ""
     diagnostic = ""
-    for attempt_index in range(2):
+    for attempt_index in range(max_generation_attempts):
         remaining = deadline - time.monotonic()
         if remaining < _MIN_GENERATION_WINDOW_S:
             break
         prompt = (
-            _program_prompt(objective, response_contract)
+            _program_prompt(
+                objective,
+                response_contract,
+                strategy=strategy,
+                excluded_program_sha256s=excluded_program_sha256s,
+                excluded_candidate_sha256s=excluded_candidate_sha256s,
+                prior_failure_class=prior_failure_class,
+            )
             if attempt_index == 0
             else _restart_prompt(
                 objective,
@@ -279,6 +357,18 @@ async def derive_executable_candidate(
             program = ""
             continue
         program = blocks[0]
+        program_sha256 = _sha256(program)
+        if program_sha256 in excluded_program_sha256s:
+            diagnostic = "public_verifier_duplicate_program"
+            attempts.append(
+                {
+                    "attempt": attempt_index + 1,
+                    "status": "duplicate_program_rejected",
+                    "program_sha256": program_sha256,
+                    "program_chars": len(program),
+                }
+            )
+            continue
         try:
             execution = await sandbox.run(program)
         except (TimeoutError, OSError, RuntimeError, AttributeError, TypeError, ValueError):
@@ -328,9 +418,15 @@ async def derive_executable_candidate(
     candidate = str(getattr(execution, "stdout", "") or "").strip()
     if len(candidate) > _MAX_STDOUT_CHARS:
         candidate = ""
-    contract_valid = bool(getattr(execution, "ok", False)) and _contract_valid(
-        candidate, response_contract
+    normalized_candidate, representation_repaired = _normalize_contract_candidate(
+        candidate,
+        response_contract,
     )
+    contract_valid = bool(getattr(execution, "ok", False)) and bool(
+        normalized_candidate
+    )
+    if contract_valid:
+        candidate = normalized_candidate
     status = "candidate_ready" if contract_valid else (
         "sandbox_execution_failed" if not getattr(execution, "ok", False)
         else "candidate_contract_invalid"
@@ -344,6 +440,7 @@ async def derive_executable_candidate(
         "candidate_chars": len(candidate),
         "candidate_sha256": _sha256(candidate) if candidate else "",
         "contract_valid": contract_valid,
+        "representation_repaired": representation_repaired,
         "sandbox": sandbox_receipt,
         "attempts": attempts,
         "elapsed_s": round(time.monotonic() - started, 6),
@@ -366,6 +463,7 @@ async def derive_executable_candidate(
 
 __all__ = [
     "EXECUTABLE_REASONING_SCHEMA",
+    "EXECUTABLE_STRATEGIES",
     "ExecutableReasoningResult",
     "derive_executable_candidate",
     "should_use_executable_reasoning",

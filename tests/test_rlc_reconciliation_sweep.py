@@ -1071,6 +1071,18 @@ def test_complete_system_promotion_preserves_incumbent_until_verified_improvemen
     assert proxy_only == "incumbent"
     assert proxy_receipt["reason"] == "candidate_lacks_exact_public_objective_proof"
 
+    consensus, consensus_receipt = sweep._promotion_assessment(
+        verifier=_Verifier(),
+        incumbent_text="incumbent",
+        candidate_text="candidate",
+        candidate_verified=True,
+        authority="independent_executable_consensus",
+    )
+    assert consensus == "candidate"
+    assert consensus_receipt["promotion_is_probabilistic"] is True
+    assert consensus_receipt["ground_truth_verified"] is False
+    assert consensus_receipt["no_regression_guaranteed"] is False
+
 
 def _run_with_dead_engine(model, config, reason: str, termination: str):
     class _DeadResult:

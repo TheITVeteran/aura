@@ -1102,32 +1102,101 @@ class ReasoningAmplifierV2:
     # ------------------------------------------------------------------ paths
     async def _shallow_path(self, problem, guard_text, sample_budget, deadline, mode, context, fallbacks):
         """FAST/NORMAL: sample N, verifier-filter, self-consistency."""
-        executable = await self._derive_executable_candidate(
-            problem,
-            deadline=deadline,
-            context=context,
-        )
-        if executable is not None:
+        from core.brain.executable_reasoning import EXECUTABLE_STRATEGIES
+
+        excluded_programs: list[str] = []
+        excluded_candidates: list[str] = []
+        executable_candidates: list[tuple[str, Any, str, str]] = []
+        executable_was_attempted = False
+        executable_attempts = min(len(EXECUTABLE_STRATEGIES), max(1, sample_budget))
+        for operation_index in range(executable_attempts):
+            executable = await self._derive_executable_candidate(
+                problem,
+                deadline=deadline,
+                context=context,
+                strategy=EXECUTABLE_STRATEGIES[operation_index],
+                excluded_program_sha256s=tuple(excluded_programs),
+                excluded_candidate_sha256s=tuple(excluded_candidates),
+                prior_failure_class=(
+                    "public_verifier_refuted" if excluded_candidates else ""
+                ),
+            )
+            if executable is None:
+                break
             operation_receipts = context.setdefault("_cognitive_operation_receipts", [])
             operation_receipts.append(executable.receipt)
-            if executable.succeeded and executable.candidate:
-                executable_verdict = await self._verify(
-                    executable.candidate,
-                    problem,
-                    context,
-                )
-                if bool(getattr(executable_verdict, "ok", False)) and bool(
-                    getattr(executable_verdict, "checked", False)
-                ):
-                    fallbacks.append("executable_reasoning_verified")
-                    return (
-                        executable.candidate,
-                        1.0,
+            if executable.receipt.get("status") == "not_applicable":
+                break
+            executable_was_attempted = True
+            program_sha256 = str(executable.receipt.get("program_sha256") or "")
+            candidate_sha256 = str(executable.receipt.get("candidate_sha256") or "")
+            if program_sha256:
+                excluded_programs.append(program_sha256)
+            if candidate_sha256:
+                excluded_candidates.append(candidate_sha256)
+            if not executable.succeeded or not executable.candidate:
+                continue
+            executable_verdict = await self._verify(
+                executable.candidate,
+                problem,
+                context,
+            )
+            if bool(getattr(executable_verdict, "ok", False)) and bool(
+                getattr(executable_verdict, "checked", False)
+            ):
+                executable_candidates.append(
+                    (
+                        str(executable.candidate),
                         executable_verdict,
-                        1,
-                        "executable_reasoning",
+                        program_sha256,
+                        str(executable.receipt.get("strategy") or ""),
                     )
-                fallbacks.append("executable_reasoning_not_verified")
+                )
+            if self._executable_verdict_is_authoritative(executable_verdict):
+                fallbacks.append("executable_reasoning_verified")
+                return (
+                    executable.candidate,
+                    1.0,
+                    executable_verdict,
+                    operation_index + 1,
+                    "executable_reasoning",
+                )
+            fallbacks.append("executable_reasoning_refuted")
+        consensus: dict[str, list[tuple[str, Any, str, str]]] = {}
+        for row in executable_candidates:
+            consensus.setdefault(row[0], []).append(row)
+        consensus_rows = sorted(
+            (
+                rows
+                for rows in consensus.values()
+                if len({row[2] for row in rows if row[2]}) >= 2
+                and len({row[3] for row in rows if row[3]}) >= 2
+            ),
+            key=lambda rows: (-len(rows), rows[0][0]),
+        )
+        if consensus_rows:
+            winner_rows = consensus_rows[0]
+            fallbacks.append("independent_executable_consensus")
+            return (
+                winner_rows[0][0],
+                len(winner_rows) / max(1, executable_attempts),
+                winner_rows[0][1],
+                executable_attempts,
+                "independent_executable_consensus",
+            )
+        seed_candidates = list(context.get("seed_candidates") or [])
+        if executable_was_attempted and seed_candidates:
+            incumbent = str(seed_candidates[0] or "").strip()
+            if incumbent:
+                fallbacks.append("executable_budget_exhausted_retained_incumbent")
+                verdict = await self._verify(incumbent, problem, context)
+                return (
+                    incumbent,
+                    1.0,
+                    verdict,
+                    executable_attempts,
+                    "executable_reasoning_retained_incumbent",
+                )
         candidates = await self._generate_candidates(
             problem,
             guard_text,
@@ -1192,6 +1261,10 @@ class ReasoningAmplifierV2:
         *,
         deadline: float,
         context: dict[str, Any],
+        strategy: str,
+        excluded_program_sha256s: tuple[str, ...],
+        excluded_candidate_sha256s: tuple[str, ...],
+        prior_failure_class: str,
     ) -> Any | None:
         """Attempt one deliberate program-of-thought operation.
 
@@ -1226,6 +1299,14 @@ class ReasoningAmplifierV2:
                 deadline=deadline,
                 response_contract=str(context.get("response_contract") or ""),
                 explicitly_enabled=explicitly_enabled,
+                strategy=strategy,
+                excluded_program_sha256s=excluded_program_sha256s,
+                excluded_candidate_sha256s=excluded_candidate_sha256s,
+                prior_failure_class=prior_failure_class,
+                # The outer controller owns independent strategy retries. One
+                # generation per strategy keeps the total model-call budget
+                # explicit instead of multiplying hidden repair rounds.
+                max_generation_attempts=1,
             )
         except (TimeoutError, OSError, RuntimeError, AttributeError, TypeError, ValueError) as exc:
             record_degradation(
@@ -1235,6 +1316,20 @@ class ReasoningAmplifierV2:
                 action="continued with the remaining reasoning operators",
             )
             return None
+
+    @staticmethod
+    def _executable_verdict_is_authoritative(verdict: Any) -> bool:
+        """Require exact authority when a verifier exposes that distinction."""
+
+        if not bool(getattr(verdict, "ok", False)) or not bool(
+            getattr(verdict, "checked", False)
+        ):
+            return False
+        detail = getattr(verdict, "detail", None)
+        if not isinstance(detail, dict) or "assessment" not in detail:
+            return True
+        assessment = detail.get("assessment") or {}
+        return bool(assessment.get("ground_truth_verified"))
 
     async def _deep_path(self, problem, guard_text, sample_budget, deadline, mode, context, fallbacks):
         """DEEP/EXTREME/PROOF: adversarial courtroom, then optional sandbox repair.

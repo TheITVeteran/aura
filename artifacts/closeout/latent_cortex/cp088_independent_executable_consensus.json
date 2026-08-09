@@ -1,0 +1,68 @@
+{
+  "schema": "aura.rlc.independent_executable_consensus_canary.v1",
+  "checkpoint": "CP088",
+  "recorded_date": "2026-08-09",
+  "source_base_commit": "5d1c30275ac47f7fdd640df7ad384ac48aae3509",
+  "implementation_files": {
+    "core/brain/executable_reasoning.py": "c65881f5da75357904e014d521cb50bcd907219312ea3d995c63ee4d7032029d",
+    "core/brain/reasoning_amplifier_v2.py": "1a814a4b1f8e2cfa64eff27719ecfa9fc7cae5121da3445fe799b5b5bc9d9714",
+    "tools/rlc_complete_system_closed_book.py": "b5b4912ae1089f724873f5f70f883e9f9b40a9a81f5bcc5ade51c2f0f7556e09"
+  },
+  "model": {
+    "path": "/Users/bryan/.aura/live-source/training/fused-model/Aura-32B-crsm-closeout-jul1-20260701-215118",
+    "manifest_sha256": "22b540a55f108b13d67a2dd7862d55385972be38de48c409200fa1bce8bc7325"
+  },
+  "task": {
+    "task_id": "rlc_frontier:mathematics:a97dcdddfb5f48bf50c69c21e16a069a17074a8e97b23f942e2d0e5c2c80e6c3",
+    "registry_seed": 20261113,
+    "difficulty": 2,
+    "domain": "mathematics",
+    "candidate_sha256": "04d574f484a34733fa6d53cbeb4e3baabb6008b8274eb38631faf60c4843ecd7"
+  },
+  "operations": [
+    {
+      "strategy": "reference_enumeration_or_simulation",
+      "status": "candidate_ready",
+      "program_sha256": "e9da354b68fad8bedb5d0973ddf4f0747dc152fd435471fc0023d93283167c4a",
+      "candidate_sha256": "04d574f484a34733fa6d53cbeb4e3baabb6008b8274eb38631faf60c4843ecd7",
+      "generation_elapsed_s": 34.914
+    },
+    {
+      "strategy": "independent_constraint_formulation",
+      "status": "candidate_ready",
+      "program_sha256": "b8c64e21a67e6a1e199605e60505e6cc310fab12dc2c766c73af814f6dc45503",
+      "candidate_sha256": "04d574f484a34733fa6d53cbeb4e3baabb6008b8274eb38631faf60c4843ecd7",
+      "generation_elapsed_s": 36.716
+    },
+    {
+      "strategy": "decomposition_with_independent_crosscheck",
+      "status": "sandbox_execution_failed",
+      "program_sha256": "1fd292027002eff8d728718dac2bd4934b9584b1b30635d155eba5b1d1724a0c",
+      "candidate_sha256": "",
+      "generation_elapsed_s": 37.881
+    }
+  ],
+  "outcome": {
+    "strategy": "independent_executable_consensus",
+    "distinct_agreeing_programs": 2,
+    "distinct_agreeing_strategies": 2,
+    "private_posthoc_scorer_correct": true,
+    "right_to_wrong_floor_measured": false,
+    "authority": "probabilistic_consensus_not_formal_proof"
+  },
+  "verification": {
+    "focused_contract_tests": "89 passed",
+    "canonical_smoke": "103 passed",
+    "ruff": "passed",
+    "py_compile": "passed",
+    "diff_check": "passed"
+  },
+  "claims": {
+    "resident_32b_independent_consensus_live": true,
+    "reasoning_gain_proven": false,
+    "frontier_level_proven": false,
+    "fusion_authorized": false,
+    "wow_signal": false
+  },
+  "next_gate": "Run a disjoint paired multi-domain pilot and estimate candidate recovery and regression rates before any powered campaign."
+}

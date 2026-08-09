@@ -40411,3 +40411,46 @@ not end the search. That is followed by a disjoint paired multi-domain pilot,
 then the powered, independently replayed resource-advantaged campaign. Reasoning
 gain, frontier performance, fusion, activation, and `WOW Signal` remain false,
 and the completion envelope remains `809/920` (approximately `87.9%`).
+
+## Checkpoint 2026-08-09-088: Independent Programs Can Commit a New Answer
+
+CP087 still conflated three budgets. Each executable strategy could spend two
+hidden generations repairing itself, and exhausting those attempts launched a
+second ordinary sampling campaign even though the complete system already held
+ordinary decode as its incumbent. A fresh resident pilot crossed its declared
+`300s` budget before one cell completed. The trace proved that the event-loop
+deadline could not preempt synchronous in-process MLX generation and that the
+amplifier had entered this redundant fallback campaign. The pilot was stopped
+at the first obsolete cell rather than allowed to consume the rest of the
+battery.
+
+The controller now owns one explicit model generation per heterogeneous
+strategy: simple enumeration/simulation, independent predicate formulation,
+and decomposed dual implementation. Exhausting them returns the existing
+incumbent immediately; it never pays for a second baseline. Failed program
+hashes remain excluded, while matching outputs from distinct program hashes and
+distinct strategy families are now evidence rather than duplicates. Two such
+programs may form `independent_executable_consensus`. That authority is
+explicitly probabilistic: it may replace an unproven incumbent, but it never
+sets `ground_truth_verified` or `no_regression_guaranteed`. The paired campaign's
+right-to-wrong floor remains the final empirical guard.
+
+A second discarded pilot then exposed a gate failure. The resident model's
+first mathematics program had computed the correct `42` subsets and witness
+`[7,15,29]`, but the public objective verifier supports only its older modular
+and Boolean program families and therefore returned `unknown`. Under the new
+path, three distinct resident programs were generated in `34.914s`, `36.716s`,
+and `37.881s`. The enumeration and constraint programs had distinct source
+hashes and emitted the same candidate hash; the cross-check program failed in
+the sandbox. Consensus returned the shared candidate, and the untouched
+post-hoc task scorer accepted it as correct.
+
+The executable/amplifier/RLC/contract contracts pass `89/89`; canonical smoke
+passes `103/103`; Ruff, compilation, and diff hygiene pass. Compact evidence is
+`artifacts/closeout/latent_cortex/cp088_independent_executable_consensus.json`.
+This proves live resident consensus mechanics and one correct consensus result,
+not a population gain. The next gate is a disjoint paired multi-domain pilot to
+measure wrong-to-right recovery, right-to-wrong regression, strategy yield, and
+cost before selecting a powered design. Reasoning gain, frontier performance,
+fusion, activation, and `WOW Signal` remain false, and the completion envelope
+remains `809/920` (approximately `87.9%`).

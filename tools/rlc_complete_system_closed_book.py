@@ -234,12 +234,12 @@ def _promotion_assessment(
     incumbent_exact = bool(incumbent_quality.get("ground_truth_verified"))
     candidate_exact = bool(candidate_quality.get("ground_truth_verified"))
     exact_authority = authority == "public_objective_deterministic_execution"
+    consensus_authority = authority == "independent_executable_consensus"
     replace = bool(
         candidate_text
         and candidate_verified
         and candidate_contract
-        and candidate_exact
-        and exact_authority
+        and ((candidate_exact and exact_authority) or consensus_authority)
         and not incumbent_exact
     )
     final_text = candidate_text if replace else incumbent_text
@@ -247,20 +247,25 @@ def _promotion_assessment(
         "schema": "aura.rlc.closed_book_promotion.v1",
         "decision": "replace" if replace else "retain",
         "reason": (
-            "exact_candidate_replaces_unproven_incumbent"
+            (
+                "exact_candidate_replaces_unproven_incumbent"
+                if exact_authority
+                else "independent_consensus_replaces_unproven_incumbent"
+            )
             if replace
             else "candidate_not_verified"
             if not candidate_verified
             else "candidate_contract_invalid"
             if not candidate_contract
             else "candidate_lacks_exact_public_objective_proof"
-            if not candidate_exact or not exact_authority
+            if not ((candidate_exact and exact_authority) or consensus_authority)
             else "incumbent_already_exactly_verified"
         ),
         "answer_key_used": False,
         "authority": authority,
         "ground_truth_verified": candidate_exact and exact_authority,
-        "no_regression_guaranteed": replace or incumbent_exact,
+        "no_regression_guaranteed": (replace and exact_authority) or incumbent_exact,
+        "promotion_is_probabilistic": consensus_authority,
         "incumbent_ground_truth_verified": incumbent_exact,
         "candidate_ground_truth_verified": candidate_exact,
         "incumbent_score": round(incumbent_score, 6),
@@ -604,11 +609,27 @@ def _run_complete_system_closed_book(
         raise sweep.EpisodeFault(
             "amplifier verdict differs from reconstructed candidate-quality gate"
         )
-    promotion_authority = (
-        "public_objective_deterministic_execution"
-        if amplifier_candidate_quality["exact_public_objective_proof"]
-        else "candidate_quality_proxy_not_ground_truth"
-    )
+    candidate_sha256 = hashlib.sha256(amplifier_candidate.encode()).hexdigest()
+    consensus_programs = {
+        str(operation.get("program_sha256") or "")
+        for operation in amplified.receipt.cognitive_operations
+        if operation.get("status") == "candidate_ready"
+        and operation.get("candidate_sha256") == candidate_sha256
+        and operation.get("program_sha256")
+    }
+    consensus_strategies = {
+        str(operation.get("strategy") or "")
+        for operation in amplified.receipt.cognitive_operations
+        if operation.get("status") == "candidate_ready"
+        and operation.get("candidate_sha256") == candidate_sha256
+        and operation.get("strategy")
+    }
+    if amplifier_candidate_quality["exact_public_objective_proof"]:
+        promotion_authority = "public_objective_deterministic_execution"
+    elif len(consensus_programs) >= 2 and len(consensus_strategies) >= 2:
+        promotion_authority = "independent_executable_consensus"
+    else:
+        promotion_authority = "candidate_quality_proxy_not_ground_truth"
     final_text, promotion = _promotion_assessment(
         verifier=EpisodeTaskVerifier(
             objective,
@@ -992,6 +1013,7 @@ def _complete_system_evidence(
         in {
             "candidate_quality_proxy_not_ground_truth",
             "public_objective_deterministic_execution",
+            "independent_executable_consensus",
         },
         "system_promotion_authority_invalid",
     )
