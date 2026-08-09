@@ -184,6 +184,64 @@ def _taste_conversation_id(state: Any) -> str:
     return "user"
 
 
+def _render_manim_in_background(response_text: str) -> None:
+    """Render a Manim animation for this answer, on its own thread.
+
+    Lifted out of `UnitaryResponsePhase.execute`, where it was a closure over
+    a single string. It runs on a plain thread with its own event loop and
+    touches no phase state, which is exactly why it did not need to be
+    nested — and being nested inside a 3,000-line method is how a
+    self-contained side quest becomes part of the response path's apparent
+    complexity.
+
+    Owns the release of `_MANIM_RENDER_LOCK`: the caller acquires it before
+    starting the thread, so this function must release it on every path or
+    the next render never starts.
+    """
+    try:
+        from core.skills.manim_renderer import ManimInput, ManimRendererSkill
+
+        skill = ManimRendererSkill()
+        params = ManimInput(
+            task=(
+                "Generate a visual animation explaining this concept. "
+                f"Focus on the geometry or equations: {response_text[:1000]}"
+            ),
+            timeout_seconds=_MANIM_RENDER_TIMEOUT_SECONDS,
+        )
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        try:
+            res = loop.run_until_complete(skill.safe_execute(params))
+        finally:
+            asyncio.set_event_loop(None)
+            loop.close()
+        if isinstance(res, dict) and res.get("ok"):
+            logger.info(
+                "✅ Autonomous Manim generation complete: %s", res.get("file_path")
+            )
+            try:
+                from core.thought_stream import get_emitter
+
+                get_emitter().emit(
+                    "Pedagogy",
+                    f"Visual render complete: {res.get('file_path')}",
+                    level="success",
+                    category="Media",
+                )
+            except _RESPONSE_RECOVERABLE_ERRORS as emit_exc:
+                _record_response_degradation(
+                    emit_exc,
+                    "UnitaryResponse: Manim completion emission skipped: %s",
+                )
+    except _RESPONSE_RECOVERABLE_ERRORS as exc:
+        _record_response_degradation(
+            exc, "UnitaryResponse: autonomous Manim failed: %s"
+        )
+    finally:
+        _MANIM_RENDER_LOCK.release()
+
+
 class UnitaryResponsePhase(Phase):
     """
     Liberated Response Generation.
@@ -7085,57 +7143,10 @@ class UnitaryResponsePhase(Phase):
                             "🎬 Math/Physics detected in response. Autonomously launching Manim generation..."
                         )
 
-                        def _dispatch_manim():
-                            try:
-                                from core.skills.manim_renderer import (
-                                    ManimInput,
-                                    ManimRendererSkill,
-                                )
-
-                                skill = ManimRendererSkill()
-                                params = ManimInput(
-                                    task=(
-                                        "Generate a visual animation explaining this concept. "
-                                        f"Focus on the geometry or equations: {response_text[:1000]}"
-                                    ),
-                                    timeout_seconds=_MANIM_RENDER_TIMEOUT_SECONDS,
-                                )
-                                loop = asyncio.new_event_loop()
-                                asyncio.set_event_loop(loop)
-                                try:
-                                    res = loop.run_until_complete(skill.safe_execute(params))
-                                finally:
-                                    asyncio.set_event_loop(None)
-                                    loop.close()
-                                if isinstance(res, dict) and res.get("ok"):
-                                    logger.info(
-                                        "✅ Autonomous Manim generation complete: %s",
-                                        res.get("file_path"),
-                                    )
-                                    try:
-                                        from core.thought_stream import get_emitter
-
-                                        get_emitter().emit(
-                                            "Pedagogy",
-                                            f"Visual render complete: {res.get('file_path')}",
-                                            level="success",
-                                            category="Media",
-                                        )
-                                    except _RESPONSE_RECOVERABLE_ERRORS as emit_exc:
-                                        _record_response_degradation(
-                                            emit_exc,
-                                            "UnitaryResponse: Manim completion emission skipped: %s",
-                                        )
-                            except _RESPONSE_RECOVERABLE_ERRORS as e:
-                                _record_response_degradation(
-                                    e, "UnitaryResponse: autonomous Manim failed: %s"
-                                )
-                            finally:
-                                _MANIM_RENDER_LOCK.release()
-
                         try:
                             threading.Thread(
-                                target=_dispatch_manim,
+                                target=_render_manim_in_background,
+                                args=(response_text,),
                                 name="aura-manim-render",
                                 daemon=True,
                             ).start()

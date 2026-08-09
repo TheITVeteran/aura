@@ -1,7 +1,7 @@
 {
   "threshold_lines": 400,
   "tracked": 71,
-  "total_lines": 66232,
+  "total_lines": 66185,
   "functions": {
     "core/brain/cognitive_engine.py::CognitiveEngine._direct_desktop_quick_reply": {
       "lines": 971,
@@ -284,8 +284,8 @@
       "returns": 16
     },
     "core/phases/response_generation_unitary.py::UnitaryResponsePhase.execute": {
-      "lines": 3084,
-      "complexity": 617,
+      "lines": 3037,
+      "complexity": 613,
       "returns": 47
     },
     "core/runtime/action_executor.py::ActionExecutor.execute": {
