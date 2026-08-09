@@ -40964,3 +40964,29 @@ The next gate is a fresh immutable-source four-arm resident-32B pilot. The old
 gain, frontier performance, fusion authority, activation authority, or
 `WOW Signal` is claimed, and the completion envelope remains `809/920`
 (approximately `87.9%`).
+
+## Checkpoint 2026-08-09-104: The Repaired WOW Pilot Is Committing Cells
+
+The fresh four-arm resident-32B pilot now runs from the detached, clean source
+worktree at commit `b62bd4fa78fd28fe62cb51f7677614774c3482fc`. Its controller
+configuration binds the unchanged model manifest, task registry, seven disjoint
+difficulty-1 tasks, seed `20261121`, 320-token decode budget, four declared arms,
+and the CP103 implementation. The first preparation attempt used a `sweep/`
+child where the controller expected a campaign root; it was never launched or
+allowed to create a cell. The admitted campaign has the unambiguous identity
+`cp103-wow-pilot-repaired-20260809`.
+
+The OS lineage is live and independently inspectable: `launchd` owns controller
+PID `65957`, its exact `caffeinate -dims` child is PID `65959`, and the controller
+owns source-bound sweep process group `66022`. The HMAC-authenticated heartbeat
+reports moving process CPU, model-load completion, valid resident memory, and
+durable journal progress. Four of 28 cells had committed without an
+infrastructure error at checkpoint capture.
+
+Launch identity is recorded in
+`artifacts/closeout/latent_cortex/cp104_repaired_wow_pilot_launch.json`. The
+campaign continues independently of Codex and the foreground Aura app. A moving
+campaign is not a capability result: reasoning gain, frontier performance,
+fusion authority, activation authority, and `WOW Signal` remain false until all
+four arms complete and the source-bound verdict validates. The completion
+envelope remains `809/920` (approximately `87.9%`).

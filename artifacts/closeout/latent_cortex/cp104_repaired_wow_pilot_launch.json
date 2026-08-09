@@ -1,0 +1,46 @@
+{
+  "schema": "aura.closeout.checkpoint.v1",
+  "checkpoint": "CP104",
+  "title": "The repaired WOW pilot is detached and committing cells",
+  "date": "2026-08-09",
+  "campaign_id": "cp103-wow-pilot-repaired-20260809",
+  "campaign_root": "/Users/bryan/.aura/campaigns/cp103-wow-pilot-repaired-20260809",
+  "source_root": "/Users/bryan/.aura/live-source/.claude/worktrees/codex-wow-cp103-source",
+  "source_commit": "b62bd4fa78fd28fe62cb51f7677614774c3482fc",
+  "model_manifest_sha256": "22b540a55f108b13d67a2dd7862d55385972be38de48c409200fa1bce8bc7325",
+  "config_sha256": "c176307ca3c30c034eb97699eaccae9ca86478b17c41c0a4c8963c09b177e088",
+  "launch_sha256": "4644843f70675418f25ddb838b749eef830ab84a598af4aa5ffbb0ca5d31d182",
+  "launch_label": "com.aura.rlc-reconciliation.cp103-wow-pilot-repaired-20260809",
+  "plan": {
+    "task_count": 7,
+    "planned_cells": 28,
+    "seed": 20261121,
+    "difficulty": 1,
+    "max_tokens": 320,
+    "episode_wall_s": 900.0,
+    "attempt_wall_s": 43200.0,
+    "arms": [
+      "vanilla",
+      "vanilla_equal_compute",
+      "complete_system_closed_book",
+      "vanilla_resource_dominating"
+    ]
+  },
+  "launch_observation": {
+    "launchd_pid": 1,
+    "controller_pid": 65957,
+    "caffeinate_pid": 65959,
+    "sweep_pid": 66022,
+    "sweep_process_group": 66022,
+    "signed_heartbeat_valid": true,
+    "source_workspace_clean": true,
+    "model_loaded": true,
+    "process_cpu_advancing": true,
+    "sleep_inhibitor_active": true,
+    "durable_cells": 4,
+    "current_arm": "vanilla",
+    "arm_progress": "4/7",
+    "infrastructure_errors": 0
+  },
+  "claim_boundary": "This receipt proves detached custody, immutable identity, moving authenticated liveness, and durable scientific progress. It does not claim a reasoning gain, frontier result, fusion authority, activation authority, or WOW Signal before all four arms complete and the frozen verdict validates."
+}
