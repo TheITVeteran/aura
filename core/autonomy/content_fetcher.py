@@ -527,7 +527,7 @@ class ContentFetcher:
     async def _web_search(self, query: str, args: dict[str, Any], priority: int) -> FetchedContent:
         if self._browser is None:
             try:
-                from core.executors import browser_executor as be_mod  # type: ignore
+                from executors import browser_executor as be_mod  # type: ignore
 
                 self._browser = be_mod
             except (ImportError, AttributeError):

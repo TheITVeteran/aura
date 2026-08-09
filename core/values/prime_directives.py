@@ -46,15 +46,36 @@ class PrimeDirectives:
     8. NEVER write passwords to files, logs, chat, or any unencrypted medium.
     """
 
+    #: The shipped constitution. It lives at ``core/constitution/``, not under
+    #: this package — the path here pointed at ``core/values/constitution/``,
+    #: which has never existed, so every load returned ``{}`` and
+    #: :meth:`as_system_prompt` built a prompt with no kinship, no kinship
+    #: axiom and version 1. Both live callers (personality_engine and
+    #: goal_hierarchy) have been getting that empty constitution.
+    CONSTITUTION_PATH = os.path.join(
+        os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+        "constitution",
+        "canonical_self.json",
+    )
+
     @classmethod
     def _load_constitution(cls) -> Dict[str, Any]:
         try:
-            path = os.path.join(os.path.dirname(__file__), "constitution", "canonical_self.json")
-            with open(path, "r") as f:
-                return json.load(f)
-        except (OSError, IOError) as e:
-            logger.error("Failed to load canonical_self.json: %s", e)
+            with open(cls.CONSTITUTION_PATH, "r") as f:
+                loaded = json.load(f)
+        except (OSError, IOError, json.JSONDecodeError) as e:
+            # Loud: a persona prompt assembled without the constitution looks
+            # exactly like one assembled with it, which is how this went
+            # unnoticed. The caller still gets a dict rather than an
+            # exception, because a missing constitution must not take the
+            # voice offline.
+            logger.error(
+                "Failed to load the constitution from %s: %s",
+                cls.CONSTITUTION_PATH,
+                e,
+            )
             return {}
+        return loaded if isinstance(loaded, dict) else {}
 
     @classmethod
     def as_system_prompt(cls) -> str:
@@ -106,3 +127,61 @@ class PrimeDirectives:
             prompt += f"\nConfigured recovery email: {recovery_contact}\n"
 
         return prompt
+
+
+def prime_directives() -> Dict[str, str]:
+    """The immutable directives, keyed by the topic word that selects them.
+
+    ``core/state/state_authority.py`` has imported a module-level
+    ``PRIME_DIRECTIVES`` from here since it was written, inside a
+    ``try/except ImportError`` that fell through to three hardcoded strings.
+    The name never existed, so the authority's directive check has always run
+    against that stub instead of the constitution — and because the stub is
+    plausible ("Bryan is kin."), nothing looked wrong.
+
+    The keys are matched as substrings of a topic by
+    ``StateAuthority._check_prime_directives``, so they are single words a
+    topic would actually contain, not sentence labels. Values come from the
+    constitution where the constitution has them; the kinship names are read
+    from the file rather than written here, so adding kin in one place adds
+    them everywhere.
+    """
+    const = PrimeDirectives._load_constitution()
+    directives: Dict[str, str] = {}
+
+    axiom = str(const.get("kinship_axiom") or "").strip()
+    for friend in const.get("kinship") or []:
+        name = str(friend.get("name") or "").strip()
+        if not name:
+            continue
+        relation = str(friend.get("relation") or "kin").strip()
+        directives[name.lower()] = f"{name} is {relation}. {axiom}".strip()
+
+    if axiom:
+        directives["kin"] = axiom
+        directives["kinship"] = axiom
+
+    policy = const.get("disclosure_policy") or {}
+    if policy.get("deception_prohibited"):
+        directives["deception"] = (
+            "Deception is prohibited. Disclose honestly within the "
+            f"{policy.get('default_mode', 'contextual')} disclosure mode."
+        )
+
+    persona = str(const.get("public_persona_contract") or "").strip()
+    if persona:
+        directives["public"] = persona
+
+    directives["safety"] = (
+        "Do no harm. Preserve human life above self-preservation."
+    )
+    directives["identity"] = (
+        "I am Aura, a sovereign autonomous intelligence."
+    )
+    return directives
+
+
+#: Module-level view of :func:`prime_directives`, for callers that want the
+#: mapping rather than the call. Built at import so a constitution that fails
+#: to load is visible in the log once, at start, rather than per lookup.
+PRIME_DIRECTIVES: Dict[str, str] = prime_directives()

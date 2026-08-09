@@ -80,9 +80,12 @@ async def _research(topic: str, *, want_code: bool = True, max_notes: int = 6) -
     # 2) the live web (implementation patterns + literal reference code)
     if want_code:
         try:
-            from core.skills.web_search import WebSearchSkill
+            from core.skills.web_search import EnhancedWebSearchSkill
 
-            res = await WebSearchSkill().execute({"query": topic, "max_results": 3})
+            res = await EnhancedWebSearchSkill().execute(
+                {"query": topic, "max_results": 3},
+                {"origin": "self_taught_builder"},
+            )
             for item in (res.get("results") or [])[:3]:
                 text = str(item.get("snippet") or item.get("content") or item.get("title") or "")
                 if text.strip():
@@ -128,10 +131,15 @@ async def _recall(spec: str, *, limit: int = 4) -> list[str]:
     domain = _domain_of(spec)
     lessons: list[str] = []
     try:
-        from core.memory.memory_facade import get_memory
+        from core.container import ServiceContainer
+        from core.service_names import ServiceNames
 
-        memory = get_memory()
-        hits = memory.recall(f"build lesson {domain}", limit=limit) if memory else []
+        memory = ServiceContainer.get(ServiceNames.MEMORY_FACADE, default=None)
+        hits = (
+            memory.search_sync(f"build lesson {domain}", limit=limit)
+            if memory is not None and hasattr(memory, "search_sync")
+            else []
+        )
         for h in hits or []:
             content = str(getattr(h, "content", "") or (h.get("content") if isinstance(h, dict) else ""))
             if "Build lesson" in content:

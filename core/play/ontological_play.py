@@ -39,6 +39,32 @@ from typing import Any, Dict, List, Optional, Tuple
 logger = logging.getLogger("Aura.OntologicalPlay")
 
 
+def _trigrams(text: str) -> frozenset[str]:
+    padded = f"  {' '.join(text.lower().split())} "
+    return frozenset(padded[i : i + 3] for i in range(max(0, len(padded) - 2)))
+
+
+def _lexical_distance(a: str, b: str) -> float:
+    """How unalike two seed concepts read, in [0, 1].
+
+    Jaccard distance over character trigrams, which catches both shared words
+    and shared morphology ("crystallography"/"crystal" are near; "moss"/
+    "binary search" are far). Deterministic across processes — the score
+    decides what a play session writes into memory, and a promotion rule that
+    depends on ``PYTHONHASHSEED`` is not a rule.
+
+    Two seeds that are the same string are distance 0; two with no trigram in
+    common are 1.
+    """
+    ta, tb = _trigrams(a), _trigrams(b)
+    if not ta and not tb:
+        return 0.0
+    union = ta | tb
+    if not union:
+        return 0.0
+    return 1.0 - (len(ta & tb) / len(union))
+
+
 @dataclass
 class PlayCombination:
     seed_a: str
@@ -131,22 +157,27 @@ class OntologicalPlayEngine:
 
     def _propose_combination(self, seeds: Tuple[str, str]) -> PlayCombination:
         a, b = seeds
-        # Lightweight, deterministic combinator. Real combinator hands the
-        # pair to the predictive coding loop or the LLM; here we score by
-        # the lexical distance between the seeds and a small heuristic on
-        # consistency vs novelty so play remains testable in unit tests.
-        novelty = min(1.0, max(0.0, abs(hash(a) ^ hash(b)) % 100 / 100.0))
+        # The comment here used to promise "the lexical distance between the
+        # seeds" and then score `abs(hash(a) ^ hash(b)) % 100`. Python's
+        # string hash is salted per process, so the number was not a distance
+        # and not even stable: the same pair scored differently every boot,
+        # and NOVELTY_PROMOTE_THRESHOLD decided what got written into memory
+        # on the strength of it. It is now the distance the comment claimed.
+        #
+        # There was also a `from core.consciousness.predictive_coding import
+        # predict_consistency` here, guarded by ImportError. Neither the
+        # module nor the function has ever existed, so the line below it never
+        # ran and consistency was always the fallback. Removed rather than
+        # repointed: no predictor in this codebase answers that question, and
+        # a guarded import of a name nobody defines is how a missing feature
+        # disguises itself as a present one.
+        novelty = _lexical_distance(a, b)
         consistency = max(0.0, 1.0 - novelty * 0.4)
         proposal = f"What if {a} were structured like {b}?"
         notes = [
             f"surface contrast: {a} vs {b}",
             f"shared dimension to test: continuity, scale, rhythm, persistence",
         ]
-        try:
-            from core.consciousness.predictive_coding import predict_consistency
-            consistency = float(predict_consistency(a, b))
-        except (ImportError, AttributeError, RuntimeError):
-            pass  # no-op: intentional
         return PlayCombination(
             seed_a=a,
             seed_b=b,

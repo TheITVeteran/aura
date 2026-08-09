@@ -66,6 +66,48 @@ DESKTOP_TASK_RETRY_SAFE_ACTIONS: frozenset[str] = frozenset(
 )
 
 
+#: Actions whose effect this machine cannot take back.
+#:
+#: Distinct from the retry-safe set above, which answers a different
+#: question: whether running a step *twice* is harmless. ``type`` is neither
+#: retry-safe nor irreversible; ``create_folder`` is reversible but not
+#: retry-safe. Conflating the two would let a planner treat "safe to repeat"
+#: as "safe to do".
+#:
+#: The line drawn here is durable state outside Aura that no later step can
+#: restore: a file overwritten or moved, a document written into an app, a
+#: system setting changed, or an arbitrary command or script whose effect
+#: this module cannot see. Actions that only read, or that a person can close
+#: or delete, are not on the list.
+DESKTOP_TASK_IRREVERSIBLE_ACTIONS: frozenset[str] = frozenset(
+    {
+        "move_file",
+        "write_text_file",
+        "render_text_pdf",
+        "write_in_app",
+        "create_note",
+        "system_control",
+        # Opaque by construction: the contract cannot read what a command or
+        # a script will do, and "unknown" belongs on the irreversible side.
+        "run_command",
+        "run_applescript",
+    }
+)
+
+
+def irreversible_actions() -> frozenset[str]:
+    """The action kinds that cannot be undone.
+
+    ``core/advanced_cognition/world_model.py`` has asked this module this
+    question since it was written, inside a ``try/except ImportError`` that
+    silently answered "nothing is irreversible" because the function did not
+    exist. The caller's own destructive-verb fallback kept the damage
+    contained, but every action whose name lacked the word "delete" — a file
+    overwrite, a system setting — was scored as reversible.
+    """
+    return DESKTOP_TASK_IRREVERSIBLE_ACTIONS
+
+
 def desktop_task_action_schema() -> str:
     return "|".join(DESKTOP_TASK_ALLOWED_ACTIONS)
 

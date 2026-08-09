@@ -507,7 +507,7 @@ def _get_belief_authority() -> Any | None:
     # nothing else can see is not a governed belief change. Absent authority
     # means the revision is not registered (the caller records that honestly).
     try:
-        from core.service_container import ServiceContainer
+        from core.container import ServiceContainer
 
         return ServiceContainer.get("belief_authority", default=None)
     except (ImportError, AttributeError, RuntimeError):

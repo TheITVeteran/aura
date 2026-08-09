@@ -235,7 +235,7 @@ def condition_for(name: str, *, capability_engine: Any = None) -> CapabilityCond
 
     if capability_engine is None:
         try:
-            from core.service_container import ServiceContainer
+            from core.container import ServiceContainer
 
             capability_engine = ServiceContainer.get("capability_engine", default=None)
         except (ImportError, RuntimeError, AttributeError) as exc:

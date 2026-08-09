@@ -5,6 +5,7 @@ from core.state.state_authority import (
     get_state_authority,
     register_state_authority,
 )
+from core.values.prime_directives import PRIME_DIRECTIVES
 
 
 def setup_function():
@@ -35,12 +36,25 @@ class VectorSource:
 
 
 def test_truth_prefers_prime_directive_over_runtime_context():
+    """Runtime context cannot demote kin.
+
+    This asserted the literal string "Bryan is kin." — which was not the
+    constitution, it was the hardcoded stub the authority fell back to when
+    `from core.values.prime_directives import PRIME_DIRECTIVES` raised
+    ImportError, because that name had never existed. The test therefore
+    passed only while the directive loader was broken, and would have failed
+    the moment it was fixed. Assert the property instead: whatever the
+    constitution says about Bryan is what comes back, at IMMUTABLE tier,
+    regardless of what the caller's context claims.
+    """
     authority = StateAuthority()
 
     truth, tier = authority.get_truth("bryan", context={"bryan": "ordinary user"})
 
-    assert truth == "Bryan is kin."
     assert tier is TruthTier.IMMUTABLE
+    assert "ordinary user" not in truth
+    assert truth == PRIME_DIRECTIVES["bryan"]
+    assert "Bryan" in truth
 
 
 def test_truth_reads_registered_knowledge_source():

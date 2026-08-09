@@ -50,7 +50,7 @@ def register_ops_services(container, is_proxy: bool = False):
     # Resilience Engine
     def create_resilience():
         try:
-            from core.resilience.resilience import ResilienceEngine
+            from core.soma.resilience_engine import ResilienceEngine
             return ResilienceEngine()
         except ImportError: return None
     container.register('resilience', create_resilience, lifetime=SERVICE_LIFETIME_SINGLETON, required=False)

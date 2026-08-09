@@ -162,9 +162,9 @@ async def realize_model_scenarios(args: dict[str, str], context: dict[str, Any])
     # Outcome simulation per option (best-effort), then a preference-consistent choice.
     sims: dict[str, Any] = {}
     try:
-        from core.sim.outcome_simulator import OutcomeSimulator
+        from core.sim.outcome_simulator import OutcomeSimulationEngine
 
-        simulator = OutcomeSimulator(orchestrator=context.get("orchestrator"))
+        simulator = OutcomeSimulationEngine(orchestrator=context.get("orchestrator"))
         for opt in options[:4]:
             result = await simulator.simulate(opt, context=context, n=3, timeout=12.0)
             sims[opt] = [getattr(t, "summary", str(t)) for t in getattr(result, "trajectories", [])][:3]

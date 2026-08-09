@@ -34,7 +34,7 @@ def register_sensory_services(container):
     # 56. Vision System
     def create_vision():
         try:
-            from core.senses.vision import VisionSystem
+            from core.perception.sensory_integration import VisionSystem
             return VisionSystem()
         except ImportError:
             return None

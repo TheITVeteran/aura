@@ -826,9 +826,12 @@ async def _research(goal: str, max_notes: int = 4) -> list[str]:
     except (ImportError, RuntimeError, OSError, TypeError, ValueError):
         pass
     try:
-        from core.skills.web_search import WebSearchSkill
+        from core.skills.web_search import EnhancedWebSearchSkill
 
-        res = await WebSearchSkill().execute({"query": goal, "max_results": 2})
+        res = await EnhancedWebSearchSkill().execute(
+            {"query": goal, "max_results": 2},
+            {"origin": "self_code_improver"},
+        )
         for item in (res.get("results") or [])[:2]:
             t = str(item.get("snippet") or item.get("content") or item.get("title") or "")
             if t.strip():

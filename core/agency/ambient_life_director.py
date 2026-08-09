@@ -244,11 +244,9 @@ class AmbientLifeDirector:
             if value is not None:
                 candidates.append(_clamp(value))
         try:
-            from core.runtime.memory_guard import current_pressure
+            from core.runtime.pressure_stall import Resource, pressure
 
-            pressure = current_pressure()
-            if isinstance(pressure, dict):
-                candidates.append(_clamp(pressure.get("pressure", 0.0)))
+            candidates.append(_clamp(pressure(Resource.MEMORY)))
         except (ImportError, AttributeError, RuntimeError, TypeError, ValueError):
             pass
         return max(candidates, default=0.0)
