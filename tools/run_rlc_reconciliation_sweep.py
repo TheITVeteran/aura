@@ -545,15 +545,18 @@ def _build_config(
     )
 
 
-def _render_prompt(tokenizer, task) -> list[int]:
-    content = task.public.prompt
+def _render_objective(tokenizer, content: str) -> list[int]:
     return list(
         tokenizer.apply_chat_template(
-            [{"role": "user", "content": content}],
+            [{"role": "user", "content": str(content)}],
             add_generation_prompt=True,
             tokenize=True,
         )
     )
+
+
+def _render_prompt(tokenizer, task) -> list[int]:
+    return _render_objective(tokenizer, task.public.prompt)
 
 
 def _render_prompt_text(tokenizer, task) -> str:
@@ -760,6 +763,7 @@ def _run_vanilla_resource_dominating(
     task,
     target_resource: dict[str, Any],
     target_information: dict[str, Any],
+    treatment_acquisition: dict[str, Any] | None,
     campaign_seed: int,
     max_samples: int = 128,
 ) -> tuple[
@@ -780,6 +784,7 @@ def _run_vanilla_resource_dominating(
     """
 
     from core.brain.llm.latent_cortex.resource_accounting import (
+        ModelComputeProfile,
         ResourceLedger,
         certify_control_resource_dominance,
         policy_sha256,
@@ -870,9 +875,130 @@ def _run_vanilla_resource_dominating(
     if control_information["policies"].get("verifier") != expected_verifier_policy:
         raise RuntimeError("resource-dominating verifier differs from treatment")
 
+    profile = ModelComputeProfile.from_receipt(target_resource["model_profile"])
+    setup_ledger = ResourceLedger(profile)
+    control_acquisition: dict[str, Any] = {
+        "schema": "aura.rlc.resource_control_acquisition.v1",
+        "status": "not_required",
+    }
+    acquisition = dict(treatment_acquisition or {})
+    if acquisition.get("status") in {
+        "completed_new_context",
+        "completed_no_new_context",
+    }:
+        import asyncio
+
+        from core.brain.cortex_compute_acquisition import acquire_cognitive_compute
+        from core.brain.llm.latent_cortex.cognitive_context import (
+            normalize_cognitive_context,
+        )
+        from core.brain.llm.latent_cortex.epistemic_state import OperationKind
+        from tools.rlc_complete_system_closed_book import (
+            _contextual_continuation_objective,
+        )
+
+        request = acquisition.get("request")
+        first_text = str(acquisition.get("input_candidate") or "")
+        expected_context = normalize_cognitive_context(
+            list(acquisition.get("acquired_context") or [])
+        )
+        if not isinstance(request, dict) or not first_text:
+            raise RuntimeError("resource-dominating acquisition replay is incomplete")
+        if (
+            acquisition.get("status") == "completed_new_context"
+            and not expected_context
+        ) or (
+            acquisition.get("status") == "completed_no_new_context"
+            and expected_context
+        ):
+            raise RuntimeError("resource-dominating acquisition status differs from context")
+        if acquisition.get("input_candidate_sha256") != hashlib.sha256(
+            first_text.encode("utf-8")
+        ).hexdigest():
+            raise RuntimeError("resource-dominating acquisition candidate differs")
+        action = OperationKind(request.get("action"))
+        timeout_s = acquisition.get("timeout_s")
+        if (
+            isinstance(timeout_s, bool)
+            or not isinstance(timeout_s, (int, float))
+            or not math.isfinite(float(timeout_s))
+            or not 0.1 <= float(timeout_s) <= 12.0
+        ):
+            raise RuntimeError("resource-dominating acquisition timeout is invalid")
+        compute = asyncio.run(
+            acquire_cognitive_compute(
+                objective=task.public.prompt,
+                first_text=first_text,
+                action=action,
+                timeout_s=float(timeout_s),
+            )
+        )
+        observed_context = normalize_cognitive_context(list(compute.context))
+        if observed_context != expected_context:
+            raise RuntimeError("resource-dominating acquisition replay differs")
+        continuation_objective = task.public.prompt
+        if observed_context:
+            continuation_objective = _contextual_continuation_objective(
+                task.public.prompt,
+                observed_context,
+            )
+            if (
+                continuation_objective != acquisition.get("continuation_objective")
+                or hashlib.sha256(continuation_objective.encode("utf-8")).hexdigest()
+                != acquisition.get("continuation_objective_sha256")
+            ):
+                raise RuntimeError("resource-dominating continuation prompt differs")
+        if _render_objective(tokenizer, continuation_objective) != prompt_tokens:
+            raise RuntimeError("resource-dominating continuation prompt differs")
+        request_bytes = len(
+            json.dumps(request, sort_keys=True, separators=(",", ":")).encode("utf-8")
+        )
+        result_bytes = len(
+            json.dumps(
+                compute.receipt,
+                sort_keys=True,
+                separators=(",", ":"),
+                default=str,
+            ).encode("utf-8")
+        )
+        setup_ledger.charge(
+            "matched_cognitive_acquisition",
+            tool_calls=1,
+            tool_input_bytes=request_bytes,
+            tool_result_bytes=result_bytes,
+            host_scalar_ops=max(1, request_bytes + result_bytes),
+        )
+        control_acquisition = {
+            "schema": "aura.rlc.resource_control_acquisition.v1",
+            "status": "replayed_identically",
+            "treatment_status": acquisition.get("status"),
+            "action": action.value,
+            "objective": task.public.prompt,
+            "request": request,
+            "timeout_s": float(timeout_s),
+            "input_candidate_sha256": hashlib.sha256(
+                first_text.encode("utf-8")
+            ).hexdigest(),
+            "context": observed_context,
+            "continuation_objective": continuation_objective,
+            "continuation_objective_sha256": hashlib.sha256(
+                continuation_objective.encode("utf-8")
+            ).hexdigest(),
+            "compute_receipt": compute.receipt,
+        }
+    elif acquisition.get("status") not in {
+        "",
+        None,
+        "not_requested",
+        "completed_no_new_context",
+        "withheld_by_closed_book_contract",
+    }:
+        raise RuntimeError("resource-dominating treatment acquisition status is invalid")
+
     outputs: list[str] = []
     scores: list[float] = []
-    resources: list[dict[str, Any]] = []
+    setup_resource = setup_ledger.to_receipt()
+    resources: list[dict[str, Any]] = [setup_resource]
     candidates: list[dict[str, Any]] = []
     generated_tokens = 0
     aggregate: dict[str, Any] | None = None
@@ -945,6 +1071,8 @@ def _run_vanilla_resource_dominating(
         "sample_limit": int(max_samples),
         "sample_count": len(outputs),
         "generated_tokens": generated_tokens,
+        "setup_resource_accounting": setup_resource,
+        "control_acquisition": control_acquisition,
         "candidates": candidates,
         "selected_index": selected_index,
         "selected_text_sha256": hashlib.sha256(selected.encode("utf-8")).hexdigest(),
@@ -1071,7 +1199,7 @@ def _runtime_receipt_issues(
             allow_nan=False,
         )
     except (TypeError, ValueError):
-        return ["resource_control_runtime_receipt_noncanonical"]
+        return ["runtime_receipt_noncanonical"]
     observed_sha = hashlib.sha256(canonical.encode("utf-8")).hexdigest()
     issues: list[str] = []
     if observed_sha != expected_sha:
@@ -1093,6 +1221,8 @@ def _runtime_receipt_issues(
 def _resource_dominating_control_receipt_issues(
     out_dir: Path,
     cell: dict[str, Any],
+    *,
+    task: Any | None = None,
 ) -> list[str]:
     """Reconstruct an advantaged control from its complete persisted receipt."""
 
@@ -1146,6 +1276,8 @@ def _resource_dominating_control_receipt_issues(
     ):
         issues.append("resource_control_candidate_set_invalid")
         return sorted(set(issues))
+    if task is not None and receipt.get("task_id") != task.task_id:
+        issues.append("resource_control_task_binding_mismatch")
 
     from core.brain.llm.latent_cortex.resource_accounting import (
         ResourceLedger,
@@ -1154,9 +1286,96 @@ def _resource_dominating_control_receipt_issues(
         validate_resource_receipt,
     )
 
+    try:
+        setup_resource = validate_resource_receipt(
+            receipt.get("setup_resource_accounting")
+        )
+    except (TypeError, ValueError):
+        issues.append("resource_control_setup_resource_invalid")
+        setup_resource = None
+    control_acquisition = receipt.get("control_acquisition")
+    if not isinstance(control_acquisition, dict) or control_acquisition.get(
+        "schema"
+    ) != "aura.rlc.resource_control_acquisition.v1":
+        issues.append("resource_control_acquisition_invalid")
+    elif control_acquisition.get("status") == "replayed_identically":
+        from core.brain.llm.latent_cortex.cognitive_context import (
+            normalize_cognitive_context,
+        )
+        from tools.rlc_complete_system_closed_book import (
+            _contextual_continuation_objective,
+        )
+
+        try:
+            normalized_context = normalize_cognitive_context(
+                list(control_acquisition.get("context") or [])
+            )
+            treatment_status = control_acquisition.get("treatment_status")
+            if treatment_status == "completed_new_context":
+                continuation_objective = _contextual_continuation_objective(
+                    str(control_acquisition.get("objective") or ""),
+                    normalized_context,
+                )
+            elif treatment_status == "completed_no_new_context" and not normalized_context:
+                continuation_objective = str(
+                    control_acquisition.get("objective") or ""
+                ).strip()
+            else:
+                raise ValueError("acquisition treatment status differs from context")
+        except (TypeError, ValueError):
+            issues.append("resource_control_acquisition_context_invalid")
+        else:
+            if (
+                continuation_objective
+                != control_acquisition.get("continuation_objective")
+                or hashlib.sha256(continuation_objective.encode("utf-8")).hexdigest()
+                != control_acquisition.get("continuation_objective_sha256")
+            ):
+                issues.append("resource_control_acquisition_context_mismatch")
+        timeout_s = control_acquisition.get("timeout_s")
+        if (
+            isinstance(timeout_s, bool)
+            or not isinstance(timeout_s, (int, float))
+            or not math.isfinite(float(timeout_s))
+            or not 0.1 <= float(timeout_s) <= 12.0
+        ):
+            issues.append("resource_control_acquisition_timeout_invalid")
+        compute_receipt = control_acquisition.get("compute_receipt")
+        if not isinstance(compute_receipt, dict):
+            issues.append("resource_control_compute_receipt_invalid")
+        else:
+            compute_body = {
+                key: value
+                for key, value in compute_receipt.items()
+                if key != "receipt_sha256"
+            }
+            compute_digest = hashlib.sha256(
+                json.dumps(
+                    compute_body,
+                    sort_keys=True,
+                    separators=(",", ":"),
+                    ensure_ascii=True,
+                    default=lambda item: (
+                        f"<{type(item).__module__}.{type(item).__qualname__}>"
+                    ),
+                ).encode("utf-8")
+            ).hexdigest()
+            if (
+                compute_receipt.get("schema")
+                != "aura.rlc.compute_acquisition.v1"
+                or compute_receipt.get("receipt_sha256") != compute_digest
+            ):
+                issues.append("resource_control_compute_receipt_invalid")
+        if setup_resource is not None and setup_resource["totals"]["tool_calls"] < 1:
+            issues.append("resource_control_acquisition_unmetered")
+    elif control_acquisition.get("status") != "not_required":
+        issues.append("resource_control_acquisition_status_invalid")
+
     outputs: list[str] = []
     scores: list[float] = []
-    resources: list[dict[str, Any]] = []
+    resources: list[dict[str, Any]] = (
+        [setup_resource] if setup_resource is not None else []
+    )
     generated_tokens = 0
     for index, candidate in enumerate(candidates):
         if not isinstance(candidate, dict) or candidate.get("sample_index") != index:
@@ -1182,6 +1401,14 @@ def _resource_dominating_control_receipt_issues(
         except (TypeError, ValueError):
             issues.append("resource_control_candidate_resource_invalid")
             continue
+        if task is not None:
+            verifier = _episode_verifier(task)
+            reconstructed_score = float(verifier(text))
+            if (
+                reconstructed_score != float(score)
+                or verifier.to_receipt() != candidate.get("verifier_receipt")
+            ):
+                issues.append("resource_control_verifier_evidence_mismatch")
         outputs.append(text)
         scores.append(float(score))
         resources.append(resource)
@@ -1219,6 +1446,69 @@ def _resource_dominating_control_receipt_issues(
         if cell.get("resource_dominance_certificate") != recorded_certificate:
             issues.append("resource_control_cell_certificate_mismatch")
     return sorted(set(issues))
+
+
+def _resource_control_treatment_acquisition_issues(
+    out_dir: Path,
+    treatment_cell: dict[str, Any],
+    control_cell: dict[str, Any],
+) -> list[str]:
+    """Bind an advantaged control replay to the treatment's exact acquisition."""
+
+    def runtime(cell: dict[str, Any]) -> dict[str, Any]:
+        path = cell.get("runtime_receipt_path")
+        if not isinstance(path, str) or not path:
+            raise ValueError("runtime receipt path absent")
+        value = _read_json(out_dir / path)
+        if not isinstance(value, dict):
+            raise ValueError("runtime receipt invalid")
+        return value
+
+    try:
+        treatment_runtime = runtime(treatment_cell)
+        control_runtime = runtime(control_cell)
+        treatment = dict(
+            (treatment_runtime.get("complete_system_closed_book") or {}).get(
+                "cognitive_acquisition"
+            )
+            or {}
+        )
+        control = dict(control_runtime.get("control_acquisition") or {})
+    except (AttributeError, TypeError, ValueError):
+        return ["resource_control_treatment_acquisition_unreadable"]
+
+    status = treatment.get("status")
+    if status not in {"completed_new_context", "completed_no_new_context"}:
+        return (
+            []
+            if control.get("status") == "not_required"
+            else ["resource_control_unmatched_acquisition"]
+        )
+    try:
+        comparisons = {
+            "treatment_status": status,
+            "request": treatment.get("request"),
+            "timeout_s": float(treatment.get("timeout_s")),
+            "input_candidate_sha256": treatment.get("input_candidate_sha256"),
+            "context": treatment.get("acquired_context"),
+            "continuation_objective": (
+                treatment.get("continuation_objective")
+                if status == "completed_new_context"
+                else (treatment_runtime.get("complete_system_closed_book") or {}).get(
+                    "objective"
+                )
+            ),
+            "compute_receipt": treatment.get("compute"),
+        }
+    except (TypeError, ValueError):
+        return ["resource_control_treatment_acquisition_invalid"]
+    issues: list[str] = []
+    if control.get("status") != "replayed_identically":
+        issues.append("resource_control_acquisition_not_replayed")
+    for field, expected in comparisons.items():
+        if control.get(field) != expected:
+            issues.append(f"resource_control_treatment_{field}_mismatch")
+    return issues
 
 
 class _OracleTaskVerifier:
@@ -1824,6 +2114,8 @@ def main() -> int:
         incumbent_resource_by_task: dict[str, dict[str, Any]] = {}
         complete_resource_by_task: dict[str, dict[str, Any]] = {}
         complete_information_by_task: dict[str, dict[str, Any]] = {}
+        complete_prompt_by_task: dict[str, list[int]] = {}
+        complete_acquisition_by_task: dict[str, dict[str, Any]] = {}
         vanilla_latency_by_task: dict[str, float] = {}
         for cell in journal.cells():
             if cell.get("error"):
@@ -1842,6 +2134,28 @@ def main() -> int:
                 )
                 complete_information_by_task[task.task_id] = validate_information_receipt(
                     cell.get("information_accounting")
+                )
+                receipt_path = cell.get("runtime_receipt_path")
+                runtime_receipt = (
+                    _read_json(out_dir / receipt_path)
+                    if isinstance(receipt_path, str) and receipt_path
+                    else None
+                )
+                system = (
+                    runtime_receipt.get("complete_system_closed_book", {})
+                    if isinstance(runtime_receipt, dict)
+                    else {}
+                )
+                acquisition = dict(system.get("cognitive_acquisition") or {})
+                complete_acquisition_by_task[task.task_id] = acquisition
+                continuation_objective = str(
+                    acquisition.get("continuation_objective") or ""
+                )
+                complete_prompt_by_task[task.task_id] = (
+                    _render_objective(tokenizer, continuation_objective)
+                    if acquisition.get("status") == "completed_new_context"
+                    and continuation_objective
+                    else _render_prompt(tokenizer, task)
                 )
                 continue
             if cell.get("arm") != "vanilla":
@@ -1956,7 +2270,12 @@ def main() -> int:
                     elif config is None and spec.profile == "ordinary_resource_dominating":
                         target_resource = complete_resource_by_task.get(task.task_id)
                         target_information = complete_information_by_task.get(task.task_id)
-                        if target_resource is None or target_information is None:
+                        target_prompt = complete_prompt_by_task.get(task.task_id)
+                        if (
+                            target_resource is None
+                            or target_information is None
+                            or target_prompt is None
+                        ):
                             raise RuntimeError(
                                 "resource-dominating control treatment prerequisite is absent"
                             )
@@ -1971,11 +2290,14 @@ def main() -> int:
                         ) = _run_vanilla_resource_dominating(
                             model,
                             tokenizer,
-                            _render_prompt(tokenizer, task),
+                            target_prompt,
                             tokens,
                             task=task,
                             target_resource=target_resource,
                             target_information=target_information,
+                            treatment_acquisition=complete_acquisition_by_task.get(
+                                task.task_id
+                            ),
                             campaign_seed=args.seed,
                         )
                     elif config is None:
@@ -2061,6 +2383,20 @@ def main() -> int:
                             complete_resource_by_task[task.task_id] = cell_resource_accounting
                             complete_information_by_task[task.task_id] = (
                                 cell_information_accounting
+                            )
+                            acquisition = dict(
+                                system_receipt.get("cognitive_acquisition") or {}
+                            )
+                            complete_acquisition_by_task[task.task_id] = acquisition
+                            continuation_objective = str(
+                                acquisition.get("continuation_objective") or ""
+                            )
+                            complete_prompt_by_task[task.task_id] = (
+                                _render_objective(tokenizer, continuation_objective)
+                                if acquisition.get("status")
+                                == "completed_new_context"
+                                and continuation_objective
+                                else _render_prompt(tokenizer, task)
                             )
                         else:
                             text, receipt = _run_rlc(
@@ -2427,7 +2763,18 @@ def grade(out_dir: Path, tasks) -> dict[str, Any]:
             if treatment_cell is None or control_cell is None:
                 continue
             issues.extend(
-                _resource_dominating_control_receipt_issues(out_dir, control_cell)
+                _resource_dominating_control_receipt_issues(
+                    out_dir,
+                    control_cell,
+                    task=by_id.get(task_id),
+                )
+            )
+            issues.extend(
+                _resource_control_treatment_acquisition_issues(
+                    out_dir,
+                    treatment_cell,
+                    control_cell,
+                )
             )
             try:
                 treatment_resource = validate_resource_receipt(

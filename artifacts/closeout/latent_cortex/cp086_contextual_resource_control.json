@@ -1,0 +1,62 @@
+{
+  "schema": "aura.closeout.latent_cortex.cp086.v1",
+  "checkpoint": "2026-08-09-086",
+  "title": "Symbolic evidence is identical and independently bound across treatment and control",
+  "resource_accounting_foundation_commit": "244682c59838911c088c632c63227d674898c97a",
+  "control_contract": {
+    "arm": "vanilla_resource_dominating",
+    "treatment_acquisition_replayed": true,
+    "same_acquisition_request": true,
+    "same_input_candidate_commitment": true,
+    "same_timeout": true,
+    "same_normalized_context": true,
+    "same_contextual_prompt_tokens": true,
+    "same_compute_receipt": true,
+    "tool_work_charged_to_both_arms": true,
+    "completed_no_new_context_supported": true,
+    "withheld_external_context_charged_as_tool_work": false
+  },
+  "admission": {
+    "treatment_request_commitment_validated": true,
+    "treatment_acquisition_receipt_validated": true,
+    "treatment_compute_receipt_validated": true,
+    "treatment_ingress_receipt_validated": true,
+    "context_bound_to_compute_receipt": true,
+    "control_replay_bound_to_treatment_receipt": true,
+    "candidate_verifier_recomputed_by_grader": true,
+    "tamper_or_replay_drift_is_inconclusive": true
+  },
+  "validation": {
+    "focused_acquisition_and_reconciliation_contracts": "63 passed",
+    "canonical_smoke": "103 passed",
+    "ruff": "passed",
+    "compile": "passed",
+    "diff_hygiene": "passed",
+    "source_sha256": {
+      "tools/run_rlc_reconciliation_sweep.py": "78ff59e8ceaca432311748f215f2e7be0a055c3cd823b39bed23e4f02fef4ade",
+      "tools/rlc_complete_system_closed_book.py": "308a20891ad987a329ab3854fff768638e7712ffc808dbdeef15eda9406d50fe",
+      "tests/test_rlc_reconciliation_sweep.py": "7bfe074f0aac906babb56ae6350464a6b8dcf3469917499a948e227bed91db50",
+      "tests/test_rlc_cognitive_acquisition.py": "55252499bfcac2daeb2d6ed7498f9535ac3294ec6bfd31472f222dc51dedf0d8"
+    }
+  },
+  "active_directional_pilot": {
+    "campaign": "rlc-wow-cp084-resident32b-heldout-d2-s20261001",
+    "frozen_source_commit": "e4763de9ec061ba2842d058527ded4c1868128e6",
+    "contains_cp086_contract": false,
+    "claim_grade": false
+  },
+  "limitations": {
+    "fresh_four_arm_campaign_required": true,
+    "powered_broad_task_battery_required": true,
+    "independent_replay_required": true,
+    "adapter_interaction_and_ablation_required": true,
+    "external_frontier_comparison_required_for_frontier_claim": true
+  },
+  "claims": {
+    "contextual_resource_control_contract_proven": true,
+    "reasoning_gain_proven": false,
+    "frontier_level_proven": false,
+    "fusion_authorized": false,
+    "wow_signal": false
+  }
+}

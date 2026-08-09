@@ -40334,3 +40334,39 @@ same content, such a cell refuses same-information admission rather than
 crediting an asymmetric comparison. No reasoning gain, frontier result, fusion
 authority, activation, or `WOW Signal` is claimed, and the completion envelope
 remains `809/920` (approximately `87.9%`).
+
+## Checkpoint 2026-08-09-086: Symbolic Evidence Is Equal Across Both Arms
+
+CP085 gave ordinary decoding more measured compute than the complete system,
+but a treatment that selected deterministic `FORMALIZE` or `SIMULATE` evidence
+could still receive that evidence through a private cognitive-context channel.
+That was not a claim-grade same-information comparison. The complete system now
+renders typed, non-authoritative symbolic observations into one canonical
+continuation objective. Its second RLC episode and the ordinary control consume
+the exact same token sequence; no private context embedding remains on this
+experimental path.
+
+The ordinary control independently repeats the treatment's committed compute
+request with the same first-candidate commitment and timeout. It must reproduce
+the exact normalized evidence, continuation objective, and compute receipt, and
+it pays the corresponding tool/input/result counters before sampling. A
+deterministic acquisition that yields no context is replayed and charged without
+inventing a continuation. A memory or web acquisition withheld by the sealed
+closed-book contract remains unexecuted and is not falsely billed as tool work.
+
+The independent grader now validates the treatment request, acquisition,
+compute, ingress, and context commitments; reconstructs every control candidate's
+verifier result from the committed task; and compares the control replay to the
+treatment acquisition field by field. Missing evidence, a changed observation,
+receipt tampering, policy drift, or a mismatched prompt makes the result
+inconclusive rather than positive.
+
+The acquisition and reconciliation contracts pass `63/63`; canonical smoke
+passes `103/103`; Ruff, compilation, and diff hygiene pass. Compact evidence is
+`artifacts/closeout/latent_cortex/cp086_contextual_resource_control.json`.
+The active frozen CP084 resident-32B pilot predates CP086 and remains directional
+only. The next claim-bearing experiment must freeze CP086-or-newer source and
+run the four-arm resource-advantaged control, followed by a powered broad
+battery, adapter interaction/ablation, and independent replay. No reasoning
+gain, frontier result, fusion authority, activation, or `WOW Signal` is claimed,
+and the completion envelope remains `809/920` (approximately `87.9%`).

@@ -302,15 +302,17 @@ def test_resource_dominating_control_spends_until_every_target_dimension_is_met(
 
     monkeypatch.setattr(sweep, "_run_vanilla", fake_vanilla)
     monkeypatch.setattr(sweep, "_episode_verifier", lambda task: FakeVerifier())
+    task = SimpleNamespace(task_id="task-a", domain="fixture")
     text, resource, observed_information, certificate, samples, generated, receipt = (
         sweep._run_vanilla_resource_dominating(
             SimpleNamespace(),
             tokenizer,
             [1],
             32,
-            task=SimpleNamespace(task_id="task-a", domain="fixture"),
+            task=task,
             target_resource=target.to_receipt(),
             target_information=information,
+            treatment_acquisition=None,
             campaign_seed=7,
             max_samples=4,
         )
@@ -340,9 +342,10 @@ def test_resource_dominating_control_spends_until_every_target_dimension_is_met(
             tokenizer,
             [1],
             32,
-            task=SimpleNamespace(task_id="task-a", domain="fixture"),
+            task=task,
             target_resource=target.to_receipt(),
             target_information=mismatched_information,
+            treatment_acquisition=None,
             campaign_seed=7,
             max_samples=4,
         )
@@ -360,7 +363,45 @@ def test_resource_dominating_control_spends_until_every_target_dimension_is_met(
         "resource_dominance_certificate": certificate,
         "text": text,
     }
-    assert sweep._resource_dominating_control_receipt_issues(tmp_path, cell) == []
+    assert sweep._resource_dominating_control_receipt_issues(
+        tmp_path,
+        cell,
+        task=task,
+    ) == []
+    persisted = tmp_path / path
+    tampered = json.loads(persisted.read_text())
+    tampered["candidates"][0]["verifier_score"] = 0.5
+    tampered["candidates"][0]["verifier_receipt"] = {
+        "score": 0.5,
+        "source": "fixture",
+    }
+    body = {key: value for key, value in tampered.items() if key != "receipt_sha256"}
+    tampered["receipt_sha256"] = hashlib.sha256(
+        json.dumps(
+            body,
+            sort_keys=True,
+            separators=(",", ":"),
+            ensure_ascii=True,
+            allow_nan=False,
+        ).encode()
+    ).hexdigest()
+    persisted.write_text(json.dumps(tampered, indent=1, sort_keys=True) + "\n")
+    cell["runtime_receipt_sha256"] = hashlib.sha256(
+        json.dumps(
+            tampered,
+            sort_keys=True,
+            separators=(",", ":"),
+            ensure_ascii=True,
+            allow_nan=False,
+        ).encode()
+    ).hexdigest()
+    assert "resource_control_verifier_evidence_mismatch" in (
+        sweep._resource_dominating_control_receipt_issues(
+            tmp_path,
+            cell,
+            task=task,
+        )
+    )
 
     persisted = tmp_path / path
     tampered = json.loads(persisted.read_text())
@@ -374,6 +415,313 @@ def test_resource_dominating_control_spends_until_every_target_dimension_is_met(
     assert sweep._resource_dominating_control_receipt_issues(tmp_path, cell) == [
         "resource_control_runtime_receipt_noncanonical"
     ]
+
+
+def test_resource_control_replays_treatment_symbolic_context(monkeypatch, tmp_path: Path):
+    from core.brain import cortex_compute_acquisition
+    from core.brain.llm.latent_cortex.resource_accounting import (
+        ModelComputeProfile,
+        ResourceLedger,
+        build_information_receipt,
+        policy_sha256,
+    )
+    from core.brain.llm.latent_cortex.value_of_computation import (
+        build_evidence_snapshot,
+    )
+    from tools.rlc_complete_system_closed_book import (
+        _contextual_continuation_objective,
+    )
+
+    objective = "Return a checked result."
+    text = "Verifier result: ok=true."
+    context = {
+        "source": "capability.symbolic_formalize",
+        "text": text,
+        "context_role": "evidence_observation",
+        "instruction_authority": False,
+        "evidence_id": "evidence-" + "a" * 24,
+        "content_sha256": hashlib.sha256(text.encode()).hexdigest(),
+        "retrieval_receipt_sha256": "b" * 64,
+        "evidence_kind": "governed_tool_observation",
+        "evidence_origin": "core.brain.cortex_compute_acquisition",
+        "source_version": "aura.rlc.compute_acquisition.v1",
+    }
+    continuation_objective = _contextual_continuation_objective(objective, [context])
+
+    class Tokenizer:
+        chat_template = "fixture"
+
+        def apply_chat_template(self, messages, *, add_generation_prompt, tokenize):
+            assert add_generation_prompt is True
+            content = messages[0]["content"]
+            assert content in {objective, continuation_objective}
+            if tokenize:
+                return [11, 12, 13] if content == continuation_objective else [7, 8]
+            return "rendered"
+
+    class FakeVerifier:
+        def __init__(self):
+            self.score = 1.0
+
+        def __call__(self, candidate):
+            return self.score
+
+        def to_receipt(self):
+            return {"score": self.score, "source": "fixture"}
+
+    tokenizer = Tokenizer()
+    verifier_path = inspect.getsourcefile(FakeVerifier)
+    evidence_payload = json.dumps(
+        build_evidence_snapshot(bucket="fixture|none|short|s:mid|u:mid", cells={}),
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode()
+    encoded_tokens = b"[11,12,13]"
+    information = build_information_receipt(
+        sources=[
+            {
+                "source_id": "rendered_model_input",
+                "kind": "model_input_tokens",
+                "content_sha256": hashlib.sha256(encoded_tokens).hexdigest(),
+                "byte_count": len(encoded_tokens),
+                "token_count": 3,
+            },
+            {
+                "source_id": "value_controller_evidence",
+                "kind": "controller_evidence",
+                "content_sha256": hashlib.sha256(evidence_payload).hexdigest(),
+                "byte_count": len(evidence_payload),
+                "token_count": 0,
+            },
+        ],
+        policies={
+            "tokenizer": policy_sha256(
+                {
+                    "module": Tokenizer.__module__,
+                    "qualname": Tokenizer.__qualname__,
+                    "chat_template_sha256": hashlib.sha256(b"fixture").hexdigest(),
+                }
+            ),
+            "verifier": policy_sha256(
+                {
+                    "module": FakeVerifier.__module__,
+                    "qualname": FakeVerifier.__qualname__,
+                    "source_sha256": hashlib.sha256(
+                        Path(verifier_path).read_bytes()
+                    ).hexdigest(),
+                }
+            ),
+            "tools": policy_sha256({"policy": "no_external_tools_inside_rlc_v1"}),
+            "nonparametric_memory": policy_sha256(
+                {
+                    "policy": "context_only_prompt_tail_recall_v1",
+                    "active_source_receipt_sha256": "none",
+                }
+            ),
+        },
+    )
+    profile = ModelComputeProfile(
+        model_type="fixture",
+        hidden_size=8,
+        intermediate_size=16,
+        num_hidden_layers=2,
+        num_attention_heads=2,
+        num_key_value_heads=1,
+        vocab_size=32,
+        head_dim=4,
+    )
+    target = ResourceLedger(profile)
+    target.charge(
+        "treatment",
+        transformer_layer_apps=1,
+        tool_calls=1,
+        tool_input_bytes=1,
+        tool_result_bytes=1,
+    )
+    compute_body = {
+        "schema": "aura.rlc.compute_acquisition.v1",
+        "action": "formalize",
+    }
+    compute_receipt = {
+        **compute_body,
+        "receipt_sha256": hashlib.sha256(
+            json.dumps(compute_body, sort_keys=True, separators=(",", ":")).encode()
+        ).hexdigest(),
+    }
+
+    async def fake_acquire(**kwargs):
+        assert kwargs["objective"] == objective
+        assert kwargs["first_text"] == "candidate"
+        return SimpleNamespace(context=(context,), receipt=compute_receipt)
+
+    def fake_vanilla(*args, **kwargs):
+        ledger = ResourceLedger(profile)
+        ledger.charge("sample", transformer_layer_apps=2)
+        return 'FINAL_ANSWER: {"value":1}', [1], "contract_complete", ledger.to_receipt()
+
+    monkeypatch.setattr(cortex_compute_acquisition, "acquire_cognitive_compute", fake_acquire)
+    monkeypatch.setattr(sweep, "_episode_verifier", lambda task: FakeVerifier())
+    monkeypatch.setattr(sweep, "_run_vanilla", fake_vanilla)
+    task = SimpleNamespace(
+        task_id="task-context",
+        domain="fixture",
+        public=SimpleNamespace(prompt=objective),
+    )
+    acquisition = {
+        "status": "completed_new_context",
+        "request": {"action": "formalize"},
+        "compute": compute_receipt,
+        "timeout_s": 12.0,
+        "input_candidate": "candidate",
+        "input_candidate_sha256": hashlib.sha256(b"candidate").hexdigest(),
+        "acquired_context": [context],
+        "continuation_objective": continuation_objective,
+        "continuation_objective_sha256": hashlib.sha256(
+            continuation_objective.encode()
+        ).hexdigest(),
+    }
+    result = sweep._run_vanilla_resource_dominating(
+        SimpleNamespace(),
+        tokenizer,
+        [11, 12, 13],
+        32,
+        task=task,
+        target_resource=target.to_receipt(),
+        target_information=information,
+        treatment_acquisition=acquisition,
+        campaign_seed=9,
+        max_samples=2,
+    )
+    receipt = result[-1]
+    assert receipt["control_acquisition"]["status"] == "replayed_identically"
+    assert receipt["resource_accounting"]["totals"]["tool_calls"] == 1
+    path, digest = sweep._persist_runtime_receipt(
+        tmp_path,
+        arm=sweep.RESOURCE_DOMINATING_CONTROL_ARM,
+        task_id=task.task_id,
+        receipt=receipt,
+    )
+    cell = {
+        "runtime_receipt_path": path,
+        "runtime_receipt_sha256": digest,
+        "resource_accounting": result[1],
+        "information_accounting": result[2],
+        "resource_dominance_certificate": result[3],
+        "text": result[0],
+    }
+    assert sweep._resource_dominating_control_receipt_issues(
+        tmp_path,
+        cell,
+        task=task,
+    ) == []
+    treatment_path, treatment_digest = sweep._persist_runtime_receipt(
+        tmp_path,
+        arm="complete_system_closed_book",
+        task_id=task.task_id,
+        receipt={
+            "complete_system_closed_book": {
+                "objective": objective,
+                "cognitive_acquisition": acquisition,
+            }
+        },
+    )
+    treatment_cell = {
+        "runtime_receipt_path": treatment_path,
+        "runtime_receipt_sha256": treatment_digest,
+    }
+    assert sweep._resource_control_treatment_acquisition_issues(
+        tmp_path,
+        treatment_cell,
+        cell,
+    ) == []
+
+    async def fake_empty_acquire(**kwargs):
+        return SimpleNamespace(context=(), receipt=compute_receipt)
+
+    empty_tokens = b"[7,8]"
+    empty_sources = [dict(source) for source in information["sources"]]
+    empty_prompt_source = next(
+        source
+        for source in empty_sources
+        if source["source_id"] == "rendered_model_input"
+    )
+    empty_prompt_source.update(
+        {
+            "content_sha256": hashlib.sha256(empty_tokens).hexdigest(),
+            "byte_count": len(empty_tokens),
+            "token_count": 2,
+        }
+    )
+    empty_information = build_information_receipt(
+        sources=empty_sources,
+        policies=information["policies"],
+    )
+    monkeypatch.setattr(
+        cortex_compute_acquisition,
+        "acquire_cognitive_compute",
+        fake_empty_acquire,
+    )
+    empty_result = sweep._run_vanilla_resource_dominating(
+        SimpleNamespace(),
+        tokenizer,
+        [7, 8],
+        32,
+        task=task,
+        target_resource=target.to_receipt(),
+        target_information=empty_information,
+        treatment_acquisition={
+            "status": "completed_no_new_context",
+            "request": {"action": "formalize"},
+            "timeout_s": 12.0,
+            "input_candidate": "candidate",
+            "input_candidate_sha256": hashlib.sha256(b"candidate").hexdigest(),
+            "acquired_context": [],
+        },
+        campaign_seed=10,
+        max_samples=2,
+    )
+    assert empty_result[-1]["control_acquisition"]["treatment_status"] == (
+        "completed_no_new_context"
+    )
+    empty_path, empty_digest = sweep._persist_runtime_receipt(
+        tmp_path,
+        arm=sweep.RESOURCE_DOMINATING_CONTROL_ARM,
+        task_id="task-empty",
+        receipt=empty_result[-1],
+    )
+    empty_cell = {
+        "runtime_receipt_path": empty_path,
+        "runtime_receipt_sha256": empty_digest,
+        "resource_accounting": empty_result[1],
+        "information_accounting": empty_result[2],
+        "resource_dominance_certificate": empty_result[3],
+        "text": empty_result[0],
+    }
+    assert sweep._resource_dominating_control_receipt_issues(
+        tmp_path,
+        empty_cell,
+        task=task,
+    ) == []
+
+    no_tool_target = ResourceLedger(profile)
+    no_tool_target.charge("treatment", transformer_layer_apps=1)
+    withheld = sweep._run_vanilla_resource_dominating(
+        SimpleNamespace(),
+        tokenizer,
+        [7, 8],
+        32,
+        task=task,
+        target_resource=no_tool_target.to_receipt(),
+        target_information=empty_information,
+        treatment_acquisition={
+            "status": "withheld_by_closed_book_contract",
+            "request": {"action": "retrieve_evidence"},
+        },
+        campaign_seed=11,
+        max_samples=2,
+    )
+    assert withheld[-1]["control_acquisition"]["status"] == "not_required"
+    assert withheld[-1]["setup_resource_accounting"]["totals"]["tool_calls"] == 0
 
 
 def test_decode_identity_binds_committed_task_difficulty():
@@ -1240,7 +1588,10 @@ def test_complete_system_can_earn_a_conservative_resource_advantaged_win(
         ],
         policies={"verifier": policy_sha256({"kind": "candidate_local"})},
     )
-    control_aggregate = ResourceLedger.aggregate([control.to_receipt()]).to_receipt()
+    control_setup = ResourceLedger(profile).to_receipt()
+    control_aggregate = ResourceLedger.aggregate(
+        [control_setup, control.to_receipt()]
+    ).to_receipt()
     certificate = certify_control_resource_dominance(
         treatment_resource=treatment.to_receipt(),
         control_resource=control_aggregate,
@@ -1258,7 +1609,25 @@ def test_complete_system_can_earn_a_conservative_resource_advantaged_win(
             (sweep.RESOURCE_DOMINATING_CONTROL_ARM, wrong),
         ):
             runtime_fields = {}
+            if arm == "complete_system_closed_book":
+                path, digest = sweep._persist_runtime_receipt(
+                    tmp_path,
+                    arm=arm,
+                    task_id=task.task_id,
+                    receipt={
+                        "complete_system_closed_book": {
+                            "objective": task.public.prompt,
+                            "cognitive_acquisition": {"status": "not_requested"},
+                        }
+                    },
+                )
+                runtime_fields = {
+                    "runtime_receipt_path": path,
+                    "runtime_receipt_sha256": digest,
+                }
             if arm == sweep.RESOURCE_DOMINATING_CONTROL_ARM:
+                verifier = sweep._episode_verifier(task)
+                verifier_score = float(verifier(wrong))
                 receipt_body = {
                     "schema": "aura.rlc.resource_dominating_control.v1",
                     "task_id": task.task_id,
@@ -1266,13 +1635,18 @@ def test_complete_system_can_earn_a_conservative_resource_advantaged_win(
                     "sample_limit": 1,
                     "sample_count": 1,
                     "generated_tokens": 1,
+                    "setup_resource_accounting": control_setup,
+                    "control_acquisition": {
+                        "schema": "aura.rlc.resource_control_acquisition.v1",
+                        "status": "not_required",
+                    },
                     "candidates": [
                         {
                             "sample_index": 0,
                             "text": wrong,
                             "text_sha256": hashlib.sha256(wrong.encode()).hexdigest(),
-                            "verifier_score": 0.0,
-                            "verifier_receipt": {"score": 0.0},
+                            "verifier_score": verifier_score,
+                            "verifier_receipt": verifier.to_receipt(),
                             "resource_accounting": control.to_receipt(),
                             "generated_tokens": 1,
                         }
@@ -1324,7 +1698,11 @@ def test_complete_system_can_earn_a_conservative_resource_advantaged_win(
             )
 
     verdict = sweep.grade(tmp_path, tasks)
-    assert verdict["resource_advantaged_control_proven"] is True
+    assert verdict["resource_advantaged_control_proven"] is True, (
+        verdict.get("resource_dominance_issues"),
+        verdict.get("mechanism_issues"),
+        verdict.get("complete"),
+    )
     assert verdict["outscored_resource_advantaged_control"] is True
     assert verdict["decision"] == "proceed_to_checkpoint_phase"
 
@@ -1664,6 +2042,132 @@ def test_complete_system_receipt_requires_acquisition_amplifier_and_promotion(
     assert evidence["resource_accounting_sha256"] == ledger.to_receipt()["receipt_sha256"]
     assert evidence["information_accounting_sha256"] == information["receipt_sha256"]
 
+    from tools import rlc_reconciliation_evidence
+    from tools.rlc_complete_system_closed_book import (
+        _contextual_continuation_objective,
+    )
+
+    monkeypatch.setattr(
+        rlc_reconciliation_evidence,
+        "full_stack_evidence",
+        lambda candidate: {"valid": True, "issues": []},
+    )
+    from core.brain.llm.latent_cortex.cognitive_acquisition import (
+        build_acquisition_receipt,
+    )
+    from core.brain.llm.latent_cortex.epistemic_state import canonical_sha256
+
+    request_body = {
+        "schema": "aura.rlc.cognitive_acquisition.v1",
+        "action": "formalize",
+        "action_step": 0,
+        "objective_sha256": hashlib.sha256(objective.encode()).hexdigest(),
+        "first_answer_sha256": hashlib.sha256(candidate_text.encode()).hexdigest(),
+        "transition_sha256": "a" * 64,
+        "retrieval_query": objective,
+        "retrieval_query_sha256": hashlib.sha256(objective.encode()).hexdigest(),
+        "before_inventory": [],
+        "before_inventory_sha256": canonical_sha256(()),
+        "max_acquisitions": 1,
+        "max_continuation_rounds": 1,
+        "worker_performed_io": False,
+    }
+    request = {**request_body, "request_sha256": canonical_sha256(request_body)}
+    compute_body = {
+        "schema": "aura.rlc.compute_acquisition.v1",
+        "action": "formalize",
+        "objective_sha256": hashlib.sha256(objective.encode()).hexdigest(),
+        "candidate_sha256": hashlib.sha256(candidate_text.encode()).hexdigest(),
+        "task_type": "general",
+        "status": "measured",
+        "verifier": {},
+        "sandbox": None,
+        "guard": {},
+        "admitted": True,
+    }
+    compute_receipt = {
+        **compute_body,
+        "receipt_sha256": canonical_sha256(compute_body),
+    }
+    context_text = "Verifier result: ok=true."
+    context = {
+        "source": "capability.symbolic_formalize",
+        "text": context_text,
+        "context_role": "evidence_observation",
+        "instruction_authority": False,
+        "evidence_id": "evidence-" + "c" * 24,
+        "content_sha256": hashlib.sha256(context_text.encode()).hexdigest(),
+        "retrieval_receipt_sha256": compute_receipt["receipt_sha256"],
+        "evidence_kind": "governed_tool_observation",
+        "evidence_origin": "core.brain.cortex_compute_acquisition",
+        "source_version": "aura.rlc.compute_acquisition.v1",
+    }
+    continuation_objective = _contextual_continuation_objective(
+        objective,
+        [context],
+    )
+    ingress_receipt = {
+        "schema": "aura.rlc.compute_ingress.v1",
+        "compute": compute_receipt,
+        "absent_sources": [],
+    }
+    acquisition_receipt = build_acquisition_receipt(
+        request,
+        acquired_context=[context],
+        ingress_receipt=ingress_receipt,
+        elapsed_s=0.1,
+    )
+    contextual_information = build_information_receipt(
+        sources=[
+            {
+                "source_id": "rendered_model_input",
+                "kind": "model_input_tokens",
+                "content_sha256": "e" * 64,
+                "byte_count": 10,
+                "token_count": 3,
+            },
+            {
+                "source_id": "value_controller_evidence",
+                "kind": "controller_evidence",
+                "content_sha256": "f" * 64,
+                "byte_count": 10,
+                "token_count": 0,
+            },
+        ],
+        policies={"closed_book": hashlib.sha256(b"closed_book").hexdigest()},
+    )
+    contextual_receipt = json.loads(json.dumps(receipt))
+    contextual_system = contextual_receipt["complete_system_closed_book"]
+    contextual_system["first_rlc_receipt"] = {}
+    contextual_system["rlc_rounds"] = 2
+    contextual_system["information_accounting"] = contextual_information
+    contextual_system["cognitive_acquisition"] = {
+        "status": "completed_new_context",
+        "request": request,
+        "receipt": acquisition_receipt,
+        "compute": compute_receipt,
+        "ingress_receipt": ingress_receipt,
+        "continuation_executed": True,
+        "closed_book_external_sources_withheld": True,
+        "timeout_s": 12.0,
+        "input_candidate": candidate_text,
+        "input_candidate_sha256": hashlib.sha256(candidate_text.encode()).hexdigest(),
+        "acquired_context": [context],
+        "continuation_objective": continuation_objective,
+        "continuation_objective_sha256": hashlib.sha256(
+            continuation_objective.encode()
+        ).hexdigest(),
+    }
+    contextual_evidence = sweep._complete_system_evidence(contextual_receipt)
+    assert contextual_evidence["valid"] is True
+    assert contextual_evidence["issues"] == []
+    contextual_system["cognitive_acquisition"][
+        "continuation_objective_sha256"
+    ] = "0" * 64
+    assert "cognitive_continuation_objective_digest_mismatch" in (
+        sweep._complete_system_evidence(contextual_receipt)["issues"]
+    )
+
     path, digest = sweep._persist_runtime_receipt(
         tmp_path,
         arm="complete_system_closed_book",
@@ -1731,7 +2235,7 @@ def test_complete_system_replaces_only_the_bound_incumbent_resource_placeholder(
 
     rlc_without_placeholder = ResourceLedger(profile)
     rlc_without_placeholder.charge("recurrence", transformer_layer_apps=11)
-    with pytest.raises(ValueError, match="lacks bound incumbent placeholder"):
+    with pytest.raises(ValueError, match="lacks a bound incumbent generation"):
         _aggregate_complete_system_resources(
             incumbent_resource=incumbent.to_receipt(),
             rlc_resources=[rlc_without_placeholder.to_receipt()],
