@@ -54,7 +54,7 @@ def _verdict(*, correct: int = 3, total: int = 7) -> dict[str, object]:
 
 def test_pair_requires_disjoint_seeds_and_complete_engine() -> None:
     calibration = _campaign(arms="vanilla,vanilla_equal_compute", seed=1)
-    pilot = _campaign(arms="full_stack", seed=2)
+    pilot = _campaign(arms="complete_system_closed_book", seed=2)
     handoff.validate_campaign_pair(calibration, pilot)
 
     same_seed = copy.deepcopy(pilot)
@@ -64,7 +64,7 @@ def test_pair_requires_disjoint_seeds_and_complete_engine() -> None:
 
     controls_only = copy.deepcopy(pilot)
     controls_only["arms"] = "vanilla"
-    with pytest.raises(handoff.HandoffError, match="complete_engine_absent"):
+    with pytest.raises(handoff.HandoffError, match="complete_system_arm_invalid"):
         handoff.validate_campaign_pair(calibration, controls_only)
 
 
@@ -92,9 +92,11 @@ def test_calibration_admits_only_a_nonsaturated_complete_control() -> None:
 
 def test_pilot_requires_complete_engine_runtime_evidence() -> None:
     verdict = _verdict()
-    verdict["arms"]["full_stack"] = {"correct": 4, "total": 7}
+    verdict["arms"]["complete_system_closed_book"] = {"correct": 4, "total": 7}
     assert handoff.pilot_completion(verdict) == (True, "pilot_measured")
-    verdict["full_stack_runtime_issues"] = {"full_stack": {"task": ["missing"]}}
+    verdict["full_stack_runtime_issues"] = {
+        "complete_system_closed_book": {"task": ["missing"]}
+    }
     assert handoff.pilot_completion(verdict) == (False, "pilot_contains_faults")
 
 

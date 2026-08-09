@@ -19,6 +19,7 @@ Every cell is bound to the exact model, task commitment, decode configuration,
 adapter, and implementation source. A partial, stale, mixed-source, or
 runtime-unmeasured battery is inconclusive rather than a negative result.
 """
+
 from __future__ import annotations
 
 import argparse
@@ -37,6 +38,7 @@ sys.path.insert(0, str(REPO_ROOT))
 
 SWEEP_SCHEMA = "aura.rlc_reconciliation_sweep.v1"
 EVIDENCE_MANIFEST_SCHEMA = "aura.rlc.reconciliation_evidence_manifest.v1"
+
 
 # (name, recurrent steps or None for ordinary decode, terminal-instruction
 # policy, decode token budget or None for the campaign default).
@@ -59,11 +61,16 @@ class Arm:
                    proxy verifiers. This is what the 2026-08-06 campaign and
                    every reconciliation run before 2026-08-07 measured. It is
                    an ABLATION, not the system.
-    ``full``       every pillar the program actually built: adaptive halting,
+    ``full``       the complete neural RLC engine: adaptive halting,
                    hidden-state optimization, temporary fast weights, local
-                   repair and the evidence-bound acceptance rule, on top of
-                   the verifier mesh. This is the claim under test -- that
-                   reasoning is a unified system rather than one mechanism.
+                   repair and evidence-bound acceptance on top of the verifier
+                   mesh. It does not claim the service-side acquisition and
+                   reasoning-amplifier layers.
+    ``complete_closed_book`` the neural RLC plus its bounded deterministic
+                   acquisition continuation, the production reasoning
+                   amplifier, and a final evidence-bound promotion gate. It
+                   is sealed from memory, RAG, web, and answer keys so the arm
+                   measures same-information system reasoning.
     ``full_oracle`` ``full`` plus a ground-truth verifier. Not a capability
                    claim and never deployable; its research-only arbitration
                    may expose a correct generated candidate so the verifier
@@ -83,6 +90,13 @@ ARMS: tuple[Arm, ...] = (
     # Compute-matched control: the full stack measured 164s against vanilla's
     # 63s on the 32B, so three independent samples sit at the same price.
     Arm("vanilla_equal_compute", None, "applied", None, "ordinary_best_of_3"),
+    Arm(
+        "complete_system_closed_book",
+        8,
+        "suppressed",
+        None,
+        "complete_closed_book",
+    ),
     # The product answer starts from the same clean prompt root as vanilla.
     # Terminal-disposition text changes the decode before any evidence gate and
     # therefore cannot coexist with a byte-identical incumbent guarantee.
@@ -95,12 +109,12 @@ ARMS: tuple[Arm, ...] = (
 )
 
 CONTROL_ARM_NAMES: Final[tuple[str, ...]] = ("vanilla", "vanilla_equal_compute")
-CLAIM_ARM_NAMES: Final[frozenset[str]] = frozenset({"full_stack"})
+CLAIM_ARM_NAMES: Final[frozenset[str]] = frozenset({"complete_system_closed_book", "full_stack"})
 DIAGNOSTIC_ARM_NAMES: Final[frozenset[str]] = frozenset(
     {"full_stack_disposition", "full_stack_oracle", "rlc_mechanism", "vanilla_long"}
 )
 RUNTIME_STACK_ARM_NAMES: Final[frozenset[str]] = frozenset(
-    arm.name for arm in ARMS if arm.profile in {"full", "full_oracle"}
+    arm.name for arm in ARMS if arm.profile in {"complete_closed_book", "full", "full_oracle"}
 )
 
 
@@ -177,7 +191,20 @@ def _implementation_manifest() -> dict[str, str]:
     """
 
     latent_root = REPO_ROOT / "core/brain/llm/latent_cortex"
-    paths = (Path(__file__).resolve(), *sorted(latent_root.glob("*.py")))
+    verifier_root = REPO_ROOT / "core/brain/verifiers"
+    paths = (
+        Path(__file__).resolve(),
+        REPO_ROOT / "tools/rlc_complete_system_closed_book.py",
+        REPO_ROOT / "tools/rlc_reconciliation_evidence.py",
+        *sorted(latent_root.glob("*.py")),
+        *sorted(verifier_root.glob("*.py")),
+        REPO_ROOT / "core/brain/calibration_gate.py",
+        REPO_ROOT / "core/brain/cortex_compute_acquisition.py",
+        REPO_ROOT / "core/brain/courtroom.py",
+        REPO_ROOT / "core/brain/reasoning_amplifier.py",
+        REPO_ROOT / "core/brain/reasoning_amplifier_v2.py",
+        REPO_ROOT / "core/brain/symbolic_sandbox.py",
+    )
     return {
         str(path.relative_to(REPO_ROOT)): hashlib.sha256(path.read_bytes()).hexdigest()
         for path in paths
@@ -224,9 +251,7 @@ def decode_fingerprint(
             "contract": "rlc_reconciliation_decode.v4",
             "difficulty": int(difficulty),
             "episode_wall_s": float(episode_wall_s),
-            "implementation_sha256": (
-                implementation_sha256 or _implementation_sha256()
-            ),
+            "implementation_sha256": (implementation_sha256 or _implementation_sha256()),
             "max_tokens": int(max_tokens),
             "model": str(model),
             "n_slots": int(n_slots),
@@ -245,9 +270,7 @@ class Journal:
     cell from a superseded configuration is discarded and re-run.
     """
 
-    def __init__(
-        self, path: Path, fingerprint: str | dict[str, str] | None = None
-    ) -> None:
+    def __init__(self, path: Path, fingerprint: str | dict[str, str] | None = None) -> None:
         self.path = path
         # Arms may differ in decode budget, so identity is per arm. A bare
         # string applies to every arm; None admits everything.
@@ -358,7 +381,7 @@ def _build_config(
         WorkspaceConfig,
     )
 
-    full = profile in {"full", "full_oracle"}
+    full = profile in {"complete_closed_book", "full", "full_oracle"}
     # Adaptive halting is the program's own latency lever and its own
     # capability claim: easy problems converge in two steps and stop paying,
     # hard ones are allowed to keep going. Pinning min == max, as every run
@@ -435,9 +458,7 @@ def _build_config(
         # verifiers were selecting the best of several equally corrupted
         # latent candidates, and the good answer was not in the pool.
         # Selection cannot exceed the best candidate it is given.
-        decode_incumbent_policy=(
-            "vanilla_incumbent" if full else "latent"
-        ),
+        decode_incumbent_policy=("vanilla_incumbent" if full else "latent"),
         # Serving-side answer replacement is a live-product safeguard: it
         # abstains rather than emit a candidate it cannot bound. In a research
         # arm that abstention destroys the observation -- the episode returns
@@ -464,9 +485,7 @@ def _build_config(
         # -- the chain ran end to end and then dropped its only candidate,
         # which is why the arm could tie ordinary decode but never beat it.
         # The repair therefore gets the same room as the answer it replaces.
-        local_repair_max_tokens=(
-            max(32, min(512, max_tokens)) if full else 128
-        ),
+        local_repair_max_tokens=(max(32, min(512, max_tokens)) if full else 128),
         # A degraded episode that quietly serves an ordinary decode would make
         # this arm a second copy of the vanilla control wearing the recurrent
         # arm's label -- the worst possible failure here, because it looks like
@@ -500,9 +519,7 @@ def _build_config(
         # This contract is deliberately separate from decode_contract so the
         # evidence lane cannot move the product floor.
         verifier_probe_contract="final_answer_v1" if full else "none",
-        decode_contract_grace_tokens=(
-            0 if full else (320 if decode_contract != "none" else 0)
-        ),
+        decode_contract_grace_tokens=(0 if full else (320 if decode_contract != "none" else 0)),
         terminal_instruction_policy=policy,
     )
 
@@ -614,9 +631,7 @@ def _run_vanilla(
     pieces: list[str] = []
     output_tokens: list[int] = []
     termination = "token_limit"
-    for response in stream_generate(
-        model, tokenizer, prompt=prompt_tokens, max_tokens=max_tokens
-    ):
+    for response in stream_generate(model, tokenizer, prompt=prompt_tokens, max_tokens=max_tokens):
         pieces.append(response.text)
         # MLX emits one final response for both EOS and length termination.
         # Its EOS response carries the stop-token id but deliberately exposes
@@ -695,140 +710,17 @@ def _route_counts(receipt: dict[str, Any]) -> dict[str, int]:
 
 
 def _full_stack_evidence(receipt: dict[str, Any]) -> dict[str, Any]:
-    """Compact, public proof that the named treatment actually ran its stack.
+    from tools.rlc_reconciliation_evidence import full_stack_evidence
 
-    A configuration test proves only that switches were set. This summary binds
-    the runtime episode to the mechanisms that executed, including conservative
-    non-admission (which is a valid outcome) versus unavailable infrastructure
-    (which is not a measurement of that mechanism).
-    """
+    return full_stack_evidence(receipt)
 
-    verifier_preflight = receipt.get("verifier_preflight") or {}
-    branch_exchange = receipt.get("branch_exchange") or {}
-    fast_weight_learning = receipt.get("fast_weight_learning") or {}
-    local_repair = receipt.get("local_repair") or {}
-    answer_replacement = receipt.get("answer_replacement") or {}
-    incumbent = receipt.get("incumbent_artifact") or {}
-    incumbent_binding = incumbent.get("binding") or {}
-    incumbent_output = incumbent.get("output") or {}
-    baseline_decode = answer_replacement.get("baseline_decode") or {}
-    issues: list[str] = []
 
-    try:
-        from core.brain.llm.latent_cortex.incumbent_artifact import (
-            validate_incumbent_receipt,
-        )
-
-        validate_incumbent_receipt(
-            incumbent,
-            checkpoint_fingerprint=str(receipt.get("checkpoint_fingerprint") or ""),
-            checkpoint_fingerprint_method=str(
-                receipt.get("checkpoint_fingerprint_method") or ""
-            ),
-        )
-        incumbent_valid = True
-    except (KeyError, TypeError, ValueError):
-        incumbent_valid = False
-
-    try:
-        from core.brain.llm.latent_cortex.causal_receipt import (
-            validate_causal_receipt,
-        )
-
-        validate_causal_receipt(
-            receipt.get("causal_receipt"),
-            worker_receipt=receipt,
-            require_complete=True,
-        )
-        causal_identity_valid = True
-    except (KeyError, TypeError, ValueError):
-        causal_identity_valid = False
-
-    def require(condition: bool, issue: str) -> None:
-        if not condition:
-            issues.append(issue)
-
-    require(int(receipt.get("n_slots") or 0) > 0, "workspace_not_measured")
-    require(int(receipt.get("steps_taken") or 0) >= 2, "recurrence_not_executed")
-    require(int(receipt.get("n_branches") or 0) >= 2, "virtual_width_not_executed")
-    isolation = receipt.get("branch_isolation") or {}
-    require(isolation.get("certified") is True, "branch_isolation_not_certified")
-    candidates = isolation.get("candidates") or []
-    require(
-        len(candidates) == int(receipt.get("n_branches") or 0)
-        and all(isinstance(row.get("role"), str) and row["role"] for row in candidates),
-        "branch_roles_not_measured",
+def _complete_system_evidence(receipt: dict[str, Any]) -> dict[str, Any]:
+    from tools.rlc_complete_system_closed_book import (
+        _complete_system_evidence as summarize,
     )
-    require(
-        branch_exchange.get("schema") == "aura.rlc.branch_exchange_trace.v1",
-        "branch_exchange_not_measured",
-    )
-    require(
-        verifier_preflight.get("verifier_admitted") is True,
-        "task_verifier_not_admitted",
-    )
-    require(
-        str(receipt.get("latent_opt_mode") or "") in {"gradient", "control"},
-        "latent_optimization_not_executed",
-    )
-    require(int(receipt.get("latent_opt_attempts") or 0) > 0, "latent_optimization_no_attempt")
-    require(bool(fast_weight_learning), "fast_weight_policy_not_measured")
-    require(
-        fast_weight_learning.get("disposition") != "rejected_verifier_unavailable",
-        "fast_weight_verifier_unavailable",
-    )
-    require(bool(receipt.get("value_of_computation")), "adaptive_controller_not_measured")
-    require(bool(receipt.get("cognitive_action_trace")), "cognitive_actions_not_measured")
-    require(bool(receipt.get("diagnostic_action_selection")), "diagnostics_not_measured")
-    require(bool(local_repair), "local_repair_policy_not_measured")
-    require(bool(answer_replacement), "incumbent_promotion_gate_not_measured")
-    require(causal_identity_valid, "causal_runtime_identity_not_measured")
-    require(
-        (receipt.get("runtime_identity") or {}).get("identity_bound") is True,
-        "source_runtime_identity_not_bound",
-    )
-    require(incumbent_valid, "canonical_incumbent_not_measured")
-    require(
-        incumbent_binding.get("checkpoint_fingerprint")
-        == receipt.get("checkpoint_fingerprint")
-        and receipt.get("checkpoint_fingerprint_method") == "sha256"
-        and int(receipt.get("checkpoint_file_count") or 0) > 0,
-        "cryptographic_checkpoint_binding_not_measured",
-    )
-    require(
-        incumbent_output.get("text_sha256") == baseline_decode.get("text_sha256")
-        and incumbent_output.get("tokens_sha256")
-        == baseline_decode.get("tokens_sha256")
-        and incumbent_output.get("token_count") == baseline_decode.get("token_count"),
-        "promotion_baseline_differs_from_canonical_incumbent",
-    )
-    require(receipt.get("params_unchanged") is True, "base_parameters_not_proven_unchanged")
-    if receipt.get("fast_weights_applied") is True:
-        require(receipt.get("fast_weights_erased") is True, "fast_weights_not_proven_erased")
-        require(bool(receipt.get("fast_weight_cleanup")), "fast_weight_cleanup_not_measured")
 
-    return {
-        "valid": not issues,
-        "issues": sorted(set(issues)),
-        "n_slots": int(receipt.get("n_slots") or 0),
-        "cognitive_slot_count": len(receipt.get("cognitive_slots") or []),
-        "steps_taken": int(receipt.get("steps_taken") or 0),
-        "n_branches": int(receipt.get("n_branches") or 0),
-        "exchange_count": len(branch_exchange.get("exchanges") or []),
-        "verifier_admitted": verifier_preflight.get("verifier_admitted") is True,
-        "latent_opt_mode": str(receipt.get("latent_opt_mode") or ""),
-        "latent_opt_attempts": int(receipt.get("latent_opt_attempts") or 0),
-        "latent_opt_accepted_steps": int(receipt.get("latent_opt_steps") or 0),
-        "fast_weight_disposition": str(fast_weight_learning.get("disposition") or ""),
-        "fast_weights_applied": receipt.get("fast_weights_applied") is True,
-        "fast_weights_erased": receipt.get("fast_weights_erased"),
-        "controller_decisions": len(receipt.get("cognitive_action_trace") or []),
-        "repair_requests": len(local_repair.get("requests") or []),
-        "replacement_decision": str(answer_replacement.get("decision") or ""),
-        "incumbent_receipt_sha256": str(incumbent.get("receipt_sha256") or ""),
-        "checkpoint_fingerprint": str(receipt.get("checkpoint_fingerprint") or ""),
-        "params_unchanged": receipt.get("params_unchanged") is True,
-    }
+    return summarize(receipt, engine_evidence=_full_stack_evidence(receipt))
 
 
 def _runtime_receipt_issues(
@@ -861,6 +753,15 @@ def _runtime_receipt_issues(
         issues.append("runtime_receipt_digest_mismatch")
     if cell.get("full_stack_evidence") != _full_stack_evidence(receipt):
         issues.append("runtime_receipt_summary_mismatch")
+    expected_complete = cell.get("complete_system_evidence")
+    if expected_complete is not None and expected_complete != _complete_system_evidence(receipt):
+        issues.append("complete_system_receipt_summary_mismatch")
+    if expected_complete is not None:
+        observed_text_sha256 = hashlib.sha256(
+            str(cell.get("text") or "").encode("utf-8")
+        ).hexdigest()
+        if expected_complete.get("final_text_sha256") != observed_text_sha256:
+            issues.append("complete_system_final_text_mismatch")
     return issues
 
 
@@ -886,9 +787,7 @@ class _OracleTaskVerifier:
             response_contract=self.response_contract,
         )
         self.evaluations = self._local.evaluations
-        self._scorer_source_sha256 = hashlib.sha256(
-            Path(ft.__file__).read_bytes()
-        ).hexdigest()
+        self._scorer_source_sha256 = hashlib.sha256(Path(ft.__file__).read_bytes()).hexdigest()
 
     def __call__(self, candidate: str) -> float:
         local_score = self._local(candidate)
@@ -1032,9 +931,7 @@ def _manifest_integrity_issues(
         or any(name not in required_set for name in requested)
     ):
         issues.append("requested_arms_invalid")
-    if required_set - set(CONTROL_ARM_NAMES) and not set(CONTROL_ARM_NAMES).issubset(
-        required_set
-    ):
+    if required_set - set(CONTROL_ARM_NAMES) and not set(CONTROL_ARM_NAMES).issubset(required_set):
         issues.append("treatment_controls_missing")
 
     fingerprints = recorded.get("decode_fingerprint")
@@ -1172,6 +1069,7 @@ def _run_rlc(
     worker_identity: dict[str, Any] | None = None,
     runtime_identity: dict[str, Any] | None = None,
     domain: str = "general",
+    cognitive_context: list[dict[str, Any]] | None = None,
 ) -> tuple[str, dict[str, Any]]:
     from core.brain.llm.latent_cortex.engine import LatentCortexEngine
     from core.brain.llm.latent_cortex.types import ComputeBudget
@@ -1198,6 +1096,9 @@ def _run_rlc(
     kwargs["decode_sentence_grace_tokens"] = 0
     if incumbent_artifact is not None:
         kwargs["incumbent_artifact"] = incumbent_artifact
+    kwargs["domain"] = str(domain or "general")
+    if cognitive_context:
+        kwargs["cognitive_context"] = cognitive_context
     if objective:
         # The engine derives its verification objective from prompt/messages.
         # Passing token_ids alone -- which this harness did to control the
@@ -1250,6 +1151,20 @@ def _run_rlc(
             receipt=receipt,
         )
     return text, receipt
+
+
+def _promotion_assessment(**kwargs: Any) -> tuple[str, dict[str, Any]]:
+    from tools.rlc_complete_system_closed_book import _promotion_assessment as assess
+
+    return assess(**kwargs)
+
+
+def _run_complete_system_closed_book(*args: Any, **kwargs: Any) -> tuple[str, dict[str, Any]]:
+    from tools.rlc_complete_system_closed_book import (
+        _run_complete_system_closed_book as run,
+    )
+
+    return run(*args, **kwargs)
 
 
 def main() -> int:
@@ -1349,8 +1264,7 @@ def main() -> int:
         return 0
 
     arm_tokens = {
-        a.name: (args.max_tokens if a.max_tokens is None else a.max_tokens)
-        for a in selected
+        a.name: (args.max_tokens if a.max_tokens is None else a.max_tokens) for a in selected
     }
     implementation_files = _implementation_manifest()
     implementation_sha256 = _implementation_sha256(implementation_files)
@@ -1415,13 +1329,16 @@ def main() -> int:
         started_unix=_now(),
     )
 
-    with standalone_model_lane(
-        owner_id=f"rlc-reconciliation-sweep:{os.getpid()}",
-        model_path=args.model,
-        purpose="evaluation",
-        preemptible=False,
-        metadata={"tool": "run_rlc_reconciliation_sweep", "operator_launched": True},
-    ), mlx_memory_envelope(fraction=args.memory_fraction) as envelope:
+    with (
+        standalone_model_lane(
+            owner_id=f"rlc-reconciliation-sweep:{os.getpid()}",
+            model_path=args.model,
+            purpose="evaluation",
+            preemptible=False,
+            metadata={"tool": "run_rlc_reconciliation_sweep", "operator_launched": True},
+        ),
+        mlx_memory_envelope(fraction=args.memory_fraction) as envelope,
+    ):
         print(f"memory envelope: {envelope.to_receipt()}", flush=True)
         model, tokenizer = load(args.model)
         print("model loaded", flush=True)
@@ -1455,9 +1372,7 @@ def main() -> int:
             task = tasks_by_id.get(str(cell.get("task_id") or ""))
             if task is None:
                 continue
-            artifact = incumbent_artifact_from_value(
-                cell.get("incumbent_artifact") or {}
-            )
+            artifact = incumbent_artifact_from_value(cell.get("incumbent_artifact") or {})
             incumbent_by_task[task.task_id] = validate_incumbent_artifact(
                 artifact,
                 input_tokens=_render_prompt(tokenizer, task),
@@ -1475,9 +1390,7 @@ def main() -> int:
 
             manifest_path = Path(args.adapter_manifest) if args.adapter_manifest else None
             if manifest_path is None or not manifest_path.exists():
-                found = list(Path(args.adapter).parent.rglob(
-                    "recurrence_adapter_manifest.json"
-                ))
+                found = list(Path(args.adapter).parent.rglob("recurrence_adapter_manifest.json"))
                 manifest_path = found[0] if found else None
             if manifest_path is None:
                 print("adapter requested but no manifest found", file=sys.stderr)
@@ -1518,9 +1431,7 @@ def main() -> int:
             config = (
                 None
                 if steps is None
-                else _build_config(
-                    steps, args.n_slots, policy, tokens, profile=spec.profile
-                )
+                else _build_config(steps, args.n_slots, policy, tokens, profile=spec.profile)
             )
             for index, task in enumerate(tasks):
                 key = (arm, task.task_id)
@@ -1584,37 +1495,56 @@ def main() -> int:
                         # arm name carries so no downstream reader can lose
                         # track of which one produced a number.
                         verifier = None
-                        if spec.profile == "full":
+                        if spec.profile in {"complete_closed_book", "full"}:
                             verifier = _episode_verifier(task)
                         elif spec.profile == "full_oracle":
                             verifier = _oracle_verifier(task)
                         incumbent = (
                             incumbent_by_task.get(task.task_id)
-                            if spec.profile in {"full", "full_oracle"}
+                            if spec.profile in {"complete_closed_book", "full", "full_oracle"}
                             else None
                         )
-                        if spec.profile in {"full", "full_oracle"} and incumbent is None:
+                        if (
+                            spec.profile in {"complete_closed_book", "full", "full_oracle"}
+                            and incumbent is None
+                        ):
                             raise EpisodeFault(
                                 "paired canonical ordinary-decode incumbent is absent"
                             )
-                        text, receipt = _run_rlc(
-                            model,
-                            config,
-                            _render_prompt(tokenizer, task),
-                            tokenizer,
-                            wall_clock_s=args.episode_wall_s,
-                            verifier=verifier,
-                            model_path=args.model,
-                            incumbent_artifact=incumbent,
-                            worker_identity=worker_identity,
-                            runtime_identity=runtime_identity,
-                            domain=task.domain,
-                            objective=(
-                                task.public.prompt
-                                if spec.profile in {"full", "full_oracle"}
-                                else ""
-                            ),
-                        )
+                        if spec.profile == "complete_closed_book":
+                            text, receipt = _run_complete_system_closed_book(
+                                model,
+                                config,
+                                _render_prompt(tokenizer, task),
+                                tokenizer,
+                                task=task,
+                                max_tokens=tokens,
+                                wall_clock_s=args.episode_wall_s,
+                                model_path=args.model,
+                                incumbent_artifact=incumbent,
+                                worker_identity=worker_identity,
+                                runtime_identity=runtime_identity,
+                                campaign_seed=args.seed,
+                            )
+                        else:
+                            text, receipt = _run_rlc(
+                                model,
+                                config,
+                                _render_prompt(tokenizer, task),
+                                tokenizer,
+                                wall_clock_s=args.episode_wall_s,
+                                verifier=verifier,
+                                model_path=args.model,
+                                incumbent_artifact=incumbent,
+                                worker_identity=worker_identity,
+                                runtime_identity=runtime_identity,
+                                domain=task.domain,
+                                objective=(
+                                    task.public.prompt
+                                    if spec.profile in {"full", "full_oracle"}
+                                    else ""
+                                ),
+                            )
                 except Exception as exc:  # noqa: BLE001 - recorded, never silent
                     # A harness fault must be visible as a fault. It is never
                     # scored as a wrong answer.
@@ -1636,7 +1566,7 @@ def main() -> int:
                     vanilla_latency_by_task[task.task_id] = incremental_latency_s
                 paired_incumbent_latency_s = (
                     vanilla_latency_by_task.get(task.task_id, 0.0)
-                    if spec.profile in {"full", "full_oracle"}
+                    if spec.profile in {"complete_closed_book", "full", "full_oracle"}
                     else 0.0
                 )
                 journal.append(
@@ -1669,14 +1599,31 @@ def main() -> int:
                             (receipt.get("local_repair") or {}).get("requests") or []
                         ),
                         "answer_replacement_decision": (
-                            (receipt.get("answer_replacement") or {}).get("decision")
+                            (
+                                (receipt.get("complete_system_closed_book") or {})
+                                .get("promotion", {})
+                                .get("decision")
+                            )
+                            if spec.profile == "complete_closed_book"
+                            else (receipt.get("answer_replacement") or {}).get("decision")
                         ),
                         "answer_replacement_reason": (
-                            (receipt.get("answer_replacement") or {}).get("reason")
+                            (
+                                (receipt.get("complete_system_closed_book") or {})
+                                .get("promotion", {})
+                                .get("reason")
+                            )
+                            if spec.profile == "complete_closed_book"
+                            else (receipt.get("answer_replacement") or {}).get("reason")
                         ),
                         "full_stack_evidence": (
                             _full_stack_evidence(receipt)
-                            if spec.profile in {"full", "full_oracle"}
+                            if spec.profile in {"complete_closed_book", "full", "full_oracle"}
+                            else None
+                        ),
+                        "complete_system_evidence": (
+                            _complete_system_evidence(receipt)
+                            if spec.profile == "complete_closed_book"
                             else None
                         ),
                         "incumbent_artifact": (
@@ -1690,9 +1637,7 @@ def main() -> int:
                         # the incremental full-stack search. The experiment
                         # reuses the exact paired artifact for causal identity,
                         # but does not pretend that generating it was free.
-                        "latency_s": (
-                            incremental_latency_s + paired_incumbent_latency_s
-                        ),
+                        "latency_s": (incremental_latency_s + paired_incumbent_latency_s),
                         "incremental_latency_s": incremental_latency_s,
                         "paired_incumbent_latency_s": paired_incumbent_latency_s,
                         "decode_prefix_token_count": receipt.get("decode_prefix_token_count"),
@@ -1804,9 +1749,7 @@ def grade(out_dir: Path, tasks) -> dict[str, Any]:
             "correct": bool(result.correct),
             "contract_neutral_correct": bool(neutral_result.correct),
             "text": str(cell.get("text") or ""),
-            "replacement_decision": str(
-                cell.get("answer_replacement_decision") or ""
-            ),
+            "replacement_decision": str(cell.get("answer_replacement_decision") or ""),
         }
         reason = result.reason or "correct"
         bucket["reasons"][reason] = bucket["reasons"].get(reason, 0) + 1
@@ -1825,19 +1768,11 @@ def grade(out_dir: Path, tasks) -> dict[str, Any]:
     for bucket in arms.values():
         lat = sorted(bucket.pop("latency_s", []) or [])
         steps = [x for x in bucket.pop("steps_taken", []) if x is not None]
-        bucket["latency_median_s"] = (
-            round(lat[len(lat) // 2], 1) if lat else None
-        )
-        bucket["latency_p90_s"] = (
-            round(lat[max(0, int(len(lat) * 0.9) - 1)], 1) if lat else None
-        )
-        bucket["steps_median"] = (
-            sorted(steps)[len(steps) // 2] if steps else None
-        )
+        bucket["latency_median_s"] = round(lat[len(lat) // 2], 1) if lat else None
+        bucket["latency_p90_s"] = round(lat[max(0, int(len(lat) * 0.9) - 1)], 1) if lat else None
+        bucket["steps_median"] = sorted(steps)[len(steps) // 2] if steps else None
         bucket["halted_early_fraction"] = (
-            round(bucket["halted_early"] / bucket["total"], 2)
-            if bucket.get("total")
-            else None
+            round(bucket["halted_early"] / bucket["total"], 2) if bucket.get("total") else None
         )
 
     expected_task_ids = set((recorded or {}).get("expected_task_ids") or [])
@@ -1845,23 +1780,26 @@ def grade(out_dir: Path, tasks) -> dict[str, Any]:
     missing_cells: dict[str, list[str]] = {}
     if expected_task_ids and required_arms:
         for arm in required_arms:
-            present = {
-                task_id for candidate_arm, task_id in unique_cells if candidate_arm == arm
-            }
+            present = {task_id for candidate_arm, task_id in unique_cells if candidate_arm == arm}
             missing = sorted(expected_task_ids - present)
             if missing:
                 missing_cells[arm] = missing
 
+    complete_system_measured = "complete_system_closed_book" in arms
+
     def claim_eligible(name: str) -> bool:
+        # Once the complete closed-book treatment is present, the narrower
+        # neural-engine arm becomes an ablation. This prevents a stronger
+        # campaign from being declared positive because an older, incomplete
+        # experimental object happened to score higher. Historical manifests
+        # without the new arm retain their original full_stack interpretation.
+        if complete_system_measured:
+            return name == "complete_system_closed_book"
         if name in CLAIM_ARM_NAMES:
             return True
         # Compatibility for historical fixtures and evidence. Controls and
         # explicit ablations can never become a claimant.
-        return bool(
-            name.startswith("rlc_")
-            and name != "rlc_mechanism"
-            and "oracle" not in name
-        )
+        return bool(name.startswith("rlc_") and name != "rlc_mechanism" and "oracle" not in name)
 
     vanilla = arms.get("vanilla", {}).get("correct", 0)
     vanilla_contract_neutral = arms.get("vanilla", {}).get(
@@ -1903,19 +1841,24 @@ def grade(out_dir: Path, tasks) -> dict[str, Any]:
                 incumbent_byte_violations.append(f"{arm}:{task_id}")
 
     mechanism_issues: dict[str, dict[str, list[str]]] = {}
-    enforce_runtime_evidence = bool(
-        recorded
-        and recorded.get("schema") == EVIDENCE_MANIFEST_SCHEMA
-    )
+    enforce_runtime_evidence = bool(recorded and recorded.get("schema") == EVIDENCE_MANIFEST_SCHEMA)
     if enforce_runtime_evidence:
         for (arm, task_id), cell in unique_cells.items():
             if arm not in RUNTIME_STACK_ARM_NAMES:
                 continue
-            evidence = cell.get("full_stack_evidence")
+            evidence = (
+                cell.get("complete_system_evidence")
+                if arm == "complete_system_closed_book"
+                else cell.get("full_stack_evidence")
+            )
             issues = (
                 list(evidence.get("issues") or [])
                 if isinstance(evidence, dict)
-                else ["full_stack_runtime_evidence_absent"]
+                else [
+                    "complete_system_runtime_evidence_absent"
+                    if arm == "complete_system_closed_book"
+                    else "full_stack_runtime_evidence_absent"
+                ]
             )
             issues.extend(_runtime_receipt_issues(out_dir, cell))
             if issues:
@@ -1943,16 +1886,10 @@ def grade(out_dir: Path, tasks) -> dict[str, Any]:
     measured_recurrence = best_rlc >= 0
     floor_holds = not floor_violations and not incumbent_byte_violations
     reaches_parity = bool(
-        complete
-        and informative
-        and measured_recurrence
-        and floor_holds
-        and best_rlc >= vanilla
+        complete and informative and measured_recurrence and floor_holds and best_rlc >= vanilla
     )
     beats_equal_compute = bool(
-        reaches_parity
-        and equal_compute is not None
-        and best_rlc > int(equal_compute)
+        reaches_parity and equal_compute is not None and best_rlc > int(equal_compute)
     )
     contract_neutral_reaches_parity = bool(
         complete
@@ -1997,9 +1934,7 @@ def grade(out_dir: Path, tasks) -> dict[str, Any]:
             "vanilla_equal_compute_correct": equal_compute_contract_neutral,
             "best_recurrent_correct": best_rlc_contract_neutral,
             "battery_informative": contract_neutral_informative,
-            "reaches_parity_with_ordinary_decode": (
-                contract_neutral_reaches_parity
-            ),
+            "reaches_parity_with_ordinary_decode": (contract_neutral_reaches_parity),
             "beats_equal_compute_control": contract_neutral_beats_equal_compute,
         },
         "best_recurrent_arm": best_rlc_name,
@@ -2038,9 +1973,7 @@ def grade(out_dir: Path, tasks) -> dict[str, Any]:
         },
         "graded_unix": _now(),
     }
-    _atomic_write(
-        out_dir / "verdict.json", json.dumps(verdict, indent=1, sort_keys=True) + "\n"
-    )
+    _atomic_write(out_dir / "verdict.json", json.dumps(verdict, indent=1, sort_keys=True) + "\n")
     return verdict
 
 

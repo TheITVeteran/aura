@@ -40144,3 +40144,44 @@ pass `34/34`; canonical smoke passes `103/103`; Ruff, compilation, formatting,
 and diff hygiene pass. Compact evidence is
 `artifacts/closeout/latent_cortex/cp079_wow_pilot_handoff_contract.json`.
 The completion envelope remains `809/920` (approximately `87.9%`).
+
+## Checkpoint 2026-08-09-080: The Pilot Measures the Complete Closed-Book System
+
+The reconciliation sweep's historical `full_stack` arm was a complete neural
+RLC episode, but it was not the complete reasoning system Aura actually runs.
+It omitted the service-side cognitive acquisition continuation and the
+production reasoning amplifier, so comparing that arm with ordinary decoding
+could not answer whether the integrated architecture adds effective capability.
+
+The new `complete_system_closed_book` arm starts from the canonical ordinary
+decode incumbent, runs the full neural RLC with the task's real domain, executes
+one bounded `FORMALIZE` or `SIMULATE` acquisition when the cortex selects it,
+permits one typed recurrent continuation, and then composes the result with the
+real `ReasoningAmplifierV2` using the same in-process checkpoint. Memory, RAG,
+web, solved caches, affective state, and answer keys are sealed out, so the arm
+measures same-information reasoning rather than retrieval advantage. Its
+implementation manifest hashes the extracted composition and evidence modules,
+and the persisted receipt binds both RLC rounds, acquisition, amplifier
+candidate, promotion, final text, model owner, and source identity.
+
+The semantic review also closed an overclaim before any 32B cell was spent.
+`EpisodeTaskVerifier` is a candidate-quality proxy for most task families, not
+ground truth. Receipts now distinguish proxy admission from exact
+public-objective deterministic proof and explicitly state whether no-regression
+is guaranteed. The held-out grader, not the proxy, decides whether a promoted
+candidate actually helped or regressed. When this complete arm is present it is
+the only claim-bearing treatment; the neural-only `full_stack` remains a useful
+ablation and cannot win the experiment.
+
+The focused reconciliation and handoff contracts pass `55/55`; the wider
+controller, pipeline, resumability, reconciliation, and handoff family passes
+`96/96`; canonical smoke passes `103/103`; the exact self-test
+expands seven tasks into `21` cells across ordinary decode, equal-compute decode,
+and the complete closed-book system; Ruff, compilation, and diff hygiene pass.
+Compact evidence is
+`artifacts/closeout/latent_cortex/cp080_complete_closed_book_system_contract.json`.
+This proves the source-level experimental object and evidence boundary, not a
+resident-32B reasoning gain, broad or frontier performance, adapter interaction,
+fusion, activation, or `WOW Signal`. Those require the frozen pilot, powered
+held-out battery, four-arm adapter interaction, and independent replay. The
+completion envelope remains `809/920` (approximately `87.9%`).

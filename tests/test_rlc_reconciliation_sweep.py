@@ -7,6 +7,7 @@ its journal, resumption, and grading must be correct before it consumes any
 
 from __future__ import annotations
 
+import hashlib
 import json
 import sys
 from pathlib import Path
@@ -107,6 +108,7 @@ def test_frontier_verifiers_enforce_each_tasks_public_response_shape():
 def test_the_battery_leads_with_the_unified_system_not_the_ablation():
     by_name = {a.name: a for a in sweep.ARMS}
     assert by_name["vanilla"].profile == "ordinary"
+    assert by_name["complete_system_closed_book"].profile == "complete_closed_book"
     assert by_name["full_stack"].profile == "full"
     assert by_name["full_stack_oracle"].profile == "full_oracle"
     assert by_name["rlc_mechanism"].profile == "mechanism"
@@ -115,6 +117,38 @@ def test_the_battery_leads_with_the_unified_system_not_the_ablation():
     assert by_name["vanilla"].max_tokens == by_name["full_stack"].max_tokens
     # The oracle arm is a diagnostic ceiling and is never promotable.
     assert "oracle" in by_name["full_stack_oracle"].name
+
+
+def test_implementation_identity_binds_extracted_complete_system_modules():
+    manifest = sweep._implementation_manifest()
+
+    assert "tools/rlc_complete_system_closed_book.py" in manifest
+    assert "tools/rlc_reconciliation_evidence.py" in manifest
+    assert "core/brain/reasoning_amplifier_v2.py" in manifest
+
+
+def test_complete_system_request_expands_to_controls_without_narrower_treatments():
+    expanded = sweep._expand_requested_arms({"complete_system_closed_book"})
+    assert [arm.name for arm in expanded] == [
+        "vanilla",
+        "vanilla_equal_compute",
+        "complete_system_closed_book",
+    ]
+
+
+def test_complete_system_config_runs_the_same_neural_pillars_as_full_stack():
+    config = sweep._build_config(
+        8,
+        16,
+        "suppressed",
+        512,
+        profile="complete_closed_book",
+    )
+    assert config.latent_opt.enabled is True
+    assert config.fast_weights.enabled is True
+    assert config.local_repair_enabled is True
+    assert config.answer_replacement_enabled is True
+    assert config.recurrence.fixed_depth is False
 
 
 def test_requesting_a_treatment_always_expands_to_both_controls():
@@ -385,6 +419,82 @@ def test_disposition_injection_is_real_when_applied_and_absent_when_suppressed()
     assert applied["decode_bridge_applied"] is False
     assert suppressed["decode_bridge_applied"] is False
     assert applied["decode_bridge_token_count"] == 0
+
+
+def test_run_rlc_passes_task_domain_and_cognitive_context_to_engine(monkeypatch):
+    captured = {}
+
+    class _Receipt:
+        @staticmethod
+        def to_dict():
+            return {"decode_termination": "contract_complete", "honest_flags": []}
+
+    class _Result:
+        ok = True
+        text = "FINAL_ANSWER: {}"
+        tokens = [1]
+        reason = "complete"
+        receipt = _Receipt()
+
+    class _CapturingEngine:
+        def __init__(self, *args, **kwargs):  # noqa: D107, ARG002
+            pass
+
+        def reason(self, **kwargs):
+            captured.update(kwargs)
+            return _Result()
+
+    import core.brain.llm.latent_cortex.engine as engine_module
+
+    monkeypatch.setattr(engine_module, "LatentCortexEngine", _CapturingEngine)
+    model = _tiny_model()
+    config = sweep._build_config(2, 4, "suppressed", 8, decode_contract="none")
+    context = [{"source": "test", "text": "bounded observation"}]
+
+    sweep._run_rlc(
+        model,
+        config,
+        [1, 2, 3],
+        _StubTokenizer(),
+        objective="test objective",
+        domain="scientific_inference",
+        cognitive_context=context,
+    )
+
+    assert captured["domain"] == "scientific_inference"
+    assert captured["cognitive_context"] == context
+    assert captured["messages"] == [{"role": "user", "content": "test objective"}]
+
+
+def test_complete_system_promotion_preserves_incumbent_until_verified_improvement():
+    class _Verifier:
+        @staticmethod
+        def evaluate(text, _record=False):  # noqa: ARG004
+            score = {"incumbent": 0.6, "candidate": 0.9}.get(text, 0.0)
+            return {
+                "score": score,
+                "checks": {"response_contract": {"valid": True}},
+            }
+
+    retained, retained_receipt = sweep._promotion_assessment(
+        verifier=_Verifier(),
+        incumbent_text="incumbent",
+        candidate_text="candidate",
+        candidate_verified=False,
+    )
+    assert retained == "incumbent"
+    assert retained_receipt["decision"] == "retain"
+    assert retained_receipt["reason"] == "candidate_not_verified"
+
+    promoted, promoted_receipt = sweep._promotion_assessment(
+        verifier=_Verifier(),
+        incumbent_text="incumbent",
+        candidate_text="candidate",
+        candidate_verified=True,
+    )
+    assert promoted == "candidate"
+    assert promoted_receipt["decision"] == "replace"
+    assert promoted_receipt["answer_key_used"] is False
 
 
 def _run_with_dead_engine(model, config, reason: str, termination: str):
@@ -690,6 +800,40 @@ def test_no_recurrent_arm_is_not_a_verdict_about_recurrence(tmp_path: Path):
     assert verdict["reaches_parity_with_ordinary_decode"] is False
     assert verdict["decision"] == "inconclusive_no_recurrent_arm_measured"
     assert verdict["claims"]["fusion_authorized"] is False
+
+
+def test_complete_system_is_the_only_claimant_when_narrower_engine_arm_is_present(
+    tmp_path: Path,
+):
+    from core.brain.llm.latent_cortex import frontier_tasks as ft
+
+    tasks = ft.generate_task_battery([20260807], difficulty=2)
+    journal = sweep.Journal(tmp_path / "journal.jsonl")
+    for index, task in enumerate(tasks):
+        correct = "FINAL_ANSWER: " + json.dumps(task.reveal_for_verifier()["expected"])
+        wrong = 'FINAL_ANSWER: {"wrong": 1}'
+        for arm, text in (
+            ("vanilla", correct if index == 0 else wrong),
+            ("vanilla_equal_compute", correct if index == 0 else wrong),
+            ("full_stack", correct),
+            ("complete_system_closed_book", correct if index == 0 else wrong),
+        ):
+            journal.append(
+                {
+                    "event": "CELL",
+                    "arm": arm,
+                    "task_id": task.task_id,
+                    "domain": task.domain,
+                    "text": text,
+                    "error": "",
+                    "answer_replacement_decision": "retain",
+                }
+            )
+
+    verdict = sweep.grade(tmp_path, tasks)
+    assert verdict["arms"]["full_stack"]["correct"] == len(tasks)
+    assert verdict["best_recurrent_arm"] == "complete_system_closed_book"
+    assert verdict["best_recurrent_correct"] == 1
 
 
 def test_per_arm_fingerprints_retire_only_the_arm_that_changed(tmp_path: Path):
@@ -1024,6 +1168,129 @@ def test_full_stack_receipt_must_measure_every_claimed_mechanism(tmp_path: Path)
         "local_repair_policy_not_measured",
     ]
 
+
+def test_complete_system_receipt_requires_acquisition_amplifier_and_promotion(
+    monkeypatch,
+    tmp_path: Path,
+):
+    monkeypatch.setattr(
+        sweep,
+        "_full_stack_evidence",
+        lambda receipt: {"valid": True, "issues": []},
+    )
+    objective = "Return a JSON object with value 1."
+    response_contract = '{"value":int}'
+    candidate_text = 'FINAL_ANSWER: {"value":1}'
+    from core.brain.llm.latent_cortex.task_verifiers import EpisodeTaskVerifier
+
+    candidate_evaluation = EpisodeTaskVerifier(
+        objective,
+        response_contract=response_contract,
+    ).evaluate(candidate_text, _record=False)
+    from tools.rlc_complete_system_closed_book import _candidate_quality_assessment
+
+    candidate_quality = _candidate_quality_assessment(candidate_evaluation)
+    receipt = {
+        "complete_system_closed_book": {
+            "schema": "aura.rlc.complete_system_closed_book.v1",
+            "contract": "same_information_no_memory_rag_web_or_answer_key",
+            "objective": objective,
+            "objective_sha256": hashlib.sha256(objective.encode()).hexdigest(),
+            "response_contract": response_contract,
+            "single_model_owner": True,
+            "first_rlc_runtime": {"valid": True, "issues": []},
+            "first_rlc_receipt": None,
+            "rlc_rounds": 1,
+            "cognitive_acquisition": {
+                "status": "not_requested",
+                "continuation_executed": False,
+                "closed_book_external_sources_withheld": True,
+            },
+            "reasoning_amplifier": {
+                "mode": "normal",
+                "strategy_used": "self_consistency",
+                "num_candidates": 3,
+            },
+            "amplifier_verified": candidate_quality["proxy_admitted"],
+            "amplifier_candidate": {
+                "schema": "aura.rlc.closed_book_amplifier_candidate.v1",
+                "text": candidate_text,
+                "text_sha256": hashlib.sha256(candidate_text.encode()).hexdigest(),
+                "evaluation": candidate_evaluation,
+                "quality_assessment": candidate_quality,
+            },
+            "amplifier_verifier_calls": 4,
+            "in_process_generation_calls": 1,
+            "seed_candidate_count": 2,
+            "promotion": {
+                "schema": "aura.rlc.closed_book_promotion.v1",
+                "decision": "replace",
+                "answer_key_used": False,
+                "authority": "candidate_quality_proxy_not_ground_truth",
+                "ground_truth_verified": False,
+                "no_regression_guaranteed": False,
+                "candidate_text_sha256": hashlib.sha256(candidate_text.encode()).hexdigest(),
+                "final_text_sha256": hashlib.sha256(candidate_text.encode()).hexdigest(),
+            },
+        }
+    }
+    evidence = sweep._complete_system_evidence(receipt)
+    assert evidence["valid"] is True
+    assert evidence["issues"] == []
+    assert evidence["amplifier_candidates"] == 3
+    assert evidence["amplifier_ground_truth_verified"] is False
+    assert evidence["no_regression_guaranteed"] is False
+
+    path, digest = sweep._persist_runtime_receipt(
+        tmp_path,
+        arm="complete_system_closed_book",
+        task_id="task-a",
+        receipt=receipt,
+    )
+    cell = {
+        "runtime_receipt_path": path,
+        "runtime_receipt_sha256": digest,
+        "full_stack_evidence": {"valid": True, "issues": []},
+        "complete_system_evidence": evidence,
+        "text": candidate_text,
+    }
+    assert sweep._runtime_receipt_issues(tmp_path, cell) == []
+    cell["text"] = 'FINAL_ANSWER: {"value":2}'
+    assert sweep._runtime_receipt_issues(tmp_path, cell) == [
+        "complete_system_final_text_mismatch"
+    ]
+
+    del receipt["complete_system_closed_book"]["reasoning_amplifier"]
+    invalid = sweep._complete_system_evidence(receipt)
+    assert invalid["valid"] is False
+    assert "amplifier_candidates_absent" in invalid["issues"]
+    assert "amplifier_strategy_not_executed" in invalid["issues"]
+
+
+def test_candidate_quality_separates_proxy_admission_from_exact_public_proof():
+    from core.brain.llm.latent_cortex.task_verifiers import EpisodeTaskVerifier
+    from tools.rlc_complete_system_closed_book import _candidate_quality_assessment
+
+    proxy_objective = "Return a JSON object with value 1."
+    proxy = EpisodeTaskVerifier(
+        proxy_objective,
+        response_contract='{"value":int}',
+    ).evaluate('FINAL_ANSWER: {"value":1}', _record=False)
+    proxy_assessment = _candidate_quality_assessment(proxy)
+    assert proxy_assessment["proxy_admitted"] is True
+    assert proxy_assessment["ground_truth_verified"] is False
+
+    exact_objective = (
+        "Start at the given value and apply each operation modulo 19: "
+        "start=5. Operations: +3, *2."
+    )
+    exact = EpisodeTaskVerifier(
+        exact_objective,
+        response_contract='{"residue":int}',
+    ).evaluate('FINAL_ANSWER: {"residue":16}', _record=False)
+    exact_assessment = _candidate_quality_assessment(exact)
+    assert exact_assessment["proxy_admitted"] is True
+    assert exact_assessment["ground_truth_verified"] is True
 
 def test_oracle_diagnostic_is_admitted_but_only_answer_keys_task_outputs():
     from core.brain.llm.latent_cortex import frontier_tasks as ft

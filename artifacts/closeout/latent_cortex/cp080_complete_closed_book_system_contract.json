@@ -1,0 +1,39 @@
+{
+ "checkpoint": "CP080",
+ "created_utc": "2026-08-09T11:13:05Z",
+ "parent_source_commit": "c8868c3e528a4202a50192517e43bfc26c83d034",
+ "subject": "complete same-information reasoning treatment for the resident-32B pilot",
+ "contracts": {
+  "arms": "a complete-system request expands to vanilla, vanilla_equal_compute, and complete_system_closed_book only",
+  "closed_book": "memory, RAG, web, solved caches, live affect, and answer keys are excluded",
+  "composition": "full neural RLC, bounded compute acquisition, at most one recurrent continuation, and ReasoningAmplifierV2 share one model owner",
+  "evidence": "implementation, both RLC rounds, candidate evaluation, promotion, and final output are content-bound and reconstructable",
+  "grading": "complete_system_closed_book is the only claim arm when present; neural-only full_stack is an ablation",
+  "truth_boundary": "candidate-quality proxy admission is distinct from exact public-objective ground-truth proof"
+ },
+ "verification": {
+  "focused": "55 passed",
+  "campaign_family": "96 passed",
+  "smoke": "103 passed",
+  "self_test": "7 tasks, 21 cells, exact arms vanilla + vanilla_equal_compute + complete_system_closed_book",
+  "ruff": "passed",
+  "compile": "passed",
+  "diff_hygiene": "passed"
+ },
+ "files": {
+  "tests/test_rlc_reconciliation_sweep.py": "1aa7eac2cec959bf6144d1688750c3580e144599982e9e364e037b3839d0ab09",
+  "tests/test_rlc_wow_pilot_handoff.py": "b83c2445c87751b093bfd3884badbce18be2ff88ab343279f2b492e0a025d06d",
+  "tools/rlc_complete_system_closed_book.py": "ebfef179b84ef816e07716865cfe3c4e7dd3a4367216602042ab9d969e710514",
+  "tools/rlc_reconciliation_evidence.py": "6e2d0fc7555d67651bd724ca83ea912433e82fba5cd46c4a9ffb27743297c05d",
+  "tools/run_rlc_reconciliation_sweep.py": "aa0c1767dbb71c63af6d7c290f2fa0257f00d03ff2efecb475e7cce533ffde91",
+  "tools/run_rlc_wow_pilot_handoff.py": "160a3ddcef7842319f130209d11bc886645bba2a427fe961dcf26032c6da51ca"
+ },
+ "claims": {
+  "reasoning_gain_proven": false,
+  "resident_32b_gain_proven": false,
+  "frontier_level_proven": false,
+  "fusion_authorized": false,
+  "wow_signal": false
+ },
+ "next": "freeze pushed CP080 source, prepare disjoint-seed 32B calibration and complete-system pilot, then admit only a powered independent certificate"
+}

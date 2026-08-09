@@ -3,7 +3,7 @@
 
 The reconciliation controller owns one campaign.  This coordinator owns the
 scientific boundary between the control calibration and the seed-disjoint
-complete-engine pilot.  It never grades a WOW claim, promotes an adapter, or
+complete-system closed-book pilot. It never grades a WOW claim, promotes an adapter, or
 changes either campaign.  Its only authority is to launch the frozen pilot
 after the frozen calibration proves that the battery is complete and neither
 at floor nor ceiling.
@@ -32,10 +32,11 @@ sys.path.insert(0, str(REPO_ROOT))
 
 from tools import run_rlc_reconciliation_controller as campaign_controller  # noqa: E402
 
-SCHEMA: Final = "aura.rlc_wow_pilot_handoff.v1"
-STATUS_SCHEMA: Final = "aura.rlc_wow_pilot_handoff_status.v1"
-LAUNCH_SCHEMA: Final = "aura.rlc_wow_pilot_handoff_launchd.v1"
+SCHEMA: Final = "aura.rlc_wow_pilot_handoff.v2"
+STATUS_SCHEMA: Final = "aura.rlc_wow_pilot_handoff_status.v2"
+LAUNCH_SCHEMA: Final = "aura.rlc_wow_pilot_handoff_launchd.v2"
 CONTROL_ARMS: Final = frozenset({"vanilla", "vanilla_equal_compute"})
+PILOT_ARM: Final = "complete_system_closed_book"
 SCIENTIFIC_MATCH_FIELDS: Final = (
     "source_commit",
     "python_sha256",
@@ -127,8 +128,8 @@ def validate_campaign_pair(
 ) -> None:
     if _arms(calibration_config) != CONTROL_ARMS:
         raise HandoffError("calibration_arms_invalid")
-    if "full_stack" not in _arms(pilot_config):
-        raise HandoffError("pilot_complete_engine_absent")
+    if _arms(pilot_config) != {PILOT_ARM}:
+        raise HandoffError("pilot_complete_system_arm_invalid")
     if int(calibration_config["seed"]) == int(pilot_config["seed"]):
         raise HandoffError("campaign_seeds_not_disjoint")
     for field in SCIENTIFIC_MATCH_FIELDS:
@@ -419,8 +420,9 @@ def pilot_completion(verdict: Mapping[str, Any]) -> tuple[bool, str]:
     ):
         return False, "pilot_contains_faults"
     arms = verdict.get("arms")
-    if not isinstance(arms, Mapping) or "full_stack" not in arms:
-        return False, "pilot_complete_engine_unmeasured"
+    expected_arms = CONTROL_ARMS | {PILOT_ARM}
+    if not isinstance(arms, Mapping) or frozenset(arms) != expected_arms:
+        return False, "pilot_complete_system_unmeasured"
     return True, "pilot_measured"
 
 
