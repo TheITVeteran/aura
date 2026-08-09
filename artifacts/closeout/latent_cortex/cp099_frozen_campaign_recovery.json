@@ -1,0 +1,37 @@
+{
+  "schema": "aura.closeout.latent_cortex_frozen_recovery.v1",
+  "checkpoint": "CP099",
+  "capability": {
+    "command": "run_rlc_reconciliation_controller.py recover",
+    "source_campaign_lock_required": true,
+    "source_and_model_reverified": true,
+    "journal_validation": [
+      "valid JSON lines",
+      "unique arm and task keys",
+      "per-arm decode fingerprint equality",
+      "safe relative receipt paths",
+      "runtime receipt SHA-256 equality"
+    ],
+    "copied_evidence": [
+      "decode_fingerprint.json",
+      "task_commitment.json",
+      "journal.jsonl",
+      "referenced runtime receipts"
+    ],
+    "excluded_state": [
+      "status.json",
+      "verdict.json",
+      "YIELD",
+      "process state",
+      "old controller heartbeat"
+    ],
+    "receipt": "A durable recovery receipt binds the old and new config digests, scientific source commit, controller program digest, preserved cell count, and every copied file."
+  },
+  "verification": {
+    "focused_tests": "78 passed",
+    "ruff": "pass",
+    "python_compile": "pass",
+    "canonical_smoke": "103 passed"
+  },
+  "next_gate": "Create a detached CP099 lifecycle worktree, recover CP093's 21 admitted cells into a new campaign, install launchd, and prove moving signed process-group liveness through a new control-cell commit."
+}

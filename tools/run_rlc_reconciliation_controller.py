@@ -17,6 +17,7 @@ import json
 import os
 import plistlib
 import secrets
+import shutil
 import signal
 import stat
 import subprocess
@@ -32,6 +33,7 @@ SOURCE_GIT_SCHEMA: Final = "aura.rlc_reconciliation_source_git_identity.v1"
 HEARTBEAT_SCHEMA: Final = "aura.rlc_reconciliation_controller_heartbeat.v1"
 STATUS_SCHEMA: Final = "aura.rlc_reconciliation_controller_status.v1"
 LAUNCH_SCHEMA: Final = "aura.rlc_reconciliation_controller_launchd.v1"
+RECOVERY_SCHEMA: Final = "aura.rlc_reconciliation_controller_recovery.v1"
 TERMINAL_PHASES: Final = frozenset({"complete", "yielded", "blocked"})
 CONFIG_SUFFIXES: Final = frozenset({".json", ".toml", ".yaml", ".yml", ".jinja"})
 GLOBAL_MODEL_LOCK: Final = Path.home() / ".aura/state/rlc-reconciliation-model.lock"
@@ -483,6 +485,148 @@ def write_prepared_campaign(
         sink.flush()
         os.fsync(sink.fileno())
     _atomic_json(config_path, config)
+
+
+def _copy_file_durable(source: Path, destination: Path) -> dict[str, Any]:
+    source = source.resolve(strict=True)
+    destination.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+    temporary = destination.with_name(
+        f".{destination.name}.{os.getpid()}.{secrets.token_hex(4)}.tmp"
+    )
+    with source.open("rb") as source_handle, temporary.open("xb") as destination_handle:
+        shutil.copyfileobj(source_handle, destination_handle, length=1024 * 1024)
+        destination_handle.flush()
+        os.fsync(destination_handle.fileno())
+    os.replace(temporary, destination)
+    return {
+        "path": str(destination),
+        "size": destination.stat().st_size,
+        "sha256": _sha_file(destination),
+    }
+
+
+def _validated_recovery_files(previous_sweep: Path) -> tuple[int, list[Path]]:
+    fingerprint_path = previous_sweep / "decode_fingerprint.json"
+    task_path = previous_sweep / "task_commitment.json"
+    journal_path = previous_sweep / "journal.jsonl"
+    recorded = _read_json(fingerprint_path, role="decode_fingerprint")
+    fingerprints = recorded.get("decode_fingerprint")
+    if not isinstance(fingerprints, Mapping) or not fingerprints:
+        raise ControllerError("recovery_decode_fingerprint_invalid")
+    required: set[Path] = {fingerprint_path, task_path, journal_path}
+    keys: set[tuple[str, str]] = set()
+    cells = 0
+    try:
+        lines = journal_path.read_text(encoding="utf-8").splitlines()
+    except OSError as exc:
+        raise ControllerError("recovery_journal_unavailable") from exc
+    for line in lines:
+        try:
+            record = json.loads(line)
+        except json.JSONDecodeError as exc:
+            raise ControllerError("recovery_journal_torn_or_invalid") from exc
+        if record.get("event") != "CELL":
+            continue
+        arm = str(record.get("arm") or "")
+        task_id = str(record.get("task_id") or "")
+        key = (arm, task_id)
+        if not arm or not task_id or key in keys:
+            raise ControllerError("recovery_journal_duplicate_or_unbound_cell")
+        if record.get("decode_fingerprint") != fingerprints.get(arm):
+            raise ControllerError("recovery_journal_fingerprint_mismatch")
+        keys.add(key)
+        cells += 1
+        relative_receipt = record.get("runtime_receipt_path")
+        if relative_receipt:
+            relative = Path(str(relative_receipt))
+            if relative.is_absolute() or ".." in relative.parts:
+                raise ControllerError("recovery_runtime_receipt_path_invalid")
+            receipt_path = (previous_sweep / relative).resolve(strict=True)
+            if previous_sweep.resolve() not in receipt_path.parents:
+                raise ControllerError("recovery_runtime_receipt_path_invalid")
+            if _sha_file(receipt_path) != record.get("runtime_receipt_sha256"):
+                raise ControllerError("recovery_runtime_receipt_hash_mismatch")
+            required.add(receipt_path)
+    if cells == 0:
+        raise ControllerError("recovery_journal_empty")
+    if not task_path.is_file():
+        raise ControllerError("recovery_task_commitment_missing")
+    return cells, sorted(required, key=lambda path: os.fsencode(str(path)))
+
+
+def recover_campaign(
+    previous_config_path: Path,
+    *,
+    out_dir: Path,
+    output: Path,
+    controller_program: Path,
+) -> dict[str, Any]:
+    """Recover admitted cells under a new lifecycle controller, unchanged."""
+
+    previous_config = load_config(previous_config_path)
+    _source_is_current(previous_config)
+    previous_root = Path(str(previous_config["out_dir"])).parent
+    lock_descriptor = os.open(
+        previous_root / ".controller.lock", os.O_RDWR | os.O_CREAT, 0o600
+    )
+    try:
+        try:
+            fcntl.flock(lock_descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError as exc:
+            raise ControllerError("recovery_source_campaign_is_active") from exc
+        cells, source_files = _validated_recovery_files(
+            Path(str(previous_config["out_dir"]))
+        )
+        config, manifest, key = build_config(
+            source_root=Path(str(previous_config["source_root"])),
+            source_commit=str(previous_config["source_commit"]),
+            model=Path(str(previous_config["model"])),
+            out_dir=out_dir,
+            python=Path(str(previous_config["python"])),
+            arms=str(previous_config["arms"]),
+            seed=int(previous_config["seed"]),
+            per_domain=int(previous_config["per_domain"]),
+            difficulty=int(previous_config["difficulty"]),
+            task_registry_version=str(previous_config["task_registry_version"]),
+            n_slots=int(previous_config["n_slots"]),
+            max_tokens=int(previous_config["max_tokens"]),
+            memory_fraction=float(previous_config["memory_fraction"]),
+            episode_wall_s=float(previous_config["episode_wall_s"]),
+            attempt_wall_s=float(previous_config["attempt_wall_s"]),
+            max_attempts=int(previous_config["max_attempts"]),
+            poll_s=float(previous_config["poll_s"]),
+            stale_after_s=float(previous_config["stale_after_s"]),
+            retry_backoff_s=float(previous_config["retry_backoff_s"]),
+            controller_program=controller_program,
+        )
+        write_prepared_campaign(output, config, manifest, key)
+        previous_sweep = Path(str(previous_config["out_dir"])).resolve()
+        destination_sweep = Path(str(config["out_dir"])).resolve()
+        copied: list[dict[str, Any]] = []
+        for source in source_files:
+            relative = source.resolve().relative_to(previous_sweep)
+            identity = _copy_file_durable(source, destination_sweep / relative)
+            identity["relative_path"] = relative.as_posix()
+            copied.append(identity)
+        body = {
+            "schema": RECOVERY_SCHEMA,
+            "previous_campaign_id": previous_config["campaign_id"],
+            "previous_config_sha256": previous_config["config_sha256"],
+            "campaign_id": config["campaign_id"],
+            "config_sha256": config["config_sha256"],
+            "source_commit": config["source_commit"],
+            "controller_program": config["controller_program"],
+            "controller_program_sha256": config["controller_program_sha256"],
+            "preserved_cells": cells,
+            "copied_files": copied,
+            "scientific_parameters_changed": False,
+            "prepared_unix": time.time(),
+        }
+        receipt = {**body, "recovery_sha256": _sha(body)}
+        _atomic_json(out_dir / "recovery_receipt.json", receipt)
+        return receipt
+    finally:
+        os.close(lock_descriptor)
 
 
 def _heartbeat_key(config: Mapping[str, Any]) -> bytes:
@@ -1029,6 +1173,7 @@ def _parser() -> argparse.ArgumentParser:
     prepare.add_argument("--model", type=Path, required=True)
     prepare.add_argument("--out-dir", type=Path, required=True)
     prepare.add_argument("--python", type=Path, required=True)
+    prepare.add_argument("--controller-program", type=Path)
     prepare.add_argument("--arms", default="full_stack,full_stack_oracle")
     prepare.add_argument("--seed", type=int, default=20260808)
     prepare.add_argument("--per-domain", type=int, default=4)
@@ -1047,6 +1192,11 @@ def _parser() -> argparse.ArgumentParser:
     prepare.add_argument("--stale-after-s", type=float, default=1_800.0)
     prepare.add_argument("--retry-backoff-s", type=float, default=30.0)
     prepare.add_argument("--output", type=Path, required=True)
+    recover = commands.add_parser("recover")
+    recover.add_argument("--previous-config", type=Path, required=True)
+    recover.add_argument("--out-dir", type=Path, required=True)
+    recover.add_argument("--output", type=Path, required=True)
+    recover.add_argument("--controller-program", type=Path, required=True)
     run_parser = commands.add_parser("run")
     run_parser.add_argument("--config", type=Path, required=True)
     run_parser.add_argument("--launchd-supervised", action="store_true")
@@ -1081,9 +1231,24 @@ def main(argv: Sequence[str] | None = None) -> int:
                 poll_s=args.poll_s,
                 stale_after_s=args.stale_after_s,
                 retry_backoff_s=args.retry_backoff_s,
+                controller_program=args.controller_program,
             )
             write_prepared_campaign(args.output, config, manifest, key)
             print(json.dumps(config, indent=2, sort_keys=True))
+            return 0
+        if args.action == "recover":
+            print(
+                json.dumps(
+                    recover_campaign(
+                        args.previous_config,
+                        out_dir=args.out_dir,
+                        output=args.output,
+                        controller_program=args.controller_program,
+                    ),
+                    indent=2,
+                    sort_keys=True,
+                )
+            )
             return 0
         if args.action == "run":
             return run(args.config, launchd_supervised=args.launchd_supervised)

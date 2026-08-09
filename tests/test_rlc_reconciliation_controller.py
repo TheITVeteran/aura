@@ -238,6 +238,89 @@ def test_external_controller_program_is_hashed_without_changing_scientific_sourc
         controller._source_is_current(config)
 
 
+def test_recovery_copies_only_fingerprint_valid_evidence(tmp_path: Path):
+    source, previous_root, previous_config_path, previous_config = _prepared(tmp_path)
+    previous_sweep = Path(previous_config["out_dir"])
+    previous_sweep.mkdir()
+    fingerprint = "a" * 64
+    (previous_sweep / "decode_fingerprint.json").write_text(
+        json.dumps({"decode_fingerprint": {"vanilla": fingerprint}}),
+        encoding="utf-8",
+    )
+    (previous_sweep / "task_commitment.json").write_text("{}\n", encoding="utf-8")
+    journal = (
+        json.dumps(
+            {
+                "event": "CELL",
+                "arm": "vanilla",
+                "task_id": "task-a",
+                "decode_fingerprint": fingerprint,
+            },
+            sort_keys=True,
+        )
+        + "\n"
+    )
+    (previous_sweep / "journal.jsonl").write_text(journal, encoding="utf-8")
+    (previous_sweep / "status.json").write_text('{"phase":"stale"}\n', encoding="utf-8")
+    controller_program = tmp_path / "repaired-controller.py"
+    controller_program.write_text("print('repaired')\n", encoding="utf-8")
+    recovered_root = tmp_path / "recovered"
+    recovered_config_path = recovered_root / "controller_config.json"
+
+    receipt = controller.recover_campaign(
+        previous_config_path,
+        out_dir=recovered_root,
+        output=recovered_config_path,
+        controller_program=controller_program,
+    )
+
+    recovered = controller.load_config(recovered_config_path)
+    assert receipt["preserved_cells"] == 1
+    assert receipt["scientific_parameters_changed"] is False
+    assert recovered["source_root"] == str(source)
+    assert recovered["source_commit"] == previous_config["source_commit"]
+    assert recovered["controller_program"] == str(controller_program)
+    assert (recovered_root / "sweep/journal.jsonl").read_text() == journal
+    assert not (recovered_root / "sweep/status.json").exists()
+    assert not (recovered_root / "sweep/verdict.json").exists()
+    assert previous_root != recovered_root
+
+
+def test_recovery_rejects_a_cell_from_another_fingerprint(tmp_path: Path):
+    _source_root, _previous_root, previous_config_path, previous_config = _prepared(
+        tmp_path
+    )
+    previous_sweep = Path(previous_config["out_dir"])
+    previous_sweep.mkdir()
+    (previous_sweep / "decode_fingerprint.json").write_text(
+        json.dumps({"decode_fingerprint": {"vanilla": "a" * 64}}),
+        encoding="utf-8",
+    )
+    (previous_sweep / "task_commitment.json").write_text("{}\n", encoding="utf-8")
+    (previous_sweep / "journal.jsonl").write_text(
+        json.dumps(
+            {
+                "event": "CELL",
+                "arm": "vanilla",
+                "task_id": "task-a",
+                "decode_fingerprint": "b" * 64,
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    controller_program = tmp_path / "repaired-controller.py"
+    controller_program.write_text("print('repaired')\n", encoding="utf-8")
+
+    with pytest.raises(controller.ControllerError, match="fingerprint_mismatch"):
+        controller.recover_campaign(
+            previous_config_path,
+            out_dir=tmp_path / "recovered",
+            output=tmp_path / "recovered/controller_config.json",
+            controller_program=controller_program,
+        )
+
+
 def test_controller_rejects_a_non_contamination_safe_task_registry(tmp_path: Path):
     _source_root, _out, config_path, _config = _prepared(tmp_path)
     document = json.loads(config_path.read_text(encoding="utf-8"))

@@ -40805,3 +40805,27 @@ process-group heartbeats through the first resource-control commit. No scored
 reasoning gain, frontier result, fusion authority, activation authority, or
 `WOW Signal` is claimed, and the completion envelope remains `809/920`
 (approximately `87.9%`).
+
+## Checkpoint 2026-08-09-099: Frozen Campaign Recovery Is An Operation
+
+A controller-only repair is useful only if durable experimental work can move
+to it without hand-editing evidence. The reconciliation controller now exposes
+a bounded `recover` operation. It acquires the prior campaign lock, revalidates
+the frozen Git source and model manifests, rejects torn journals, duplicate
+cells, foreign decode fingerprints, unsafe receipt paths, and receipt hash
+drift, then copies only admitted evidence with fsync and atomic replacement.
+
+The recovery excludes stale process state, status, verdict, yield sentinels,
+and old heartbeats. Its receipt binds the old and new config digests, unchanged
+scientific source commit, separately hashed lifecycle controller, exact cell
+count, and every copied file's size and SHA-256. This turns a long campaign
+restart into a repeatable custody operation rather than a manual filesystem
+procedure.
+
+Focused controller/sweep contracts pass `78/78`; Ruff and Python byte
+compilation pass. Compact evidence is
+`artifacts/closeout/latent_cortex/cp099_frozen_campaign_recovery.json`.
+The next gate is the real CP093 recovery and a moving authenticated heartbeat
+through a newly committed resource-control cell. No reasoning-gain, frontier,
+fusion, activation, or `WOW Signal` claim is made. The completion envelope
+remains `809/920` (approximately `87.9%`).
