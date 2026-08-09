@@ -4179,6 +4179,21 @@ class MLXLocalClient:
         # activation-grounded Φ complex can never fill — the steering hook's
         # in-process PhiCore lookup is always False on the far side of the fork.
         # See core/consciousness/phi_residual_channel.py.
+        # Reverse channel: latent readouts from the worker's transformer
+        # hooks back to the substrate, which lives here. This is the backward
+        # arrow of the latent bridge; without it the readout hooks accumulate
+        # deltas into a thread that drops them.
+        # See core/consciousness/latent_readout_channel.py.
+        try:
+            from core.consciousness.latent_readout_channel import (
+                create_channel as _create_latent_channel,
+            )
+
+            self._latent_readout_mem = _create_latent_channel(self._mp_context)
+        except (ImportError, AttributeError, OSError, ValueError):
+            self._latent_readout_mem = None
+        self._latent_readout_seen: list[float] | None = None
+
         try:
             from core.consciousness.phi_residual_channel import create_channel
 
@@ -9500,6 +9515,7 @@ class MLXLocalClient:
                             self._contract_key,
                             dict(self._worker_capture_launch_authority.challenge),
                             self._phi_residual_mem,
+                            self._latent_readout_mem,
                         ),
                         source="mlx_local_client.worker_owner",
                         name=f"MLXWorker-{os.path.basename(self.model_path)}",
@@ -11542,6 +11558,68 @@ class MLXLocalClient:
             )
             return 0
 
+    async def _drain_latent_readouts(self) -> float:
+        """Inject the worker's latent readouts into the substrate.
+
+        THE BACKWARD ARROW. ``AffectiveSteering`` carries substrate state INTO
+        the residual stream; this carries the model's own representations back
+        out. The bridge that does the reading was written long ago and could
+        not have worked in any process — it looked the substrate up in the
+        worker, where it does not exist, and injected through
+        ``asyncio.get_running_loop()`` from a plain thread, which always
+        raises. Both halves failed silently, so the coupling was one-way and
+        read as two.
+
+        Here there is a substrate and there is a running loop. Returns the
+        magnitude injected, and never raises: feedback is not worth a turn.
+        """
+        channel = getattr(self, "_latent_readout_mem", None)
+        if channel is None:
+            return 0.0
+        try:
+            import numpy as np
+
+            from core.consciousness.latent_readout_channel import drain
+
+            deltas, snapshot = drain(channel, getattr(self, "_latent_readout_seen", None))
+            self._latent_readout_seen = snapshot
+            if not deltas:
+                return 0.0
+
+            from core.runtime.service_registry import get_runtime_service
+
+            substrate = get_runtime_service("conscious_substrate", default=None)
+            if substrate is None or not hasattr(substrate, "inject_stimulus"):
+                return 0.0
+
+            neuron_count = int(getattr(getattr(substrate, "config", None), "neuron_count", 0))
+            if neuron_count <= 0:
+                return 0.0
+            stimulus = np.zeros(neuron_count, dtype=np.float32)
+            for index, delta in deltas.items():
+                if 0 <= index < neuron_count:
+                    stimulus[index] = float(delta)
+
+            magnitude = float(np.linalg.norm(stimulus))
+            if magnitude <= 0.005:
+                return 0.0
+
+            await substrate.inject_stimulus(stimulus, weight=1.0)
+            self._latent_injections = int(getattr(self, "_latent_injections", 0)) + 1
+            self._latent_magnitude = (
+                float(getattr(self, "_latent_magnitude", 0.0)) + magnitude
+            )
+            return magnitude
+        except Exception as exc:  # noqa: BLE001 — feedback may not break a turn
+            record_degradation(
+                "mlx_client",
+                exc,
+                severity="debug",
+                action="skipped one latent readout injection",
+                enforce_failure_policy=False,
+            )
+            return 0.0
+
     async def generate(self, prompt: str, **kwargs) -> str | None:
         """High-level generation endpoint with unified deadlines.
 
@@ -11789,6 +11867,12 @@ class MLXLocalClient:
             # the worker. Cheap (a deque append per sampled token) and the
             # only thing standing between the encoder and a live Φ.
             self._drain_phi_residual_ring()
+
+            # Close the latent loop: the model's own representations, read in
+            # the worker, injected into the substrate here. Awaited rather
+            # than fired off, so an injection cannot outlive the turn that
+            # produced it and land in the middle of the next one.
+            await self._drain_latent_readouts()
 
             # Reliability tracing: inference nests under the HTTP root span
             # (contextvars), so a slow turn reads as one connected trace.

@@ -238,26 +238,39 @@ class ConsciousnessSystem:
 
         # Layer 3: LatentBridge — backward path, model hidden state -> substrate.
         #
-        # This said "deferred (attaches on model load)" and had done since it
-        # was written. `deferred` reads as "will happen shortly" — it is a
-        # promise about a future event, and nothing redeems it:
-        # attach_latent_bridge() has NO caller anywhere in the repository.
-        # mlx_client does import a latent_bridge, but a DIFFERENT module
-        # (core.brain.latent_bridge) and only for compute_inference_params;
-        # it never attaches this one.
+        # History, because it is the useful part. This said "deferred
+        # (attaches on model load)" for as long as it existed. `deferred` is a
+        # promise about a future event and nothing redeemed it:
+        # attach_latent_bridge() had no caller anywhere. That was corrected to
+        # "unwired", which was honest but still described a hole.
         #
-        # So the backward path is not deferred, it is unwired — and a status
-        # claiming otherwise is the same defect class as a health check that
-        # reports success because it never ran. Reported honestly, with the
-        # reason, so nobody credits model-hidden-state feedback as live.
-        self.layer_status["latent_bridge"] = "unwired"
+        # The hole was deeper than the missing call. Attaching it as written
+        # would have injected nothing, twice over: the injector resolved the
+        # substrate with an in-process ServiceContainer lookup (the hooks run
+        # in the MLX worker, the substrate lives here) and injected through
+        # asyncio.get_running_loop() from a plain daemon thread, which raises
+        # unconditionally. A backward arrow that collects deltas and drops
+        # them would have been worse than none, because it reads as live.
+        #
+        # Both are fixed and the path is now real: the worker publishes
+        # readouts over core/consciousness/latent_readout_channel.py and
+        # MLXLocalClient._drain_latent_readouts injects them here, where the
+        # substrate and a running loop both exist.
+        #
+        # The status is still not asserted from this module. Whether hooks
+        # actually installed depends on a model being loaded with steering
+        # vectors present, which happens later and elsewhere — so this
+        # reports the wiring, and liveness is read from the bridge itself.
+        self.layer_status["latent_bridge"] = "wired"
         self.layer_detail["latent_bridge"] = (
-            "attach_latent_bridge() has no production caller; the backward "
-            "hidden-state path is defined but never attached to a model"
+            "attached in the MLX worker after affective steering; readouts "
+            "cross to the substrate over latent_readout_channel. Hooks install "
+            "only when the model loads with steering vectors — read "
+            "get_latent_bridge().get_diagnostics() for live hook count."
         )
-        logger.warning(
-            "🧠 Layer 3: LatentBridge UNWIRED — attach_latent_bridge() is never "
-            "called, so model hidden state does not feed back into the substrate."
+        logger.info(
+            "🧠 Layer 3: LatentBridge WIRED — model hidden state reaches the "
+            "substrate once a model is attached in the worker."
         )
 
         # Layer 4: Closed Causal Loop — self-prediction + output receptor

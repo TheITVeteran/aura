@@ -4515,6 +4515,7 @@ def _mlx_worker_loop(
     contract_key: bytes | None = None,
     worker_capture_launch_challenge: Mapping[str, Any] | None = None,
     phi_residual_mem: Any = None,
+    latent_readout_mem: Any = None,
 ):
     """Runs in a FULLY ISOLATED native subprocess via ForkServer.
 
@@ -4757,6 +4758,44 @@ def _mlx_worker_loop(
             )
             logger.error("FATAL: Affective steering failed to attach. Cannot run sovereign inference unsteered. %s", se)
             raise RuntimeError(f"Steering liveness gate failed: {se}") from se
+
+        # The backward arrow. Steering above carries substrate state INTO the
+        # residual stream; this reads the model's own representations back out
+        # and publishes them to the parent, which owns the substrate.
+        #
+        # attach_latent_bridge() had no caller for its whole existence, and
+        # calling it as it was written would not have helped: its injector
+        # looked the substrate up in THIS process, where it does not exist,
+        # and injected via asyncio.get_running_loop() from a plain thread,
+        # which always raises. Both are fixed; the transport is
+        # core/consciousness/latent_readout_channel.py.
+        #
+        # Unlike steering, a failure here is not fatal. Unsteered inference is
+        # a governance problem — the substrate must reach the model. A missing
+        # backward arrow costs a feedback loop, and answering without it is
+        # better than not answering.
+        if latent_readout_mem is not None and _steering_active:
+            try:
+                from core.consciousness.latent_bridge import attach_latent_bridge
+
+                bridge = attach_latent_bridge(model, channel=latent_readout_mem)
+                if bridge is not None:
+                    bridge.start_substrate_sync(channel=latent_readout_mem)
+                    logger.info(
+                        "🔁 LatentBridge ONLINE (%d readout hooks) — model "
+                        "representations now reach the substrate.",
+                        len(getattr(bridge, "_readout_hooks", []) or []),
+                    )
+                else:
+                    logger.warning("LatentBridge did not attach; backward path is off.")
+            except (ImportError, AttributeError, RuntimeError, TypeError, ValueError) as le:
+                record_degradation(
+                    "latent_bridge",
+                    le,
+                    severity="warning",
+                    action="continued with forward-only steering after the latent bridge failed to attach",
+                )
+                logger.warning("LatentBridge attach failed (forward-only): %s", le)
 
         # Write steering liveness to shared state so parent can query it
         if substrate_mem is not None:

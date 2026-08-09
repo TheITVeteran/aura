@@ -192,89 +192,89 @@ class LatentReadoutHook:
 # ── Substrate Injection Thread ─────────────────────────────────────────────────
 
 class SubstrateInjectionThread:
-    """
-    Periodically collects accumulated readouts from all readout hooks
-    and injects them into LiquidSubstrate.
+    """Collects readout deltas from the hooks and publishes them across the fork.
 
-    This is the backward arrow of the latent bridge:
-      h_layer (model representations) → substrate state
+    This used to try to inject directly, and could not have worked in any
+    process. Two independent reasons, both now gone:
+
+    * It resolved the substrate with ``ServiceContainer.get("conscious_substrate")``.
+      These hooks run in the MLX worker; the substrate is registered in the
+      main runtime. That lookup returns None there, always.
+    * It called ``asyncio.get_running_loop()`` from a plain daemon thread,
+      which raises unconditionally. Even in the main process, with the
+      substrate present, the injection sat inside a ``try`` that could only
+      take the ``except``.
+
+    So it publishes now, and the parent injects. Transport is
+    :mod:`core.consciousness.latent_readout_channel`, mirroring the Φ
+    residual ring in the same direction for the same reason.
     """
 
-    def __init__(self, readout_hooks: List[LatentReadoutHook]):
+    def __init__(
+        self,
+        readout_hooks: List[LatentReadoutHook],
+        channel: Any = None,
+    ):
         self._hooks = readout_hooks
+        self._channel = channel
         self._thread: Optional[threading.Thread] = None
         self._running = False
-        self._total_injections = 0
-        self._total_magnitude_injected = 0.0
+        self._total_published = 0
+        self._total_magnitude_published = 0.0
 
     def start(self):
+        if self._channel is None:
+            logger.warning(
+                "LatentBridge has no readout channel; the backward path would "
+                "collect deltas and drop them. Not starting."
+            )
+            return
         self._running = True
         self._thread = threading.Thread(
             target=self._loop,
-            name="LatentBridge.InjectionThread",
+            name="LatentBridge.ReadoutPublisher",
             daemon=True,
         )
         self._thread.start()
-        logger.info("🔄 SubstrateInjectionThread started (%d hooks)", len(self._hooks))
+        logger.info(
+            "🔄 LatentBridge readout publisher started (%d hooks)", len(self._hooks)
+        )
 
     def stop(self):
         self._running = False
 
     def _loop(self):
-        substrate = None
+        from core.consciousness.latent_readout_channel import publish_deltas
 
         while self._running:
             try:
-                # Lazy substrate discovery
-                if substrate is None:
-                    try:
-                        from core.container import ServiceContainer
-                        substrate = ServiceContainer.get("conscious_substrate", default=None)
-                    except (ImportError, AttributeError, RuntimeError) as _e:
-                        record_degradation('latent_bridge', _e)
-                        logger.debug('Ignored Exception in latent_bridge.py: %s', _e)
+                combined: Dict[int, float] = {}
+                for hook in self._hooks:
+                    for idx, delta in hook.pop_pending_injection().items():
+                        combined[idx] = combined.get(idx, 0.0) + delta
 
-                if substrate is not None:
-                    # Collect from all hooks
-                    combined: Dict[int, float] = {}
-                    for hook in self._hooks:
-                        pending = hook.pop_pending_injection()
-                        for idx, delta in pending.items():
-                            combined[idx] = combined.get(idx, 0.0) + delta
-
-                    # Build stimulus vector and inject
-                    if combined:
-                        stimulus = np.zeros(substrate.config.neuron_count, dtype=np.float32)
-                        for idx, delta in combined.items():
-                            if 0 <= idx < len(stimulus):
-                                stimulus[idx] = np.clip(float(delta), -0.5, 0.5)
-
-                        magnitude = float(np.linalg.norm(stimulus))
-                        if magnitude > 0.005:
-                            import asyncio
-                            try:
-                                loop = asyncio.get_running_loop()
-                                if loop.is_running():
-                                    asyncio.run_coroutine_threadsafe(
-                                        substrate.inject_stimulus(stimulus, weight=1.0),
-                                        loop,
-                                    )
-                                    self._total_injections += 1
-                                    self._total_magnitude_injected += magnitude
-                            except RuntimeError as _e:
-                                logger.debug('Ignored RuntimeError in latent_bridge.py: %s', _e)
-
-            except (ImportError, AttributeError, RuntimeError) as e:
-                record_degradation('latent_bridge', e)
-                logger.debug("InjectionThread error: %s", e)
+                if combined and publish_deltas(self._channel, combined):
+                    self._total_published += 1
+                    self._total_magnitude_published += float(
+                        np.linalg.norm(np.array(list(combined.values()), dtype=np.float32))
+                    )
+            except (AttributeError, OSError, RuntimeError, TypeError, ValueError) as exc:
+                record_degradation(
+                    "latent_bridge",
+                    exc,
+                    severity="debug",
+                    action="dropped one latent readout publish cycle",
+                    enforce_failure_policy=False,
+                )
 
             time.sleep(INJECTION_INTERVAL_S)
 
     def get_diagnostics(self) -> Dict[str, Any]:
         return {
             "running": self._running,
-            "total_injections": self._total_injections,
-            "total_magnitude": round(self._total_magnitude_injected, 3),
+            "has_channel": self._channel is not None,
+            "total_published": self._total_published,
+            "total_magnitude": round(self._total_magnitude_published, 3),
         }
 
 
@@ -294,11 +294,14 @@ class LatentBridge:
     Together: genuine bidirectional coupling in activation space.
     """
 
-    def __init__(self, steering_engine):
+    def __init__(self, steering_engine, channel: Any = None):
         self._steering_engine = steering_engine
         self._readout_hooks: List[LatentReadoutHook] = []
         self._injection_thread: Optional[SubstrateInjectionThread] = None
         self._attached = False
+        #: Shared array to the parent. None means the backward arrow has no
+        #: transport and must not pretend otherwise.
+        self._channel = channel
 
     def attach(self, model):
         """
@@ -339,14 +342,23 @@ class LatentBridge:
             len(self._readout_hooks), target_layers
         )
 
-    def start_substrate_sync(self):
-        """Start the substrate injection thread."""
+    def start_substrate_sync(self, channel: Any = None):
+        """Start publishing readouts toward the substrate.
+
+        ``channel`` is the shared array the parent allocated before the fork
+        (:mod:`core.consciousness.latent_readout_channel`). Without it the
+        backward path has nowhere to go, and the publisher refuses to start
+        rather than accumulating deltas into a thread that drops them —
+        which is what this class did for its whole existence.
+        """
         if not self._readout_hooks:
             logger.warning("No readout hooks installed. Call attach() first.")
             return
         if self._injection_thread and self._injection_thread._running:
             return
-        self._injection_thread = SubstrateInjectionThread(self._readout_hooks)
+        self._injection_thread = SubstrateInjectionThread(
+            self._readout_hooks, channel=channel or self._channel
+        )
         self._injection_thread.start()
 
     def stop(self):
@@ -464,9 +476,14 @@ def get_latent_bridge() -> Optional[LatentBridge]:
     return _bridge_instance
 
 
-def attach_latent_bridge(model) -> Optional[LatentBridge]:
-    """
-    Convenience wrapper. Call after AffectiveSteeringEngine.attach().
+def attach_latent_bridge(model, channel: Any = None) -> Optional[LatentBridge]:
+    """Install the backward path. Call after ``AffectiveSteeringEngine.attach()``.
+
+    ``channel`` carries readouts to the process that owns the substrate. It
+    is optional only so this stays callable from a test; in the worker it is
+    required, and the publisher refuses to start without it. A backward arrow
+    that collects deltas and drops them is the thing this module spent its
+    whole existence being.
     """
     global _bridge_instance
 
@@ -477,7 +494,7 @@ def attach_latent_bridge(model) -> Optional[LatentBridge]:
         logger.error("AffectiveSteeringEngine must be attached before LatentBridge.")
         return None
 
-    _bridge_instance = LatentBridge(engine)
+    _bridge_instance = LatentBridge(engine, channel=channel)
     _bridge_instance.attach(model)
 
     try:
