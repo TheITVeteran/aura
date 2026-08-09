@@ -1,0 +1,54 @@
+{
+  "schema": "aura.rlc.cp046_ability_frontier_calibration.v1",
+  "checkpoint": "CP046",
+  "base_commit": "4c3b9754d",
+  "model": "/Users/bryan/.aura/live-source/models/Qwen2.5-1.5B-Instruct-4bit",
+  "run_directory": "/tmp/aura-rlc-cp046-1p5b-d1-calibration",
+  "seed": 20260820,
+  "per_domain": 4,
+  "difficulty": 1,
+  "arms": [
+    "vanilla",
+    "vanilla_equal_compute"
+  ],
+  "artifact_sha256": {
+    "task_commitment_json": "0d8012e65c68cd96da5f06561a0c8f8fa6ac910be69674584a28a3b281df915c",
+    "decode_fingerprint_json": "793e87f3bfbc65828490e16b207fd64acc56287338e8b7bd2c62201e52e1125c",
+    "journal_jsonl": "4739eb165e6b44e171a6bfc679b8027eff2237532f1b42e603f8a4b2ea4bd581",
+    "verdict_json": "53599d099e92da5708a36ee8f17d5e0aaeb0165ce47a4bf761fa3929c9ce6bce"
+  },
+  "calibration": {
+    "planned_cells": 56,
+    "completed_cells": 56,
+    "faults": 0,
+    "vanilla_strict_correct": "0/28",
+    "vanilla_equal_compute_strict_correct": "0/28",
+    "vanilla_contract_neutral_correct": "0/28",
+    "vanilla_equal_compute_contract_neutral_correct": "0/28",
+    "vanilla_normalizations_admitted": 8,
+    "vanilla_equal_compute_normalizations_admitted": 8,
+    "treatment_run_admitted": false
+  },
+  "harness": {
+    "difficulty_is_explicit": true,
+    "difficulty_is_decode_fingerprint_bound": true,
+    "strict_serving_grade_preserved": true,
+    "contract_neutral_grade_authority": "diagnostic_only",
+    "contract_neutral_grade_preserves_generated_values": true,
+    "held_out_treatment_seeds_required": true
+  },
+  "bounded_gates": {
+    "reconciliation_harness_contracts": "33/33",
+    "ruff": "pass",
+    "compile": "pass",
+    "diff_check": "pass"
+  },
+  "conclusion": {
+    "one_point_five_b_has_measurable_headroom_on_this_battery": false,
+    "one_point_five_b_treatment_would_be_informative": false,
+    "reasoning_gain_proven": false,
+    "fusion_authorized": false,
+    "frontier_level_proven": false,
+    "wow_signal_authorized": false
+  }
+}

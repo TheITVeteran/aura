@@ -201,6 +201,7 @@ def decode_fingerprint(
     episode_wall_s: float,
     seed: int,
     per_domain: int,
+    difficulty: int = 2,
     arm: str = "",
     adapter: str = "",
     implementation_sha256: str | None = None,
@@ -220,7 +221,8 @@ def decode_fingerprint(
             # identity, a candidate's cells could resume as frozen-base cells.
             "adapter": str(adapter),
             "arm": str(arm),
-            "contract": "rlc_reconciliation_decode.v3",
+            "contract": "rlc_reconciliation_decode.v4",
+            "difficulty": int(difficulty),
             "episode_wall_s": float(episode_wall_s),
             "implementation_sha256": (
                 implementation_sha256 or _implementation_sha256()
@@ -641,6 +643,30 @@ def _episode_verifier(task):
         task.public.prompt,
         response_contract=task.public.response_contract,
     )
+
+
+def _contract_neutral_score(task, text: str):
+    """Score model-generated values after deterministic representation repair.
+
+    This diagnostic cannot affect the strict serving grade. It only separates
+    a wrong answer from one correct payload wrapped in the wrong transport
+    syntax. The parser may preserve and re-encode generated values; it cannot
+    invent, replace, or choose answer values.
+    """
+
+    from core.brain.llm.latent_cortex import frontier_tasks as ft
+    from core.brain.llm.latent_cortex.contract_repair import (
+        parse_contract_repair_generation,
+    )
+
+    try:
+        normalized = parse_contract_repair_generation(
+            text,
+            response_contract=task.public.response_contract,
+        )
+    except (TypeError, ValueError):
+        return ft.score_task(task, text), False
+    return ft.score_task(task, normalized), normalized != text.strip()
 
 
 def _route_counts(receipt: dict[str, Any]) -> dict[str, int]:
@@ -1218,6 +1244,16 @@ def main() -> int:
     parser.add_argument("--out-dir", required=True)
     parser.add_argument("--seed", type=int, default=20260807)
     parser.add_argument("--per-domain", type=int, default=4)
+    parser.add_argument(
+        "--difficulty",
+        type=int,
+        choices=(1, 2, 3),
+        default=2,
+        help=(
+            "Committed task-generator difficulty. Calibrate with control-only "
+            "seeds, then evaluate treatment on disjoint held-out seeds."
+        ),
+    )
     parser.add_argument("--n-slots", type=int, default=16)
     parser.add_argument("--max-tokens", type=int, default=320)
     parser.add_argument("--memory-fraction", type=float, default=0.40)
@@ -1262,7 +1298,7 @@ def main() -> int:
     # Tasks are generated from a committed seed so a resumed process, and any
     # independent replay, reconstructs exactly the same battery.
     seeds = [args.seed + i for i in range(args.per_domain)]
-    tasks = ft.generate_task_battery(seeds, difficulty=2)
+    tasks = ft.generate_task_battery(seeds, difficulty=args.difficulty)
     manifest = ft.build_task_manifest(tasks)
     commitment = ft.build_task_commitment(manifest)
     _atomic_write(
@@ -1272,6 +1308,7 @@ def main() -> int:
                 "schema": SWEEP_SCHEMA,
                 "seed": args.seed,
                 "per_domain": args.per_domain,
+                "difficulty": args.difficulty,
                 "task_count": len(tasks),
                 "commitment_sha256": commitment.commitment_sha256,
                 "registry_version": ft.REGISTRY_VERSION,
@@ -1311,6 +1348,7 @@ def main() -> int:
             episode_wall_s=args.episode_wall_s,
             seed=args.seed,
             per_domain=args.per_domain,
+            difficulty=args.difficulty,
             arm=name,
             adapter=args.adapter,
             implementation_sha256=implementation_sha256,
@@ -1324,6 +1362,7 @@ def main() -> int:
                 "schema": EVIDENCE_MANIFEST_SCHEMA,
                 "decode_fingerprint": fingerprints,
                 "arm_max_tokens": arm_tokens,
+                "difficulty": args.difficulty,
                 "implementation_files": implementation_files,
                 "implementation_sha256": implementation_sha256,
                 "requested_arms": sorted(requested_names),
@@ -1713,9 +1752,12 @@ def grade(out_dir: Path, tasks) -> dict[str, Any]:
             arm,
             {
                 "correct": 0,
+                "contract_neutral_correct": 0,
+                "contract_normalizations_admitted": 0,
                 "total": 0,
                 "errors": 0,
                 "reasons": {},
+                "contract_neutral_reasons": {},
                 "generated_tokens": [],
                 "prefix_tokens": [],
                 "latency_s": [],
@@ -1738,9 +1780,13 @@ def grade(out_dir: Path, tasks) -> dict[str, Any]:
             unknown_task_cells.append(f"{arm}:{cell['task_id']}")
             continue
         result = ft.score_task(task, cell["text"])
+        neutral_result, normalized = _contract_neutral_score(task, cell["text"])
         bucket["correct"] += int(result.correct)
+        bucket["contract_neutral_correct"] += int(neutral_result.correct)
+        bucket["contract_normalizations_admitted"] += int(normalized)
         scored.setdefault(arm, {})[cell["task_id"]] = {
             "correct": bool(result.correct),
+            "contract_neutral_correct": bool(neutral_result.correct),
             "text": str(cell.get("text") or ""),
             "replacement_decision": str(
                 cell.get("answer_replacement_decision") or ""
@@ -1748,6 +1794,10 @@ def grade(out_dir: Path, tasks) -> dict[str, Any]:
         }
         reason = result.reason or "correct"
         bucket["reasons"][reason] = bucket["reasons"].get(reason, 0) + 1
+        neutral_reason = neutral_result.reason or "correct"
+        bucket["contract_neutral_reasons"][neutral_reason] = (
+            bucket["contract_neutral_reasons"].get(neutral_reason, 0) + 1
+        )
         if cell.get("decode_generated_tokens") is not None:
             bucket["generated_tokens"].append(cell["decode_generated_tokens"])
         if cell.get("decode_prefix_token_count") is not None:
@@ -1798,13 +1848,25 @@ def grade(out_dir: Path, tasks) -> dict[str, Any]:
         )
 
     vanilla = arms.get("vanilla", {}).get("correct", 0)
+    vanilla_contract_neutral = arms.get("vanilla", {}).get(
+        "contract_neutral_correct",
+        0,
+    )
     equal_compute = arms.get("vanilla_equal_compute", {}).get("correct")
+    equal_compute_contract_neutral = arms.get("vanilla_equal_compute", {}).get(
+        "contract_neutral_correct"
+    )
     best_rlc_name, best_rlc = "", -1
+    best_rlc_contract_neutral = -1
     for name, bucket in arms.items():
         if not claim_eligible(name):
             continue
         if bucket["correct"] > best_rlc:
             best_rlc_name, best_rlc = name, bucket["correct"]
+        best_rlc_contract_neutral = max(
+            best_rlc_contract_neutral,
+            int(bucket["contract_neutral_correct"]),
+        )
 
     floor_violations: list[str] = []
     incumbent_byte_violations: list[str] = []
@@ -1858,6 +1920,7 @@ def grade(out_dir: Path, tasks) -> dict[str, Any]:
     # control task there is no baseline to be at parity with. The floor is
     # structural (a baseline exists / does not), not a tuned threshold.
     informative = vanilla > 0
+    contract_neutral_informative = vanilla_contract_neutral > 0
     # No recurrent arm ran, so nothing about the recurrent path was observed.
     # The sentinel -1 is smaller than any vanilla score, which would otherwise
     # publish "below ordinary decode" as a finding drawn from no data at all.
@@ -1874,6 +1937,18 @@ def grade(out_dir: Path, tasks) -> dict[str, Any]:
         reaches_parity
         and equal_compute is not None
         and best_rlc > int(equal_compute)
+    )
+    contract_neutral_reaches_parity = bool(
+        complete
+        and contract_neutral_informative
+        and measured_recurrence
+        and floor_holds
+        and best_rlc_contract_neutral >= vanilla_contract_neutral
+    )
+    contract_neutral_beats_equal_compute = bool(
+        contract_neutral_reaches_parity
+        and equal_compute_contract_neutral is not None
+        and best_rlc_contract_neutral > int(equal_compute_contract_neutral)
     )
     if not complete:
         if manifest_issues:
@@ -1900,6 +1975,17 @@ def grade(out_dir: Path, tasks) -> dict[str, Any]:
         "arms": arms,
         "vanilla_correct": vanilla,
         "vanilla_equal_compute_correct": equal_compute,
+        "contract_neutral_diagnostic": {
+            "authority": "diagnostic_only_no_serving_fusion_or_claim_authority",
+            "vanilla_correct": vanilla_contract_neutral,
+            "vanilla_equal_compute_correct": equal_compute_contract_neutral,
+            "best_recurrent_correct": best_rlc_contract_neutral,
+            "battery_informative": contract_neutral_informative,
+            "reaches_parity_with_ordinary_decode": (
+                contract_neutral_reaches_parity
+            ),
+            "beats_equal_compute_control": contract_neutral_beats_equal_compute,
+        },
         "best_recurrent_arm": best_rlc_name,
         "best_recurrent_correct": best_rlc,
         "arms_complete": complete,

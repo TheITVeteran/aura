@@ -132,6 +132,52 @@ def test_requesting_a_treatment_always_expands_to_both_controls():
         sweep._expand_requested_arms({"not_a_real_arm"})
 
 
+def test_decode_identity_binds_committed_task_difficulty():
+    common = {
+        "model": "/models/Qwen-1.5B",
+        "n_slots": 8,
+        "max_tokens": 224,
+        "episode_wall_s": 120.0,
+        "seed": 20260808,
+        "per_domain": 2,
+        "arm": "vanilla",
+        "implementation_sha256": "a" * 64,
+    }
+
+    easy = sweep.decode_fingerprint(difficulty=1, **common)
+    standard = sweep.decode_fingerprint(difficulty=2, **common)
+
+    assert easy != standard
+    assert standard == sweep.decode_fingerprint(difficulty=2, **common)
+
+
+def test_contract_neutral_diagnostic_repairs_shape_without_inventing_values():
+    from core.brain.llm.latent_cortex import frontier_tasks as ft
+
+    task = ft.generate_task_battery(
+        [20260831],
+        domains=("misleading_premise",),
+        difficulty=1,
+    )[0]
+    expected = task.reveal_for_verifier()["expected"]
+    fenced = "```json\n" + json.dumps(expected) + "\n```"
+
+    strict = ft.score_task(task, fenced)
+    neutral, normalized = sweep._contract_neutral_score(task, fenced)
+
+    assert strict.correct is False
+    assert neutral.correct is True
+    assert normalized is True
+
+    wrong = dict(expected)
+    wrong["actual_score"] += 1
+    neutral_wrong, _normalized = sweep._contract_neutral_score(
+        task,
+        "```json\n" + json.dumps(wrong) + "\n```",
+    )
+    assert neutral_wrong.correct is False
+
+
 def test_config_carries_the_arm_policy_and_validates():
     for steps, policy in ((4, "applied"), (1, "suppressed")):
         config = sweep._build_config(steps, 16, policy, 320, profile="mechanism")

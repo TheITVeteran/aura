@@ -39067,3 +39067,35 @@ hygiene pass. The completion envelope remains `809/920` (approximately
 `87.9%`). The next RLC checkpoint must improve the task-local generation or
 verification signal on a battery where ordinary decoding has measurable
 headroom; repeating this zero-floor battery cannot answer the capability claim.
+
+## Checkpoint 2026-08-08-046: Calibrate Where the Model Can Answer
+
+The reconciliation sweep no longer hardcodes task difficulty outside its
+experimental identity. Difficulty is an explicit CLI parameter, constrained to
+the task registry's supported levels, recorded in the task commitment and
+evidence manifest, and included in each arm's decode fingerprint. Resuming a
+different difficulty can no longer mix cells into one campaign.
+
+Strict serving grade remains unchanged. A second diagnostic grade uses the
+existing deterministic contract-repair parser to distinguish wrong content
+from one model-generated payload wrapped in the wrong transport syntax. It
+preserves every generated value and applies identically to every arm; its
+receipt explicitly grants no serving, fusion, or reasoning-claim authority.
+
+A control-only calibration used four fresh seeds per domain at the easiest
+supported difficulty on Qwen2.5-1.5B. All `56/56` cells completed without
+faults. Greedy ordinary decode scored `0/28`; three-sample equal-compute decode
+also scored `0/28`. Deterministic representation normalization admitted eight
+outputs from each arm, but both remained `0/28` on exact content. The result is
+therefore not a formatting artifact: this checkpoint has no measurable ability
+floor on the battery, and a recurrent treatment run on it cannot answer the
+gain claim.
+
+The compact evidence record is
+`artifacts/closeout/latent_cortex/cp046_ability_frontier_calibration_1p5b.json`.
+The harness contracts pass `33/33`; Ruff, compilation, and diff hygiene pass.
+Reasoning gain, fusion, frontier-level performance, and `WOW Signal` remain
+false. The completion envelope remains `809/920` (approximately `87.9%`). The
+next bounded step is a control-only calibration on the frozen resident 32B;
+only a nonzero, non-ceiling control result may admit a disjoint held-out
+complete-engine treatment.
