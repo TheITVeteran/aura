@@ -77,3 +77,37 @@ and the runtime disagree, the runtime is right.
 ## 9. Legal and Moral Personhood
 * **Status**: `strictly unsupported`
 * **Rationale**: Aura is an operational engineering runtime and does not hold, nor claim, moral status, legal rights, or moral responsibility. All agency and safety bounds are designed to protect human operators and ensure alignment with human intent.
+
+## 10. Process-Level Non-Bypassable Governance
+
+* **Status**: `strictly unsupported`
+* **Rationale**: Aura's governance is substantial and audited — the Unified
+  Will, `core/executive/authority_gateway.py`, `SubstrateAuthority`, the
+  file-write and subprocess gateways, and the `make governance-lint`
+  effect-ownership ratchet. What it is not is a reference monitor.
+
+  The cognitive code and the effectful code inhabit the **same Python
+  process with the same OS privileges**. Any code path can reach the
+  filesystem, the network, or a subprocess without asking a gate; the
+  static effect scan counts first-party direct calls in the tens per
+  category (`os.replace`, `os.remove`, `os.unlink`, `shutil.rmtree`,
+  `shutil.move`, `socket.socket`, and two `os.execv`). Most are legitimate
+  infrastructure and many carry local rules. `subprocess` is genuinely
+  centralised in `core/runtime/subprocess_gateway.py`. None of that is the
+  same as being unable to bypass.
+
+  Two documented exceptions exist even on the canonical message path: the
+  Somatic Reflex Bypass for embodied-control contracts, and the Will gate's
+  own recoverable-error path, which continues in a degraded state. Turns
+  that reach cognition without a Will decision are counted and surfaced at
+  `runtime_health_report()["integrity"]["ungoverned_turns"]`
+  (`core/runtime/governance_coverage.py`) rather than passing silently.
+
+  **What would change this status**: privilege separation enforced outside
+  the cognitive process — consequential capabilities held by a separate
+  broker, the cognitive process lacking filesystem/network/exec privileges
+  of its own, and an unforgeable authorized capability presented over IPC,
+  with the OS enforcing that no other path exists. Until that is built, the
+  supportable claim is *governed canonical paths inside one trust domain*,
+  and any wording implying OS- or cryptographically-enforced
+  non-bypassability is unsupported.

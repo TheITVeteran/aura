@@ -1,12 +1,35 @@
-"""core/consciousness/substrate_authority.py — The Single Narrow Waist
+"""core/consciousness/substrate_authority.py — The Narrow Waist
 
-The substrate is no longer advisory. It is constitutional.
+The substrate is no longer advisory. It is constitutional at the call sites
+that consult it — and that qualifier is the honest version of a sentence
+this docstring used to make without it.
 
-SubstrateAuthority is the MANDATORY gate through which ALL significant actions
-must pass: responses, memory writes, tool executions, belief mutations, and
-autonomous initiatives. It does not replace the existing constitutional core —
-it extends it with embodied, neurochemical, and field-level constraints that
-cannot be bypassed.
+SubstrateAuthority is the gate through which the significant actions listed
+under "Integration points" below pass: it extends the constitutional core
+with embodied, neurochemical, and field-level constraints. It does not
+replace it.
+
+What it is not — and what the previous wording claimed it was:
+
+**Not "ALL significant actions".** It is called from the sites enumerated
+below and nowhere else. Two of the integration points this docstring used to
+list — memory writes and tool execution — had no call site at all; neither
+``core/memory`` nor ``core/agency`` referenced this module. A list of
+integration points that includes ones nobody wired is how "implemented"
+comes to be read as "live".
+
+**Not unbypassable.** Aura's cognitive code and her effectful code share one
+Python process and one set of OS privileges. Any code path can call the
+filesystem, the network, or a subprocess without asking this gate; what
+stops it is convention, review, and the ratchets in ``make governance-lint``
+— not the operating system. A genuinely non-bypassable reference monitor
+would need privilege separation this runtime does not have: capabilities
+held by a separate broker, the cognitive process unable to open, unlink,
+connect or exec on its own, and an unforgeable receipt over IPC. That is a
+real design, and it is not this one.
+
+So: a strong, audited, in-process authority at named call sites. Not a
+kernel.
 
 The gate enforces three hard constraints:
 
@@ -32,12 +55,22 @@ The authority also feeds back into the substrate: blocked actions trigger
 frustration chemistry, allowed actions trigger anticipatory dopamine,
 and constrained actions trigger norepinephrine (heightened vigilance).
 
-Integration points:
-  - ConsciousnessBridge hooks this into GWT candidate submission
-  - Fast-path response generation checks before returning
-  - Memory writes check before committing
-  - Tool execution checks before dispatching
-  - Executive closure reads authority state for pressure computation
+Integration points — every one of these is a real ``authorize()`` call site,
+and ``tests/test_substrate_authority_reach.py`` fails if one disappears or
+if this list grows an entry nobody wired:
+
+  - core/governance/will.py — the Will consults it before deciding
+  - core/executive/authority_gateway.py — effect authorization
+  - core/consciousness/consciousness_bridge.py — GWT candidate submission
+  - core/consciousness/liquid_substrate.py — substrate-driven action
+  - core/orchestrator/mixins/message_pipeline.py — the message pipeline
+  - core/senses/sensory_instincts.py — instinctive sensory response
+  - interface/routes/chat.py — the chat turn
+
+Not integrated, listed here because their absence is the interesting part:
+memory writes and tool execution. Both were claimed above for a long time.
+If either should be gated, wire it and add it to the list; until then the
+list says what is true.
 """
 from __future__ import annotations
 
