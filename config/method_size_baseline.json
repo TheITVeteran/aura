@@ -1,7 +1,7 @@
 {
   "threshold_lines": 400,
   "tracked": 71,
-  "total_lines": 66185,
+  "total_lines": 66141,
   "functions": {
     "core/brain/cognitive_engine.py::CognitiveEngine._direct_desktop_quick_reply": {
       "lines": 971,
@@ -124,8 +124,8 @@
       "returns": 52
     },
     "core/brain/llm/mlx_worker.py::_mlx_worker_loop": {
-      "lines": 3388,
-      "complexity": 508,
+      "lines": 3350,
+      "complexity": 501,
       "returns": 9
     },
     "core/brain/llm_health_router.py::HealthAwareLLMRouter._call_endpoint": {
@@ -159,7 +159,7 @@
       "returns": 5
     },
     "core/consciousness/system.py::ConsciousnessSystem.start": {
-      "lines": 433,
+      "lines": 427,
       "complexity": 31,
       "returns": 1
     },

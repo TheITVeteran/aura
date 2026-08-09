@@ -4504,6 +4504,127 @@ def _active_steering_hooks(engine: Any = None) -> list[Any]:
         return []
 
 
+def _attach_affective_steering(
+    model: Any,
+    tokenizer: Any,
+    substrate_mem: Any,
+    phi_residual_mem: Any,
+    steering_active_flag: Any,
+) -> tuple[Any, bool]:
+    """The forward arrow: substrate state into the residual stream.
+
+    Fatal on failure, deliberately. Unsteered inference is Aura answering
+    without her own state reaching the model, and the worker crashes rather
+    than serve that — the liveness gate is the point, not a nicety.
+
+    Also hands the Φ residual ring to each hook. Without it the hooks fall
+    back to an in-process PhiCore lookup that is ALWAYS False here — this is
+    the worker, PhiCore lives in the parent — which is why the
+    activation-grounded complex read 0/50 forever.
+
+    Returns ``(engine, active)``.
+    """
+    engine = None
+    try:
+        from core.consciousness.affective_steering import get_steering_engine
+
+        engine = get_steering_engine()
+        engine.attach(model, tokenizer)
+        if substrate_mem is not None:
+            engine.start_substrate_sync(shared_state=substrate_mem)
+        if phi_residual_mem is not None:
+            for hook in getattr(engine, "_hooks", None) or []:
+                try:
+                    hook._phi_residual_channel = phi_residual_mem
+                except (AttributeError, TypeError):
+                    continue
+        active = engine.is_active()
+
+        if steering_active_flag is not None:
+            steering_active_flag.value = active
+
+        if active:
+            logger.info(
+                "🎯 Affective Steering Engine ONLINE (alpha=%.1f, hooks=%d).",
+                engine._alpha,
+                len(getattr(engine, "_hooks", [])),
+            )
+            return engine, True
+
+        logger.error(
+            "FATAL: Steering Engine attached but NOT ACTIVE — vectors may be missing."
+        )
+        _record_mlx_degradation(
+            RuntimeError("Steering attached but inactive"),
+            severity="critical",
+            action="crashed worker to prevent unsteered inference",
+        )
+        raise RuntimeError("Steering liveness gate failed: Engine inactive")
+    except (ImportError, AttributeError, RuntimeError) as exc:
+        record_degradation(
+            "affective_steering",
+            exc,
+            severity="critical",
+            action="crashed MLX worker to prevent unsteered inference",
+        )
+        logger.error(
+            "FATAL: Affective steering failed to attach. Cannot run sovereign "
+            "inference unsteered. %s",
+            exc,
+        )
+        raise RuntimeError(f"Steering liveness gate failed: {exc}") from exc
+
+
+def _attach_latent_bridge(model: Any, latent_readout_mem: Any) -> Any:
+    """Install the backward arrow: model representations → the substrate.
+
+    Steering carries substrate state INTO the residual stream. This reads the
+    model's own representations back out and publishes them to the parent,
+    which is where the substrate lives.
+
+    ``attach_latent_bridge()`` had no caller for its whole existence, and
+    calling it as written would not have helped: its injector resolved the
+    substrate in THIS process, where it does not exist, and injected through
+    ``asyncio.get_running_loop()`` from a plain thread, which always raises.
+    Both are fixed; the transport is
+    :mod:`core.consciousness.latent_readout_channel`.
+
+    Unlike steering, a failure here is not fatal. Unsteered inference is a
+    governance problem — the substrate must reach the model, so the worker
+    crashes rather than serve without it. A missing backward arrow costs a
+    feedback loop, and answering without it beats not answering.
+    """
+    if latent_readout_mem is None:
+        logger.warning(
+            "No latent readout channel; the backward path stays off rather than "
+            "collecting deltas nothing will read."
+        )
+        return None
+    try:
+        from core.consciousness.latent_bridge import attach_latent_bridge
+
+        bridge = attach_latent_bridge(model, channel=latent_readout_mem)
+        if bridge is None:
+            logger.warning("LatentBridge did not attach; backward path is off.")
+            return None
+        bridge.start_substrate_sync(channel=latent_readout_mem)
+        logger.info(
+            "🔁 LatentBridge ONLINE (%d readout hooks) — model representations "
+            "now reach the substrate.",
+            len(getattr(bridge, "_readout_hooks", []) or []),
+        )
+        return bridge
+    except (ImportError, AttributeError, RuntimeError, TypeError, ValueError) as exc:
+        record_degradation(
+            "latent_bridge",
+            exc,
+            severity="warning",
+            action="continued with forward-only steering after the latent bridge failed to attach",
+        )
+        logger.warning("LatentBridge attach failed (forward-only): %s", exc)
+        return None
+
+
 def _mlx_worker_loop(
     model_path: str,
     request_queue: mp.Queue,
@@ -4713,89 +4834,12 @@ def _mlx_worker_loop(
 
         draft_model = _load_speculative_draft(model_path, tokenizer)
 
-        # Attach Affective Steering
-        engine = None
-        _steering_active = False
-        try:
-            from core.consciousness.affective_steering import get_steering_engine
-            engine = get_steering_engine()
-            engine.attach(model, tokenizer)
-            if substrate_mem is not None:
-                engine.start_substrate_sync(shared_state=substrate_mem)
-            # Hand the Φ residual ring to every installed hook. Without it the
-            # hooks fall back to an in-process PhiCore lookup that is ALWAYS
-            # False here — this is the worker, PhiCore lives in the parent —
-            # which is why the activation-grounded complex read 0/50 forever.
-            if phi_residual_mem is not None:
-                for _hook in getattr(engine, "_hooks", None) or []:
-                    try:
-                        _hook._phi_residual_channel = phi_residual_mem
-                    except (AttributeError, TypeError):
-                        continue
-            _steering_active = engine.is_active()
-
-            if steering_active_flag is not None:
-                steering_active_flag.value = _steering_active
-
-            if _steering_active:
-                logger.info("🎯 Affective Steering Engine ONLINE (alpha=%.1f, hooks=%d).",
-                            engine._alpha, len(getattr(engine, '_hooks', [])))
-            else:
-                logger.error("FATAL: Steering Engine attached but NOT ACTIVE — "
-                               "vectors may be missing.")
-                _record_mlx_degradation(
-                    RuntimeError("Steering attached but inactive"),
-                    severity="critical",
-                    action="crashed worker to prevent unsteered inference",
-                )
-                raise RuntimeError("Steering liveness gate failed: Engine inactive")
-        except (ImportError, AttributeError, RuntimeError) as se:
-            record_degradation(
-                "affective_steering",
-                se,
-                severity="critical",
-                action="crashed MLX worker to prevent unsteered inference",
-            )
-            logger.error("FATAL: Affective steering failed to attach. Cannot run sovereign inference unsteered. %s", se)
-            raise RuntimeError(f"Steering liveness gate failed: {se}") from se
-
-        # The backward arrow. Steering above carries substrate state INTO the
-        # residual stream; this reads the model's own representations back out
-        # and publishes them to the parent, which owns the substrate.
-        #
-        # attach_latent_bridge() had no caller for its whole existence, and
-        # calling it as it was written would not have helped: its injector
-        # looked the substrate up in THIS process, where it does not exist,
-        # and injected via asyncio.get_running_loop() from a plain thread,
-        # which always raises. Both are fixed; the transport is
-        # core/consciousness/latent_readout_channel.py.
-        #
-        # Unlike steering, a failure here is not fatal. Unsteered inference is
-        # a governance problem — the substrate must reach the model. A missing
-        # backward arrow costs a feedback loop, and answering without it is
-        # better than not answering.
-        if latent_readout_mem is not None and _steering_active:
-            try:
-                from core.consciousness.latent_bridge import attach_latent_bridge
-
-                bridge = attach_latent_bridge(model, channel=latent_readout_mem)
-                if bridge is not None:
-                    bridge.start_substrate_sync(channel=latent_readout_mem)
-                    logger.info(
-                        "🔁 LatentBridge ONLINE (%d readout hooks) — model "
-                        "representations now reach the substrate.",
-                        len(getattr(bridge, "_readout_hooks", []) or []),
-                    )
-                else:
-                    logger.warning("LatentBridge did not attach; backward path is off.")
-            except (ImportError, AttributeError, RuntimeError, TypeError, ValueError) as le:
-                record_degradation(
-                    "latent_bridge",
-                    le,
-                    severity="warning",
-                    action="continued with forward-only steering after the latent bridge failed to attach",
-                )
-                logger.warning("LatentBridge attach failed (forward-only): %s", le)
+        # Both arrows of the substrate<->activation coupling.
+        engine, _steering_active = _attach_affective_steering(
+            model, tokenizer, substrate_mem, phi_residual_mem, steering_active_flag
+        )
+        if _steering_active:
+            _attach_latent_bridge(model, latent_readout_mem)
 
         # Write steering liveness to shared state so parent can query it
         if substrate_mem is not None:

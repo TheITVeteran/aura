@@ -48,6 +48,17 @@ _FIXTURE_HINTS = ("tmp_path", "tmp_dir", "tmpdir", "fixture", "artifacts", "/tmp
 #: How far past the read to look for the assertions it feeds.
 _WINDOW = 12
 
+#: Keywords that open a Python statement. A literal beginning with one is a
+#: code fragment a structural test is asserting the existence of, not prose.
+_CODE_OPENERS = frozenset(
+    {
+        "def", "class", "async", "import", "from", "return", "raise", "yield",
+        "await", "with", "if", "elif", "else", "for", "while", "try", "except",
+        "finally", "assert", "lambda", "global", "nonlocal", "del", "pass",
+        "@property", "@staticmethod", "@classmethod",
+    }
+)
+
 _ASSERT_LITERAL = re.compile(r'assert[^\n]*?["\']([^"\']{4,})["\']')
 
 
@@ -67,8 +78,15 @@ def _is_structural(literal: str) -> bool:
     try:
         ast.parse(candidate)
     except SyntaxError:
-        return False
-    return True
+        pass
+    else:
+        return True
+    # A fragment of code that does not stand alone. ``def _drain_phi_residual_ring``
+    # is exactly what a structural test asserts — "this function exists" — and it
+    # will never parse, because it is half a statement. Leading keyword, not a
+    # sentence.
+    first = candidate.split(maxsplit=1)[0].rstrip(":")
+    return first in _CODE_OPENERS
 
 
 def _phrase_pins(source: str) -> int:

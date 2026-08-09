@@ -10,6 +10,34 @@ LatentBridge (backward):     h_layer → project onto each v_i → substrate upd
 
 Together: genuine bidirectional coupling in activation space.
 No text, no symbols, no lookup tables.
+
+HOW THIS CAME TO BE LIVE, because the history is the useful part.
+-----------------------------------------------------------------
+The consciousness layer reported this as ``deferred (attaches on model
+load)`` for as long as it existed. "Deferred" is a promise about a future
+event, and nothing redeemed it: ``attach_latent_bridge()`` had no caller
+anywhere. That was corrected to ``unwired``, which was honest and still
+described a hole.
+
+The hole was deeper than the missing call. Attaching it as written would
+have injected nothing, twice over:
+
+* ``SubstrateInjectionThread`` resolved the substrate with
+  ``ServiceContainer.get("conscious_substrate")``. These hooks run in the
+  MLX worker subprocess; the substrate is registered in the main runtime.
+  None there, always.
+* It injected through ``asyncio.get_running_loop()`` from a plain daemon
+  thread, which raises unconditionally. Even in the main process, with the
+  substrate present, the injection sat inside a ``try`` that could only take
+  the ``except``.
+
+So having no caller was the merciful part. A backward arrow that collects
+deltas and drops them is worse than an absent one, because it reads as live.
+
+Both are fixed. The thread publishes rather than injects, over
+:mod:`core.consciousness.latent_readout_channel`, and
+``MLXLocalClient._drain_latent_readouts`` injects in the parent, where the
+substrate and a running event loop both exist.
 """
 
 from core.runtime.errors import record_degradation

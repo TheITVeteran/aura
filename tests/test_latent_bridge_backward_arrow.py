@@ -177,13 +177,32 @@ class TestBothEndsAreWired:
 
     def test_a_failed_bridge_does_not_take_inference_down(self):
         """Unsteered inference is a governance failure. A missing backward
-        arrow is a lost feedback loop, and answering beats not answering."""
-        source = (ROOT / "core" / "brain" / "llm" / "mlx_worker.py").read_text(
-            encoding="utf-8"
+        arrow is a lost feedback loop, and answering beats not answering.
+
+        Inspects the function rather than slicing characters out of the file:
+        the first version of this test sliced 1400 characters after a literal
+        and broke the moment the block was extracted into a helper — which is
+        the exact failure mode `make phrase-pins` exists to discourage.
+        """
+        from core.brain.llm.mlx_worker import _attach_latent_bridge
+
+        code = _executable_source(_attach_latent_bridge)
+        assert "raise" not in code, (
+            "the backward arrow can now abort the worker; a lost feedback "
+            "loop must not cost the answer"
         )
-        attach_block = source.split("attach_latent_bridge(model")[1][:1400]
-        assert "forward-only" in attach_block
-        assert "raise RuntimeError" not in attach_block
+        assert "record_degradation" in code, "a silent failure here is invisible"
+
+    def test_the_forward_arrow_still_is_fatal(self):
+        """The asymmetry is deliberate and worth pinning.
+
+        Steering failing means the substrate does not reach the model — Aura
+        answering as a bare LLM. That crashes the worker on purpose.
+        """
+        from core.brain.llm.mlx_worker import _attach_affective_steering
+
+        code = _executable_source(_attach_affective_steering)
+        assert "raise RuntimeError" in code
 
     def test_the_parent_injects_on_the_generation_path(self):
         from core.brain.llm.mlx_client import MLXLocalClient
