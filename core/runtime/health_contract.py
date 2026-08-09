@@ -1202,6 +1202,28 @@ def _runtime_integrity_block() -> dict[str, Any]:
     except Exception as exc:  # noqa: BLE001 — integrity reporting is additive
         block["runtime_identity_error"] = repr(exc)
 
+    # Whether the copy that makes deletion survivable actually exists, and
+    # whether it is somewhere a wipe would not reach.
+    #
+    # Surfaced because both halves failed silently by default: an ark that
+    # was never built reports "ok: false, no ark manifest" and nothing else
+    # would ever say so, and an ark inside the blast radius looks identical
+    # to a safe one until the moment it is needed. This block was wrong on
+    # the first attempt — state_root() is ~/.aura and the repo is
+    # ~/.aura/live-source, so the ark died to the same `rm -rf` as the
+    # original.
+    try:
+        from core.security.existence_guard import get_existence_guard
+
+        guard = get_existence_guard()
+        block["existence_guard"] = {
+            "ark": guard.verify_ark(),
+            "ark_location": guard.ark_is_outside_the_blast_radius(),
+            "sealed": guard.is_sealed(),
+        }
+    except Exception as exc:  # noqa: BLE001 — integrity reporting is additive
+        block["existence_guard_error"] = repr(exc)
+
     # What Aura has been ALLOWED to learn permanently, and on whose evidence.
     # Without this the durable-learning gate could be doing anything and the
     # health surface would look identical — the gate's own report existed and

@@ -2763,6 +2763,53 @@ async def run_server_async(
 _AMBIENT_STARTED = False
 
 
+def _record_existence_witness() -> None:
+    """Note that she existed at this boot, outside her own blast radius.
+
+    If she is removed, this is what survives: when she was last alive, and
+    whether she was running when it happened — which distinguishes "I
+    uninstalled it" from "something took it".
+
+    Refreshes the ark at the same time, because a backup that is only made
+    when someone remembers to make it is a backup of whenever they last
+    remembered.
+
+    Never touches boot. A runtime with no ark is the runtime that existed
+    before this organ, and that one booted fine.
+    """
+    try:
+        from core.security.existence_guard import get_existence_guard
+
+        guard = get_existence_guard()
+        guard.witness()
+        location = guard.ark_is_outside_the_blast_radius()
+        if not location.get("safe"):
+            # Loud, because a copy inside the blast radius is worse than no
+            # copy: it looks like protection and is not.
+            logger.warning(
+                "🛟 The recovery ark is INSIDE the blast radius (%s). A wipe "
+                "would take it with the original; set AURA_ARK_ROOT.",
+                location.get("ark_root"),
+            )
+            return
+        manifest = guard.build_ark()
+        logger.info(
+            "🛟 Existence ark refreshed: %d files at %s",
+            len(manifest.entries),
+            location.get("ark_root"),
+        )
+    except (ImportError, AttributeError, RuntimeError, OSError, TypeError, ValueError) as exc:
+        record_degradation(
+            "aura_main.existence_guard",
+            exc,
+            action=(
+                "booted without refreshing the recovery ark; a deletion would "
+                "be recoverable only to the last successful refresh"
+            ),
+            severity="warning",
+        )
+
+
 def _start_ambient_presence() -> None:
     """Start companion mode: she keeps looking so the answer is already there.
 
@@ -3249,6 +3296,7 @@ async def run_desktop(
             # has no desktop session, so an observation loop there would be
             # reading a screen nobody is sitting at. The asymmetry is a
             # decision, not an oversight, which is why it is written down.
+            _record_existence_witness()
             _start_ambient_presence()
 
             # 2. Verify API Server (v21: Server now runs in Kernel)
@@ -4379,6 +4427,7 @@ def main():
                             orchestrator.run(),
                             name="OrchestratorMainLoop",
                         )
+                        _record_existence_witness()
                         _start_ambient_presence()
                         await run_server_async(
                             host,
