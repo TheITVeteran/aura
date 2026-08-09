@@ -253,22 +253,6 @@
       "canonical_owner": false,
       "category": "direct_atomic_file_write",
       "count": 1,
-      "path": "core/advanced_cognition/continual_learning_stability.py",
-      "scope": "<module>.ContinualLearningStabilityEngine._append_jsonl"
-    },
-    {
-      "callee": "core.runtime.atomic_writer.atomic_write_text",
-      "canonical_owner": false,
-      "category": "direct_atomic_file_write",
-      "count": 1,
-      "path": "core/advanced_cognition/continual_learning_stability.py",
-      "scope": "<module>.ContinualLearningStabilityEngine._persist_state"
-    },
-    {
-      "callee": "core.runtime.atomic_writer.atomic_write_text",
-      "canonical_owner": false,
-      "category": "direct_atomic_file_write",
-      "count": 1,
       "path": "core/advanced_cognition/world_model.py",
       "scope": "<module>.MultiDomainWorldModel.save"
     },
@@ -3239,6 +3223,22 @@
       "count": 1,
       "path": "core/adapters/nethack_adapter.py",
       "scope": "<module>.NetHackAdapter._spawn_locked"
+    },
+    {
+      "callee": "<file_write_gateway>.append_text",
+      "canonical_owner": false,
+      "category": "file_write_gateway",
+      "count": 1,
+      "path": "core/advanced_cognition/continual_learning_stability.py",
+      "scope": "<module>.ContinualLearningStabilityEngine._write"
+    },
+    {
+      "callee": "<file_write_gateway>.write_text",
+      "canonical_owner": false,
+      "category": "file_write_gateway",
+      "count": 1,
+      "path": "core/advanced_cognition/continual_learning_stability.py",
+      "scope": "<module>.ContinualLearningStabilityEngine._write"
     },
     {
       "callee": "core.runtime.file_write_gateway.get_file_write_gateway().write_text",
@@ -16482,6 +16482,6 @@
     }
   ],
   "description": "Exact AST effect-ownership debt ratchet; refresh only after reviewed change",
-  "inventory_sha256": "d8ac7014b885ebbc14561264bed22f7e9b3d1b28254d638178400bd7d36f7dc0",
+  "inventory_sha256": "8a3859e5db4099ab4ca6b453c01031964f296f19d7d0846fc7ee2333e476fb79",
   "schema_version": 1
 }
