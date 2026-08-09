@@ -88,17 +88,32 @@ def _candidate_rows(skill: str, payload: dict[str, Any]) -> list[tuple[str, str]
 
     rows: list[tuple[str, str]] = []
     if skill in _WEB_SKILLS:
-        for item in list(payload.get("results") or [])[:3]:
+        web_rows: list[Any] = []
+        for field in ("results", "sources", "citations", "chunks"):
+            values = payload.get(field)
+            if isinstance(values, list):
+                web_rows.extend(values)
+        seen: set[tuple[str, str]] = set()
+        for item in web_rows:
             if not isinstance(item, dict):
                 continue
             title = _bounded(item.get("title"), 100)
-            snippet = _bounded(item.get("snippet"), 240)
-            url = _bounded(item.get("url"), 180)
+            snippet = _bounded(
+                item.get("snippet") or item.get("text") or item.get("content"),
+                240,
+            )
+            url = _bounded(item.get("url") or item.get("uri") or item.get("link"), 180)
+            identity = (url, "") if url else ("", snippet)
+            if identity in seen:
+                continue
+            seen.add(identity)
             text = ". ".join(part for part in (title, snippet) if part)
             if url:
                 text = f"{text} Source: {url}" if text else f"Source: {url}"
             if text:
                 rows.append((text, url or f"capability:{skill}"))
+            if len(rows) >= 3:
+                break
         summary = _bounded(
             payload.get("answer")
             or payload.get("summary")

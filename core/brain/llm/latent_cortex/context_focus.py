@@ -51,6 +51,7 @@ def source_matches_action(source: Any, action: OperationKind | str) -> bool:
             label in {*_EVIDENCE_SOURCES, "one_shot_memory"}
             or label.startswith("evidence")
             or label.startswith("tool_observation")
+            or label.startswith("capability.")
         )
     return False
 

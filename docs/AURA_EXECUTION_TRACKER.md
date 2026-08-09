@@ -39901,3 +39901,43 @@ autonomous mid-episode invocation of arbitrary tools or an installed-app,
 resident-32B, general, neural-transfer, frontier, fusion, activation, or
 `WOW Signal` result. The completion envelope remains `809/920` (approximately
 `87.9%`).
+
+## Checkpoint 2026-08-09-072: The Cortex Can Acquire Live Evidence
+
+The existing recurrent acquisition contract let the MLX worker select
+`SEARCH_MEMORY` or `RETRIEVE_EVIDENCE` without performing I/O, but the service
+translated the latter into the local reference corpus only. A current fact or
+an objective outside the offline Wikipedia corpus could therefore produce a
+valid retrieval decision with no way to reach Aura's governed web capability.
+The evidence-focus operator also did not recognize CP071's `capability.*`
+source class even after that evidence reached the workspace.
+
+One service-side broker now federates evidence acquisition without moving I/O
+into the model worker. Memory remains the provider for memory actions. The
+6.6-million-article local corpus remains sufficient when it returns new
+evidence. A temporal or source-sensitive objective, or an uncovered local
+query, may invoke one shallow `web_search` through the live orchestrator and
+CapabilityEngine. The `latent_cortex` origin has bounded public-research
+standing authority; it bypasses background-idle scheduling only while serving
+a foreground cognitive acquisition and does not bypass Will, capability,
+maturity, effect-scope, or standing-authority gates.
+
+The external query contains the public objective only. The tentative first
+answer remains local. Private/local wording and content matching the structural
+credential or personal-identifier redactor refuses hidden web acquisition.
+Successful results pass the same prompt-injection guard and epistemic firewall
+as other retrieved evidence, enter as hashed non-instruction
+`capability.web_search` slots, and can authorize at most one continuation
+episode. Deep-search `sources`, `citations`, and `chunks` now normalize and
+deduplicate by URL rather than disappearing behind a summary-only adapter.
+
+Focused broker, acquisition, context-focus, authority, CapabilityEngine,
+foreground, and runtime-validation contracts pass `142/142`; direct runtime
+claim checks pass `3/3`; canonical smoke passes `103/103`; Ruff, compilation,
+and diff hygiene pass. Compact evidence is
+`artifacts/closeout/latent_cortex/cp072_governed_live_web_acquisition.json`.
+This proves the source-level governed route, not installed-app network success,
+resident-32B route selection, acquisition-caused gain, cross-domain generality,
+intrinsic recurrent-neural gain, frontier performance, fusion, activation, or
+`WOW Signal`. The completion envelope remains `809/920` (approximately
+`87.9%`).

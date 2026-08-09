@@ -1,0 +1,60 @@
+{
+  "schema": "aura.closeout.rlc_governed_live_web_acquisition.v1",
+  "checkpoint": "CP072",
+  "date": "2026-08-09",
+  "implementation": {
+    "worker_contract": "the MLX worker selects a retrieval-class action but performs no I/O",
+    "service_broker": "core/brain/cortex_web_acquisition.py",
+    "provider_policy": [
+      "typed memory remains the search-memory provider",
+      "the local 6.6M-article reference corpus remains sufficient when it returns new evidence",
+      "a temporal or source-sensitive objective selects live web evidence",
+      "a local reference miss selects one bounded live-web fallback",
+      "private, local, personal-identifier, or credential-shaped objectives refuse hidden web acquisition"
+    ],
+    "authority": [
+      "latent_cortex is a canonical autonomous standing-authority origin",
+      "only the public read-only research tool class is available through this path",
+      "foreground cognitive acquisition bypasses background-idle scheduling but not CapabilityEngine, Will, maturity, effect, or standing-authority gates",
+      "the broker never asserts user authorization"
+    ],
+    "evidence": [
+      "only the public objective becomes the external query; tentative answer text remains local",
+      "web results pass ContextGuard and EpistemicFirewall",
+      "admitted results become content-addressed capability.web_search slots with no instruction authority",
+      "the evidence operator now recognizes capability observations",
+      "the acquisition receipt accepts a governed capability source even when the local reference adapter is absent",
+      "one provider acquisition can authorize at most one continuation episode"
+    ]
+  },
+  "verification": {
+    "focused_contract_tests": {
+      "passed": 142,
+      "failed": 0
+    },
+    "runtime_claim_tests": {
+      "passed": 3,
+      "failed": 0
+    },
+    "smoke_tests": {
+      "passed": 103,
+      "failed": 0
+    },
+    "ruff": "pass",
+    "compile": "pass",
+    "diff_check": "pass"
+  },
+  "claim_boundary": {
+    "proven": "the canonical service can convert one recurrent evidence request into bounded local or governed live-web acquisition and one typed continuation without worker I/O or instruction-authority escalation",
+    "not_proven": [
+      "installed-app network success before user restart",
+      "resident 32B selection of this route",
+      "reasoning gain caused by live acquisition",
+      "cross-domain generality",
+      "intrinsic recurrent neural gain",
+      "frontier-level reasoning",
+      "fusion authority",
+      "WOW Signal"
+    ]
+  }
+}

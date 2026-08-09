@@ -147,6 +147,33 @@ def test_autonomous_web_search_is_safe_read_only_research_with_user_benefit():
     assert review.verdict == "for_user"
 
 
+def test_latent_cortex_has_bounded_autonomous_web_research_authority():
+    params = {"query": "current compiler release notes"}
+    context = {
+        "origin": "latent_cortex",
+        "objective": "Identify the current compiler behavior.",
+        "foreground_request": True,
+        "foreground_cognitive_acquisition": True,
+    }
+
+    assert CapabilityEngine._safe_autonomous_web_research(
+        "web_search",
+        params,
+        context,
+        "latent_cortex",
+        "read_only",
+    )
+
+    from core.orchestrator.mixins.tool_execution import ToolExecutionMixin
+
+    assert ToolExecutionMixin._safe_autonomous_web_research_tool(
+        "web_search",
+        params,
+        "latent_cortex",
+        context,
+    )
+
+
 def test_low_phi_telemetry_does_not_block_bounded_capability(monkeypatch):
     ServiceContainer.clear()
     engine = _engine_with_skill("computer_use", metabolic_cost=2)

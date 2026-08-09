@@ -540,6 +540,7 @@ def install_runtime_validation() -> dict[str, Any]:
         "state_attestation",
         "commitment_search",
         "rlc_capability_evidence",
+        "rlc_governed_web_acquisition",
     )
     suite.add_model(model)
 
@@ -590,6 +591,32 @@ def install_runtime_validation() -> dict[str, Any]:
                 subject="RLC capability-evidence admission",
             ),
             owner="core/brain/capability_evidence_context.py",
+        )
+    )
+    suite.add_test(
+        ValidationTest(
+            name="recurrent_cognition_can_request_bounded_live_evidence",
+            description=(
+                "a retrieval-class recurrent action can select live evidence when "
+                "the objective is temporal or the offline corpus is uncovered, "
+                "through bounded public-research standing authority"
+            ),
+            required_capability="rlc_governed_web_acquisition",
+            observation=Observation(
+                name="governed_web_acquisition_contract_holds",
+                value=True,
+                source=(
+                    "core/brain/cortex_web_acquisition.py and "
+                    "tests/test_cortex_web_acquisition.py"
+                ),
+            ),
+            predict=lambda _m: _rlc_web_acquisition_contract_holds(),
+            score=lambda p, o: boolean_score(
+                bool(p),
+                expected=bool(o.value),
+                subject="RLC governed web acquisition",
+            ),
+            owner="core/brain/cortex_web_acquisition.py",
         )
     )
     suite.add_test(
@@ -894,6 +921,23 @@ def install_runtime_validation() -> dict[str, Any]:
     suite.add_claim(
         Claim(
             statement=(
+                "A retrieval-class recurrent action can request one bounded "
+                "read-only live-web observation when local knowledge is stale or absent."
+            ),
+            test="recurrent_cognition_can_request_bounded_live_evidence",
+            owner="core/brain/cortex_web_acquisition.py",
+            asserted_in="docs/AURA_EXECUTION_TRACKER.md",
+            evidence=Evidence.MEASURED_SYNTHETIC,
+            evidence_note=(
+                "Planner, authority origin, service broker, evidence admission, and "
+                "continuation are contract-tested. Network availability and resident-32B "
+                "use remain installed-runtime proof gates."
+            ),
+        )
+    )
+    suite.add_claim(
+        Claim(
+            statement=(
                 "A successful current-turn governed observation can causally seed "
                 "the recurrent workspace without gaining instruction authority."
             ),
@@ -986,6 +1030,29 @@ def _rlc_capability_evidence_contract_holds() -> bool:
         and admitted.items[0].get("evidence_kind") == "governed_tool_observation"
         and not stale.items
         and stale.receipt.get("reason") == "stale_skill_result"
+    )
+
+
+def _rlc_web_acquisition_contract_holds() -> bool:
+    from core.brain.cortex_web_acquisition import should_acquire_live_web
+    from core.brain.llm.latent_cortex.context_focus import source_matches_action
+    from core.executive.standing_authority import AUTONOMOUS_AUTHORITY_ORIGINS
+
+    live = should_acquire_live_web(
+        "What is the latest compiler release?",
+        "compiler release",
+        local_context_is_new=True,
+    )
+    uncovered = should_acquire_live_web(
+        "Explain the new theorem.",
+        "new theorem",
+        local_context_is_new=False,
+    )
+    return bool(
+        live == (True, "live_or_source_sensitive_objective")
+        and uncovered == (True, "local_reference_uncovered")
+        and "latent_cortex" in AUTONOMOUS_AUTHORITY_ORIGINS
+        and source_matches_action("capability.web_search", "retrieve_evidence")
     )
 
 

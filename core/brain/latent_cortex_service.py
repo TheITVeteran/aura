@@ -3776,6 +3776,7 @@ class LatentCortexService:
         )
         try:
             from core.brain.llm.latent_cortex.cognitive_acquisition import (
+                acquisition_has_new_context,
                 build_acquisition_receipt,
                 build_acquisition_request,
                 build_continuation_receipt,
@@ -3867,10 +3868,51 @@ class LatentCortexService:
                 ),
             )
             acquired_context = cognitive_context_items(ingress) or None
+            ingress_receipt = ingress.to_receipt()
+            if request["action"] == "retrieve_evidence":
+                from core.brain.cortex_web_acquisition import (
+                    acquire_live_web_evidence,
+                    should_acquire_live_web,
+                )
+
+                local_context_is_new = acquisition_has_new_context(
+                    request,
+                    acquired_context,
+                )
+                use_web, web_reason = should_acquire_live_web(
+                    objective,
+                    str(request["retrieval_query"]),
+                    local_context_is_new=local_context_is_new,
+                )
+                ingress_receipt["live_web_selection"] = {
+                    "selected": use_web,
+                    "reason": web_reason,
+                    "local_context_is_new": local_context_is_new,
+                }
+                if use_web:
+                    remaining_acquisition_s = max(
+                        1.0,
+                        min(
+                            20.0,
+                            float(reason_kwargs.get("timeout_s", 300.0))
+                            - (time.monotonic() - started)
+                            - 15.0,
+                        ),
+                    )
+                    web = await acquire_live_web_evidence(
+                        self.orchestrator if orchestrator is None else orchestrator,
+                        objective=objective,
+                        retrieval_query=str(request["retrieval_query"]),
+                        cognitive_context=acquired_context,
+                        selection_reason=web_reason,
+                        timeout_s=remaining_acquisition_s,
+                    )
+                    acquired_context = web.context
+                    ingress_receipt["live_web_acquisition"] = web.receipt
             acquisition = build_acquisition_receipt(
                 request,
                 acquired_context=acquired_context,
-                ingress_receipt=ingress.to_receipt(),
+                ingress_receipt=ingress_receipt,
                 elapsed_s=time.monotonic() - acquisition_started,
             )
             validate_acquisition_receipt(acquisition, request=request)

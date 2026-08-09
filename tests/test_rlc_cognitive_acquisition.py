@@ -11,6 +11,7 @@ from core.brain.llm.latent_cortex.adaptive_compute import (
     build_adaptive_compute_plan,
 )
 from core.brain.llm.latent_cortex.cognitive_acquisition import (
+    acquisition_has_new_context,
     build_acquisition_receipt,
     build_acquisition_request,
     build_continuation_receipt,
@@ -210,6 +211,35 @@ def test_evidence_acquisition_counts_only_the_reference_adapter():
     assert receipt["after_inventory"] == []
 
 
+def test_evidence_acquisition_accepts_governed_capability_observations():
+    request = build_acquisition_request(
+        objective=OBJECTIVE,
+        first_text=FIRST_TEXT,
+        first_receipt=_episode_receipt("retrieve_evidence"),
+        cognitive_context=[{"source": "world_model", "text": "Existing state."}],
+    )
+    assert request is not None
+    web = {
+        "source": "capability.web_search",
+        "text": "A current source confirms bounded lease recovery.",
+        "content_sha256": "3" * 64,
+    }
+
+    assert acquisition_has_new_context(request, [web]) is True
+    receipt = build_acquisition_receipt(
+        request,
+        acquired_context=[web],
+        ingress_receipt={"absent_sources": ["reference"]},
+        elapsed_s=0.2,
+    )
+
+    assert receipt["status"] == "completed_new_context"
+    assert receipt["error_code"] == ""
+    assert receipt["new_inventory"] == [
+        ["capability.web_search", "3" * 64]
+    ]
+
+
 def test_continuation_receipt_binds_both_results_and_returned_round():
     request = build_acquisition_request(
         objective=OBJECTIVE,
@@ -321,6 +351,86 @@ async def test_service_runs_at_most_one_continuation_with_new_context(monkeypatc
     assert continuation["continuation_cap_exhausted"] is True
     assert result["receipt"]["adaptive_acquisition"]["authorized"] is True
     assert result["receipt"]["adaptive_acquisition"]["attempted"] is True
+
+
+@pytest.mark.asyncio
+async def test_service_acquires_live_web_evidence_after_reference_miss(monkeypatch):
+    from core.brain import cognitive_ingress
+    from core.brain.latent_cortex_service import LatentCortexService
+
+    service = LatentCortexService()
+    first_receipt = _episode_receipt("retrieve_evidence")
+    first_receipt["adaptive_compute"] = {"plan": _adaptive_plan(deadline_s=240.0)}
+    first = {"ok": True, "text": FIRST_TEXT, "receipt": first_receipt}
+    second = {
+        "ok": True,
+        "text": "Current evidence confirms that the bounded lease recovers.",
+        "receipt": {"round": 2},
+    }
+    calls: list[dict] = []
+
+    async def fake_deep_reason(question=None, *, messages=None, **kwargs):
+        calls.append(dict(kwargs))
+        return first if len(calls) == 1 else second
+
+    ingress = SimpleNamespace(
+        stakes=0.8,
+        uncertainty=0.6,
+        epistemic_genesis=None,
+        epistemic_state=None,
+        memory_result=None,
+        to_receipt=lambda: {
+            "schema": "aura.cognitive_ingress.v1",
+            "absent_sources": ["reference"],
+        },
+    )
+
+    async def fake_ingress(*args, **kwargs):
+        assert kwargs["acquisition_source"] == "reference"
+        return ingress
+
+    class Orchestrator:
+        tool_calls: list[tuple] = []
+
+        async def execute_tool(self, *args, **kwargs):
+            self.tool_calls.append((args, kwargs))
+            return {
+                "ok": True,
+                "summary": (
+                    "Current scheduler evidence confirms bounded lease recovery."
+                ),
+                "source": "https://example.org/current-scheduler",
+            }
+
+    orchestrator = Orchestrator()
+    monkeypatch.setattr(service, "deep_reason", fake_deep_reason)
+    monkeypatch.setattr(cognitive_ingress, "assemble_cognitive_ingress_async", fake_ingress)
+    monkeypatch.setattr(
+        cognitive_ingress,
+        "cognitive_context_items",
+        lambda _ingress: [{"source": "world_model", "text": "No reference hit."}],
+    )
+
+    result = await service.deep_reason_with_acquisition(
+        OBJECTIVE,
+        orchestrator=orchestrator,
+        stakes=0.8,
+        uncertainty=0.8,
+        timeout_s=60.0,
+        foreground_request=True,
+        cognitive_context=[{"source": "world_model", "text": "Prior state."}],
+    )
+
+    assert result is second
+    assert len(orchestrator.tool_calls) == 1
+    assert len(calls) == 2
+    assert any(
+        row["source"] == "capability.web_search"
+        for row in calls[1]["cognitive_context"]
+    )
+    continuation = result["receipt"]["cognitive_acquisition"]
+    assert continuation["returned_round"] == 2
+    assert continuation["acquisition"]["new_context_count"] == 1
 
 
 @pytest.mark.asyncio

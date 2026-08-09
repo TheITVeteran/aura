@@ -742,6 +742,29 @@ async def test_unified_will_requires_validated_child_lease(monkeypatch):
     assert "denied_by_default" not in accepted.reason
 
 
+@pytest.mark.asyncio
+async def test_latent_cortex_can_receive_a_bounded_public_research_lease():
+    manager = _manager()
+    lease = await manager.issue_child_lease(
+        "web_search",
+        {"query": "current public compiler documentation"},
+        origin="latent_cortex",
+        effect_scope="read_only",
+        risk_level="low",
+    )
+
+    assert lease.approved is True
+    valid, reason, _ = manager.validate_context(
+        lease.context,
+        tool_name="web_search",
+        arguments={"query": "current public compiler documentation"},
+        origin="latent_cortex",
+        effect_scope="read_only",
+        risk_level="low",
+    )
+    assert valid is True, reason
+
+
 def test_execution_policy_is_invocation_specific_and_unknown_fails_high():
     from core.capability_engine import CapabilityEngine
 

@@ -209,6 +209,7 @@ _AUTONOMOUS_RESEARCH_ORIGINS = frozenset(
         "curiosity_explorer",
         "dream",
         "intention_loop",
+        "latent_cortex",
         "overt_action_loop",
         "research_cycle",
         "subconscious_loop",
@@ -5015,6 +5016,11 @@ class CapabilityEngine(AuraBaseModule):
             elif (
                 skill_name in _LIGHTWEIGHT_BACKGROUND_IO_SKILLS
                 and not self._is_user_facing_origin(exec_source)
+                and not (
+                    exec_source == "latent_cortex"
+                    and ctx.get("foreground_cognitive_acquisition") is True
+                    and ctx.get("foreground_request") is True
+                )
             ):
                 try:
                     from core.runtime.background_policy import background_activity_reason

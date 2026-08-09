@@ -92,6 +92,7 @@ AUTONOMOUS_AUTHORITY_ORIGINS = frozenset(
         "curiosity_explorer",
         "dream",
         "intention_loop",
+        "latent_cortex",
         "overt_action_loop",
         "proactive_presence",
         "proactive_comm",

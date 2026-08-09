@@ -64,6 +64,38 @@ def test_current_web_result_becomes_typed_non_authoritative_evidence():
     assert normalize_cognitive_context([dict(item)]) == [dict(item)]
 
 
+def test_deep_web_sources_are_extracted_and_deduplicated():
+    objective = "Compare current octopus cognition sources."
+    bundle = build_current_turn_capability_evidence(
+        _fresh_modifiers(
+            "web_search",
+            objective,
+            {
+                "ok": True,
+                "answer": "Two recent studies report flexible problem solving.",
+                "sources": [
+                    {
+                        "title": "Octopus cognition study A",
+                        "text": "An octopus changed strategies after feedback.",
+                        "url": "https://example.org/a",
+                    }
+                ],
+                "citations": [
+                    {
+                        "title": "Octopus cognition study A",
+                        "url": "https://example.org/a",
+                    }
+                ],
+            },
+        ),
+        objective,
+    )
+
+    assert bundle.receipt["admitted"] is True
+    assert "https://example.org/a" in bundle.items[0]["text"]
+    assert bundle.items[0]["text"].count("https://example.org/a") == 1
+
+
 def test_same_turn_marker_admits_auto_browsed_page_without_objective_hash():
     objective = "Synthesize the policy page and identify the deadline."
     bundle = build_current_turn_capability_evidence(

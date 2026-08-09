@@ -74,6 +74,8 @@ def _source_inventory(
                 source == "memory" or source.startswith("memory.")
                 if action is OperationKind.SEARCH_MEMORY
                 else source == "reference"
+                or source.startswith("reference.")
+                or source.startswith("capability.")
             )
         if matches:
             rows.append((source, _context_digest(raw)))
@@ -199,16 +201,6 @@ def build_acquisition_receipt(
     elapsed_s = float(elapsed_s)
     if not 0.0 <= elapsed_s <= 30.0:
         raise ValueError("cognitive acquisition elapsed time is outside bounds")
-    target_source = (
-        "memory" if action is OperationKind.SEARCH_MEMORY else "reference"
-    )
-    absent_sources = ingress_receipt.get("absent_sources")
-    if (
-        not error_code
-        and isinstance(absent_sources, list)
-        and target_source in absent_sources
-    ):
-        error_code = f"{target_source}_source_unavailable"
     before = {
         tuple(row)
         for row in request.get("before_inventory", [])
@@ -221,6 +213,17 @@ def build_acquisition_receipt(
         acquired_only=True,
     )
     new_rows = tuple(row for row in after if row[1] not in before_content)
+    target_source = (
+        "memory" if action is OperationKind.SEARCH_MEMORY else "reference"
+    )
+    absent_sources = ingress_receipt.get("absent_sources")
+    if (
+        not error_code
+        and not after
+        and isinstance(absent_sources, list)
+        and target_source in absent_sources
+    ):
+        error_code = f"{target_source}_source_unavailable"
     error_code = str(error_code or "").strip()
     if error_code and not re.fullmatch(r"[a-z0-9_.:-]{1,96}", error_code):
         raise ValueError("cognitive acquisition error code is invalid")
@@ -250,6 +253,32 @@ def build_acquisition_receipt(
         "worker_performed_io": False,
     }
     return {**payload, "receipt_sha256": canonical_sha256(payload)}
+
+
+def acquisition_has_new_context(
+    request: Mapping[str, Any],
+    acquired_context: Sequence[Mapping[str, Any]] | None,
+) -> bool:
+    """Whether a provider returned content absent from the first episode."""
+
+    if not isinstance(request, Mapping):
+        raise ValueError("cognitive acquisition request is invalid")
+    action = OperationKind(request.get("action"))
+    if action not in COGNITIVE_ACQUISITION_ACTIONS:
+        raise ValueError("cognitive acquisition action is unsupported")
+    before_content = {
+        row[1]
+        for row in request.get("before_inventory", [])
+        if isinstance(row, list) and len(row) == 2
+    }
+    return any(
+        digest not in before_content
+        for _source, digest in _source_inventory(
+            acquired_context,
+            action,
+            acquired_only=True,
+        )
+    )
 
 
 def validate_acquisition_receipt(
@@ -467,6 +496,7 @@ __all__ = [
     "COGNITIVE_ACQUISITION_SCHEMA",
     "MAX_CONTINUATION_ROUNDS",
     "MAX_RETRIEVAL_QUERY_CHARS",
+    "acquisition_has_new_context",
     "build_acquisition_receipt",
     "build_acquisition_request",
     "build_continuation_receipt",

@@ -37,6 +37,8 @@ def test_source_classes_are_explicit_and_hybrid_one_shot_is_evidence():
     assert not source_matches_action("reference", "search_memory")
     assert source_matches_action("reference", "retrieve_evidence")
     assert source_matches_action("tool_observation.web", "retrieve_evidence")
+    assert source_matches_action("capability.web_search", "retrieve_evidence")
+    assert source_matches_action("capability.run_code", "retrieve_evidence")
     assert not source_matches_action("goals", "retrieve_evidence")
 
     assert context_sources_for_action(
