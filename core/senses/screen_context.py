@@ -20,6 +20,7 @@ from __future__ import annotations
 import subprocess
 
 from core.runtime.errors import record_degradation
+from core.runtime.subprocess_gateway import get_subprocess_gateway
 
 #: Bounded hard. This runs on every screen read, and a hung osascript would
 #: stall the caller — including the response lane answering "what's on my
@@ -50,12 +51,16 @@ def frontmost_window_hint() -> tuple[str, str]:
     make that policy — it only reports.
     """
     try:
-        completed = subprocess.run(
+        # Through the gateway, not raw: every process this runtime spawns is
+        # accounted for in one place, and a read of the frontmost window is
+        # not special enough to be the exception.
+        completed = get_subprocess_gateway().run(
             ["osascript", "-e", _SCRIPT],
-            capture_output=True,
-            text=True,
             timeout=_TIMEOUT_S,
-            check=False,
+            read_only=True,
+            capture_output=True,
+            source="screen_context.frontmost_window",
+            accelerator_capability="none",
         )
     except (OSError, subprocess.SubprocessError) as exc:
         record_degradation(

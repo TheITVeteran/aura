@@ -15281,6 +15281,22 @@
       "scope": "<module>.read_window_elements"
     },
     {
+      "callee": "core.runtime.subprocess_gateway.get_subprocess_gateway().run",
+      "canonical_owner": false,
+      "category": "subprocess_gateway",
+      "count": 1,
+      "path": "core/perception/screen_highlight.py",
+      "scope": "<module>._screen_area"
+    },
+    {
+      "callee": "core.runtime.subprocess_gateway.get_subprocess_gateway().run",
+      "canonical_owner": false,
+      "category": "subprocess_gateway",
+      "count": 1,
+      "path": "core/perception/screen_highlight.py",
+      "scope": "<module>.locate_on_screen"
+    },
+    {
       "callee": "core.runtime.subprocess_gateway.get_subprocess_gateway().spawn_async",
       "canonical_owner": false,
       "category": "subprocess_gateway",
@@ -15815,6 +15831,14 @@
       "count": 1,
       "path": "core/senses/notifications.py",
       "scope": "<module>.DesktopNotifier.send"
+    },
+    {
+      "callee": "core.runtime.subprocess_gateway.get_subprocess_gateway().run",
+      "canonical_owner": false,
+      "category": "subprocess_gateway",
+      "count": 1,
+      "path": "core/senses/screen_context.py",
+      "scope": "<module>.frontmost_window_hint"
     },
     {
       "callee": "core.runtime.subprocess_gateway.get_subprocess_gateway().spawn",
@@ -16458,6 +16482,6 @@
     }
   ],
   "description": "Exact AST effect-ownership debt ratchet; refresh only after reviewed change",
-  "inventory_sha256": "fee83c89f4598c8c25e504c7bcfdbb8d30bf091d596c390a0d3f074e5ba7cc7a",
+  "inventory_sha256": "de04792e3530dbfeee6155974525258e3473578ee89382f7c2a9b42c5824af93",
   "schema_version": 1
 }

@@ -1391,6 +1391,8 @@ final class AuraLauncherDelegate: NSObject, NSApplicationDelegate,
     private var bubbleFrameObserver: Any?
     private var companionPanel: NSPanel?
     private var companionWebView: WKWebView?
+    private var overlayWindow: NSWindow?
+    private var overlayDismissWork: DispatchWorkItem?
 
     private var auraRoot: URL!
     private var launchScript: URL!
@@ -2902,10 +2904,90 @@ final class AuraLauncherDelegate: NSObject, NSApplicationDelegate,
             NSApp.activate(ignoringOtherApps: true)
         case "close":
             hideCompanionChat()
+        case "highlight":
+            let rect = body["rect"] as? [String: Any] ?? [:]
+            showHighlight(
+                x: (rect["x"] as? Double) ?? 0,
+                y: (rect["y"] as? Double) ?? 0,
+                width: (rect["width"] as? Double) ?? 0,
+                height: (rect["height"] as? Double) ?? 0,
+                seconds: (body["seconds"] as? Double) ?? 3.0
+            )
         case "hide":
             hideBubble()
         default:
             break
+        }
+    }
+
+    // MARK: - Highlight overlay
+
+    /// Draw a transient, CLICK-THROUGH rectangle over the screen.
+    ///
+    /// ignoresMouseEvents is the safety property, not a nicety: an overlay
+    /// that can swallow a click can cost someone work, and this window sits
+    /// over whatever they were doing. It also auto-dismisses — a highlight
+    /// that outlives its answer becomes furniture on someone's desktop.
+    func showHighlight(x: Double, y: Double, width: Double, height: Double, seconds: Double) {
+        DispatchQueue.main.async { [weak self] in
+            guard let self else { return }
+            self.overlayDismissWork?.cancel()
+
+            // Accessibility reports top-left origin; AppKit windows are
+            // bottom-left. Converting wrong puts the rectangle around
+            // something else entirely, which is worse than not drawing it.
+            let screenHeight = NSScreen.main?.frame.height ?? 0
+            let frame = NSRect(
+                x: x,
+                y: screenHeight - y - height,
+                width: max(4, width),
+                height: max(4, height)
+            )
+
+            let window = self.overlayWindow ?? {
+                let created = NSWindow(
+                    contentRect: frame,
+                    styleMask: [.borderless],
+                    backing: .buffered,
+                    defer: false
+                )
+                created.isOpaque = false
+                created.backgroundColor = .clear
+                created.hasShadow = false
+                created.ignoresMouseEvents = true
+                created.level = .screenSaver
+                created.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .ignoresCycle]
+                created.isReleasedWhenClosed = false
+                let view = NSView(frame: NSRect(origin: .zero, size: frame.size))
+                view.wantsLayer = true
+                created.contentView = view
+                self.overlayWindow = created
+                return created
+            }()
+
+            window.setFrame(frame, display: false)
+            window.contentView?.frame = NSRect(origin: .zero, size: frame.size)
+            if let layer = window.contentView?.layer {
+                layer.borderWidth = 2.5
+                layer.borderColor = NSColor(
+                    calibratedRed: 0.62, green: 0.45, blue: 1.0, alpha: 0.95
+                ).cgColor
+                layer.cornerRadius = 6
+                layer.backgroundColor = NSColor(
+                    calibratedRed: 0.62, green: 0.45, blue: 1.0, alpha: 0.14
+                ).cgColor
+            }
+            // orderFront, never makeKey: pointing at something must not take
+            // focus away from it.
+            window.orderFront(nil)
+
+            let dismiss = DispatchWorkItem { [weak self] in
+                self?.overlayWindow?.orderOut(nil)
+            }
+            self.overlayDismissWork = dismiss
+            DispatchQueue.main.asyncAfter(
+                deadline: .now() + max(0.5, min(10.0, seconds)), execute: dismiss
+            )
         }
     }
 
