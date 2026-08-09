@@ -401,8 +401,16 @@ def prepare_local_repair_requests(
     branch_candidates: Mapping[int, str],
     objective: str,
     max_requests: int = 1,
+    conditioning: str = "",
 ) -> list[dict[str, Any]]:
-    """Return bounded worker-private prompts for exact-refutation repairs."""
+    """Return bounded worker-private prompts for exact-refutation repairs.
+
+    ``conditioning`` is the episode's commitment block — the answers already
+    refuted in THIS episode. A repair is a redraw, and a redraw that does not
+    know what was already ruled out re-derives it: the same duplicate work
+    that makes best-of-N behave like best-of-2. Passing it turns the repair
+    into a draw from the residual distribution rather than the original one.
+    """
 
     if not isinstance(branch_candidates, Mapping) or not isinstance(objective, str):
         raise TypeError("local repair private sources are invalid")
@@ -468,6 +476,7 @@ def prepare_local_repair_requests(
             "for the invalidated span as plain text, continuing directly from "
             "the preserved prefix. Do not continue past it -- the remainder of "
             "the answer is preserved automatically. Write nothing else.\n"
+            f"{conditioning}\n" if conditioning else ""
             f"Objective: {objective}\n"
             f"INVALIDATED_ATOM_IDS: {request['invalidated_atom_ids']}\n"
             # The preserved prefix is by definition ORIGINAL_CANDIDATE's first

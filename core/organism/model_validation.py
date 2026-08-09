@@ -538,9 +538,33 @@ def install_runtime_validation() -> dict[str, Any]:
         "reality_metrology",
         "egress_privacy",
         "state_attestation",
+        "commitment_search",
     )
     suite.add_model(model)
 
+    suite.add_test(
+        ValidationTest(
+            name="sequential_exclusion_dominates_iid_sampling",
+            description=(
+                "removing refuted answer mass and renormalising never lowers "
+                "the per-draw probability of drawing a correct answer"
+            ),
+            required_capability="commitment_search",
+            observation=Observation(
+                name="cases_where_iid_wins",
+                value=0,
+                source=(
+                    "core/brain/llm/latent_cortex/sequential_exclusion.py — "
+                    "P(draw k+1 correct) = p*/(1 - m_k) >= p* for every "
+                    "distribution, so no case can exist"
+                ),
+                units="cases",
+            ),
+            predict=lambda _m: _exclusion_losses_to_iid(),
+            score=lambda p, o: threshold_score(float(p), float(o.value), units=" cases"),
+            owner="core/brain/llm/latent_cortex/sequential_exclusion.py",
+        )
+    )
     suite.add_test(
         ValidationTest(
             name="lockdep_reports_no_order_violations",
@@ -807,6 +831,33 @@ def install_runtime_validation() -> dict[str, Any]:
             Claim(statement=statement, test=test_name, owner=asserted_in, asserted_in=asserted_in)
         )
 
+    # Graded MEASURED_SYNTHETIC on purpose. The arithmetic is proven and the
+    # policy is wired into live best-of-N, but no live reasoning gain has
+    # been measured — and every previous RLC claim that skipped that
+    # distinction had to be walked back. The note says exactly what is
+    # missing so nobody has to reconstruct it later.
+    suite.add_claim(
+        Claim(
+            statement=(
+                "Excluding refuted answers makes best-of-N search strictly "
+                "better-covering than independent sampling."
+            ),
+            test="sequential_exclusion_dominates_iid_sampling",
+            owner="core/brain/llm/latent_cortex/sequential_exclusion.py",
+            asserted_in="docs/RLC_COMMITMENT_SEARCH.md",
+            evidence=Evidence.MEASURED_SYNTHETIC,
+            evidence_note=(
+                "The dominance is arithmetic and is checked exhaustively over "
+                "constructed distributions. What is NOT measured is a live "
+                "reasoning gain on the resident model: that needs the five "
+                "ablation arms in tools/run_commitment_ablation.py run against "
+                "a real task set, with the shuffle arm beating chance. Until "
+                "then this claim is about a sampling policy, not about Aura "
+                "reasoning better."
+            ),
+        )
+    )
+
     return {
         "model": model.name,
         "tests": [t.name for t in suite.tests()],
@@ -815,6 +866,32 @@ def install_runtime_validation() -> dict[str, Any]:
 
 
 # ── prediction helpers, kept small and failure-tolerant ───────────────
+
+def _exclusion_losses_to_iid() -> int:
+    """Count distributions where i.i.d. sampling beats exclusion. Must be 0.
+
+    Swept rather than spot-checked: the claim is universal, so a single
+    counterexample refutes it and the test has to be able to find one.
+    """
+    import random
+
+    from core.brain.llm.latent_cortex.sequential_exclusion import (
+        exclusion_success_probability,
+        iid_success_probability,
+    )
+
+    losses = 0
+    rng = random.Random(20260809)
+    for _ in range(400):
+        p_star = rng.uniform(0.01, 0.9)
+        draws = rng.randint(1, 24)
+        masses = [rng.random() * (1.0 - p_star) / 4 for _ in range(draws)]
+        if exclusion_success_probability(p_star, masses, draws) < (
+            iid_success_probability(p_star, draws) - 1e-12
+        ):
+            losses += 1
+    return losses
+
 
 def _lockdep() -> dict[str, Any]:
     from core.runtime.lockdep import lockdep_report

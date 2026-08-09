@@ -1565,6 +1565,12 @@ class EpisodeReceipt:
     # decoded branch probes exist, their hash-bound claims/dependencies.
     # Diagnostic only: later policy chooses what operation resolves a dispute.
     disagreement_graph: dict[str, Any] = field(default_factory=dict)
+    #: What this episode irreversibly COMMITTED, and the coverage that
+    #: bought. Under i.i.d. branch sampling most branches re-derive the same
+    #: answer, so best-of-N is best-of-2 and the receipt never said so; the
+    #: ratchet's receipt carries distinct coverage, the exclusions that
+    #: produced it, and whether any narrowing was actually measured.
+    commitment_ratchet: dict[str, Any] = field(default_factory=dict)
     # Cheapest available diagnostic selected for each localized disagreement,
     # bound to deterministic routes and measured/declared action costs.
     diagnostic_action_selection: dict[str, Any] = field(default_factory=dict)

@@ -5186,12 +5186,49 @@ class LatentCortexEngine:
             repair_limit = (
                 self.config.local_repair_max_attempts if self.config.local_repair_enabled else 0
             )
+            # ── the episode's commitments ────────────────────────────────
+            #
+            # Branch sampling is i.i.d., and i.i.d. sampling from a peaked
+            # model re-derives its mode: measured here twice already, as
+            # cos(pass1, pass2) = 0.9994 and as "collapse is cheapest". The
+            # consequence is that best-of-N behaves like best-of-2 and the
+            # repair generation that follows redraws from the SAME
+            # distribution that produced the refuted answers.
+            #
+            # Committing each refuted branch turns the redraw into a draw
+            # from the residual distribution: P(correct) goes from p* to
+            # p*/(1 - m), which dominates for every N. Only branches the
+            # task verifier actually refuted are committed — an unscored or
+            # undecided branch has not been shown wrong, and excluding it
+            # would remove an answer for not having been checked.
+            episode_ratchet = self._build_episode_ratchet(
+                objective=verification_objective,
+                branch_texts=branch_probe_texts,
+                blind_scores=blind_scores,
+            )
+            receipt.commitment_ratchet = episode_ratchet.receipt()
+            # Coverage on the operator view, not only in a receipt nobody
+            # opens: eight passes producing two distinct answers is the
+            # condition that explains every flat RLC result, and it has been
+            # invisible.
+            try:
+                from core.brain.llm.latent_cortex import commitment_telemetry
+
+                commitment_telemetry.sample(
+                    receipt.commitment_ratchet, passes=len(ensemble.branches)
+                )
+            except _LATENT_PHASE_ERRORS as exc:
+                record_degradation(
+                    "latent_cortex_engine", exc, severity="debug",
+                    action="episode ran without commitment telemetry",
+                )
             prepared_repairs = prepare_local_repair_requests(
                 disagreement_graph=receipt.disagreement_graph,
                 diagnostic_selection=receipt.diagnostic_action_selection,
                 branch_candidates=branch_probe_texts,
                 objective=verification_objective,
                 max_requests=repair_limit,
+                conditioning=episode_ratchet.conditioning_block(),
             )
 
         # SPARK-044: counterfactual generation is allowed to resolve only a
@@ -7661,6 +7698,56 @@ class LatentCortexEngine:
         return runtime
 
     # ── Fast-weight helpers ─────────────────────────────────────────────
+    #: A branch scoring at or below this from the blind task verifier is
+    #: REFUTED, not merely weak. Above it the verifier is expressing a
+    #: preference, and a preference is not grounds for an irreversible
+    #: exclusion — the exclusion has to be the verifier saying no, or the
+    #: search removes answers on the strength of an opinion.
+    REFUTATION_SCORE_CEILING = 0.0
+
+    def _build_episode_ratchet(
+        self,
+        *,
+        objective: str,
+        branch_texts: Mapping[int, str],
+        blind_scores: Mapping[int, float],
+    ) -> Any:
+        """Commit what this episode has established, strongest evidence first.
+
+        Three sources, in order: refutations (a verifier said no), the
+        prompt's own stated requirements (free and exact, and routinely
+        dropped several passes deep), then unanimous agreement across
+        independently sampled branches. Agreement is committed LAST and only
+        on unanimity, because a majority-vote constraint is a consensus
+        mechanism and consensus is what collapsed into a local basin here
+        before.
+
+        The candidate pool is the branch texts, so every narrowing on the
+        receipt is MEASURED — the fraction of live candidates a constraint
+        actually eliminated — rather than asserted.
+        """
+        from core.brain.llm.latent_cortex.commitment_extraction import (
+            propose_constraints,
+        )
+        from core.brain.llm.latent_cortex.commitment_ratchet import CommitmentRatchet
+
+        texts = [str(text) for text in branch_texts.values() if str(text).strip()]
+        refuted = [
+            str(branch_texts.get(index) or "")
+            for index, score in blind_scores.items()
+            if float(score) <= self.REFUTATION_SCORE_CEILING
+            and str(branch_texts.get(index) or "").strip()
+        ]
+        ratchet = CommitmentRatchet(texts)
+        for constraint in propose_constraints(
+            objective=objective,
+            candidates=texts,
+            refuted=refuted,
+        ):
+            ratchet.commit(constraint)
+        ratchet.seal()
+        return ratchet
+
     def _run_generated_canaries(
         self, canaries: CapabilityCanaries, budget: ComputeBudget
     ) -> dict[str, Any]:

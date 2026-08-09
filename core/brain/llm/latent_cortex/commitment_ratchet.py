@@ -381,6 +381,24 @@ class CommitReceipt:
         }
 
 
+#: Sources whose constraints narrow the FUTURE rather than the present pool.
+#:
+#: A requirement the person stated — "answer in one word", "in kilometres" —
+#: may eliminate none of the candidates already drawn, because those were
+#: drawn while the requirement was still in the prompt. Its value is that it
+#: keeps being true on pass six, when a model several passes deep has
+#: quietly stopped honouring it. Refusing it for narrowing nothing would
+#: discard the cheapest and most reliable constraint there is.
+#:
+#: These commit with narrowing recorded but not enforced, so they never
+#: contribute to a measured-narrowing claim.
+_FUTURE_NARROWING_SOURCES = frozenset({"prompt"})
+
+
+def _is_stated_requirement(constraint: Constraint) -> bool:
+    return constraint.source in _FUTURE_NARROWING_SOURCES
+
+
 class CommitmentRatchet:
     """Accumulates irreversible, consistent, measured narrowings.
 
@@ -438,10 +456,18 @@ class CommitmentRatchet:
 
     @property
     def measured_commits(self) -> int:
+        """Commits whose narrowing was MEASURED against the live pool.
+
+        A stated requirement is excluded even when a pool was present: it
+        was committed for its effect on later draws, and counting it here
+        would let restating the prompt inflate a measured-narrowing claim.
+        """
         return sum(
             1
             for receipt in self._receipts
-            if receipt.committed and receipt.narrowing is not None
+            if receipt.committed
+            and receipt.narrowing is not None
+            and receipt.narrowing > MIN_MEASURED_NARROWING
         )
 
     # ── the turn ─────────────────────────────────────────────────────────
@@ -501,7 +527,11 @@ class CommitmentRatchet:
             )
 
         narrowing, before, after = self.would_narrow(constraint)
-        if narrowing is not None and narrowing <= MIN_MEASURED_NARROWING:
+        if (
+            narrowing is not None
+            and narrowing <= MIN_MEASURED_NARROWING
+            and not _is_stated_requirement(constraint)
+        ):
             return self._record(
                 False, constraint, "no_measured_narrowing", narrowing, before, after
             )
