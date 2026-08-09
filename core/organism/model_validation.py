@@ -541,6 +541,8 @@ def install_runtime_validation() -> dict[str, Any]:
         "commitment_search",
         "rlc_capability_evidence",
         "rlc_governed_web_acquisition",
+        "rlc_verified_amplifier_composition",
+        "kernel_confined_symbolic_cognition",
     )
     suite.add_model(model)
 
@@ -617,6 +619,53 @@ def install_runtime_validation() -> dict[str, Any]:
                 subject="RLC governed web acquisition",
             ),
             owner="core/brain/cortex_web_acquisition.py",
+        )
+    )
+    suite.add_test(
+        ValidationTest(
+            name="recurrent_answer_enters_verified_complete_engine",
+            description=(
+                "a canonical RLC result is admitted as a bounded candidate and must "
+                "survive the same verifier and calibration path as generated alternatives"
+            ),
+            required_capability="rlc_verified_amplifier_composition",
+            observation=Observation(
+                name="rlc_seed_composition_contract_holds",
+                value=True,
+                source=(
+                    "core/brain/reasoning_amplifier_v2.py and "
+                    "tests/test_response_generation_unitary_tiering.py"
+                ),
+            ),
+            predict=lambda _m: _rlc_amplifier_composition_contract_holds(),
+            score=lambda p, o: boolean_score(
+                bool(p),
+                expected=bool(o.value),
+                subject="RLC verified amplifier composition",
+            ),
+            owner="core/phases/response_generation_unitary.py",
+        )
+    )
+    suite.add_test(
+        ValidationTest(
+            name="symbolic_cognition_has_kernel_boundary",
+            description=(
+                "model-written Python used by cognitive verification runs only when "
+                "the host exposes a supported kernel sandbox"
+            ),
+            required_capability="kernel_confined_symbolic_cognition",
+            observation=Observation(
+                name="kernel_sandbox_available",
+                value=True,
+                source="core/sandbox/untrusted_python.py",
+            ),
+            predict=lambda _m: _symbolic_cognition_boundary_available(),
+            score=lambda p, o: boolean_score(
+                bool(p),
+                expected=bool(o.value),
+                subject="symbolic cognition kernel boundary",
+            ),
+            owner="core/brain/symbolic_sandbox.py",
         )
     )
     suite.add_test(
@@ -938,6 +987,38 @@ def install_runtime_validation() -> dict[str, Any]:
     suite.add_claim(
         Claim(
             statement=(
+                "The healthy foreground path composes a canonical RLC answer with "
+                "the verifier-backed reasoning amplifier instead of selecting only one."
+            ),
+            test="recurrent_answer_enters_verified_complete_engine",
+            owner="core/phases/response_generation_unitary.py",
+            asserted_in="docs/AURA_EXECUTION_TRACKER.md",
+            evidence=Evidence.MEASURED_SYNTHETIC,
+            evidence_note=(
+                "The response contract admits RLC output as a bounded candidate, carries "
+                "admitted evidence, and adopts only a verifier-clean amplifier result."
+            ),
+        )
+    )
+    suite.add_claim(
+        Claim(
+            statement=(
+                "Symbolic cognitive Python requires an OS kernel sandbox and refuses "
+                "execution when no supported boundary exists."
+            ),
+            test="symbolic_cognition_has_kernel_boundary",
+            owner="core/brain/symbolic_sandbox.py",
+            asserted_in="docs/AURA_EXECUTION_TRACKER.md",
+            evidence=Evidence.MEASURED_SYNTHETIC,
+            evidence_note=(
+                "The macOS test host executed pure computation under Seatbelt; Linux "
+                "requires bubblewrap and unsupported hosts fail closed."
+            ),
+        )
+    )
+    suite.add_claim(
+        Claim(
+            statement=(
                 "A successful current-turn governed observation can causally seed "
                 "the recurrent workspace without gaining instruction authority."
             ),
@@ -1054,6 +1135,21 @@ def _rlc_web_acquisition_contract_holds() -> bool:
         and "latent_cortex" in AUTONOMOUS_AUTHORITY_ORIGINS
         and source_matches_action("capability.web_search", "retrieve_evidence")
     )
+
+
+def _rlc_amplifier_composition_contract_holds() -> bool:
+    from core.brain.reasoning_amplifier_v2 import _admit_seed_candidates
+
+    return _admit_seed_candidates(
+        ["candidate", "candidate", ""],
+        limit=2,
+    ) == ["candidate"]
+
+
+def _symbolic_cognition_boundary_available() -> bool:
+    from core.sandbox.untrusted_python import available_boundary
+
+    return available_boundary() in {"seatbelt", "bubblewrap"}
 
 
 def _lockdep() -> dict[str, Any]:

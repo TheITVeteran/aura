@@ -39941,3 +39941,35 @@ resident-32B route selection, acquisition-caused gain, cross-domain generality,
 intrinsic recurrent-neural gain, frontier performance, fusion, activation, or
 `WOW Signal`. The completion envelope remains `809/920` (approximately
 `87.9%`).
+
+## Checkpoint 2026-08-09-073: One Complete Reasoning Engine
+
+The healthy foreground path previously made an exclusive choice it did not
+advertise: when the canonical RLC succeeded, `UnitaryResponsePhase` skipped the
+verifier-backed reasoning amplifier. Aura could use recurrent tissue or the
+evidence, procedural memory, deterministic verifier, and Python repair stack,
+but not both on the same answer. That made the production engine less complete
+than either its architecture diagram or its comparative treatment.
+
+An RLC answer now enters the amplifier as a bounded seed candidate. It carries
+the already-admitted memory/evidence pack, occupies the corresponding part of
+the sample budget, receives no instruction authority, and faces the same
+verifier and calibration gates as newly decoded alternatives. A verifier-clean
+candidate may replace the recurrent draft; an unchecked or failed candidate
+cannot. The response receipt explicitly records that the two engines composed.
+
+The symbolic repair lane also stopped calling AST screening plus isolated-mode
+CPython a sandbox. It now executes through the shared untrusted-Python boundary:
+macOS Seatbelt or Linux bubblewrap, denied network and user-data access, bounded
+resources and output, and refusal when no supported kernel boundary exists.
+AST screening remains defense in depth rather than the claimed containment.
+
+The composed RLC, amplifier, verifier, Phi-budget, response, ingress, and
+symbolic-execution family passes `201/201`; canonical smoke passes `103/103`;
+the runtime self-model/claim suite passes `33/33`; Ruff, compilation, and diff
+hygiene pass. Compact evidence is
+`artifacts/closeout/latent_cortex/cp073_complete_engine_composition.json`.
+This proves source-level causal composition and host kernel confinement, not an
+installed-app, resident-32B, broad capability-gain, intrinsic-neural-transfer,
+frontier, fusion, activation, or `WOW Signal` result. The completion envelope
+remains `809/920` (approximately `87.9%`).

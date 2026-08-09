@@ -12,6 +12,9 @@ async def test_runs_pure_computation():
     res = await sbx.run("print(sum(range(10)))")
     assert res.ok
     assert res.stdout.strip() == "45"
+    assert res.isolation["sandboxed"] is True
+    assert res.isolation["kernel_boundary"] in {"seatbelt", "bubblewrap"}
+    assert res.isolation["network_denied"] is True
 
 
 @pytest.mark.asyncio

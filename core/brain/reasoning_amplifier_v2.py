@@ -59,6 +59,7 @@ _MODE_BUDGET = {
 }
 _TEMPS = [0.2, 0.5, 0.7, 0.9, 1.0, 0.4, 0.6, 0.8, 1.1]
 _MAX_SAMPLES = len(_TEMPS)
+_MAX_SEED_CANDIDATE_CHARS = 32_768
 
 # Φ thresholds mirror core.phases.phi_consciousness so the amplifier's notion of
 # "is cognition integrated enough to spend deep compute" matches the kernel's.
@@ -268,7 +269,7 @@ class AmplifiedAnswer:
         }
 
 
-def _admit_sample_budget(requested: Any, mode: "ReasoningMode") -> int:
+def _admit_sample_budget(requested: Any, mode: ReasoningMode) -> int:
     """Resolve a sample budget that is always inside the documented cap.
 
     CP126 bbb356e0. Only Phi-resolved counts were clamped to _MAX_SAMPLES;
@@ -291,6 +292,36 @@ def _admit_sample_budget(requested: Any, mode: "ReasoningMode") -> int:
     if value <= 0:
         return max(1, min(_MAX_SAMPLES, default))
     return max(1, min(_MAX_SAMPLES, value))
+
+
+def _admit_seed_candidates(value: Any, *, limit: int) -> list[str]:
+    """Admit prior cognitive results as candidates, never as instructions.
+
+    The canonical RLC may have already spent substantial compute on this exact
+    objective. Re-running a disconnected candidate search and discarding that
+    result is both wasteful and scientifically the wrong treatment. Seeds are
+    bounded answer artifacts: they receive no control authority and must pass
+    the same verifier as newly generated candidates.
+    """
+
+    if not isinstance(value, (list, tuple)) or type(limit) is not int or limit < 1:
+        return []
+    admitted: list[str] = []
+    seen: set[str] = set()
+    for raw in value:
+        if not isinstance(raw, str):
+            continue
+        candidate = raw.strip()
+        if not candidate or len(candidate) > _MAX_SEED_CANDIDATE_CHARS:
+            continue
+        identity = re.sub(r"\s+", " ", candidate).casefold()
+        if identity in seen:
+            continue
+        seen.add(identity)
+        admitted.append(candidate)
+        if len(admitted) >= min(limit, _MAX_SAMPLES):
+            break
+    return admitted
 
 
 def _cache_hit_is_insufficient(
@@ -711,6 +742,14 @@ class ReasoningAmplifierV2:
                 sample_budget = _admit_sample_budget(request.sample_budget, mode)
                 fallbacks.append("substrate_deepened")
 
+        seed_candidates = _admit_seed_candidates(
+            request.context.get("seed_candidates"),
+            limit=sample_budget,
+        )
+        if seed_candidates:
+            fallbacks.append(f"seed_candidates_admitted:{len(seed_candidates)}")
+        request.context["seed_candidates"] = seed_candidates
+
         # 2. retrieve failure-mode guards from prior reasoning.
         guard_text = ""
         guards: list[str] = []
@@ -1023,6 +1062,7 @@ class ReasoningAmplifierV2:
             budget_used={
                 "samples": n_cand,
                 "sample_budget": sample_budget,
+                "seed_candidates": len(seed_candidates),
                 "time_s": round(time.monotonic() - start, 3),
                 "time_budget_s": request.time_budget_s,
             },
@@ -1171,10 +1211,16 @@ class ReasoningAmplifierV2:
     ) -> list[str]:
         sys_block = self._build_prompt(problem, guard_text)
         context = dict(context or {})
+        seeds = _admit_seed_candidates(context.get("seed_candidates"), limit=n)
+        generation_count = max(0, n - len(seeds))
+        if generation_count == 0:
+            return seeds
 
         # Batched lane first: N candidates in ONE decoding pass when the live
         # MLX client supports it. Falls back to serial sampling on any miss.
-        if n >= 2 and not bool(context.get("disable_batched_candidates", False)):
+        if generation_count >= 2 and not bool(
+            context.get("disable_batched_candidates", False)
+        ):
             try:
                 from core.brain.llm.batch_candidates import generate_candidates_batched
 
@@ -1188,12 +1234,12 @@ class ReasoningAmplifierV2:
                     batch_max_tokens = 512
                 batched = await generate_candidates_batched(
                     sys_block,
-                    n,
+                    generation_count,
                     max_tokens=batch_max_tokens,
                     timeout_s=remaining,
                 )
                 if batched:
-                    return [
+                    generated = [
                         attributed_text(
                             candidate,
                             {
@@ -1203,6 +1249,7 @@ class ReasoningAmplifierV2:
                         )
                         for index, candidate in enumerate(batched)
                     ]
+                    return [*seeds, *generated]
             except (ImportError, RuntimeError, AttributeError, TypeError, ValueError) as exc:
                 record_degradation("amplifier_v2_batch_lane", exc, severity="debug")
 
@@ -1222,8 +1269,8 @@ class ReasoningAmplifierV2:
                 record_degradation("amplifier_v2_generate", exc)
                 return ""
 
-        results = await asyncio.gather(*[_one(i) for i in range(max(1, n))])
-        return [r for r in results if r]
+        results = await asyncio.gather(*[_one(i) for i in range(generation_count)])
+        return [*seeds, *[r for r in results if r]]
 
     def _build_prompt(self, problem: ProblemRepresentation, guard_text: str) -> str:
         parts = [problem.objective]

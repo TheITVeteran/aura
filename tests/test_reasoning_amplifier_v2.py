@@ -357,6 +357,38 @@ class _CheckedPassingVerifier:
 
 
 @pytest.mark.asyncio
+async def test_seeded_rlc_candidate_is_verified_without_regeneration(tmp_path):
+    async def generation_must_not_run(_prompt: str, _temperature: float) -> str:
+        raise AssertionError("a complete one-candidate seed budget regenerated")
+
+    amp = _amp_with_verifier(
+        generation_must_not_run,
+        _CheckedPassingVerifier(),
+        tmp_path,
+    )
+    out = await amp.amplify(
+        AmplificationRequest(
+            objective="Explain the bounded result",
+            task_type="planning",
+            mode=ReasoningMode.FAST,
+            sample_budget=1,
+            context={
+                "seed_candidates": ["The bounded result is 42."],
+                "read_only_evaluation": True,
+                "skip_cache": True,
+                "skip_evidence": True,
+            },
+        )
+    )
+
+    assert out.answer == "The bounded result is 42."
+    assert out.verified is True
+    assert out.receipt.num_candidates == 1
+    assert out.receipt.budget_used["seed_candidates"] == 1
+    assert "seed_candidates_admitted:1" in out.receipt.fallbacks_used
+
+
+@pytest.mark.asyncio
 async def test_concurrent_winner_keeps_its_own_generation_metadata(tmp_path):
     invocation = 0
 

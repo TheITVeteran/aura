@@ -1,0 +1,47 @@
+{
+  "schema": "aura.closeout.rlc_complete_engine_composition.v1",
+  "checkpoint": "CP073",
+  "date": "2026-08-09",
+  "implementation": {
+    "canonical_composition": [
+      "the healthy foreground RLC answer is a bounded seed candidate, not a terminal bypass",
+      "admitted memory and evidence observations travel into the verifier-backed amplifier",
+      "new candidates share the remaining sample budget rather than duplicating the RLC work",
+      "every seed has zero instruction authority and faces the same verifier as new candidates",
+      "an unverified amplifier result cannot replace the RLC draft"
+    ],
+    "symbolic_execution": [
+      "model-written Python executes through core.sandbox.untrusted_python",
+      "macOS Seatbelt or Linux bubblewrap is required",
+      "network and user-data reads are denied by the kernel profile",
+      "CPU, output, process, file-size, and wall-clock bounds are applied",
+      "absence of a supported boundary refuses execution"
+    ],
+    "knowledge_surface": [
+      "resident model knowledge remains available through generation",
+      "typed self/world state, one-shot memory, durable memory, offline reference, and current governed observations seed the RLC",
+      "live web can be acquired through CP072",
+      "verification, procedural memory, reasoning memory, and deterministic Python now compose after the recurrent result"
+    ]
+  },
+  "verification": {
+    "composition_and_adjacent_tests": {"passed": 201, "failed": 0},
+    "runtime_validation_tests": {"passed": 33, "failed": 0},
+    "smoke_tests": {"passed": 103, "failed": 0},
+    "ruff": "pass",
+    "compile": "pass",
+    "diff_check": "pass"
+  },
+  "claim_boundary": {
+    "proven": "source-level canonical composition and kernel-confined symbolic cognition on the macOS test host",
+    "not_proven": [
+      "installed-app execution before user restart",
+      "resident-32B selection and measured gain",
+      "cross-domain general reasoning gain",
+      "intrinsic neural transfer",
+      "frontier-level reasoning",
+      "fusion authority",
+      "WOW Signal"
+    ]
+  }
+}

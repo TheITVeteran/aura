@@ -154,6 +154,7 @@ class ForegroundLatentOutcome:
     text: str
     trace: dict[str, Any]
     fallback_allowed: bool
+    evidence: tuple[str, ...] = ()
 
     @property
     def selected(self) -> bool:
@@ -329,6 +330,7 @@ async def run_foreground_latent_episode(
     epistemic_genesis = None
     epistemic_state = None
     memory_result = None
+    admitted_evidence: tuple[str, ...] = ()
     try:
         from core.brain.cognitive_ingress import (
             assemble_cognitive_ingress_async,
@@ -373,6 +375,13 @@ async def run_foreground_latent_episode(
         )
         trace["latent_cortex_capability_evidence"] = capability_bundle.receipt
         trace["latent_cortex_context_merge"] = merge_receipt
+        admitted_evidence = tuple(
+            str(item.get("text") or "").strip()
+            for item in ingress_context or []
+            if isinstance(item, dict)
+            and item.get("context_role") in {"memory_observation", "evidence_observation"}
+            and str(item.get("text") or "").strip()
+        )[:6]
     except _RECOVERABLE_ERRORS as exc:
         record_degradation(
             "latent_cortex.capability_evidence",
@@ -481,7 +490,12 @@ async def run_foreground_latent_episode(
                 "response_path": "cognitive_engine_latent_cortex",
             }
         )
-        return ForegroundLatentOutcome(text=text, trace=trace, fallback_allowed=False)
+        return ForegroundLatentOutcome(
+            text=text,
+            trace=trace,
+            fallback_allowed=False,
+            evidence=admitted_evidence,
+        )
 
     reason = str(result.get("reason") or "latent_episode_failed")
     if not receipt:

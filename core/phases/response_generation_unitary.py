@@ -2050,6 +2050,8 @@ class UnitaryResponsePhase(Phase):
         is_user_facing: bool,
         is_background: bool,
         proof_or_benchmark: bool,
+        seed_candidates: list[str] | None = None,
+        evidence: list[str] | None = None,
     ) -> str:
         """Re-derive a verifiable hard-turn answer through the reasoning amplifier.
 
@@ -2101,7 +2103,13 @@ class UnitaryResponsePhase(Phase):
 
         budget = float(min(30.0, max(8.0, (request_timeout or 20.0) * 0.8)))
         result = await amplify_turn(
-            objective, _gen, task_type=task_type, time_budget_s=budget, escalate_generate=escalate_gen
+            objective,
+            _gen,
+            task_type=task_type,
+            evidence=list(evidence or []),
+            time_budget_s=budget,
+            extra_context={"seed_candidates": list(seed_candidates or [])},
+            escalate_generate=escalate_gen,
         )
         receipt = result.receipt.to_dict()
         self._last_reasoning_receipt = receipt
@@ -5750,6 +5758,7 @@ class UnitaryResponsePhase(Phase):
             # exact, benchmark, directive, inventory and action contracts stay
             # on their purpose-built lanes.
             latent_path_committed = False
+            latent_evidence: list[str] = []
             model_retry_suppressed = False
             raw: Any = None
             try:
@@ -5830,6 +5839,7 @@ class UnitaryResponsePhase(Phase):
                 if latent_outcome.succeeded:
                     raw = latent_outcome.text
                     latent_path_committed = True
+                    latent_evidence = list(latent_outcome.evidence)
                 elif latent_outcome.attempted and not latent_outcome.fallback_allowed:
                     model_retry_suppressed = True
                     new_state.response_modifiers.update(
@@ -5932,7 +5942,7 @@ class UnitaryResponsePhase(Phase):
             # memory), generate candidates, run the domain truth engines, repair in the
             # symbolic sandbox, calibrate, and attach a reasoning receipt. Bounded,
             # governed, and fail-open to the original draft so behaviour never regresses.
-            if not latent_path_committed and not model_retry_suppressed:
+            if not model_retry_suppressed:
                 try:
                     response_text = await self._maybe_amplify_response(
                         objective=objective,
@@ -5943,7 +5953,15 @@ class UnitaryResponsePhase(Phase):
                         is_user_facing=is_user_facing,
                         is_background=is_background,
                         proof_or_benchmark=bool(proof_evaluation_turn or benchmark_turn or strict_proof_answer_request),
+                        seed_candidates=(
+                            [response_text] if latent_path_committed else None
+                        ),
+                        evidence=latent_evidence,
                     )
+                    if latent_path_committed and self._last_reasoning_receipt:
+                        new_state.response_modifiers[
+                            "latent_cortex_amplifier_composed"
+                        ] = True
                 except _RESPONSE_RECOVERABLE_ERRORS as amp_exc:
                     logger.debug("Reasoning amplifier v2 skipped (fail-open): %s", amp_exc)
 

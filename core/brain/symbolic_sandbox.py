@@ -7,8 +7,9 @@ candidate Python (a calculation, a property test, a counterexample search) it:
 1. statically vets the script with the existing AST safety analyzer — any
    dangerous import/call (os, subprocess, socket, open, eval, …) is refused
    *before* execution, so the executed script can only do pure computation + print;
-2. writes it to the session scratch directory and runs it in CPython's isolated
-   mode (``-I``) under a wall-clock timeout, through the governed subprocess gateway;
+2. executes it through :mod:`core.sandbox.untrusted_python`, which requires an
+   OS kernel boundary, denies network and user-data access, applies resource
+   limits, and refuses to run if that boundary is unavailable;
 3. captures stdout / stderr / traceback (bounded at capture time);
 4. on failure, feeds the *sanitized* traceback back to a caller-supplied
    ``repair`` generator and retries, up to a bounded number of rounds sharing
@@ -18,10 +19,8 @@ It is the execution spine the code/math truth engines and the amplifier's
 ``expand_or_repair_failed_candidates`` step call when prose verification is not
 enough and the answer can simply be *run*.
 
-Honest bound (CP126): AST vetting + isolated mode + a wall-clock timeout is NOT
-an OS sandbox — vetted pure-computation code still runs with host privileges and
-no cgroup/rlimit quota. Treat this as a cognitive scratchpad, not a containment
-boundary.
+The AST screen remains defense in depth. The kernel sandbox and resource limits
+are the actual containment boundary.
 """
 from __future__ import annotations
 
@@ -30,16 +29,11 @@ import logging
 import math
 import os
 import re
-import sys
-import tempfile
 import time
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
-from pathlib import Path
 from typing import Any
 
-from core.runtime.atomic_writer import async_atomic_write_text
-from core.runtime.constrained_exec import ISOLATION_LEVEL, isolation_receipt, scrubbed_env
 from core.runtime.errors import record_degradation
 
 logger = logging.getLogger("Aura.SymbolicSandbox")
@@ -131,7 +125,7 @@ class SandboxResult:
             "warnings": self.warnings[:6],
             # CP126 d10e3cc5: no caller may infer containment from the word
             # "sandbox"; the real bound travels with every result.
-            "isolation": self.isolation or {"isolation_level": ISOLATION_LEVEL},
+            "isolation": self.isolation or {"isolation_level": "unavailable"},
             # CP126 93229cf5: the generated source and raw diagnostics stay OUT
             # of the serialized form. `final_code` remains on the object for a
             # repair round, but a logged/persisted result carries only its hash.
@@ -146,22 +140,14 @@ class SandboxResult:
 class SymbolicSandbox:
     """AST-vetted Python execution with a self-correction loop.
 
-    NOT an OS sandbox — see the module docstring's honest bound.
+    The execution boundary is the host's required kernel sandbox.
     """
 
     def __init__(self, *, workspace: str | os.PathLike[str] | None = None, timeout: float = _DEFAULT_TIMEOUT) -> None:
-        self._workspace = Path(workspace) if workspace else None
+        # Retained for API compatibility. The kernel sandbox owns an ephemeral
+        # scratch directory and does not accept caller-controlled write paths.
+        self._workspace = os.fspath(workspace) if workspace is not None else None
         self._timeout = _clamp_timeout(timeout)
-
-    def _resolve_workspace(self) -> Path:
-        if self._workspace is not None:
-            self._workspace.mkdir(parents=True, exist_ok=True)
-            return self._workspace
-        scratch = os.getenv("CLAUDE_SCRATCHPAD") or os.getenv("AURA_SCRATCH_DIR")
-        base = Path(scratch) if scratch else Path(tempfile.gettempdir())
-        target = base / "aura_symbolic_sandbox"
-        target.mkdir(parents=True, exist_ok=True)
-        return target
 
     def vet(self, code: str) -> tuple[bool, list[str]]:
         """Static safety gate. True ⇒ safe to execute (pure computation only)."""
@@ -191,45 +177,43 @@ class SymbolicSandbox:
 
         effective_timeout = _clamp_timeout(timeout_override) if timeout_override is not None else self._timeout
         try:
-            from core.runtime.subprocess_gateway import get_subprocess_gateway
+            import asyncio
 
-            workspace = self._resolve_workspace()
-            with tempfile.TemporaryDirectory(prefix="aura_sbx_", dir=str(workspace)) as td:
-                script = Path(td) / "scratch.py"
-                await async_atomic_write_text(script, body, encoding="utf-8")
-                # CP126 c77398cb: elapsed timeout was the ONLY hard control,
-                # so code could exhaust memory, fork descendants or burn CPU
-                # before it fired. The environment is scrubbed here and the
-                # interpreter starts in isolated + no-site mode. Kernel rlimits
-                # need a preexec hook the async gateway path does not expose;
-                # that gap is DECLARED in the isolation receipt rather than
-                # papered over — see resource_limits_enforced below.
-                env = scrubbed_env(HOME=td, TMPDIR=td)
-                res = await get_subprocess_gateway().run_async(
-                    (sys.executable, "-I", "-B", "-S", str(script)),
-                    timeout=effective_timeout,
-                    cwd=td,
-                    env=env,
-                    # CP126 23199cb8: executing arbitrary Python is NOT a
-                    # read-only action. The authority label has to describe the
-                    # effect, not the intent.
-                    read_only=False,
-                    source="symbolic_sandbox:exec",
-                    accelerator_capability="none",
-                )
-            stdout, stdout_bytes = _bound_capture(res.stdout or "")
-            stderr, stderr_bytes = _bound_capture(res.stderr or "")
-            tb = stderr.strip() if (res.returncode != 0 and stderr) else ""
+            from core.sandbox.untrusted_python import run_untrusted_script
+
+            outcome = await asyncio.to_thread(
+                run_untrusted_script,
+                body,
+                timeout_s=effective_timeout,
+                require_boundary=True,
+                source="symbolic_cognition",
+            )
+            stdout, stdout_bytes = _bound_capture(outcome.stdout or "")
+            diagnostic = "\n".join(
+                part for part in (outcome.stderr, outcome.error) if part
+            )
+            stderr, stderr_bytes = _bound_capture(diagnostic)
+            tb = stderr.strip() if not outcome.ok else ""
+            isolation = {
+                "isolation_level": f"kernel:{outcome.boundary}",
+                "kernel_boundary": outcome.boundary,
+                "sandboxed": outcome.sandboxed,
+                "network_denied": outcome.sandboxed,
+                "user_data_denied": outcome.sandboxed,
+                "resource_limits_enforced": outcome.sandboxed,
+            }
             return SandboxResult(
-                ok=(res.returncode == 0),
+                ok=outcome.ok and outcome.sandboxed,
                 stdout=stdout,
                 stderr=stderr,
                 traceback=tb,
+                timed_out=outcome.status == "timeout",
+                refused=outcome.status in {"rejected", "no_boundary"},
                 final_code=body,
                 warnings=warnings,
                 stdout_bytes=stdout_bytes,
                 stderr_bytes=stderr_bytes,
-                isolation=isolation_receipt(resource_limits_enforced=False),
+                isolation=isolation,
             )
         except TimeoutError:
             return SandboxResult(ok=False, timed_out=True, final_code=body, warnings=warnings)

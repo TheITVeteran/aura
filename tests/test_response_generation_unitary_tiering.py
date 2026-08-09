@@ -610,6 +610,7 @@ async def test_unitary_healthy_chat_commits_full_latent_answer_before_direct_dec
     orchestrator = SimpleNamespace(name="test-orchestrator")
     phase = UnitaryResponsePhase(SimpleNamespace(organs={}))
     captured = {}
+    amplification = {}
 
     async def _run_latent(**kwargs):
         captured.update(kwargs)
@@ -634,11 +635,43 @@ async def test_unitary_healthy_chat_commits_full_latent_answer_before_direct_dec
                 "response_path": "cognitive_engine_latent_cortex",
             },
             fallback_allowed=False,
+            evidence=("Raft evidence from the admitted reference corpus.",),
+        )
+
+    async def _amplify(_objective, _generate, **kwargs):
+        amplification.update(kwargs)
+        return SimpleNamespace(
+            answer=(
+                "Verified composition: Raft is appropriate for a crash-only failure "
+                "model, while PBFT handles Byzantine faults. The recommendation changes "
+                "because Byzantine nodes may equivocate instead of merely stopping, so "
+                "Raft's majority-log guarantees no longer cover the requested threat."
+            ),
+            confidence=0.96,
+            verified=True,
+            receipt=SimpleNamespace(
+                to_dict=lambda: {
+                    "strategy_used": "rlc_seed+verifier",
+                    "valid_candidates": 1,
+                }
+            ),
         )
 
     monkeypatch.setattr(
         "core.brain.foreground_latent_runtime.run_foreground_latent_episode",
         _run_latent,
+    )
+    monkeypatch.setattr(
+        "core.phases.response_generation_unitary.reasoning_amplifier_v2_enabled",
+        lambda: True,
+    )
+    monkeypatch.setattr(
+        "core.brain.reasoning_amplifier_v2.is_amplifiable",
+        lambda _objective: "architecture",
+    )
+    monkeypatch.setattr(
+        "core.brain.reasoning_amplifier_v2.amplify_turn",
+        _amplify,
     )
     monkeypatch.setattr(
         "core.phases.response_generation_unitary.ContextAssembler.build_messages",
@@ -685,7 +718,12 @@ async def test_unitary_healthy_chat_commits_full_latent_answer_before_direct_dec
     assert captured["messages"][-1]["content"] == objective
     assert new_state.response_modifiers["latent_cortex_succeeded"] is True
     assert new_state.response_modifiers["response_path"] == "cognitive_engine_latent_cortex"
-    assert "Byzantine failure model" in new_state.cognition.last_response
+    assert new_state.response_modifiers["latent_cortex_amplifier_composed"] is True
+    assert amplification["extra_context"]["seed_candidates"][0].startswith("Raft is")
+    assert amplification["evidence"] == [
+        "Raft evidence from the admitted reference corpus."
+    ]
+    assert "Verified composition" in new_state.cognition.last_response
 
 
 @pytest.mark.asyncio
