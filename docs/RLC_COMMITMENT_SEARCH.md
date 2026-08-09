@@ -78,14 +78,33 @@ distribution, every p\*.** That is a statement about renormalising a measure
 after removing mass — not a claim about a checkpoint, which is why it does
 not need the checkpoint to internalise anything.
 
-### Why it should be large here specifically
+### Why it is large here — measured, not argued
 
-The dominance scales with how peaked `p` is, and this system has measured
+The dominance scales with how peaked `p` is, and this system had measured
 its own peakedness twice without naming it as such: `cos = 0.9994`, and
 "collapse is cheapest". Both say the sampler keeps redrawing the same
-answer. Under i.i.d., N draws from a 0.7-mass mode spend ~70% of the budget
-re-deriving one answer — **best-of-8 is best-of-2**, which is a complete
-explanation for why more branches and more depth have bought so little.
+answer. But neither was ever turned into the number that matters, because
+branch candidate texts are worker-private and no campaign artifact retained
+them — so the premise behind every "more branches" decision was untested.
+
+Measured 2026-08-09, Qwen2.5-1.5B-Instruct-4bit, 8 short-answer tasks,
+8 i.i.d. draws each at temperature 0.7
+(`artifacts/rlc/commitment_search/peakedness_qwen1p5b_20260809.json`,
+reproduce with `tools/measure_candidate_peakedness.py`):
+
+| | measured |
+|---|---|
+| mean peakedness (Herfindahl) | **0.516** |
+| distinct answers | **25 of 64 draws** |
+| expected distinct per 8 i.i.d. draws | **2.58** |
+
+**Best-of-8 is best-of-2.6.** Five of eight passes re-derive an answer
+already examined. One task ("how many sides does a hexagon have") returned
+the identical answer all eight times — peakedness 1.0, the point-mass case,
+seven wasted passes out of eight.
+
+That is the complete explanation for why more branches and more depth have
+bought so little, and it is now a measurement rather than an inference.
 
 Exclusion turns the peak from a liability into an asset: the bigger the
 mode, the more one refutation removes.
@@ -169,9 +188,27 @@ reconstruct what would have counted as failure after seeing the numbers:
 > the ratchet's score is explained by extra passes and extra prompt text,
 > not by the order in which commitments constrain later passes
 
-## What is not claimed
+## What is measured, and what is not
 
-No reasoning gain, yet. What exists is a mechanism with an arithmetic
-argument, three instrumented premises, a quantitative self-prediction, and a
-harness that can refute it. The next step is running the arms against the
-resident model on a real task set — not more design.
+**Measured.** The dominance arithmetic, swept over 400 constructed
+distributions with zero counterexamples (registered claim
+`sequential_exclusion_dominates_iid_sampling`). And the premise: answer
+distributions on a real model are peaked enough that i.i.d. best-of-8
+examines ~2.6 distinct answers.
+
+**Not measured.** That exclusion produces a correctness gain end to end.
+The two measurements above establish that the mechanism has room to work and
+that the arithmetic is sound; neither is a reasoning gain, and every prior
+RLC claim that blurred that line had to be walked back.
+
+The next step is the five ablation arms against a model on a real task set —
+not more design. What would change the verdict:
+
+* if the SHUFFLE arm matches the real arm, ordering carries no information
+  and this is refuted;
+* if compliance is low, the model ignores exclusions and the coverage gain
+  cannot appear regardless of the arithmetic;
+* if the verifier ever refutes a correct answer, the truth is excluded
+  permanently and no budget recovers from it.
+
+All three are instrumented. A null here will name its cause.

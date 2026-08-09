@@ -1,0 +1,146 @@
+{
+  "schema": "aura.rlc.peakedness_measurement.v1",
+  "model": "models/Qwen2.5-1.5B-Instruct-4bit",
+  "temperature": 0.7,
+  "draws_per_task": 8,
+  "tasks": 8,
+  "total_draws": 64,
+  "total_distinct": 25,
+  "distinct_fraction": 0.3906,
+  "mean_peakedness": 0.5156,
+  "mean_expected_distinct_iid": 2.58,
+  "verdict": "PREMISE_HOLDS",
+  "reading": "answers concentrate hard (mean peakedness 0.52); i.i.d. sampling examines ~2.6 distinct answers per 8 draws, so exclusion has real coverage to gain",
+  "duration_s": 9.1,
+  "per_task": [
+    {
+      "prompt": "A shop sells pens at 3 for $2. How much do 12 pens cost? Answer with just the am",
+      "expected": "8",
+      "draws": 8,
+      "distinct_normalised": 5,
+      "distinct_raw": 5,
+      "peakedness": 0.3125,
+      "top_mass": 0.5,
+      "expected_distinct_iid": 3.622,
+      "predicted_advantage": 4.378,
+      "answers": [
+        "$4",
+        "$8",
+        "12 pens cost $8.",
+        "6",
+        "8"
+      ]
+    },
+    {
+      "prompt": "What is 17 * 23? Answer with just the number.",
+      "expected": "391",
+      "draws": 8,
+      "distinct_normalised": 2,
+      "distinct_raw": 2,
+      "peakedness": 0.7812,
+      "top_mass": 0.875,
+      "expected_distinct_iid": 1.656,
+      "predicted_advantage": 6.344,
+      "answers": [
+        "391",
+        "401"
+      ]
+    },
+    {
+      "prompt": "If a train leaves at 2pm and takes 3 hours, what time does it arrive? Just the t",
+      "expected": "5pm",
+      "draws": 8,
+      "distinct_normalised": 5,
+      "distinct_raw": 5,
+      "peakedness": 0.2188,
+      "top_mass": 0.25,
+      "expected_distinct_iid": 4.012,
+      "predicted_advantage": 3.988,
+      "answers": [
+        "4pm.",
+        "5:00 pm",
+        "5:00 pm.",
+        "5:00pm",
+        "5pm"
+      ]
+    },
+    {
+      "prompt": "How many days are in February in a leap year? Just the number.",
+      "expected": "29",
+      "draws": 8,
+      "distinct_normalised": 3,
+      "distinct_raw": 3,
+      "peakedness": 0.4062,
+      "top_mass": 0.5,
+      "expected_distinct_iid": 2.629,
+      "predicted_advantage": 5.371,
+      "answers": [
+        "28",
+        "29",
+        "29 days"
+      ]
+    },
+    {
+      "prompt": "What is the capital of Australia? Just the city name.",
+      "expected": "Canberra",
+      "draws": 8,
+      "distinct_normalised": 2,
+      "distinct_raw": 2,
+      "peakedness": 0.625,
+      "top_mass": 0.75,
+      "expected_distinct_iid": 1.9,
+      "predicted_advantage": 6.1,
+      "answers": [
+        "canberra",
+        "the capital of australia is canberra."
+      ]
+    },
+    {
+      "prompt": "A rectangle is 7 by 4. What is its area? Just the number.",
+      "expected": "28",
+      "draws": 8,
+      "distinct_normalised": 5,
+      "distinct_raw": 8,
+      "peakedness": 0.25,
+      "top_mass": 0.375,
+      "expected_distinct_iid": 3.846,
+      "predicted_advantage": 4.154,
+      "answers": [
+        "the area of a rectangle is calculated by multiplying its length by its width. for a rectangle that is 7 by 4 the area is:",
+        "the area of a rectangle is calculated by multiplying its length by its width. for a rectangle that is 7 units by 4 units the area is:",
+        "the area of a rectangle is calculated by multiplying its length by its width. for a rectangle that is 7 units long and 4 units wide the area is 7 times 4 28 square units.",
+        "the area of a rectangle is calculated by multiplying its length by its width. for a rectangle that is 7 units long and 4 units wide the area is:",
+        "the area of a rectangle is calculated by multiplying its length by its width. for a rectangle with dimensions 7 by 4 the area is:"
+      ]
+    },
+    {
+      "prompt": "What is 144 divided by 12? Just the number.",
+      "expected": "12",
+      "draws": 8,
+      "distinct_normalised": 2,
+      "distinct_raw": 2,
+      "peakedness": 0.5312,
+      "top_mass": 0.625,
+      "expected_distinct_iid": 1.976,
+      "predicted_advantage": 6.024,
+      "answers": [
+        "12",
+        "12."
+      ]
+    },
+    {
+      "prompt": "How many sides does a hexagon have? Just the number.",
+      "expected": "6",
+      "draws": 8,
+      "distinct_normalised": 1,
+      "distinct_raw": 1,
+      "peakedness": 1.0,
+      "top_mass": 1.0,
+      "expected_distinct_iid": 1.0,
+      "predicted_advantage": 7.0,
+      "answers": [
+        "6"
+      ]
+    }
+  ]
+}

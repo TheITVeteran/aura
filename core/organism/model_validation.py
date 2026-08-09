@@ -847,13 +847,16 @@ def install_runtime_validation() -> dict[str, Any]:
             asserted_in="docs/RLC_COMMITMENT_SEARCH.md",
             evidence=Evidence.MEASURED_SYNTHETIC,
             evidence_note=(
-                "The dominance is arithmetic and is checked exhaustively over "
-                "constructed distributions. What is NOT measured is a live "
-                "reasoning gain on the resident model: that needs the five "
-                "ablation arms in tools/run_commitment_ablation.py run against "
-                "a real task set, with the shuffle arm beating chance. Until "
-                "then this claim is about a sampling policy, not about Aura "
-                "reasoning better."
+                "Two things ARE measured. The dominance is arithmetic and is "
+                "swept over 400 constructed distributions with zero "
+                "counterexamples. And the premise it depends on was measured "
+                "on a real model 2026-08-09 (Qwen2.5-1.5B, 8 tasks x 8 draws): "
+                "mean peakedness 0.516, 25 distinct answers from 64 draws, so "
+                "i.i.d. best-of-8 examines ~2.6 distinct answers. What is NOT "
+                "measured is a correctness gain end to end: that needs the five "
+                "ablation arms in tools/run_commitment_ablation.py against a "
+                "real task set, with the shuffle arm beaten. Until then this is "
+                "a claim about search coverage, not about Aura reasoning better."
             ),
         )
     )
