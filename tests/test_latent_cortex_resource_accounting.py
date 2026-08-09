@@ -11,9 +11,11 @@ from core.brain.llm.latent_cortex.resource_accounting import (
     ResourceLedger,
     build_information_receipt,
     certify_comparison_accounting,
+    certify_control_resource_dominance,
     policy_sha256,
     triangular_attention_pairs,
     validate_comparison_accounting_certificate,
+    validate_control_resource_dominance_certificate,
     validate_information_receipt,
     validate_resource_receipt,
 )
@@ -236,6 +238,51 @@ def test_information_or_policy_advantage_refuses_comparison():
     )
     assert "information_or_policy_mismatch" in prompt_mismatch["reasons"]
     assert "information_or_policy_mismatch" in verifier_mismatch["reasons"]
+
+
+def test_same_information_overfunded_control_admits_resource_dominance():
+    treatment = _resource(tensor_ops=100, tensor_reads=500, verifier_calls=2)
+    control = _resource(tensor_ops=1_000, tensor_reads=5_000, verifier_calls=8)
+    certificate = certify_control_resource_dominance(
+        treatment_resource=treatment,
+        control_resource=control,
+        treatment_information=_information(),
+        control_information=_information(),
+    )
+    assert certificate["admitted"] is True
+    assert certificate["information_matched"] is True
+    assert all(
+        row["control_dominates"]
+        for row in certificate["resource_dimensions"].values()
+    )
+    assert validate_control_resource_dominance_certificate(certificate) == certificate
+
+
+def test_resource_dominance_refuses_any_control_shortfall_or_information_drift():
+    certificate = certify_control_resource_dominance(
+        treatment_resource=_resource(tensor_reads=5_000, verifier_calls=8),
+        control_resource=_resource(tensor_reads=500, verifier_calls=2),
+        treatment_information=_information(prompt="same facts"),
+        control_information=_information(prompt="different facts"),
+    )
+    assert certificate["admitted"] is False
+    assert "control_shortfall:tensor_element_reads" in certificate["reasons"]
+    assert "control_shortfall:verifier_calls" in certificate["reasons"]
+    assert "information_or_policy_mismatch" in certificate["reasons"]
+
+
+def test_resource_dominance_validator_recomputes_dimensions_after_rehash():
+    certificate = certify_control_resource_dominance(
+        treatment_resource=_resource(),
+        control_resource=_resource(tensor_ops=1_000, tensor_reads=5_000),
+        treatment_information=_information(),
+        control_information=_information(),
+    )
+    tampered = deepcopy(certificate)
+    tampered["resource_dimensions"]["estimated_flops"]["control_dominates"] = False
+    _rehash_certificate(tampered)
+    with pytest.raises(ValueError, match="dimension verdict differs"):
+        validate_control_resource_dominance_certificate(tampered)
 
 
 def test_information_receipt_is_order_stable_and_tamper_evident():

@@ -40297,3 +40297,40 @@ This admits resident-32B difficulty calibration and the disjoint complete-system
 pilot. It does not prove an equal-compute advantage, reasoning gain, frontier
 performance, fusion authority, activation, or `WOW Signal`, and the completion
 envelope remains `809/920` (approximately `87.9%`).
+
+## Checkpoint 2026-08-09-085: The Treatment Must Beat an Advantaged Control
+
+The historical `vanilla_equal_compute` arm is retained only as a readable
+best-of-three reference. It cannot support an equal-compute claim. The new
+`vanilla_resource_dominating` arm repeatedly samples the ordinary checkpoint,
+scores candidates with the same candidate-local verifier available to the
+treatment, and stops only after its aggregate measured budget is no smaller
+than the complete system on estimated structural FLOPs and every non-neural
+parity counter. Candidate selection is deterministic, answer-key-free, and
+bound to a persisted receipt containing every output, verifier result,
+per-sample resource receipt, selected index, and digest.
+
+The comparison certificate is deliberately one-sided: it proves that the
+ordinary control was at least as well funded, never that unlike architectures
+performed identical work. It also requires complete resource and information
+receipts, one model-compute profile, the exact rendered prompt commitment,
+value-controller evidence, tokenizer identity, verifier implementation, tool
+policy, and nonparametric-memory policy. Any shortfall, unknown operation,
+policy drift, source drift, or receipt tampering makes the verdict
+inconclusive. The complete-system request now expands into four arms: ordinary
+decode, historical best-of-three, complete closed-book system, and the
+resource-advantaged ordinary control. A claim-bearing treatment must outperform
+the last arm without regressing any ordinary success.
+
+The focused sweep, accounting, controller, and handoff contracts pass `97/97`;
+canonical smoke passes `103/103`; Ruff, compilation, and diff hygiene pass.
+Compact evidence is
+`artifacts/closeout/latent_cortex/cp085_resource_advantaged_control.json`.
+The currently frozen CP084 resident-32B pilot predates this arm and remains a
+directional result. A fresh CP085 four-arm campaign is required for claim-grade
+evidence. Typed symbolic context selected during a complete-system episode also
+remains an explicit next control task: until the ordinary arm can replay the
+same content, such a cell refuses same-information admission rather than
+crediting an asymmetric comparison. No reasoning gain, frontier result, fusion
+authority, activation, or `WOW Signal` is claimed, and the completion envelope
+remains `809/920` (approximately `87.9%`).

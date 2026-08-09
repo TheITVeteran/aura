@@ -8,9 +8,11 @@ its journal, resumption, and grading must be correct before it consumes any
 from __future__ import annotations
 
 import hashlib
+import inspect
 import json
 import sys
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -134,6 +136,7 @@ def test_complete_system_request_expands_to_controls_without_narrower_treatments
         "vanilla",
         "vanilla_equal_compute",
         "complete_system_closed_book",
+        "vanilla_resource_dominating",
     ]
 
 
@@ -174,6 +177,203 @@ def test_equal_compute_random_streams_are_task_bound_and_reproducible():
     assert first != sweep._equal_compute_seed(20260809, "task-b", 0)
     assert first != sweep._equal_compute_seed(20260809, "task-a", 1)
     assert first != sweep._equal_compute_seed(20260810, "task-a", 0)
+
+
+def test_resource_dominating_control_spends_until_every_target_dimension_is_met(
+    monkeypatch,
+    tmp_path: Path,
+):
+    from core.brain.llm.latent_cortex.resource_accounting import (
+        ModelComputeProfile,
+        ResourceLedger,
+        build_information_receipt,
+        policy_sha256,
+    )
+    from core.brain.llm.latent_cortex.value_of_computation import (
+        build_evidence_snapshot,
+    )
+
+    profile = ModelComputeProfile(
+        model_type="fixture",
+        hidden_size=8,
+        intermediate_size=16,
+        num_hidden_layers=2,
+        num_attention_heads=2,
+        num_key_value_heads=1,
+        vocab_size=32,
+        head_dim=4,
+    )
+    target = ResourceLedger(profile)
+    target.charge(
+        "target",
+        transformer_layer_apps=20,
+        attention_query_key_pairs=20,
+        output_head_tokens=2,
+        tensor_element_reads=20,
+        tensor_element_writes=20,
+        verifier_calls=2,
+        verifier_input_bytes=2,
+        verifier_output_bytes=2,
+    )
+    encoded_tokens = b"[1]"
+    evidence_payload = json.dumps(
+        build_evidence_snapshot(bucket="fixture|none|short|s:mid|u:mid", cells={}),
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode()
+    tokenizer = SimpleNamespace(chat_template="")
+    tokenizer_type = type(tokenizer)
+
+    information = build_information_receipt(
+        sources=[
+            {
+                "source_id": "rendered_model_input",
+                "kind": "model_input_tokens",
+                "content_sha256": hashlib.sha256(encoded_tokens).hexdigest(),
+                "byte_count": len(encoded_tokens),
+                "token_count": 1,
+            },
+            {
+                "source_id": "value_controller_evidence",
+                "kind": "controller_evidence",
+                "content_sha256": hashlib.sha256(evidence_payload).hexdigest(),
+                "byte_count": len(evidence_payload),
+                "token_count": 0,
+            },
+        ],
+        policies={
+            "tokenizer": policy_sha256(
+                {
+                    "module": tokenizer_type.__module__,
+                    "qualname": tokenizer_type.__qualname__,
+                    "chat_template_sha256": hashlib.sha256(b"").hexdigest(),
+                }
+            ),
+            "verifier": "0" * 64,
+            "tools": policy_sha256({"policy": "no_external_tools_inside_rlc_v1"}),
+            "nonparametric_memory": policy_sha256(
+                {
+                    "policy": "context_only_prompt_tail_recall_v1",
+                    "active_source_receipt_sha256": "none",
+                }
+            ),
+        },
+    )
+    calls = 0
+
+    def fake_vanilla(*args, **kwargs):
+        nonlocal calls
+        calls += 1
+        ledger = ResourceLedger(profile)
+        ledger.charge(
+            "sample",
+            transformer_layer_apps=10,
+            attention_query_key_pairs=10,
+            output_head_tokens=1,
+            tensor_element_reads=10,
+            tensor_element_writes=10,
+        )
+        value = calls
+        return f'FINAL_ANSWER: {{"value":{value}}}', [value], "contract_complete", ledger.to_receipt()
+
+    class FakeVerifier:
+        def __init__(self):
+            self.score = 0.0
+
+        def __call__(self, text):
+            self.score = 1.0 if '"value":2' in text else 0.0
+            return self.score
+
+        def to_receipt(self):
+            return {"score": self.score, "source": "fixture"}
+
+    verifier_path = inspect.getsourcefile(FakeVerifier)
+    verifier_policy = policy_sha256(
+        {
+            "module": FakeVerifier.__module__,
+            "qualname": FakeVerifier.__qualname__,
+            "source_sha256": hashlib.sha256(Path(verifier_path).read_bytes()).hexdigest(),
+        }
+    )
+    information = build_information_receipt(
+        sources=information["sources"],
+        policies={**information["policies"], "verifier": verifier_policy},
+    )
+
+    monkeypatch.setattr(sweep, "_run_vanilla", fake_vanilla)
+    monkeypatch.setattr(sweep, "_episode_verifier", lambda task: FakeVerifier())
+    text, resource, observed_information, certificate, samples, generated, receipt = (
+        sweep._run_vanilla_resource_dominating(
+            SimpleNamespace(),
+            tokenizer,
+            [1],
+            32,
+            task=SimpleNamespace(task_id="task-a", domain="fixture"),
+            target_resource=target.to_receipt(),
+            target_information=information,
+            campaign_seed=7,
+            max_samples=4,
+        )
+    )
+
+    assert calls == samples == generated == 2
+    assert text == 'FINAL_ANSWER: {"value":2}'
+    assert resource["estimated_flops"] >= target.to_receipt()["estimated_flops"]
+    assert observed_information == information
+    assert certificate["admitted"] is True
+    assert receipt["selected_index"] == 1
+    assert receipt["sample_count"] == 2
+    mismatched_sources = [dict(source) for source in information["sources"]]
+    prompt_source = next(
+        source
+        for source in mismatched_sources
+        if source["source_id"] == "rendered_model_input"
+    )
+    prompt_source["content_sha256"] = hashlib.sha256(b"[2]").hexdigest()
+    mismatched_information = build_information_receipt(
+        sources=mismatched_sources,
+        policies=information["policies"],
+    )
+    with pytest.raises(RuntimeError, match="prompt differs"):
+        sweep._run_vanilla_resource_dominating(
+            SimpleNamespace(),
+            tokenizer,
+            [1],
+            32,
+            task=SimpleNamespace(task_id="task-a", domain="fixture"),
+            target_resource=target.to_receipt(),
+            target_information=mismatched_information,
+            campaign_seed=7,
+            max_samples=4,
+        )
+    path, digest = sweep._persist_runtime_receipt(
+        tmp_path,
+        arm=sweep.RESOURCE_DOMINATING_CONTROL_ARM,
+        task_id="task-a",
+        receipt=receipt,
+    )
+    cell = {
+        "runtime_receipt_path": path,
+        "runtime_receipt_sha256": digest,
+        "resource_accounting": resource,
+        "information_accounting": observed_information,
+        "resource_dominance_certificate": certificate,
+        "text": text,
+    }
+    assert sweep._resource_dominating_control_receipt_issues(tmp_path, cell) == []
+
+    persisted = tmp_path / path
+    tampered = json.loads(persisted.read_text())
+    tampered["candidates"][1]["text"] = 'FINAL_ANSWER: {"value":999}'
+    persisted.write_text(json.dumps(tampered), encoding="utf-8")
+    issues = sweep._resource_dominating_control_receipt_issues(tmp_path, cell)
+    assert "resource_control_runtime_receipt_digest_mismatch" in issues
+    assert "resource_control_candidate_evidence_invalid" in issues
+
+    persisted.write_text('{"invalid_number":NaN}', encoding="utf-8")
+    assert sweep._resource_dominating_control_receipt_issues(tmp_path, cell) == [
+        "resource_control_runtime_receipt_noncanonical"
+    ]
 
 
 def test_decode_identity_binds_committed_task_difficulty():
@@ -983,6 +1183,150 @@ def test_best_of_three_win_is_not_misreported_as_equal_compute(tmp_path: Path):
     assert verdict["outscored_preliminary_best_of_3"] is True
     assert verdict["beats_equal_compute_control"] is False
     assert verdict["resource_matched_control_proven"] is False
+
+
+def test_complete_system_can_earn_a_conservative_resource_advantaged_win(
+    tmp_path: Path,
+):
+    from core.brain.llm.latent_cortex import frontier_tasks as ft
+    from core.brain.llm.latent_cortex.resource_accounting import (
+        ModelComputeProfile,
+        ResourceLedger,
+        build_information_receipt,
+        certify_control_resource_dominance,
+        policy_sha256,
+    )
+
+    tasks = ft.generate_task_battery([20260807], difficulty=2)
+    profile = ModelComputeProfile(
+        model_type="fixture",
+        hidden_size=8,
+        intermediate_size=16,
+        num_hidden_layers=2,
+        num_attention_heads=2,
+        num_key_value_heads=1,
+        vocab_size=32,
+        head_dim=4,
+    )
+    treatment = ResourceLedger(profile)
+    treatment.charge(
+        "treatment",
+        transformer_layer_apps=10,
+        tensor_element_reads=10,
+        tensor_element_writes=10,
+        verifier_calls=1,
+        verifier_input_bytes=10,
+        verifier_output_bytes=10,
+    )
+    control = ResourceLedger(profile)
+    control.charge(
+        "control",
+        transformer_layer_apps=20,
+        tensor_element_reads=20,
+        tensor_element_writes=20,
+        verifier_calls=2,
+        verifier_input_bytes=20,
+        verifier_output_bytes=20,
+    )
+    information = build_information_receipt(
+        sources=[
+            {
+                "source_id": "prompt",
+                "kind": "model_input_tokens",
+                "content_sha256": hashlib.sha256(b"same").hexdigest(),
+                "byte_count": 4,
+                "token_count": 1,
+            }
+        ],
+        policies={"verifier": policy_sha256({"kind": "candidate_local"})},
+    )
+    control_aggregate = ResourceLedger.aggregate([control.to_receipt()]).to_receipt()
+    certificate = certify_control_resource_dominance(
+        treatment_resource=treatment.to_receipt(),
+        control_resource=control_aggregate,
+        treatment_information=information,
+        control_information=information,
+    )
+    journal = sweep.Journal(tmp_path / "journal.jsonl")
+    for index, task in enumerate(tasks):
+        correct = "FINAL_ANSWER: " + json.dumps(task.reveal_for_verifier()["expected"])
+        wrong = 'FINAL_ANSWER: {"wrong": 1}'
+        for arm, text in (
+            ("vanilla", correct if index == 0 else wrong),
+            ("vanilla_equal_compute", correct if index == 0 else wrong),
+            ("complete_system_closed_book", correct),
+            (sweep.RESOURCE_DOMINATING_CONTROL_ARM, wrong),
+        ):
+            runtime_fields = {}
+            if arm == sweep.RESOURCE_DOMINATING_CONTROL_ARM:
+                receipt_body = {
+                    "schema": "aura.rlc.resource_dominating_control.v1",
+                    "task_id": task.task_id,
+                    "campaign_seed": 7,
+                    "sample_limit": 1,
+                    "sample_count": 1,
+                    "generated_tokens": 1,
+                    "candidates": [
+                        {
+                            "sample_index": 0,
+                            "text": wrong,
+                            "text_sha256": hashlib.sha256(wrong.encode()).hexdigest(),
+                            "verifier_score": 0.0,
+                            "verifier_receipt": {"score": 0.0},
+                            "resource_accounting": control.to_receipt(),
+                            "generated_tokens": 1,
+                        }
+                    ],
+                    "selected_index": 0,
+                    "selected_text_sha256": hashlib.sha256(wrong.encode()).hexdigest(),
+                    "resource_accounting": control_aggregate,
+                    "information_accounting": information,
+                    "resource_dominance_certificate": certificate,
+                }
+                runtime_receipt = {
+                    **receipt_body,
+                    "receipt_sha256": policy_sha256(receipt_body),
+                }
+                path, digest = sweep._persist_runtime_receipt(
+                    tmp_path,
+                    arm=arm,
+                    task_id=task.task_id,
+                    receipt=runtime_receipt,
+                )
+                runtime_fields = {
+                    "runtime_receipt_path": path,
+                    "runtime_receipt_sha256": digest,
+                }
+            journal.append(
+                {
+                    "event": "CELL",
+                    "arm": arm,
+                    "task_id": task.task_id,
+                    "domain": task.domain,
+                    "text": text,
+                    "error": "",
+                    "answer_replacement_decision": (
+                        "replace" if arm == "complete_system_closed_book" else ""
+                    ),
+                    "resource_accounting": (
+                        control_aggregate
+                        if arm == sweep.RESOURCE_DOMINATING_CONTROL_ARM
+                        else treatment.to_receipt()
+                    ),
+                    "information_accounting": information,
+                    "resource_dominance_certificate": (
+                        certificate
+                        if arm == sweep.RESOURCE_DOMINATING_CONTROL_ARM
+                        else None
+                    ),
+                    **runtime_fields,
+                }
+            )
+
+    verdict = sweep.grade(tmp_path, tasks)
+    assert verdict["resource_advantaged_control_proven"] is True
+    assert verdict["outscored_resource_advantaged_control"] is True
+    assert verdict["decision"] == "proceed_to_checkpoint_phase"
 
 
 def test_manifest_requires_every_control_and_treatment_cell(tmp_path: Path):

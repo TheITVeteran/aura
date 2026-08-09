@@ -8,8 +8,9 @@ system: persistent workspace, independent branches, controlled recurrence,
 latent optimization, temporary fast weights, verifier-guided local repair,
 adaptive compute, and evidence-bound answer promotion.
 
-This sweep measures that complete engine against two retained controls:
-ordinary greedy decode and a preliminary best-of-three textual control.
+This sweep measures that complete engine against ordinary greedy decode, a
+preliminary best-of-three textual control, and a same-information ordinary
+search control whose measured resource budget dominates the treatment.
 Ordinary decode remains the per-task incumbent, so an unpromoted full-stack
 answer must be byte-identical to it. Diagnostic ablations can explain a result
 but can never win the experiment. The sweep performs no optimizer update and
@@ -25,7 +26,9 @@ from __future__ import annotations
 import argparse
 import dataclasses
 import hashlib
+import inspect
 import json
+import math
 import os
 import sys
 import time
@@ -99,6 +102,17 @@ ARMS: tuple[Arm, ...] = (
         None,
         "complete_closed_book",
     ),
+    # Claim-grade conservative control. It runs only after the complete
+    # treatment has produced a digest-bound resource target, then grants
+    # ordinary sampled decoding at least every measured resource dimension
+    # and the identical information/policy envelope.
+    Arm(
+        "vanilla_resource_dominating",
+        None,
+        "applied",
+        None,
+        "ordinary_resource_dominating",
+    ),
     # The product answer starts from the same clean prompt root as vanilla.
     # Terminal-disposition text changes the decode before any evidence gate and
     # therefore cannot coexist with a byte-identical incumbent guarantee.
@@ -111,6 +125,7 @@ ARMS: tuple[Arm, ...] = (
 )
 
 CONTROL_ARM_NAMES: Final[tuple[str, ...]] = ("vanilla", "vanilla_equal_compute")
+RESOURCE_DOMINATING_CONTROL_ARM: Final[str] = "vanilla_resource_dominating"
 CLAIM_ARM_NAMES: Final[frozenset[str]] = frozenset({"complete_system_closed_book", "full_stack"})
 DIAGNOSTIC_ARM_NAMES: Final[frozenset[str]] = frozenset(
     {"full_stack_disposition", "full_stack_oracle", "rlc_mechanism", "vanilla_long"}
@@ -137,6 +152,10 @@ def _expand_requested_arms(requested_names: set[str]) -> list[Arm]:
     expanded = set(requested_names)
     if expanded - set(CONTROL_ARM_NAMES):
         expanded.update(CONTROL_ARM_NAMES)
+    if "complete_system_closed_book" in expanded:
+        expanded.add(RESOURCE_DOMINATING_CONTROL_ARM)
+    if RESOURCE_DOMINATING_CONTROL_ARM in expanded:
+        expanded.add("complete_system_closed_book")
     return [arm for arm in ARMS if arm.name in expanded]
 
 
@@ -614,6 +633,8 @@ def _run_vanilla(
     tokenizer,
     prompt_tokens: list[int],
     max_tokens: int,
+    *,
+    sample_seed: int | None = None,
 ) -> tuple[str, list[int], str, dict[str, Any]]:
     """Ordinary greedy decode -- the control the recurrent arms must beat.
 
@@ -631,7 +652,20 @@ def _run_vanilla(
     pieces: list[str] = []
     output_tokens: list[int] = []
     termination = "token_limit"
-    for response in stream_generate(model, tokenizer, prompt=prompt_tokens, max_tokens=max_tokens):
+    generation_kwargs: dict[str, Any] = {}
+    if sample_seed is not None:
+        import mlx.core as mx
+        from mlx_lm.sample_utils import make_sampler
+
+        mx.random.seed(sample_seed)
+        generation_kwargs["sampler"] = make_sampler(temp=0.7, top_p=0.95)
+    for response in stream_generate(
+        model,
+        tokenizer,
+        prompt=prompt_tokens,
+        max_tokens=max_tokens,
+        **generation_kwargs,
+    ):
         pieces.append(response.text)
         # MLX emits one final response for both EOS and length termination.
         # Its EOS response carries the stop-token id but deliberately exposes
@@ -679,6 +713,266 @@ def _run_vanilla(
         host_scalar_ops=output_token_count * profile.vocab_size * 8,
     )
     return text, output_tokens, termination, ledger.to_receipt()
+
+
+def _resource_target_reached(
+    control_resource: dict[str, Any],
+    target_resource: dict[str, Any],
+) -> bool:
+    from core.brain.llm.latent_cortex.resource_accounting import (
+        NON_NEURAL_PARITY_COUNTERS,
+    )
+
+    return bool(
+        int(control_resource.get("estimated_flops") or 0)
+        >= int(target_resource.get("estimated_flops") or 0)
+        and all(
+            int(control_resource["totals"][name])
+            >= int(target_resource["totals"][name])
+            for name in NON_NEURAL_PARITY_COUNTERS
+        )
+    )
+
+
+def _select_verified_candidate(outputs: list[str], scores: list[float]) -> str:
+    if not outputs or len(outputs) != len(scores):
+        raise ValueError("verified control candidates are incomplete")
+    best = max(scores)
+    eligible = [text for text, score in zip(outputs, scores, strict=True) if score == best]
+    payloads: dict[str, list[str]] = {}
+    for text in eligible:
+        marker = text.rfind("FINAL_ANSWER:")
+        key = text[marker:].strip() if marker >= 0 else ""
+        if key:
+            payloads.setdefault(key, []).append(text)
+    if not payloads:
+        return eligible[0]
+    winner = max(payloads.items(), key=lambda item: (len(item[1]), -eligible.index(item[1][0])))
+    return winner[1][0]
+
+
+def _run_vanilla_resource_dominating(
+    model,
+    tokenizer,
+    prompt_tokens: list[int],
+    max_tokens: int,
+    *,
+    task,
+    target_resource: dict[str, Any],
+    target_information: dict[str, Any],
+    campaign_seed: int,
+    max_samples: int = 128,
+) -> tuple[
+    str,
+    dict[str, Any],
+    dict[str, Any],
+    dict[str, Any],
+    int,
+    int,
+    dict[str, Any],
+]:
+    """Run an ordinary-search control until it dominates treatment resources.
+
+    Candidate selection uses the same candidate-local verifier class available
+    to the treatment, never the hidden answer key. The target information
+    receipt is reused as the declared access envelope only after validation;
+    the control receives the same prompt/verifier policy and no extra source.
+    """
+
+    from core.brain.llm.latent_cortex.resource_accounting import (
+        ResourceLedger,
+        certify_control_resource_dominance,
+        policy_sha256,
+        validate_information_receipt,
+        validate_resource_receipt,
+    )
+    from core.brain.llm.latent_cortex.value_of_computation import (
+        build_evidence_snapshot,
+    )
+
+    target_resource = validate_resource_receipt(target_resource)
+    control_information = validate_information_receipt(target_information)
+    if target_resource["accounting_complete"] is not True:
+        raise RuntimeError("resource-dominating target accounting is incomplete")
+    if control_information["accounting_complete"] is not True:
+        raise RuntimeError("resource-dominating information envelope is incomplete")
+    expected_sources = {
+        source["source_id"]: source for source in control_information["sources"]
+    }
+    if set(expected_sources) != {"rendered_model_input", "value_controller_evidence"}:
+        raise RuntimeError("resource-dominating information envelope is not closed-book")
+    encoded_tokens = json.dumps(
+        prompt_tokens,
+        separators=(",", ":"),
+        allow_nan=False,
+    ).encode("ascii")
+    prompt_source = expected_sources["rendered_model_input"]
+    if (
+        prompt_source["content_sha256"]
+        != hashlib.sha256(encoded_tokens).hexdigest()
+        or prompt_source["byte_count"] != len(encoded_tokens)
+        or prompt_source["token_count"] != len(prompt_tokens)
+    ):
+        raise RuntimeError("resource-dominating prompt differs from treatment information")
+    policy_evidence = build_evidence_snapshot(
+        bucket=f"{str(task.domain or 'general')[:24]}|none|short|s:mid|u:mid",
+        cells={},
+    )
+    policy_payload = json.dumps(
+        policy_evidence,
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode("utf-8")
+    evidence_source = expected_sources["value_controller_evidence"]
+    if (
+        evidence_source["content_sha256"]
+        != hashlib.sha256(policy_payload).hexdigest()
+        or evidence_source["byte_count"] != len(policy_payload)
+    ):
+        raise RuntimeError("resource-dominating policy evidence differs from treatment")
+    if control_information["policies"].get("tools") != policy_sha256(
+        {"policy": "no_external_tools_inside_rlc_v1"}
+    ):
+        raise RuntimeError("resource-dominating treatment allowed a different tool policy")
+    if control_information["policies"].get("nonparametric_memory") != policy_sha256(
+        {
+            "policy": "context_only_prompt_tail_recall_v1",
+            "active_source_receipt_sha256": "none",
+        }
+    ):
+        raise RuntimeError("resource-dominating treatment allowed nonparametric memory")
+    tokenizer_type = type(tokenizer) if tokenizer is not None else None
+    expected_tokenizer_policy = policy_sha256(
+        {
+            "module": tokenizer_type.__module__ if tokenizer_type else "none",
+            "qualname": tokenizer_type.__qualname__ if tokenizer_type else "none",
+            "chat_template_sha256": hashlib.sha256(
+                str(getattr(tokenizer, "chat_template", "")).encode("utf-8")
+            ).hexdigest(),
+        }
+    )
+    if control_information["policies"].get("tokenizer") != expected_tokenizer_policy:
+        raise RuntimeError("resource-dominating tokenizer differs from treatment")
+    verifier_identity = type(_episode_verifier(task))
+    verifier_source_path = inspect.getsourcefile(verifier_identity)
+    verifier_source_sha256 = "none"
+    if verifier_source_path:
+        verifier_source_sha256 = hashlib.sha256(
+            Path(verifier_source_path).read_bytes()
+        ).hexdigest()
+    expected_verifier_policy = policy_sha256(
+        {
+            "module": verifier_identity.__module__,
+            "qualname": verifier_identity.__qualname__,
+            "source_sha256": verifier_source_sha256,
+        }
+    )
+    if control_information["policies"].get("verifier") != expected_verifier_policy:
+        raise RuntimeError("resource-dominating verifier differs from treatment")
+
+    outputs: list[str] = []
+    scores: list[float] = []
+    resources: list[dict[str, Any]] = []
+    candidates: list[dict[str, Any]] = []
+    generated_tokens = 0
+    aggregate: dict[str, Any] | None = None
+    for sample_index in range(max_samples):
+        text, output_tokens, _, resource = _run_vanilla(
+            model,
+            tokenizer,
+            prompt_tokens,
+            max_tokens,
+            sample_seed=_equal_compute_seed(campaign_seed, task.task_id, sample_index),
+        )
+        verifier = _episode_verifier(task)
+        score = float(verifier(text))
+        verifier_receipt = verifier.to_receipt()
+        verifier_payload = json.dumps(
+            {"score": score, "receipt": verifier_receipt},
+            sort_keys=True,
+            separators=(",", ":"),
+            ensure_ascii=True,
+            allow_nan=False,
+        ).encode("utf-8")
+        sample_ledger = ResourceLedger.aggregate([resource])
+        sample_ledger.charge(
+            "candidate_local_verifier",
+            verifier_calls=1,
+            verifier_input_bytes=len(text.encode("utf-8")),
+            verifier_output_bytes=len(verifier_payload),
+            host_scalar_ops=max(1, len(text) + len(verifier_payload)),
+        )
+        outputs.append(text)
+        scores.append(score)
+        sample_resource = sample_ledger.to_receipt()
+        resources.append(sample_resource)
+        candidates.append(
+            {
+                "sample_index": sample_index,
+                "text": text,
+                "text_sha256": hashlib.sha256(text.encode("utf-8")).hexdigest(),
+                "verifier_score": score,
+                "verifier_receipt": verifier_receipt,
+                "resource_accounting": sample_resource,
+                "generated_tokens": len(output_tokens),
+            }
+        )
+        generated_tokens += len(output_tokens)
+        aggregate = ResourceLedger.aggregate(resources).to_receipt()
+        if _resource_target_reached(aggregate, target_resource):
+            break
+    if aggregate is None or not _resource_target_reached(aggregate, target_resource):
+        raise RuntimeError(
+            "resource-dominating control exhausted its bounded sample budget below target"
+        )
+    certificate = certify_control_resource_dominance(
+        treatment_resource=target_resource,
+        control_resource=aggregate,
+        treatment_information=target_information,
+        control_information=control_information,
+    )
+    if certificate["admitted"] is not True:
+        raise RuntimeError(
+            "resource-dominating control failed its comparison certificate: "
+            + ",".join(certificate["reasons"])
+        )
+    selected = _select_verified_candidate(outputs, scores)
+    selected_index = outputs.index(selected)
+    receipt_body = {
+        "schema": "aura.rlc.resource_dominating_control.v1",
+        "task_id": task.task_id,
+        "campaign_seed": int(campaign_seed),
+        "sample_limit": int(max_samples),
+        "sample_count": len(outputs),
+        "generated_tokens": generated_tokens,
+        "candidates": candidates,
+        "selected_index": selected_index,
+        "selected_text_sha256": hashlib.sha256(selected.encode("utf-8")).hexdigest(),
+        "resource_accounting": aggregate,
+        "information_accounting": control_information,
+        "resource_dominance_certificate": certificate,
+    }
+    receipt = {
+        **receipt_body,
+        "receipt_sha256": hashlib.sha256(
+            json.dumps(
+                receipt_body,
+                sort_keys=True,
+                separators=(",", ":"),
+                ensure_ascii=True,
+                allow_nan=False,
+            ).encode("utf-8")
+        ).hexdigest(),
+    }
+    return (
+        selected,
+        aggregate,
+        control_information,
+        certificate,
+        len(outputs),
+        generated_tokens,
+        receipt,
+    )
 
 
 def _episode_verifier(task):
@@ -768,13 +1062,16 @@ def _runtime_receipt_issues(
     receipt = _read_json(candidate)
     if not isinstance(receipt, dict):
         return ["runtime_receipt_unreadable"]
-    canonical = json.dumps(
-        receipt,
-        sort_keys=True,
-        separators=(",", ":"),
-        ensure_ascii=True,
-        allow_nan=False,
-    )
+    try:
+        canonical = json.dumps(
+            receipt,
+            sort_keys=True,
+            separators=(",", ":"),
+            ensure_ascii=True,
+            allow_nan=False,
+        )
+    except (TypeError, ValueError):
+        return ["resource_control_runtime_receipt_noncanonical"]
     observed_sha = hashlib.sha256(canonical.encode("utf-8")).hexdigest()
     issues: list[str] = []
     if observed_sha != expected_sha:
@@ -791,6 +1088,137 @@ def _runtime_receipt_issues(
         if expected_complete.get("final_text_sha256") != observed_text_sha256:
             issues.append("complete_system_final_text_mismatch")
     return issues
+
+
+def _resource_dominating_control_receipt_issues(
+    out_dir: Path,
+    cell: dict[str, Any],
+) -> list[str]:
+    """Reconstruct an advantaged control from its complete persisted receipt."""
+
+    relative = cell.get("runtime_receipt_path")
+    expected_sha = cell.get("runtime_receipt_sha256")
+    if not isinstance(relative, str) or not relative:
+        return ["resource_control_runtime_receipt_absent"]
+    candidate_path = (out_dir / relative).resolve()
+    receipt_root = (out_dir / "runtime_receipts").resolve()
+    if receipt_root not in candidate_path.parents or not candidate_path.is_file():
+        return ["resource_control_runtime_receipt_path_invalid"]
+    receipt = _read_json(candidate_path)
+    if not isinstance(receipt, dict):
+        return ["resource_control_runtime_receipt_unreadable"]
+    issues: list[str] = []
+    try:
+        canonical = json.dumps(
+            receipt,
+            sort_keys=True,
+            separators=(",", ":"),
+            ensure_ascii=True,
+            allow_nan=False,
+        )
+    except (TypeError, ValueError):
+        return ["resource_control_runtime_receipt_noncanonical"]
+    if hashlib.sha256(canonical.encode("utf-8")).hexdigest() != expected_sha:
+        issues.append("resource_control_runtime_receipt_digest_mismatch")
+    body = {key: value for key, value in receipt.items() if key != "receipt_sha256"}
+    if (
+        receipt.get("schema") != "aura.rlc.resource_dominating_control.v1"
+        or receipt.get("receipt_sha256")
+        != hashlib.sha256(
+            json.dumps(
+                body,
+                sort_keys=True,
+                separators=(",", ":"),
+                ensure_ascii=True,
+                allow_nan=False,
+            ).encode("utf-8")
+        ).hexdigest()
+    ):
+        issues.append("resource_control_receipt_identity_invalid")
+    candidates = receipt.get("candidates")
+    selected_index = receipt.get("selected_index")
+    if (
+        not isinstance(candidates, list)
+        or not candidates
+        or type(selected_index) is not int
+        or not 0 <= selected_index < len(candidates)
+        or receipt.get("sample_count") != len(candidates)
+    ):
+        issues.append("resource_control_candidate_set_invalid")
+        return sorted(set(issues))
+
+    from core.brain.llm.latent_cortex.resource_accounting import (
+        ResourceLedger,
+        validate_control_resource_dominance_certificate,
+        validate_information_receipt,
+        validate_resource_receipt,
+    )
+
+    outputs: list[str] = []
+    scores: list[float] = []
+    resources: list[dict[str, Any]] = []
+    generated_tokens = 0
+    for index, candidate in enumerate(candidates):
+        if not isinstance(candidate, dict) or candidate.get("sample_index") != index:
+            issues.append("resource_control_candidate_identity_invalid")
+            continue
+        text = candidate.get("text")
+        score = candidate.get("verifier_score")
+        if (
+            not isinstance(text, str)
+            or candidate.get("text_sha256")
+            != hashlib.sha256(text.encode("utf-8")).hexdigest()
+            or not isinstance(score, (int, float))
+            or isinstance(score, bool)
+            or not math.isfinite(float(score))
+            or not isinstance(candidate.get("verifier_receipt"), dict)
+            or type(candidate.get("generated_tokens")) is not int
+            or candidate["generated_tokens"] < 0
+        ):
+            issues.append("resource_control_candidate_evidence_invalid")
+            continue
+        try:
+            resource = validate_resource_receipt(candidate.get("resource_accounting"))
+        except (TypeError, ValueError):
+            issues.append("resource_control_candidate_resource_invalid")
+            continue
+        outputs.append(text)
+        scores.append(float(score))
+        resources.append(resource)
+        generated_tokens += candidate["generated_tokens"]
+    if len(outputs) != len(candidates):
+        return sorted(set(issues))
+    selected = _select_verified_candidate(outputs, scores)
+    if (
+        selected != candidates[selected_index]["text"]
+        or receipt.get("selected_text_sha256")
+        != hashlib.sha256(selected.encode("utf-8")).hexdigest()
+        or selected != str(cell.get("text") or "")
+    ):
+        issues.append("resource_control_selection_invalid")
+    if receipt.get("generated_tokens") != generated_tokens:
+        issues.append("resource_control_generated_token_total_invalid")
+    try:
+        aggregate = ResourceLedger.aggregate(resources).to_receipt()
+        recorded_resource = validate_resource_receipt(receipt.get("resource_accounting"))
+        recorded_information = validate_information_receipt(
+            receipt.get("information_accounting")
+        )
+        recorded_certificate = validate_control_resource_dominance_certificate(
+            receipt.get("resource_dominance_certificate")
+        )
+    except (TypeError, ValueError):
+        issues.append("resource_control_aggregate_evidence_invalid")
+    else:
+        if aggregate != recorded_resource:
+            issues.append("resource_control_resource_aggregation_mismatch")
+        if cell.get("resource_accounting") != recorded_resource:
+            issues.append("resource_control_cell_resource_mismatch")
+        if cell.get("information_accounting") != recorded_information:
+            issues.append("resource_control_cell_information_mismatch")
+        if cell.get("resource_dominance_certificate") != recorded_certificate:
+            issues.append("resource_control_cell_certificate_mismatch")
+    return sorted(set(issues))
 
 
 class _OracleTaskVerifier:
@@ -1394,12 +1822,29 @@ def main() -> int:
         tasks_by_id = {task.task_id: task for task in tasks}
         incumbent_by_task: dict[str, Any] = {}
         incumbent_resource_by_task: dict[str, dict[str, Any]] = {}
+        complete_resource_by_task: dict[str, dict[str, Any]] = {}
+        complete_information_by_task: dict[str, dict[str, Any]] = {}
         vanilla_latency_by_task: dict[str, float] = {}
         for cell in journal.cells():
-            if cell.get("arm") != "vanilla" or cell.get("error"):
+            if cell.get("error"):
                 continue
             task = tasks_by_id.get(str(cell.get("task_id") or ""))
             if task is None:
+                continue
+            if cell.get("arm") == "complete_system_closed_book":
+                from core.brain.llm.latent_cortex.resource_accounting import (
+                    validate_information_receipt,
+                    validate_resource_receipt,
+                )
+
+                complete_resource_by_task[task.task_id] = validate_resource_receipt(
+                    cell.get("resource_accounting")
+                )
+                complete_information_by_task[task.task_id] = validate_information_receipt(
+                    cell.get("information_accounting")
+                )
+                continue
+            if cell.get("arm") != "vanilla":
                 continue
             artifact = incumbent_artifact_from_value(cell.get("incumbent_artifact") or {})
             incumbent_by_task[task.task_id] = validate_incumbent_artifact(
@@ -1493,6 +1938,10 @@ def main() -> int:
                 text = ""
                 cell_incumbent = None
                 cell_resource_accounting = None
+                cell_information_accounting = None
+                cell_resource_dominance_certificate = None
+                cell_control_samples = None
+                cell_decode_generated_tokens = None
                 try:
                     if config is None and spec.profile == "ordinary_best_of_3":
                         text = _run_vanilla_best_of(
@@ -1503,6 +1952,31 @@ def main() -> int:
                             samples=3,
                             campaign_seed=args.seed,
                             task_id=task.task_id,
+                        )
+                    elif config is None and spec.profile == "ordinary_resource_dominating":
+                        target_resource = complete_resource_by_task.get(task.task_id)
+                        target_information = complete_information_by_task.get(task.task_id)
+                        if target_resource is None or target_information is None:
+                            raise RuntimeError(
+                                "resource-dominating control treatment prerequisite is absent"
+                            )
+                        (
+                            text,
+                            cell_resource_accounting,
+                            cell_information_accounting,
+                            cell_resource_dominance_certificate,
+                            cell_control_samples,
+                            cell_decode_generated_tokens,
+                            receipt,
+                        ) = _run_vanilla_resource_dominating(
+                            model,
+                            tokenizer,
+                            _render_prompt(tokenizer, task),
+                            tokens,
+                            task=task,
+                            target_resource=target_resource,
+                            target_information=target_information,
+                            campaign_seed=args.seed,
                         )
                     elif config is None:
                         prompt_tokens = _render_prompt(tokenizer, task)
@@ -1571,6 +2045,22 @@ def main() -> int:
                                 worker_identity=worker_identity,
                                 runtime_identity=runtime_identity,
                                 campaign_seed=args.seed,
+                            )
+                            system_receipt = receipt.get("complete_system_closed_book") or {}
+                            from core.brain.llm.latent_cortex.resource_accounting import (
+                                validate_information_receipt,
+                                validate_resource_receipt,
+                            )
+
+                            cell_resource_accounting = validate_resource_receipt(
+                                system_receipt.get("resource_accounting")
+                            )
+                            cell_information_accounting = validate_information_receipt(
+                                system_receipt.get("information_accounting")
+                            )
+                            complete_resource_by_task[task.task_id] = cell_resource_accounting
+                            complete_information_by_task[task.task_id] = (
+                                cell_information_accounting
                             )
                         else:
                             text, receipt = _run_rlc(
@@ -1678,6 +2168,11 @@ def main() -> int:
                             else None
                         ),
                         "resource_accounting": cell_resource_accounting,
+                        "information_accounting": cell_information_accounting,
+                        "resource_dominance_certificate": (
+                            cell_resource_dominance_certificate
+                        ),
+                        "control_samples": cell_control_samples,
                         "text": text,
                         "error": error,
                         # A product request pays for the ordinary incumbent and
@@ -1690,7 +2185,11 @@ def main() -> int:
                         "decode_prefix_token_count": receipt.get("decode_prefix_token_count"),
                         "decode_prefix_composition": receipt.get("decode_prefix_composition"),
                         "decode_termination": receipt.get("decode_termination"),
-                        "decode_generated_tokens": receipt.get("decode_generated_tokens"),
+                        "decode_generated_tokens": (
+                            cell_decode_generated_tokens
+                            if cell_decode_generated_tokens is not None
+                            else receipt.get("decode_generated_tokens")
+                        ),
                         "halting_reason": receipt.get("halting_reason"),
                         "committed_unix": _now(),
                     }
@@ -1911,6 +2410,57 @@ def grade(out_dir: Path, tasks) -> dict[str, Any]:
             if issues:
                 mechanism_issues.setdefault(arm, {})[task_id] = sorted(set(issues))
 
+    resource_dominance_issues: dict[str, list[str]] = {}
+    resource_dominating_control_measured = RESOURCE_DOMINATING_CONTROL_ARM in arms
+    if resource_dominating_control_measured:
+        from core.brain.llm.latent_cortex.resource_accounting import (
+            validate_control_resource_dominance_certificate,
+            validate_information_receipt,
+            validate_resource_receipt,
+        )
+
+        dominance_task_ids = expected_task_ids or set(by_id)
+        for task_id in sorted(dominance_task_ids):
+            treatment_cell = unique_cells.get(("complete_system_closed_book", task_id))
+            control_cell = unique_cells.get((RESOURCE_DOMINATING_CONTROL_ARM, task_id))
+            issues: list[str] = []
+            if treatment_cell is None or control_cell is None:
+                continue
+            issues.extend(
+                _resource_dominating_control_receipt_issues(out_dir, control_cell)
+            )
+            try:
+                treatment_resource = validate_resource_receipt(
+                    treatment_cell.get("resource_accounting")
+                )
+                treatment_information = validate_information_receipt(
+                    treatment_cell.get("information_accounting")
+                )
+                control_resource = validate_resource_receipt(
+                    control_cell.get("resource_accounting")
+                )
+                control_information = validate_information_receipt(
+                    control_cell.get("information_accounting")
+                )
+                certificate = validate_control_resource_dominance_certificate(
+                    control_cell.get("resource_dominance_certificate")
+                )
+            except (TypeError, ValueError):
+                issues.append("resource_dominance_evidence_invalid")
+            else:
+                bindings = {
+                    "treatment_resource_sha256": treatment_resource["receipt_sha256"],
+                    "control_resource_sha256": control_resource["receipt_sha256"],
+                    "treatment_information_sha256": treatment_information["receipt_sha256"],
+                    "control_information_sha256": control_information["receipt_sha256"],
+                }
+                if any(certificate[name] != digest for name, digest in bindings.items()):
+                    issues.append("resource_dominance_cell_binding_mismatch")
+                if certificate["admitted"] is not True:
+                    issues.extend(certificate["reasons"] or ["resource_dominance_not_admitted"])
+            if issues:
+                resource_dominance_issues[task_id] = sorted(set(issues))
+
     # An arm carrying harness faults has not been measured. Concluding either
     # way from it would report a starved budget as a reasoning result.
     faulted = {name: b["errors"] for name, b in arms.items() if b["errors"]}
@@ -1919,6 +2469,11 @@ def grade(out_dir: Path, tasks) -> dict[str, Any]:
     )
     mechanism_complete = not mechanism_issues
     complete = not faulted and coverage_complete and mechanism_complete
+    resource_advantaged_control_proven = bool(
+        resource_dominating_control_measured
+        and complete
+        and not resource_dominance_issues
+    )
     # A battery the ordinary decode cannot score on has not measured the
     # recurrent path either: 0 >= 0 satisfies every inequality below, so mutual
     # failure would otherwise be published as parity and promote a model that
@@ -1946,6 +2501,15 @@ def grade(out_dir: Path, tasks) -> dict[str, Any]:
     )
     beats_equal_compute = bool(
         resource_matched_control_proven and outscored_preliminary_best_of_three
+    )
+    resource_dominating_correct = arms.get(RESOURCE_DOMINATING_CONTROL_ARM, {}).get(
+        "correct"
+    )
+    outscored_resource_advantaged_control = bool(
+        reaches_parity
+        and resource_advantaged_control_proven
+        and resource_dominating_correct is not None
+        and best_rlc > int(resource_dominating_correct)
     )
     contract_neutral_reaches_parity = bool(
         complete
@@ -1977,6 +2541,10 @@ def grade(out_dir: Path, tasks) -> dict[str, Any]:
         decision = "inconclusive_no_recurrent_arm_measured"
     elif not informative:
         decision = "inconclusive_battery_uninformative_ordinary_decode_scored_zero"
+    elif resource_dominating_control_measured and not resource_advantaged_control_proven:
+        decision = "inconclusive_resource_dominance_unproven"
+    elif resource_dominating_control_measured and not outscored_resource_advantaged_control:
+        decision = "complete_system_did_not_beat_resource_advantaged_control"
     elif reaches_parity:
         decision = "proceed_to_checkpoint_phase"
     else:
@@ -1994,7 +2562,17 @@ def grade(out_dir: Path, tasks) -> dict[str, Any]:
                 "resource_matched": resource_matched_control_proven,
                 "claim_authority": "preliminary_only",
                 "required_claim_successor": "digest_bound_paired_resource_certificate",
-            }
+            },
+            RESOURCE_DOMINATING_CONTROL_ARM: {
+                "selection": "candidate_local_verifier_best_of_bounded_samples",
+                "resource_matched": False,
+                "resource_advantaged": resource_advantaged_control_proven,
+                "claim_authority": (
+                    "conservative_architectural_gain_control"
+                    if resource_advantaged_control_proven
+                    else "none"
+                ),
+            },
         },
         "contract_neutral_diagnostic": {
             "authority": "diagnostic_only_no_serving_fusion_or_claim_authority",
@@ -2031,6 +2609,11 @@ def grade(out_dir: Path, tasks) -> dict[str, Any]:
         "beats_equal_compute_control": beats_equal_compute,
         "outscored_preliminary_best_of_3": outscored_preliminary_best_of_three,
         "resource_matched_control_proven": resource_matched_control_proven,
+        "resource_advantaged_control_proven": resource_advantaged_control_proven,
+        "resource_dominance_issues": resource_dominance_issues,
+        "outscored_resource_advantaged_control": (
+            outscored_resource_advantaged_control
+        ),
         "paired_vanilla_floor": {
             "holds": floor_holds,
             "right_to_wrong_regressions": sorted(floor_violations),

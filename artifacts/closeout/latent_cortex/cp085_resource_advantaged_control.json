@@ -1,0 +1,54 @@
+{
+  "schema": "aura.closeout.latent_cortex.cp085.v1",
+  "checkpoint": "2026-08-09-085",
+  "title": "A claim-bearing treatment must beat a resource-advantaged ordinary control",
+  "resource_accounting_foundation_commit": "e4763de9ec061ba2842d058527ded4c1868128e6",
+  "control_contract": {
+    "arm": "vanilla_resource_dominating",
+    "selection": "candidate_local_verifier_best_of_bounded_samples",
+    "resource_relation": "control_greater_than_or_equal_to_treatment_on_every_measured_dimension",
+    "information_relation": "exact_source_and_policy_receipt_match",
+    "ordinary_decode_only": true,
+    "hidden_answer_key": false,
+    "external_tools": false,
+    "nonparametric_memory": false,
+    "historical_best_of_3_is_claim_bearing": false
+  },
+  "admission": {
+    "requires_complete_treatment_accounting": true,
+    "requires_complete_control_accounting": true,
+    "requires_matching_model_compute_profile": true,
+    "requires_matching_prompt_token_commitment": true,
+    "requires_matching_value_controller_evidence": true,
+    "requires_matching_tokenizer_policy": true,
+    "requires_matching_verifier_implementation": true,
+    "requires_control_dominance_for_all_non_neural_counters": true,
+    "tamper_evident_runtime_receipt": true
+  },
+  "validation": {
+    "focused_proof_contracts": "97 passed",
+    "canonical_smoke": "103 passed",
+    "ruff": "passed",
+    "compile": "passed",
+    "diff_hygiene": "passed",
+    "source_sha256": {
+      "core/brain/llm/latent_cortex/resource_accounting.py": "be0f42b505762554b2ad01f2efbd1b5ef2f9a78cb1135d959a934e9a6f4f519c",
+      "tools/run_rlc_reconciliation_sweep.py": "630deb8ee2ad740c296416a2898f6b2dc551632632e825fc51716175f0867f2d",
+      "tests/test_latent_cortex_resource_accounting.py": "b4574faa652a1d2cb7d98d9bcd8b1981cba1882477ad948e516588f22df9cf54",
+      "tests/test_rlc_reconciliation_sweep.py": "2b26d8cb2d34029a03e9de98b50328e4d67c92002020a4686143ec0bf8a25f56"
+    }
+  },
+  "limitations": {
+    "current_cp084_pilot_contains_this_control": false,
+    "fresh_four_arm_campaign_required": true,
+    "typed_cognitive_context_replay_for_ordinary_control": "open; cells that acquire additional symbolic context refuse same-information admission",
+    "broad_power_and_external_frontier_comparison": "open"
+  },
+  "claims": {
+    "resource_advantaged_control_contract_proven": true,
+    "reasoning_gain_proven": false,
+    "frontier_level_proven": false,
+    "fusion_authorized": false,
+    "wow_signal": false
+  }
+}

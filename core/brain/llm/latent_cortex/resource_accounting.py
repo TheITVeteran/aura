@@ -25,6 +25,7 @@ MODEL_PROFILE_SCHEMA = "aura.rlc.model_compute_profile.v1"
 RESOURCE_ACCOUNTING_SCHEMA = "aura.rlc.resource_accounting.v1"
 INFORMATION_ACCOUNTING_SCHEMA = "aura.rlc.information_accounting.v1"
 COMPARISON_ACCOUNTING_SCHEMA = "aura.rlc.comparison_accounting.v1"
+RESOURCE_DOMINANCE_SCHEMA = "aura.rlc.resource_dominance.v1"
 ESTIMATOR_VERSION = "dense_decoder_gqa_structural_flops_v1"
 
 RESOURCE_COUNTERS = (
@@ -663,6 +664,182 @@ def validate_comparison_accounting_certificate(value: Any) -> dict[str, Any]:
     return dict(value)
 
 
+def certify_control_resource_dominance(
+    *,
+    treatment_resource: Mapping[str, Any],
+    control_resource: Mapping[str, Any],
+    treatment_information: Mapping[str, Any],
+    control_information: Mapping[str, Any],
+) -> dict[str, Any]:
+    """Certify a same-information control with no smaller measured budget.
+
+    Different reasoning architectures need not express useful work through the
+    same mix of tensor reads, writes, and verifier calls. Exact dimensional
+    parity can therefore be impossible even when an ordinary-search control is
+    deliberately overfunded. This certificate preserves that asymmetry: it
+    authorizes only the claim that the control had *at least* every measured
+    resource available to the treatment. It never calls the comparison equal.
+    """
+
+    treatment = validate_resource_receipt(treatment_resource)
+    control = validate_resource_receipt(control_resource)
+    treatment_info = validate_information_receipt(treatment_information)
+    control_info = validate_information_receipt(control_information)
+    reasons: list[str] = []
+    if not treatment["accounting_complete"]:
+        reasons.append("treatment_resource_accounting_incomplete")
+    if not control["accounting_complete"]:
+        reasons.append("control_resource_accounting_incomplete")
+    if not treatment_info["accounting_complete"]:
+        reasons.append("treatment_information_accounting_incomplete")
+    if not control_info["accounting_complete"]:
+        reasons.append("control_information_accounting_incomplete")
+    information_matched = (
+        treatment_info["source_set_sha256"] == control_info["source_set_sha256"]
+    )
+    if not information_matched:
+        reasons.append("information_or_policy_mismatch")
+    profile_matched = (
+        treatment["model_profile"]["profile_sha256"]
+        == control["model_profile"]["profile_sha256"]
+    )
+    if not profile_matched:
+        reasons.append("compute_estimator_profile_mismatch")
+
+    dimensions: dict[str, dict[str, Any]] = {}
+    pairs = {
+        "estimated_flops": (
+            treatment["estimated_flops"],
+            control["estimated_flops"],
+        ),
+        **{
+            name: (treatment["totals"][name], control["totals"][name])
+            for name in NON_NEURAL_PARITY_COUNTERS
+        },
+    }
+    for name, (treatment_value, control_value) in pairs.items():
+        dominated = (
+            type(treatment_value) is int
+            and type(control_value) is int
+            and control_value >= treatment_value
+        )
+        dimensions[name] = {
+            "treatment": treatment_value,
+            "control": control_value,
+            "control_dominates": dominated,
+        }
+        if not dominated:
+            reasons.append(f"control_shortfall:{name}")
+
+    body = {
+        "schema": RESOURCE_DOMINANCE_SCHEMA,
+        "claim": "same_information_control_has_no_smaller_measured_resource_budget",
+        "treatment_resource_sha256": treatment["receipt_sha256"],
+        "control_resource_sha256": control["receipt_sha256"],
+        "treatment_information_sha256": treatment_info["receipt_sha256"],
+        "control_information_sha256": control_info["receipt_sha256"],
+        "information_matched": information_matched,
+        "compute_estimator_profile_matched": profile_matched,
+        "resource_dimensions": dimensions,
+        "reasons": sorted(set(reasons)),
+        "admitted": not reasons,
+    }
+    return {**body, "certificate_sha256": _canonical_sha256(body)}
+
+
+def validate_control_resource_dominance_certificate(value: Any) -> dict[str, Any]:
+    """Recompute every derived field in a resource-dominance certificate."""
+
+    required = {
+        "schema",
+        "claim",
+        "treatment_resource_sha256",
+        "control_resource_sha256",
+        "treatment_information_sha256",
+        "control_information_sha256",
+        "information_matched",
+        "compute_estimator_profile_matched",
+        "resource_dimensions",
+        "reasons",
+        "admitted",
+        "certificate_sha256",
+    }
+    if not isinstance(value, Mapping) or set(value) != required:
+        raise ValueError("resource dominance certificate schema is invalid")
+    if (
+        value.get("schema") != RESOURCE_DOMINANCE_SCHEMA
+        or value.get("claim")
+        != "same_information_control_has_no_smaller_measured_resource_budget"
+    ):
+        raise ValueError("resource dominance certificate version is invalid")
+    for name in (
+        "treatment_resource_sha256",
+        "control_resource_sha256",
+        "treatment_information_sha256",
+        "control_information_sha256",
+    ):
+        if not _is_sha256(value.get(name)):
+            raise ValueError("resource dominance commitment is invalid")
+    if (
+        type(value.get("information_matched")) is not bool
+        or type(value.get("compute_estimator_profile_matched")) is not bool
+        or type(value.get("admitted")) is not bool
+        or not isinstance(value.get("resource_dimensions"), Mapping)
+        or not isinstance(value.get("reasons"), list)
+        or value["reasons"] != sorted(set(value["reasons"]))
+    ):
+        raise ValueError("resource dominance verdict fields are invalid")
+    expected_dimensions = {"estimated_flops", *NON_NEURAL_PARITY_COUNTERS}
+    dimensions = value["resource_dimensions"]
+    if set(dimensions) != expected_dimensions:
+        raise ValueError("resource dominance dimensions are invalid")
+    allowed_reasons = {
+        "treatment_resource_accounting_incomplete",
+        "control_resource_accounting_incomplete",
+        "treatment_information_accounting_incomplete",
+        "control_information_accounting_incomplete",
+        "information_or_policy_mismatch",
+        "compute_estimator_profile_mismatch",
+        *(f"control_shortfall:{name}" for name in expected_dimensions),
+    }
+    if any(reason not in allowed_reasons for reason in value["reasons"]):
+        raise ValueError("resource dominance reason is invalid")
+    for name in sorted(expected_dimensions):
+        row = dimensions[name]
+        if not isinstance(row, Mapping) or set(row) != {
+            "treatment",
+            "control",
+            "control_dominates",
+        }:
+            raise ValueError("resource dominance dimension row is invalid")
+        treatment_value = _counter(
+            row["treatment"], field_name=f"{name} treatment"
+        )
+        control_value = _counter(row["control"], field_name=f"{name} control")
+        dominates = control_value >= treatment_value
+        if row["control_dominates"] is not dominates:
+            raise ValueError("resource dominance dimension verdict differs")
+        reason = f"control_shortfall:{name}"
+        if (reason in value["reasons"]) is dominates:
+            raise ValueError("resource dominance shortfall reason differs")
+    if (
+        ("information_or_policy_mismatch" in value["reasons"])
+        is value["information_matched"]
+    ):
+        raise ValueError("resource dominance information reason differs")
+    if (
+        ("compute_estimator_profile_mismatch" in value["reasons"])
+        is value["compute_estimator_profile_matched"]
+    ):
+        raise ValueError("resource dominance profile reason differs")
+    body = {key: value[key] for key in required - {"certificate_sha256"}}
+    if value.get("certificate_sha256") != _canonical_sha256(body):
+        raise ValueError("resource dominance certificate digest differs")
+    if value["admitted"] is not (not value["reasons"]):
+        raise ValueError("resource dominance verdict contradicts reasons")
+    return dict(value)
+
+
 def policy_sha256(value: Any) -> str:
     """Public helper for committing a JSON-safe policy description."""
 
@@ -682,14 +859,17 @@ __all__ = [
     "MODEL_PROFILE_SCHEMA",
     "NON_NEURAL_PARITY_COUNTERS",
     "RESOURCE_ACCOUNTING_SCHEMA",
+    "RESOURCE_DOMINANCE_SCHEMA",
     "RESOURCE_COUNTERS",
     "ModelComputeProfile",
     "ResourceLedger",
     "build_information_receipt",
     "certify_comparison_accounting",
+    "certify_control_resource_dominance",
     "policy_sha256",
     "triangular_attention_pairs",
     "validate_comparison_accounting_certificate",
+    "validate_control_resource_dominance_certificate",
     "validate_information_receipt",
     "validate_resource_receipt",
 ]
