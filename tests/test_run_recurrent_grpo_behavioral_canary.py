@@ -214,6 +214,44 @@ def test_source_contract_binds_every_joint_objective() -> None:
     assert "core/brain/llm/latent_cortex/commitment_ratchet.py" in canary.SOURCE_PATHS
     assert "core/brain/llm/latent_cortex/commitment_telemetry.py" in canary.SOURCE_PATHS
     assert "core/brain/llm/latent_cortex/sequential_exclusion.py" in canary.SOURCE_PATHS
+    assert "core/brain/llm/latent_cortex/types.py" in canary.SOURCE_PATHS
+
+
+def test_commitment_ratchet_coverage_requires_every_digest_bound_receipt() -> None:
+    from core.brain.llm.latent_cortex.commitment_ratchet import (
+        CommitmentRatchet,
+        Constraint,
+        ConstraintKind,
+    )
+
+    ratchet = CommitmentRatchet(["wrong", "right"])
+    ratchet.commit(Constraint(kind=ConstraintKind.EXCLUDES, subject="wrong"))
+    ratchet.seal()
+    report = {
+        "records": [
+            {
+                "task_id": "task-1",
+                "depth": 1,
+                "episode_receipt": {"commitment_ratchet": ratchet.receipt()},
+            }
+        ]
+    }
+
+    coverage = canary._commitment_ratchet_coverage(report)
+
+    assert coverage["episode_count"] == 1
+    assert coverage["valid_receipts"] == 1
+    assert coverage["active_episode_count"] == 1
+    assert coverage["turns"] == 1
+    assert coverage["measured_commits"] == 1
+    assert coverage["failures"] == []
+
+    report["records"][0]["episode_receipt"]["commitment_ratchet"][
+        "turns"
+    ] = 2
+    tampered = canary._commitment_ratchet_coverage(report)
+    assert tampered["valid_receipts"] == 0
+    assert tampered["failures"][0]["failure"] == "digest_mismatch"
 
 
 def test_complete_engine_probe_is_not_the_naked_latent_ablation() -> None:

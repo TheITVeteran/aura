@@ -17,6 +17,7 @@ So these tests drive the seams:
 """
 from __future__ import annotations
 
+import hashlib
 import json
 import subprocess
 import sys
@@ -31,9 +32,12 @@ from core.brain.llm.latent_cortex.commitment_ablations import (
     shuffled_constraints,
 )
 from core.brain.llm.latent_cortex.commitment_ratchet import (
+    RATCHET_SCHEMA,
+    CommitmentRatchet,
     Constraint,
     ConstraintKind,
 )
+from core.brain.llm.latent_cortex.types import EpisodeReceipt
 
 ROOT = Path(__file__).resolve().parents[1]
 RUNNER = ROOT / "tools" / "run_commitment_ablation.py"
@@ -121,16 +125,40 @@ def test_the_ratchet_is_sealed_so_nothing_appends_after_the_episode():
     ).committed
 
 
+def test_the_episode_serializes_a_digest_bound_ratchet_receipt():
+    ratchet = CommitmentRatchet(["wrong", "right"])
+    assert ratchet.commit(
+        Constraint(kind=ConstraintKind.EXCLUDES, subject="wrong")
+    ).committed
+    ratchet.seal()
+
+    serialized = EpisodeReceipt(commitment_ratchet=ratchet.receipt()).to_dict()
+    durable = serialized["commitment_ratchet"]
+    body = {key: value for key, value in durable.items() if key != "receipt_sha256"}
+    encoded = json.dumps(
+        body,
+        sort_keys=True,
+        separators=(",", ":"),
+        ensure_ascii=True,
+        allow_nan=False,
+    ).encode("ascii")
+
+    assert durable["schema"] == RATCHET_SCHEMA
+    assert durable["turns"] == 1
+    assert durable["receipt_sha256"] == hashlib.sha256(encoded).hexdigest()
+
+
 # ──────────────────────────── the conditioning reaches repair generation
 
 
 def test_the_repair_prompt_carries_the_episode_commitments():
     """A repair is a redraw. A redraw that does not know what was ruled out
     re-derives it — the duplicate work that makes best-of-N best-of-2."""
+    import inspect
+
     from core.brain.llm.latent_cortex.local_repair import (
         prepare_local_repair_requests,
     )
-    import inspect
 
     signature = inspect.signature(prepare_local_repair_requests)
     assert "conditioning" in signature.parameters, (

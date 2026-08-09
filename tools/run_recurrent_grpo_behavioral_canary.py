@@ -24,6 +24,7 @@ from typing import Any, Final
 REPO_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO_ROOT))
 
+from core.brain.llm.latent_cortex.commitment_ratchet import RATCHET_SCHEMA  # noqa: E402
 from core.brain.llm.latent_cortex.execution_spec import RLCExecutionSpec  # noqa: E402
 from core.brain.llm.latent_cortex.recurrence_adapter_identity_v2 import (  # noqa: E402
     full_weight_checkpoint_identity,
@@ -102,6 +103,7 @@ SOURCE_PATHS: Final = (
     "core/brain/llm/latent_cortex/recurrence_adapter.py",
     "core/brain/llm/latent_cortex/sequential_exclusion.py",
     "core/brain/llm/latent_cortex/task_verifiers.py",
+    "core/brain/llm/latent_cortex/types.py",
     "core/learning/depth_conditioned_lora.py",
     "core/learning/role_conditioned_lora.py",
     "tools/run_recurrent_grpo_behavioral_canary.py",
@@ -394,6 +396,71 @@ def _observable_grade_reward(
         format_credit=format_credit,
     )
     return observable, verdict, reward, reward_receipt
+
+
+def _commitment_ratchet_coverage(*reports: dict[str, Any]) -> dict[str, Any]:
+    """Verify every complete-engine episode durably exposes its ratchet."""
+
+    episode_count = 0
+    valid_receipts = 0
+    active_episode_count = 0
+    turns = 0
+    measured_commits = 0
+    measured_narrowing = 0.0
+    failures: list[dict[str, Any]] = []
+    for report in reports:
+        for record in report.get("records") or ():
+            if not isinstance(record, dict):
+                continue
+            episode_count += 1
+            episode = record.get("episode_receipt")
+            ratchet = (
+                episode.get("commitment_ratchet")
+                if isinstance(episode, dict)
+                else None
+            )
+            failure = ""
+            if not isinstance(ratchet, dict):
+                failure = "missing_receipt"
+            elif ratchet.get("schema") != RATCHET_SCHEMA:
+                failure = "schema_mismatch"
+            else:
+                claimed = ratchet.get("receipt_sha256")
+                body = {
+                    key: value
+                    for key, value in ratchet.items()
+                    if key != "receipt_sha256"
+                }
+                observed = hashlib.sha256(canonical_json_bytes(body)).hexdigest()
+                if claimed != observed:
+                    failure = "digest_mismatch"
+            if failure:
+                failures.append(
+                    {
+                        "task_id": record.get("task_id"),
+                        "depth": record.get("depth"),
+                        "failure": failure,
+                    }
+                )
+                continue
+            valid_receipts += 1
+            receipt_turns = int(ratchet.get("turns", 0) or 0)
+            receipt_measured = int(ratchet.get("measured_commits", 0) or 0)
+            turns += receipt_turns
+            measured_commits += receipt_measured
+            measured_narrowing += float(ratchet.get("measured_narrowing", 0.0) or 0.0)
+            if receipt_turns > 0:
+                active_episode_count += 1
+    return {
+        "schema": "aura.rlc.commitment_ratchet.coverage.v1",
+        "episode_count": episode_count,
+        "valid_receipts": valid_receipts,
+        "active_episode_count": active_episode_count,
+        "turns": turns,
+        "measured_commits": measured_commits,
+        "measured_narrowing_sum": round(measured_narrowing, 6),
+        "failures": failures,
+    }
 
 
 def _status(out_dir: Path, phase: str, **detail: Any) -> None:
@@ -1228,6 +1295,10 @@ def run_canary(
         mx.save_safetensors(str(out_dir / "adapter.safetensors"), adapter)
 
     base_after = full_weight_checkpoint_identity(model_path)
+    commitment_ratchet_coverage = _commitment_ratchet_coverage(
+        initial_full_engine,
+        trained_full_engine,
+    )
     gates = {
         "base_checkpoint_immutable": base_before == base_after,
         "all_samples_admitted": all_samples_admitted,
@@ -1254,6 +1325,14 @@ def run_canary(
                 and "trajectory_receipt" in row["objective_receipt"]
                 for row in projection_trail
             )
+        ),
+        "commitment_ratchet_receipted": bool(
+            commitment_ratchet_coverage["episode_count"] > 0
+            and commitment_ratchet_coverage["valid_receipts"]
+            == commitment_ratchet_coverage["episode_count"]
+        ),
+        "commitment_ratchet_exercised": bool(
+            commitment_ratchet_coverage["active_episode_count"] > 0
         ),
         "adapter_mutated": adapter_before != adapter_after,
         "complete_engine_heldout_strict_gain": bool(
@@ -1322,6 +1401,7 @@ def run_canary(
         "branch_specialization_trail": specialization_trail,
         "answer_projection_trail": projection_trail,
         "branch_specialization_panel": specialization_panel,
+        "commitment_ratchet_coverage": commitment_ratchet_coverage,
         "proxy_task_manifest": proxy_manifest,
         "proxy_task_manifest_sha256": proxy_manifest_sha256,
         "free_generation_before": before,

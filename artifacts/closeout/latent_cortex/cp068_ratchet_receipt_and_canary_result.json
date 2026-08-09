@@ -1,0 +1,68 @@
+{
+  "schema": "aura.closeout.rlc_ratchet_receipt.v1",
+  "checkpoint": "CP068",
+  "cp067_canary": {
+    "source_commit": "9b0f75b6705647f4396aa98815f3611f510aeabc",
+    "seed": 2026080904,
+    "elapsed_s": 628.679618,
+    "receipt_sha256": "e1c40af2d3dc1ee26f8ef37ebb0b70429a306b45085399fa9e2113874e5b4e2a",
+    "optimizer_updates": 8,
+    "configured_steps": 8,
+    "retry_selected_steps": [
+      3,
+      5
+    ],
+    "all_samples_admitted": true,
+    "base_checkpoint_immutable": true,
+    "scores": {
+      "ordinary_initial": "6/8",
+      "complete_engine_initial": "8/8",
+      "ordinary_trained": "6/8",
+      "complete_engine_trained": "8/8",
+      "intrinsic_recurrent_initial": "0/8",
+      "intrinsic_recurrent_trained": "0/8"
+    },
+    "authorized_complete_engine_corrections": 2,
+    "complete_engine_regressions": 0,
+    "adapter_heldout_gain": 0,
+    "passed": false,
+    "failed_gate": "complete_engine_heldout_strict_gain"
+  },
+  "serialization_defect": {
+    "engine_assigned_ratchet": true,
+    "durable_episode_receipt_omitted_ratchet": true,
+    "affected_complete_engine_records": 16,
+    "fixed": true
+  },
+  "repair": {
+    "ratchet_schema": "aura.rlc.commitment_ratchet.v2",
+    "canonical_receipt_sha256": true,
+    "episode_serialization": true,
+    "canary_source_binds_types": true,
+    "canary_requires_all_ratchet_receipts": true,
+    "canary_requires_active_commitment": true
+  },
+  "verification": {
+    "focused_contracts": {
+      "passed": 144,
+      "failed": 0
+    },
+    "canonical_smoke": {
+      "passed": 103,
+      "failed": 0
+    },
+    "ruff": "pass",
+    "compile": "pass",
+    "diff_check": "pass"
+  },
+  "claim_state": {
+    "bounded_system_level_gain_proven": true,
+    "adapter_training_gain_proven": false,
+    "recurrent_neural_gain_proven": false,
+    "commitment_ratchet_gain_proven": false,
+    "resident_32b_gain_proven": false,
+    "frontier_level_proven": false,
+    "fusion_allowed": false,
+    "wow_signal_allowed": false
+  }
+}

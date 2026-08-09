@@ -70,7 +70,7 @@ from dataclasses import dataclass, field
 from enum import StrEnum
 from typing import Any
 
-RATCHET_SCHEMA = "aura.rlc.commitment_ratchet.v1"
+RATCHET_SCHEMA = "aura.rlc.commitment_ratchet.v2"
 COMMIT_SCHEMA = "aura.rlc.commitment_ratchet.commit.v1"
 
 #: A ratchet with unbounded teeth is a prompt-stuffing device. Past this the
@@ -84,7 +84,7 @@ MAX_TEETH = 24
 MIN_MEASURED_NARROWING = 1e-9
 
 
-class RatchetRefusal(RuntimeError):
+class RatchetRefusal(RuntimeError):  # noqa: N818 - public compatibility name
     """A commit was refused. The ratchet only turns one way."""
 
 
@@ -678,7 +678,7 @@ class CommitmentRatchet:
     # ── receipt ──────────────────────────────────────────────────────────
 
     def receipt(self) -> dict[str, Any]:
-        return {
+        body = {
             "schema": RATCHET_SCHEMA,
             "turns": self.turns,
             "sealed": self._sealed,
@@ -698,6 +698,17 @@ class CommitmentRatchet:
             # unmeasured one.
             "narrowing_is_measured": self.measured_commits > 0,
             "conditioning_chars": len(self.conditioning_block()),
+        }
+        encoded = json.dumps(
+            body,
+            sort_keys=True,
+            separators=(",", ":"),
+            ensure_ascii=True,
+            allow_nan=False,
+        ).encode("ascii")
+        return {
+            **body,
+            "receipt_sha256": hashlib.sha256(encoded).hexdigest(),
         }
 
 

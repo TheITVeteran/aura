@@ -1871,6 +1871,7 @@ class EpisodeReceipt:
             "external_execution_handoff": dict(self.external_execution_handoff),
             "structural_diversity": dict(self.structural_diversity),
             "disagreement_graph": dict(self.disagreement_graph),
+            "commitment_ratchet": dict(self.commitment_ratchet),
             "diagnostic_action_selection": dict(self.diagnostic_action_selection),
             "local_repair": dict(self.local_repair),
             "answer_replacement": dict(self.answer_replacement),

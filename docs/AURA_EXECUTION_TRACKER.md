@@ -39748,3 +39748,39 @@ larger learnability window produces more verified optimizer updates and whether
 the ratchet changes any held-out answer. No resident, frontier, fusion,
 activation, or `WOW Signal` claim advances. The completion envelope remains
 `809/920` (approximately `87.9%`).
+
+## Checkpoint 2026-08-09-068: Ratchet Evidence Survives the Episode Boundary
+
+The fresh CP067-source canary completed in `628.7s`. Its adaptive learnability
+window converted the prior run's two updates into eight: six nominal groups
+were immediately nondegenerate and two found usable reward variance on their
+second disjoint same-stratum task. Every sampled trace passed admission, the
+base checkpoint remained immutable, and every optimizer update changed both
+the policy and adapter digests.
+
+The scientific outcome separates the architecture from the trained adapter.
+Ordinary decode scored `6/8`; the initial complete engine scored `8/8`; the
+trained ordinary decode remained `6/8`; and the trained complete engine
+remained `8/8`, with two independently authorized corrections and zero
+regressions. The intrinsic recurrent adapter scored `0/8` both before and
+after training. The larger learnability window therefore fixed absent gradient
+opportunities but did not produce held-out neural transfer.
+
+Inspection of the supposedly wired commitment ratchet exposed a separate
+proof defect. `LatentCortexEngine` assigned the ratchet to the in-memory
+`EpisodeReceipt`, but `EpisodeReceipt.to_dict()` omitted that field. All 16
+complete-engine records consequently erased the ratchet before durable
+serialization. The field is now serialized, the ratchet receipt has a
+canonical SHA-256 binding under schema v2, the canary source identity includes
+`types.py`, and canary admission separately requires every complete-engine
+episode to carry a valid ratchet receipt and at least one episode to exercise a
+real commitment.
+
+Focused engine, canary, commitment-ratchet, and sequential-exclusion contracts
+pass `144/144`; canonical smoke passes `103/103`; Ruff, compilation, and diff
+hygiene pass. A fresh published-source canary must now expose the actual
+commitment count and narrowing before the ratchet earns any capability credit.
+The bounded whole-system verified-search gain remains positive; adapter,
+recurrent-neural, resident-32B, frontier, fusion, activation, and `WOW Signal`
+claims remain false. The completion envelope remains `809/920` (approximately
+`87.9%`).
