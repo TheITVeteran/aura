@@ -12,6 +12,12 @@ from pydantic import BaseModel, Field
 from core.config import config
 from core.runtime.errors import record_degradation
 from core.runtime.subprocess_gateway import get_subprocess_gateway
+from core.security.execution_authority import (
+    KIND_OPEN,
+    KIND_SHELL,
+    authorize_execution,
+    release_execution,
+)
 from core.skills.base_skill import BaseSkill
 from core.utils.task_tracker import task_tracker
 
@@ -78,8 +84,40 @@ class SovereignTerminalSkill(BaseSkill):
     async def _run_command(self, cmd: str, cwd: str, timeout_s: int) -> dict[str, Any]:
         if not cmd:
             return {"ok": False, "error": "Execute action requires a 'command'."}
-        
-        # --- Advanced Security Hardening ---
+
+        # The decision is the Will's, and it is made BEFORE the denylists
+        # below — not after, and not instead of them.
+        #
+        # This skill runs arbitrary shell, which is the widest capability in
+        # the system, and until now it asked nobody: the substring checks
+        # below were the entire gate. A substring check is a lexical test
+        # standing in for a semantic question, so it refuses `rm -rf /` and
+        # waves through `rm -rf "$HOME"`, `find . -delete`, or any of the
+        # spellings nobody enumerated. Keeping them is worthwhile as a cheap
+        # second layer; treating them as the gate was the defect.
+        verdict = await authorize_execution(
+            KIND_SHELL,
+            cmd,
+            source="tool_execution:sovereign_terminal.shell",
+            cwd=cwd,
+            extra={"timeout_s": int(timeout_s)},
+        )
+        if not verdict.approved:
+            return verdict.as_error()
+
+        try:
+            return await self._run_authorized_command(cmd, cwd, timeout_s, verdict)
+        finally:
+            release_execution(verdict, source="sovereign_terminal.shell")
+
+    async def _run_authorized_command(
+        self,
+        cmd: str,
+        cwd: str,
+        timeout_s: int,
+        verdict: Any,
+    ) -> dict[str, Any]:
+        # --- Defence in depth, behind the Will's decision ---
         normalized_cmd = cmd.lower()
         obfuscation_patterns = ["base64 -d", "base64 --decode", "\\x", "\\u", "${", "eval $(", "echo -e"]
         if any(p in normalized_cmd for p in obfuscation_patterns):
@@ -179,6 +217,7 @@ class SovereignTerminalSkill(BaseSkill):
                         stderr_str or "Execution timed out or hung on interactive prompt.",
                         return_code=None,
                     ),
+                    "governance": verdict.receipt(),
                 }
 
             stdout_str = b"".join(stdout_chunks).decode(errors="replace")
@@ -199,6 +238,7 @@ class SovereignTerminalSkill(BaseSkill):
                     stderr_str,
                     return_code=process.returncode,
                 ),
+                "governance": verdict.receipt(),
             }
         except (subprocess.SubprocessError, OSError) as e:
             record_degradation('sovereign_terminal', e)
@@ -255,6 +295,19 @@ class SovereignTerminalSkill(BaseSkill):
         else:
             return {"ok": False, "error": f"Unsupported OS for 'open': {system}"}
             
+        # `open -a <anything>` launches an arbitrary program with the owner's
+        # session and privileges. That is execution, not navigation, and it
+        # was the way around the shell path: a command refused as a command
+        # ran fine as a `.app` or a document with a handler.
+        verdict = await authorize_execution(
+            KIND_OPEN,
+            cmd,
+            source="tool_execution:sovereign_terminal.open",
+            extra={"target": target, "open_action": action},
+        )
+        if not verdict.approved:
+            return verdict.as_error()
+
         logger.info("🚀 Launching %s: %s", action, target)
         try:
             # Tracking open actions too
@@ -272,8 +325,15 @@ class SovereignTerminalSkill(BaseSkill):
                             f"'{' '.join(cmd)}' exited {process.returncode} — "
                             f"{target} was NOT opened (missing app or bad target?)."
                         ),
+                        "governance": verdict.receipt(),
                     }
-                return {"ok": True, "summary": f"Target {target} opened successfully."}
+                return {
+                    "ok": True,
+                    "summary": f"Target {target} opened successfully.",
+                    "governance": verdict.receipt(),
+                }
         except (RuntimeError, asyncio.CancelledError, TimeoutError, AttributeError) as e:
             record_degradation('sovereign_terminal', e)
             return {"ok": False, "error": f"Failed to open target: {e}"}
+        finally:
+            release_execution(verdict, source="sovereign_terminal.open")

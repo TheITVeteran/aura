@@ -37,6 +37,11 @@ from core.runtime.action_executor import ActionExecutor
 from core.runtime.errors import record_degradation
 from core.runtime.state_ownership import state_root
 from core.runtime.subprocess_gateway import get_subprocess_gateway
+from core.security.execution_authority import (
+    KIND_SHELL,
+    authorize_execution,
+    release_execution,
+)
 
 logger = logging.getLogger("Aura.HostAutomation")
 
@@ -1432,11 +1437,40 @@ class HostAutomationProvider:
         command: str,
         timeout: float = 15.0,  # noqa: ASYNC109
     ) -> AutomationReceipt:
-        """Run a shell command after safety validation."""
+        """Run a shell command after authorization and safety validation.
+
+        The section header above said "(governed)" while the only check was
+        `ScriptASTGuard` — a syntactic guard, not a governance decision. This
+        method is reachable from `mission_state` with a plan-supplied string,
+        so it is Aura executing an arbitrary command of her own devising, and
+        it must ask the Will exactly like the terminal skill does.
+        """
         start = time.time()
+
+        verdict = await authorize_execution(
+            KIND_SHELL,
+            command,
+            source="tool_execution:host_automation.shell_command",
+            extra={"timeout_s": float(timeout)},
+        )
+        if not verdict.approved:
+            receipt = AutomationReceipt(
+                action="run_command", target=str(command)[:200],
+                adapter="shell", success=False,
+                error=verdict.reason,
+                duration_ms=(time.time() - start) * 1000,
+            )
+            self._log_receipt(receipt)
+            return receipt
 
         is_safe, reason = ScriptASTGuard.validate_shell_command(command)
         if not is_safe:
+            release_execution(
+                verdict,
+                source="host_automation.shell_command",
+                success=False,
+                error=reason,
+            )
             receipt = AutomationReceipt(
                 action="run_command", target=command[:200],
                 adapter="shell", success=False,
@@ -1479,6 +1513,12 @@ class HostAutomationProvider:
                 duration_ms=(time.time() - start) * 1000,
             )
 
+        release_execution(
+            verdict,
+            source="host_automation.shell_command",
+            success=bool(receipt.success),
+            error=str(receipt.error or ""),
+        )
         self._log_receipt(receipt)
         return receipt
 

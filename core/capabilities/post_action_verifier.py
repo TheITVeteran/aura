@@ -23,6 +23,11 @@ from typing import Any, Callable, Dict, List, Optional, Tuple
 from core.container import ServiceContainer
 from core.runtime.errors import record_degradation
 from core.runtime.subprocess_gateway import get_subprocess_gateway
+from core.security.execution_authority import (
+    KIND_SHELL,
+    authorize_execution,
+    release_execution,
+)
 
 logger = logging.getLogger("Aura.PostActionVerifier")
 
@@ -500,13 +505,32 @@ class PostActionVerifier:
             )
 
     async def _verify_command(self, args: Dict[str, Any]) -> VerificationResult:
-        """Check if a command succeeds (return code 0)."""
+        """Check if a command succeeds (return code 0).
+
+        "Verify that this command succeeds" is arbitrary execution wearing a
+        verification hat: the predicate runs whatever string it is handed,
+        with the same reach as the terminal skill and none of its scrutiny.
+        A check that can run anything is a capability, so it asks like one.
+        """
         command = str(args.get("command", ""))
         if not command:
             return VerificationResult(
                 predicate="command_succeeded", args=args,
                 success=False, evidence="No command specified",
             )
+
+        verdict = await authorize_execution(
+            KIND_SHELL,
+            command,
+            source="tool_execution:post_action_verifier.command_succeeded",
+            extra={"predicate": "command_succeeded"},
+        )
+        if not verdict.approved:
+            return VerificationResult(
+                predicate="command_succeeded", args=args,
+                success=False, evidence=verdict.reason,
+            )
+
         try:
             proc = await get_subprocess_gateway().spawn_shell_async(
                 command,
@@ -527,6 +551,10 @@ class PostActionVerifier:
             return VerificationResult(
                 predicate="command_succeeded", args=args,
                 success=False, evidence=f"Command failed: {e}",
+            )
+        finally:
+            release_execution(
+                verdict, source="post_action_verifier.command_succeeded"
             )
 
     async def _verify_always_true(self, args: Dict[str, Any]) -> VerificationResult:

@@ -16102,7 +16102,7 @@
       "category": "subprocess_gateway",
       "count": 1,
       "path": "core/skills/sovereign_terminal.py",
-      "scope": "<module>.SovereignTerminalSkill._run_command"
+      "scope": "<module>.SovereignTerminalSkill._run_authorized_command"
     },
     {
       "callee": "core.runtime.subprocess_gateway.get_subprocess_gateway().spawn_async",
@@ -16570,6 +16570,6 @@
     }
   ],
   "description": "Exact AST effect-ownership debt ratchet; refresh only after reviewed change",
-  "inventory_sha256": "ce02b993ad2fe90f3487543ab3f733b065620cb688e4c1f098633e7bee7ef1d1",
+  "inventory_sha256": "c1477ab2f971c383d88d0a80642f21d758d5f740bd3d49b921205f04ce465151",
   "schema_version": 1
 }

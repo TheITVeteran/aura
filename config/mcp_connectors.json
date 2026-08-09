@@ -1,0 +1,29 @@
+{
+  "_comment": [
+    "MCP connectors Aura can reach. Same shape as ~/.claude.json and Claude",
+    "Desktop's config, which are also read — adding a server to either of",
+    "those makes it reachable here with no duplicate entry needed.",
+    "",
+    "This file ships EMPTY on purpose. A plausible-looking default list would",
+    "make Aura describe a reach she does not have.",
+    "",
+    "Each entry:",
+    "  command   required, the program to launch",
+    "  args      optional list of strings",
+    "  env       optional; KEY names whose values are read from the owner's",
+    "            environment at launch. Values are never stored here and",
+    "            never enter Aura's context. A declared key that is unset",
+    "            fails the call with that reason instead of an auth error.",
+    "  purpose   optional one-line description, used when Aura is asked what",
+    "            she can reach",
+    "",
+    "Example (not active):",
+    "  \"sentry\": {",
+    "    \"command\": \"npx\",",
+    "    \"args\": [\"-y\", \"@sentry/mcp-server\"],",
+    "    \"env\": {\"SENTRY_AUTH_TOKEN\": \"\"},",
+    "    \"purpose\": \"read issues and events from Sentry\"",
+    "  }"
+  ],
+  "mcpServers": {}
+}

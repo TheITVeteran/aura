@@ -1952,9 +1952,43 @@ class CapabilityEngine(AuraBaseModule):
                 r"voice (?:output|synthesis)",
             ],
         }
+        # MCP routing was `r"use mcp"` and four variants — so a connector was
+        # reachable only by naming the protocol, never by naming the thing.
+        # "check my Sentry issues" routed nowhere even with a Sentry connector
+        # configured, because the word "mcp" was the whole interface.
+        #
+        # These come from what is ACTUALLY configured, so the routing cannot
+        # advertise a connector that does not exist and cannot go stale in the
+        # other direction either.
+        patterns.setdefault("mcp_client", []).extend(self._connector_trigger_patterns())
         for name, pats in patterns.items():
             if name in self.skills:
                 self.skills[name].trigger_patterns.extend(pats)
+
+    def _connector_trigger_patterns(self) -> list[str]:
+        """One pattern per configured MCP connector, by its own name.
+
+        Re-derived from the registry on every catalog load rather than
+        hard-coded, which is what keeps this from becoming another
+        handwritten routing table that drifts from reality. `list_connectors`
+        reads the registry live and is never stale; routing patterns refresh
+        when the catalog reloads.
+        """
+        try:
+            from core.capabilities.mcp_connectors import available_connectors
+
+            return [
+                rf"\b{re.escape(connector.name)}\b"
+                for connector in available_connectors()
+                if connector.name.strip()
+            ]
+        except (ImportError, OSError, ValueError) as exc:
+            _record_capability_degradation(
+                exc,
+                action="routed no MCP connectors because the registry was unreadable",
+                severity="warning",
+            )
+            return []
 
         for name, meta in self.skills.items():
             for pattern in _generic_skill_invocation_patterns(name):
