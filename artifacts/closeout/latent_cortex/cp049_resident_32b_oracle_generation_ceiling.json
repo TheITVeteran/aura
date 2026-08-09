@@ -1,0 +1,91 @@
+{
+  "schema": "aura.rlc.cp049_resident_32b_oracle_generation_ceiling.v1",
+  "checkpoint": "CP049",
+  "scientific_source_commit": "92d164a82e20346beee6e1788272779f3171999f",
+  "implementation_sha256": "e7ca348f8a583fd9b5ab33dc0481e5f790befb47c797e7f34968bc90a298cd56",
+  "task_commitment_sha256": "da37553ad21ee4fe9052a6ce7f1c040e7fa27708404e3f3a82b2b1a3db0ed272",
+  "model": "/Users/bryan/.aura/live-source/models/Qwen2.5-32B-Instruct-4bit",
+  "seed": 20260911,
+  "difficulty": 2,
+  "per_domain": 1,
+  "max_tokens": 1024,
+  "n_slots": 16,
+  "run_directory": "/tmp/aura-rlc-cp048-32b-d2-heldout-1024",
+  "run_phase": "complete",
+  "elapsed_s": 1355.285374708008,
+  "cells": 7,
+  "faults": 0,
+  "oracle_replacements": 0,
+  "oracle_correct_recurrent_candidates": 0,
+  "contract_valid_recurrent_candidates": 12,
+  "latent_attempts": 28,
+  "latent_committed_steps": 0,
+  "repair_requests": 1,
+  "repair_candidates_admitted": 0,
+  "domains": {
+    "novel_algorithms": {
+      "incumbent_correct": false,
+      "recurrent_candidate_correct": false,
+      "valid_recurrent_candidates": 2,
+      "oracle_decision": "retain",
+      "receipt_sha256": "6d8c778a9bc7e661239766f1c2f20fbdd5496aa06d7ece0ad04a280705d2bca4"
+    },
+    "mathematics": {
+      "incumbent_correct": false,
+      "recurrent_candidate_correct": false,
+      "valid_recurrent_candidates": 2,
+      "oracle_decision": "retain",
+      "receipt_sha256": "675e532a2ecdf848f8a1d435ab3ad02f9f2223f5de41e88f68a8d1e69f7b9bf2"
+    },
+    "coding": {
+      "incumbent_correct": false,
+      "recurrent_candidate_correct": null,
+      "valid_recurrent_candidates": 0,
+      "oracle_decision": "candidate_unavailable",
+      "receipt_sha256": "121a65fa76cb16d2bc58e4905f5ba457455d0c662bba030a44ad52c2c57451f3"
+    },
+    "scientific_inference": {
+      "incumbent_correct": true,
+      "recurrent_candidate_correct": false,
+      "valid_recurrent_candidates": 2,
+      "oracle_decision": "retain",
+      "receipt_sha256": "812fd4bd8f0c7fbbd80d0d00bd48c59e480283692f04753ad3244f122d62531d"
+    },
+    "long_horizon_planning": {
+      "incumbent_correct": false,
+      "recurrent_candidate_correct": false,
+      "valid_recurrent_candidates": 2,
+      "oracle_decision": "retain",
+      "receipt_sha256": "74c1f8898914c4225cb862a899a87ad141f787ac7b1cb70ea9265203dc1b4933"
+    },
+    "calibration": {
+      "incumbent_correct": false,
+      "recurrent_candidate_correct": false,
+      "valid_recurrent_candidates": 2,
+      "oracle_decision": "retain",
+      "receipt_sha256": "62951160239b240400738444e55932929322128d33c22bc2e6c95c2dde30288f"
+    },
+    "misleading_premise": {
+      "incumbent_correct": true,
+      "recurrent_candidate_correct": false,
+      "valid_recurrent_candidates": 2,
+      "oracle_decision": "retain",
+      "receipt_sha256": "35876e92a0eb4b3ce48b05842ad71c640ab317c3ef27a930ad1bb4009009912d"
+    }
+  },
+  "interpretation": {
+    "selection_limit_observed": false,
+    "generation_limit_observed": true,
+    "ordinary_floor_preserved": true,
+    "diagnostic_scope": "research_oracle_only",
+    "serving_authority": false,
+    "capability_claim_authority": false,
+    "research_measurement_authority": true
+  },
+  "claims": {
+    "reasoning_gain_proven": false,
+    "frontier_level_proven": false,
+    "fusion_authorized": false,
+    "wow_signal_authorized": false
+  }
+}

@@ -39154,3 +39154,34 @@ completion envelope remains `809/920` (approximately `87.9%`). The next RLC
 checkpoint must create and independently verify task-local repair candidates
 from the refutation route; repeating this frozen stack cannot improve the
 verdict.
+
+## Checkpoint 2026-08-08-049: Oracle Ceiling Locates the Generation Defect
+
+The research-only oracle arm completed the same seven held-out resident-32B
+tasks under the frozen CP048 task commitment, 1024-token budget, and complete
+RLC configuration. All seven cells completed without an infrastructure fault.
+The oracle inspected every contract-valid recurrent candidate but never
+replaced an incumbent: twelve recurrent candidates were validly shaped and all
+were wrong; coding produced no contract-valid recurrent candidate. On both
+tasks ordinary decode answered correctly, the recurrent candidates were wrong.
+On all five wrong incumbents, no hidden correct recurrent candidate existed for
+the selector to recover.
+
+This rules out the most useful version of a selection-only diagnosis on this
+battery. The engine did not generate a correct trajectory and then lose it at
+promotion. Across the seven cells it attempted 28 latent proposals, committed
+zero verified latent steps, admitted zero repair candidates from one repair
+request, and produced no oracle-correct recurrent answer. The next intervention
+must change how recurrent trajectories and repairs are generated or trained;
+another selector, confidence threshold, recurrence-depth increase, or rerun of
+the same frozen computation cannot create a missing candidate.
+
+The compact evidence record is
+`artifacts/closeout/latent_cortex/cp049_resident_32b_oracle_generation_ceiling.json`.
+The oracle receipt explicitly retains research-only authority and cannot serve
+an answer or support a capability claim. Reasoning gain, frontier performance,
+fusion, activation, and `WOW Signal` remain false. The completion envelope
+remains `809/920` (approximately `87.9%`). The next bounded step is a
+trace-bearing, revision-aware training/candidate-generation canary that must
+show strict free-generation improvement before resident training or another
+held-out 32B campaign is admitted.
