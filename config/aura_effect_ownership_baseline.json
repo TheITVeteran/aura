@@ -3217,12 +3217,28 @@
       "scope": "<module>.VerifiedModificationPlasticityBridge._record"
     },
     {
+      "callee": "core.runtime.file_write_gateway.get_file_write_gateway().ensure_directory",
+      "canonical_owner": false,
+      "category": "file_write_gateway",
+      "count": 1,
+      "path": "core/adapters/nethack_adapter.py",
+      "scope": "<module>.NetHackAdapter._session_root"
+    },
+    {
+      "callee": "core.runtime.file_write_gateway.get_file_write_gateway().ensure_directory",
+      "canonical_owner": false,
+      "category": "file_write_gateway",
+      "count": 1,
+      "path": "core/adapters/nethack_adapter.py",
+      "scope": "<module>.NetHackAdapter._spawn_locked"
+    },
+    {
       "callee": "core.runtime.file_write_gateway.get_file_write_gateway().write_text",
       "canonical_owner": false,
       "category": "file_write_gateway",
       "count": 1,
       "path": "core/adapters/nethack_adapter.py",
-      "scope": "<module>.NetHackAdapter.start"
+      "scope": "<module>.NetHackAdapter._spawn_locked"
     },
     {
       "callee": "core.runtime.file_write_gateway.get_file_write_gateway().write_text",
@@ -16466,6 +16482,6 @@
     }
   ],
   "description": "Exact AST effect-ownership debt ratchet; refresh only after reviewed change",
-  "inventory_sha256": "9bac4f0bb0356afe420f0983b01da54f428612f82ea615a53c58cb5ddd30c7b0",
+  "inventory_sha256": "d8ac7014b885ebbc14561264bed22f7e9b3d1b28254d638178400bd7d36f7dc0",
   "schema_version": 1
 }

@@ -24,7 +24,6 @@ Proprioceptive feedback:
   fire-and-forget keystrokes; she feels the result.
 """
 
-import asyncio
 import logging
 from typing import Any
 
@@ -49,7 +48,9 @@ SPECIAL_KEYS = {
     "OPEN": 'o', "CLOSE": 'c', "KICK": '\x04',  # Ctrl+D
     "EAT": 'e', "QUAFF": 'q', "READ": 'r', "ZAP": 'z', "WEAR": 'W',
     "WIELD": 'w', "THROW": 't', "FIRE": 'f',
-    "PRAY": '#',  # Extended command prefix
+    # The extended command itself, not the '#' prefix. Sending a bare '#'
+    # left the game at a half-typed command line waiting for a word.
+    "PRAY": '#pray',
     "LOOK": ':',
     "HELP": '?',
     "MORE": ' ',  # --More-- prompts
@@ -87,10 +88,20 @@ class ExecuteNethackActionSkill(BaseSkill):
         adapter = ServiceContainer.get("nethack_adapter", default=None)
         if not adapter:
             return {"ok": False, "error": "No active NetHack session found."}
-        
+
         if not adapter.is_alive():
             logger.info("NetHack process not alive. Starting now...")
-            adapter.start()
+            try:
+                # Never destroys a saved game on its own. If one is there the
+                # adapter refuses and says so, and restarting into it is a
+                # decision a human makes, not a side effect of a keystroke.
+                await adapter.start_async()
+            except Exception as exc:  # noqa: BLE001 - reported, not swallowed
+                return {
+                    "ok": False,
+                    "error": f"Could not start NetHack: {exc}",
+                    "summary": f"The NetHack session could not be started: {exc}",
+                }
 
         action = params.action.strip()
         action_upper = action.upper()
@@ -103,11 +114,17 @@ class ExecuteNethackActionSkill(BaseSkill):
             physical_key = action
             display_name = action
         else:
-            # Multi-char that isn't a special key — take first char
-            physical_key = action[0] if action else None
-            display_name = action
-            if not physical_key:
-                return {"ok": False, "error": f"Invalid action: '{action}'"}
+            # A multi-character action used to be truncated to its first
+            # letter and sent, so "quaff" became "q" — a different command,
+            # executed as though it had been asked for.
+            return {
+                "ok": False,
+                "error": f"Invalid action: '{action}'",
+                "summary": (
+                    f"'{action}' is not a NetHack key or a known action name. "
+                    "Send one key, or one of the named actions."
+                ),
+            }
 
         # Consult the general embodied cognition runtime if the challenge
         # registered one. This is a local environment action gate, layered
@@ -156,25 +173,37 @@ class ExecuteNethackActionSkill(BaseSkill):
         screen_before = ""
         msg_before = ""
         try:
-            screen_before = adapter.get_screen_text()
+            screen_before = await adapter.get_screen_text_async()
             lines = screen_before.split('\n')
             msg_before = lines[0].strip() if lines else ""
         except (RuntimeError, AttributeError, TypeError, ValueError) as _exc:
             logger.debug("Suppressed %s in core.skills.nethack: %s", type(_exc).__name__, _exc)
 
-        # Execute the action
+        # Execute the action. The adapter drains the terminal to quiet before
+        # it returns, so there is nothing to sleep for afterwards — the old
+        # fixed 0.15s wait was both too long for a movement key and too short
+        # for a menu.
         try:
-            adapter.send_action(physical_key)
-            await asyncio.sleep(0.15)  # Let terminal settle
+            receipt = await adapter.send_action_async(physical_key)
         except (RuntimeError, AttributeError, TypeError, ValueError) as e:
             return {"ok": False, "error": f"Failed to send keystroke: {e}"}
+        if not receipt.get("accepted", True):
+            return {
+                "ok": False,
+                "error": receipt.get("detail") or "the keystroke was not delivered",
+                "receipt": receipt,
+                "summary": (
+                    f"Action '{display_name}' was not delivered: "
+                    f"{receipt.get('detail') or 'the game is not running'}."
+                ),
+            }
 
         # Capture screen AFTER action
         screen_after = ""
         msg_after = ""
         status_line = ""
         try:
-            screen_after = adapter.get_screen_text()
+            screen_after = await adapter.get_screen_text_async()
             lines = screen_after.split('\n')
             msg_after = lines[0].strip() if lines else ""
             # Status line is typically the last 2 non-empty lines
@@ -186,8 +215,10 @@ class ExecuteNethackActionSkill(BaseSkill):
         except (RuntimeError, AttributeError, TypeError, ValueError) as _exc:
             logger.debug("Suppressed %s in core.skills.nethack: %s", type(_exc).__name__, _exc)
 
-        # Determine if the action had an observable effect
-        screen_changed = screen_before != screen_after
+        # Determine if the action had an observable effect. The adapter
+        # measured this across the exact frames that bracket the keystroke;
+        # the before/after texts here can only agree with it or be staler.
+        screen_changed = bool(receipt.get("screen_changed", screen_before != screen_after))
         msg_changed = msg_before != msg_after
 
         # Build structured result
@@ -196,6 +227,7 @@ class ExecuteNethackActionSkill(BaseSkill):
             "action_sent": display_name,
             "screen_changed": screen_changed,
             "message_changed": msg_changed,
+            "receipt": receipt,
         }
 
         # Include the game's feedback message if it changed

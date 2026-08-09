@@ -51,6 +51,8 @@ async def run(*, max_steps: int = DEFAULT_MAX_STEPS, max_seconds: float = DEFAUL
     from core.orchestrator.main import create_orchestrator
 
     orchestrator = create_orchestrator()
+    # Every adapter call below blocks on a pty read or a terminal settling,
+    # so they all go through the *_async pair rather than stalling this loop.
     adapter = NetHackAdapter()
     deadline = time.monotonic() + max(1.0, max_seconds)
 
@@ -62,7 +64,7 @@ async def run(*, max_steps: int = DEFAULT_MAX_STEPS, max_seconds: float = DEFAUL
     )
     try:
         await orchestrator.start()
-        adapter.start(name="AuraSimple")
+        await adapter.start_async(name="AuraSimple")
         ServiceContainer.register_instance("nethack_adapter", adapter)
 
         for step in range(max(1, max_steps)):
@@ -74,7 +76,7 @@ async def run(*, max_steps: int = DEFAULT_MAX_STEPS, max_seconds: float = DEFAUL
                 break
 
             try:
-                obs = adapter.get_observation()
+                obs = await adapter.get_observation_async()
                 obs_text = obs.get("text", "")
                 logger.debug("NetHack prompt step=%s text=%r", step + 1, obs_text[:100])
 
@@ -89,7 +91,7 @@ async def run(*, max_steps: int = DEFAULT_MAX_STEPS, max_seconds: float = DEFAUL
                 action = _extract_action(str(response))
                 if action:
                     logger.debug("Executing NetHack action step=%s action=%r", step + 1, action)
-                    adapter.send_action(action)
+                    await adapter.send_action_async(action)
                 else:
                     logger.debug("Ignoring non-action NetHack response step=%s response=%r", step + 1, response)
 
@@ -103,7 +105,7 @@ async def run(*, max_steps: int = DEFAULT_MAX_STEPS, max_seconds: float = DEFAUL
                 )
                 await asyncio.sleep(2)
     finally:
-        adapter.stop()
+        await adapter.stop_async()
         try:
             await orchestrator.stop()
         except _RECOVERABLE_CHALLENGE_ERRORS as exc:
