@@ -40508,3 +40508,35 @@ paired pilot must now measure recovery, regression, yield, and cost across every
 strategy family. Reasoning gain, frontier performance, fusion, activation, and
 `WOW Signal` remain false, and the completion envelope remains `809/920`
 (approximately `87.9%`).
+
+## Checkpoint 2026-08-09-091: Fresh Seeds Now Mean Held-Out Tasks
+
+The first CP090 resident pilot was stopped after six ordinary-control cells,
+before the expensive treatment arm. Its committed task manifest exposed a
+claim-blocking identity defect: the reconciliation sweep still generated tasks
+with registry `2026.07.18.1`, while the repository's complete
+excluded-training-family contract lives in contamination-safe registry
+`2026.08.06.1`. A different random seed inside an older task-family contract is
+not enough to establish held-out evaluation. The partial ordinary arm also
+scored `0/6`, so that particular battery was below the useful measurement floor
+even if its registry had been admissible.
+
+Claim-bearing reconciliation now requires the contamination-safe registry at
+both controller and sweep boundaries. The version is signed into the immutable
+controller config, forwarded as an explicit argv value, committed in the task
+manifest, bound into every arm's decode fingerprint, and repeated in the
+evidence manifest. Resume treats a version change as a superseded cell, and the
+grader rejects any manifest whose registry differs from the actual task
+objects. An explicit request for the legacy registry fails before model load.
+
+The controller/sweep/frontier contracts pass `156/156`; canonical smoke passes
+`103/103`; Ruff and byte compilation pass. The positive CLI self-test committed
+registry `2026.08.06.1`; the legacy-registry negative control exited `2` with a
+specific refusal. Exact hashes and the preserved six-cell diagnostic are in
+`artifacts/closeout/latent_cortex/cp091_contamination_safe_registry.json`.
+
+The next bounded gate is control-only calibration on seed `20261120`, followed
+by a disjoint four-arm pilot on seed `20261121` at the frozen informative
+difficulty. No reasoning gain, frontier performance, fusion, activation, or
+`WOW Signal` is claimed, and the completion envelope remains `809/920`
+(approximately `87.9%`).

@@ -191,6 +191,20 @@ def test_config_digest_rejects_a_changed_scientific_parameter(tmp_path: Path):
         controller.load_config(config_path)
 
 
+def test_controller_rejects_a_non_contamination_safe_task_registry(tmp_path: Path):
+    _source_root, _out, config_path, _config = _prepared(tmp_path)
+    document = json.loads(config_path.read_text(encoding="utf-8"))
+    document["task_registry_version"] = "2026.07.18.1"
+    document["config_sha256"] = controller._sha(controller._config_body(document))
+    config_path.write_text(json.dumps(document), encoding="utf-8")
+
+    with pytest.raises(
+        controller.ControllerError,
+        match="controller_task_registry_not_contamination_safe",
+    ):
+        controller.load_config(config_path)
+
+
 @pytest.mark.parametrize("difficulty", [0, 4, True, "2"])
 def test_config_rejects_invalid_task_difficulty_even_with_a_valid_digest(
     tmp_path: Path,
@@ -332,6 +346,9 @@ def test_sweep_command_preserves_complete_engine_parameters(tmp_path: Path):
     command = controller._sweep_command(config)
     assert command[command.index("--arms") + 1] == "full_stack"
     assert command[command.index("--difficulty") + 1] == "2"
+    assert command[command.index("--task-registry-version") + 1] == (
+        controller.CLAIM_TASK_REGISTRY_VERSION
+    )
     assert command[command.index("--episode-wall-s") + 1] == "20.0"
     assert command[command.index("--max-wall-s") + 1] == "60.0"
     assert command[command.index("--model") + 1] == config["model"]

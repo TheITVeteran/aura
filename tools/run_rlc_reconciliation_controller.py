@@ -35,6 +35,7 @@ LAUNCH_SCHEMA: Final = "aura.rlc_reconciliation_controller_launchd.v1"
 TERMINAL_PHASES: Final = frozenset({"complete", "yielded", "blocked"})
 CONFIG_SUFFIXES: Final = frozenset({".json", ".toml", ".yaml", ".yml", ".jinja"})
 GLOBAL_MODEL_LOCK: Final = Path.home() / ".aura/state/rlc-reconciliation-model.lock"
+CLAIM_TASK_REGISTRY_VERSION: Final = "2026.08.06.1"
 
 
 class ControllerError(RuntimeError):
@@ -338,6 +339,7 @@ def load_config(path: Path) -> dict[str, Any]:
         "seed",
         "per_domain",
         "difficulty",
+        "task_registry_version",
         "n_slots",
         "max_tokens",
         "memory_fraction",
@@ -356,6 +358,8 @@ def load_config(path: Path) -> dict[str, Any]:
         raise ControllerError("controller_attempt_budget_invalid")
     if type(config["difficulty"]) is not int or config["difficulty"] not in {1, 2, 3}:
         raise ControllerError("controller_difficulty_invalid")
+    if config["task_registry_version"] != CLAIM_TASK_REGISTRY_VERSION:
+        raise ControllerError("controller_task_registry_not_contamination_safe")
     if float(config["stale_after_s"]) <= float(config["episode_wall_s"]):
         raise ControllerError("controller_stale_budget_too_short")
     if not isinstance(config.get("source_git_identity"), Mapping):
@@ -385,9 +389,12 @@ def build_config(
     poll_s: float,
     stale_after_s: float,
     retry_backoff_s: float,
+    task_registry_version: str = CLAIM_TASK_REGISTRY_VERSION,
 ) -> tuple[dict[str, Any], dict[str, Any], bytes]:
     if type(difficulty) is not int or difficulty not in {1, 2, 3}:
         raise ControllerError("controller_difficulty_invalid")
+    if task_registry_version != CLAIM_TASK_REGISTRY_VERSION:
+        raise ControllerError("controller_task_registry_not_contamination_safe")
     source_root = source_root.expanduser().resolve(strict=True)
     source_commit = str(source_commit).strip().lower()
     model = model.expanduser().resolve(strict=True)
@@ -424,6 +431,7 @@ def build_config(
         "seed": int(seed),
         "per_domain": int(per_domain),
         "difficulty": int(difficulty),
+        "task_registry_version": task_registry_version,
         "n_slots": int(n_slots),
         "max_tokens": int(max_tokens),
         "memory_fraction": float(memory_fraction),
@@ -550,6 +558,8 @@ def _sweep_command(config: Mapping[str, Any]) -> list[str]:
         str(config["per_domain"]),
         "--difficulty",
         str(config["difficulty"]),
+        "--task-registry-version",
+        str(config["task_registry_version"]),
         "--n-slots",
         str(config["n_slots"]),
         "--max-tokens",
@@ -906,6 +916,10 @@ def _parser() -> argparse.ArgumentParser:
     prepare.add_argument("--seed", type=int, default=20260808)
     prepare.add_argument("--per-domain", type=int, default=4)
     prepare.add_argument("--difficulty", type=int, choices=(1, 2, 3), default=2)
+    prepare.add_argument(
+        "--task-registry-version",
+        default=CLAIM_TASK_REGISTRY_VERSION,
+    )
     prepare.add_argument("--n-slots", type=int, default=16)
     prepare.add_argument("--max-tokens", type=int, default=512)
     prepare.add_argument("--memory-fraction", type=float, default=0.40)
@@ -940,6 +954,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 seed=args.seed,
                 per_domain=args.per_domain,
                 difficulty=args.difficulty,
+                task_registry_version=args.task_registry_version,
                 n_slots=args.n_slots,
                 max_tokens=args.max_tokens,
                 memory_fraction=args.memory_fraction,

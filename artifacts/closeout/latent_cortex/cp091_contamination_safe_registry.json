@@ -1,0 +1,60 @@
+{
+  "schema": "aura.closeout.latent_cortex.cp091.v1",
+  "checkpoint": "CP091",
+  "date": "2026-08-09",
+  "finding": {
+    "classification": "claim_blocking_experiment_identity_defect",
+    "legacy_registry_version": "2026.07.18.1",
+    "required_registry_version": "2026.08.06.1",
+    "reason": "A fresh random seed does not establish held-out evaluation when the campaign uses a registry whose excluded-training-family contract predates the complete training-family inventory."
+  },
+  "aborted_campaign": {
+    "campaign_id": "cp091-wow-pilot-20260809",
+    "source_commit": "271df78894fcba8429b1fb94dae5f8338ca2820e",
+    "controller_config_sha256": "ef824051d9087bf1458a66289c828e572eb40c4570c11856746f41de88768791",
+    "signed_config_sha256": "af016f26e0c585319e8564090470fc7c77a3093e17bbbbcb7c2e9a9fd8ea19e4",
+    "task_commitment_sha256": "e33fcdc7209db08556e841e6ce313eac95d5d72b214f9c1fc8c7acf809c33c96",
+    "journal_sha256": "a546e4ff9cab086f73c9d2f096aac80d45883e4d2851e1cbea96d2262277ef0f",
+    "durable_cells": 6,
+    "planned_cells": 28,
+    "completed_arms": [
+      "vanilla_partial"
+    ],
+    "infrastructure_errors": 0,
+    "ordinary_correct": 0,
+    "ordinary_total": 6,
+    "disposition": "stopped_before_treatment_to_avoid_consuming_compute_on_non_claim-grade_and_below-floor_battery"
+  },
+  "repair": {
+    "controller_requires_contamination_safe_registry": true,
+    "sweep_requires_contamination_safe_registry": true,
+    "registry_bound_to_signed_config": true,
+    "registry_bound_to_task_commitment": true,
+    "registry_bound_to_per_arm_decode_fingerprint": true,
+    "registry_bound_to_evidence_manifest": true,
+    "resume_rejects_registry_drift": true,
+    "grader_rejects_registry_drift": true
+  },
+  "verification": {
+    "focused_contracts": "156 passed",
+    "canonical_smoke": "103 passed",
+    "ruff": "passed",
+    "byte_compile": "passed",
+    "contamination_safe_self_test": "passed with registry 2026.08.06.1",
+    "legacy_registry_negative_control": "refused with exit code 2"
+  },
+  "next_gate": {
+    "calibration_seed": 20261120,
+    "evaluation_seed": 20261121,
+    "difficulty_candidates": [
+      1,
+      2
+    ],
+    "policy": "Use control-only calibration to select an informative difficulty, then freeze that choice before running treatment on the disjoint evaluation seed."
+  },
+  "non_claims": [
+    "The aborted campaign does not measure the complete system.",
+    "Zero of six ordinary successes is not evidence of treatment gain or loss.",
+    "No reasoning gain, frontier performance, fusion authority, activation authority, or WOW Signal is claimed."
+  ]
+}

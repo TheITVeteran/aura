@@ -41,6 +41,7 @@ sys.path.insert(0, str(REPO_ROOT))
 
 SWEEP_SCHEMA = "aura.rlc_reconciliation_sweep.v1"
 EVIDENCE_MANIFEST_SCHEMA = "aura.rlc.reconciliation_evidence_manifest.v1"
+CLAIM_TASK_REGISTRY_VERSION = "2026.08.06.1"
 
 
 # (name, recurrent steps or None for ordinary decode, terminal-instruction
@@ -250,6 +251,7 @@ def decode_fingerprint(
     seed: int,
     per_domain: int,
     difficulty: int = 2,
+    task_registry_version: str = CLAIM_TASK_REGISTRY_VERSION,
     arm: str = "",
     adapter: str = "",
     implementation_sha256: str | None = None,
@@ -278,6 +280,7 @@ def decode_fingerprint(
             "n_slots": int(n_slots),
             "per_domain": int(per_domain),
             "seed": int(seed),
+            "task_registry_version": str(task_registry_version),
         },
         sort_keys=True,
     )
@@ -1657,6 +1660,8 @@ def _manifest_integrity_issues(
     commitment = ft.build_task_commitment(task_manifest).commitment_sha256
     if recorded.get("task_commitment_sha256") != commitment:
         issues.append("task_commitment_mismatch")
+    if recorded.get("task_registry_version") != task_manifest.registry_version:
+        issues.append("task_registry_version_mismatch")
 
     required = recorded.get("required_arms")
     requested = recorded.get("requested_arms")
@@ -1929,6 +1934,14 @@ def main() -> int:
             "seeds, then evaluate treatment on disjoint held-out seeds."
         ),
     )
+    parser.add_argument(
+        "--task-registry-version",
+        default=CLAIM_TASK_REGISTRY_VERSION,
+        help=(
+            "Committed frontier-task registry. Claim-bearing reconciliation defaults "
+            "to the contamination-safe held-out family registry."
+        ),
+    )
     parser.add_argument("--n-slots", type=int, default=16)
     parser.add_argument("--max-tokens", type=int, default=320)
     parser.add_argument("--memory-fraction", type=float, default=0.40)
@@ -1973,7 +1986,17 @@ def main() -> int:
     # Tasks are generated from a committed seed so a resumed process, and any
     # independent replay, reconstructs exactly the same battery.
     seeds = [args.seed + i for i in range(args.per_domain)]
-    tasks = ft.generate_task_battery(seeds, difficulty=args.difficulty)
+    if args.task_registry_version != ft.CONTAMINATION_SAFE_REGISTRY_VERSION:
+        print(
+            "claim-bearing reconciliation requires the contamination-safe task registry",
+            file=sys.stderr,
+        )
+        return 2
+    tasks = ft.generate_task_battery(
+        seeds,
+        difficulty=args.difficulty,
+        registry_version=args.task_registry_version,
+    )
     manifest = ft.build_task_manifest(tasks)
     commitment = ft.build_task_commitment(manifest)
     _atomic_write(
@@ -1986,7 +2009,7 @@ def main() -> int:
                 "difficulty": args.difficulty,
                 "task_count": len(tasks),
                 "commitment_sha256": commitment.commitment_sha256,
-                "registry_version": ft.REGISTRY_VERSION,
+                "registry_version": args.task_registry_version,
                 "domains": list(ft.FRONTIER_DOMAINS),
             },
             indent=1,
@@ -2001,6 +2024,7 @@ def main() -> int:
             json.dumps(
                 {
                     "tasks": len(tasks),
+                    "task_registry_version": args.task_registry_version,
                     "requested_arms": sorted(requested_names),
                     "execution_arms": [a.name for a in selected],
                 },
@@ -2023,6 +2047,7 @@ def main() -> int:
             seed=args.seed,
             per_domain=args.per_domain,
             difficulty=args.difficulty,
+            task_registry_version=args.task_registry_version,
             arm=name,
             adapter=args.adapter,
             implementation_sha256=implementation_sha256,
@@ -2037,6 +2062,7 @@ def main() -> int:
                 "decode_fingerprint": fingerprints,
                 "arm_max_tokens": arm_tokens,
                 "difficulty": args.difficulty,
+                "task_registry_version": args.task_registry_version,
                 "implementation_files": implementation_files,
                 "implementation_sha256": implementation_sha256,
                 "requested_arms": sorted(requested_names),

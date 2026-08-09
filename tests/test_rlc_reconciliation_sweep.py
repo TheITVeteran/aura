@@ -47,6 +47,7 @@ def _write_evidence_manifest(
                 "required_arms": required_arms,
                 "expected_task_ids": [task.task_id for task in tasks],
                 "task_commitment_sha256": commitment.commitment_sha256,
+                "task_registry_version": task_manifest.registry_version,
                 "implementation_files": implementation,
                 "implementation_sha256": sweep._implementation_sha256(implementation),
             }
@@ -741,6 +742,56 @@ def test_decode_identity_binds_committed_task_difficulty():
 
     assert easy != standard
     assert standard == sweep.decode_fingerprint(difficulty=2, **common)
+
+
+def test_decode_identity_binds_the_task_registry():
+    from core.brain.llm.latent_cortex import frontier_tasks as ft
+
+    assert sweep.CLAIM_TASK_REGISTRY_VERSION == ft.CONTAMINATION_SAFE_REGISTRY_VERSION
+    common = {
+        "model": "/models/Qwen-32B",
+        "n_slots": 16,
+        "max_tokens": 320,
+        "episode_wall_s": 720.0,
+        "seed": 20260808,
+        "per_domain": 1,
+        "difficulty": 2,
+        "arm": "vanilla",
+        "implementation_sha256": "a" * 64,
+    }
+    safe = sweep.decode_fingerprint(
+        task_registry_version=sweep.CLAIM_TASK_REGISTRY_VERSION,
+        **common,
+    )
+    legacy = sweep.decode_fingerprint(
+        task_registry_version="2026.07.18.1",
+        **common,
+    )
+    assert safe != legacy
+
+
+def test_evidence_manifest_rejects_task_registry_drift(tmp_path: Path):
+    from core.brain.llm.latent_cortex import frontier_tasks as ft
+
+    tasks = ft.generate_task_battery(
+        [20260831],
+        difficulty=2,
+        registry_version=ft.CONTAMINATION_SAFE_REGISTRY_VERSION,
+    )
+    _write_evidence_manifest(
+        tmp_path,
+        tasks,
+        required_arms=["vanilla"],
+    )
+    manifest_path = tmp_path / "decode_fingerprint.json"
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    manifest["task_registry_version"] = ft.REGISTRY_VERSION
+    manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+
+    assert "task_registry_version_mismatch" in sweep._manifest_integrity_issues(
+        manifest,
+        tasks,
+    )
 
 
 def test_contract_neutral_diagnostic_repairs_shape_without_inventing_values():
