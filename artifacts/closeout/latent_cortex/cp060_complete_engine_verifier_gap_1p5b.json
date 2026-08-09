@@ -1,0 +1,68 @@
+{
+  "schema": "aura.rlc.cp060_complete_engine_verifier_gap_1p5b.v1",
+  "checkpoint": "CP060",
+  "source_commit": "5d4c840923f05bbba6545700ac5c749ac64bd981",
+  "model": "/Users/bryan/.aura/live-source/models/Qwen2.5-1.5B-Instruct-4bit",
+  "model_fingerprint": "d6e4ecf7593b78cb88ded2f4e98dd26b16802b38d2421b2af805eaea2f24f37d",
+  "seed": 2026080701,
+  "elapsed_s": 711.8150961399078,
+  "optimizer_updates": 8,
+  "adapter_before_sha256": "3cc7ada2940b3748f5557d2b6a767deceaff2ca8877a2211159b84aba35d00d1",
+  "adapter_after_sha256": "5094ac05af33ab850fc6a3f4ddd5ec16d52118a1addac0283200324fb9cd6570",
+  "intrinsic_latent_path": {
+    "before_correct": 0,
+    "after_correct": 1,
+    "observations": 8,
+    "before_correct_by_depth": {"1": 0, "2": 0},
+    "after_correct_by_depth": {"1": 0, "2": 1}
+  },
+  "complete_engine": {
+    "initial_ordinary_correct": 4,
+    "initial_full_engine_correct": 4,
+    "trained_ordinary_correct": 4,
+    "trained_full_engine_correct": 4,
+    "observations": 8,
+    "ordinary_decode_changed": 0,
+    "ordinary_floor_regressions": 0,
+    "training_regressions": 0,
+    "authorized_correct_gains": 0,
+    "replacement_decisions": {"retain": 8, "replace": 0, "abstain": 0}
+  },
+  "admission": {
+    "decision": "reject_complete_engine_gain_unproven",
+    "canonical_incumbent_bound": true,
+    "complete_full_engine_execution": true,
+    "ordinary_decode_stable_across_adapter": true,
+    "ordinary_correctness_floor_preserved": true,
+    "no_training_correctness_regressions": true,
+    "strict_gain_over_initial_full_engine": false,
+    "strict_gain_over_ordinary_decode": false,
+    "independently_authorized_correct_gain": false,
+    "admitted": false,
+    "admission_sha256": "ce18bfe0cdc0b560e94f5fa932af347d13adc4e5955b62803f9e8fc3831af0c6"
+  },
+  "diagnosis": {
+    "complete_engine_measurement_executed": true,
+    "ordinary_floor_worked": true,
+    "intrinsic_transfer_observed": true,
+    "branch_candidates_reached_contract_repair": true,
+    "candidate_semantic_task_proof_available": false,
+    "candidate_inventory_replayed_when_no_local_repair": false,
+    "root_gap": "public objective programs were not executable by the deterministic replacement verifier",
+    "same_recipe_rerun_authorized": false
+  },
+  "repair": {
+    "public_prompt_program_families": ["nested_boolean", "modular_chain"],
+    "hidden_expected_answer_used": false,
+    "validator_reexecutes_candidate_routes": true,
+    "critic_source_closure_updated": true,
+    "branch_candidates_always_replayed_when_available": true
+  },
+  "source_receipt_sha256": "8d28fc3b73cbe9b27d90ec2ea647c9c991f89c87a1538a0b53407e8043166f54",
+  "claims": {
+    "reasoning_gain_proven": false,
+    "frontier_level_proven": false,
+    "fusion_authorized": false,
+    "wow_signal_authorized": false
+  }
+}

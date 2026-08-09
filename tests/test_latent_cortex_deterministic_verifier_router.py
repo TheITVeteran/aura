@@ -98,3 +98,38 @@ def test_router_check_returns_neutral_when_no_sound_route_exists() -> None:
     assert check["applicable"] is False
     assert check["score"] is None
     assert check["receipt"]["counts"]["unknown"] == 1
+
+
+def test_router_executes_public_modular_objective_without_hidden_answer() -> None:
+    objective = (
+        "Start at the given value and apply each operation modulo 19: start=17. "
+        "Operations: -11, *12. You may reason before answering. Finish with exactly "
+        "one final line using the envelope FINAL_ANSWER: <JSON object>."
+    )
+    good = _route('FINAL_ANSWER: {"residue":15}', objective)
+    bad = _route('FINAL_ANSWER: {"residue":14}', objective)
+
+    assert good["routes"][0]["verifier"] == "exact_objective_program"
+    assert good["routes"][0]["outcome"] == "verified"
+    assert bad["routes"][0]["outcome"] == "refuted"
+    assert bad["routes"][0]["detail"]["failure_codes"] == [
+        "objective_result_mismatch"
+    ]
+    assert "expected_payload" not in good["routes"][0]["detail"]
+    assert len(good["routes"][0]["detail"]["expected_payload_sha256"]) == 64
+
+
+def test_router_executes_public_boolean_objective_with_bounded_parser() -> None:
+    objective = (
+        "Evaluate this 2-operation expression with 1=true, 0=false, and xor meaning "
+        "exactly one operand is true: ((not 0) or 0). Return a value of 1 or 0. "
+        "You may reason before answering."
+    )
+    receipt = _route('FINAL_ANSWER: {"value":1}', objective)
+
+    assert receipt["routes"][0]["verifier"] == "exact_objective_program"
+    assert receipt["routes"][0]["outcome"] == "verified"
+    execution = receipt["routes"][0]["detail"]["execution"]
+    assert execution["declared_operations"] == 2
+    assert execution["executed_operations"] == 2
+    assert len(execution["expression_sha256"]) == 64

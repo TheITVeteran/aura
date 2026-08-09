@@ -42,12 +42,14 @@ MAX_BASELINE_EVIDENCE_TOKENS = 12_288
 _REFUTATION_VERIFIERS = {
     "exact_integer_arithmetic",
     "exact_modular_arithmetic",
+    "exact_objective_program",
     "python_ast",
     "json_parser",
 }
 _SEMANTIC_EXACT_VERIFIERS = {
     "exact_integer_arithmetic",
     "exact_modular_arithmetic",
+    "exact_objective_program",
 }
 _SHA256_RE = re.compile(r"[0-9a-f]{64}\Z")
 _FULL_INTEGER_ARITHMETIC_RE = re.compile(
@@ -112,12 +114,21 @@ def _quality_interval(
     ]
     semantic_verified = 0
     partial_or_nonsemantic = 0
+    objective_program_verified = False
     for atom, route in zip(atomic["atoms"], routed["routes"], strict=True):
         fragment = candidate[int(atom["start"]) : int(atom["end"])]
+        if (
+            route["verifier"] == "exact_objective_program"
+            and route["outcome"] == "verified"
+        ):
+            objective_program_verified = True
         full_span_semantic = bool(
             route["verifier"] in _SEMANTIC_EXACT_VERIFIERS
             and route["outcome"] == "verified"
-            and _FULL_INTEGER_ARITHMETIC_RE.fullmatch(fragment)
+            and (
+                route["verifier"] == "exact_objective_program"
+                or _FULL_INTEGER_ARITHMETIC_RE.fullmatch(fragment)
+            )
         )
         semantic_verified += int(full_span_semantic)
         partial_or_nonsemantic += int(not full_span_semantic)
@@ -127,6 +138,9 @@ def _quality_interval(
     if refuted or atomic["grade_admissible"] is not True:
         lower = upper = 0.0
         basis = "deterministic_exact_refutation" if refuted else "structural_grade_refutation"
+    elif objective_program_verified:
+        lower = upper = 1.0
+        basis = "objective_program_exact_complete"
     elif every_atom_semantically_verified:
         lower = upper = 1.0
         basis = "full_span_semantic_exact_complete"
@@ -224,9 +238,23 @@ def _candidate_inventory(
     branch_quality: dict[int, dict[str, Any]] = {}
     for index in sorted(decompositions, key=int):
         text = branch_texts[index]
+        rebuilt_decomposition = build_atomic_decomposition(
+            text,
+            objective=private_evidence["objective"],
+        )
+        rebuilt_routes = build_deterministic_router_receipt(
+            text,
+            objective=private_evidence["objective"],
+            atomic_receipt=rebuilt_decomposition,
+        )
+        if (
+            rebuilt_decomposition != decompositions[index]
+            or rebuilt_routes != candidate_routes[index]
+        ):
+            raise ValueError("answer replacement candidate evidence reconstruction differs")
         branch_quality[int(index)] = _quality_interval(
-            decompositions[index],
-            candidate_routes[index],
+            rebuilt_decomposition,
+            rebuilt_routes,
             candidate=text,
         )
     if selected_branch in branch_quality:
@@ -257,6 +285,24 @@ def _candidate_inventory(
             if replacement_available
             else None
         )
+        if replacement_available:
+            rebuilt_replacement_decomposition = build_atomic_decomposition(
+                replacement_text,
+                objective=private_evidence["objective"],
+            )
+            rebuilt_replacement_routes = build_deterministic_router_receipt(
+                replacement_text,
+                objective=private_evidence["objective"],
+                atomic_receipt=rebuilt_replacement_decomposition,
+            )
+            if (
+                rebuilt_replacement_decomposition
+                != transaction["replacement_decomposition"]
+                or rebuilt_replacement_routes != transaction["replacement_routes"]
+            ):
+                raise ValueError(
+                    "answer replacement repair evidence reconstruction differs"
+                )
         original_routes = validate_deterministic_router_envelope(
             candidate_routes[str(branch)],
             atomic_receipt=decompositions[str(branch)],
@@ -452,7 +498,7 @@ def build_answer_replacement_receipt(
         for transaction in local_repair["transactions"]
         if transaction["status"] == "repaired_candidate_admitted"
     }
-    private_evidence_required = bool(local_repair["requests"]) or (
+    private_evidence_required = bool(branch_candidates) or bool(local_repair["requests"]) or (
         baseline_quality["basis"] == "deterministic_exact_refutation"
     )
     private_evidence = (
@@ -679,7 +725,8 @@ def validate_answer_replacement_receipt(
         disagreement_graph=disagreement_graph,
         diagnostic_selection=diagnostic_selection,
     )
-    private_required = bool(local_repair["requests"]) or (
+    candidate_decompositions = disagreement_graph.get("candidate_decompositions")
+    private_required = bool(candidate_decompositions) or bool(local_repair["requests"]) or (
         isinstance(value.get("baseline_quality"), Mapping)
         and value["baseline_quality"].get("basis") == "deterministic_exact_refutation"
     )

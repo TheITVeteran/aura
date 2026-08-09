@@ -37,8 +37,8 @@ def _scenario(
     left: str,
     right: str,
     repaired: str,
+    objective: str = "Return the exactly correct arithmetic answer.",
 ) -> tuple[str, dict[int, str], dict, dict, dict, dict[str, dict]]:
-    objective = "Return the exactly correct arithmetic answer."
     candidates = {0: left, 1: right}
     decompositions = {
         str(index): build_atomic_decomposition(text, objective=objective)
@@ -262,7 +262,7 @@ def test_explicit_disable_retains_baseline_without_borrowing_authority():
     assert _decode(tokens) == "2 + 2 = 5."
 
 
-def test_no_repair_candidate_is_public_noop_without_private_evidence():
+def test_no_repair_candidate_inventory_is_replayed_before_retaining_baseline():
     objective, candidates, graph, selector, local_repair, generated = _scenario(
         left="2 + 2 = 4.",
         right="2 + 2 = 4.",
@@ -287,17 +287,17 @@ def test_no_repair_candidate_is_public_noop_without_private_evidence():
         max_output_tokens=64,
     )
 
-    assert private == {}
-    assert receipt["private_evidence_required"] is False
-    assert receipt["candidates"] == []
+    assert private["branch_candidates"] == {"0": baseline, "1": baseline}
+    assert receipt["private_evidence_required"] is True
+    assert len(receipt["candidates"]) == 2
     assert receipt["decision"] == "retain"
-    assert receipt["reason"] == "no_local_repair_candidates"
+    assert receipt["reason"] == "final_decode_already_exactly_verified"
     validate_answer_replacement_receipt(
         receipt,
         disagreement_graph=graph,
         diagnostic_selection=selector,
         local_repair=local_repair,
-        private_evidence={},
+        private_evidence=private,
         expected_objective=objective,
         expected_selected_branch=0,
         expected_enabled=True,
@@ -306,13 +306,15 @@ def test_no_repair_candidate_is_public_noop_without_private_evidence():
         expected_output_text=baseline,
         expected_output_tokens=tokens,
     )
-    with pytest.raises(ValueError, match="retained private evidence"):
+    tampered = copy.deepcopy(private)
+    tampered["branch_candidates"]["0"] = "2 + 2 = 9."
+    with pytest.raises(ValueError, match="binding|reconstruction"):
         validate_answer_replacement_receipt(
             receipt,
             disagreement_graph=graph,
             diagnostic_selection=selector,
             local_repair=local_repair,
-            private_evidence={"unexpected": "candidate"},
+            private_evidence=tampered,
             expected_objective=objective,
             expected_selected_branch=0,
             expected_enabled=True,
@@ -321,6 +323,63 @@ def test_no_repair_candidate_is_public_noop_without_private_evidence():
             expected_output_text=baseline,
             expected_output_tokens=tokens,
         )
+
+
+def test_public_objective_program_promotes_correct_branch_over_wrong_incumbent():
+    objective = (
+        "Start at the given value and apply each operation modulo 19: start=17. "
+        "Operations: -11, *12. You may reason before answering. Finish with exactly "
+        "one final line using the envelope FINAL_ANSWER: <JSON object>."
+    )
+    correct = 'FINAL_ANSWER: {"residue":15}'
+    wrong = 'FINAL_ANSWER: {"residue":14}'
+    objective, candidates, graph, selector, local_repair, generated = _scenario(
+        left=correct,
+        right=correct,
+        repaired=correct,
+        objective=objective,
+    )
+    assert local_repair["requests"] == []
+
+    receipt, tokens, private = build_answer_replacement_receipt(
+        disagreement_graph=graph,
+        diagnostic_selection=selector,
+        local_repair=local_repair,
+        selected_branch=0,
+        branch_candidates=candidates,
+        generated_repairs=generated,
+        objective=objective,
+        baseline_text=wrong,
+        baseline_tokens=_encode(wrong),
+        encode=_encode,
+        decode=_decode,
+        enabled=True,
+        margin=0.05,
+        max_output_tokens=64,
+    )
+
+    assert receipt["baseline_quality"]["basis"] == "deterministic_exact_refutation"
+    assert receipt["candidates"][0]["replacement_quality"]["basis"] == (
+        "objective_program_exact_complete"
+    )
+    assert receipt["candidates"][0]["dominates"] is True
+    assert receipt["decision"] == "replace"
+    assert receipt["accepted_output"]["source"] == "branch_candidate"
+    assert _decode(tokens) == correct
+    validate_answer_replacement_receipt(
+        receipt,
+        disagreement_graph=graph,
+        diagnostic_selection=selector,
+        local_repair=local_repair,
+        private_evidence=private,
+        expected_objective=objective,
+        expected_selected_branch=0,
+        expected_enabled=True,
+        expected_margin=0.05,
+        expected_max_output_tokens=64,
+        expected_output_text=correct,
+        expected_output_tokens=tokens,
+    )
 
 
 def test_no_repair_budget_never_returns_a_deterministically_refuted_decode():

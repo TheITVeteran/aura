@@ -39502,3 +39502,48 @@ not prove a capability gain. Reasoning gain, frontier performance, fusion,
 activation, and `WOW Signal` remain false. The completion envelope remains
 `809/920` (approximately `87.9%`). A fresh source-bound v4 1.5B canary must now
 decide whether the complete treatment earns a resident-32B campaign.
+
+## Checkpoint 2026-08-08-060: Public Objective Programs Become Exact Evidence
+
+The published CP059 v4 canary completed in `711.8s` on the immutable 1.5B
+checkpoint. All training stages and eight on-policy optimizer updates executed.
+The intrinsic recurrent arm improved from `0/8` to `1/8`, while the complete
+engine held the ordinary floor exactly at `4/8` before and after training with
+zero ordinary-output drift, training regression, depth regression, or incumbent
+binding failure. It correctly rejected the adapter because it authorized no
+strict gain.
+
+That paired result localized the missing authority. Contract repair produced
+shape-valid branch answers, but the deterministic verifier could check only
+wire shape, isolated arithmetic claims, and syntax. It could not execute the
+boolean or modular program stated in the public task prompt. Furthermore,
+answer replacement retained private branch evidence only when a local-repair
+request or refuted incumbent happened to exist, despite its own policy claiming
+that independently verified branch candidates were promotable. All eight
+complete-engine observations therefore retained the incumbent without ever
+building a semantically decisive candidate interval.
+
+Aura now has a parameterless objective-program verifier for the bounded public
+`nested_boolean` and `modular_chain` languages. It parses the prompt, checks
+declared operation counts and numeric bounds, executes the program, parses the
+strict terminal JSON, and emits a text-free hash-bound verdict. No expected
+answer or private task grader enters the engine. The answer-replacement
+validator reconstructs every branch and repaired-candidate decomposition and
+route from private text in its own trust domain before accepting a confidence
+interval. Available branch candidates now always enter that replay, even when
+no repair request was needed. A wrong ordinary incumbent can consequently be
+replaced by an exactly proven branch; a correct exactly proven incumbent still
+cannot be displaced.
+
+The new module is included in both the canary's immutable source binding and
+the critic's declared, dependency-audited source closure. The expanded RLC
+engine, critic, repair, replacement, replay, wiring, and admission suite passes
+`305/305`; canonical smoke passes `103/103`; Ruff, compilation, critic
+dependency audit, and diff hygiene pass. Compact run evidence is
+`artifacts/closeout/latent_cortex/cp060_complete_engine_verifier_gap_1p5b.json`.
+This repairs the measured inference gap but does not retroactively turn CP059
+into a gain. Reasoning gain, frontier performance, fusion, activation, and
+`WOW Signal` remain false. The completion envelope remains `809/920`
+(approximately `87.9%`). A fresh published-source v4 canary must test whether
+the exact objective lane now converts trained candidate quality into a strict,
+floor-preserving complete-engine gain.

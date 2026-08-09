@@ -152,7 +152,19 @@ def _route_atom(
     atom: Mapping[str, Any],
     *,
     code_atom_count: int,
+    objective: str = "",
 ) -> tuple[str, str, dict[str, Any]]:
+    from core.brain.llm.latent_cortex.objective_program_verifier import (
+        verify_objective_program,
+    )
+
+    objective_program = verify_objective_program(fragment, objective=objective)
+    if objective_program is not None:
+        return (
+            objective_program["outcome"],
+            "exact_objective_program",
+            objective_program,
+        )
     if atom.get("kind") == "code":
         if code_atom_count > 1:
             return (
@@ -234,6 +246,7 @@ def build_deterministic_router_receipt(
             fragment,
             atom,
             code_atom_count=code_atom_count,
+            objective=objective,
         )
         tool_payload = {
             "tool_id": verifier,

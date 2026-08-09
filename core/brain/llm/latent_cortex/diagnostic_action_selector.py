@@ -30,6 +30,7 @@ _METHOD_OPERATION = {
 _EXACT_VERIFIERS = {
     "exact_integer_arithmetic",
     "exact_modular_arithmetic",
+    "exact_objective_program",
     "python_ast",
     "json_parser",
 }

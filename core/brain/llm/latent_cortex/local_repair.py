@@ -37,6 +37,7 @@ _SHA256_RE = re.compile(r"[0-9a-f]{64}\Z")
 _EXACT_VERIFIERS = {
     "exact_integer_arithmetic",
     "exact_modular_arithmetic",
+    "exact_objective_program",
     "python_ast",
     "json_parser",
 }
