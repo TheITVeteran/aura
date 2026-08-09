@@ -2609,6 +2609,62 @@ class UnitaryResponsePhase(Phase):
             logger.debug("UnitaryResponse: recent episodic recall failed: %s", exc)
             return []
 
+    #: Words that carry no retrieval signal. A memory matching "about" tells
+    #: you nothing about whether it is the memory being asked for.
+    _RECALL_STOPWORDS: frozenset[str] = frozenset(
+        {
+            "the", "and", "that", "this", "with", "from", "what", "when",
+            "was", "were", "you", "your", "did", "does", "have", "has",
+            "had", "said", "say", "tell", "told", "about", "there", "then",
+            "them", "they", "some", "something", "anything", "just", "like",
+            "which", "would", "could", "should", "into", "over", "back",
+            "again", "still", "more", "most", "other", "than", "thing",
+            "things", "know", "think", "remember", "recall", "time",
+        }
+    )
+
+    @classmethod
+    def _token_distinctiveness(cls, token: str) -> float:
+        """How much a match on this token should count, in [0, 4].
+
+        Replaces a length floor that scored "something" and ignored "fox".
+        Distinctiveness comes from three things a stopword list cannot fake:
+
+          * digits and punctuation-bearing tokens are almost always specific
+            ("3:14", "v2", "412") — these are the ones a person quotes back;
+          * a token absent from the stopword list carries content;
+          * very short tokens are ambiguous ONLY when they are also common,
+            so shortness alone is not a penalty.
+
+        Bounded above so no single token can dominate the score the way the
+        hardcoded +4.0 did.
+        """
+        word = str(token or "").strip().lower()
+        if not word or word in cls._RECALL_STOPWORDS:
+            return 0.0
+        has_digit = any(character.isdigit() for character in word)
+        has_separator = any(character in ":._-/" for character in word)
+        if has_digit or has_separator:
+            # A number or a structured token is the thing people quote back
+            # verbatim, and matching one is strong evidence.
+            return 2.5
+        if len(word) < 3:
+            # One and two-letter tokens are function words or fragments.
+            return 0.0
+        # Every other content word counts the SAME.
+        #
+        # The first version of this graded by length — 1.5 at eight
+        # characters, 1.0 at five, 0.75 at three — and a test comparing "fox"
+        # against "otter" caught it: the two scored differently for the same
+        # sentence, which is the very asymmetry the hardcoded bonuses
+        # created. Grading by length also contradicts the argument directly
+        # above it, that distinctiveness is not length.
+        #
+        # Without a corpus there is no honest basis for a gradient, and an
+        # invented one is a magic number that quietly decides which memories
+        # surface. Equal weight is the claim the evidence supports.
+        return 1.0
+
     @classmethod
     def _score_memory_candidate(cls, candidate: str, objective: str) -> float:
         text = cls._normalize_text(candidate)
@@ -2629,17 +2685,26 @@ class UnitaryResponsePhase(Phase):
             score += 3.0
         if "exact phrase" in lowered or "phrase" in lowered:
             score += 1.5
-        if "fox" in lowered:
-            score += 4.0
-        if "3:14" in lowered:
-            score += 2.5
-        if "bryan" in lowered:
-            score += 1.5
-
+        # The three literal boosts that used to live here — "fox" +4.0,
+        # "3:14" +2.5, "bryan" +1.5 — are gone.
+        #
+        # They were not arbitrary: they were a patch over a real defect
+        # immediately below. The general overlap rule required
+        # ``len(token) > 3``, so "fox" scored NOTHING through the general
+        # path, and someone made the demo work by naming it. The cost was
+        # that the very examples used to show memory working were the ones
+        # the scorer privileged, so those demos could not be read as
+        # evidence about general retrieval at all.
+        #
+        # The fix is to the cause. A token's worth is its DISTINCTIVENESS,
+        # not its length: "fox" and "3:14" are short and highly specific,
+        # while "about" and "something" are longer and carry nothing. A
+        # length floor gets that exactly backwards.
         objective_tokens = set(re.findall(r"[a-z0-9:]+", objective_lower))
         for token in objective_tokens:
-            if len(token) > 3 and token in lowered:
-                score += 0.75
+            if token not in lowered:
+                continue
+            score += cls._token_distinctiveness(token)
 
         if lowered.endswith("?"):
             score -= 2.0

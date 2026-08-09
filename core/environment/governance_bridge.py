@@ -75,7 +75,21 @@ class EnvironmentGovernanceBridge:
                 payload,
                 source="environment_kernel",
                 priority=priority,
-                is_critical=bool(payload["risk"] in {"irreversible", "forbidden"}),
+                # NEVER from risk. The Will documents is_critical as "the ONLY
+                # bypass" and its critical path returns an unconditional
+                # CRITICAL_PASS — so passing True here meant the two HIGHEST
+                # risk classes were the two that skipped the veto. Exactly
+                # inverted: "irreversible" and "forbidden" are the labels that
+                # most need a decision, and they were the labels that got one
+                # for free.
+                #
+                # is_critical exists for safety-critical actions that must not
+                # be blocked — an emergency stop, a thermal shutdown. An
+                # environment intent is not that, and this bridge has no way to
+                # know if it were, so it never claims it. A caller with a
+                # genuine safety-critical action states it explicitly rather
+                # than having it inferred from a risk word.
+                is_critical=False,
             )
             return GovernanceDecision(
                 approved=bool(decision.approved),

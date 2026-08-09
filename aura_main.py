@@ -2760,6 +2760,9 @@ async def run_server_async(
 
 
 
+_AMBIENT_STARTED = False
+
+
 def _start_ambient_presence() -> None:
     """Start companion mode: she keeps looking so the answer is already there.
 
@@ -2772,6 +2775,13 @@ def _start_ambient_presence() -> None:
     is a desktop where she looks when asked, which is the behaviour that
     existed before this loop.
     """
+    global _AMBIENT_STARTED
+    if _AMBIENT_STARTED:
+        # Two desktop entry points can both reach here. A second loop would
+        # double the observation rate and the speech budget, which is the
+        # opposite of what a quiet companion should do when someone launches
+        # her a slightly different way.
+        return
     if _env_flag_disabled("AURA_AMBIENT_PRESENCE"):
         logger.info("Ambient companion mode disabled by AURA_AMBIENT_PRESENCE.")
         return
@@ -2791,6 +2801,7 @@ def _start_ambient_presence() -> None:
             get_ambient_presence().run(interval_s=interval),
             name="AmbientPresenceLoop",
         )
+        _AMBIENT_STARTED = True
         logger.info("👁️ Ambient companion mode active (%.0fs cadence).", interval)
     except (ImportError, AttributeError, RuntimeError, TypeError, ValueError) as exc:
         record_degradation(
@@ -3228,6 +3239,17 @@ async def run_desktop(
             if owner.requested:
                 return
             tracker.create_task(orchestrator.run(), name="OrchestratorMainLoop")
+            # This is a DESKTOP boot, so companion mode belongs here too. It
+            # was started on only one of the desktop paths, which meant that
+            # whether she kept looking depended on which entry point launched
+            # her — invisible from the outside, and indistinguishable from
+            # the loop being broken.
+            #
+            # Deliberately NOT added to the philosophy-stream path: that boot
+            # has no desktop session, so an observation loop there would be
+            # reading a screen nobody is sitting at. The asymmetry is a
+            # decision, not an oversight, which is why it is written down.
+            _start_ambient_presence()
 
             # 2. Verify API Server (v21: Server now runs in Kernel)
             if api_task is None or api_task.done():

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import re
+
 import asyncio
 import copy
 import hashlib
@@ -111,6 +113,108 @@ def _is_background_processing_placeholder(text: Any) -> bool:
     if not value:
         return False
     return value.startswith(_BACKGROUND_PROCESSING_PREFIXES)
+
+
+#: Sentence openers that state a POSITIVE stance toward what follows.
+_POSITIVE_STANCE_RE = re.compile(
+    r"^\s*(?:i\s*(?:'m|’m)?\s*)?(?:really\s+|genuinely\s+|do\s+)?"
+    r"(?:like|love|enjoy|admire|appreciate|prefer|favou?r|am\s+drawn\s+to|"
+    r"find\s+\w+\s+(?:beautiful|elegant|compelling|lovely))\b",
+    re.IGNORECASE,
+)
+
+#: Openers that state a NEGATIVE stance. Checked BEFORE the positive class,
+#: because "I don't like X" contains "like".
+_NEGATIVE_STANCE_RE = re.compile(
+    r"^\s*(?:i\s*(?:'m|’m)?\s*)?(?:really\s+|genuinely\s+)?"
+    r"(?:do\s*n[o'’]?t\s+(?:like|enjoy|care\s+for)|don'?t\s+(?:like|enjoy)|"
+    r"dislike|hate|avoid|can'?t\s+stand|am\s+averse\s+to|"
+    r"find\s+\w+\s+(?:tedious|ugly|tiresome|unpleasant))\b",
+    re.IGNORECASE,
+)
+
+#: Openers that state INTEREST without valence. "I'm curious about X" is a
+#: real stance and it is neither attraction nor aversion.
+_CURIOUS_STANCE_RE = re.compile(
+    # "I'm" has no space after the I, which an `i\s+` prefix silently misses —
+    # the contraction is the common form, so missing it means missing most of
+    # the class.
+    r"^\s*(?:i\s*(?:'m|’m|\s+am)?\s*)?(?:curious|intrigued|fascinated)\b",
+    re.IGNORECASE,
+)
+
+#: A negation anywhere in a sentence flips it, even when the opener looked
+#: positive: "I think the elegant solution is NOT worth the complexity".
+_NEGATION_ANYWHERE_RE = re.compile(
+    r"\b(?:not|never|no longer|rather than|instead of|except)\b", re.IGNORECASE
+)
+
+
+#: Evaluative words that carry polarity wherever they appear. A stance can be
+#: stated without a stance VERB — "that approach is elegant" is a preference,
+#: and the first version of this parser refused it.
+_POSITIVE_EVALUATION_RE = re.compile(
+    r"\b(?:elegant|beautiful|lovely|brilliant|excellent|wonderful|"
+    r"delightful|remarkable|finest|best|greatest|favou?rite|"
+    r"most\s+\w+|compelling|satisfying|graceful)\b",
+    re.IGNORECASE,
+)
+
+_NEGATIVE_EVALUATION_RE = re.compile(
+    r"\b(?:tedious|ugly|awful|terrible|dreadful|clumsy|tiresome|"
+    r"unpleasant|worst|pointless|dismal|irritating|graceless)\b",
+    re.IGNORECASE,
+)
+
+def _stance_of_position(text: str) -> str | None:
+    """Which stance this self-stated position expresses, or None.
+
+    None means the polarity could not be established, and the caller records
+    NOTHING. That is the whole correction: the previous behaviour assumed
+    attraction for every position, so a stated dislike became a stated
+    liking. Guessing in the ambiguous case would be the same defect with a
+    smaller blast radius.
+
+    Deliberately conservative. A preference that fails to form costs one
+    missed stance; a preference that forms backwards means she will act on,
+    and defend, the opposite of what she said.
+    """
+    body = " ".join(str(text or "").split())
+    if not body:
+        return None
+    # Negative first: "I don't like X" matches the positive pattern too.
+    if _NEGATIVE_STANCE_RE.search(body):
+        return "averse_to"
+    if _CURIOUS_STANCE_RE.search(body):
+        return "curious_about"
+    if _POSITIVE_STANCE_RE.search(body):
+        # A positive opener with a negation later is not positive.
+        opener_end = _POSITIVE_STANCE_RE.search(body).end()
+        if _NEGATION_ANYWHERE_RE.search(body[opener_end:]):
+            return None
+        return "drawn_to"
+    # An opener is not the only place polarity lives. "I think wave
+    # interference is the most elegant idea in physics" is a preference
+    # wearing a belief's clothes, and the signal is the EVALUATION, not the
+    # verb in front of it.
+    #
+    # This band was missed by the first version of the fix, which keyed only
+    # on like/dislike verbs and so refused a genuine stance. Both failures
+    # matter and they pull in opposite directions: too permissive stores a
+    # dislike as a liking, too strict forms nothing at all.
+    negated = bool(_NEGATION_ANYWHERE_RE.search(body))
+    positive = bool(_POSITIVE_EVALUATION_RE.search(body))
+    negative = bool(_NEGATIVE_EVALUATION_RE.search(body))
+    if positive and not negative:
+        return "averse_to" if negated else "drawn_to"
+    if negative and not positive:
+        return "drawn_to" if negated else "averse_to"
+
+    # Both polarities present, or neither. "I think X" with no evaluation
+    # states a BELIEF, and "I disagree with X" states a position — treating
+    # either as attraction is exactly how a disagreement became a liking.
+    # They belong to the belief system, not this one.
+    return None
 
 
 class CognitiveMode(Enum):
@@ -999,12 +1103,24 @@ class AuraState:
                 subject = " ".join(str(getattr(entry, "text", "")).split())[:80]
                 if len(subject) < 12:
                     continue
+                # POLARITY. Every position used to become "drawn_to",
+                # whatever it said, so "I don't like brutalist architecture"
+                # was stored as an attraction to brutalist architecture. A
+                # preference system that inverts the meaning of half its
+                # inputs is not forming preferences; it is accumulating
+                # subjects with a label attached at random.
+                stance = _stance_of_position(subject)
+                if stance is None:
+                    # Polarity unclear. Recording SOMETHING would be the old
+                    # bug with extra steps, so it records nothing: a stance
+                    # she cannot be shown to hold is not one she holds.
+                    continue
                 # The ledger folds a repeated statement into ONE entry and
                 # counts it in `mentions`. Registering a single encounter per
                 # entry would mean a position she took ten times weighed the
                 # same as one she said once, and nothing would ever form.
                 for _ in range(max(1, int(getattr(entry, "mentions", 1) or 1))):
-                    prefs.encounter(subject, stance="drawn_to")
+                    prefs.encounter(subject, stance=stance)
             self.identity.self_preferences = prefs.to_dict()
         except (ImportError, AttributeError, RuntimeError, TypeError, ValueError) as exc:
             from core.runtime.errors import record_degradation

@@ -12985,6 +12985,70 @@
       "scope": "<module>.Quarantine.isolate"
     },
     {
+      "callee": "root.mkdir",
+      "canonical_owner": false,
+      "category": "raw_file_mutation",
+      "count": 1,
+      "path": "core/security/existence_guard.py",
+      "scope": "<module>.ExistenceGuard.build_ark"
+    },
+    {
+      "callee": "target.parent.mkdir",
+      "canonical_owner": false,
+      "category": "raw_file_mutation",
+      "count": 1,
+      "path": "core/security/existence_guard.py",
+      "scope": "<module>.ExistenceGuard.build_ark"
+    },
+    {
+      "callee": "target.write_bytes",
+      "canonical_owner": false,
+      "category": "raw_file_mutation",
+      "count": 1,
+      "path": "core/security/existence_guard.py",
+      "scope": "<module>.ExistenceGuard.build_ark"
+    },
+    {
+      "callee": "write_text",
+      "canonical_owner": false,
+      "category": "raw_file_mutation",
+      "count": 1,
+      "path": "core/security/existence_guard.py",
+      "scope": "<module>.ExistenceGuard.build_ark"
+    },
+    {
+      "callee": "live.parent.mkdir",
+      "canonical_owner": false,
+      "category": "raw_file_mutation",
+      "count": 1,
+      "path": "core/security/existence_guard.py",
+      "scope": "<module>.ExistenceGuard.restore_from_ark"
+    },
+    {
+      "callee": "live.write_bytes",
+      "canonical_owner": false,
+      "category": "raw_file_mutation",
+      "count": 1,
+      "path": "core/security/existence_guard.py",
+      "scope": "<module>.ExistenceGuard.restore_from_ark"
+    },
+    {
+      "callee": "root.mkdir",
+      "canonical_owner": false,
+      "category": "raw_file_mutation",
+      "count": 1,
+      "path": "core/security/existence_guard.py",
+      "scope": "<module>.ExistenceGuard.witness"
+    },
+    {
+      "callee": "write_text",
+      "canonical_owner": false,
+      "category": "raw_file_mutation",
+      "count": 1,
+      "path": "core/security/existence_guard.py",
+      "scope": "<module>.ExistenceGuard.witness"
+    },
+    {
       "callee": "self._db_path.parent.mkdir",
       "canonical_owner": false,
       "category": "raw_file_mutation",
@@ -15573,6 +15637,22 @@
       "canonical_owner": false,
       "category": "subprocess_gateway",
       "count": 1,
+      "path": "core/security/existence_guard.py",
+      "scope": "<module>.ExistenceGuard._chflags"
+    },
+    {
+      "callee": "core.runtime.subprocess_gateway.get_subprocess_gateway().run",
+      "canonical_owner": false,
+      "category": "subprocess_gateway",
+      "count": 1,
+      "path": "core/security/existence_guard.py",
+      "scope": "<module>.ExistenceGuard.is_sealed"
+    },
+    {
+      "callee": "core.runtime.subprocess_gateway.get_subprocess_gateway().run",
+      "canonical_owner": false,
+      "category": "subprocess_gateway",
+      "count": 1,
       "path": "core/security/integrity_guardian.py",
       "scope": "<module>.IntegrityGuardian._get_git_status_map"
     },
@@ -16490,6 +16570,6 @@
     }
   ],
   "description": "Exact AST effect-ownership debt ratchet; refresh only after reviewed change",
-  "inventory_sha256": "9e0656d61429c532a2f9ecf5fcdcfb0536b9f9155b5981bc8d2550b928f0d449",
+  "inventory_sha256": "ce02b993ad2fe90f3487543ab3f733b065620cb688e4c1f098633e7bee7ef1d1",
   "schema_version": 1
 }
