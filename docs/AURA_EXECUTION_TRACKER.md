@@ -39371,3 +39371,33 @@ remain false. The completion envelope remains `809/920` (approximately
 `87.9%`). The next bounded bridge must combine the learned public process with
 the existing generated-prefix, branch-specialization, and paired-depth answer
 objective. More trace-only updates are not admitted as a new experiment.
+
+## Checkpoint 2026-08-08-056: Process and Answer Learning Share One Adapter
+
+The bounded behavioral canary now trains the complete causal bridge that the
+CP055 result showed was missing. Its first phase acquires explicit public
+transition traces. A second phase gives the constructive and critical branches
+measured non-communication-slot separation. A third phase trains ordinary
+final-answer projection through the existing v6 composite: generated-prefix
+recovery, equal lexical responsibility for every branch, structural
+specialization, and an exact-adjoint paired-depth improvement hinge. Only then
+does verifier-scored process GRPO refine the same adapter.
+
+Process, answer-projection, and proxy tasks are deterministic but strictly
+disjoint by prompt and task identity. Each stage has its own crash-visible
+journal, source commit and execution-spec binding, before/after adapter
+fingerprints, and independently replayable objective receipts. Final evidence
+also measures branch separation across the complete answer-training panel.
+The canary cannot pass unless trace bootstrap, specialization, generated answer
+projection, paired-depth evidence, on-policy optimizer signal, immutable base
+weights, and the unchanged behavioral admission all pass together.
+
+The canary schema advances to v3 and binds objective v2, v5, and v6 source
+bytes without duplicate source entries. Joint curriculum, source identity,
+generated-prefix, specialization, paired-depth, process-reward, checkpoint,
+and tokenizer contracts pass `64/64`; Ruff, compilation, and diff hygiene pass.
+This proves the integrated experiment is executable, not that it improves
+reasoning. Reasoning gain, frontier performance, fusion, activation, and
+`WOW Signal` remain false. The completion envelope remains `809/920`
+(approximately `87.9%`). A fresh source-bound 1.5B v3 canary must decide
+whether the joint objective earns a resident-scale campaign.

@@ -93,6 +93,27 @@ def test_training_cycle_covers_every_task_before_repeating() -> None:
     assert observed[len(tasks) :] == observed[: len(tasks)]
 
 
+def test_joint_curricula_are_balanced_and_strictly_disjoint() -> None:
+    process, answer, proxy = canary._task_sets(2026080805)
+
+    assert len(process) == 8
+    assert len(answer) == 8
+    assert len(proxy) == 4
+    assert {task.family for task in process} == {"boolean", "modular"}
+    assert {task.family for task in answer} == {"boolean", "modular"}
+    assert {task.family for task in proxy} == {"boolean", "modular"}
+    all_tasks = [*process, *answer, *proxy]
+    assert len({task.task_id for task in all_tasks}) == len(all_tasks)
+    assert len({task.prompt for task in all_tasks}) == len(all_tasks)
+
+
+def test_source_contract_binds_every_joint_objective() -> None:
+    assert len(canary.SOURCE_PATHS) == len(set(canary.SOURCE_PATHS))
+    assert "core/learning/recurrence_native_objective_v2.py" in canary.SOURCE_PATHS
+    assert "core/learning/recurrence_native_objective_v5.py" in canary.SOURCE_PATHS
+    assert "core/learning/recurrence_native_objective_v6.py" in canary.SOURCE_PATHS
+
+
 def test_reward_is_correctness_dominant_and_format_credit_bounded() -> None:
     task = task_battery(["boolean"], [2], 1, seed=43)[0]
 

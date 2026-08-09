@@ -29,6 +29,7 @@ from core.brain.llm.latent_cortex.recurrence_adapter_identity_v2 import (  # noq
     full_weight_checkpoint_identity,
 )
 from core.learning.grpo import group_advantages, reward_from_verdict  # noqa: E402
+from core.learning.recurrence_curriculum import task_battery  # noqa: E402
 from core.learning.recurrent_behavioral_probe import (  # noqa: E402
     build_behavioral_probe_report,
     build_ordinary_decode_probe_report,
@@ -64,7 +65,7 @@ from core.runtime.atomic_writer import atomic_write_bytes  # noqa: E402
 from core.runtime.mlx_memory_guard import mlx_memory_envelope  # noqa: E402
 from core.runtime.model_lane_control import standalone_model_lane  # noqa: E402
 
-CANARY_SCHEMA: Final = "aura.recurrent_grpo_behavioral_canary.v2"
+CANARY_SCHEMA: Final = "aura.recurrent_grpo_behavioral_canary.v3"
 SOURCE_PATHS: Final = (
     "core/learning/grpo.py",
     "core/learning/recurrence_curriculum.py",
@@ -73,7 +74,8 @@ SOURCE_PATHS: Final = (
     "core/learning/recurrent_grpo.py",
     "core/learning/recurrent_process_curriculum.py",
     "core/learning/recurrence_native_objective_v2.py",
-    "core/learning/recurrence_native_objective_v2.py",
+    "core/learning/recurrence_native_objective_v5.py",
+    "core/learning/recurrence_native_objective_v6.py",
     "core/learning/recurrent_sft_execution.py",
     "core/learning/verified_token_trace.py",
     "core/brain/llm/latent_cortex/execution_spec.py",
@@ -206,6 +208,41 @@ def _cyclic_task(tasks: list[Any], *, one_based_step: int) -> Any:
     if not tasks or type(one_based_step) is not int or one_based_step < 1:
         raise ValueError("training task cycle coordinates are invalid")
     return tasks[(one_based_step - 1) % len(tasks)]
+
+
+def _task_sets(seed: int) -> tuple[list[Any], list[Any], list[Any]]:
+    """Build disjoint process, answer-projection, and proxy curricula."""
+
+    if type(seed) is not int or not 0 <= seed <= 2**63 - 1:
+        raise ValueError("seed must be inside [0, 2^63-1]")
+    process_tasks = process_task_battery(
+        ["boolean", "modular"],
+        [2],
+        4,
+        seed=seed,
+    )
+    answer_tasks = task_battery(
+        ["boolean", "modular"],
+        [2],
+        4,
+        seed=seed + 104_729,
+        excluded_prompts=tuple(task.prompt for task in process_tasks),
+        excluded_task_ids=tuple(task.task_id for task in process_tasks),
+    )
+    excluded = [*process_tasks, *answer_tasks]
+    proxy_tasks = task_battery(
+        ["boolean", "modular"],
+        [2],
+        2,
+        seed=seed + 7_919,
+        excluded_prompts=tuple(task.prompt for task in excluded),
+        excluded_task_ids=tuple(task.task_id for task in excluded),
+    )
+    ids = [task.task_id for task in excluded + proxy_tasks]
+    prompts = [task.prompt for task in excluded + proxy_tasks]
+    if len(ids) != len(set(ids)) or len(prompts) != len(set(prompts)):
+        raise RuntimeError("joint recurrent curriculum is not disjoint")
+    return process_tasks, answer_tasks, proxy_tasks
 
 
 def _grade_reward(
@@ -348,15 +385,32 @@ def run_canary(
     learning_rate: float,
     bootstrap_steps: int,
     bootstrap_learning_rate: float,
+    specialization_steps: int,
+    specialization_learning_rate: float,
+    projection_steps: int,
+    projection_learning_rate: float,
     memory_fraction: float,
 ) -> dict[str, Any]:
     import mlx.core as mx
     import mlx.optimizers as optim
     from mlx_lm import load
 
-    from core.learning.recurrence_curriculum import task_battery
     from core.learning.recurrence_native_objective_v2 import (
+        ExactAdjointTrajectoryConfig,
         cached_supervised_live_path_value_and_grad,
+    )
+    from core.learning.recurrence_native_objective_v5 import (
+        GeneratedRollinSelectionConfig,
+        derive_rollin_seed,
+    )
+    from core.learning.recurrence_native_objective_v6 import (
+        COMPOSITE_DEPTH_RECEIPT_SCHEMA,
+        BranchSpecializationConfig,
+        branch_specialization_live_path_loss,
+        branch_specialization_live_path_value_and_grad,
+        generated_rollin_specialization_value_and_grad,
+        validate_branch_specialization_receipt,
+        validate_generated_rollin_specialization_receipt,
     )
 
     if type(steps) is not int or not 1 <= steps <= 16:
@@ -365,11 +419,17 @@ def run_canary(
         raise ValueError("group_size must be inside [2, 8]")
     if type(bootstrap_steps) is not int or not 1 <= bootstrap_steps <= 32:
         raise ValueError("bootstrap_steps must be inside [1, 32]")
+    if type(specialization_steps) is not int or not 1 <= specialization_steps <= 16:
+        raise ValueError("specialization_steps must be inside [1, 16]")
+    if type(projection_steps) is not int or not 1 <= projection_steps <= 16:
+        raise ValueError("projection_steps must be inside [1, 16]")
     if type(seed) is not int or not 0 <= seed <= 2**63 - 1:
         raise ValueError("seed must be inside [0, 2^63-1]")
     for name, value in (
         ("learning_rate", learning_rate),
         ("bootstrap_learning_rate", bootstrap_learning_rate),
+        ("specialization_learning_rate", specialization_learning_rate),
+        ("projection_learning_rate", projection_learning_rate),
     ):
         if (
             isinstance(value, bool)
@@ -393,6 +453,20 @@ def run_canary(
     grpo_config = RecurrentGRPOConfig(
         kl_coefficient=0.04,
         advantage_clip=4.0,
+    )
+    generated_config = GeneratedRollinSelectionConfig(
+        student_forcing_probability=0.5,
+        sampling_temperature=0.8,
+        branch_softmin_temperature=0.5,
+    )
+    specialization_config = BranchSpecializationConfig(
+        weight=8.0,
+        target_separation=0.30,
+    )
+    trajectory_config = ExactAdjointTrajectoryConfig(
+        probe_steps=(1, 2),
+        improvement_weight=1.0,
+        improvement_margin=0.05,
     )
     with (
         standalone_model_lane(
@@ -428,20 +502,21 @@ def run_canary(
             role_conditioned_branches=len(spec.branch_roles),
         )
         adapter_before = adapter_tensor_fingerprint(adapter_tensor_dict(model))
-        training_tasks = process_task_battery(
-            ["boolean", "modular"],
-            [2],
-            4,
-            seed=seed,
-        )
-        proxy_tasks = task_battery(
-            ["boolean", "modular"],
-            [2],
-            2,
-            seed=seed + 7_919,
-            excluded_prompts=tuple(task.prompt for task in training_tasks),
-            excluded_task_ids=tuple(task.task_id for task in training_tasks),
-        )
+        training_tasks, answer_tasks, proxy_tasks = _task_sets(seed)
+        answer_rows: list[dict[str, Any]] = []
+        for task in answer_tasks:
+            prompt_tokens, answer_tokens = tokenize_task(
+                tokenizer,
+                task.prompt,
+                task.answer,
+            )
+            answer_rows.append(
+                {
+                    "task_id": task.task_id,
+                    "prompt_tokens": prompt_tokens,
+                    "answer_tokens": answer_tokens,
+                }
+            )
         proxy_manifest, proxy_manifest_sha256 = build_recurrence_task_manifest(proxy_tasks)
         _status(out_dir, "baseline_probe")
         before = build_behavioral_probe_report(
@@ -532,6 +607,211 @@ def run_canary(
             mx.clear_cache()
         del bootstrap_optimizer
         mx.clear_cache()
+
+        specialization_optimizer = optim.AdamW(
+            learning_rate=float(specialization_learning_rate),
+            weight_decay=0.0,
+        )
+        specialization_optimizer.init(model.trainable_parameters())
+        specialization_trail: list[dict[str, Any]] = []
+        for specialization_step in range(1, specialization_steps + 1):
+            row = _cyclic_task(answer_rows, one_based_step=specialization_step)
+            _status(
+                out_dir,
+                "branch_specialization",
+                step=specialization_step,
+                steps=specialization_steps,
+                task_id=row["task_id"],
+            )
+            adapter_step_before = adapter_tensor_fingerprint(adapter_tensor_dict(model))
+            result = branch_specialization_live_path_value_and_grad(
+                model,
+                row["prompt_tokens"],
+                spec=spec,
+                config=specialization_config,
+            )
+            objective_receipt = validate_branch_specialization_receipt(
+                result.evaluation.receipt()
+            )
+            specialization_optimizer.update(model, result.gradients)
+            mx.eval(model.trainable_parameters(), specialization_optimizer.state)
+            post_update = branch_specialization_live_path_loss(
+                model,
+                row["prompt_tokens"],
+                spec=spec,
+                config=specialization_config,
+            )
+            adapter_step_after = adapter_tensor_fingerprint(adapter_tensor_dict(model))
+            if adapter_step_after == adapter_step_before:
+                raise RuntimeError("branch specialization update did not mutate the policy")
+            specialization_trail.append(
+                {
+                    "step": specialization_step,
+                    "task_id": row["task_id"],
+                    "loss_before": float(result.value),
+                    "separations_before": list(result.evaluation.separations),
+                    "loss_after": float(post_update.value),
+                    "separations_after": list(post_update.separations),
+                    "objective_receipt": objective_receipt,
+                    "adapter_before_sha256": adapter_step_before,
+                    "adapter_after_sha256": adapter_step_after,
+                }
+            )
+            specialization_body = {
+                "schema": "aura.recurrent_branch_specialization.journal.v1",
+                "source_commit": source_commit,
+                "execution_spec_sha256": spec.sha256,
+                "seed": seed,
+                "configured_steps": specialization_steps,
+                "completed_steps": specialization_step,
+                "trail": specialization_trail,
+            }
+            atomic_write_bytes(
+                out_dir / "specialization_journal.json",
+                canonical_json_bytes(
+                    {
+                        **specialization_body,
+                        "journal_sha256": hashlib.sha256(
+                            canonical_json_bytes(specialization_body)
+                        ).hexdigest(),
+                    }
+                ),
+                mode=0o600,
+            )
+            print(
+                "[recurrent-grpo-canary] "
+                f"specialization={specialization_step}/{specialization_steps} "
+                f"task={row['task_id']} loss={post_update.value:.4f} "
+                f"min_separation={min(post_update.separations):.4f}",
+                flush=True,
+            )
+            del result, post_update
+            mx.synchronize()
+            mx.clear_cache()
+        del specialization_optimizer
+        mx.clear_cache()
+
+        projection_optimizer = optim.AdamW(
+            learning_rate=float(projection_learning_rate),
+            weight_decay=0.0,
+        )
+        projection_optimizer.init(model.trainable_parameters())
+        projection_trail: list[dict[str, Any]] = []
+        for projection_step in range(1, projection_steps + 1):
+            row = _cyclic_task(answer_rows, one_based_step=projection_step)
+            _status(
+                out_dir,
+                "answer_projection",
+                step=projection_step,
+                steps=projection_steps,
+                task_id=row["task_id"],
+            )
+            rollin_seed = derive_rollin_seed(
+                campaign_seed=seed,
+                phase="joint_process_answer_projection",
+                example_id=row["task_id"],
+                sample_ordinal=projection_step,
+                execution_spec_sha256=spec.sha256,
+            )
+            adapter_step_before = adapter_tensor_fingerprint(adapter_tensor_dict(model))
+            policy_before = recurrent_policy_sha256(model, spec)
+            result = generated_rollin_specialization_value_and_grad(
+                model,
+                row["prompt_tokens"],
+                row["answer_tokens"],
+                spec=spec,
+                base_seed=rollin_seed,
+                generated_config=generated_config,
+                specialization_config=specialization_config,
+                trajectory_config=trajectory_config,
+                trajectory_policy_sha256=policy_before,
+            )
+            objective_receipt = validate_generated_rollin_specialization_receipt(
+                result.evaluation.receipt()
+            )
+            projection_optimizer.update(model, result.gradients)
+            mx.eval(model.trainable_parameters(), projection_optimizer.state)
+            adapter_step_after = adapter_tensor_fingerprint(adapter_tensor_dict(model))
+            policy_after = recurrent_policy_sha256(model, spec)
+            if adapter_step_after == adapter_step_before or policy_after == policy_before:
+                raise RuntimeError("answer projection update did not mutate the policy")
+            trajectory = result.evaluation.trajectory
+            if trajectory is None:
+                raise RuntimeError("answer projection omitted paired-depth evidence")
+            projection_trail.append(
+                {
+                    "step": projection_step,
+                    "task_id": row["task_id"],
+                    "loss": float(result.value),
+                    "lexical_loss": float(result.evaluation.generated.value),
+                    "specialization_loss": float(result.evaluation.specialization.value),
+                    "trajectory_loss": float(trajectory.value),
+                    "branch_separations": list(result.evaluation.specialization.separations),
+                    "branch_values": list(result.branch_values),
+                    "branch_weights": list(result.branch_weights),
+                    "rollin_base_seed": rollin_seed,
+                    "objective_receipt": objective_receipt,
+                    "adapter_before_sha256": adapter_step_before,
+                    "adapter_after_sha256": adapter_step_after,
+                    "policy_before_sha256": policy_before,
+                    "policy_after_sha256": policy_after,
+                }
+            )
+            projection_body = {
+                "schema": "aura.recurrent_answer_projection.journal.v1",
+                "source_commit": source_commit,
+                "execution_spec_sha256": spec.sha256,
+                "seed": seed,
+                "configured_steps": projection_steps,
+                "completed_steps": projection_step,
+                "trail": projection_trail,
+            }
+            atomic_write_bytes(
+                out_dir / "projection_journal.json",
+                canonical_json_bytes(
+                    {
+                        **projection_body,
+                        "journal_sha256": hashlib.sha256(
+                            canonical_json_bytes(projection_body)
+                        ).hexdigest(),
+                    }
+                ),
+                mode=0o600,
+            )
+            print(
+                "[recurrent-grpo-canary] "
+                f"projection={projection_step}/{projection_steps} "
+                f"task={row['task_id']} loss={result.value:.4f} "
+                f"depth_loss={trajectory.value:.4f}",
+                flush=True,
+            )
+            del result
+            mx.synchronize()
+            mx.clear_cache()
+        del projection_optimizer
+        mx.clear_cache()
+
+        specialization_panel: list[dict[str, Any]] = []
+        for row in answer_rows:
+            evaluation = branch_specialization_live_path_loss(
+                model,
+                row["prompt_tokens"],
+                spec=spec,
+                config=specialization_config,
+            )
+            specialization_panel.append(
+                {
+                    "task_id": row["task_id"],
+                    "loss": float(evaluation.value),
+                    "separations": list(evaluation.separations),
+                    "objective_receipt": validate_branch_specialization_receipt(
+                        evaluation.receipt()
+                    ),
+                }
+            )
+            del evaluation
+            mx.clear_cache()
+
         optimizer = build_recurrent_policy_optimizer(float(learning_rate))
         optimizer.init(model.trainable_parameters())
         step_receipts: list[dict[str, Any]] = []
@@ -711,6 +991,28 @@ def run_canary(
         "all_samples_admitted": all_samples_admitted,
         "optimizer_signal_observed": optimizer_updates > 0,
         "process_bootstrap_completed": len(bootstrap_trail) == bootstrap_steps,
+        "branch_specialization_completed": (
+            len(specialization_trail) == specialization_steps
+        ),
+        "answer_projection_completed": len(projection_trail) == projection_steps,
+        "branch_specialization_target_met": bool(
+            specialization_panel
+            and all(
+                row["separations"]
+                and min(row["separations"])
+                >= float(specialization_config.target_separation)
+                for row in specialization_panel
+            )
+        ),
+        "paired_depth_projection_exercised": bool(
+            projection_trail
+            and all(
+                row["objective_receipt"].get("schema")
+                == COMPOSITE_DEPTH_RECEIPT_SCHEMA
+                and "trajectory_receipt" in row["objective_receipt"]
+                for row in projection_trail
+            )
+        ),
         "adapter_mutated": adapter_before != adapter_after,
         "heldout_free_generation_strict_gain": bool(
             admission is not None and admission["admitted"]
@@ -748,13 +1050,27 @@ def run_canary(
             "weight_decay": 0.0,
             "objective": "exact_cached_live_path_full_public_trace_ce",
         },
+        "joint_answer_projection_config": {
+            "specialization_steps": specialization_steps,
+            "specialization_learning_rate": float(specialization_learning_rate),
+            "projection_steps": projection_steps,
+            "projection_learning_rate": float(projection_learning_rate),
+            "generated": generated_config.to_dict(),
+            "specialization": specialization_config.to_dict(),
+            "trajectory": trajectory_config.to_dict(),
+            "objective": "generated_prefix_role_and_depth_specialized_answer_ce",
+        },
         "seed": seed,
         "steps": steps,
         "optimizer_updates": optimizer_updates,
         "adapter_before_sha256": adapter_before,
         "adapter_after_sha256": adapter_after,
-        "training_task_ids": [task.task_id for task in training_tasks],
+        "process_training_task_ids": [task.task_id for task in training_tasks],
+        "answer_projection_task_ids": [task.task_id for task in answer_tasks],
         "process_bootstrap_trail": bootstrap_trail,
+        "branch_specialization_trail": specialization_trail,
+        "answer_projection_trail": projection_trail,
+        "branch_specialization_panel": specialization_panel,
         "proxy_task_manifest": proxy_manifest,
         "proxy_task_manifest_sha256": proxy_manifest_sha256,
         "free_generation_before": before,
@@ -800,8 +1116,12 @@ def main() -> int:
     parser.add_argument("--group-size", type=int, default=4)
     parser.add_argument("--seed", type=int, default=2026080701)
     parser.add_argument("--learning-rate", type=float, default=5e-5)
-    parser.add_argument("--bootstrap-steps", type=int, default=8)
+    parser.add_argument("--bootstrap-steps", type=int, default=32)
     parser.add_argument("--bootstrap-learning-rate", type=float, default=1e-4)
+    parser.add_argument("--specialization-steps", type=int, default=8)
+    parser.add_argument("--specialization-learning-rate", type=float, default=1e-3)
+    parser.add_argument("--projection-steps", type=int, default=8)
+    parser.add_argument("--projection-learning-rate", type=float, default=1e-4)
     parser.add_argument("--memory-fraction", type=float, default=0.35)
     args = parser.parse_args()
     out_dir = args.out_dir.expanduser().resolve(strict=False)
@@ -815,6 +1135,10 @@ def main() -> int:
             learning_rate=args.learning_rate,
             bootstrap_steps=args.bootstrap_steps,
             bootstrap_learning_rate=args.bootstrap_learning_rate,
+            specialization_steps=args.specialization_steps,
+            specialization_learning_rate=args.specialization_learning_rate,
+            projection_steps=args.projection_steps,
+            projection_learning_rate=args.projection_learning_rate,
             memory_fraction=args.memory_fraction,
         )
     except Exception as exc:
