@@ -543,6 +543,7 @@ def install_runtime_validation() -> dict[str, Any]:
         "rlc_governed_web_acquisition",
         "rlc_verified_amplifier_composition",
         "kernel_confined_symbolic_cognition",
+        "rlc_closed_loop_compute",
     )
     suite.add_model(model)
 
@@ -666,6 +667,31 @@ def install_runtime_validation() -> dict[str, Any]:
                 subject="symbolic cognition kernel boundary",
             ),
             owner="core/brain/symbolic_sandbox.py",
+        )
+    )
+    suite.add_test(
+        ValidationTest(
+            name="recurrent_compute_actions_receive_machine_feedback",
+            description=(
+                "successful formalize and simulate actions produce one bounded, "
+                "typed machine observation for one recurrent continuation"
+            ),
+            required_capability="rlc_closed_loop_compute",
+            observation=Observation(
+                name="rlc_compute_continuation_contract_holds",
+                value=True,
+                source=(
+                    "core/brain/cortex_compute_acquisition.py and "
+                    "tests/test_rlc_cognitive_acquisition.py"
+                ),
+            ),
+            predict=lambda _m: _rlc_compute_continuation_contract_holds(),
+            score=lambda p, o: boolean_score(
+                bool(p),
+                expected=bool(o.value),
+                subject="RLC closed-loop compute",
+            ),
+            owner="core/brain/latent_cortex_service.py",
         )
     )
     suite.add_test(
@@ -1019,6 +1045,23 @@ def install_runtime_validation() -> dict[str, Any]:
     suite.add_claim(
         Claim(
             statement=(
+                "When recurrent cognition chooses to formalize or simulate, one "
+                "bounded machine result can causally inform a second episode."
+            ),
+            test="recurrent_compute_actions_receive_machine_feedback",
+            owner="core/brain/latent_cortex_service.py",
+            asserted_in="docs/AURA_EXECUTION_TRACKER.md",
+            evidence=Evidence.MEASURED_SYNTHETIC,
+            evidence_note=(
+                "Exact-math contradiction, single sandbox execution, typed evidence "
+                "admission, and the one-round continuation cap are contract-tested. "
+                "Resident-32B selection frequency and reasoning gain remain empirical gates."
+            ),
+        )
+    )
+    suite.add_claim(
+        Claim(
+            statement=(
                 "A successful current-turn governed observation can causally seed "
                 "the recurrent workspace without gaining instruction authority."
             ),
@@ -1150,6 +1193,44 @@ def _symbolic_cognition_boundary_available() -> bool:
     from core.sandbox.untrusted_python import available_boundary
 
     return available_boundary() in {"seatbelt", "bubblewrap"}
+
+
+def _rlc_compute_continuation_contract_holds() -> bool:
+    from core.brain.llm.latent_cortex.cognitive_acquisition import (
+        acquisition_has_new_context,
+        build_acquisition_request,
+    )
+
+    transition = {
+        "action": "formalize",
+        "outcome": "succeeded",
+        "checked": True,
+    }
+    request = build_acquisition_request(
+        objective="Compute 12 * 13 exactly.",
+        first_text="The answer is 157.",
+        first_receipt={
+            "cognitive_action_trace": [
+                {"decision": {"action": "formalize"}, "transition": transition}
+            ]
+        },
+        cognitive_context=None,
+    )
+    return bool(
+        request
+        and request.get("action") == "formalize"
+        and request.get("max_acquisitions") == 1
+        and request.get("max_continuation_rounds") == 1
+        and acquisition_has_new_context(
+            request,
+            [
+                {
+                    "source": "capability.symbolic_formalize",
+                    "text": "exact(12*13) = 156",
+                }
+            ],
+        )
+    )
 
 
 def _lockdep() -> dict[str, Any]:

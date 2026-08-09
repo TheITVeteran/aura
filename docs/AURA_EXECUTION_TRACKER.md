@@ -39973,3 +39973,42 @@ This proves source-level causal composition and host kernel confinement, not an
 installed-app, resident-32B, broad capability-gain, intrinsic-neural-transfer,
 frontier, fusion, activation, or `WOW Signal` result. The completion envelope
 remains `809/920` (approximately `87.9%`).
+
+## Checkpoint 2026-08-09-074: Cognitive Operations Receive Machine Results
+
+CP073 composed the recurrent answer with Aura's verifier-backed amplifier, but
+two in-episode operation labels were still only descriptions. A successful
+`FORMALIZE` or `SIMULATE` transition did not cause a deterministic computation
+before the episode concluded. The cortex could choose the right next operation
+without receiving the result of that operation while it was still reasoning.
+
+The service-side acquisition contract now recognizes both compute actions.
+`FORMALIZE` invokes the task-appropriate deterministic truth-engine registry
+against the tentative answer. `SIMULATE` extracts one Python experiment and
+executes it exactly once through the kernel-confined symbolic sandbox. The
+result records whether anything was measured; unchecked computation is not
+treated as evidence. Successful checks, contradictions, refusals, timeouts, and
+bounded stdout/stderr become a content-addressed evidence observation with
+`instruction_authority=False`. One adaptive-compute authorization permits one
+machine acquisition and at most one recurrent continuation; the request,
+machine receipt, context merge, both model results, and returned round remain
+cryptographically committed.
+
+This closes the timing gap between selecting a cognitive operation and learning
+from its outcome. Together with CP071-CP073, the canonical engine can reason
+over live organ state, memories, one-shot memory, offline reference/Wikipedia
+evidence, governed current-turn tool observations, bounded live-web evidence,
+deterministic verifiers, and confined Python execution. Those sources remain
+typed observations rather than prompt authority, and world-changing execution
+continues through the separate Will/action path.
+
+Focused acquisition, capability-context, amplifier, and runtime-validation
+contracts pass `80/80`; canonical smoke passes `103/103`; Ruff, compilation,
+and diff hygiene pass. Compact evidence is
+`artifacts/closeout/latent_cortex/cp074_closed_loop_compute.json`. This proves
+the source-level closed loop and bounded synthetic contradictions, not how often
+the resident 32B selects it or any cross-domain reasoning gain. The fresh 1.5B
+falsification campaign and frozen resident-32B comparative certificate remain
+the immediate empirical gates for the `WOW Signal`; fusion and activation stay
+forbidden until they pass. The completion envelope remains `809/920`
+(approximately `87.9%`).

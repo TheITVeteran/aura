@@ -24,6 +24,12 @@ COGNITIVE_ACQUISITION_SCHEMA = "aura.rlc.cognitive_acquisition.v1"
 COGNITIVE_ACQUISITION_ACTIONS = {
     OperationKind.SEARCH_MEMORY,
     OperationKind.RETRIEVE_EVIDENCE,
+    OperationKind.FORMALIZE,
+    OperationKind.SIMULATE,
+}
+COGNITIVE_COMPUTE_ACTIONS = {
+    OperationKind.FORMALIZE,
+    OperationKind.SIMULATE,
 }
 MAX_RETRIEVAL_QUERY_CHARS = 1_200
 MAX_CONTINUATION_ROUNDS = 1
@@ -68,15 +74,22 @@ def _source_inventory(
             )
         ):
             raise ValueError("cognitive acquisition context row is invalid")
-        matches = source_matches_action(source, action)
+        matches = (
+            source.startswith("capability.symbolic_")
+            if action in COGNITIVE_COMPUTE_ACTIONS
+            else source_matches_action(source, action)
+        )
         if acquired_only:
-            matches = (
-                source == "memory" or source.startswith("memory.")
-                if action is OperationKind.SEARCH_MEMORY
-                else source == "reference"
-                or source.startswith("reference.")
-                or source.startswith("capability.")
-            )
+            if action is OperationKind.SEARCH_MEMORY:
+                matches = source == "memory" or source.startswith("memory.")
+            elif action is OperationKind.RETRIEVE_EVIDENCE:
+                matches = (
+                    source == "reference"
+                    or source.startswith("reference.")
+                    or source.startswith("capability.")
+                )
+            else:
+                matches = source.startswith("capability.symbolic_")
         if matches:
             rows.append((source, _context_digest(raw)))
     return tuple(sorted(set(rows)))
@@ -127,13 +140,25 @@ def build_acquisition_request(
         return None
     step, action, transition = selected
     transition_sha256 = canonical_sha256(transition)
-    directive = (
-        "Recall prior context that could confirm, contradict, or refine this "
-        "tentative answer:"
-        if action is OperationKind.SEARCH_MEMORY
-        else "Find reference evidence that could confirm, contradict, or refine "
-        "this tentative answer:"
-    )
+    directives = {
+        OperationKind.SEARCH_MEMORY: (
+            "Recall prior context that could confirm, contradict, or refine this "
+            "tentative answer:"
+        ),
+        OperationKind.RETRIEVE_EVIDENCE: (
+            "Find reference evidence that could confirm, contradict, or refine "
+            "this tentative answer:"
+        ),
+        OperationKind.FORMALIZE: (
+            "Apply the deterministic truth engines to confirm, contradict, or "
+            "refine this tentative answer:"
+        ),
+        OperationKind.SIMULATE: (
+            "Execute the answer's bounded Python experiment and inspect the "
+            "machine outcome before refining this tentative answer:"
+        ),
+    }
+    directive = directives[action]
     retrieval_query = (
         f"{objective}\n{directive}\n{first_text[:800]}"
     )[:MAX_RETRIEVAL_QUERY_CHARS].strip()
@@ -213,9 +238,12 @@ def build_acquisition_receipt(
         acquired_only=True,
     )
     new_rows = tuple(row for row in after if row[1] not in before_content)
-    target_source = (
-        "memory" if action is OperationKind.SEARCH_MEMORY else "reference"
-    )
+    target_source = {
+        OperationKind.SEARCH_MEMORY: "memory",
+        OperationKind.RETRIEVE_EVIDENCE: "reference",
+        OperationKind.FORMALIZE: "symbolic_compute",
+        OperationKind.SIMULATE: "symbolic_compute",
+    }[action]
     absent_sources = ingress_receipt.get("absent_sources")
     if (
         not error_code
@@ -493,6 +521,7 @@ def validate_continuation_receipt(value: Any) -> dict[str, Any]:
 
 __all__ = [
     "COGNITIVE_ACQUISITION_ACTIONS",
+    "COGNITIVE_COMPUTE_ACTIONS",
     "COGNITIVE_ACQUISITION_SCHEMA",
     "MAX_CONTINUATION_ROUNDS",
     "MAX_RETRIEVAL_QUERY_CHARS",

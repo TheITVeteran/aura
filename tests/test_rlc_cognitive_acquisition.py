@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 from copy import deepcopy
 from types import SimpleNamespace
 
@@ -116,6 +117,90 @@ def test_non_retrieval_action_creates_no_request():
         )
         is None
     )
+
+
+def test_formalize_action_requests_deterministic_compute_feedback():
+    request = build_acquisition_request(
+        objective="Compute 12 * 13 exactly.",
+        first_text="The answer is 157.",
+        first_receipt=_episode_receipt("formalize"),
+        cognitive_context=[OLD_MEMORY],
+    )
+
+    assert request is not None
+    assert request["action"] == "formalize"
+    assert request["before_inventory"] == []
+    assert "deterministic truth engines" in request["retrieval_query"]
+
+
+@pytest.mark.asyncio
+async def test_compute_broker_emits_typed_machine_evidence_for_wrong_math():
+    from core.brain.cortex_compute_acquisition import acquire_cognitive_compute
+
+    result = await acquire_cognitive_compute(
+        objective="Compute 12 * 13 exactly.",
+        first_text="The answer is 157.",
+        action="formalize",
+        timeout_s=2.0,
+    )
+
+    assert result.receipt["status"] == "measured"
+    assert result.receipt["verifier"]["checked"] is True
+    assert result.receipt["verifier"]["ok"] is False
+    assert len(result.context) == 1
+    item = result.context[0]
+    assert item["source"] == "capability.symbolic_formalize"
+    assert item["instruction_authority"] is False
+    assert item["evidence_kind"] == "governed_tool_observation"
+    assert "156" in item["text"]
+
+
+@pytest.mark.asyncio
+async def test_simulate_broker_executes_one_bounded_sandbox_pass(monkeypatch):
+    from core.brain import symbolic_sandbox
+    from core.brain.cortex_compute_acquisition import acquire_cognitive_compute
+
+    calls: list[tuple[str, float]] = []
+
+    class Result:
+        @staticmethod
+        def to_dict():
+            return {
+                "ok": True,
+                "refused": False,
+                "timed_out": False,
+                "stdout": "42\n",
+                "stderr": "",
+                "isolation": {"isolation_level": "kernel:test"},
+            }
+
+    class Sandbox:
+        async def run(self, code, *, timeout_override):
+            calls.append((code, timeout_override))
+            return Result()
+
+    monkeypatch.setattr(symbolic_sandbox, "get_symbolic_sandbox", lambda: Sandbox())
+    result = await acquire_cognitive_compute(
+        objective="Run this code and report the result.",
+        first_text="```python\nprint(6 * 7)\n```",
+        action="simulate",
+        timeout_s=3.0,
+    )
+
+    assert calls == [("print(6 * 7)", 3.0)]
+    assert result.receipt["status"] == "measured"
+    assert result.receipt["verifier"]["checked"] is False
+    assert result.receipt["sandbox"]["ok"] is True
+    assert result.context[0]["source"] == "capability.symbolic_simulate"
+    assert "42" in result.context[0]["text"]
+
+    with pytest.raises(ValueError, match="timeout"):
+        await acquire_cognitive_compute(
+            objective="Run this code.",
+            first_text="```python\nprint(42)\n```",
+            action="simulate",
+            timeout_s=float("nan"),
+        )
 
 
 def test_request_accepts_worker_slot_text_commitments_without_raw_text():
@@ -351,6 +436,74 @@ async def test_service_runs_at_most_one_continuation_with_new_context(monkeypatc
     assert continuation["continuation_cap_exhausted"] is True
     assert result["receipt"]["adaptive_acquisition"]["authorized"] is True
     assert result["receipt"]["adaptive_acquisition"]["attempted"] is True
+
+
+@pytest.mark.asyncio
+async def test_service_feeds_formal_verdict_into_one_recurrent_continuation(
+    monkeypatch,
+):
+    from core.brain import cortex_compute_acquisition
+    from core.brain.cortex_compute_acquisition import ComputeAcquisition
+    from core.brain.latent_cortex_service import LatentCortexService
+
+    objective = "Compute 12 * 13 exactly."
+    service = LatentCortexService()
+    first_receipt = _episode_receipt("formalize")
+    first_receipt["adaptive_compute"] = {
+        "plan": _adaptive_plan(deadline_s=240.0)
+    }
+    first = {"ok": True, "text": "The answer is 157.", "receipt": first_receipt}
+    second = {"ok": True, "text": "The exact answer is 156.", "receipt": {"round": 2}}
+    calls: list[dict] = []
+
+    async def fake_deep_reason(question=None, *, messages=None, **kwargs):
+        calls.append(dict(kwargs))
+        return first if len(calls) == 1 else second
+
+    evidence_text = "Verifier result: ok=False. exact(12*13) = 156."
+    content_sha256 = hashlib.sha256(evidence_text.encode()).hexdigest()
+    evidence = {
+        "source": "capability.symbolic_formalize",
+        "text": evidence_text,
+        "context_role": "evidence_observation",
+        "instruction_authority": False,
+        "evidence_id": "evidence-" + "a" * 24,
+        "content_sha256": content_sha256,
+        "retrieval_receipt_sha256": "b" * 64,
+        "evidence_kind": "governed_tool_observation",
+        "evidence_origin": "core.brain.cortex_compute_acquisition",
+        "source_version": "aura.rlc.compute_acquisition.v1",
+    }
+
+    async def fake_compute(**_kwargs):
+        return ComputeAcquisition((evidence,), {"schema": "compute-test"})
+
+    monkeypatch.setattr(service, "deep_reason", fake_deep_reason)
+    monkeypatch.setattr(
+        cortex_compute_acquisition,
+        "acquire_cognitive_compute",
+        fake_compute,
+    )
+
+    result = await service.deep_reason_with_acquisition(
+        objective,
+        stakes=0.8,
+        uncertainty=0.8,
+        timeout_s=60.0,
+        foreground_request=True,
+        cognitive_context=[{"source": "goals", "text": "Return an exact answer."}],
+    )
+
+    assert result is second
+    assert len(calls) == 2
+    assert any(
+        row["source"] == "capability.symbolic_formalize"
+        for row in calls[1]["cognitive_context"]
+    )
+    continuation = result["receipt"]["cognitive_acquisition"]
+    assert continuation["request"]["action"] == "formalize"
+    assert continuation["acquisition"]["new_context_count"] == 1
+    assert continuation["returned_round"] == 2
 
 
 @pytest.mark.asyncio

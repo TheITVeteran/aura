@@ -3848,28 +3848,81 @@ class LatentCortexService:
                     )
 
         acquisition_started = time.monotonic()
+        continuation_inputs: dict[str, Any] = {}
         try:
-            from core.brain.cognitive_ingress import (
-                assemble_cognitive_ingress_async,
-                cognitive_context_items,
+            from core.brain.llm.latent_cortex.cognitive_acquisition import (
+                COGNITIVE_COMPUTE_ACTIONS,
             )
+            from core.brain.llm.latent_cortex.epistemic_state import OperationKind
 
-            ingress = await assemble_cognitive_ingress_async(
-                self.orchestrator if orchestrator is None else orchestrator,
-                objective,
-                tenant_id=tenant_id,
-                user_id=user_id,
-                session_id=session_id,
-                retrieval_query=str(request["retrieval_query"]),
-                acquisition_source=(
-                    "memory"
-                    if request["action"] == "search_memory"
-                    else "reference"
-                ),
-            )
-            acquired_context = cognitive_context_items(ingress) or None
-            ingress_receipt = ingress.to_receipt()
-            if request["action"] == "retrieve_evidence":
+            action = OperationKind(request["action"])
+            if action in COGNITIVE_COMPUTE_ACTIONS:
+                from core.brain.capability_evidence_context import (
+                    CapabilityEvidenceBundle,
+                    merge_capability_evidence,
+                )
+                from core.brain.cortex_compute_acquisition import (
+                    acquire_cognitive_compute,
+                )
+
+                compute = await acquire_cognitive_compute(
+                    objective=objective,
+                    first_text=str(first.get("text") or ""),
+                    action=action,
+                    timeout_s=max(
+                        0.1,
+                        min(
+                            12.0,
+                            float(reason_kwargs.get("timeout_s", 300.0))
+                            - (time.monotonic() - started)
+                            - 15.0,
+                        ),
+                    ),
+                )
+                acquired_context, merge_receipt = merge_capability_evidence(
+                    original_context if isinstance(original_context, list) else None,
+                    CapabilityEvidenceBundle(compute.context, compute.receipt),
+                )
+                ingress_receipt = {
+                    "schema": "aura.rlc.compute_ingress.v1",
+                    "compute": compute.receipt,
+                    "context_merge": merge_receipt,
+                    "absent_sources": (
+                        [] if compute.context else ["symbolic_compute"]
+                    ),
+                }
+            else:
+                from core.brain.cognitive_ingress import (
+                    assemble_cognitive_ingress_async,
+                    cognitive_context_items,
+                )
+
+                ingress = await assemble_cognitive_ingress_async(
+                    self.orchestrator if orchestrator is None else orchestrator,
+                    objective,
+                    tenant_id=tenant_id,
+                    user_id=user_id,
+                    session_id=session_id,
+                    retrieval_query=str(request["retrieval_query"]),
+                    acquisition_source=(
+                        "memory"
+                        if request["action"] == "search_memory"
+                        else "reference"
+                    ),
+                )
+                acquired_context = cognitive_context_items(ingress) or None
+                ingress_receipt = ingress.to_receipt()
+                continuation_inputs = {
+                    "stakes": max(
+                        float(reason_kwargs.get("stakes", 0.5)),
+                        float(ingress.stakes),
+                    ),
+                    "uncertainty": float(ingress.uncertainty),
+                    "epistemic_genesis": ingress.epistemic_genesis,
+                    "epistemic_state": ingress.epistemic_state,
+                    "selective_memory_result": ingress.memory_result,
+                }
+            if action is OperationKind.RETRIEVE_EVIDENCE:
                 from core.brain.cortex_web_acquisition import (
                     acquire_live_web_evidence,
                     should_acquire_live_web,
@@ -4001,16 +4054,9 @@ class LatentCortexService:
         second_kwargs = dict(reason_kwargs)
         second_kwargs.update(
             {
-                "stakes": max(
-                    float(reason_kwargs.get("stakes", 0.5)),
-                    float(ingress.stakes),
-                ),
-                "uncertainty": float(ingress.uncertainty),
                 "timeout_s": remaining_s,
                 "cognitive_context": acquired_context,
-                "epistemic_genesis": ingress.epistemic_genesis,
-                "epistemic_state": ingress.epistemic_state,
-                "selective_memory_result": ingress.memory_result,
+                **continuation_inputs,
             }
         )
         second = await self.deep_reason(

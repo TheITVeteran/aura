@@ -1,0 +1,59 @@
+{
+  "schema": "aura.closeout.rlc_checkpoint.v1",
+  "checkpoint": "CP074",
+  "base_commit": "239f7da02394b303134576953d54f6ce46d1aec9",
+  "subject": "closed-loop deterministic compute for recurrent cognition",
+  "claim_level": "measured_synthetic",
+  "causal_route": [
+    "successful FORMALIZE or SIMULATE action transition",
+    "adaptive one-acquisition authority",
+    "service-side verifier or single kernel-sandbox execution",
+    "typed non-authoritative machine evidence",
+    "one recurrent continuation",
+    "content-addressed continuation receipt"
+  ],
+  "safety_bounds": {
+    "worker_performed_io": false,
+    "max_acquisitions": 1,
+    "max_continuation_rounds": 1,
+    "max_sandbox_seconds": 12.0,
+    "simulation_executes_once": true,
+    "instruction_authority": false,
+    "world_effect_lane_changed": false
+  },
+  "evidence": {
+    "focused_tests": {
+      "passed": 80,
+      "failed": 0,
+      "command": "pytest -q tests/test_rlc_cognitive_acquisition.py tests/test_rlc_capability_evidence_context.py tests/test_reasoning_amplifier_v2.py tests/test_cognition_discipline.py"
+    },
+    "smoke": {
+      "passed": 103,
+      "failed": 0
+    },
+    "ruff": "pass",
+    "compile": "pass",
+    "diff_check": "pass"
+  },
+  "measured_cases": [
+    "wrong exact arithmetic becomes contradiction evidence",
+    "simulation has one bounded sandbox invocation",
+    "machine evidence enters one second recurrent episode",
+    "non-finite timeout is rejected",
+    "non-retrieval non-compute actions do not acquire"
+  ],
+  "not_claimed": [
+    "installed application proof",
+    "resident 32B operation-selection frequency",
+    "broad or frontier reasoning gain",
+    "intrinsic neural transfer",
+    "fusion authorization",
+    "WOW Signal"
+  ],
+  "next_empirical_gates": [
+    "fresh 1.5B falsification campaign",
+    "frozen resident 32B comparative certificate",
+    "independent certificate verification",
+    "fusion only after positive preregistered evidence"
+  ]
+}
