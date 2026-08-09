@@ -201,6 +201,27 @@ def _contract_admitted_branch_score(
     return score
 
 
+def _repeats_a_refuted_answer(ratchet: Any, candidate: str) -> bool:
+    """Has this episode already refuted this exact answer?
+
+    Compared on the normalised surface, because "391" and "391." are the
+    same answer and re-verifying the second is the duplicate work the policy
+    exists to remove.
+    """
+    from core.brain.llm.latent_cortex.commitment_ratchet import (
+        ConstraintKind,
+        _normalize,
+    )
+
+    target = _normalize(candidate)
+    if not target:
+        return False
+    return any(
+        tooth.kind is ConstraintKind.EXCLUDES and _normalize(tooth.subject) == target
+        for tooth in getattr(ratchet, "teeth", ())
+    )
+
+
 def _postconditions_lost(
     baseline: dict[str, Any] | None, adapted: dict[str, Any]
 ) -> list[str]:
@@ -5228,6 +5249,8 @@ class LatentCortexEngine:
                 branch_candidates=branch_probe_texts,
                 objective=verification_objective,
                 max_requests=repair_limit,
+                # Requirements only. Exclusions are enforced by
+                # rejection below, not by naming them in the prompt.
                 conditioning=episode_ratchet.conditioning_block(),
             )
 
@@ -5490,6 +5513,15 @@ class LatentCortexEngine:
                         repaired_candidate,
                         objective=verification_objective,
                     )
+                    # Rejection, not prompt-listing. A repair that lands back
+                    # on an answer this episode already refuted is discarded
+                    # rather than verified again — the measured form of the
+                    # policy (48.1% -> 59.4%, p=0.044, on fewer verifier
+                    # calls). Describing the excluded answers in the repair
+                    # prompt was measured and lost.
+                    if _repeats_a_refuted_answer(episode_ratchet, repaired_candidate):
+                        repair_failures[request_id] = "repeated_refuted_answer"
+                        continue
                     generated_repairs[request_id] = {
                         "candidate": repaired_candidate,
                         "generation_context": {

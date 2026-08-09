@@ -175,7 +175,11 @@ def run_task(
         generations += 1
         index = verified_calls
         use_prompt_block = exclude and mode == "prompt"
-        block = ratchet.conditioning_block() if use_prompt_block else ""
+        block = (
+            ratchet.conditioning_block(include_exclusions=True)
+            if use_prompt_block
+            else ""
+        )
         # AFTER the question, not before it. A prefix competes with the
         # instruction for the model's attention; the constraint has to be the
         # last thing it reads before generating.

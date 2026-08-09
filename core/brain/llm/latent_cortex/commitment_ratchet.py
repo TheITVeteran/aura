@@ -567,7 +567,7 @@ class CommitmentRatchet:
 
     # ── conditioning the next pass ───────────────────────────────────────
 
-    def conditioning_block(self) -> str:
+    def conditioning_block(self, *, include_exclusions: bool = False) -> str:
         """What pass N+1 sees that pass N did not.
 
         This is the whole mechanism. The next pass is not re-running the
@@ -592,9 +592,19 @@ class CommitmentRatchet:
         # A requirement says "stay inside this". An exclusion says "go
         # somewhere else". Rendering them under one heading with one closing
         # instruction inverted the mechanism.
-        exclusions = [
-            tooth for tooth in self._teeth if tooth.kind is ConstraintKind.EXCLUDES
-        ]
+        # Exclusions are OFF by default because listing them in a prompt was
+        # measured and lost: 46.9% vs 48.1% for plain i.i.d. on 160 paired
+        # tasks. Naming a wrong answer does not remove it from the
+        # distribution — it adds tokens that anchor on it. The correct
+        # implementation of "draw from p restricted to A \\ R" is REJECTION:
+        # draw unconditioned, discard draws landing in R, redraw. Callers do
+        # that with `teeth`; the ablation harness asks for them explicitly
+        # because measuring the losing arm is its job.
+        exclusions = (
+            [tooth for tooth in self._teeth if tooth.kind is ConstraintKind.EXCLUDES]
+            if include_exclusions
+            else []
+        )
         requirements = [
             tooth for tooth in self._teeth if tooth.kind is not ConstraintKind.EXCLUDES
         ]

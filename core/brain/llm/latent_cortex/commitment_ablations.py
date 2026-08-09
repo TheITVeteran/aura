@@ -370,7 +370,9 @@ def _conditioning_for(
     for constraint in sorted(constraints, key=lambda item: item.step):
         if ratchet.commit(constraint).committed:
             committed += 1
-    return ratchet.conditioning_block(), committed
+    # Explicitly ON: this harness exists to measure the prompt-conditioned
+    # arm, including the fact that it loses.
+    return ratchet.conditioning_block(include_exclusions=True), committed
 
 
 def _matches(answer: Any, expected: str) -> bool:

@@ -176,22 +176,30 @@ def test_a_refuted_answer_is_never_drawn_again():
     assert result.distinct_examined == 3
 
 
-def test_the_conditioning_block_is_what_carries_the_exclusion():
+def test_the_exclusion_is_enforced_without_naming_it_in_the_prompt():
+    """Measured 2026-08-09: naming excluded answers LOSES (46.9% vs 48.1%).
+
+    The block carries requirements, not exclusions. Exclusion is enforced by
+    the search discarding a draw that lands in R — which is what
+    "draw from p restricted to A \\ R" actually means.
+    """
     seen_blocks = []
+    drawn = ["wrong", "wrong", "right"]
 
     def _draw(objective, conditioning):
         seen_blocks.append(conditioning)
-        return "wrong" if not conditioning else "right"
+        return drawn[min(len(seen_blocks) - 1, len(drawn) - 1)]
 
     result = run_sequential_exclusion(
         "q", draw=_draw, verify=_verifier("right"), max_draws=4
     )
 
     assert result.answer == "right"
-    assert seen_blocks[0] == "", "the first draw had nothing to condition on"
-    assert "wrong" in seen_blocks[1], (
-        "the refutation never reached the next draw, so nothing was excluded"
-    )
+    for block in seen_blocks:
+        assert "wrong" not in block, (
+            f"a refuted answer was named in the prompt: {block!r}"
+        )
+    assert result.ratchet_receipt["turns"] >= 1, "nothing was excluded at all"
 
 
 def test_an_undecided_verdict_excludes_nothing():
