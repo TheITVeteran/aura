@@ -9,6 +9,7 @@ from core.brain.calibration_gate import CalibrationGate
 from core.brain.executable_reasoning import (
     EXECUTABLE_REASONING_SCHEMA,
     derive_executable_candidate,
+    select_executable_strategies,
     should_use_executable_reasoning,
 )
 from core.brain.reasoning_amplifier_v2 import (
@@ -82,6 +83,24 @@ def test_semantic_admission_is_general_and_honors_no_execution() -> None:
         task_type="code",
         explicitly_enabled=True,
     )
+
+
+def test_strategy_selection_uses_problem_semantics_not_task_ids() -> None:
+    causal = select_executable_strategies(
+        "Independent interventions changed the downstream baseline value.",
+        task_type="factual",
+    )
+    planning = select_executable_strategies(
+        "Schedule tasks with prerequisites, deadlines, and minimum makespan.",
+        task_type="planning",
+    )
+    probability = select_executable_strategies(
+        "Update the prior probability using both likelihoods and report the posterior.",
+        task_type="math",
+    )
+    assert causal[0] == "causal_total_effect_reconstruction"
+    assert planning[0] == "exhaustive_feasible_schedule_search"
+    assert probability[0] == "exact_fraction_probability_update"
     assert not should_use_executable_reasoning(
         "Explain why curiosity matters.",
         task_type="factual",

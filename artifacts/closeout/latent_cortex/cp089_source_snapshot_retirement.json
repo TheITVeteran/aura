@@ -1,0 +1,30 @@
+{
+  "schema": "aura.closeout.source_snapshot_retirement.v1",
+  "checkpoint": "CP089",
+  "recorded_date": "2026-08-09",
+  "commit": "1d39bc786",
+  "retired": {
+    "tracked_files": 924,
+    "python_lines": 1004086,
+    "bytes": 40339663,
+    "scope": "artifacts/closeout/latent_cortex/**/source_snapshots/*.py"
+  },
+  "preserved": {
+    "authored_diagnostic_python_files": 5,
+    "historical_manifests_and_receipts": true,
+    "canonical_live_source": true,
+    "retrievable_from_git_history": true
+  },
+  "prevention": {
+    "gitignore_blocks_future_closeout_source_snapshots": true,
+    "source_hygiene_rejects_tracked_snapshots": true,
+    "canonical_bundler_excludes_artifacts": true,
+    "modern_audit_exporter_already_excluded_artifacts": true
+  },
+  "verification": {
+    "focused_tests": "6 passed",
+    "ruff": "passed",
+    "py_compile": "passed",
+    "source_hygiene": "passed"
+  }
+}

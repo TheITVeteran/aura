@@ -1102,19 +1102,23 @@ class ReasoningAmplifierV2:
     # ------------------------------------------------------------------ paths
     async def _shallow_path(self, problem, guard_text, sample_budget, deadline, mode, context, fallbacks):
         """FAST/NORMAL: sample N, verifier-filter, self-consistency."""
-        from core.brain.executable_reasoning import EXECUTABLE_STRATEGIES
+        from core.brain.executable_reasoning import select_executable_strategies
 
+        executable_strategies = select_executable_strategies(
+            problem.objective,
+            task_type=problem.task_type,
+        )
         excluded_programs: list[str] = []
         excluded_candidates: list[str] = []
         executable_candidates: list[tuple[str, Any, str, str]] = []
         executable_was_attempted = False
-        executable_attempts = min(len(EXECUTABLE_STRATEGIES), max(1, sample_budget))
+        executable_attempts = min(len(executable_strategies), max(1, sample_budget))
         for operation_index in range(executable_attempts):
             executable = await self._derive_executable_candidate(
                 problem,
                 deadline=deadline,
                 context=context,
-                strategy=EXECUTABLE_STRATEGIES[operation_index],
+                strategy=executable_strategies[operation_index],
                 excluded_program_sha256s=tuple(excluded_programs),
                 excluded_candidate_sha256s=tuple(excluded_candidates),
                 prior_failure_class=(

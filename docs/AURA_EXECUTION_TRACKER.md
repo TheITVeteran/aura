@@ -40454,3 +40454,57 @@ measure wrong-to-right recovery, right-to-wrong regression, strategy yield, and
 cost before selecting a powered design. Reasoning gain, frontier performance,
 fusion, activation, and `WOW Signal` remain false, and the completion envelope
 remains `809/920` (approximately `87.9%`).
+
+## Checkpoint 2026-08-09-089: Generated Source Is Not Repository Source
+
+Historical RLC campaigns had committed a complete Python source snapshot into
+each result directory. Those copies were useful while a campaign was mutable,
+but 924 copies remained after the runs closed: 1,004,086 duplicate lines and
+40,339,663 bytes under `artifacts/closeout`. They were neither Aura's canonical
+implementation nor required by the live runtime. CP089 removes those generated
+files while preserving the canonical source, five authored diagnostic probes,
+the compact manifests and receipts, and Git history from which an old snapshot
+can still be recovered.
+
+The repository now ignores every closeout `source_snapshots/` directory and
+`make source-hygiene` rejects one if it becomes tracked. The canonical source
+bundler now excludes `artifacts/` completely, matching the modern external-audit
+exporter, so an audit bundle cannot recursively absorb old evidence or source
+copies. Focused hygiene/bundler tests pass `6/6`; Ruff, compilation, and the
+source-hygiene gate pass. The compact retirement receipt is
+`artifacts/closeout/latent_cortex/cp089_source_snapshot_retirement.json`.
+
+This is repository hygiene, not a reasoning result. The capability completion
+envelope remains `809/920` (approximately `87.9%`).
+
+## Checkpoint 2026-08-09-090: Strategies Follow the Problem's Semantics
+
+The first CP088 scientific-inference canary exposed a capability defect rather
+than a measurement defect. Generic executable reasoning compiled a program that
+treated an already-observed total intervention effect as if it were another
+direct edge and propagated it repeatedly, predicting `233` where the committed
+answer was `83`. More generic samples would repeat the same conceptual error.
+
+Executable reasoning now selects independent algorithm families from semantic
+structure. Causal problems receive total-effect reconstruction, explicit
+structural equations, and counterfactual cross-checks. Bounded planning receives
+exhaustive scheduling, dynamic programming, and branch-and-bound. Probability
+problems receive exact-fraction Bayes, odds-form updates, and normalization
+cross-checks. Premise audits receive independent recomputation, counterexample
+search, and dual-formula ranking. Unmatched structured tasks retain the generic
+enumeration family. These are reusable computational laws, not task IDs or
+embedded benchmark answers.
+
+On the same resident-32B causal task, the first causal strategy generated a
+distinct program and returned root `brin`, mediator `elara`, downstream `aeron`,
+and predicted value `83` in `53.623s`; the untouched post-hoc scorer accepted it.
+The focused executable/amplifier/reconciliation/handoff sweep passes `91/91`;
+canonical smoke passes `103/103`; Ruff, compilation, and diff hygiene pass.
+Compact evidence is
+`artifacts/closeout/latent_cortex/cp090_semantic_executable_strategies.json`.
+
+This is one repaired resident task, not a population estimate. A fresh disjoint
+paired pilot must now measure recovery, regression, yield, and cost across every
+strategy family. Reasoning gain, frontier performance, fusion, activation, and
+`WOW Signal` remain false, and the completion envelope remains `809/920`
+(approximately `87.9%`).

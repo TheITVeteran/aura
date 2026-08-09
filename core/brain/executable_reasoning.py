@@ -37,6 +37,26 @@ EXECUTABLE_STRATEGIES = (
     "independent_constraint_formulation",
     "decomposition_with_independent_crosscheck",
 )
+_CAUSAL_STRATEGIES = (
+    "causal_total_effect_reconstruction",
+    "independent_structural_equation_model",
+    "causal_counterfactual_crosscheck",
+)
+_PLANNING_STRATEGIES = (
+    "exhaustive_feasible_schedule_search",
+    "dynamic_programming_over_completed_tasks",
+    "branch_and_bound_with_lexicographic_tiebreak",
+)
+_PROBABILITY_STRATEGIES = (
+    "exact_fraction_probability_update",
+    "independent_odds_form_update",
+    "probability_normalization_crosscheck",
+)
+_AUDIT_STRATEGIES = (
+    "independent_recomputation_and_rank",
+    "counterexample_search_against_the_claim",
+    "dual_formula_audit_with_tiebreak_check",
+)
 _STRATEGY_GUIDANCE = {
     "reference_enumeration_or_simulation": (
         "Implement the simplest exhaustive enumeration or literal state simulation. "
@@ -49,6 +69,61 @@ _STRATEGY_GUIDANCE = {
     "decomposition_with_independent_crosscheck": (
         "Implement two structurally different pure computations, compare their derived "
         "payloads, and print only when they agree. Do not compare against a literal answer."
+    ),
+    "causal_total_effect_reconstruction": (
+        "Treat each reported intervention outcome as the total measured effect of that "
+        "intervention. Infer direction from asymmetric interventions. When predicting "
+        "the same intervention-to-outcome relation, scale that observed total effect "
+        "exactly once; do not add mediated components already included in it."
+    ),
+    "independent_structural_equation_model": (
+        "Build explicit linear structural equations from interventions. Distinguish "
+        "total intervention effects from direct edge coefficients, and do not infer a "
+        "direct coefficient when the observations identify only a total effect."
+    ),
+    "causal_counterfactual_crosscheck": (
+        "Infer the causal order, compute the requested intervention two ways when "
+        "identifiable, and reject any derivation that propagates an observed total "
+        "effect through the graph a second time."
+    ),
+    "exhaustive_feasible_schedule_search": (
+        "Enumerate task subsets and permutations within the stated bound. Simulate one "
+        "resource timeline, enforce prerequisites and completion deadlines, then apply "
+        "the objectives and tie-breaks in their declared order."
+    ),
+    "dynamic_programming_over_completed_tasks": (
+        "Use a bounded state keyed by completed tasks and elapsed time. Admit a transition "
+        "only when prerequisites and deadlines hold, retaining the best declared objective "
+        "tuple for each state."
+    ),
+    "branch_and_bound_with_lexicographic_tiebreak": (
+        "Search feasible plans with an optimistic remaining-reward bound. Compare complete "
+        "plans by the exact objective tuple, including makespan and lexicographic tie-break."
+    ),
+    "exact_fraction_probability_update": (
+        "Use fractions for every probability. Enumerate the mutually exclusive hypotheses, "
+        "compute evidence mass, normalize once, reduce exactly, then derive any band from "
+        "the exact posterior."
+    ),
+    "independent_odds_form_update": (
+        "Compute prior odds times the likelihood ratio using exact fractions, convert back "
+        "to probability, and independently confirm normalization."
+    ),
+    "probability_normalization_crosscheck": (
+        "Compute the posterior both by Bayes normalization and by odds. Print only if the "
+        "two exact fractions agree and the declared category follows from that value."
+    ),
+    "independent_recomputation_and_rank": (
+        "Ignore the stated conclusion, recompute every candidate score from the supplied "
+        "formula, and rank by the complete declared tie-break tuple."
+    ),
+    "counterexample_search_against_the_claim": (
+        "Try to refute the stated claim by exhaustively finding any candidate with a better "
+        "objective tuple; report validity only after that search is complete."
+    ),
+    "dual_formula_audit_with_tiebreak_check": (
+        "Compute all scores in two independent functions, require agreement, then evaluate "
+        "the stated winner and every tie-break explicitly."
     ),
 }
 
@@ -102,6 +177,26 @@ def should_use_executable_reasoning(
         and _STRUCTURED_COMPUTE.search(text)
         and _STRUCTURED_INPUT.search(text)
     )
+
+
+def select_executable_strategies(
+    objective: str,
+    *,
+    task_type: str,
+) -> tuple[str, ...]:
+    """Select reusable computational laws from task semantics, not task IDs."""
+
+    text = str(objective or "").lower()
+    if any(token in text for token in ("intervention", "causal", "baseline values")):
+        return _CAUSAL_STRATEGIES
+    if any(token in text for token in ("deadline", "makespan", "prerequisite", "horizon")):
+        return _PLANNING_STRATEGIES
+    if any(token in text for token in ("posterior", "likelihood", "bayes", "prior probability")):
+        return _PROBABILITY_STRATEGIES
+    if any(token in text for token in ("premise", "claim", "actual winner", "highest score")):
+        return _AUDIT_STRATEGIES
+    del task_type
+    return EXECUTABLE_STRATEGIES
 
 
 def _sha256(text: str) -> str:
@@ -466,5 +561,6 @@ __all__ = [
     "EXECUTABLE_STRATEGIES",
     "ExecutableReasoningResult",
     "derive_executable_candidate",
+    "select_executable_strategies",
     "should_use_executable_reasoning",
 ]
