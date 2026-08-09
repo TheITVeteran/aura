@@ -31,3 +31,22 @@ def test_bundler_excludes_generated_source_bundles_and_oversized_files(tmp_path)
     included.write_text("VALUE = 1\n", encoding="utf-8")
 
     assert _relative_files(tmp_path) == {"core/normal.py"}
+
+
+def test_bundler_excludes_closeout_artifact_source_snapshots(tmp_path):
+    snapshot = (
+        tmp_path
+        / "artifacts"
+        / "closeout"
+        / "latent_cortex"
+        / "old_run"
+        / "source_snapshots"
+        / "trainer.py"
+    )
+    snapshot.parent.mkdir(parents=True, exist_ok=True)
+    snapshot.write_text("DUPLICATED = True\n", encoding="utf-8")
+    included = tmp_path / "core" / "trainer.py"
+    included.parent.mkdir(parents=True, exist_ok=True)
+    included.write_text("CANONICAL = True\n", encoding="utf-8")
+
+    assert _relative_files(tmp_path) == {"core/trainer.py"}

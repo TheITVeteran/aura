@@ -47,7 +47,7 @@ MAX_SOURCE_FILE_BYTES = 4_000_000
 EXCLUDE_DIRS: frozenset[str] = frozenset({
     "__pycache__", ".git", ".venv", "venv", "env",
     "node_modules", "dist", "build", ".mypy_cache",
-    ".pytest_cache", "data", "logs", "backups",
+    ".pytest_cache", "artifacts", "data", "logs", "backups",
     "browser_profile", ".sys_temp_integrity",
 })
 

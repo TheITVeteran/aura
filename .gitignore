@@ -49,6 +49,12 @@ file_list.txt
 flagship_readiness*.txt
 source_files*.txt
 source_list.txt
+aura_codebase_ai_audit*.txt
+aura_source_export*.txt
+# Campaign source copies are immutable runtime inputs, not repository source.
+# Their manifests retain origin paths and SHA-256 identities; Git retains old
+# copies in the checkpoint that produced them.
+artifacts/closeout/**/source_snapshots/
 .claude/
 
 # Python

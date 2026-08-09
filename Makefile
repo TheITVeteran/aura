@@ -103,12 +103,7 @@ source-hygiene:
 		echo "❌ source-hygiene requires a git checkout: cannot inspect tracked files without .git"; \
 		exit 1; \
 	}
-	@tracked="$$(git ls-files | grep -E '(^|/)__pycache__/|\.py[cod]$$|\$$py\.class$$|(^|/)\.(pytest|mypy|ruff)_cache/|\.sqlite3?$$|(^|/)test_vdb/' || true)"; \
-	if [ -n "$$tracked" ]; then \
-		echo "Generated cache artifacts are tracked:"; \
-		echo "$$tracked"; \
-		exit 1; \
-	fi
+	@$(PYTHON) tools/check_source_hygiene.py
 	@echo "✅ Source snapshot hygiene passed"
 
 governance-lint:
