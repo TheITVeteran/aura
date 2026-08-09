@@ -1349,6 +1349,52 @@ def test_complete_system_receipt_requires_acquisition_amplifier_and_promotion(
     assert "complete_system_resource_accounting_incomplete" in invalid["issues"]
 
 
+def test_complete_system_replaces_only_the_bound_incumbent_resource_placeholder():
+    from core.brain.llm.latent_cortex.resource_accounting import (
+        ModelComputeProfile,
+        ResourceLedger,
+    )
+    from tools.rlc_complete_system_closed_book import (
+        _aggregate_complete_system_resources,
+    )
+
+    profile = ModelComputeProfile(
+        model_type="fixture",
+        hidden_size=8,
+        intermediate_size=16,
+        num_hidden_layers=2,
+        num_attention_heads=2,
+        num_key_value_heads=1,
+        vocab_size=32,
+        head_dim=4,
+    )
+    incumbent = ResourceLedger(profile)
+    incumbent.charge("vanilla", transformer_layer_apps=7)
+    rlc = ResourceLedger(profile)
+    rlc.charge("recurrence", transformer_layer_apps=11)
+    rlc.mark_unknown("bound_incumbent_generation")
+    amplifier = ResourceLedger(profile)
+    amplifier.charge("decode", transformer_layer_apps=13)
+
+    combined = _aggregate_complete_system_resources(
+        incumbent_resource=incumbent.to_receipt(),
+        rlc_resources=[rlc.to_receipt()],
+        amplifier_resources=[amplifier.to_receipt()],
+    ).to_receipt()
+    assert combined["accounting_complete"] is True
+    assert combined["unknown_operations"] == []
+    assert combined["totals"]["transformer_layer_apps"] == 31
+
+    rlc_without_placeholder = ResourceLedger(profile)
+    rlc_without_placeholder.charge("recurrence", transformer_layer_apps=11)
+    with pytest.raises(ValueError, match="lacks bound incumbent placeholder"):
+        _aggregate_complete_system_resources(
+            incumbent_resource=incumbent.to_receipt(),
+            rlc_resources=[rlc_without_placeholder.to_receipt()],
+            amplifier_resources=[amplifier.to_receipt()],
+        )
+
+
 def test_candidate_quality_separates_proxy_admission_from_exact_public_proof():
     from core.brain.llm.latent_cortex.task_verifiers import EpisodeTaskVerifier
     from tools.rlc_complete_system_closed_book import _candidate_quality_assessment

@@ -1,0 +1,46 @@
+{
+  "schema": "aura.closeout.latent_cortex.cp083.v1",
+  "checkpoint": "2026-08-09-083",
+  "title": "The reused incumbent is measured instead of remaining unknown",
+  "failed_canary": {
+    "source_commit": "cc5a80f585dd2ecc0d5f2ac4c1cc4b7f256ab241",
+    "model": "Qwen2.5-1.5B-Instruct-4bit",
+    "seed": 20260971,
+    "committed_cells": 21,
+    "harness_faults": 0,
+    "decision": "inconclusive_full_stack_runtime_unmeasured",
+    "receipt_issue": "complete_system_resource_accounting_incomplete",
+    "unknown_operation": "sample_0:bound_incumbent_generation",
+    "affected_treatment_cells": 7,
+    "artifact_sha256": {
+      "verdict.json": "0ca2f284e05bd7bc9dce1c9b8cfa9eec1c625403bd09ddca644e5c63d8753ad9",
+      "decode_fingerprint.json": "beaf43e85ebe9931a7462b113467ba6a43e98c1c6c30819fc6b6d613d28982aa",
+      "task_commitment.json": "f47bfdd037fb995094a8ef6763f4ce87ca4040747c84711cb8536570b3f03f96",
+      "journal.jsonl": "626e92e2a2e83d8dab0beb92358e8a6bdfe1b8ba1594702e6f594dd8f2891ca9",
+      "status.json": "9f9a0e4e90a7ca0063088c54496dbb88e77a134d40df69fb9273ed5f1e6fd302"
+    }
+  },
+  "repair": {
+    "ordinary_incumbent_metered_at_generation": true,
+    "incumbent_resource_persisted_for_resume": true,
+    "bound_placeholder_replaced_exactly_once": true,
+    "missing_placeholder_refused": true,
+    "other_unknown_operations_preserved": true,
+    "model_profile_match_required": true
+  },
+  "validation": {
+    "reconciliation_family": "86 passed",
+    "canonical_smoke": "103 passed",
+    "ruff": "passed",
+    "compile": "passed",
+    "diff_hygiene": "passed"
+  },
+  "claims": {
+    "repaired_real_checkpoint_canary_passed": false,
+    "equal_compute_control_proven": false,
+    "reasoning_gain_proven": false,
+    "frontier_level_proven": false,
+    "fusion_authorized": false,
+    "wow_signal": false
+  }
+}

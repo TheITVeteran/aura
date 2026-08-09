@@ -614,7 +614,7 @@ def _run_vanilla(
     tokenizer,
     prompt_tokens: list[int],
     max_tokens: int,
-) -> tuple[str, list[int], str]:
+) -> tuple[str, list[int], str, dict[str, Any]]:
     """Ordinary greedy decode -- the control the recurrent arms must beat.
 
     It stops on the same rule the recurrent arms stop on
@@ -650,7 +650,35 @@ def _run_vanilla(
     text = tokenizer.decode(output_tokens)
     if text != "".join(pieces):
         raise RuntimeError("ordinary decode token/text round trip differs")
-    return text, output_tokens, termination
+    from core.brain.llm.latent_cortex.resource_accounting import (
+        ModelComputeProfile,
+        ResourceLedger,
+        triangular_attention_pairs,
+    )
+
+    profile = ModelComputeProfile.from_model(model)
+    ledger = ResourceLedger(profile)
+    prompt_token_count = len(prompt_tokens)
+    output_token_count = max(1, len(output_tokens))
+    n_layers = len(model.model.layers)
+    decode_forwards = max(0, output_token_count - 1)
+    ledger.charge(
+        "vanilla_prefill",
+        transformer_layer_apps=prompt_token_count * n_layers,
+        attention_query_key_pairs=(triangular_attention_pairs(prompt_token_count) * n_layers),
+        output_head_tokens=1,
+    )
+    decode_pairs = sum(prompt_token_count + index + 1 for index in range(decode_forwards))
+    ledger.charge(
+        "vanilla_decode",
+        transformer_layer_apps=decode_forwards * n_layers,
+        attention_query_key_pairs=decode_pairs * n_layers,
+        output_head_tokens=decode_forwards,
+        tensor_element_reads=output_token_count * profile.vocab_size,
+        tensor_element_writes=output_token_count * profile.vocab_size,
+        host_scalar_ops=output_token_count * profile.vocab_size * 8,
+    )
+    return text, output_tokens, termination, ledger.to_receipt()
 
 
 def _episode_verifier(task):
@@ -1365,6 +1393,7 @@ def main() -> int:
             return 2
         tasks_by_id = {task.task_id: task for task in tasks}
         incumbent_by_task: dict[str, Any] = {}
+        incumbent_resource_by_task: dict[str, dict[str, Any]] = {}
         vanilla_latency_by_task: dict[str, float] = {}
         for cell in journal.cells():
             if cell.get("arm") != "vanilla" or cell.get("error"):
@@ -1381,6 +1410,13 @@ def main() -> int:
                 max_tokens=int(cell.get("decode_max_tokens") or args.max_tokens),
                 n_layers=len(model.model.layers),
                 decode=lambda values: tokenizer.decode(list(values)),
+            )
+            from core.brain.llm.latent_cortex.resource_accounting import (
+                validate_resource_receipt,
+            )
+
+            incumbent_resource_by_task[task.task_id] = validate_resource_receipt(
+                cell.get("resource_accounting")
             )
             vanilla_latency_by_task[task.task_id] = float(cell.get("latency_s") or 0.0)
         if args.adapter:
@@ -1456,6 +1492,7 @@ def main() -> int:
                 receipt: dict[str, Any] = {}
                 text = ""
                 cell_incumbent = None
+                cell_resource_accounting = None
                 try:
                     if config is None and spec.profile == "ordinary_best_of_3":
                         text = _run_vanilla_best_of(
@@ -1469,7 +1506,12 @@ def main() -> int:
                         )
                     elif config is None:
                         prompt_tokens = _render_prompt(tokenizer, task)
-                        text, output_tokens, termination = _run_vanilla(
+                        (
+                            text,
+                            output_tokens,
+                            termination,
+                            cell_resource_accounting,
+                        ) = _run_vanilla(
                             model,
                             tokenizer,
                             prompt_tokens,
@@ -1487,6 +1529,7 @@ def main() -> int:
                                 termination=termination,
                             )
                             incumbent_by_task[task.task_id] = cell_incumbent
+                            incumbent_resource_by_task[task.task_id] = cell_resource_accounting
                     else:
                         # The verifier ablation. An oracle arm is a
                         # diagnostic ceiling that separates a generation
@@ -1522,6 +1565,9 @@ def main() -> int:
                                 wall_clock_s=args.episode_wall_s,
                                 model_path=args.model,
                                 incumbent_artifact=incumbent,
+                                incumbent_resource_accounting=incumbent_resource_by_task.get(
+                                    task.task_id
+                                ),
                                 worker_identity=worker_identity,
                                 runtime_identity=runtime_identity,
                                 campaign_seed=args.seed,
@@ -1631,6 +1677,7 @@ def main() -> int:
                             if cell_incumbent is not None
                             else None
                         ),
+                        "resource_accounting": cell_resource_accounting,
                         "text": text,
                         "error": error,
                         # A product request pays for the ordinary incumbent and

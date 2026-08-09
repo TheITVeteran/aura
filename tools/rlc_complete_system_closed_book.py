@@ -258,6 +258,45 @@ def _promotion_assessment(
     return final_text, receipt
 
 
+def _aggregate_complete_system_resources(
+    *,
+    incumbent_resource: dict[str, Any],
+    rlc_resources: list[dict[str, Any]],
+    amplifier_resources: list[dict[str, Any]],
+) -> Any:
+    """Replace the RLC incumbent placeholder with its exact measured work."""
+
+    from core.brain.llm.latent_cortex.resource_accounting import (
+        ModelComputeProfile,
+        ResourceLedger,
+        validate_resource_receipt,
+    )
+
+    incumbent = validate_resource_receipt(incumbent_resource)
+    profile = ModelComputeProfile.from_receipt(incumbent["model_profile"])
+    ledger = ResourceLedger(profile)
+
+    def merge(receipt: dict[str, Any], *, prefix: str, resolve_incumbent: bool) -> None:
+        validated = validate_resource_receipt(receipt)
+        ledger.bind_profile(ModelComputeProfile.from_receipt(validated["model_profile"]))
+        unknown = set(validated["unknown_operations"])
+        if resolve_incumbent:
+            if "bound_incumbent_generation" not in unknown:
+                raise ValueError("RLC resource receipt lacks bound incumbent placeholder")
+            unknown.remove("bound_incumbent_generation")
+        for operation, counters in validated["operations"].items():
+            ledger.charge(f"{prefix}:{operation}", **counters)
+        for operation in sorted(unknown):
+            ledger.mark_unknown(f"{prefix}:{operation}")
+
+    merge(incumbent, prefix="incumbent", resolve_incumbent=False)
+    for index, receipt in enumerate(rlc_resources):
+        merge(receipt, prefix=f"rlc_{index}", resolve_incumbent=True)
+    for index, receipt in enumerate(amplifier_resources):
+        merge(receipt, prefix=f"amplifier_{index}", resolve_incumbent=False)
+    return ledger
+
+
 def _run_complete_system_closed_book(
     model: Any,
     config: Any,
@@ -269,11 +308,15 @@ def _run_complete_system_closed_book(
     wall_clock_s: float,
     model_path: str,
     incumbent_artifact: Any,
+    incumbent_resource_accounting: dict[str, Any] | None,
     worker_identity: dict[str, Any],
     runtime_identity: dict[str, Any],
     campaign_seed: int,
 ) -> tuple[str, dict[str, Any]]:
     """Measure the same-information RLC, acquisition, and amplifier composition."""
+
+    if not isinstance(incumbent_resource_accounting, dict):
+        raise ValueError("paired incumbent resource accounting is absent")
 
     from core.brain.llm.latent_cortex.cognitive_acquisition import (
         COGNITIVE_COMPUTE_ACTIONS,
@@ -504,7 +547,6 @@ def _run_complete_system_closed_book(
         authority=promotion_authority,
     )
     from core.brain.llm.latent_cortex.resource_accounting import (
-        ResourceLedger,
         validate_information_receipt,
         validate_resource_receipt,
     )
@@ -517,7 +559,11 @@ def _run_complete_system_closed_book(
             else []
         ),
     ]
-    complete_ledger = ResourceLedger.aggregate([*rlc_receipts, *amplifier_generation_resources])
+    complete_ledger = _aggregate_complete_system_resources(
+        incumbent_resource=incumbent_resource_accounting,
+        rlc_resources=rlc_receipts,
+        amplifier_resources=amplifier_generation_resources,
+    )
     verifier_input_bytes = (
         verifier_registry.input_bytes
         + len(amplifier_candidate.encode("utf-8"))

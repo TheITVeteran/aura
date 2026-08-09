@@ -40247,3 +40247,29 @@ checkpoint canary that reconstructs these receipts, followed by a dynamically
 matched ordinary control on an informative resident-32B band. No reasoning
 gain, frontier result, fusion authority, activation, or `WOW Signal` is claimed,
 and the completion envelope remains `809/920` (approximately `87.9%`).
+
+## Checkpoint 2026-08-09-083: The Incumbent's Compute Is No Longer Unknown
+
+The first CP082 real-checkpoint canary correctly failed closed. All `21/21`
+cells completed without a harness fault, but every complete-system receipt
+retained `bound_incumbent_generation` as an unknown operation. The neural
+episode was right to mark it: the paired ordinary answer had been generated
+outside the episode and supplied as an immutable incumbent artifact. The
+aggregate treatment ledger was wrong to inherit the placeholder after it had
+access to the generation that could measure it.
+
+Ordinary decode now emits and journals its own model-profile-bound resource
+receipt beside the incumbent artifact. The complete treatment substitutes that
+measured prefill/decode work exactly once while aggregating one or two RLC
+rounds, removes only the corresponding placeholder from each RLC receipt, and
+preserves every other unknown operation. Resume reconstructs and validates the
+same receipt. A missing placeholder, malformed ledger, or model-profile drift
+fails rather than double-counting or silently declaring completeness.
+
+The reconciliation/controller/pipeline/handoff family passes `86/86`;
+canonical smoke passes `103/103`; Ruff, compilation, and diff hygiene pass.
+Compact evidence, including hashes of the rejected real-checkpoint campaign,
+is `artifacts/closeout/latent_cortex/cp083_incumbent_resource_binding.json`.
+The repaired real-checkpoint rerun remains the next gate. No gain, frontier,
+fusion, activation, or `WOW Signal` claim is awarded, and the completion
+envelope remains `809/920` (approximately `87.9%`).
