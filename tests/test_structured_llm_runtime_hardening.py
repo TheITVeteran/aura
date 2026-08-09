@@ -194,12 +194,12 @@ def test_the_campaign_stops_at_its_deadline_not_at_its_retry_count():
 
         async def generate_with_meta(self, prompt, **kwargs):
             self.calls += 1
-            time.sleep(0.05)
+            await asyncio.sleep(0.05)
             return {"text": "not json", "error_code": ""}
 
         async def generate(self, prompt, **kwargs):
             self.calls += 1
-            time.sleep(0.05)
+            await asyncio.sleep(0.05)
             return "not json"
 
     router = _SlowRouter()

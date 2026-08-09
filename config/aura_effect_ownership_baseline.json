@@ -765,14 +765,6 @@
       "canonical_owner": false,
       "category": "direct_atomic_file_write",
       "count": 1,
-      "path": "core/brain/symbolic_sandbox.py",
-      "scope": "<module>.SymbolicSandbox.run"
-    },
-    {
-      "callee": "core.runtime.atomic_writer.async_atomic_write_text",
-      "canonical_owner": false,
-      "category": "direct_atomic_file_write",
-      "count": 1,
       "path": "core/brain/verifiers/code_engine.py",
       "scope": "<module>.CodeTruthEngine._ruff"
     },
@@ -4591,6 +4583,22 @@
       "count": 1,
       "path": "core/perception/affordance_schema.py",
       "scope": "<module>.AffordanceKnowledgeBase._save"
+    },
+    {
+      "callee": "<file_write_gateway>.ensure_directory_async",
+      "canonical_owner": false,
+      "category": "file_write_gateway",
+      "count": 1,
+      "path": "core/perception/ambient_presence.py",
+      "scope": "<module>.AmbientPresence.persist_bubble_position"
+    },
+    {
+      "callee": "<file_write_gateway>.write_json_async",
+      "canonical_owner": false,
+      "category": "file_write_gateway",
+      "count": 1,
+      "path": "core/perception/ambient_presence.py",
+      "scope": "<module>.AmbientPresence.persist_bubble_position"
     },
     {
       "callee": "core.runtime.file_write_gateway.get_file_write_gateway().write_text",
@@ -8487,22 +8495,6 @@
       "count": 1,
       "path": "core/brain/semantic_memory.py",
       "scope": "<module>.SemanticMemory.__init__"
-    },
-    {
-      "callee": "self._workspace.mkdir",
-      "canonical_owner": false,
-      "category": "raw_file_mutation",
-      "count": 1,
-      "path": "core/brain/symbolic_sandbox.py",
-      "scope": "<module>.SymbolicSandbox._resolve_workspace"
-    },
-    {
-      "callee": "target.mkdir",
-      "canonical_owner": false,
-      "category": "raw_file_mutation",
-      "count": 1,
-      "path": "core/brain/symbolic_sandbox.py",
-      "scope": "<module>.SymbolicSandbox._resolve_workspace"
     },
     {
       "callee": "os.replace",
@@ -14805,14 +14797,6 @@
       "canonical_owner": false,
       "category": "subprocess_gateway",
       "count": 1,
-      "path": "core/brain/symbolic_sandbox.py",
-      "scope": "<module>.SymbolicSandbox.run"
-    },
-    {
-      "callee": "core.runtime.subprocess_gateway.get_subprocess_gateway().run_async",
-      "canonical_owner": false,
-      "category": "subprocess_gateway",
-      "count": 1,
       "path": "core/brain/verifiers/code_engine.py",
       "scope": "<module>.CodeTruthEngine._ruff"
     },
@@ -16482,6 +16466,6 @@
     }
   ],
   "description": "Exact AST effect-ownership debt ratchet; refresh only after reviewed change",
-  "inventory_sha256": "de04792e3530dbfeee6155974525258e3473578ee89382f7c2a9b42c5824af93",
+  "inventory_sha256": "9ea408b2523b12f7e36fa431a26b0b7d39e50ff9f46eaead795e75e8450ce247",
   "schema_version": 1
 }

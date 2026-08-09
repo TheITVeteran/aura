@@ -849,6 +849,28 @@ def _write_once(path: Path, value: Mapping[str, Any]) -> None:
         _fail("resident_sft_controller_immutable_artifact_drift")
 
 
+def _note_status_publish_failure(exc: BaseException, *, original: str) -> None:
+    """The status file did not get written while a campaign was already dying.
+
+    This runs inside an ``except`` block that is about to re-raise, so it must
+    not raise and must not replace the original failure — a controller that
+    reported "could not write the status file" instead of "training aborted"
+    would send the reader to the wrong subsystem.
+
+    It must also not be silent. A campaign whose terminal status never landed
+    looks, to every downstream reader, exactly like a campaign still running;
+    the whole point of the status file is that absence means something. So
+    the failure is written to stderr, where the launchd log already collects
+    this controller's output.
+    """
+    print(
+        f"resident_sft_controller: could not publish terminal status "
+        f"after {original}: {type(exc).__name__}: {exc}",
+        file=sys.stderr,
+        flush=True,
+    )
+
+
 def _publish_status(
     root: Path, config: Mapping[str, Any], state: str, details: Mapping[str, Any]
 ) -> dict[str, Any]:
@@ -1575,8 +1597,8 @@ def run_controller(config_path: Path, *, launchd_supervised: bool = False) -> di
                     ),
                     {"error": exc.code},
                 )
-            except Exception:
-                pass
+            except Exception as publish_exc:  # noqa: BLE001 — see _note_status_publish_failure
+                _note_status_publish_failure(publish_exc, original=exc.code)
             raise
         except BaseException as exc:
             try:
@@ -1586,8 +1608,10 @@ def run_controller(config_path: Path, *, launchd_supervised: bool = False) -> di
                     "failed",
                     {"error": str(exc) or "no_message", "error_type": type(exc).__name__},
                 )
-            except Exception:
-                pass
+            except Exception as publish_exc:  # noqa: BLE001 — see _note_status_publish_failure
+                _note_status_publish_failure(
+                    publish_exc, original=type(exc).__name__
+                )
             raise
         finally:
             for custody in reversed(custodies):

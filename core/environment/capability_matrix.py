@@ -67,7 +67,7 @@ REQUIREMENTS: tuple[CapabilityRequirement, ...] = (
     CapabilityRequirement("run_lifecycle", "Run Lifecycle", "Runs must start, terminate, postmortem, and preserve cross-run learning."),
     CapabilityRequirement("governance_bridge", "Governance Bridge", "Risky effects must connect to will/authority receipts."),
     CapabilityRequirement("benchmark_integrity", "Benchmark Integrity", "Strict-real, simulated, and fixture runs must stay distinguishable."),
-    CapabilityRequirement("external_task_proof", "External Task Proof Gate", "Placeholder scaffolds and canaries must not be counted as broad task wins."),
+    CapabilityRequirement("external_task_proof", "External Task Proof Gate", "Scaffolded canaries must not be counted as broad task wins."),
 )
 
 
