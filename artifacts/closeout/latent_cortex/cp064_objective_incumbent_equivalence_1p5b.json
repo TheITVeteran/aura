@@ -1,0 +1,64 @@
+{
+  "schema": "aura.closeout.rlc.cp064.v1",
+  "checkpoint": "CP064",
+  "input_experiment": {
+    "campaign": "aura-cp063-v4-canary-63ced16c2-s2026080902",
+    "source_commit": "63ced16c2286701d5c8574b7a1ff515f8325abf6",
+    "seed": 2026080902,
+    "elapsed_s": 492.95152592658997,
+    "receipt_sha256": "6cc3587b1f2cb143724193ce50a4f49296b320a9c84e5535238a1f282eafbd16",
+    "ordinary_correct": 6,
+    "initial_full_engine_correct": 6,
+    "trained_full_engine_correct": 6,
+    "observations": 8,
+    "optimizer_updates": 8,
+    "all_samples_admitted": true,
+    "adapter_mutated": true,
+    "scientific_gate": "complete_engine_heldout_strict_gain",
+    "scientific_gate_passed": false
+  },
+  "localized_failure": {
+    "task_id": "recurrence-boolean-d2-s4484561004535460531",
+    "depths": [1, 2],
+    "expected_value": 1,
+    "ordinary_value": 0,
+    "baseline_shape": "single_markdown_json_fence_without_FINAL_ANSWER_marker",
+    "exactly_refuted_neural_branches": 2,
+    "exact_solver_candidate_available": true,
+    "exact_solver_candidate_quality": [1.0, 1.0],
+    "baseline_quality": [0.0, 1.0],
+    "replacement_decision": "retain",
+    "replacement_reason": "no_proven_dominance_or_known_refutation",
+    "root_cause": "the exact objective verifier required the requested envelope while the independent task grader accepted a uniquely bounded JSON object, so the incumbent received only syntax evidence and no exact semantic comparison"
+  },
+  "repair": {
+    "verifier_schema": "aura.rlc.objective_program_verifier.v2",
+    "accepted_markerless_forms": [
+      "whole_response_json_object",
+      "single_whole_response_json_fence"
+    ],
+    "still_unverifiable": [
+      "prose_wrapped_json",
+      "multiple_payloads",
+      "ambiguous_partial_payloads"
+    ],
+    "authority_rule": "the same exact public-objective program verifies or refutes both incumbent and challenger before confidence-bound replacement"
+  },
+  "verification": {
+    "focused_contracts": {"passed": 121, "failed": 0},
+    "canonical_smoke": {"passed": 103, "failed": 0},
+    "wrong_fenced_incumbent_replaced_in_regression": true,
+    "prose_wrapped_payload_remains_unknown": true,
+    "ruff": "pass",
+    "py_compile": "pass",
+    "diff_check": "pass"
+  },
+  "claims": {
+    "fresh_seed_architecture_gain_proven": false,
+    "training_gain_proven": false,
+    "resident_32b_gain_proven": false,
+    "frontier_level_proven": false,
+    "fusion_allowed": false,
+    "wow_signal": false
+  }
+}

@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import json
 
+import pytest
+
 from core.brain.llm.latent_cortex.atomic_decomposition import (
     build_atomic_decomposition,
 )
@@ -137,6 +139,44 @@ def test_router_executes_public_boolean_objective_with_bounded_parser() -> None:
     assert execution["declared_operations"] == 2
     assert execution["executed_operations"] == 2
     assert len(execution["expression_sha256"]) == 64
+
+
+@pytest.mark.parametrize(
+    ("candidate", "outcome"),
+    [
+        ('{"value":1}', "verified"),
+        ('{"value":0}', "refuted"),
+        ('```json\n{"value":1}\n```', "verified"),
+        ('```json\n{"value":0}\n```', "refuted"),
+    ],
+)
+def test_router_checks_uniquely_bounded_json_without_final_answer_marker(
+    candidate: str,
+    outcome: str,
+) -> None:
+    objective = (
+        "Evaluate this 2-operation expression with 1=true, 0=false, and xor meaning "
+        "exactly one operand is true: ((1 and 1) or 0). Return a value of 1 or 0. "
+        "You may reason before answering."
+    )
+
+    receipt = _route(candidate, objective)
+
+    assert receipt["routes"][0]["verifier"] == "exact_objective_program"
+    assert receipt["routes"][0]["outcome"] == outcome
+
+
+def test_router_does_not_treat_prose_wrapped_json_as_unique_terminal_answer() -> None:
+    objective = (
+        "Evaluate this 2-operation expression with 1=true, 0=false, and xor meaning "
+        "exactly one operand is true: ((1 and 1) or 0). Return a value of 1 or 0. "
+        "You may reason before answering."
+    )
+
+    receipt = _route('Maybe {"value":1}, but I am not certain.', objective)
+
+    assert receipt["routes"][0]["verifier"] == "none"
+    assert receipt["routes"][0]["outcome"] == "unknown"
 
 
 def test_public_objective_solver_emits_canonical_candidate_and_text_free_receipt() -> None:

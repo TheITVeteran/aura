@@ -39618,3 +39618,40 @@ Compact evidence is
 Reasoning gain, training gain, resident-32B gain, frontier performance, fusion,
 activation, and `WOW Signal` remain false. The completion envelope remains
 `809/920` (approximately `87.9%`).
+
+## Checkpoint 2026-08-09-064: Incumbent and Challenger Share One Objective
+
+The fresh CP063-source canary completed in `493.0s` with all eight optimizer
+updates, all on-policy samples admitted, a mutated adapter, immutable base
+weights, complete specialization and projection stages, and no ordinary-floor
+or depth regression. Ordinary decode, the initial complete engine, and the
+trained complete engine each scored `6/8`. The strict gain gate correctly
+rejected the checkpoint. This is a valid negative training result: no training
+gain, resident-32B gain, frontier result, fusion authority, or `WOW Signal` can
+be inferred.
+
+The paired evidence nevertheless exposed an arbitration defect on the one
+failed Boolean identity. The ordinary incumbent returned one fenced JSON
+object containing the wrong value but omitted the requested `FINAL_ANSWER:`
+marker. The independent task grader could parse and refute that answer. The
+answer-replacement verifier could not: it treated the same text only as
+syntactically valid code, assigned the unknown interval `[0,1]`, and therefore
+made the exact solver's verified `[1,1]` candidate mathematically incapable of
+clearing a `0.05` dominance margin. Both neural branches were exactly refuted,
+the public objective solver had the correct result, and the engine still
+retained the wrong incumbent.
+
+Objective-program verifier v2 now accepts only two markerless forms whose
+answer is still uniquely bounded: a whole-response JSON object or one
+whole-response JSON fence. It does not extract JSON from prose, choose among
+multiple payloads, or relax the public program parser. The same bounded exact
+program now verifies or refutes both the incumbent and every challenger, so a
+wrong fenced incumbent can be replaced while an ambiguous response retains no
+semantic authority.
+
+Focused verifier, replacement, admission, canary, and engine contracts pass
+`121/121`; canonical smoke passes `103/103`; Ruff, compilation, and diff
+hygiene pass. Compact evidence is
+`artifacts/closeout/latent_cortex/cp064_objective_incumbent_equivalence_1p5b.json`.
+The repair requires a fresh canary. The completion envelope remains `809/920`
+(approximately `87.9%`).

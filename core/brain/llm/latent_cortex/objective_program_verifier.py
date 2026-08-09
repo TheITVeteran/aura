@@ -14,7 +14,7 @@ import re
 from dataclasses import dataclass
 from typing import Any
 
-OBJECTIVE_PROGRAM_VERIFIER_SCHEMA = "aura.rlc.objective_program_verifier.v1"
+OBJECTIVE_PROGRAM_VERIFIER_SCHEMA = "aura.rlc.objective_program_verifier.v2"
 OBJECTIVE_PROGRAM_SOLUTION_SCHEMA = "aura.rlc.objective_program_solution.v1"
 
 _MODULAR_OBJECTIVE_RE = re.compile(
@@ -28,6 +28,10 @@ _BOOLEAN_OBJECTIVE_RE = re.compile(
     r"(?P<expression>.+?)\. Return a value of 1 or 0\.",
 )
 _BOOLEAN_TOKEN_RE = re.compile(r"\s*(?:(?P<bit>[01])|(?P<op>not|and|or|xor)|(?P<paren>[()]))")
+_JSON_FENCE_RE = re.compile(
+    r"\A```(?:json)?[ \t]*\r?\n(?P<body>\{[\s\S]*\})\r?\n```\Z",
+    re.IGNORECASE,
+)
 
 
 def _sha(value: Any) -> str:
@@ -131,7 +135,20 @@ def _boolean_tokens(expression: str) -> list[str]:
 def _candidate_payload(candidate: str) -> dict[str, Any]:
     from core.brain.llm.latent_cortex.frontier_tasks import parse_final_answer
 
-    payload = parse_final_answer(candidate)
+    if "FINAL_ANSWER:" in candidate:
+        payload = parse_final_answer(candidate)
+    else:
+        # Some checkpoints return only the requested JSON object, commonly in
+        # one markdown fence.  That is a contract-format defect, but the
+        # semantic answer remains uniquely identifiable.  Accept only a whole
+        # response object or one whole-response JSON fence: prose-wrapped,
+        # multiple, or otherwise ambiguous payloads remain unverifiable.
+        bounded = candidate.strip()
+        fence = _JSON_FENCE_RE.fullmatch(bounded)
+        encoded = fence.group("body") if fence is not None else bounded
+        if not (encoded.startswith("{") and encoded.endswith("}")):
+            raise ValueError("terminal_answer_not_uniquely_bounded")
+        payload = json.loads(encoded)
     if not isinstance(payload, dict):
         raise ValueError("terminal_answer_not_object")
     return payload
@@ -249,11 +266,16 @@ def verify_objective_program(candidate: str, *, objective: str) -> dict[str, Any
 
     if not isinstance(candidate, str) or not isinstance(objective, str):
         raise TypeError("objective program verifier inputs must be text")
-    if "FINAL_ANSWER:" not in candidate:
-        return None
     executed = _execute_objective(objective)
     if executed is None:
         return None
+    if "FINAL_ANSWER:" not in candidate:
+        bounded = candidate.strip()
+        if not (
+            (bounded.startswith("{") and bounded.endswith("}"))
+            or _JSON_FENCE_RE.fullmatch(bounded) is not None
+        ):
+            return None
     family, expected, execution = executed
     failure_codes: list[str] = []
     try:
