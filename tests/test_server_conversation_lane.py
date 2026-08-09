@@ -13277,7 +13277,17 @@ async def test_desktop_required_stabilizer_does_not_add_a_third_generation_by_de
     assert "not starting a second foreground generation" not in result
     assert "failed the reply-quality gate" not in result
     assert "AI language model" not in result
-    assert "I'm here" in result or "i'm here" in result
+    # She still SAYS something, in her own first person, rather than returning
+    # an empty string or an error surface.
+    #
+    # This used to assert the literal "I'm here", which was the opening of the
+    # terminal fallback until 718e46091 reworded it — that copy asserted "the
+    # thread intact", a claim the recovery path cannot establish, and grounding
+    # it was the point of the change. Pinning the phrase made an honesty fix
+    # look like a regression. The property is what this test is for; the
+    # wording belongs to whoever writes her voice.
+    assert result.strip()
+    assert result.strip().lower().startswith("i ") or " i " in result.lower()
 
 
 @pytest.mark.asyncio

@@ -23,7 +23,13 @@ from typing import Any
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from core.container import ServiceContainer  # noqa: E402
+from core.runtime.content_integrity import text_sha256  # noqa: E402
 from core.skills.desktop_task import DesktopTaskParams, DesktopTaskSkill  # noqa: E402
+
+#: The renderer bounds the body before hashing it, and the verifier bounds it
+#: the same way. Mirrored here so the double proves the real binding rather
+#: than a looser one.
+_PDF_BODY_LIMIT = 9000
 
 
 class _GovernedEngineDouble:
@@ -73,14 +79,20 @@ class _GovernedEngineDouble:
                 "effect_verified": True,
             }
         if action == "render_text_pdf":
-            content = str(parsed.get("content") or "")
+            # The renderer reads "body", not "content", and reports a digest
+            # binding the persisted PDF to the text it was asked to render.
+            # This double emitted neither, so it stood in for a renderer that
+            # cannot exist — and the step it was standing in for could never
+            # verify.
+            body = str(parsed.get("body") or "")[:_PDF_BODY_LIMIT]
             return {
                 "ok": True,
                 "path": parsed.get("path"),
-                "bytes": max(1, len(content)),
-                "pages": 1 + len(content) // 1800,
-                "chars": max(1, len(content)),
+                "bytes": max(1, len(body)),
+                "pages": 1 + len(body) // 1800,
+                "chars": max(1, len(body)),
                 "sha256": "0" * 64,
+                "source_body_sha256": text_sha256(body),
                 "effect_verified": True,
             }
         if action == "move_file":
@@ -165,7 +177,7 @@ def test_novel_task_research_dossier():
          "reason": "persist notes", "expect": "file written"},
         {"action": "render_text_pdf",
          "target": json.dumps({"path": "~/Documents/Research/Fusion/dossier.pdf",
-                                "content": "Fusion dossier summary." * 40}),
+                                "body": "Fusion dossier summary." * 40}),
          "reason": "deliverable", "expect": "pdf rendered"},
     ]
     result, engine = _execute(steps, "Build me a fusion research dossier")

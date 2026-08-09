@@ -497,6 +497,19 @@ class DesktopTaskSkill(BaseSkill):
 
     @staticmethod
     def _requested_visible_source_count(objective: str) -> int:
+        """How many sources the person asked to actually SEE. 0 if they did not.
+
+        Distinct from ``_requested_research_source_count``, which is how many
+        she READS. "Find 3 articles and write me a PDF" wants three articles
+        researched and zero browser tabs; opening them anyway answers a
+        request nobody made, with someone else's windows.
+
+        So the opening verb has to sit beside the count. An earlier version
+        searched the whole objective for "open", which meant "Open Google
+        Chrome, find 3 articles…" licensed three tabs on the strength of a
+        verb belonging to a different clause — and then fell through to a
+        default of 3 that nobody had asked for.
+        """
         lowered = str(objective or "").lower()
         counted_sources = (
             r"(?:\d+|one|two|three|four|five|six|seven|eight|nine|ten|"

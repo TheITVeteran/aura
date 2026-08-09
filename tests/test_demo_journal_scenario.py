@@ -28,7 +28,12 @@ from typing import Any
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from core.container import ServiceContainer  # noqa: E402
+from core.runtime.content_integrity import text_sha256  # noqa: E402
 from core.skills.desktop_task import DesktopTaskParams, DesktopTaskSkill  # noqa: E402
+
+#: The renderer bounds the body before hashing it and the verifier bounds it
+#: identically. Mirrored so the double stands in for the real contract.
+_PDF_BODY_LIMIT = 9000
 
 
 def _journal_steps() -> list[dict[str, Any]]:
@@ -71,7 +76,7 @@ def _journal_steps() -> list[dict[str, Any]]:
             "target": json.dumps(
                 {
                     "path": "~/Documents/Aura's Journal/who-i-am.pdf",
-                    "content": summary,
+                    "body": summary,
                 }
             ),
             "reason": "the user asked for a PDF export",
@@ -147,14 +152,18 @@ class _GovernedEngineDouble:
                 "effect_verified": True,
             }
         if action == "render_text_pdf":
-            content = str(parsed.get("content") or "")
+            # "body", not "content" — and the digest that binds the persisted
+            # PDF to the text it was asked to render. Without both, this double
+            # described a renderer the verifier would always reject.
+            body = str(parsed.get("body") or "")[:_PDF_BODY_LIMIT]
             return {
                 "ok": True,
                 "path": parsed.get("path"),
-                "bytes": max(1, len(content)),
+                "bytes": max(1, len(body)),
                 "pages": 1,
-                "chars": max(1, len(content)),
+                "chars": max(1, len(body)),
                 "sha256": "0" * 64,
+                "source_body_sha256": text_sha256(body),
                 "effect_verified": True,
             }
         if action == "move_file":
@@ -281,7 +290,21 @@ def test_user_requests_mentioning_proof_are_not_hijacked_by_harness_lane():
         assert _is_live_runtime_proof_request(message) is True, message
 
 
-def test_research_document_objective_opens_visible_sources_before_document_work():
+def test_a_research_document_objective_does_not_open_tabs_nobody_asked_for():
+    """Finding three articles is not opening three tabs.
+
+    This test used to assert the opposite, and passed because the visible-tab
+    count searched the WHOLE objective for the word "open" — so "Open Google
+    Chrome, find 3 different articles…" licensed three browser tabs on the
+    strength of a verb belonging to a different clause, then fell through to
+    a default of 3 nobody had chosen.
+
+    The rule since: reading is `_requested_research_source_count`, showing is
+    `_requested_visible_source_count`, and showing needs its own ask. She
+    still opens the search and the document — those WERE asked for.
+    ``test_requested_source_count`` owns the parser contract; this pins the
+    plan that comes out of it.
+    """
     skill = DesktopTaskSkill()
     objective = (
         "Open Google Chrome, find 3 different articles on climate change, "
@@ -309,9 +332,13 @@ def test_research_document_objective_opens_visible_sources_before_document_work(
         and target.get("browser") == "Google Chrome"
         for target in source_targets
     )
-    assert {"url": "https://example.com/climate-1", "browser": "Google Chrome"} in source_targets
-    assert {"url": "https://example.com/climate-2", "browser": "Google Chrome"} in source_targets
-    assert {"url": "https://example.com/climate-3", "browser": "Google Chrome"} in source_targets
+    # The sources are available in context and still not opened, because the
+    # request never asked to see them — it asked for a document about them.
+    for index in (1, 2, 3):
+        assert {
+            "url": f"https://example.com/climate-{index}",
+            "browser": "Google Chrome",
+        } not in source_targets
     assert {
         "url": "https://docs.google.com/document/u/0/create",
         "browser": "Google Chrome",
@@ -322,3 +349,34 @@ def test_research_document_objective_opens_visible_sources_before_document_work(
     hotkeys = [step.target for step in steps if step.action == "hotkey"]
     assert "command+v" in hotkeys
     assert "command+n" not in hotkeys
+
+
+def test_asking_to_see_the_sources_does_open_them():
+    """The other half. Refusing tabs unasked must not mean never opening any.
+
+    Without this, "do not open tabs nobody asked for" would be satisfied by a
+    planner that had simply lost the ability to open a source at all.
+    """
+    skill = DesktopTaskSkill()
+    objective = (
+        "Open Google Chrome, open 3 different articles on climate change, "
+        "open Google Docs, summarize those articles in a doc, and export it "
+        "as a PDF to a new folder titled Aura's Journal on my Desktop."
+    )
+    context = {
+        "desktop_task_research_sources": [
+            {"title": "Climate source 1", "url": "https://example.com/climate-1", "snippet": "one"},
+            {"title": "Climate source 2", "url": "https://example.com/climate-2", "snippet": "two"},
+            {"title": "Climate source 3", "url": "https://example.com/climate-3", "snippet": "three"},
+        ],
+        "desktop_task_research_summary": "Three current climate article notes.",
+    }
+
+    steps = skill._derive_steps_from_objective(objective, context)
+    source_targets = [step.target for step in steps if step.action == "open_url"]
+
+    for index in (1, 2, 3):
+        assert {
+            "url": f"https://example.com/climate-{index}",
+            "browser": "Google Chrome",
+        } in source_targets
