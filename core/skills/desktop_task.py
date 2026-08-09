@@ -5255,6 +5255,47 @@ class DesktopTaskSkill(BaseSkill):
             ),
         }
 
+    def _ambient_answer(self, objective: str, params: Any) -> dict[str, Any] | None:
+        """Answer from what she already saw, or None to capture normally.
+
+        None is the pre-ambient behaviour, so every failure path here simply
+        falls through to a real capture. That is the property that makes the
+        fast path safe to add: it can only ever remove latency, never remove
+        an answer.
+        """
+        if getattr(params, "steps", None):
+            # An explicit plan is a request to DO something, not to know.
+            return None
+        if not looks_like_screen_observation(objective):
+            return None
+        if self._objective_needs_general_os_automation(objective):
+            # There is an action in here; the screen is about to change.
+            return None
+        try:
+            from core.perception.ambient_presence import get_ambient_presence
+
+            observation = get_ambient_presence().fresh_observation_for(objective)
+        except (ImportError, AttributeError, RuntimeError, TypeError, ValueError):
+            return None
+        if observation is None:
+            return None
+        return {
+            "ok": True,
+            "status": "answered_from_ambient_observation",
+            "objective": objective,
+            "steps_requested": 0,
+            "steps_completed": 0,
+            "receipts": [],
+            "observation": observation.for_reasoning(),
+            "observation_meta": observation.to_dict(),
+            # Named, so an answer sourced from a moment ago is never mistaken
+            # for a reading of this instant. The age travels with it.
+            "observation_age_s": round(
+                max(0.0, time.time() - float(getattr(observation, "timestamp", 0.0))), 1
+            ),
+            "captured_now": False,
+        }
+
     async def execute(self, params: Any, context: dict[str, Any]) -> dict[str, Any]:
         if isinstance(params, dict):
             params = DesktopTaskParams(**params)
@@ -5282,6 +5323,20 @@ class DesktopTaskSkill(BaseSkill):
         receipts: list[dict[str, Any]] = []
         failures: list[dict[str, Any]] = []
         objective = params.objective or str((context or {}).get("objective") or "desktop task")
+
+        # She may already be looking. A pure observation — "what's on my
+        # screen" with no action attached — is answerable from what the
+        # ambient loop saw moments ago, and re-capturing to answer it costs
+        # a governed desktop action plus its latency to learn what is
+        # already known.
+        #
+        # Bounded to PURE observations on purpose: any request with an action
+        # in it needs the current screen, because the action is about to
+        # change it. And the freshness bound is short, because answering a
+        # question about NOW with a fact about THEN is answering wrong.
+        ambient = self._ambient_answer(objective, params)
+        if ambient is not None:
+            return ambient
 
         task_context = dict(context or {})
         task_context.setdefault("objective", objective)

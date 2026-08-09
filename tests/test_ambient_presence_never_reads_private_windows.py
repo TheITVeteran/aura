@@ -558,3 +558,116 @@ class TestThePrivacyRuleHoldsForEveryCaller:
         )
 
         assert ComputerUseSkill.__new__(ComputerUseSkill).read_screen_text() == "SCREEN"
+
+
+class TestTheFastPathIsCausalInTheAnswerLane:
+    """Retaining observations changes nothing unless the answer path reads them."""
+
+    def _skill(self):
+        from core.skills.desktop_task import DesktopTaskSkill
+
+        return DesktopTaskSkill.__new__(DesktopTaskSkill)
+
+    def _params(self, objective, steps=()):
+        from core.skills.desktop_task import DesktopTaskParams
+
+        return DesktopTaskParams(objective=objective, steps=list(steps))
+
+    def test_a_screen_question_is_answered_from_a_recent_observation(
+        self, presence, monkeypatch
+    ):
+        from core.perception.observation_evidence import get_observation_memory
+
+        get_observation_memory().clear()
+        _with_context(presence, "Terminal", "zsh", text="pytest: 3 failed, 12 passed")
+        asyncio.run(presence.tick())
+        monkeypatch.setattr(
+            "core.perception.ambient_presence.get_ambient_presence", lambda: presence
+        )
+
+        answer = self._skill()._ambient_answer(
+            "what's on my screen?", self._params("what's on my screen?")
+        )
+
+        assert answer is not None
+        assert answer["captured_now"] is False
+        assert "3 failed" in answer["observation"]
+        assert answer["observation_age_s"] is not None, (
+            "an answer from a moment ago must carry its age, or it reads as a "
+            "reading of this instant"
+        )
+
+    def test_a_request_with_an_action_still_captures(self, presence, monkeypatch):
+        """The screen is about to change; a cached reading is the wrong one."""
+        from core.perception.observation_evidence import get_observation_memory
+
+        get_observation_memory().clear()
+        _with_context(presence, "Terminal", "zsh", text="anything")
+        asyncio.run(presence.tick())
+        monkeypatch.setattr(
+            "core.perception.ambient_presence.get_ambient_presence", lambda: presence
+        )
+
+        objective = "click the run button and tell me what's on my screen"
+        assert self._skill()._ambient_answer(objective, self._params(objective)) is None
+
+    def test_an_explicit_plan_is_never_short_circuited(self, presence, monkeypatch):
+        from core.perception.observation_evidence import get_observation_memory
+        from core.skills.desktop_task import DesktopTaskStep
+
+        get_observation_memory().clear()
+        _with_context(presence, "Terminal", "zsh", text="anything")
+        asyncio.run(presence.tick())
+        monkeypatch.setattr(
+            "core.perception.ambient_presence.get_ambient_presence", lambda: presence
+        )
+
+        params = self._params(
+            "what's on my screen?",
+            steps=[
+                DesktopTaskStep(
+                    action="read_screen_text", target="", reason="r", expect="e"
+                )
+            ],
+        )
+        assert self._skill()._ambient_answer("what's on my screen?", params) is None
+
+    def test_a_non_observation_objective_is_untouched(self, presence, monkeypatch):
+        monkeypatch.setattr(
+            "core.perception.ambient_presence.get_ambient_presence", lambda: presence
+        )
+        objective = "open Safari and go to github.com"
+        assert self._skill()._ambient_answer(objective, self._params(objective)) is None
+
+    def test_no_recent_observation_falls_through_to_a_real_capture(
+        self, presence, monkeypatch
+    ):
+        """None is the pre-ambient behaviour, so the fast path is always safe."""
+        from core.perception.observation_evidence import get_observation_memory
+
+        get_observation_memory().clear()
+        monkeypatch.setattr(
+            "core.perception.ambient_presence.get_ambient_presence", lambda: presence
+        )
+
+        assert (
+            self._skill()._ambient_answer(
+                "what's on my screen?", self._params("what's on my screen?")
+            )
+            is None
+        )
+
+    def test_a_broken_ambient_organ_falls_through_rather_than_failing(self, monkeypatch):
+        def _boom():
+            raise RuntimeError("ambient organ gone")
+
+        monkeypatch.setattr(
+            "core.perception.ambient_presence.get_ambient_presence", _boom
+        )
+
+        assert (
+            self._skill()._ambient_answer(
+                "what's on my screen?", self._params("what's on my screen?")
+            )
+            is None
+        )
