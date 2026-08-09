@@ -1,0 +1,477 @@
+"""Bounded foreground entry point for the Recursive Latent Cortex.
+
+The active and compatibility response phases must make the same routing and
+ownership decisions.  This module owns that contract so a latent episode is
+never selected in one serving path but silently bypassed in another.
+"""
+
+from __future__ import annotations
+
+import logging
+from dataclasses import dataclass
+from typing import Any
+
+from core.runtime.errors import record_degradation
+from core.runtime.structured_input import analyze_prompt_shape
+
+logger = logging.getLogger("Aura.ForegroundLatentRuntime")
+
+_LATENT_OWNER_TIMEOUT_SECONDS = 165.0
+_LATENT_CLEANUP_RESERVE_SECONDS = 8.0
+_RECOVERABLE_ERRORS = (
+    AttributeError,
+    ImportError,
+    LookupError,
+    OSError,
+    RuntimeError,
+    TimeoutError,
+    TypeError,
+    ValueError,
+)
+_PROMPT_SHAPE_KEYS = frozenset(
+    {
+        "question_parts",
+        "explicit_question_marks",
+        "question_like_lines",
+        "connector_parts",
+        "repeated_clause_parts",
+        "numbered_parts",
+        "imperative_parts",
+        "prefers_extended_answer",
+        "requires_single_reply_coverage",
+    }
+)
+
+
+def _base_trace() -> dict[str, Any]:
+    return {
+        "latent_cortex_selected": False,
+        "latent_cortex_attempted": False,
+        "latent_cortex_succeeded": False,
+        "latent_cortex_fallback_used": False,
+        "latent_cortex_failure_reason": "",
+        "latent_cortex_identity_bound": False,
+        "latent_cortex_receipt": {},
+        "latent_cortex_progress": {},
+    }
+
+
+def select_foreground_episode(
+    *,
+    foreground: bool,
+    desktop_required: bool,
+    cognitive_mode: str,
+    prompt_shape: dict[str, Any] | None,
+    compact_contract: bool,
+    strict_output_contract: bool,
+    incompatible_contract: bool,
+    proof_or_benchmark: bool,
+    explicitly_required: bool = False,
+    visible_objective: str | None = None,
+) -> dict[str, Any]:
+    """Return a closed-schema, auditable foreground routing decision."""
+
+    analyzed_shape = analyze_prompt_shape(visible_objective).to_dict()
+    supplied_shape = prompt_shape if isinstance(prompt_shape, dict) else {}
+    shape: dict[str, Any] = {}
+    rejected_shape_keys = sorted(set(supplied_shape) - _PROMPT_SHAPE_KEYS)[:8]
+    for key in (
+        "question_parts",
+        "explicit_question_marks",
+        "question_like_lines",
+        "connector_parts",
+        "repeated_clause_parts",
+        "numbered_parts",
+        "imperative_parts",
+    ):
+        supplied = supplied_shape.get(key)
+        supplied = supplied if type(supplied) is int and 0 <= supplied <= 512 else 0
+        shape[key] = max(supplied, int(analyzed_shape.get(key) or 0))
+    for key in ("prefers_extended_answer", "requires_single_reply_coverage"):
+        shape[key] = bool(supplied_shape.get(key) or analyzed_shape.get(key))
+
+    question_parts = shape.get("question_parts", 0)
+    question_parts = question_parts if type(question_parts) is int else 0
+    extended = bool(shape.get("prefers_extended_answer"))
+    single_reply_coverage = bool(shape.get("requires_single_reply_coverage"))
+    mode = str(cognitive_mode or "").strip().lower()
+    depth_worthy = bool(
+        explicitly_required
+        or mode == "deliberate"
+        or extended
+        or single_reply_coverage
+        or question_parts > 1
+    )
+    exclusion = ""
+    if not foreground:
+        exclusion = "not_foreground"
+    elif not desktop_required:
+        exclusion = "desktop_cognitive_engine_not_required"
+    elif compact_contract and not depth_worthy:
+        exclusion = "compact_contract"
+    elif strict_output_contract:
+        exclusion = "strict_output_contract"
+    elif incompatible_contract:
+        exclusion = "incompatible_contract"
+    elif proof_or_benchmark and not explicitly_required:
+        exclusion = "proof_lane_not_explicitly_opted_in"
+    selected = bool(not exclusion and depth_worthy)
+    reason = (
+        "explicit_requirement"
+        if selected and explicitly_required
+        else "deliberate_cognitive_mode"
+        if selected and mode == "deliberate"
+        else "multipart_or_extended_prompt"
+        if selected
+        else exclusion or "depth_threshold_not_met"
+    )
+    depth_signal = min(1.0, 0.55 + 0.10 * min(3, question_parts))
+    if extended or single_reply_coverage:
+        depth_signal = max(depth_signal, 0.75)
+    if mode == "deliberate":
+        depth_signal = max(depth_signal, 0.80)
+    if explicitly_required:
+        depth_signal = max(depth_signal, 0.90)
+    return {
+        "latent_cortex_selected": selected,
+        "latent_cortex_selection_reason": reason,
+        "latent_cortex_depth_worthy": depth_worthy,
+        "latent_cortex_prompt_shape": shape,
+        "latent_cortex_prompt_shape_rejected_keys": rejected_shape_keys,
+        "stakes": round(max(0.55, depth_signal - 0.05), 3),
+        "uncertainty": round(depth_signal, 3),
+        "signal_basis": "prompt_shape_heuristic",
+        "signal_sources": ["prompt_text_shape"],
+        "calibrated_uncertainty": False,
+        "consequence_evidence": False,
+    }
+
+
+@dataclass(frozen=True)
+class ForegroundLatentOutcome:
+    """One complete foreground routing attempt and its ownership disposition."""
+
+    text: str
+    trace: dict[str, Any]
+    fallback_allowed: bool
+
+    @property
+    def selected(self) -> bool:
+        return self.trace.get("latent_cortex_selected") is True
+
+    @property
+    def attempted(self) -> bool:
+        return self.trace.get("latent_cortex_attempted") is True
+
+    @property
+    def succeeded(self) -> bool:
+        return self.trace.get("latent_cortex_succeeded") is True
+
+
+def latent_owner_exhausted(reason: str, receipt: dict[str, Any]) -> bool:
+    """Return whether a failed episode can still own the resident model.
+
+    A completed receipt-contract failure and a soft cancellation release the
+    owner.  Starting a second decode after a timeout, identity failure, or a
+    non-terminal episode receipt can collide with a still-cleaning worker.
+    """
+
+    normalized = str(reason or "").strip()
+    if normalized.startswith(
+        (
+            "latent_timeout:",
+            "latent_integrity:",
+            "worker_identity_failed:",
+            "runtime_identity_deadline_exhausted",
+            "runtime_identity_unbound",
+        )
+    ):
+        return True
+
+    terminal_stage = str(receipt.get("last_stage") or "").strip().lower()
+    if normalized.startswith("receipt_contract_failed:") and terminal_stage in {
+        "complete",
+        "completed",
+        "finished",
+    }:
+        return False
+    if normalized.startswith("soft_cancel") or normalized in {"cancelled", "canceled"}:
+        return False
+
+    input_tokens = receipt.get("input_token_count")
+    consumed_input = type(input_tokens) is int and input_tokens > 0
+    return bool(
+        str(receipt.get("episode_id") or "").strip()
+        and (str(receipt.get("last_stage") or "").strip() or consumed_input)
+    )
+
+
+def _resolve_service() -> Any:
+    from core.container import ServiceContainer
+
+    service = ServiceContainer.get("latent_cortex", default=None)
+    if service is not None:
+        return service
+    try:
+        from core.runtime.service_registry import get_runtime_service
+
+        return get_runtime_service("latent_cortex", default=None)
+    except _RECOVERABLE_ERRORS:
+        return None
+
+
+def _latest_service_evidence(service: Any) -> tuple[dict[str, Any], dict[str, Any]]:
+    getter = getattr(service, "get_status", None)
+    if not callable(getter):
+        return {}, {}
+    try:
+        status = getter()
+    except _RECOVERABLE_ERRORS:
+        return {}, {}
+    if not isinstance(status, dict):
+        return {}, {}
+    receipt = status.get("last_failure_receipt") or status.get("last_receipt")
+    progress = status.get("last_progress")
+    return (
+        dict(receipt) if isinstance(receipt, dict) else {},
+        dict(progress) if isinstance(progress, dict) else {},
+    )
+
+
+def _bounded_int(value: Any, default: int, minimum: int, maximum: int) -> int:
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError, OverflowError):
+        parsed = default
+    return max(minimum, min(maximum, parsed))
+
+
+def _bounded_float(value: Any, default: float, minimum: float, maximum: float) -> float:
+    try:
+        parsed = float(value)
+    except (TypeError, ValueError, OverflowError):
+        parsed = default
+    return max(minimum, min(maximum, parsed))
+
+
+async def run_foreground_latent_episode(
+    *,
+    orchestrator: Any,
+    messages: list[dict[str, Any]],
+    visible_objective: str,
+    foreground: bool,
+    desktop_required: bool,
+    cognitive_mode: str,
+    request_timeout_s: float,
+    prompt_shape: dict[str, Any] | None = None,
+    compact_contract: bool = False,
+    strict_output_contract: bool = False,
+    incompatible_contract: bool = False,
+    proof_or_benchmark: bool = False,
+    explicitly_required: bool = False,
+    tenant_id: str = "local",
+    user_id: str = "owner",
+    session_id: str = "local",
+    domain: str = "desktop_conversation",
+    decode_max_tokens: int = 768,
+    decode_temperature: float = 0.58,
+    decode_top_p: float = 0.88,
+    recurrent_loops: int = 1,
+    steering_alpha: float = 0.25,
+) -> ForegroundLatentOutcome:
+    """Select and, when warranted, execute one full-stack latent episode."""
+
+    trace = _base_trace()
+    selection = select_foreground_episode(
+        foreground=foreground,
+        desktop_required=desktop_required,
+        cognitive_mode=cognitive_mode,
+        prompt_shape=prompt_shape,
+        compact_contract=compact_contract,
+        strict_output_contract=strict_output_contract,
+        incompatible_contract=incompatible_contract,
+        proof_or_benchmark=proof_or_benchmark,
+        explicitly_required=explicitly_required,
+        visible_objective=visible_objective,
+    )
+    trace.update(
+        {key: value for key, value in selection.items() if key.startswith("latent_cortex_")}
+    )
+    if selection.get("latent_cortex_selected") is not True:
+        return ForegroundLatentOutcome(text="", trace=trace, fallback_allowed=True)
+
+    trace["latent_cortex_attempted"] = True
+    service = _resolve_service()
+    if service is None:
+        trace.update(
+            {
+                "latent_cortex_fallback_used": True,
+                "latent_cortex_failure_reason": "latent_service_not_registered",
+            }
+        )
+        return ForegroundLatentOutcome(text="", trace=trace, fallback_allowed=True)
+
+    latent_timeout = min(_LATENT_OWNER_TIMEOUT_SECONDS, max(0.0, request_timeout_s))
+    latent_timeout = max(0.0, latent_timeout - _LATENT_CLEANUP_RESERVE_SECONDS)
+    if latent_timeout < 15.0:
+        trace.update(
+            {
+                "latent_cortex_fallback_used": True,
+                "latent_cortex_failure_reason": "latent_cycle_budget_insufficient",
+            }
+        )
+        return ForegroundLatentOutcome(text="", trace=trace, fallback_allowed=True)
+
+    ingress_stakes = float(selection.get("stakes") or 0.75)
+    ingress_uncertainty = float(selection.get("uncertainty") or 0.80)
+    ingress_context: list[dict[str, Any]] | None = None
+    epistemic_genesis = None
+    epistemic_state = None
+    memory_result = None
+    try:
+        from core.brain.cognitive_ingress import (
+            assemble_cognitive_ingress_async,
+            cognitive_context_items,
+        )
+
+        ingress = await assemble_cognitive_ingress_async(
+            orchestrator,
+            visible_objective,
+            tenant_id=tenant_id,
+            user_id=user_id,
+            session_id=session_id,
+        )
+        ingress_stakes = max(ingress.stakes, ingress_stakes - 0.15)
+        ingress_uncertainty = ingress.uncertainty
+        ingress_context = cognitive_context_items(ingress) or None
+        epistemic_genesis = ingress.epistemic_genesis
+        epistemic_state = ingress.epistemic_state
+        memory_result = ingress.memory_result
+        trace["latent_cortex_ingress"] = ingress.to_receipt()
+    except _RECOVERABLE_ERRORS as exc:
+        record_degradation(
+            "latent_cortex.foreground_ingress",
+            exc,
+            action="used bounded routing estimates after typed cognitive ingress failed",
+            severity="warning",
+        )
+
+    reasoner = getattr(service, "deep_reason_with_acquisition", None)
+    acquisition_kwargs: dict[str, Any] = {}
+    if callable(reasoner):
+        acquisition_kwargs = {
+            "orchestrator": orchestrator,
+            "tenant_id": tenant_id,
+            "user_id": user_id,
+            "session_id": session_id,
+        }
+    else:
+        reasoner = getattr(service, "deep_reason", None)
+    if not callable(reasoner):
+        trace.update(
+            {
+                "latent_cortex_fallback_used": True,
+                "latent_cortex_failure_reason": "latent_service_contract_missing",
+            }
+        )
+        return ForegroundLatentOutcome(text="", trace=trace, fallback_allowed=True)
+
+    try:
+        result = await reasoner(
+            messages=messages,
+            **acquisition_kwargs,
+            stakes=ingress_stakes,
+            uncertainty=ingress_uncertainty,
+            domain=str(domain or "desktop_conversation")[:64],
+            config_overrides={
+                "decode_max_tokens": _bounded_int(decode_max_tokens, 768, 64, 4096),
+                "decode_temperature": _bounded_float(decode_temperature, 0.58, 0.0, 1.5),
+                "decode_top_p": _bounded_float(decode_top_p, 0.88, 0.05, 1.0),
+            },
+            runtime_controls={
+                "clean_user_surface_recurrent_loops": _bounded_int(recurrent_loops, 1, 1, 2),
+                "clean_user_surface_steering_alpha": _bounded_float(
+                    steering_alpha, 0.25, 0.01, 1.0
+                ),
+            },
+            timeout_s=latent_timeout,
+            require_full_stack=True,
+            foreground_request=True,
+            cognitive_context=ingress_context,
+            epistemic_genesis=epistemic_genesis,
+            epistemic_state=epistemic_state,
+            selective_memory_result=memory_result,
+        )
+    except Exception as exc:  # noqa: BLE001 - resident-owner safety boundary
+        receipt, progress = _latest_service_evidence(service)
+        reason = (
+            f"latent_timeout:{type(exc).__name__}"
+            if isinstance(exc, TimeoutError)
+            else f"latent_integrity:runtime_error:{type(exc).__name__}"
+        )
+        trace.update(
+            {
+                "latent_cortex_fallback_used": True,
+                "latent_cortex_failure_reason": reason,
+                "latent_cortex_receipt": receipt,
+                "latent_cortex_progress": progress,
+            }
+        )
+        exhausted = latent_owner_exhausted(reason, receipt)
+        record_degradation(
+            "latent_cortex.foreground_episode",
+            exc,
+            action=(
+                "suppressed a colliding decoder retry after latent owner exhaustion"
+                if exhausted
+                else "released the latent lane and retained ordinary foreground decoding"
+            ),
+            severity="warning",
+        )
+        return ForegroundLatentOutcome(text="", trace=trace, fallback_allowed=not exhausted)
+
+    if not isinstance(result, dict):
+        result = {"ok": False, "reason": "invalid_latent_service_response"}
+    receipt = dict(result.get("receipt") or {}) if isinstance(result.get("receipt"), dict) else {}
+    progress = (
+        dict(result.get("progress") or {}) if isinstance(result.get("progress"), dict) else {}
+    )
+    text = str(result.get("text") or "").strip()
+    if result.get("ok") is True and text:
+        runtime_identity = receipt.get("runtime_identity")
+        trace.update(
+            {
+                "latent_cortex_succeeded": True,
+                "latent_cortex_identity_bound": bool(
+                    isinstance(runtime_identity, dict)
+                    and runtime_identity.get("identity_bound") is True
+                ),
+                "latent_cortex_receipt": receipt,
+                "latent_cortex_progress": progress,
+                "response_path": "cognitive_engine_latent_cortex",
+            }
+        )
+        return ForegroundLatentOutcome(text=text, trace=trace, fallback_allowed=False)
+
+    reason = str(result.get("reason") or "latent_episode_failed")
+    if not receipt:
+        receipt, latest_progress = _latest_service_evidence(service)
+        progress = progress or latest_progress
+    trace.update(
+        {
+            "latent_cortex_fallback_used": True,
+            "latent_cortex_failure_reason": reason,
+            "latent_cortex_receipt": receipt,
+            "latent_cortex_progress": progress,
+        }
+    )
+    exhausted = latent_owner_exhausted(reason, receipt)
+    return ForegroundLatentOutcome(text="", trace=trace, fallback_allowed=not exhausted)
+
+
+__all__ = [
+    "ForegroundLatentOutcome",
+    "latent_owner_exhausted",
+    "run_foreground_latent_episode",
+    "select_foreground_episode",
+]

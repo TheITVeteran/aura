@@ -705,73 +705,9 @@ class ResponseGenerationPhase(BasePhase):
         receipt: dict[str, Any],
     ) -> bool:
         """Whether the selected latent path already consumed the model owner."""
+        from core.brain.foreground_latent_runtime import latent_owner_exhausted
 
-        normalized = str(reason or "").strip()
-        if normalized.startswith(
-            (
-                "latent_timeout:",
-                "latent_integrity:",
-                "worker_identity_failed:",
-                "runtime_identity_deadline_exhausted",
-                "runtime_identity_unbound",
-            )
-        ):
-            return True
-        # A PROOF failure after a clean completion is not an exhausted owner.
-        #
-        # The episode ran to its terminal stage and released the resident model;
-        # what failed afterwards was its receipt contract — it could not PROVE
-        # what it had done. The owner is free, an ordinary generation is both
-        # possible and correct, and treating this as exhaustion costs the person
-        # their whole turn to protect an experimental lane's bookkeeping.
-        #
-        # Measured live on the desktop path the moment the latent lane started
-        # running at all: stage=complete, elapsed_s=59.9, then
-        #   receipt_contract_failed:terminal_disposition_unproven,
-        #   answer_replacement_unproven,fast_weight_learning_receipt_unproven
-        # ...and the reply the person received was "I couldn't get to an answer
-        # I'd stand behind on that one." Every turn died that way. An
-        # enhancement lane must never be able to destroy the answer.
-        terminal_stage = str(receipt.get("last_stage") or "").strip().lower()
-        if normalized.startswith("receipt_contract_failed:") and terminal_stage in {
-            "complete",
-            "completed",
-            "finished",
-        }:
-            return False
-
-        # A SOFT-CANCEL RELEASES THE OWNER. That is what it is for.
-        #
-        # The stall watchdog cancels a job precisely so the resident model
-        # stops being held, so by the time this runs the owner is free and an
-        # ordinary generation is both possible and correct. Treating the
-        # cancellation as exhaustion is the same defect the comment above
-        # describes, arriving through a different door.
-        #
-        # Measured live 2026-07-28. "Did you know the Earth's core is cold?"
-        # — a question she had answered twice in twelve seconds earlier the
-        # same evening — went into the latent lane, spent 88.6s and 177,120
-        # layer applications on branch_select, hit the worker's 40s stall
-        # budget, and was cancelled. The person got "I couldn't get to an
-        # answer I'd stand behind on that one." The enhancement lane failed
-        # and took the answer with it.
-        if normalized.startswith("soft_cancel") or normalized in {
-            "cancelled",
-            "canceled",
-        }:
-            return False
-
-        input_token_count = receipt.get("input_token_count")
-        input_evidence = bool(
-            type(input_token_count) is int and input_token_count > 0
-        )
-        return bool(
-            str(receipt.get("episode_id") or "").strip()
-            and (
-                str(receipt.get("last_stage") or "").strip()
-                or input_evidence
-            )
-        )
+        return latent_owner_exhausted(reason, receipt)
 
     @staticmethod
     def _generation_metadata_snapshot(router: Any) -> dict[str, Any]:

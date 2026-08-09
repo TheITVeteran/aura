@@ -1,0 +1,251 @@
+import pytest
+
+from core.brain.foreground_latent_runtime import (
+    latent_owner_exhausted,
+    run_foreground_latent_episode,
+)
+
+
+class _Ingress:
+    stakes = 0.81
+    uncertainty = 0.72
+    epistemic_genesis = "genesis"
+    epistemic_state = "epistemic-state"
+    memory_result = "memory-result"
+
+    def to_receipt(self):
+        return {"schema": "test.ingress.v1", "stakes": self.stakes}
+
+
+class _LatentService:
+    def __init__(self, result):
+        self.result = result
+        self.calls = []
+
+    async def deep_reason_with_acquisition(self, **kwargs):
+        self.calls.append(kwargs)
+        return self.result
+
+    def get_status(self):
+        return {
+            "last_failure_receipt": {},
+            "last_receipt": {},
+            "last_progress": {},
+        }
+
+
+class _UnexpectedService(_LatentService):
+    async def deep_reason_with_acquisition(self, **kwargs):
+        self.calls.append(kwargs)
+        raise _WorkerProtocolError("custom worker protocol failure")
+
+
+class _WorkerProtocolError(Exception):
+    pass
+
+
+def _selected(**_kwargs):
+    return {
+        "latent_cortex_selected": True,
+        "latent_cortex_selection_reason": "multipart_or_extended_prompt",
+        "latent_cortex_depth_worthy": True,
+        "stakes": 0.70,
+        "uncertainty": 0.80,
+    }
+
+
+@pytest.mark.asyncio
+async def test_foreground_latent_runner_executes_full_stack_with_typed_ingress(
+    monkeypatch,
+):
+    service = _LatentService(
+        {
+            "ok": True,
+            "text": "The complete latent answer.",
+            "receipt": {
+                "episode_id": "ep-1",
+                "last_stage": "complete",
+                "runtime_identity": {"identity_bound": True},
+            },
+            "progress": {"stage": "complete"},
+        }
+    )
+    monkeypatch.setattr(
+        "core.brain.foreground_latent_runtime.select_foreground_episode",
+        _selected,
+    )
+    monkeypatch.setattr(
+        "core.brain.foreground_latent_runtime._resolve_service",
+        lambda: service,
+    )
+    monkeypatch.setattr(
+        "core.brain.cognitive_ingress.assemble_cognitive_ingress_async",
+        _async_value(_Ingress()),
+    )
+    monkeypatch.setattr(
+        "core.brain.cognitive_ingress.cognitive_context_items",
+        lambda _ingress: [{"source": "memory", "text": "bounded evidence"}],
+    )
+
+    outcome = await run_foreground_latent_episode(
+        orchestrator="orchestrator",
+        messages=[{"role": "user", "content": "Compare both designs."}],
+        visible_objective="Compare both designs.",
+        foreground=True,
+        desktop_required=True,
+        cognitive_mode="deliberate",
+        request_timeout_s=180.0,
+        decode_max_tokens=900,
+        recurrent_loops=2,
+    )
+
+    assert outcome.succeeded is True
+    assert outcome.text == "The complete latent answer."
+    assert outcome.trace["latent_cortex_identity_bound"] is True
+    assert outcome.trace["latent_cortex_ingress"]["schema"] == "test.ingress.v1"
+    assert len(service.calls) == 1
+    call = service.calls[0]
+    assert call["require_full_stack"] is True
+    assert call["cognitive_context"] == [{"source": "memory", "text": "bounded evidence"}]
+    assert call["epistemic_genesis"] == "genesis"
+    assert call["config_overrides"]["decode_max_tokens"] == 900
+    assert call["runtime_controls"]["clean_user_surface_recurrent_loops"] == 2
+
+
+@pytest.mark.asyncio
+async def test_foreground_latent_runner_allows_fallback_after_terminal_receipt_failure(
+    monkeypatch,
+):
+    service = _LatentService(
+        {
+            "ok": False,
+            "reason": "receipt_contract_failed:answer_replacement_unproven",
+            "receipt": {"episode_id": "ep-2", "last_stage": "complete"},
+        }
+    )
+    monkeypatch.setattr(
+        "core.brain.foreground_latent_runtime.select_foreground_episode",
+        _selected,
+    )
+    monkeypatch.setattr(
+        "core.brain.foreground_latent_runtime._resolve_service",
+        lambda: service,
+    )
+    monkeypatch.setattr(
+        "core.brain.cognitive_ingress.assemble_cognitive_ingress_async",
+        _async_value(_Ingress()),
+    )
+    monkeypatch.setattr(
+        "core.brain.cognitive_ingress.cognitive_context_items",
+        lambda _ingress: [],
+    )
+
+    outcome = await run_foreground_latent_episode(
+        orchestrator=None,
+        messages=[{"role": "user", "content": "Compare both designs."}],
+        visible_objective="Compare both designs.",
+        foreground=True,
+        desktop_required=True,
+        cognitive_mode="deliberate",
+        request_timeout_s=180.0,
+    )
+
+    assert outcome.attempted is True
+    assert outcome.succeeded is False
+    assert outcome.fallback_allowed is True
+    assert outcome.trace["latent_cortex_fallback_used"] is True
+
+
+@pytest.mark.asyncio
+async def test_unclassified_post_acquisition_exception_suppresses_colliding_decode(
+    monkeypatch,
+):
+    service = _UnexpectedService({})
+    monkeypatch.setattr(
+        "core.brain.foreground_latent_runtime.select_foreground_episode",
+        _selected,
+    )
+    monkeypatch.setattr(
+        "core.brain.foreground_latent_runtime._resolve_service",
+        lambda: service,
+    )
+    monkeypatch.setattr(
+        "core.brain.cognitive_ingress.assemble_cognitive_ingress_async",
+        _async_value(_Ingress()),
+    )
+    monkeypatch.setattr(
+        "core.brain.cognitive_ingress.cognitive_context_items",
+        lambda _ingress: [],
+    )
+
+    outcome = await run_foreground_latent_episode(
+        orchestrator=None,
+        messages=[{"role": "user", "content": "Compare both designs."}],
+        visible_objective="Compare both designs.",
+        foreground=True,
+        desktop_required=True,
+        cognitive_mode="deliberate",
+        request_timeout_s=180.0,
+    )
+
+    assert outcome.attempted is True
+    assert outcome.fallback_allowed is False
+    assert outcome.trace["latent_cortex_failure_reason"].startswith(
+        "latent_integrity:runtime_error:_WorkerProtocolError"
+    )
+
+
+@pytest.mark.asyncio
+async def test_foreground_latent_runner_does_not_acquire_service_for_incompatible_turn(
+    monkeypatch,
+):
+    service_resolution_attempted = False
+
+    def _resolve():
+        nonlocal service_resolution_attempted
+        service_resolution_attempted = True
+        return _LatentService({})
+
+    monkeypatch.setattr(
+        "core.brain.foreground_latent_runtime._resolve_service",
+        _resolve,
+    )
+
+    outcome = await run_foreground_latent_episode(
+        orchestrator=None,
+        messages=[{"role": "user", "content": "Return exact JSON."}],
+        visible_objective="Return exact JSON.",
+        foreground=True,
+        desktop_required=True,
+        cognitive_mode="deliberate",
+        request_timeout_s=180.0,
+        incompatible_contract=True,
+    )
+
+    assert outcome.selected is False
+    assert outcome.trace["latent_cortex_selection_reason"] == "incompatible_contract"
+    assert service_resolution_attempted is False
+
+
+@pytest.mark.parametrize(
+    ("reason", "receipt", "expected"),
+    [
+        ("soft_cancel:watchdog", {"episode_id": "e", "last_stage": "decode"}, False),
+        (
+            "receipt_contract_failed:x",
+            {"episode_id": "e", "last_stage": "complete"},
+            False,
+        ),
+        ("latent_timeout:TimeoutError", {}, True),
+        ("worker_failure", {"episode_id": "e", "last_stage": "branch_select"}, True),
+    ],
+)
+def test_latent_owner_disposition_is_explicit(reason, receipt, expected):
+    assert latent_owner_exhausted(reason, receipt) is expected
+
+
+def _async_value(value):
+    async def _return(*_args, **_kwargs):
+        return value
+
+    return _return

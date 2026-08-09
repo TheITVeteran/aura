@@ -31,7 +31,6 @@ from typing import Any
 
 from core.brain.llm.latent_cortex.output_quality import evaluate_latent_output
 from core.runtime.errors import record_degradation
-from core.runtime.structured_input import analyze_prompt_shape
 
 logger = logging.getLogger("Aura.LatentCortexService")
 
@@ -228,21 +227,6 @@ _MAX_MESSAGES_CHARS = 400_000
 _MAX_DOMAIN_CHARS = 64
 _ALLOWED_MESSAGE_ROLES = frozenset({"system", "user", "assistant", "tool"})
 _ALLOWED_MESSAGE_KEYS = frozenset({"role", "content", "name", "tool_call_id"})
-
-#: The only prompt-shape fields this routing decision examines (CP126
-#: fc2f6c87). Anything else a caller supplies is dropped and named in the
-#: receipt rather than copied into an auditable decision.
-_PROMPT_SHAPE_KEYS = frozenset({
-    "question_parts",
-    "explicit_question_marks",
-    "question_like_lines",
-    "connector_parts",
-    "repeated_clause_parts",
-    "numbered_parts",
-    "imperative_parts",
-    "prefers_extended_answer",
-    "requires_single_reply_coverage",
-})
 
 _UNKNOWN_BODY_PRESSURE = 0.6
 
@@ -3392,99 +3376,23 @@ class LatentCortexService:
         visible_objective: str | None = None,
     ) -> dict[str, Any]:
         """Return a deterministic, auditable decision for live latent routing."""
+        # Kept as the public service API for existing callers, but owned by a
+        # lightweight module so an ordinary route decision does not import the
+        # numerical RLC engine before it has actually been selected.
+        from core.brain.foreground_latent_runtime import select_foreground_episode
 
-        # CP126 fc2f6c87: the ENTIRE caller-supplied dictionary was copied into
-        # the returned receipt, so arbitrary keys and oversized nested values
-        # travelled into an auditable routing decision — and supplied counts
-        # could only ever RAISE the analyzed ones, which makes the caller's
-        # claim authoritative over the measurement. A closed schema keeps the
-        # receipt describing what this method actually examined.
-        analyzed_shape = analyze_prompt_shape(visible_objective).to_dict()
-        supplied_shape = prompt_shape if isinstance(prompt_shape, dict) else {}
-        shape: dict[str, Any] = {}
-        rejected_shape_keys = sorted(set(supplied_shape) - _PROMPT_SHAPE_KEYS)[:8]
-        for key in (
-            "question_parts",
-            "explicit_question_marks",
-            "question_like_lines",
-            "connector_parts",
-            "repeated_clause_parts",
-            "numbered_parts",
-            "imperative_parts",
-        ):
-            supplied = supplied_shape.get(key)
-            # Bounded as well as typed: a caller cannot inflate a routing
-            # signal by declaring a huge count.
-            supplied = supplied if type(supplied) is int and 0 <= supplied <= 512 else 0
-            shape[key] = max(supplied, int(analyzed_shape.get(key) or 0))
-        for key in ("prefers_extended_answer", "requires_single_reply_coverage"):
-            shape[key] = bool(supplied_shape.get(key) or analyzed_shape.get(key))
-        question_parts = shape.get("question_parts", 0)
-        question_parts = question_parts if type(question_parts) is int else 0
-        extended = bool(shape.get("prefers_extended_answer"))
-        single_reply_coverage = bool(shape.get("requires_single_reply_coverage"))
-        mode = str(cognitive_mode or "").strip().lower()
-
-        depth_worthy = bool(
-            explicitly_required
-            or mode == "deliberate"
-            or extended
-            or single_reply_coverage
-            or question_parts > 1
+        return select_foreground_episode(
+            foreground=foreground,
+            desktop_required=desktop_required,
+            cognitive_mode=cognitive_mode,
+            prompt_shape=prompt_shape,
+            compact_contract=compact_contract,
+            strict_output_contract=strict_output_contract,
+            incompatible_contract=incompatible_contract,
+            proof_or_benchmark=proof_or_benchmark,
+            explicitly_required=explicitly_required,
+            visible_objective=visible_objective,
         )
-        exclusion = ""
-        if not foreground:
-            exclusion = "not_foreground"
-        elif not desktop_required:
-            exclusion = "desktop_cognitive_engine_not_required"
-        elif compact_contract and not depth_worthy:
-            exclusion = "compact_contract"
-        elif strict_output_contract:
-            exclusion = "strict_output_contract"
-        elif incompatible_contract:
-            exclusion = "incompatible_contract"
-        elif proof_or_benchmark and not explicitly_required:
-            exclusion = "proof_lane_not_explicitly_opted_in"
-        selected = bool(not exclusion and depth_worthy)
-        reason = (
-            "explicit_requirement"
-            if selected and explicitly_required
-            else "deliberate_cognitive_mode"
-            if selected and mode == "deliberate"
-            else "multipart_or_extended_prompt"
-            if selected
-            else exclusion or "depth_threshold_not_met"
-        )
-        depth_signal = min(1.0, 0.55 + 0.10 * min(3, question_parts))
-        if extended or single_reply_coverage:
-            depth_signal = max(depth_signal, 0.75)
-        if mode == "deliberate":
-            depth_signal = max(depth_signal, 0.80)
-        if explicitly_required:
-            depth_signal = max(depth_signal, 0.90)
-        return {
-            "latent_cortex_selected": selected,
-            "latent_cortex_selection_reason": reason,
-            "latent_cortex_depth_worthy": depth_worthy,
-            "latent_cortex_prompt_shape": shape,
-            # CP126 fc2f6c87: what the caller supplied that this decision did
-            # NOT examine. Dropped rather than copied into an auditable
-            # receipt, and named so the drop is visible.
-            "latent_cortex_prompt_shape_rejected_keys": rejected_shape_keys,
-            "stakes": round(max(0.55, depth_signal - 0.05), 3),
-            "uncertainty": round(depth_signal, 3),
-            # CP126 0eef80b2: these come from PROMPT SHAPE — part counts,
-            # extended-answer hints, an explicit request — not from memory,
-            # body, goals, Will, risk, or calibrated uncertainty. Prompt
-            # length and formatting are a routing heuristic, and calling the
-            # outputs "stakes" and "uncertainty" borrows the vocabulary of
-            # epistemic and consequence signals they are not. Stated here so a
-            # consumer treats them as a routing hint rather than evidence.
-            "signal_basis": "prompt_shape_heuristic",
-            "signal_sources": ["prompt_text_shape"],
-            "calibrated_uncertainty": False,
-            "consequence_evidence": False,
-        }
 
     @staticmethod
     def _attestation_disclosure(receipt: Any) -> dict[str, Any]:

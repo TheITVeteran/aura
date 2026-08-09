@@ -1,0 +1,68 @@
+{
+  "schema": "aura.closeout.canonical_unitary_rlc_wiring.v1",
+  "checkpoint": "CP070",
+  "date": "2026-08-09",
+  "defect": {
+    "active_phase": "core.phases.response_generation_unitary.UnitaryResponsePhase",
+    "bypassed_phase": "core.phases.response_generation.ResponseGenerationPhase",
+    "prior_behavior": "the sovereign kernel's healthy response phase called llm.think directly even though the compatibility phase carried the full foreground RLC route"
+  },
+  "implementation": {
+    "shared_contract": "core/brain/foreground_latent_runtime.py",
+    "routing": [
+      "foreground selection is lightweight and closed-schema",
+      "depth-worthy healthy desktop dialogue executes one full-stack latent episode",
+      "strict proof, exact-format, benchmark, directive, inventory, status, memory-state, self-condition, and desktop-action contracts retain their dedicated lanes"
+    ],
+    "causal_ingress": [
+      "memory",
+      "reference",
+      "body",
+      "goals",
+      "Will",
+      "affect",
+      "self_model",
+      "world_model"
+    ],
+    "authority": [
+      "a successful RLC answer replaces the ordinary decoder call",
+      "the committed answer continues through user-facing shaping, governance, dialogue validation, and reliability checks",
+      "generation-based reasoning, conversation, and self-critique amplifiers cannot overwrite a committed RLC answer",
+      "a terminal receipt failure or soft cancellation permits one ordinary fallback",
+      "a timeout, identity failure, nonterminal owner receipt, or unclassified post-acquisition exception suppresses a colliding decoder retry"
+    ]
+  },
+  "verification": {
+    "focused_tests": {
+      "expected_passed": 170,
+      "failed": 0,
+      "selection": [
+        "tests/test_foreground_latent_runtime.py",
+        "tests/test_response_generation_unitary_tiering.py",
+        "tests/test_latent_lane_cannot_destroy_a_turn.py",
+        "tests/test_latent_budget_matches_the_watchdog.py",
+        "tests/test_latent_cortex_wiring.py"
+      ]
+    },
+    "smoke_tests": {
+      "expected_passed": 103,
+      "failed": 0
+    },
+    "ruff": "pass",
+    "compile": "pass",
+    "diff_check": "pass"
+  },
+  "claim_boundary": {
+    "proven": "the source-level sovereign healthy-chat phase now causally routes selected foreground turns through the full-stack RLC contract and respects resident-owner fallback disposition",
+    "not_proven": [
+      "installed-app execution of this source before user restart",
+      "universal in-episode acquisition across web, Wikipedia/RAG, Python, symbolic solvers, imagination, and every amplifier",
+      "resident 32B reasoning gain",
+      "cross-domain generality",
+      "intrinsic recurrent neural gain",
+      "frontier-level reasoning",
+      "fusion authority",
+      "WOW Signal"
+    ]
+  }
+}

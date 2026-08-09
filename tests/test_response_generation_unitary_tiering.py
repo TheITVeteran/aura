@@ -592,6 +592,196 @@ async def test_desktop_cognitive_contract_forwards_flags_and_does_not_model_retr
 
 
 @pytest.mark.asyncio
+async def test_unitary_healthy_chat_commits_full_latent_answer_before_direct_decode(
+    monkeypatch,
+):
+    from core.brain.foreground_latent_runtime import ForegroundLatentOutcome
+
+    objective = (
+        "Compare Raft and PBFT, then explain why changing from a crash-only "
+        "failure model to a Byzantine failure model changes the recommendation."
+    )
+    state = AuraState()
+    state.cognition.current_origin = "desktop_ui"
+    state.cognition.current_objective = objective
+    llm = SimpleNamespace(
+        think=AsyncCallProbe(return_value="The ordinary decoder must not run.")
+    )
+    orchestrator = SimpleNamespace(name="test-orchestrator")
+    phase = UnitaryResponsePhase(SimpleNamespace(organs={}))
+    captured = {}
+
+    async def _run_latent(**kwargs):
+        captured.update(kwargs)
+        return ForegroundLatentOutcome(
+            text=(
+                "Raft is appropriate under the requested crash-only model, while PBFT "
+                "addresses the requested Byzantine failure model. The recommendation "
+                "changes because crash-only assumptions no longer protect the committed log."
+            ),
+            trace={
+                "latent_cortex_selected": True,
+                "latent_cortex_attempted": True,
+                "latent_cortex_succeeded": True,
+                "latent_cortex_fallback_used": False,
+                "latent_cortex_failure_reason": "",
+                "latent_cortex_identity_bound": True,
+                "latent_cortex_receipt": {
+                    "episode_id": "unitary-episode",
+                    "last_stage": "complete",
+                },
+                "latent_cortex_progress": {"stage": "complete"},
+                "response_path": "cognitive_engine_latent_cortex",
+            },
+            fallback_allowed=False,
+        )
+
+    monkeypatch.setattr(
+        "core.brain.foreground_latent_runtime.run_foreground_latent_episode",
+        _run_latent,
+    )
+    monkeypatch.setattr(
+        "core.phases.response_generation_unitary.ContextAssembler.build_messages",
+        staticmethod(
+            lambda _state, current: [
+                {"role": "system", "content": "bounded context"},
+                {"role": "user", "content": current},
+            ]
+        ),
+    )
+    monkeypatch.setattr(
+        "core.container.ServiceContainer.get",
+        staticmethod(
+            lambda name, default=None: (
+                llm
+                if name == "llm_router"
+                else orchestrator
+                if name == "orchestrator"
+                else default
+            )
+        ),
+    )
+    monkeypatch.setattr(
+        "core.phases.response_generation_unitary.build_response_contract",
+        lambda _state, _objective, is_user_facing=False: ResponseContract(
+            is_user_facing=is_user_facing,
+            reason="ordinary_dialogue",
+        ),
+    )
+
+    new_state = await phase.execute(
+        state,
+        objective=objective,
+        priority=True,
+        context={
+            "cognitive_engine_required": True,
+            "desktop_cognitive_engine_required": True,
+            "visible_user_message": objective,
+        },
+    )
+
+    llm.think.assert_not_awaited()
+    assert captured["desktop_required"] is True
+    assert captured["messages"][-1]["content"] == objective
+    assert new_state.response_modifiers["latent_cortex_succeeded"] is True
+    assert new_state.response_modifiers["response_path"] == "cognitive_engine_latent_cortex"
+    assert "Byzantine failure model" in new_state.cognition.last_response
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("fallback_allowed", [True, False])
+async def test_unitary_latent_failure_respects_resident_owner_disposition(
+    monkeypatch,
+    fallback_allowed,
+):
+    from core.brain.foreground_latent_runtime import ForegroundLatentOutcome
+
+    objective = "Explain Raft's failure model and quorum behavior in detail."
+    state = AuraState()
+    state.cognition.current_origin = "desktop_ui"
+    state.cognition.current_objective = objective
+    llm = SimpleNamespace(
+        think=AsyncCallProbe(
+            return_value=(
+                "Raft assumes a failed node stops participating rather than sending conflicting "
+                "messages, and it uses a leader plus majority quorums to replicate its log. "
+                "A committed entry remains durable because any later leader must win an election "
+                "from a majority that intersects the committing quorum. This crash-fault model "
+                "does not protect against a node that lies or sends conflicting messages."
+            )
+        )
+    )
+    phase = UnitaryResponsePhase(SimpleNamespace(organs={}))
+
+    async def _run_latent(**_kwargs):
+        return ForegroundLatentOutcome(
+            text="",
+            trace={
+                "latent_cortex_selected": True,
+                "latent_cortex_attempted": True,
+                "latent_cortex_succeeded": False,
+                "latent_cortex_fallback_used": True,
+                "latent_cortex_failure_reason": "worker_failure",
+                "latent_cortex_identity_bound": False,
+                "latent_cortex_receipt": {
+                    "episode_id": "failed-unitary-episode",
+                    "last_stage": "branch_select",
+                },
+                "latent_cortex_progress": {"stage": "branch_select"},
+            },
+            fallback_allowed=fallback_allowed,
+        )
+
+    monkeypatch.setattr(
+        "core.brain.foreground_latent_runtime.run_foreground_latent_episode",
+        _run_latent,
+    )
+    monkeypatch.setattr(
+        "core.phases.response_generation_unitary.ContextAssembler.build_messages",
+        staticmethod(
+            lambda _state, current: [
+                {"role": "system", "content": "bounded context"},
+                {"role": "user", "content": current},
+            ]
+        ),
+    )
+    monkeypatch.setattr(
+        "core.container.ServiceContainer.get",
+        staticmethod(lambda name, default=None: llm if name == "llm_router" else default),
+    )
+    monkeypatch.setattr(
+        "core.phases.response_generation_unitary.build_response_contract",
+        lambda _state, _objective, is_user_facing=False: ResponseContract(
+            is_user_facing=is_user_facing,
+            reason="ordinary_dialogue",
+        ),
+    )
+
+    new_state = await phase.execute(
+        state,
+        objective=objective,
+        priority=True,
+        context={
+            "cognitive_engine_required": True,
+            "desktop_cognitive_engine_required": True,
+            "visible_user_message": objective,
+        },
+    )
+
+    if fallback_allowed:
+        llm.think.assert_awaited_once()
+        assert "failed node stops participating" in new_state.cognition.last_response
+        assert new_state.response_modifiers.get("model_retry_suppressed") is not True
+    else:
+        llm.think.assert_not_awaited()
+        assert new_state.response_modifiers["model_retry_suppressed"] is True
+        assert (
+            new_state.response_modifiers["response_path"]
+            == "cognitive_engine_latent_owner_exhausted"
+        )
+
+
+@pytest.mark.asyncio
 async def test_unitary_response_injects_active_grounding_evidence_for_targeted_followup(monkeypatch):
     state = AuraState()
     state.cognition.current_origin = "api"

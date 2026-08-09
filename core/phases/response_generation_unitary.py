@@ -5733,28 +5733,138 @@ class UnitaryResponsePhase(Phase):
                     }
                 )
 
-            # [STABILITY v53] Explicit timeout wrapper — don't rely on router
-            # honoring the timeout kwarg. If the router hangs, the phase hangs,
-            # the kernel hangs, the user gets nothing.
+            # The sovereign kernel replaces ResponseGenerationPhase with this
+            # phase.  The legacy phase had a complete foreground RLC route, but
+            # this active path used to jump straight to ``llm.think`` and thus
+            # silently bypassed it during healthy chat.  Route one bounded,
+            # depth-worthy episode here before ordinary decoding.  Strict,
+            # exact, benchmark, directive, inventory and action contracts stay
+            # on their purpose-built lanes.
+            latent_path_committed = False
+            model_retry_suppressed = False
+            raw: Any = None
             try:
-                raw = await asyncio.wait_for(
-                    llm.think(objective, **llm_kwargs),
-                    timeout=request_timeout + 5.0,  # Small buffer over router's internal timeout
+                from core.brain.foreground_latent_runtime import (
+                    run_foreground_latent_episode,
                 )
-            except TimeoutError as timeout_exc:
-                if proof_evaluation_turn or benchmark_turn:
-                    raise TimeoutError(
-                        f"proof/benchmark generation timed out after {request_timeout + 5.0:.0f}s"
-                    ) from timeout_exc
-                if is_user_facing:
-                    logger.warning(
-                        "🚨 [STABILITY] LLM generation hard-timed-out. Using operational failure floor."
+
+                controls = runtime_context.get("live_mind_generation_controls")
+                controls = controls if isinstance(controls, dict) else {}
+                cognitive_mode = getattr(new_state.cognition.current_mode, "value", None)
+                cognitive_mode = str(cognitive_mode or new_state.cognition.current_mode or "")
+                operational_contract = bool(
+                    _is_system_directive
+                    or exact_format_required
+                    or operator_evidence_turn
+                    or runtime_context.get("desktop_execution_contract", False)
+                    or runtime_context.get("capability_inventory_contract", False)
+                    or runtime_context.get("runtime_fact_status_contract", False)
+                    or runtime_context.get("grounded_runtime_status_contract", False)
+                    or runtime_context.get("memory_state_contract", False)
+                    or runtime_context.get("self_condition_contract", False)
+                )
+                latent_outcome = await run_foreground_latent_episode(
+                    orchestrator=ServiceContainer.get("orchestrator", default=None),
+                    messages=messages,
+                    visible_objective=str(surface_prompt.prompt or objective or ""),
+                    foreground=is_user_facing and not is_background,
+                    desktop_required=desktop_cognitive_engine_required,
+                    cognitive_mode=cognitive_mode,
+                    request_timeout_s=request_timeout,
+                    prompt_shape=(
+                        runtime_context.get("prompt_shape")
+                        if isinstance(runtime_context.get("prompt_shape"), dict)
+                        else None
+                    ),
+                    compact_contract=use_compact_router_payload,
+                    strict_output_contract=bool(
+                        strict_proof_answer_request or exact_format_required
+                    ),
+                    incompatible_contract=operational_contract,
+                    proof_or_benchmark=bool(proof_evaluation_turn or benchmark_turn),
+                    explicitly_required=bool(
+                        runtime_context.get("latent_cortex_required", False)
+                    ),
+                    tenant_id=str(runtime_context.get("tenant_id") or "local"),
+                    user_id=str(
+                        runtime_context.get("user_id")
+                        or runtime_context.get("owner_id")
+                        or "owner"
+                    ),
+                    session_id=str(
+                        runtime_context.get("session_id")
+                        or runtime_context.get("conversation_id")
+                        or "local"
+                    ),
+                    domain=str(
+                        runtime_context.get("latent_cortex_domain")
+                        or "desktop_conversation"
+                    ),
+                    decode_max_tokens=int(llm_kwargs.get("max_tokens") or 768),
+                    decode_temperature=float(
+                        controls.get("temperature")
+                        or llm_kwargs.get("temperature")
+                        or 0.58
+                    ),
+                    decode_top_p=float(
+                        controls.get("top_p") or llm_kwargs.get("top_p") or 0.88
+                    ),
+                    recurrent_loops=int(
+                        controls.get("clean_user_surface_recurrent_loops") or 1
+                    ),
+                    steering_alpha=float(
+                        controls.get("clean_user_surface_steering_alpha") or 0.25
+                    ),
+                )
+                new_state.response_modifiers.update(latent_outcome.trace)
+                if latent_outcome.succeeded:
+                    raw = latent_outcome.text
+                    latent_path_committed = True
+                elif latent_outcome.attempted and not latent_outcome.fallback_allowed:
+                    model_retry_suppressed = True
+                    new_state.response_modifiers.update(
+                        {
+                            "model_retry_suppressed": True,
+                            "generation_failure_class": str(
+                                latent_outcome.trace.get("latent_cortex_failure_reason")
+                                or "latent_owner_exhausted"
+                            )[:120],
+                            "response_path": "cognitive_engine_latent_owner_exhausted",
+                        }
                     )
                     raw = self._build_minimal_live_voice_reply(new_state, objective)
-                else:
-                    raise TimeoutError(
-                        f"LLM generation hard-timed-out after {request_timeout + 5.0:.0f}s"
-                    ) from timeout_exc
+            except _RESPONSE_RECOVERABLE_ERRORS as latent_route_exc:
+                _record_response_degradation(
+                    latent_route_exc,
+                    "UnitaryResponse: foreground latent routing failed before owner acquisition: %s",
+                    action="retained ordinary foreground decoding after pre-acquisition latent routing failed",
+                    severity="warning",
+                )
+
+            # [STABILITY v53] Explicit timeout wrapper — don't rely on router
+            # honoring the timeout kwarg. If the router hangs, the phase hangs,
+            # the user gets nothing. A committed latent answer replaces only
+            # this decoder call; downstream response contracts remain active.
+            if raw is None:
+                try:
+                    raw = await asyncio.wait_for(
+                        llm.think(objective, **llm_kwargs),
+                        timeout=request_timeout + 5.0,
+                    )
+                except TimeoutError as timeout_exc:
+                    if proof_evaluation_turn or benchmark_turn:
+                        raise TimeoutError(
+                            f"proof/benchmark generation timed out after {request_timeout + 5.0:.0f}s"
+                        ) from timeout_exc
+                    if is_user_facing:
+                        logger.warning(
+                            "🚨 [STABILITY] LLM generation hard-timed-out. Using operational failure floor."
+                        )
+                        raw = self._build_minimal_live_voice_reply(new_state, objective)
+                    else:
+                        raise TimeoutError(
+                            f"LLM generation hard-timed-out after {request_timeout + 5.0:.0f}s"
+                        ) from timeout_exc
 
             if isinstance(raw, dict):
                 raw = raw.get("content") or raw.get("response") or ""
@@ -5812,38 +5922,40 @@ class UnitaryResponsePhase(Phase):
             # memory), generate candidates, run the domain truth engines, repair in the
             # symbolic sandbox, calibrate, and attach a reasoning receipt. Bounded,
             # governed, and fail-open to the original draft so behaviour never regresses.
-            try:
-                response_text = await self._maybe_amplify_response(
-                    objective=objective,
-                    draft=response_text,
-                    llm=llm,
-                    state=new_state,
-                    request_timeout=request_timeout,
-                    is_user_facing=is_user_facing,
-                    is_background=is_background,
-                    proof_or_benchmark=bool(proof_evaluation_turn or benchmark_turn or strict_proof_answer_request),
-                )
-            except _RESPONSE_RECOVERABLE_ERRORS as amp_exc:
-                logger.debug("Reasoning amplifier v2 skipped (fail-open): %s", amp_exc)
+            if not latent_path_committed and not model_retry_suppressed:
+                try:
+                    response_text = await self._maybe_amplify_response(
+                        objective=objective,
+                        draft=response_text,
+                        llm=llm,
+                        state=new_state,
+                        request_timeout=request_timeout,
+                        is_user_facing=is_user_facing,
+                        is_background=is_background,
+                        proof_or_benchmark=bool(proof_evaluation_turn or benchmark_turn or strict_proof_answer_request),
+                    )
+                except _RESPONSE_RECOVERABLE_ERRORS as amp_exc:
+                    logger.debug("Reasoning amplifier v2 skipped (fail-open): %s", amp_exc)
 
             # ── Conversational Amplifier (live, taste-selected) ───────────────
             # For substantive conversational turns (not actions, not verifiable
             # reasoning), don't ship the median sample: generate alternatives, rank
             # by the personalized TasteModel, self-revise the winner. Harvests the
             # median→best gap for wit/voice/creativity. Bounded, fail-open.
-            try:
-                response_text = await self._maybe_amplify_conversation(
-                    objective=objective,
-                    draft=response_text,
-                    llm=llm,
-                    state=new_state,
-                    request_timeout=request_timeout,
-                    is_user_facing=is_user_facing,
-                    is_background=is_background,
-                    proof_or_benchmark=bool(proof_evaluation_turn or benchmark_turn or strict_proof_answer_request),
-                )
-            except _RESPONSE_RECOVERABLE_ERRORS as conv_exc:
-                logger.debug("Conversational amplifier skipped (fail-open): %s", conv_exc)
+            if not latent_path_committed and not model_retry_suppressed:
+                try:
+                    response_text = await self._maybe_amplify_conversation(
+                        objective=objective,
+                        draft=response_text,
+                        llm=llm,
+                        state=new_state,
+                        request_timeout=request_timeout,
+                        is_user_facing=is_user_facing,
+                        is_background=is_background,
+                        proof_or_benchmark=bool(proof_evaluation_turn or benchmark_turn or strict_proof_answer_request),
+                    )
+                except _RESPONSE_RECOVERABLE_ERRORS as conv_exc:
+                    logger.debug("Conversational amplifier skipped (fail-open): %s", conv_exc)
 
             if benchmark_turn:
                 try:
@@ -6437,6 +6549,8 @@ class UnitaryResponsePhase(Phase):
                     and not benchmark_turn
                     and not contract.tool_evidence_available
                     and not desktop_cognitive_engine_required
+                    and not latent_path_committed
+                    and not model_retry_suppressed
                     and strategies._is_logical_check(objective)
                 ):
                     logger.info("⚡ [Critique] Running System 2 self-critique on response...")

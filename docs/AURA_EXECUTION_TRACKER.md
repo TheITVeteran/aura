@@ -39819,3 +39819,42 @@ The bounded whole-system gain is integrated more faithfully, but the completion
 envelope remains `809/920` (approximately `87.9%`) because no open resident,
 neural-transfer, generality, frontier, fusion, activation, or `WOW Signal` gate
 has yet closed.
+
+## Checkpoint 2026-08-09-070: The Sovereign Chat Path Uses the Complete Cortex
+
+The healthy production kernel replaces the compatibility response phase with
+`UnitaryResponsePhase`. The compatibility phase carried the complete
+foreground Recursive Latent Cortex route, but the active unitary phase called
+`llm.think()` directly. Consequently, source-level RLC wiring and specialized
+pre-action use did not make the RLC Aura's canonical substrate for an ordinary
+depth-worthy healthy desktop conversation.
+
+One lightweight foreground-latent contract now owns the closed-schema routing
+decision and resident-owner disposition. A selected unitary turn assembles
+typed ingress from memory, reference evidence, body, goals, Will, affect,
+self-model, and world model; executes the registered full-stack RLC service;
+and, on success, makes that answer authoritative in place of ordinary decoding.
+The answer still passes through the same user-facing shaping, governance,
+dialogue, and reliability checks. Separate generation-based amplifiers and
+self-critique cannot silently overwrite it after commitment.
+
+Strict proof, exact-format, benchmark, directive, capability-inventory,
+runtime-status, memory-state, self-condition, and desktop-execution contracts
+remain on their dedicated lanes. A clean terminal receipt failure or soft
+cancellation releases the owner and permits one ordinary fallback. A timeout,
+identity failure, nonterminal owner receipt, or unclassified exception after
+owner acquisition suppresses a colliding decoder call. The compatibility phase
+delegates to the same ownership rule, so the two serving architectures cannot
+drift on this safety decision.
+
+Focused active-phase, routing, ingress, fallback, owner, and engine contracts
+pass `170/170`; canonical smoke passes `103/103`; Ruff, compilation, and diff
+hygiene pass. Compact evidence is
+`artifacts/closeout/latent_cortex/cp070_canonical_unitary_rlc_wiring.json`.
+This proves the canonical source-level causal route, not an installed-app or
+reasoning-gain result. Universal in-episode acquisition across live web,
+Wikipedia/RAG, Python/symbolic execution, imagination, and all amplifier
+surfaces remains an explicit open RLC unification task. Resident-32B gain,
+cross-domain generality, intrinsic recurrent-neural gain, frontier performance,
+fusion, activation, and `WOW Signal` remain false. The completion envelope
+therefore remains `809/920` (approximately `87.9%`).
