@@ -40541,6 +40541,42 @@ difficulty. No reasoning gain, frontier performance, fusion, activation, or
 `WOW Signal` is claimed, and the completion envelope remains `809/920`
 (approximately `87.9%`).
 
+## Checkpoint 2026-08-09-094: Complete Reasoning Reaches Canonical Desktop Chat
+
+A complete-file route review found a second production response architecture
+that CP093 had not closed. Desktop `/api/chat` normally invokes
+`CognitiveEngine` first, and that engine instantiates `ResponseGenerationPhase`
+through the legacy-named pipeline blueprint. `KernelInterface` and
+`UnitaryResponsePhase` run later only when the desktop engine produced no
+reply. The active phase had an older amplifier hook, but its `24s` generation
+and `30s` total ceilings made measured `45-55s` resident program synthesis
+impossible, it did not explicitly enable executable reasoning, and it did not
+carry the ordinary draft as a monotonic incumbent.
+
+The active desktop phase now has the same complete-engine policy: three
+semantic executable strategies, a bounded `60-150s` program budget only when
+the enclosing turn can fund at least one complete candidate, and the first
+draft retained unless a stronger result earns promotion. Simple arithmetic
+keeps its low-cost verifier path rather than being suppressed by the program
+budget floor. Both live phase implementations now refuse to start structured
+program synthesis when the remaining turn contract cannot complete one
+candidate.
+
+Promotion authority is preserved after selection. Checked-verifier and
+independent-executable-consensus results cannot be overwritten by an
+unverified System-2 critic, composer, or dialogue-regeneration pass.
+Deterministic safety, formatting, and surface cleanup remain active. The
+consensus-bearing source answer is surfaced directly instead of a later rewrite
+that did not earn consensus.
+
+Focused canonical/sovereign phase and action-disambiguation contracts pass
+`44/44`; Ruff and byte compilation pass. Compact evidence is
+`artifacts/closeout/latent_cortex/cp094_canonical_chat_complete_engine.json`.
+The frozen CP093 campaign is unaffected. No population reasoning gain,
+frontier result, fusion authority, activation authority, or `WOW Signal` is
+claimed, and the completion envelope remains `809/920` (approximately
+`87.9%`).
+
 ## Checkpoint 2026-08-09-093: The Complete Engine Is Live, Not Laboratory-Only
 
 CP092 made structured causal, planning, and premise requests semantically

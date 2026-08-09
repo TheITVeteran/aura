@@ -836,6 +836,32 @@ class ResponseGenerationPhase(BasePhase):
         task_type = is_amplifiable(objective)
         if task_type is None:
             return draft
+        from core.brain.executable_reasoning import should_use_executable_reasoning
+
+        executable_reasoning = should_use_executable_reasoning(
+            objective,
+            task_type=task_type,
+        )
+
+        # Keep the complete engine inside the enclosing CognitiveEngine turn.
+        # Structured program generation on the resident 32B needs about 45-55s;
+        # do not start it when the remaining phase contract cannot fund one
+        # complete candidate. Evidence-only amplification keeps its smaller cap.
+        available_budget = max(1.0, float(request_timeout or 20.0) * 0.60)
+        requires_full_program_budget = bool(
+            executable_reasoning and task_type != "math"
+        )
+        budget_floor = 60.0 if requires_full_program_budget else 8.0
+        budget_ceiling = 150.0 if executable_reasoning else 30.0
+        budget = min(budget_ceiling, available_budget)
+        if requires_full_program_budget and budget < budget_floor:
+            return draft
+        budget = max(min(budget_floor, available_budget), budget)
+        generation_timeout = (
+            min(75.0, budget, max(55.0, budget * 0.50))
+            if requires_full_program_budget
+            else min(24.0, budget, max(8.0, budget * 0.50))
+        )
 
         visible_user_message = str(
             runtime_context.get("user_surface_validation_prompt")
@@ -908,7 +934,7 @@ class ResponseGenerationPhase(BasePhase):
                     hard_output_token_ceiling=runtime_context.get(
                         "hard_output_token_ceiling"
                     ),
-                    timeout=min(24.0, max(8.0, request_timeout * 0.50)),
+                    timeout=generation_timeout,
                     cognitive_situation_sampling_bias=state.response_modifiers.get(
                         "cognitive_situation_sampling_bias"
                     ),
@@ -939,17 +965,20 @@ class ResponseGenerationPhase(BasePhase):
             )
 
         try:
-            budget = float(min(30.0, max(8.0, (request_timeout or 20.0) * 0.60)))
             result = await amplify_turn(
                 objective,
                 _gen,
                 task_type=task_type,
                 time_budget_s=budget,
+                sample_budget=3 if executable_reasoning else None,
                 extra_context={
                     "live_response_phase": True,
                     "require_generation_metadata": True,
                     "disable_batched_candidates": True,
                     "generation_max_tokens": amplifier_token_cap,
+                    "seed_candidates": [draft],
+                    "enable_executable_reasoning": executable_reasoning,
+                    "allow_textual_fallback_after_executable": True,
                     "cognitive_situation_frame": state.response_modifiers.get(
                         "cognitive_situation_frame"
                     ),
@@ -977,19 +1006,41 @@ class ResponseGenerationPhase(BasePhase):
             "task_type": task_type,
             "verified": bool(result.verified),
             "confidence": float(result.confidence),
-            "adopted": bool(result.verified and result.answer),
+            "promotion_authority": str(
+                receipt.get("promotion_authority") or "none"
+            ),
+            "adopted": bool(
+                result.answer
+                and receipt.get("promotion_authority")
+                in {"checked_verifier", "independent_executable_consensus"}
+            ),
         }
+        authority = str(receipt.get("promotion_authority") or "none")
         logger.info(
-            "🧠 [AmplifyV2-active-phase] task=%s verified=%s conf=%.2f -> %s",
+            "🧠 [AmplifyV2-active-phase] task=%s authority=%s conf=%.2f -> %s",
             task_type,
-            result.verified,
+            authority,
             result.confidence,
-            "adopted" if (result.verified and result.answer) else "kept draft",
+            "adopted"
+            if (
+                result.answer
+                and authority
+                in {"checked_verifier", "independent_executable_consensus"}
+            )
+            else "kept draft",
         )
-        if result.verified and result.answer and len(result.answer.strip()) >= 3:
-            amplified_text = attributed_text(result.answer, result.generation_metadata)
+        promoted_answer = ""
+        if authority == "checked_verifier":
+            promoted_answer = str(result.answer or "").strip()
+        elif authority == "independent_executable_consensus":
+            promoted_answer = str(result.source_answer or result.answer or "").strip()
+        if promoted_answer:
+            amplified_text = attributed_text(
+                promoted_answer,
+                result.generation_metadata,
+            )
             amplified_text.reasoning_source_answer = str(
-                getattr(result, "source_answer", "") or result.answer
+                getattr(result, "source_answer", "") or promoted_answer
             )
             amplified_text.reasoning_text_mutations = [
                 dict(item) for item in getattr(result, "text_mutations", [])
@@ -1553,6 +1604,7 @@ class ResponseGenerationPhase(BasePhase):
                 "latent_cortex_receipt": {},
                 "latent_cortex_progress": {},
             }
+            amplifier_promotion_authority = "none"
             try:
                 request_timeout = self._request_timeout(
                     is_background=is_background,
@@ -2003,6 +2055,7 @@ class ResponseGenerationPhase(BasePhase):
                         )
 
                 pre_amplifier_text = response_text
+                amplifier_promotion_authority = "none"
                 if latent_trace.get("latent_cortex_selected") is not True:
                     response_text = await self._maybe_amplify_response(
                         objective=objective,
@@ -2016,6 +2069,15 @@ class ResponseGenerationPhase(BasePhase):
                         is_user_facing=not is_background and not is_test_run,
                         is_background=is_background,
                         proof_or_benchmark=proof_answer_run,
+                    )
+                    amplifier_promotion_authority = str(
+                        (
+                            state.response_modifiers.get(
+                                "reasoning_amplifier_v2_active_phase"
+                            )
+                            or {}
+                        ).get("promotion_authority")
+                        or "none"
                     )
                 amplifier_generation_metadata = generation_metadata_of(response_text)
                 amplifier_source_answer = str(
@@ -2091,6 +2153,7 @@ class ResponseGenerationPhase(BasePhase):
                     if (
                         not desktop_cognitive_engine_required
                         and not shape_repaired
+                        and amplifier_promotion_authority == "none"
                         and strategies._is_logical_check(objective)
                     ):
                         logger.info("⚡ [Critique] Running System 2 self-critique on response...")
@@ -2117,7 +2180,10 @@ class ResponseGenerationPhase(BasePhase):
                 # ComposerNode: Structural Refinement
                 composer = (
                     None
-                    if latent_trace.get("latent_cortex_selected") is True
+                    if (
+                        latent_trace.get("latent_cortex_selected") is True
+                        or amplifier_promotion_authority != "none"
+                    )
                     else self.container.get("composer_node", default=None)
                 )
                 if composer and hasattr(composer, "refine"):
@@ -2597,6 +2663,7 @@ class ResponseGenerationPhase(BasePhase):
                         not is_background
                         and not is_test_run
                         and latent_trace.get("latent_cortex_selected") is not True
+                        and amplifier_promotion_authority == "none"
                     )
                     else None
                 ),

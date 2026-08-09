@@ -2171,14 +2171,16 @@ class UnitaryResponsePhase(Phase):
         # tasks impossible by construction. Spend a larger but still bounded
         # share of the foreground contract only when structured computation is
         # actually applicable; evidence-only amplification keeps its 30s cap.
-        budget_floor = 60.0 if executable_reasoning else 8.0
-        budget_ceiling = 150.0 if executable_reasoning else 30.0
-        budget = float(
-            min(
-                budget_ceiling,
-                max(budget_floor, (request_timeout or 20.0) * 0.8),
-            )
+        requires_full_program_budget = bool(
+            executable_reasoning and task_type != "math"
         )
+        budget_floor = 60.0 if requires_full_program_budget else 8.0
+        budget_ceiling = 150.0 if executable_reasoning else 30.0
+        available_budget = max(1.0, float(request_timeout or 20.0) * 0.8)
+        budget = float(min(budget_ceiling, available_budget))
+        if requires_full_program_budget and budget < budget_floor:
+            return draft
+        budget = max(min(budget_floor, available_budget), budget)
         result = await amplify_turn(
             objective,
             _gen,

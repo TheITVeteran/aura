@@ -1,7 +1,7 @@
 """The reasoning amplifier must fire on the dominant phase response lane.
 
-These call UnitaryResponsePhase._maybe_amplify_response directly (with stubs) so we
-prove the live wiring without standing up the whole phase graph.
+These exercise both response implementations directly so the compatibility and
+sovereign live paths cannot silently drift apart.
 """
 from __future__ import annotations
 
@@ -278,6 +278,162 @@ async def test_active_response_generation_phase_amplifies_verified_math_turn():
     assert state.response_modifiers["reasoning_amplifier_v2_active_phase"]["adopted"] is True
     assert router.calls >= 1
     assert router.kwargs[0]["desktop_cognitive_engine_required"] is True
+
+
+@pytest.mark.asyncio
+async def test_active_phase_funds_structured_execution_and_keeps_draft_incumbent(monkeypatch):
+    from core.brain.reasoning_amplifier_v2 import AmplifiedAnswer, ReasoningReceipt
+
+    captured = {}
+
+    async def fake_amplify_turn(objective, generate, **kwargs):
+        del objective, generate
+        captured.update(kwargs)
+        return AmplifiedAnswer(
+            answer="UNPROMOTED",
+            source_answer="UNPROMOTED",
+            confidence=0.2,
+            verified=False,
+            calibrated=False,
+            receipt=ReasoningReceipt(
+                mode="normal",
+                strategy_used="none",
+                task_type="planning",
+                num_candidates=0,
+                verifiers_run=[],
+                valid_candidates=0,
+                winning_candidate_id=None,
+                confidence=0.2,
+                agreement=0.0,
+                epistemic_status="unverified",
+            ),
+        )
+
+    monkeypatch.setattr(
+        "core.brain.reasoning_amplifier_v2.amplify_turn",
+        fake_amplify_turn,
+    )
+    draft = "Keep this first-pass answer unless a stronger result earns promotion."
+    state = AuraState.default()
+    phase = _phase_stub()
+    out = await phase._maybe_amplify_response(
+        objective=(
+            "Schedule these jobs to minimize makespan: "
+            "[{'name':'A','duration':2}, {'name':'B','duration':3}]"
+        ),
+        draft=draft,
+        router=_StubRouter("unused"),
+        state=state,
+        request_timeout=180.0,
+        origin="desktop_ui",
+        tier="primary",
+        runtime_context={"desktop_cognitive_engine_required": True},
+        is_user_facing=True,
+        is_background=False,
+        proof_or_benchmark=False,
+    )
+
+    assert out == draft
+    assert captured["time_budget_s"] == 108.0
+    assert captured["sample_budget"] == 3
+    assert captured["extra_context"]["seed_candidates"] == [draft]
+    assert captured["extra_context"]["enable_executable_reasoning"] is True
+    assert captured["extra_context"]["allow_textual_fallback_after_executable"] is True
+    assert state.response_modifiers["reasoning_amplifier_v2_active_phase"][
+        "promotion_authority"
+    ] == "none"
+
+
+@pytest.mark.asyncio
+async def test_active_phase_surfaces_consensus_bearing_answer(monkeypatch):
+    from core.brain.reasoning_amplifier_v2 import AmplifiedAnswer, ReasoningReceipt
+
+    async def fake_amplify_turn(objective, generate, **kwargs):
+        del objective, generate, kwargs
+        return AmplifiedAnswer(
+            answer="A later rewrite that did not earn consensus.",
+            source_answer="FINAL_ANSWER: 42",
+            confidence=0.6,
+            verified=False,
+            calibrated=True,
+            receipt=ReasoningReceipt(
+                mode="normal",
+                strategy_used="independent_executable_consensus",
+                task_type="planning",
+                num_candidates=3,
+                verifiers_run=["logic"],
+                valid_candidates=0,
+                winning_candidate_id=None,
+                confidence=0.6,
+                agreement=2 / 3,
+                epistemic_status="uncertain",
+                promotion_authority="independent_executable_consensus",
+            ),
+        )
+
+    monkeypatch.setattr(
+        "core.brain.reasoning_amplifier_v2.amplify_turn",
+        fake_amplify_turn,
+    )
+    state = AuraState.default()
+    phase = _phase_stub()
+    out = await phase._maybe_amplify_response(
+        objective="Compute the feasible schedule for jobs [2,3] within horizon 5.",
+        draft="INCUMBENT",
+        router=_StubRouter("unused"),
+        state=state,
+        request_timeout=180.0,
+        origin="desktop_ui",
+        tier="primary",
+        runtime_context={"desktop_cognitive_engine_required": True},
+        is_user_facing=True,
+        is_background=False,
+        proof_or_benchmark=False,
+    )
+
+    assert str(out) == "FINAL_ANSWER: 42"
+    assert state.response_modifiers["reasoning_amplifier_v2_active_phase"][
+        "promotion_authority"
+    ] == "independent_executable_consensus"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("phase_kind", ["active", "unitary"])
+async def test_structured_execution_does_not_start_without_one_candidate_budget(
+    phase_kind,
+):
+    draft = "INCUMBENT"
+    if phase_kind == "active":
+        router = _StubRouter("must not run")
+        out = await _phase_stub()._maybe_amplify_response(
+            objective="Minimize the makespan for jobs [2,3].",
+            draft=draft,
+            router=router,
+            state=AuraState.default(),
+            request_timeout=30.0,
+            origin="desktop_ui",
+            tier="primary",
+            runtime_context={"desktop_cognitive_engine_required": True},
+            is_user_facing=True,
+            is_background=False,
+            proof_or_benchmark=False,
+        )
+        assert router.calls == 0
+    else:
+        llm = _StubLLM("must not run")
+        out = await UnitaryResponsePhase._maybe_amplify_response(
+            _self_stub(),
+            objective="Minimize the makespan for jobs [2,3].",
+            draft=draft,
+            llm=llm,
+            state=_state_stub(),
+            request_timeout=30.0,
+            is_user_facing=True,
+            is_background=False,
+            proof_or_benchmark=False,
+        )
+        assert llm.calls == 0
+    assert out == draft
 
 
 @pytest.mark.asyncio

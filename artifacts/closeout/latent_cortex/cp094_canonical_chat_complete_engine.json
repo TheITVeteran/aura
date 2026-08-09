@@ -1,0 +1,67 @@
+{
+  "schema": "aura.closeout.latent_cortex.cp094.v1",
+  "checkpoint": "CP094",
+  "date": "2026-08-09",
+  "finding": {
+    "classification": "canonical_desktop_phase_policy_drift",
+    "route_evidence": [
+      "The desktop /api/chat route invokes CognitiveEngine before KernelInterface when the desktop cognitive contract is required.",
+      "CognitiveEngine instantiates ResponseGenerationPhase through instantiate_legacy_runtime_phases.",
+      "AuraKernel uses UnitaryResponsePhase, but that phase is a later chat fallback when CognitiveEngine has already produced no reply."
+    ],
+    "defects": [
+      "The active CognitiveEngine phase retained a 24-second generation ceiling and a 30-second total amplifier ceiling, shorter than measured resident-32B program synthesis.",
+      "The active phase did not enable executable reasoning or carry the first-pass answer as a monotonic incumbent.",
+      "The active phase promoted only exact verifier passes and could not surface independently computed consensus.",
+      "A promoted answer could later be replaced by a lower-authority model critic, composer, or dialogue retry."
+    ]
+  },
+  "repair": {
+    "canonical_phase": "core.phases.response_generation.ResponseGenerationPhase",
+    "structured_program_budget_s": {
+      "minimum_complete_candidate": 60.0,
+      "maximum_amplifier": 150.0,
+      "maximum_generation": 75.0,
+      "enclosing_turn_budget_respected": true
+    },
+    "simple_math_fast_path_preserved": true,
+    "structured_sample_budget": 3,
+    "ordinary_draft_is_incumbent": true,
+    "executable_reasoning_enabled_by_semantics": true,
+    "promotion_authorities": [
+      "checked_verifier",
+      "independent_executable_consensus"
+    ],
+    "consensus_surfaces_exact_source_answer": true,
+    "lower_authority_model_rewrites_blocked_after_promotion": [
+      "system2_self_critic",
+      "composer_node",
+      "dialogue_retry"
+    ],
+    "deterministic_safety_and_surface_cleanup_retained": true,
+    "unitary_short_budget_overrun_fixed": true
+  },
+  "verification": {
+    "focused_phase_and_action_contracts": "44 passed",
+    "ruff": "passed",
+    "byte_compile": "passed",
+    "negative_controls": [
+      "short structured turns retain the incumbent without starting an impossible candidate",
+      "simple arithmetic remains eligible for the bounded fast verifier path",
+      "unpromoted output cannot replace the incumbent",
+      "independent consensus surfaces its consensus-bearing source answer",
+      "calendar scheduling remains an action while computational scheduling remains reasoning"
+    ]
+  },
+  "campaign_boundary": {
+    "active_campaign": "cp093-wow-pilot-20260809",
+    "campaign_source_commit": "6fc714b90a8b471d2f5b17e87c742a6c306c3675",
+    "campaign_mutated": false,
+    "claim_from_campaign": "pending"
+  },
+  "non_claims": [
+    "This checkpoint does not itself demonstrate a reasoning gain.",
+    "No frontier result, fusion authority, activation authority, or WOW Signal is claimed.",
+    "The installed application must restart onto this source before live-user behavior can include the repair."
+  ]
+}
