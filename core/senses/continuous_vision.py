@@ -62,7 +62,11 @@ class ContinuousSensoryBuffer:
         self.frame_buffer = deque(maxlen=6)
         self._capture_task = None
         self._is_active = False
-        self.cap: Any | None = None
+        # The device handle is the camera authority's, never this
+        # object's. Holding it here was how two subsystems ended up
+        # opening the same camera with neither able to see the other.
+        self._camera_lease: Any | None = None
+        self._last_camera_denial: str | None = None
 
         from core.config import get_config
 
@@ -112,12 +116,14 @@ class ContinuousSensoryBuffer:
     def stop(self):
         """Stops the capture loop."""
         self._is_active = False
-        if self.cap and self.cap.isOpened():
+        if self._camera_lease is not None:
             try:
-                self.cap.release()
-            except (RuntimeError, AttributeError, TypeError, ValueError):
+                from core.perception.camera_authority import get_camera_authority
+
+                get_camera_authority().release(self._camera_lease)
+            except (ImportError, RuntimeError, AttributeError, TypeError, ValueError):
                 logger.debug("ContinuousSensoryBuffer: camera release skipped", exc_info=True)
-            self.cap = None
+            self._camera_lease = None
         if self._capture_task:
             self._capture_task.cancel()
             self._capture_task = None
@@ -255,21 +261,53 @@ class ContinuousSensoryBuffer:
                         logger.debug("👁️ [VISION] Camera branch deferred to sidecar after PyAV load.")
                         await asyncio.sleep(2.0)
                         continue
-                    if self.cap is None or not self.cap.isOpened():
+
+                    # `self.camera_enabled` is the build-time feature flag.
+                    # It is NOT the owner's settings toggle, so this loop
+                    # used to keep filming after the camera was switched off
+                    # in Aura's settings. The authority checks the owner's
+                    # switch on every acquisition, holds the single device
+                    # lease, and — because this is a continuous feed Aura
+                    # runs on her own initiative rather than at the owner's
+                    # request — asks whether autonomous observation is
+                    # permitted at all.
+                    from core.perception.camera_authority import (
+                        CameraDenial,
+                        get_camera_authority,
+                    )
+
+                    authority = get_camera_authority()
+                    if self._camera_lease is None or not self._camera_lease.active:
+                        acquired = authority.acquire(
+                            "continuous_vision",
+                            purpose="rolling visual context buffer",
+                            autonomous=True,
+                        )
+                        if isinstance(acquired, CameraDenial):
+                            if acquired.reason != self._last_camera_denial:
+                                self._last_camera_denial = acquired.reason
+                                logger.info(
+                                    "👁️ [VISION] Camera not available: %s — %s",
+                                    acquired.reason,
+                                    acquired.detail,
+                                )
+                            await asyncio.sleep(2.0)
+                            continue
+                        self._last_camera_denial = None
+                        self._camera_lease = acquired
+
+                    frame = authority.read(self._camera_lease)
+                    if frame is None:
+                        # Either the frame failed or the lease was reclaimed.
+                        # Drop it and re-acquire next tick rather than
+                        # spinning on a handle that may already be closed.
+                        authority.release(self._camera_lease)
+                        self._camera_lease = None
+                    else:
                         import cv2
 
-                        self.cap = cv2.VideoCapture(0)
-                        if self.cap:
-                            self.cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
-                            self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
-
-                    if self.cap and self.cap.isOpened():
-                        ret, frame = self.cap.read()
-                        if ret:
-                            import cv2
-
-                            _, jpeg_bytes = cv2.imencode('.jpg', frame)
-                            self.frame_buffer.append(("image/jpeg", jpeg_bytes.tobytes()))
+                        _, jpeg_bytes = cv2.imencode('.jpg', frame)
+                        self.frame_buffer.append(("image/jpeg", jpeg_bytes.tobytes()))
             except (ImportError, AttributeError, RuntimeError) as e:
                 record_degradation('continuous_vision', e)
                 logger.error("Sensory Buffer capture failed: %s", e)

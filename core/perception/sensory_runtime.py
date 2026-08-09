@@ -20,6 +20,7 @@ demand is always available once permission is granted.
 """
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import importlib.util
 import logging
@@ -115,12 +116,31 @@ class CameraProvider:
         if not self._load():
             return Sight(captured=False, detail={"reason": "cv2_unavailable"})
         cv2 = self._cv2
-        cap = None
+
+        # This path used to open the device directly and never consulted
+        # `camera_allowed()`, so turning the camera off in Aura's settings
+        # left it capturing. It now goes through the one authority, which
+        # checks the owner's switch, the OS grant, and the device lease —
+        # and names which of them refused instead of returning a bare
+        # "no_frame_or_permission" that conflated all three.
+        from core.perception.camera_authority import (
+            CameraDenial,
+            get_camera_authority,
+        )
+
+        authority = get_camera_authority()
+        lease = authority.acquire(
+            "sensory_runtime.CameraProvider",
+            purpose="single-frame presence check",
+            index=camera_index,
+        )
+        if isinstance(lease, CameraDenial):
+            return Sight(captured=False, detail=lease.to_dict())
+
         try:
-            cap = cv2.VideoCapture(camera_index)
-            ok, frame = cap.read()
-            if not ok or frame is None:
-                return Sight(captured=False, detail={"reason": "no_frame_or_permission"})
+            frame = authority.read(lease)
+            if frame is None:
+                return Sight(captured=False, detail={"reason": "no_frame"})
             h, w = frame.shape[:2]
             gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
             person = False
@@ -137,11 +157,7 @@ class CameraProvider:
         except _provider_errors(cv2) as exc:
             return Sight(captured=False, detail={"reason": f"capture_error:{type(exc).__name__}"})
         finally:
-            if cap is not None:
-                try:
-                    cap.release()
-                except _provider_errors(cv2) as exc:
-                    logger.debug("camera release failed: %s", exc)
+            authority.release(lease)
 
 
 class MicProvider:
@@ -291,6 +307,35 @@ class SensoryRuntime:
         sight = self.look()
         sound = self.listen(seconds=listen_seconds)
         return {"sight": sight, "sound": sound}
+
+    # the async lane ------------------------------------------------------
+    #
+    # Every method above blocks: `look` opens a device and decodes a frame,
+    # and `listen` sleeps for its whole recording window — two full seconds
+    # by default. There was no async form of any of them, so an async caller
+    # had no correct option and the only available one stalls the event
+    # loop. An on-loop fsync once froze this runtime for twenty minutes;
+    # a two-second camera grab in the response path is the same defect with
+    # a smaller constant.
+    #
+    # These are the correct option. They are thin on purpose: the offload is
+    # the entire point, and duplicating the logic would let the two lanes
+    # drift.
+
+    async def look_async(self, *, route: bool = True) -> Sight:
+        return await asyncio.to_thread(self.look, route=route)
+
+    async def listen_async(
+        self, *, seconds: float = 3.0, route: bool = True
+    ) -> Sound:
+        return await asyncio.to_thread(self.listen, seconds=seconds, route=route)
+
+    async def sense_async(self, *, listen_seconds: float = 2.0) -> dict[str, Any]:
+        return await asyncio.to_thread(self.sense, listen_seconds=listen_seconds)
+
+    async def capabilities_async(self) -> dict[str, bool]:
+        # `available()` does a find_spec, which touches the filesystem.
+        return await asyncio.to_thread(self.capabilities)
 
     def capabilities(self) -> dict[str, bool]:
         return {

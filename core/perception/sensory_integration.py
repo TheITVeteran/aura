@@ -4,6 +4,7 @@ Gives Aura access to cameras, microphones, speakers, and A/V production tools
 import asyncio
 import base64
 import hashlib
+import json
 import logging
 import threading
 import time
@@ -332,6 +333,88 @@ class SensorySystem:
             )
 
 
+def _parse_vision_reading(raw: Any) -> dict[str, Any]:
+    """Turn the model's answer into a reading that distinguishes unknown.
+
+    Three outcomes must stay distinguishable, and before this they were not:
+
+      * observed, and there is nothing there      -> 0 / []
+      * observed, but cannot tell (dark, blurred,
+        occluded, out of frame)                   -> None
+      * never observed at all                     -> None + abstained
+
+    Collapsing the middle case into zero is what makes a perception system
+    confidently wrong: "no faces detected" in a dark room reads exactly like
+    "the room is empty", and only one of those is a fact.
+    """
+    text = str(raw or "").strip()
+    reading: dict[str, Any] = {
+        "timestamp": time.time(),
+        "analyzed": True,
+        "abstained": False,
+        "scene_description": text,
+        "objects_detected": None,
+        "text_detected": None,
+        "faces_detected": None,
+    }
+    if not text:
+        reading.update(
+            analyzed=False,
+            abstained=True,
+            reason="empty_model_reply",
+            scene_description="",
+        )
+        return reading
+
+    # Models wrap JSON in prose and fences. Take the outermost object.
+    start, end = text.find("{"), text.rfind("}")
+    if start == -1 or end <= start:
+        # Prose only. The description is still real and is kept; the
+        # structured fields stay unknown rather than being invented as
+        # empty, which is what the constants used to do.
+        reading["reason"] = "unstructured_reply"
+        return reading
+
+    try:
+        payload = json.loads(text[start : end + 1])
+    except ValueError:
+        reading["reason"] = "unparseable_json"
+        return reading
+    if not isinstance(payload, dict):
+        reading["reason"] = "unexpected_json_shape"
+        return reading
+
+    scene = payload.get("scene")
+    if isinstance(scene, str) and scene.strip():
+        reading["scene_description"] = scene.strip()
+
+    def _as_list(value: Any) -> list[str] | None:
+        # null means "cannot tell" and must survive as None.
+        if value is None:
+            return None
+        if isinstance(value, list):
+            return [str(item).strip() for item in value if str(item).strip()]
+        if isinstance(value, str) and value.strip():
+            return [value.strip()]
+        return None
+
+    reading["objects_detected"] = _as_list(payload.get("objects"))
+    reading["text_detected"] = _as_list(payload.get("text"))
+
+    people = payload.get("people")
+    if isinstance(people, bool):
+        # `true` is not a count. Treating it as 1 would invent a number.
+        reading["faces_detected"] = None
+    elif isinstance(people, (int, float)):
+        reading["faces_detected"] = max(0, int(people))
+    elif isinstance(people, str) and people.strip().isdigit():
+        reading["faces_detected"] = int(people.strip())
+    else:
+        reading["faces_detected"] = None
+
+    return reading
+
+
 class VisionSystem:
     """Camera and visual perception system.
     
@@ -360,23 +443,24 @@ class VisionSystem:
         return self._camera_available
         
     def _check_camera(self) -> bool:
-        """Check if camera is available (Must be called in thread)."""
-        if cv2_main_process_blocked():
-            logger.debug("OpenCV camera probe deferred to sidecar after PyAV load.")
-            return False
-        try:
-            import cv2
-            cap = cv2.VideoCapture(0)
-            available = cap.isOpened()
-            cap.release()
-            return available
-        except ImportError:
-            logger.debug("OpenCV is unavailable; camera capture disabled.")
-            return False
-        except (AttributeError, RuntimeError) as exc:
-            record_degradation("sensory_integration", exc)
-            logger.debug("Camera availability probe failed: %s", exc)
-            return False
+        """Check if camera is available (Must be called in thread).
+
+        Probing by opening the device was itself a defect: it contended for
+        an exclusive resource just to answer a question, so a probe during
+        an active stream reported "unavailable" and a probe that raced the
+        stream could take the device from it. The authority already knows.
+        """
+        from core.perception.camera_authority import get_camera_authority
+
+        state = get_camera_authority().state()
+        # In use by another holder still means the hardware is there. This
+        # answers "is there a camera we are allowed to use", which is what
+        # every caller of this actually wanted.
+        return bool(
+            state["backend_available"]
+            and state["owner_permission"]
+            and state["os_permission"] is not False
+        )
     
     async def capture(self, duration: float = 0, save_path: str | None = None) -> dict[str, Any]:
         """Capture from camera (Async)."""
@@ -389,13 +473,27 @@ class VisionSystem:
         def _do_capture() -> dict[str, Any]:
             if cv2_main_process_blocked():
                 return {"error": "cv2_deferred_to_sidecar_after_pyav_load"}
+            from core.perception.camera_authority import (
+                CameraDenial,
+                get_camera_authority,
+            )
+
+            authority = get_camera_authority()
+            lease = authority.acquire(
+                "sensory_integration",
+                purpose=f"owner-requested capture ({'video' if duration else 'photo'})",
+            )
+            if isinstance(lease, CameraDenial):
+                # The named reason and its remedy, not a bare
+                # "camera_not_available" that told the owner nothing about
+                # which of four possible causes it was.
+                return {"error": lease.reason, **lease.to_dict()}
+
             try:
                 import cv2
-                cap = cv2.VideoCapture(0)
                 if duration == 0:
-                    ret, frame = cap.read()
-                    cap.release()
-                    if not ret:
+                    frame = authority.read(lease)
+                    if frame is None:
                         return {"error": "capture_failed"}
                     if save_path:
                         cv2.imwrite(save_path, frame)
@@ -411,16 +509,19 @@ class VisionSystem:
                     fourcc = cv2.VideoWriter_fourcc(*"mp4v")  # type: ignore[attr-defined]
                     out = cv2.VideoWriter(path, fourcc, 20.0, (640, 480))
                     start = time.time()
-                    while time.time() - start < duration:
-                        ret, frame = cap.read()
-                        if ret:
-                            out.write(frame)
-                    cap.release()
-                    out.release()
+                    try:
+                        while time.time() - start < duration:
+                            frame = authority.read(lease)
+                            if frame is not None:
+                                out.write(frame)
+                    finally:
+                        out.release()
                     return {"type": "video", "path": path, "duration": duration, "timestamp": time.time()}
             except (ImportError, AttributeError, RuntimeError) as e:
                 record_degradation('sensory_integration', e)
                 return {"error": str(e)}
+            finally:
+                authority.release(lease)
 
         result = await asyncio.to_thread(_do_capture)
         if "error" not in result:
@@ -457,29 +558,40 @@ class VisionSystem:
                     image_b64 = str(capture_data.get("data") or capture_data.get("base64"))
 
                 if image_b64:
+                    # Ask for the structure, then parse it. The previous
+                    # version asked for prose and returned
+                    # `objects_detected: []`, `text_detected: []`,
+                    # `faces_detected: 0` as CONSTANTS beside a real
+                    # description — so a caller checking `faces_detected`
+                    # read zero while the model was describing three people
+                    # in the adjacent field.
                     description = await brain.think(
-                        "Describe what you see in this image concisely. "
-                        "List any objects, text, or people visible.",
+                        "Describe this image. Reply with JSON only:\n"
+                        '{"scene": "<one or two sentences>", '
+                        '"objects": ["..."], "text": ["..."], "people": <count>}\n'
+                        "Use an empty list and 0 only when you are confident "
+                        "none are present. If the image is too dark, blurred, "
+                        'or occluded to tell, use null for that field.',
                         images=[image_b64],
                     )
-                    return {
-                        "timestamp": time.time(),
-                        "scene_description": str(description or "").strip(),
-                        "objects_detected": [],
-                        "text_detected": [],
-                        "faces_detected": 0,
-                    }
+                    return _parse_vision_reading(description)
         except (ImportError, AttributeError, RuntimeError) as e:
             record_degradation('sensory_integration', e)
             logger.debug("Vision analysis via brain failed: %s", e)
 
-        # Fallback: no vision model available
+        # No vision model. This is an ABSTENTION, not an observation of an
+        # empty room, and the two used to return identical structured
+        # fields — zeros and empty lists either way. A caller could not tell
+        # "I looked and saw nobody" from "I could not look".
         return {
             "timestamp": time.time(),
-            "objects_detected": [],
+            "analyzed": False,
+            "abstained": True,
+            "reason": "no_vision_model",
+            "objects_detected": None,
             "scene_description": "No vision model available for analysis.",
-            "text_detected": [],
-            "faces_detected": 0,
+            "text_detected": None,
+            "faces_detected": None,
         }
 
 

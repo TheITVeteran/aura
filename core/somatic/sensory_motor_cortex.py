@@ -94,38 +94,45 @@ class SensoryMotorCortex:
 
     def _run_opencv_stream(self):
         try:
-            # DEFERRED BINDING: Only attempt to open camera if enabled
+            from core.perception.camera_authority import (
+                CameraDenial,
+                get_camera_authority,
+            )
+
+            authority = get_camera_authority()
             cv2 = None
-            cap = None
-            if self.camera_enabled and camera_allowed():
-                cv2 = _get_cv2()
-                cap = cv2.VideoCapture(0)
-            
-            if cap is None or not cap.isOpened():
+            lease = None
+
+            # v48 FIX kept: never return, or the thread dies and the toggle
+            # can never turn the camera back on. What changed is that the
+            # wait no longer reopens the device itself.
+            while self.is_active:
                 if self.camera_enabled:
-                    logger.warning("Visual cortex camera not available.")
-                
-                # v48 FIX: Instead of returning (which kills the Thread), we wait for the toggle.
-                while self.is_active:
-                    time.sleep(5)
-                    if self.camera_enabled:
-                        if cv2 is None:
-                            cv2 = _get_cv2()
-                        cap = cv2.VideoCapture(0)
-                        if cap and cap.isOpened():
-                            break
-                if not self.is_active:
-                    return
-
-            # Set low res for background monitoring
-            cap.set(cv2.CAP_PROP_FRAME_WIDTH, 320)
-            cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 240)
-
-            ret, frame1 = cap.read()
-            if not ret: 
-                cap.release()
+                    acquired = authority.acquire(
+                        "sensory_motor_cortex",
+                        purpose="background visual-delta monitoring",
+                        # Aura watching for movement on her own initiative,
+                        # not because the owner asked for a picture.
+                        autonomous=True,
+                    )
+                    if not isinstance(acquired, CameraDenial):
+                        lease = acquired
+                        cv2 = _get_cv2()
+                        break
+                    logger.info(
+                        "Visual cortex camera unavailable: %s — %s",
+                        acquired.reason,
+                        acquired.detail,
+                    )
+                time.sleep(5)
+            if not self.is_active or lease is None:
                 return
-            
+
+            frame1 = authority.read(lease)
+            if frame1 is None:
+                authority.release(lease)
+                return
+
             gray1 = cv2.cvtColor(frame1, cv2.COLOR_BGR2GRAY)
             gray1 = cv2.GaussianBlur(gray1, (21, 21), 0)
 
@@ -140,15 +147,40 @@ class SensoryMotorCortex:
                     time.sleep(10)
                     continue
 
-                # 2. Privacy Toggle: If camera disabled, just sleep and skip
+                # 2. Privacy toggle. Sleeping while still HOLDING the device
+                # was the bug: the camera stayed open — indicator light on —
+                # with the setting switched off, which is precisely the
+                # state the switch exists to prevent. Release it, and
+                # re-acquire when the owner turns it back on.
                 if not self.camera_enabled or not camera_allowed():
+                    if lease is not None:
+                        authority.release(lease)
+                        lease = None
                     time.sleep(2.0)
                     continue
 
-                ret, frame2 = cap.read()
-                if not ret:
+                if lease is None or not lease.active:
+                    reacquired = authority.acquire(
+                        "sensory_motor_cortex",
+                        purpose="background visual-delta monitoring",
+                        autonomous=True,
+                    )
+                    if isinstance(reacquired, CameraDenial):
+                        time.sleep(2.0)
+                        continue
+                    lease = reacquired
+                    # The reference frame is stale after any gap in the feed.
+                    frame1 = authority.read(lease)
+                    if frame1 is None:
+                        continue
+                    gray1 = cv2.cvtColor(frame1, cv2.COLOR_BGR2GRAY)
+                    gray1 = cv2.GaussianBlur(gray1, (21, 21), 0)
+                    continue
+
+                frame2 = authority.read(lease)
+                if frame2 is None:
                     break
-                
+
                 gray2 = cv2.cvtColor(frame2, cv2.COLOR_BGR2GRAY)
                 # Ensure sizes match to prevent OpenCV exceptions
                 if gray2.shape != gray1.shape:
@@ -174,8 +206,16 @@ class SensoryMotorCortex:
                 gray1 = gray2
                 time.sleep(1.0) # Low-power polling
 
-            cap.release()
+            authority.release(lease)
         except (OSError, IOError) as e:
+            # Release on the failure path too. A thread that dies holding
+            # the device is exactly the case the authority's stale-lease
+            # reclamation exists for, but recovering after 30s of a dark
+            # camera is the fallback, not the plan.
+            try:
+                authority.release(lease)
+            except (RuntimeError, AttributeError, TypeError, ValueError):
+                logger.debug("visual cortex camera release skipped", exc_info=True)
             record_degradation(
                 "sensory_motor_cortex",
                 e,
