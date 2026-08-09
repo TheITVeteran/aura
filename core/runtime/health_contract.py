@@ -1213,6 +1213,21 @@ def _runtime_integrity_block() -> dict[str, Any]:
     except Exception as exc:  # noqa: BLE001 — integrity reporting is additive
         block["durable_learning_error"] = repr(exc)
 
+    # Turns that reached cognition without a Will decision.
+    #
+    # The message handler's comment claimed ALL processing passes the Unified
+    # Will. It does not: the gate is skipped entirely before the Will starts,
+    # and continues degraded when it raises. Both were silent, so a turn
+    # nobody governed looked exactly like a turn the Will approved. A runtime
+    # serving ungoverned turns is precisely the kind of fact a green verdict
+    # cannot express on its own, which is what this block is for.
+    try:
+        from core.runtime.governance_coverage import ungoverned_turn_report
+
+        block["ungoverned_turns"] = ungoverned_turn_report()
+    except Exception as exc:  # noqa: BLE001 — integrity reporting is additive
+        block["ungoverned_turns_error"] = repr(exc)
+
     # Whether admission is predicting from measurement or still guessing.
     #
     # Read through the runtime service registry rather than by importing the

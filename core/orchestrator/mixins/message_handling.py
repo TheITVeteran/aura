@@ -12,6 +12,7 @@ import time
 from typing import Any
 
 from core.runtime.errors import record_degradation
+from core.runtime.governance_coverage import note_ungoverned_turn
 
 logger = logging.getLogger(__name__)
 
@@ -783,13 +784,35 @@ class MessageHandlingMixin:
         self._last_emitted_fingerprint = msg_hash
 
         # ── UNIFIED WILL GATE ──────────────────────────────────────────
-        # ALL processing — user-facing or internal — must pass through the
-        # Unified Will. This is THE architectural invariant that makes
-        # Aura a unified intelligence rather than a federation.
+        # Almost all processing — user-facing or internal — passes through
+        # the Unified Will. That is the architectural intent, and it is what
+        # makes Aura a unified intelligence rather than a federation.
+        #
+        # It is not "ALL", and the comment here used to say it was. There are
+        # exactly three ways a message reaches cognition ungated, and naming
+        # them is the difference between a known exception and a hole:
+        #
+        #   1. The Somatic Reflex Bypass above returns before this gate for
+        #      embodied-control contracts. Deliberate: a UI reflex answering
+        #      in milliseconds cannot wait on a deliberative decision.
+        #   2. The Will has not started. Every message before governance is
+        #      up is ungated — and the code reads exactly as though it were
+        #      gated, which is the more dangerous half.
+        #   3. The gate itself raises a recoverable error. Processing
+        #      continues degraded rather than taking the conversation
+        #      offline.
+        #
+        # Cases 2 and 3 are recorded as ungoverned turns rather than passing
+        # silently, so "the Will approved this" and "nobody asked the Will"
+        # are distinguishable afterwards. The count is on the health
+        # surface; a runtime quietly serving ungoverned turns is a fact the
+        # verdict must be able to express.
         try:
             from core.will import ActionDomain, get_will
 
             will = get_will()
+            if not will._started:
+                note_ungoverned_turn(origin, "will_not_started")
             if will._started:
                 domain = (
                     ActionDomain.RESPONSE
@@ -830,6 +853,7 @@ class MessageHandlingMixin:
                     else:
                         return None  # Internal messages can be refused
         except _MESSAGE_HANDLING_RECOVERABLE_ERRORS as _will_err:
+            note_ungoverned_turn(origin, f"gate_error:{type(_will_err).__name__}")
             _record_message_degradation(
                 _will_err,
                 action="continued user-input processing with degraded Will gate",
