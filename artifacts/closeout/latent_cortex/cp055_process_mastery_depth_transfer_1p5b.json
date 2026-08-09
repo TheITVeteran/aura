@@ -1,0 +1,69 @@
+{
+  "schema": "aura.rlc.cp055_process_mastery_depth_transfer_1p5b.v1",
+  "checkpoint": "CP055",
+  "source_commit": "b458bec461aa23f484f2b62841ce50c26cc7946e",
+  "model": "/Users/bryan/.aura/live-source/models/Qwen2.5-1.5B-Instruct-4bit",
+  "model_fingerprint": "d6e4ecf7593b78cb88ded2f4e98dd26b16802b38d2421b2af805eaea2f24f37d",
+  "seed": 2026080805,
+  "bootstrap_steps": 32,
+  "grpo_steps": 8,
+  "group_size": 4,
+  "sample_count": 32,
+  "elapsed_s": 385.91178488731384,
+  "optimizer_updates": 7,
+  "degenerate_groups": 1,
+  "nonzero_reward_samples": 27,
+  "exact_correct_training_samples": 5,
+  "parsed_training_samples": 27,
+  "bootstrap_first_epoch_loss_range": [1.713630497455597, 2.1763031482696533],
+  "bootstrap_last_epoch_loss_range": [0.09264294430613518, 0.5614098310470581],
+  "adapter_before_sha256": "1faf4b9885e4ebc09b2b1b0f117b462bfeef7ed6c77db90ae406112e4a429bea",
+  "adapter_after_sha256": "2ddade5107bd157ce06f22f28abffbb2f449eb97fe56340889fdb2dbf16a964b",
+  "before": {
+    "correct_by_depth": {
+      "1": 1,
+      "2": 1
+    },
+    "total_correct": 2,
+    "total_observations": 8
+  },
+  "after": {
+    "correct_by_depth": {
+      "1": 0,
+      "2": 2
+    },
+    "total_correct": 2,
+    "total_observations": 8
+  },
+  "ordinary_decode": {
+    "correct": 4,
+    "total_task_identities": 4
+  },
+  "admission": {
+    "decision": "reject_checkpoint_behavioral_gain_unproven",
+    "aggregate_correct_gain": 0,
+    "training_by_depth_interaction": 2,
+    "trained_depth_regressions": 0,
+    "strict_heldout_free_generation_gain": false,
+    "positive_training_by_depth_interaction": true,
+    "no_trained_depth_regressions": true,
+    "beats_ordinary_decode": false,
+    "admitted": false
+  },
+  "source_receipt_sha256": "de33fae74405c7be7d6bc322cdc9fcbc226130863d393d8ab98f6db6ef5c354d",
+  "interpretation": {
+    "public_trace_language_acquired": true,
+    "on_policy_process_signal_dense": true,
+    "depth_conditioning_causally_changed_behavior": true,
+    "aggregate_answer_transfer_observed": false,
+    "ordinary_floor_preserved": false,
+    "joint_answer_and_process_objective_required": true,
+    "resident_training_admitted": false
+  },
+  "claims": {
+    "reasoning_gain_proven": false,
+    "frontier_level_proven": false,
+    "fusion_authorized": false,
+    "wow_signal_authorized": false
+  }
+}

@@ -39345,3 +39345,29 @@ remain false. The completion envelope remains `809/920` (approximately
 `87.9%`). The next bounded discriminator must test whether deeper supervised
 trace acquisition turns this sparse transfer into stable depth-conditioned
 behavior; it may not relax the ordinary floor or reuse this failed adapter.
+
+## Checkpoint 2026-08-08-055: Trace Mastery Moves Depth, Not Total Accuracy
+
+A controlled rerun held the model, seed, task identities, adapter topology,
+GRPO budget, and admission policy fixed while increasing supervised process
+bootstrap from eight to 32 updates. First-epoch losses ranged from `1.71` to
+`2.18`; final-epoch losses fell to `0.09` through `0.56`. On-policy behavior
+changed from two scoreable samples in CP054 to `27/32`, with five exact process
+solutions and seven nondegenerate optimizer updates. The trace language was
+therefore learned rather than merely imitated once.
+
+The disjoint answer-only probe did not gain in aggregate: it remained `2/8`.
+Its distribution did change from one correct answer at each recurrent depth to
+zero at depth one and two at depth two. That positive depth interaction and
+absence of deep-below-shallow regressions show the depth-conditioned adapter
+causally changed computation in the intended direction, but the new competence
+did not beat the initial adapter or the `4/4` ordinary-decode task floor. The
+checkpoint was rejected and no weights were promoted.
+
+The compact evidence record is
+`artifacts/closeout/latent_cortex/cp055_process_mastery_depth_transfer_1p5b.json`.
+Reasoning gain, frontier performance, fusion, activation, and `WOW Signal`
+remain false. The completion envelope remains `809/920` (approximately
+`87.9%`). The next bounded bridge must combine the learned public process with
+the existing generated-prefix, branch-specialization, and paired-depth answer
+objective. More trace-only updates are not admitted as a new experiment.
