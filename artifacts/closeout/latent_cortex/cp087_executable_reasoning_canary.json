@@ -1,0 +1,62 @@
+{
+  "schema": "aura.rlc.executable_reasoning_canary.v1",
+  "checkpoint": "CP087",
+  "recorded_date": "2026-08-09",
+  "source_base_commit": "5b861ba2c660663e02a3cba56d25d652ba633d8a",
+  "implementation_files": {
+    "core/brain/executable_reasoning.py": "80a7097b44656e45fafcba5ae35d74e008f8346ca464ed4a11b3b528a68ee297",
+    "core/brain/reasoning_amplifier_v2.py": "5be6875b5f5526de53301d6680cd9070c97ae1326b9bcc4f7addfd10d52ad811",
+    "tools/rlc_complete_system_closed_book.py": "9e3559919c9108063db23e1ef1c08f6bea4eda65241122863c124f4e6fe8673b"
+  },
+  "model": {
+    "path": "/Users/bryan/.aura/live-source/training/fused-model/Aura-32B-crsm-closeout-jul1-20260701-215118",
+    "manifest_sha256": "22b540a55f108b13d67a2dd7862d55385972be38de48c409200fa1bce8bc7325"
+  },
+  "task": {
+    "task_id": "rlc_frontier:novel_algorithms:9f31f8d2c1510c995525c6be461ab6e87ef0c874c03db6b943c9d2e811ebdacb",
+    "registry_seed": 20261112,
+    "difficulty": 2,
+    "domain": "novel_algorithms",
+    "objective_sha256": "7ae37d6fa2b53b6fdb4df25b9a521d656a619d4b415fce6c71c65631ead247ee"
+  },
+  "execution": {
+    "generation_calls": 1,
+    "program_chars": 885,
+    "program_sha256": "fd3ede538d6e7f9ad19720405661f0662502f0028e0e52263e3c77f5c16fc5e9",
+    "candidate_sha256": "a5746a1103612531eac70e5f9467dda93f40029d70f57810af00262d39ccd8dd",
+    "elapsed_s": 40.957,
+    "sandbox": {
+      "kernel_boundary": "seatbelt",
+      "network_denied": true,
+      "user_data_denied": true,
+      "resource_limits_enforced": true
+    },
+    "contract_valid": true,
+    "independent_task_score": {
+      "parsed": true,
+      "correct": true,
+      "reason": "correct"
+    }
+  },
+  "regression_contract": {
+    "incumbent_is_retained_without_exact_public_objective_proof": true,
+    "proxy_score_can_replace_incumbent": false,
+    "failed_source_is_withheld_from_disjoint_restart": true,
+    "raw_failure_text_is_withheld_from_disjoint_restart": true
+  },
+  "verification": {
+    "focused_contract_tests": "96 passed",
+    "canonical_smoke": "103 passed",
+    "ruff": "passed",
+    "py_compile": "passed",
+    "diff_check": "passed"
+  },
+  "claims": {
+    "mechanism_live_on_resident_32b": true,
+    "reasoning_gain_proven": false,
+    "frontier_level_proven": false,
+    "fusion_authorized": false,
+    "wow_signal": false
+  },
+  "next_gate": "Add verifier-refutation-driven heterogeneous retries, then run a disjoint paired multi-domain pilot before any powered claim campaign."
+}

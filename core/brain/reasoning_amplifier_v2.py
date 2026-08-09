@@ -225,6 +225,7 @@ class ReasoningReceipt:
     budget_used: dict[str, Any] = field(default_factory=dict)
     fallbacks_used: list[str] = field(default_factory=list)
     guards_applied: list[str] = field(default_factory=list)
+    cognitive_operations: list[dict[str, Any]] = field(default_factory=list)
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -243,6 +244,7 @@ class ReasoningReceipt:
             "budget_used": self.budget_used,
             "fallbacks_used": self.fallbacks_used,
             "guards_applied": self.guards_applied[:6],
+            "cognitive_operations": [dict(item) for item in self.cognitive_operations[:6]],
         }
 
 
@@ -749,6 +751,10 @@ class ReasoningAmplifierV2:
         if seed_candidates:
             fallbacks.append(f"seed_candidates_admitted:{len(seed_candidates)}")
         request.context["seed_candidates"] = seed_candidates
+        # Internal operation receipts travel with this request only.  They are
+        # serialized into the final reasoning receipt, never into a model prompt.
+        request.context["_cognitive_operation_receipts"] = []
+        request.context["_resolved_reasoning_mode"] = mode.value
 
         # 2. retrieve failure-mode guards from prior reasoning.
         guard_text = ""
@@ -1068,6 +1074,9 @@ class ReasoningAmplifierV2:
             },
             fallbacks_used=fallbacks,
             guards_applied=guards,
+            cognitive_operations=list(
+                request.context.get("_cognitive_operation_receipts") or []
+            ),
         )
         logger.info(
             "🧠 [AmplifyV2] mode=%s task=%s cands=%d verifier=%s conf=%.2f status=%s",
@@ -1093,6 +1102,32 @@ class ReasoningAmplifierV2:
     # ------------------------------------------------------------------ paths
     async def _shallow_path(self, problem, guard_text, sample_budget, deadline, mode, context, fallbacks):
         """FAST/NORMAL: sample N, verifier-filter, self-consistency."""
+        executable = await self._derive_executable_candidate(
+            problem,
+            deadline=deadline,
+            context=context,
+        )
+        if executable is not None:
+            operation_receipts = context.setdefault("_cognitive_operation_receipts", [])
+            operation_receipts.append(executable.receipt)
+            if executable.succeeded and executable.candidate:
+                executable_verdict = await self._verify(
+                    executable.candidate,
+                    problem,
+                    context,
+                )
+                if bool(getattr(executable_verdict, "ok", False)) and bool(
+                    getattr(executable_verdict, "checked", False)
+                ):
+                    fallbacks.append("executable_reasoning_verified")
+                    return (
+                        executable.candidate,
+                        1.0,
+                        executable_verdict,
+                        1,
+                        "executable_reasoning",
+                    )
+                fallbacks.append("executable_reasoning_not_verified")
         candidates = await self._generate_candidates(
             problem,
             guard_text,
@@ -1150,6 +1185,56 @@ class ReasoningAmplifierV2:
         winner = result.answer or pool[0]
         verdict = await self._verify(winner, problem, context)
         return winner, result.agreement, verdict, len(candidates), "self_consistency"
+
+    async def _derive_executable_candidate(
+        self,
+        problem: ProblemRepresentation,
+        *,
+        deadline: float,
+        context: dict[str, Any],
+    ) -> Any | None:
+        """Attempt one deliberate program-of-thought operation.
+
+        This is capability work, not a verifier shortcut: the resident model
+        authors the program from the public objective, Aura executes it under
+        the same kernel sandbox used by her code organ, and the resulting text
+        still has to pass the ordinary task verifier before it can win.
+        """
+
+        if not _flag_on("AURA_EXECUTABLE_REASONING"):
+            return None
+        resolved_mode = str(context.get("_resolved_reasoning_mode") or "")
+        explicitly_enabled = bool(context.get("enable_executable_reasoning"))
+        if (
+            resolved_mode
+            not in {
+                ReasoningMode.DEEP.value,
+                ReasoningMode.EXTREME.value,
+                ReasoningMode.PROOF.value,
+            }
+            and not explicitly_enabled
+        ):
+            return None
+        try:
+            from core.brain.executable_reasoning import derive_executable_candidate
+
+            return await derive_executable_candidate(
+                objective=problem.objective,
+                task_type=problem.task_type,
+                generate=self._generate,
+                sandbox=self._ensure_sandbox(),
+                deadline=deadline,
+                response_contract=str(context.get("response_contract") or ""),
+                explicitly_enabled=explicitly_enabled,
+            )
+        except (TimeoutError, OSError, RuntimeError, AttributeError, TypeError, ValueError) as exc:
+            record_degradation(
+                "amplifier_v2_executable_reasoning",
+                exc,
+                severity="warning",
+                action="continued with the remaining reasoning operators",
+            )
+            return None
 
     async def _deep_path(self, problem, guard_text, sample_budget, deadline, mode, context, fallbacks):
         """DEEP/EXTREME/PROOF: adversarial courtroom, then optional sandbox repair.

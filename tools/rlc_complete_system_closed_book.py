@@ -214,7 +214,13 @@ def _promotion_assessment(
     candidate_verified: bool,
     authority: str = "candidate_quality_proxy_not_ground_truth",
 ) -> tuple[str, dict[str, Any]]:
-    """Apply the same answer-key-free monotonic promotion rule after amplification."""
+    """Promote only a public-objective proof over an unproven incumbent.
+
+    Proxy scores still rank exploration, but they cannot provide the no-regression
+    authority claimed by this boundary.  This makes the baseline an incumbent in
+    the literal sense: an exact, independently checked result can replace it;
+    prose quality or caller-declared confidence cannot.
+    """
 
     incumbent_row = verifier.evaluate(incumbent_text, _record=False)
     candidate_row = verifier.evaluate(candidate_text, _record=False) if candidate_text else {}
@@ -223,29 +229,40 @@ def _promotion_assessment(
     candidate_contract = bool(
         (candidate_row.get("checks") or {}).get("response_contract", {}).get("valid", False)
     )
+    incumbent_quality = _candidate_quality_assessment(incumbent_row)
+    candidate_quality = _candidate_quality_assessment(candidate_row) if candidate_row else {}
+    incumbent_exact = bool(incumbent_quality.get("ground_truth_verified"))
+    candidate_exact = bool(candidate_quality.get("ground_truth_verified"))
+    exact_authority = authority == "public_objective_deterministic_execution"
     replace = bool(
         candidate_text
         and candidate_verified
         and candidate_contract
-        and candidate_score > incumbent_score + 1e-9
+        and candidate_exact
+        and exact_authority
+        and not incumbent_exact
     )
     final_text = candidate_text if replace else incumbent_text
     receipt = {
         "schema": "aura.rlc.closed_book_promotion.v1",
         "decision": "replace" if replace else "retain",
         "reason": (
-            "verified_candidate_score_improved"
+            "exact_candidate_replaces_unproven_incumbent"
             if replace
             else "candidate_not_verified"
             if not candidate_verified
             else "candidate_contract_invalid"
             if not candidate_contract
-            else "candidate_score_did_not_improve"
+            else "candidate_lacks_exact_public_objective_proof"
+            if not candidate_exact or not exact_authority
+            else "incumbent_already_exactly_verified"
         ),
         "answer_key_used": False,
         "authority": authority,
-        "ground_truth_verified": authority == "public_objective_deterministic_execution",
-        "no_regression_guaranteed": authority == "public_objective_deterministic_execution",
+        "ground_truth_verified": candidate_exact and exact_authority,
+        "no_regression_guaranteed": replace or incumbent_exact,
+        "incumbent_ground_truth_verified": incumbent_exact,
+        "candidate_ground_truth_verified": candidate_exact,
         "incumbent_score": round(incumbent_score, 6),
         "candidate_score": round(candidate_score, 6),
         "candidate_verified": bool(candidate_verified),
@@ -565,6 +582,10 @@ def _run_complete_system_closed_book(
                     "skip_precompute_enqueue": True,
                     "disable_batched_candidates": True,
                     "generation_max_tokens": max_tokens,
+                    # Public task shape feeds the cognitive compiler; no
+                    # verifier-only value or answer key crosses this boundary.
+                    "response_contract": task.public.response_contract,
+                    "enable_executable_reasoning": True,
                 },
             )
         )
@@ -630,6 +651,21 @@ def _run_complete_system_closed_book(
         verifier_output_bytes=(verifier_registry.output_bytes + verifier_calls * 8),
         host_scalar_ops=max(1, verifier_input_bytes * 4),
     )
+    for index, operation in enumerate(amplified.receipt.cognitive_operations):
+        if operation.get("schema") != "aura.executable_reasoning.v1":
+            continue
+        sandbox = operation.get("sandbox") or {}
+        program_chars = int(operation.get("program_chars") or 0)
+        result_bytes = int(sandbox.get("stdout_total_bytes") or 0) + int(
+            sandbox.get("stderr_total_bytes") or 0
+        )
+        complete_ledger.charge(
+            f"executable_reasoning_{index}",
+            tool_calls=1,
+            tool_input_bytes=program_chars,
+            tool_result_bytes=result_bytes,
+            host_scalar_ops=max(1, program_chars + result_bytes),
+        )
     if acquisition_evidence.get("request") and acquisition_evidence.get("compute"):
         request_bytes = len(
             json.dumps(

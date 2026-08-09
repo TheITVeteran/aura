@@ -40370,3 +40370,44 @@ run the four-arm resource-advantaged control, followed by a powered broad
 battery, adapter interaction/ablation, and independent replay. No reasoning
 gain, frontier result, fusion authority, activation, or `WOW Signal` is claimed,
 and the completion envelope remains `809/920` (approximately `87.9%`).
+
+## Checkpoint 2026-08-09-087: Aura Can Compile a Reasoning Problem into Execution
+
+The complete engine previously asked the resident checkpoint for more prose and
+then tried to score it. It had a symbolic sandbox, but no deliberate operation
+that asked the model to author a program for a structured problem, execute that
+program under containment, and feed the result back into the same reasoning
+turn. `ExecutableReasoning` now provides that operation. It admits semantically
+structured computation rather than benchmark names, respects explicit
+no-execution constraints, asks the resident model for a task-local pure-Python
+derivation, runs it under the existing macOS Seatbelt boundary, and publishes
+only source/output hashes and bounded containment receipts.
+
+The first implementation exposed a real cognitive defect on an unseen
+resident-32B algorithm task: the generated algorithm was useful, but the model
+invented a literal expected-sequence assertion that contradicted its own code;
+the correction prompt then anchored on and reproduced the same failed program.
+Repair now starts from the original objective, withholds the failed source and
+raw runtime text, communicates only a bounded failure class and prior-program
+hash, raises sampling diversity, and explicitly prohibits literal expected
+answers in assertions. The exact task that exposed the defect then completed in
+one model-authored program: the public scorer independently accepted the full
+sequence and checksum as correct in `40.957s`.
+
+The promotion boundary is also monotonic in the domain where the public
+objective has a deterministic verifier. Proxy quality scores may guide search,
+but cannot replace ordinary decode. A candidate replaces the incumbent only
+when the verifier reconstructs an exact public-objective proof and the incumbent
+is not already exactly proven; otherwise Aura returns the incumbent byte for
+byte. Focused executable/amplifier/RLC/sandbox contracts pass `96/96`; canonical
+smoke passes `103/103`; Ruff, compilation, and diff hygiene pass. The compact
+resident evidence is
+`artifacts/closeout/latent_cortex/cp087_executable_reasoning_canary.json`.
+
+This is a real resident-32B mechanism result, not a broad capability result.
+The next capability checkpoint is verifier-refutation-driven heterogeneous
+retry: a cleanly executing but refuted program must force a different algorithm,
+not end the search. That is followed by a disjoint paired multi-domain pilot,
+then the powered, independently replayed resource-advantaged campaign. Reasoning
+gain, frontier performance, fusion, activation, and `WOW Signal` remain false,
+and the completion envelope remains `809/920` (approximately `87.9%`).

@@ -1018,7 +1018,26 @@ def test_complete_system_promotion_preserves_incumbent_until_verified_improvemen
             score = {"incumbent": 0.6, "candidate": 0.9}.get(text, 0.0)
             return {
                 "score": score,
-                "checks": {"response_contract": {"valid": True}},
+                "applicable_checks": ["response_contract", "deterministic_router"],
+                "checks": {
+                    "response_contract": {"valid": True},
+                    "atomic_decomposition": {"valid": True},
+                    "deterministic_router": {
+                        "valid": True,
+                        "receipt": {
+                            "routes": (
+                                [{
+                                    "verifier": "exact_objective_program",
+                                    "outcome": "verified",
+                                }]
+                                if text == "candidate"
+                                else []
+                            )
+                        },
+                    },
+                    "arithmetic": {"failures": []},
+                    "code": {"failures": []},
+                },
             }
 
     retained, retained_receipt = sweep._promotion_assessment(
@@ -1036,10 +1055,21 @@ def test_complete_system_promotion_preserves_incumbent_until_verified_improvemen
         incumbent_text="incumbent",
         candidate_text="candidate",
         candidate_verified=True,
+        authority="public_objective_deterministic_execution",
     )
     assert promoted == "candidate"
     assert promoted_receipt["decision"] == "replace"
     assert promoted_receipt["answer_key_used"] is False
+    assert promoted_receipt["no_regression_guaranteed"] is True
+
+    proxy_only, proxy_receipt = sweep._promotion_assessment(
+        verifier=_Verifier(),
+        incumbent_text="incumbent",
+        candidate_text="candidate",
+        candidate_verified=True,
+    )
+    assert proxy_only == "incumbent"
+    assert proxy_receipt["reason"] == "candidate_lacks_exact_public_objective_proof"
 
 
 def _run_with_dead_engine(model, config, reason: str, termination: str):
