@@ -361,6 +361,80 @@ async def test_terminal_receipt_survives_journal_recreation(tmp_path: Path) -> N
 
 
 @pytest.mark.asyncio
+async def test_running_progress_is_durable_fenced_and_public(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "chat.sqlite3"
+    first = ChatDeliveryJournal(path)
+    identity = _identity("progress-turn")
+    owner = await first.reserve(identity, _request_hash(), wait_timeout_s=0)
+
+    updated = await first.publish_progress(
+        owner,
+        phase="executing",
+        message="Completed the first verified step.",
+        details={"steps_completed": 1, "steps_total": 3, "tool": "desktop_task"},
+    )
+
+    assert updated.progress_sequence == 1
+    assert updated.progress is not None
+    assert updated.progress["phase"] == "executing"
+    assert updated.progress["details"]["steps_completed"] == 1
+    public = updated.public_status()
+    assert public["progress"]["message"] == "Completed the first verified step."
+
+    reopened = ChatDeliveryJournal(path)
+    durable = await reopened.get(identity)
+    assert durable is not None
+    assert durable.progress == updated.progress
+
+    await reopened.finalize(
+        owner,
+        state=DeliveryState.COMPLETED,
+        http_status=200,
+        response={"response": "done", "status": "ok"},
+    )
+    with pytest.raises(ChatDeliveryFenceLost):
+        await reopened.publish_progress(
+            owner,
+            phase="executing",
+            message="This stale owner must not publish.",
+        )
+
+
+def test_version_one_journal_migrates_progress_columns(tmp_path: Path) -> None:
+    path = tmp_path / "chat.sqlite3"
+    ChatDeliveryJournal(path)
+    with contextlib.closing(sqlite3.connect(path)) as conn:
+        with conn:
+            conn.execute(
+                "UPDATE chat_delivery_meta SET value='1' WHERE key='schema_version'"
+            )
+            # Simulate the v1 table shape rather than merely relabeling v2.
+            conn.execute("ALTER TABLE chat_deliveries DROP COLUMN progress_hash")
+            conn.execute("ALTER TABLE chat_deliveries DROP COLUMN progress_json")
+            conn.execute("ALTER TABLE chat_deliveries DROP COLUMN progress_at")
+            conn.execute("ALTER TABLE chat_deliveries DROP COLUMN progress_sequence")
+
+    migrated = ChatDeliveryJournal(path)
+    with contextlib.closing(sqlite3.connect(migrated.db_path)) as conn:
+        version = conn.execute(
+            "SELECT value FROM chat_delivery_meta WHERE key='schema_version'"
+        ).fetchone()
+        columns = {
+            row[1] for row in conn.execute("PRAGMA table_info(chat_deliveries)").fetchall()
+        }
+
+    assert version == ("2",)
+    assert {
+        "progress_sequence",
+        "progress_at",
+        "progress_json",
+        "progress_hash",
+    } <= columns
+
+
+@pytest.mark.asyncio
 async def test_tampered_terminal_receipt_fails_closed(
     journal: ChatDeliveryJournal,
 ) -> None:
@@ -492,6 +566,39 @@ async def test_route_concurrent_duplicate_runs_handler_once(
     assert first_payload["turn_id"] == second_payload["turn_id"]
     assert first_payload["delivery_replayed"] is False
     assert second_payload["delivery_replayed"] is True
+
+
+@pytest.mark.asyncio
+async def test_route_binds_and_seals_durable_progress(
+    monkeypatch: pytest.MonkeyPatch,
+    journal: ChatDeliveryJournal,
+) -> None:
+    from core.runtime.chat_delivery_progress import report_chat_delivery_progress
+    from interface.routes import chat as chat_mod
+
+    _patch_route_identity(monkeypatch, journal)
+
+    @chat_mod._paired_chat_response_boundary
+    async def handler(*, body, request):
+        published = await report_chat_delivery_progress(
+            phase="executing",
+            message="Reading the requested source.",
+            details={"source_count": 1},
+        )
+        assert published is True
+        return JSONResponse({"response": "done", "status": "ok"})
+
+    body = chat_mod.ChatRequest(message="read it", session_id="session-1")
+    response = await handler(body=body, request=_request("route-progress"))
+    record = await journal.get(_identity("route-progress"))
+
+    assert response.status_code == 200
+    assert record is not None
+    assert record.terminal is True
+    assert record.progress_sequence == 3
+    assert record.progress is not None
+    assert record.progress["phase"] == "finalizing"
+    assert record.progress["message"] == "Checking the result and its evidence before replying."
 
 
 @pytest.mark.asyncio
@@ -799,3 +906,33 @@ async def test_authenticated_status_endpoint_returns_terminal_result(
     assert response.status_code == 200
     assert payload["turn_id"] == terminal.turn_id
     assert payload["result"] == {"response": "recovered", "status": "ok"}
+
+
+@pytest.mark.asyncio
+async def test_authenticated_status_endpoint_returns_live_progress(
+    monkeypatch: pytest.MonkeyPatch,
+    journal: ChatDeliveryJournal,
+) -> None:
+    from interface.routes import chat as chat_mod
+
+    _patch_route_identity(monkeypatch, journal)
+    identity = _identity("status-progress")
+    owner = await journal.reserve(identity, _request_hash(), wait_timeout_s=0)
+    await journal.publish_progress(
+        owner,
+        phase="verifying",
+        message="Checking two effect receipts.",
+        details={"receipts": 2},
+    )
+
+    response = await chat_mod.api_chat_delivery_status(
+        "status-progress",
+        _request("ignored", method="GET"),
+        session_id="session-1",
+    )
+    payload = _payload(response)
+
+    assert response.status_code == 202
+    assert payload["terminal"] is False
+    assert payload["progress"]["phase"] == "verifying"
+    assert payload["progress"]["details"] == {"receipts": 2}

@@ -14,13 +14,17 @@
   const input = document.getElementById("input");
   const send = document.getElementById("send");
   const thinking = document.getElementById("thinking");
+  const thinkingLabel = document.getElementById("thinking-label");
   const expand = document.getElementById("expand");
 
-  const REQUEST_TIMEOUT_MS = 240000;
-  const DELIVERY_TIMEOUT_MS = 360000;
+  // A request wait is bounded so a broken socket cannot pin the surface. The
+  // admitted TURN is not deadline-bounded: its durable status is followed
+  // until it reaches an authoritative terminal receipt.
+  const REQUEST_TIMEOUT_MS = 30000;
   const DELIVERY_POLL_MS = 750;
   const PENDING_KEY = "aura-companion-pending-v1";
   let inFlight = false;
+  let lastProgressSequence = 0;
 
   function idempotencyKey() {
     const id = window.crypto?.randomUUID?.()
@@ -72,7 +76,11 @@
         ...options,
         signal: controller.signal,
       });
-      const payload = await response.json();
+      const body = await response.text();
+      let payload = {};
+      try { payload = body ? JSON.parse(body) : {}; } catch (_error) {
+        payload = { status: "invalid_json_response", detail: body.slice(0, 240) };
+      }
       return { response, payload };
     } finally {
       window.clearTimeout(timeout);
@@ -87,48 +95,88 @@
     );
   }
 
-  async function awaitDelivery(key) {
-    const deadline = Date.now() + DELIVERY_TIMEOUT_MS;
-    while (Date.now() < deadline) {
-      const { response, payload } = await deliveryStatus(key);
-      if (response.ok && (payload.terminal || payload.delivery_status === "terminal")) {
-        return payload;
+  function updateProgress(payload, fallback = "Working on your request.") {
+    const progress = payload?.progress;
+    const sequence = Number(progress?.sequence) || 0;
+    if (sequence && sequence < lastProgressSequence) return;
+    if (sequence) lastProgressSequence = sequence;
+    const message = String(progress?.message || fallback || "").trim();
+    if (message) thinkingLabel.textContent = message;
+  }
+
+  async function postChat(item) {
+    const { response, payload } = await jsonFetch(
+      "/api/chat",
+      {
+        method: "POST",
+        headers: chatHeaders(item.key),
+        body: JSON.stringify({ message: item.message }),
+      },
+      REQUEST_TIMEOUT_MS,
+    );
+    updateProgress(payload);
+    if (response.ok && response.status !== 202) return { terminal: true, payload };
+    if (response.status === 202) return { terminal: false, payload };
+    const detail = replyText(payload) || payload.detail || payload.status || `chat ${response.status}`;
+    const error = new Error(detail);
+    error.fatal = [400, 401, 403, 409, 422].includes(response.status);
+    throw error;
+  }
+
+  async function awaitDelivery(item) {
+    let missingPolls = 0;
+    let transportFailures = 0;
+    while (true) {
+      try {
+        const { response, payload } = await deliveryStatus(item.key);
+        if (response.ok && (payload.terminal || payload.delivery_status === "terminal")) {
+          return payload;
+        }
+        updateProgress(
+          payload,
+          response.status === 503
+            ? "The delivery journal is recovering; the admitted work is still protected."
+            : "The request is admitted and still running.",
+        );
+        if (response.status === 404) {
+          missingPolls += 1;
+          // The initial POST may have died before admission. Reusing the exact
+          // key is safe: the journal either admits it once or returns its owner.
+          if (missingPolls >= 3) {
+            const retried = await postChat(item);
+            if (retried.terminal) return retried.payload;
+            missingPolls = 0;
+          }
+        } else if (response.status === 401 || response.status === 403) {
+          throw Object.assign(new Error(`delivery ${response.status}`), { fatal: true });
+        } else if (response.status !== 202 && response.status !== 503) {
+          throw Object.assign(new Error(`delivery ${response.status}`), { fatal: true });
+        }
+        transportFailures = 0;
+        const retry = Math.max(250, Number(payload.retry_after_ms) || DELIVERY_POLL_MS);
+        await new Promise((resolve) => window.setTimeout(resolve, retry));
+      } catch (error) {
+        if (error?.fatal) throw error;
+        transportFailures += 1;
+        updateProgress(null, navigator.onLine === false
+          ? "Connection paused. The turn will resume here when the computer is online."
+          : "Connection interrupted. Reconnecting to the durable turn.");
+        const retry = Math.min(10000, 500 * Math.pow(2, Math.min(5, transportFailures)));
+        await new Promise((resolve) => window.setTimeout(resolve, retry));
       }
-      if (response.status !== 202 && response.status !== 404 && response.status !== 503) {
-        throw new Error(`delivery ${response.status}`);
-      }
-      const retry = Math.max(100, Number(payload.retry_after_ms) || DELIVERY_POLL_MS);
-      await new Promise((resolve) => window.setTimeout(resolve, retry));
     }
-    throw new Error("reply is still running; it will be recovered when this window opens again");
   }
 
   async function sendDurably(item) {
     try {
-      const { response, payload } = await jsonFetch(
-        "/api/chat",
-        {
-          method: "POST",
-          headers: chatHeaders(item.key),
-          body: JSON.stringify({ message: item.message }),
-        },
-        REQUEST_TIMEOUT_MS,
-      );
-      if (response.ok && response.status !== 202) return payload;
-      if (response.status !== 202) {
-        const detail = replyText(payload) || payload.status || `chat ${response.status}`;
-        throw new Error(detail);
-      }
+      const posted = await postChat(item);
+      if (posted.terminal) return posted.payload;
     } catch (error) {
-      // Aborting the HTTP wait does not mean the fenced backend turn stopped.
-      // Resolve the durable receipt before allowing another send.
-      if (error?.name !== "AbortError") {
-        const probe = await deliveryStatus(item.key).catch(() => null);
-        if (!probe || probe.response.status === 404) throw error;
-        if (probe.response.ok && probe.payload.terminal) return probe.payload;
-      }
+      if (error?.fatal) throw error;
+      // A timed-out or interrupted POST says nothing about the admitted turn.
+      // The status loop safely reuses the key if admission never happened.
     }
-    return awaitDelivery(item.key);
+    return awaitDelivery(item);
   }
 
   function bubble(text, kind) {
@@ -144,6 +192,8 @@
     inFlight = state;
     send.disabled = state;
     thinking.classList.toggle("on", state);
+    if (state) updateProgress(null, "Working on your request.");
+    else lastProgressSequence = 0;
     if (state) log.scrollTop = log.scrollHeight;
   }
 

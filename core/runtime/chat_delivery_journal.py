@@ -30,13 +30,15 @@ from typing import Any, Never
 from core.runtime.flags import FlagKind, declare
 from core.runtime.state_ownership import state_root
 
-_SCHEMA_VERSION = 1
+_SCHEMA_VERSION = 2
 _HEX_64_RE = re.compile(r"^[0-9a-f]{64}$")
 _IDEMPOTENCY_KEY_RE = re.compile(r"^[A-Za-z0-9._:-]{1,240}$")
+_PROGRESS_PHASE_RE = re.compile(r"^[a-z][a-z0-9_]{0,47}$")
 _TERMINAL_STATES = frozenset({"awaiting_approval", "completed", "failed", "ambiguous"})
 _PENDING_STATES = frozenset({"queued", "running"})
 _ALL_STATES = _TERMINAL_STATES | _PENDING_STATES
 _MAX_RESPONSE_BYTES = 16 * 1024 * 1024
+_MAX_PROGRESS_BYTES = 64 * 1024
 _CLOCK_SKEW_TOLERANCE_S = 1.0
 _DB_PATH_FLAG = declare(
     "AURA_CHAT_DELIVERY_DB",
@@ -127,6 +129,9 @@ class DeliveryRecord:
     terminal_at: float | None
     http_status: int | None
     response: dict[str, Any] | None
+    progress_sequence: int
+    progress_at: float | None
+    progress: dict[str, Any] | None
 
     @property
     def terminal(self) -> bool:
@@ -169,7 +174,9 @@ class DeliveryRecord:
         if self.http_status is not None:
             payload["http_status"] = self.http_status
         if not self.terminal:
-            payload["retry_after_ms"] = 100
+            payload["retry_after_ms"] = 500
+        if self.progress is not None:
+            payload["progress"] = dict(self.progress)
         if include_result and self.terminal and self.response is not None:
             payload["result"] = self.response
         return payload
@@ -221,6 +228,46 @@ def _canonical_response(payload: dict[str, Any]) -> tuple[str, str]:
     if len(raw) > _MAX_RESPONSE_BYTES:
         raise ValueError("chat delivery response exceeds durable replay limit")
     return encoded, hashlib.sha256(raw).hexdigest()
+
+
+def _canonical_progress(
+    *,
+    phase: str,
+    message: str,
+    sequence: int,
+    observed_at: float,
+    details: dict[str, Any] | None,
+) -> tuple[str, str, dict[str, Any]]:
+    normalized_phase = str(phase or "").strip().casefold()
+    normalized_message = " ".join(str(message or "").strip().split())
+    if not _PROGRESS_PHASE_RE.fullmatch(normalized_phase):
+        raise ValueError("chat delivery progress phase is invalid")
+    if not normalized_message or len(normalized_message) > 600:
+        raise ValueError("chat delivery progress message must be 1-600 characters")
+    if isinstance(sequence, bool) or int(sequence) < 1:
+        raise ValueError("chat delivery progress sequence must be positive")
+    if not math.isfinite(observed_at) or observed_at < 0:
+        raise ValueError("chat delivery progress time must be finite")
+    normalized_details = dict(details or {})
+    payload = {
+        "schema": "aura.chat.delivery.progress.v1",
+        "sequence": int(sequence),
+        "phase": normalized_phase,
+        "message": normalized_message,
+        "observed_at": float(observed_at),
+        "details": normalized_details,
+    }
+    encoded = json.dumps(
+        payload,
+        ensure_ascii=False,
+        separators=(",", ":"),
+        sort_keys=True,
+        allow_nan=False,
+    )
+    raw = encoded.encode("utf-8", errors="strict")
+    if len(raw) > _MAX_PROGRESS_BYTES:
+        raise ValueError("chat delivery progress exceeds durable storage limit")
+    return encoded, hashlib.sha256(raw).hexdigest(), payload
 
 
 def _finite_positive(value: Any, *, name: str, minimum: float) -> float:
@@ -386,6 +433,7 @@ class ChatDeliveryJournal:
                     raise ChatDeliveryJournalCorruption(
                         "existing chat delivery database has no schema identity"
                     )
+                schema_version = 0
                 if version_row is not None:
                     try:
                         schema_version = int(version_row[0])
@@ -393,7 +441,7 @@ class ChatDeliveryJournal:
                         raise ChatDeliveryJournalCorruption(
                             "invalid chat delivery journal schema identity"
                         ) from exc
-                    if schema_version != _SCHEMA_VERSION:
+                    if schema_version not in {1, _SCHEMA_VERSION}:
                         raise ChatDeliveryJournalCorruption(
                             "unsupported chat delivery journal schema"
                         )
@@ -419,10 +467,29 @@ class ChatDeliveryJournal:
                         http_status INTEGER,
                         response_json TEXT,
                         response_hash TEXT,
+                        progress_sequence INTEGER NOT NULL DEFAULT 0,
+                        progress_at REAL,
+                        progress_json TEXT,
+                        progress_hash TEXT,
                         PRIMARY KEY (principal_digest, session_id, idempotency_key)
                     )
                     """
                 )
+                columns = {
+                    str(row[1])
+                    for row in conn.execute("PRAGMA table_info(chat_deliveries)").fetchall()
+                }
+                progress_columns = {
+                    "progress_sequence": "INTEGER NOT NULL DEFAULT 0",
+                    "progress_at": "REAL",
+                    "progress_json": "TEXT",
+                    "progress_hash": "TEXT",
+                }
+                for column, declaration in progress_columns.items():
+                    if column not in columns:
+                        conn.execute(
+                            f"ALTER TABLE chat_deliveries ADD COLUMN {column} {declaration}"
+                        )
                 conn.execute(
                     "CREATE INDEX IF NOT EXISTS idx_chat_deliveries_terminal "
                     "ON chat_deliveries(terminal_at, updated_at)"
@@ -432,6 +499,11 @@ class ChatDeliveryJournal:
                     "VALUES('schema_version', ?)",
                     (str(_SCHEMA_VERSION),),
                 )
+                if schema_version == 1:
+                    conn.execute(
+                        "UPDATE chat_delivery_meta SET value=? WHERE key='schema_version'",
+                        (str(_SCHEMA_VERSION),),
+                    )
             finally:
                 conn.close()
         except ChatDeliveryJournalError:
@@ -498,6 +570,64 @@ class ChatDeliveryJournal:
             response = decoded
         elif response_hash:
             raise ChatDeliveryJournalCorruption("chat delivery response digest has no payload")
+        progress: dict[str, Any] | None = None
+        progress_json = row["progress_json"]
+        progress_hash = str(row["progress_hash"] or "")
+        try:
+            progress_sequence = int(row["progress_sequence"])
+        except (TypeError, ValueError, OverflowError) as exc:
+            raise ChatDeliveryJournalCorruption(
+                "invalid chat delivery progress sequence"
+            ) from exc
+        progress_at_raw = row["progress_at"]
+        progress_at = (
+            _finite_timestamp(progress_at_raw, name="progress_at")
+            if progress_at_raw is not None
+            else None
+        )
+        if progress_json is not None:
+            raw_progress = str(progress_json).encode("utf-8", errors="strict")
+            if not progress_hash or not secrets.compare_digest(
+                hashlib.sha256(raw_progress).hexdigest(), progress_hash
+            ):
+                raise ChatDeliveryJournalCorruption("chat delivery progress digest mismatch")
+            try:
+                decoded_progress = json.loads(raw_progress)
+            except (json.JSONDecodeError, UnicodeError) as exc:
+                raise ChatDeliveryJournalCorruption(
+                    "chat delivery progress is not valid JSON"
+                ) from exc
+            if not isinstance(decoded_progress, dict):
+                raise ChatDeliveryJournalCorruption(
+                    "chat delivery progress is not an object"
+                )
+            try:
+                decoded_sequence = int(decoded_progress.get("sequence", -1))
+                decoded_observed_at = float(decoded_progress.get("observed_at", -1))
+            except (TypeError, ValueError, OverflowError) as exc:
+                raise ChatDeliveryJournalCorruption(
+                    "chat delivery progress contains invalid numeric fields"
+                ) from exc
+            progress_message = str(decoded_progress.get("message") or "").strip()
+            if (
+                decoded_progress.get("schema") != "aura.chat.delivery.progress.v1"
+                or decoded_sequence != progress_sequence
+                or not _PROGRESS_PHASE_RE.fullmatch(
+                    str(decoded_progress.get("phase") or "")
+                )
+                or not progress_message
+                or len(progress_message) > 600
+                or decoded_observed_at != progress_at
+                or not isinstance(decoded_progress.get("details"), dict)
+            ):
+                raise ChatDeliveryJournalCorruption(
+                    "chat delivery progress failed contract validation"
+                )
+            progress = decoded_progress
+        elif progress_hash or progress_sequence != 0 or progress_at is not None:
+            raise ChatDeliveryJournalCorruption(
+                "chat delivery progress metadata has no payload"
+            )
         try:
             generation = int(row["generation"])
             attempts = int(row["attempts"])
@@ -518,6 +648,12 @@ class ChatDeliveryJournal:
         )
         if generation < 0 or attempts < 0 or updated_at < created_at:
             raise ChatDeliveryJournalCorruption("invalid chat delivery chronology")
+        if progress_at is not None and (
+            progress_at < created_at or progress_at > updated_at + _CLOCK_SKEW_TOLERANCE_S
+        ):
+            raise ChatDeliveryJournalCorruption(
+                "invalid chat delivery progress chronology"
+            )
         terminal = state in _TERMINAL_STATES
         if terminal and (terminal_at is None or response is None):
             raise ChatDeliveryJournalCorruption("terminal chat delivery has no terminal receipt")
@@ -557,6 +693,9 @@ class ChatDeliveryJournal:
             terminal_at=terminal_at,
             http_status=http_status,
             response=response,
+            progress_sequence=progress_sequence,
+            progress_at=progress_at,
+            progress=progress,
         )
 
     def _compact_if_due_locked(
@@ -840,7 +979,9 @@ class ChatDeliveryJournal:
                         SET state='running', generation=?, attempts=attempts+1,
                             owner_token=?, lease_expires_at=?, updated_at=?,
                             terminal_at=NULL, http_status=NULL,
-                            response_json=NULL, response_hash=NULL
+                            response_json=NULL, response_hash=NULL,
+                            progress_sequence=0, progress_at=NULL,
+                            progress_json=NULL, progress_hash=NULL
                         WHERE principal_digest=? AND session_id=? AND idempotency_key=?
                           AND generation=?
                         """,
@@ -948,6 +1089,97 @@ class ChatDeliveryJournal:
         if not admission.may_execute:
             return False
         return await asyncio.to_thread(self._renew_sync, admission, time.time())
+
+    def _publish_progress_sync(
+        self,
+        admission: DeliveryAdmission,
+        phase: str,
+        message: str,
+        details: dict[str, Any] | None,
+        now: float,
+    ) -> DeliveryRecord:
+        if not admission.may_execute:
+            raise ValueError("only an execution owner may publish delivery progress")
+        try:
+            conn = self._connect()
+            try:
+                conn.execute("BEGIN IMMEDIATE")
+                row = self._select_row(conn, admission.record.identity)
+                if row is None:
+                    conn.rollback()
+                    raise ChatDeliveryFenceLost("chat delivery progress owner disappeared")
+                current = self._decode_row(row)
+                next_sequence = current.progress_sequence + 1
+                progress_json, progress_hash, _ = _canonical_progress(
+                    phase=phase,
+                    message=message,
+                    sequence=next_sequence,
+                    observed_at=now,
+                    details=details,
+                )
+                changed = conn.execute(
+                    """
+                    UPDATE chat_deliveries
+                    SET progress_sequence=?, progress_at=?, progress_json=?,
+                        progress_hash=?, updated_at=?, lease_expires_at=?
+                    WHERE principal_digest=? AND session_id=? AND idempotency_key=?
+                      AND request_hash=? AND state='running'
+                      AND generation=? AND owner_token=?
+                    """,
+                    (
+                        next_sequence,
+                        now,
+                        progress_json,
+                        progress_hash,
+                        now,
+                        now + self.stale_after_s,
+                        admission.record.identity.principal_digest,
+                        admission.record.identity.session_id,
+                        admission.record.identity.idempotency_key,
+                        admission.record.request_hash,
+                        admission.record.generation,
+                        admission.owner_token,
+                    ),
+                ).rowcount
+                updated = self._select_row(conn, admission.record.identity)
+                if changed != 1 or updated is None:
+                    conn.rollback()
+                    raise ChatDeliveryFenceLost(
+                        "chat delivery progress fence is no longer current"
+                    )
+                conn.commit()
+                return self._decode_row(updated)
+            except BaseException:
+                try:
+                    conn.rollback()
+                except sqlite3.Error:
+                    pass
+                raise
+            finally:
+                conn.close()
+        except ChatDeliveryJournalError:
+            raise
+        except sqlite3.Error as exc:
+            self._raise_sqlite(exc)
+
+    async def publish_progress(
+        self,
+        admission: DeliveryAdmission,
+        *,
+        phase: str,
+        message: str,
+        details: dict[str, Any] | None = None,
+    ) -> DeliveryRecord:
+        """Publish owner-fenced, durable progress and renew the execution lease."""
+
+        return await asyncio.to_thread(
+            self._publish_progress_sync,
+            admission,
+            phase,
+            message,
+            details,
+            time.time(),
+        )
 
     def _finalize_sync(
         self,

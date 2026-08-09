@@ -619,6 +619,10 @@ class AutonomousTaskEngine:
         is_shadow: bool = False,
     ) -> TaskResult:
         """Logic for decomposing a goal and executing the plan."""
+        if on_progress is None:
+            from core.runtime.chat_delivery_progress import current_task_progress_callback
+
+            on_progress = current_task_progress_callback()
         trace_id = uuid.uuid4().hex[:8]
         # A uuid suffix makes the id unique: deriving it from int(time.time())
         # alone meant two goals started in the same second shared plan id,
@@ -629,6 +633,16 @@ class AutonomousTaskEngine:
             goal[:50],
             requested_plan_id,
             trace_id,
+        )
+        await self._report_progress_event(
+            on_progress,
+            {
+                "event": "planning",
+                "plan_id": requested_plan_id,
+                "status": "planning",
+                "steps_completed": 0,
+                "steps_total": 0,
+            },
         )
 
         # 0. Safety Check: Is this goal/skill allowed?
@@ -724,6 +738,17 @@ class AutonomousTaskEngine:
                 steps_total=0,
                 trace_id=trace_id,
             )
+
+        await self._report_progress_event(
+            on_progress,
+            {
+                "event": "plan_ready",
+                "plan_id": plan.plan_id,
+                "status": "ready",
+                "steps_completed": len(plan.succeeded_steps),
+                "steps_total": len(plan.steps),
+            },
+        )
 
         # 1.5. Plan-level review is explicit. Step count and tool names are not
         # proxies for user consent: each real effect is independently governed
@@ -2245,14 +2270,49 @@ Respond ONLY with a JSON array, no other text:
             "7. Report only verified outcomes and preserve artifacts for replay."
         )
 
-    def _report_progress(self, step: TaskStep, on_progress: Callable | None) -> None:
-        if on_progress is None:
-            return
+    @staticmethod
+    async def _report_progress_event(
+        on_progress: Callable | None,
+        payload: dict[str, Any],
+    ) -> None:
         try:
-            on_progress(step.to_dict())
+            from core.runtime.chat_delivery_progress import invoke_progress_callback
+
+            await invoke_progress_callback(on_progress, payload)
         except (RuntimeError, AttributeError, TypeError, ValueError) as e:
             record_degradation("autonomous_task_engine", e)
             logger.debug("Ignored Exception in autonomous_task_engine.py: %s", e)
+
+    def _report_progress(self, step: TaskStep, on_progress: Callable | None) -> Any:
+        """Legacy two-argument callback contract retained for integrations."""
+
+        if on_progress is None:
+            return None
+        try:
+            return on_progress(step.to_dict())
+        except (RuntimeError, AttributeError, TypeError, ValueError) as e:
+            record_degradation("autonomous_task_engine", e)
+            logger.debug("Ignored Exception in autonomous_task_engine.py: %s", e)
+            return None
+
+    async def _emit_step_progress(
+        self,
+        step: TaskStep,
+        on_progress: Callable | None,
+        plan: TaskPlan,
+        *,
+        event: str = "step_update",
+    ) -> None:
+        payload = step.to_dict()
+        payload.update(
+            {
+                "event": event,
+                "plan_id": plan.plan_id,
+                "steps_completed": len(plan.succeeded_steps),
+                "steps_total": len(plan.steps),
+            }
+        )
+        await self._report_progress_event(on_progress, payload)
 
     async def _fail_plan(self, plan: TaskPlan, completed_ids: set[str], reason: str) -> None:
         logger.error("TaskEngine: %s", reason)
@@ -2303,7 +2363,7 @@ Respond ONLY with a JSON array, no other text:
                 for step in pending_steps:
                     step.status = StepStatus.SKIPPED
                     step.error = "dependency cycle or unsatisfied dependency"
-                    self._report_progress(step, on_progress)
+                    await self._emit_step_progress(step, on_progress, plan)
                 plan.status = "failed"
                 self._persist_plan_state(plan)
                 logger.error("TaskEngine: no runnable steps remain for plan %s", plan.plan_id)
@@ -2313,13 +2373,20 @@ Respond ONLY with a JSON array, no other text:
                 : self.MAX_PARALLEL_STEPS
             ]
             if parallel_wave:
+                for step in parallel_wave:
+                    await self._emit_step_progress(
+                        step,
+                        on_progress,
+                        plan,
+                        event="step_started",
+                    )
                 await asyncio.gather(
                     *(self._execute_step_with_retry(step, plan) for step in parallel_wave)
                 )
                 for step in parallel_wave:
                     if step.status == StepStatus.SUCCEEDED:
                         completed_ids.add(step.step_id)
-                    self._report_progress(step, on_progress)
+                    await self._emit_step_progress(step, on_progress, plan)
                 self._persist_plan_state(plan)
                 failed_step = next(
                     (step for step in parallel_wave if step.status == StepStatus.FAILED), None
@@ -2334,10 +2401,16 @@ Respond ONLY with a JSON array, no other text:
                 continue
 
             step = ready_steps[0]
+            await self._emit_step_progress(
+                step,
+                on_progress,
+                plan,
+                event="step_started",
+            )
             await self._execute_step_with_retry(step, plan)
             if step.status == StepStatus.SUCCEEDED:
                 completed_ids.add(step.step_id)
-            self._report_progress(step, on_progress)
+            await self._emit_step_progress(step, on_progress, plan)
             self._persist_plan_state(plan)
 
             if step.status == StepStatus.FAILED:

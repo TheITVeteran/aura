@@ -40829,3 +40829,59 @@ The next gate is the real CP093 recovery and a moving authenticated heartbeat
 through a newly committed resource-control cell. No reasoning-gain, frontier,
 fusion, activation, or `WOW Signal` claim is made. The completion envelope
 remains `809/920` (approximately `87.9%`).
+
+## Checkpoint 2026-08-09-100: Recovery Preserves The Experiment
+
+The CP093 evidence was recovered into a new source-bound campaign rather than
+rerun or edited in place. All `21/28` admitted cells, their journal digest,
+decode commitment, task commitment, and seven referenced runtime receipts were
+copied under the CP099 custody operation. Stale status, heartbeat, verdict, and
+process files were deliberately excluded.
+
+Launchd now owns the CP100 controller, its exact `caffeinate` child, and the
+scientific sweep process group. The authenticated heartbeat advances from
+measured process-group CPU activity while the old frozen runner remains inside
+a long resource-dominating cell. The scientific source stays frozen at
+`6fc714b90a8b471d2f5b17e87c742a6c306c3675`; only the separately hashed CP100
+lifecycle controller supervises it.
+
+The recovery and launch identities are recorded in
+`artifacts/closeout/latent_cortex/cp100_recovered_campaign_launch.json`. A live,
+moving campaign is not a scored result. No reasoning gain, frontier result,
+fusion authority, activation authority, or `WOW Signal` is claimed, and the
+completion envelope remains `809/920` (approximately `87.9%`).
+
+## Checkpoint 2026-08-09-101: Long Work Has Durable, Truthful Progress
+
+The restrained companion previously showed only animated dots and imposed a
+six-minute whole-turn deadline. A valid task could continue in Aura while the
+surface declared failure, and reconnecting could reveal only `running`, with no
+evidence of whether cognition, a tool, or verification was moving.
+
+The canonical at-most-once delivery journal now migrates to schema 2 and stores
+one owner-fenced, hash-validated progress record with a monotonic sequence,
+phase, display text, timestamp, and bounded structured details. Progress writes
+renew the exact execution lease and cannot survive a moved generation or
+terminal fence. The chat boundary publishes understanding/finalization phases;
+the general task engine publishes real plan and step transitions; governed live
+skills publish execution and verification transitions. This is operational
+evidence, not disclosed or invented chain-of-thought.
+
+The native companion renders that durable status, follows an admitted turn
+until an authoritative terminal receipt exists, backs off through offline or
+broken transports, and safely reuses the same idempotency key when an initial
+POST may have died before admission. Individual network waits remain bounded so
+a dead socket cannot freeze the UI; valid work no longer fails because an
+arbitrary wall-clock budget expired.
+
+Focused journal, route, companion, and task-engine contracts pass `84/84`;
+canonical smoke passes `103/103`; Ruff, Python byte compilation, JavaScript
+syntax, and diff hygiene pass. Evidence is
+`artifacts/closeout/companion/cp101_durable_companion_progress.json`.
+
+This does not close actual latency. Model cold starts, repeated context work,
+serialized research/tool stages, desktop selector recovery, and foreground
+inference contention must be measured and reduced rather than hidden behind a
+larger timeout. Camera authority, visual-detail proof, and rebuilt-app live proof
+also remain open. The completion envelope remains `809/920` (approximately
+`87.9%`).

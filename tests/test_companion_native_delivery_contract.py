@@ -174,10 +174,25 @@ def test_companion_uses_the_fenced_desktop_delivery_contract() -> None:
     assert "/api/chat/delivery/" in source
     assert "AbortController" in source
     assert "PENDING_KEY" in source
+    assert "DELIVERY_TIMEOUT_MS" not in source
+    assert "while (true)" in source
+    assert "updateProgress(payload" in source
+    assert "missingPolls >= 3" in source
+    assert "postChat(item)" in source
     assert "session_id" not in source, (
         "the companion would fork a disposable conversation instead of sharing "
         "the authenticated owner's canonical desktop session"
     )
+
+
+def test_companion_exposes_durable_progress_as_status_not_fake_thought() -> None:
+    source = COMPANION_JS.read_text(encoding="utf-8")
+    html = (ROOT / "interface/static/companion_chat.html").read_text(encoding="utf-8")
+
+    assert 'progress?.message' in source
+    assert 'id="thinking-label"' in html
+    assert 'role="status"' in html
+    assert "chain-of-thought" in html
 
 
 def test_native_move_sequence_returns_through_the_position_route() -> None:

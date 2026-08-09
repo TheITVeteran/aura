@@ -1,0 +1,28 @@
+{
+  "schema": "aura.closeout.checkpoint.v1",
+  "checkpoint": "CP100",
+  "title": "Recovered campaign launch preserves admitted evidence",
+  "date": "2026-08-09",
+  "source_commit": "6fc714b90a8b471d2f5b17e87c742a6c306c3675",
+  "controller_commit": "40ea8e26e",
+  "campaign_id": "cp100-wow-pilot-recovery-20260809",
+  "campaign_root": "/Users/bryan/.aura/campaigns/cp100-wow-pilot-recovery-20260809",
+  "launchd_label": "com.aura.rlc-reconciliation.cp100-wow-pilot-recovery-20260809",
+  "recovered_cells": 21,
+  "planned_cells": 28,
+  "recovery_receipt_sha256": "fbc66b8c9ac5fcb686f323cd7c6156ff166c4df7a79fe18047c4672388d63af4",
+  "launch_receipt_sha256": "fc9a2efd1fedb979241c021f37f9c1c9e8510dadefa9588b0547ebb151ccc777",
+  "controller_config_sha256": "cbcb0b7f4b3fe701607ac3055688597198c9103c205032c875dfc2233d34ba43",
+  "controller_program_sha256": "13e880e363a093a8942d7edbbadd23598378e468d8dd00d894a42c5e7b4408b7",
+  "journal_sha256": "b7aec6081364ae760e6ac3d6a29f716b65de49122367a1e7e548fe909c4f5386",
+  "verified": {
+    "launchd_parent": true,
+    "caffeinate_child": true,
+    "sweep_process_group": true,
+    "authenticated_heartbeat": true,
+    "process_cpu_advanced": true,
+    "recovered_journal_unchanged": true,
+    "scientific_source_unchanged": true
+  },
+  "claim_boundary": "The recovered campaign is alive and source-bound. No reasoning gain, frontier result, fusion authority, activation authority, or WOW Signal is claimed before scored cells and the frozen verdict exist."
+}

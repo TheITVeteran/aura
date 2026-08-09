@@ -75,16 +75,21 @@ html, body {
 .msg.her { align-self: flex-start; background: var(--hers); }
 .msg.err { align-self: flex-start; background: rgba(255,120,90,0.14); color: #ffd0c2; }
 
-/* She is thinking. Three dots, not a spinner: a spinner implies a duration
-   nobody knows, and a wrong duration is worse than no duration. */
-#thinking { display: none; align-self: flex-start; gap: 4px; padding: 8px 10px; }
+/* This is execution evidence, not a countdown or invented chain-of-thought. */
+#thinking {
+  display: none; align-self: flex-start; align-items: center; gap: 8px;
+  max-width: 92%; padding: 7px 10px; color: var(--dim);
+  font-size: 11px; line-height: 1.35;
+}
 #thinking.on { display: flex; }
-#thinking span {
+#thinking .dots { display: flex; gap: 4px; flex: 0 0 auto; }
+#thinking .dot {
   width: 5px; height: 5px; border-radius: 50%;
   background: var(--dim); animation: pulse 1.2s ease-in-out infinite;
 }
-#thinking span:nth-child(2) { animation-delay: 0.15s; }
-#thinking span:nth-child(3) { animation-delay: 0.3s; }
+#thinking .dot:nth-child(2) { animation-delay: 0.15s; }
+#thinking .dot:nth-child(3) { animation-delay: 0.3s; }
+#thinking-label { min-width: 0; overflow-wrap: anywhere; }
 @keyframes pulse { 0%,100% { opacity: 0.25; } 50% { opacity: 0.9; } }
 
 #composer {
@@ -107,7 +112,7 @@ html, body {
 #send:disabled { opacity: 0.4; cursor: default; }
 
 @media (prefers-reduced-motion: reduce) {
-  #thinking span { animation: none; opacity: 0.6; }
+  #thinking .dot { animation: none; opacity: 0.6; }
 }
 </style>
 </head>
@@ -119,7 +124,10 @@ html, body {
     <button id="expand" title="Open the full desktop">FULL</button>
   </div>
   <div id="log" role="log" aria-live="polite"></div>
-  <div id="thinking" aria-hidden="true"><span></span><span></span><span></span></div>
+  <div id="thinking" role="status" aria-live="polite">
+    <span class="dots" aria-hidden="true"><span class="dot"></span><span class="dot"></span><span class="dot"></span></span>
+    <span id="thinking-label">Working on your request.</span>
+  </div>
   <div id="composer">
     <textarea id="input" rows="1" placeholder="" aria-label="Message Aura"></textarea>
     <button id="send" aria-label="Send">↑</button>

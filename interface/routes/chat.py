@@ -69,6 +69,10 @@ from core.runtime.chat_delivery_journal import (
     canonical_request_hash,
     get_chat_delivery_journal,
 )
+from core.runtime.chat_delivery_progress import (
+    bind_chat_delivery_progress,
+    report_chat_delivery_progress,
+)
 from core.runtime.desktop_objective_intent import (
     looks_like_desktop_objective as _shared_looks_like_desktop_objective,
 )
@@ -1102,8 +1106,20 @@ def _paired_chat_response_boundary(handler: Callable[..., Any]) -> Callable[...,
         try:
             try:
                 observed_principal = _observe_authenticated_chat_turn(request, body)
-                with relational_principal_scope(observed_principal or exact_principal):
+                with (
+                    relational_principal_scope(observed_principal or exact_principal),
+                    bind_chat_delivery_progress(journal, admission),
+                ):
+                    await report_chat_delivery_progress(
+                        phase="understanding",
+                        message="Understanding the request and gathering its relevant context.",
+                        details={"surface": request_access_profile(request).get("surface", "")},
+                    )
                     response = await handler(*args, **kwargs)
+                    await report_chat_delivery_progress(
+                        phase="finalizing",
+                        message="Checking the result and its evidence before replying.",
+                    )
             except asyncio.CancelledError:
                 cancelled_payload = _chat_delivery_payload(
                     {
@@ -18709,7 +18725,25 @@ async def _execute_governed_live_skill(
                 "error": "No governed capability executor is registered.",
                 "status": "capability_engine_unavailable",
             }
+        activity = {
+            "desktop_task": "Working through the requested desktop steps.",
+            "web_search": "Searching for current, relevant sources.",
+            "search_web": "Searching for current, relevant sources.",
+            "grounded_search": "Searching for current, relevant sources.",
+            "file_operation": "Working with the requested files.",
+            "web_interlocutor": "Working in the browser conversation.",
+        }.get(skill_name, f"Using {skill_name.replace('_', ' ')} for this request.")
+        await report_chat_delivery_progress(
+            phase="executing",
+            message=activity,
+            details={"skill": skill_name, "route": str(context.get("route") or "")},
+        )
         result = await engine.execute(skill_name, dict(params), context=execution_context or context)
+        await report_chat_delivery_progress(
+            phase="verifying",
+            message=f"Verifying the result from {skill_name.replace('_', ' ')}.",
+            details={"skill": skill_name, "result_structured": isinstance(result, dict)},
+        )
         if isinstance(result, dict):
             return result
         return {"ok": bool(result), "result": result}
