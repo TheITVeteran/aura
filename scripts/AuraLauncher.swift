@@ -1389,6 +1389,8 @@ final class AuraLauncherDelegate: NSObject, NSApplicationDelegate,
     private var bubblePanel: NSPanel?
     private var bubbleWebView: WKWebView?
     private var bubbleFrameObserver: Any?
+    private var companionPanel: NSPanel?
+    private var companionWebView: WKWebView?
 
     private var auraRoot: URL!
     private var launchScript: URL!
@@ -2861,9 +2863,11 @@ final class AuraLauncherDelegate: NSObject, NSApplicationDelegate,
         // diagnostics, but remove it before presenting the live desktop so a
         // Dock activation cannot leave both windows stacked.
         hideLauncherWindow()
-        // The window and the bubble are the same presence on two surfaces;
-        // both at once is two Auras.
+        // The window, the bubble and the restrained chat are the same
+        // presence on three surfaces; more than one at once is more than one
+        // Aura.
         hideBubble()
+        hideCompanionChat()
         desktopWindow?.center()
         desktopWindow?.makeKeyAndOrderFront(nil)
         desktopWindow?.orderFrontRegardless()
@@ -2880,19 +2884,94 @@ final class AuraLauncherDelegate: NSObject, NSApplicationDelegate,
         _ userContentController: WKUserContentController,
         didReceive message: WKScriptMessage
     ) {
-        guard message.name == "auraBubble" else { return }
+        guard message.name == "auraBubble" || message.name == "auraCompanion" else {
+            return
+        }
         let body = message.body as? [String: Any] ?? [:]
         switch String(describing: body["action"] ?? "") {
         case "open":
-            // Clicking the bubble is an explicit request for her full
-            // attention, so this one IS allowed to activate.
+            // Clicking the bubble opens the RESTRAINED window, not the full
+            // desktop. Someone who clicked a bubble in the corner wants to
+            // say one thing and get back to work; handing them the whole
+            // surface makes them close a window they did not ask for.
+            showCompanionChat()
+        case "expand":
+            // They asked for the full desktop explicitly.
+            hideCompanionChat()
             openNativeDesktopWindow()
             NSApp.activate(ignoringOtherApps: true)
+        case "close":
+            hideCompanionChat()
         case "hide":
             hideBubble()
         default:
             break
         }
+    }
+
+    private func companionURL() -> URL {
+        URL(string: "http://127.0.0.1:8000/static/companion_chat.html?surface=companion")!
+    }
+
+    private func showCompanionChat() {
+        if companionPanel == nil {
+            let size = NSSize(width: 420, height: 380)
+            let config = WKWebViewConfiguration()
+            config.userContentController.add(self, name: "auraCompanion")
+            let webView = WKWebView(
+                frame: NSRect(origin: .zero, size: size), configuration: config
+            )
+            webView.setValue(false, forKey: "drawsBackground")
+
+            let panel = NSPanel(
+                contentRect: NSRect(origin: .zero, size: size),
+                // Titled would give it a chrome bar this window does not
+                // want, and .nonactivatingPanel is wrong HERE: unlike the
+                // bubble, this window exists to be typed into, and a text
+                // field you cannot focus is not a chat window.
+                styleMask: [.borderless, .fullSizeContentView, .resizable],
+                backing: .buffered,
+                defer: false
+            )
+            panel.isFloatingPanel = true
+            panel.level = .floating
+            panel.backgroundColor = .clear
+            panel.isOpaque = false
+            panel.hasShadow = true
+            panel.isMovableByWindowBackground = true
+            panel.minSize = NSSize(width: 340, height: 260)
+            panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
+            panel.contentView = webView
+            panel.isReleasedWhenClosed = false
+            panel.setFrameOrigin(companionOrigin(for: size))
+
+            companionPanel = panel
+            companionWebView = webView
+        }
+
+        companionWebView?.load(
+            URLRequest(url: companionURL(), cachePolicy: .reloadIgnoringLocalCacheData)
+        )
+        // makeKey, because this one is for typing into.
+        companionPanel?.makeKeyAndOrderFront(nil)
+        NSApp.activate(ignoringOtherApps: true)
+    }
+
+    private func hideCompanionChat() {
+        companionPanel?.orderOut(nil)
+    }
+
+    private func companionOrigin(for size: NSSize) -> NSPoint {
+        // Directly above the bubble when there is one, so the window opens
+        // where the person's attention already is rather than centring on a
+        // screen they were not looking at.
+        if let bubble = bubblePanel {
+            let frame = bubble.frame
+            return NSPoint(x: frame.minX, y: frame.maxY + 10)
+        }
+        guard let screen = NSScreen.main else { return NSPoint(x: 60, y: 60) }
+        let visible = screen.visibleFrame
+        return NSPoint(x: visible.minX + 24, y: visible.minY + 100)
     }
 
     func windowWillClose(_ notification: Notification) {

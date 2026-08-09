@@ -1,0 +1,130 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1"/>
+<title>Aura</title>
+<link rel="stylesheet" href="/static/design_tokens.css"/>
+<style>
+/*
+  The restrained chat window: what clicking the bubble opens.
+  Small, keyboard-first, and NOT the full desktop.
+
+  It is restrained on purpose. Someone who clicked a bubble in the corner of
+  their screen wants to say one thing and get back to work; giving them the
+  whole surface makes them close a window they did not ask to open. The full
+  desktop is one click away and is where anything longer belongs.
+
+  No sidebar, no history pane, no settings, no model picker. The transcript,
+  a composer, and one way out.
+*/
+:root {
+  --bg: rgba(20, 19, 27, 0.96);
+  --edge: rgba(160, 130, 255, 0.24);
+  --text: #ece7f7;
+  --dim: rgba(236, 231, 247, 0.5);
+  --mine: rgba(126, 96, 214, 0.22);
+  --hers: rgba(255, 255, 255, 0.045);
+}
+* { box-sizing: border-box; }
+html, body {
+  margin: 0; height: 100%; background: transparent;
+  font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", system-ui, sans-serif;
+  color: var(--text); overflow: hidden;
+}
+#shell {
+  display: flex; flex-direction: column;
+  height: 100%;
+  background: var(--bg);
+  border: 1px solid var(--edge);
+  border-radius: 14px;
+  backdrop-filter: blur(22px) saturate(140%);
+  -webkit-backdrop-filter: blur(22px) saturate(140%);
+  overflow: hidden;
+}
+
+#bar {
+  -webkit-app-region: drag;
+  display: flex; align-items: center; gap: 8px;
+  padding: 8px 10px;
+  border-bottom: 1px solid rgba(255,255,255,0.06);
+  flex: 0 0 auto;
+}
+#bar img { width: 20px; height: 20px; }
+#bar .spacer { flex: 1; }
+#expand {
+  -webkit-app-region: no-drag;
+  border: 0; background: transparent; color: var(--dim);
+  font-size: 11px; letter-spacing: 0.03em; cursor: pointer;
+  padding: 3px 7px; border-radius: 6px;
+}
+#expand:hover { color: var(--text); background: rgba(255,255,255,0.07); }
+
+#log {
+  flex: 1 1 auto; overflow-y: auto; padding: 10px 12px;
+  display: flex; flex-direction: column; gap: 8px;
+  scrollbar-width: thin;
+}
+.msg {
+  max-width: 88%;
+  padding: 7px 10px; border-radius: 11px;
+  font-size: 13px; line-height: 1.42;
+  white-space: pre-wrap; word-break: break-word;
+}
+.msg.me { align-self: flex-end; background: var(--mine); }
+.msg.her { align-self: flex-start; background: var(--hers); }
+.msg.err { align-self: flex-start; background: rgba(255,120,90,0.14); color: #ffd0c2; }
+
+/* She is thinking. Three dots, not a spinner: a spinner implies a duration
+   nobody knows, and a wrong duration is worse than no duration. */
+#thinking { display: none; align-self: flex-start; gap: 4px; padding: 8px 10px; }
+#thinking.on { display: flex; }
+#thinking span {
+  width: 5px; height: 5px; border-radius: 50%;
+  background: var(--dim); animation: pulse 1.2s ease-in-out infinite;
+}
+#thinking span:nth-child(2) { animation-delay: 0.15s; }
+#thinking span:nth-child(3) { animation-delay: 0.3s; }
+@keyframes pulse { 0%,100% { opacity: 0.25; } 50% { opacity: 0.9; } }
+
+#composer {
+  flex: 0 0 auto; display: flex; gap: 8px; align-items: flex-end;
+  padding: 9px 10px; border-top: 1px solid rgba(255,255,255,0.06);
+}
+#input {
+  flex: 1; resize: none; min-height: 34px; max-height: 120px;
+  padding: 8px 10px; border-radius: 9px;
+  border: 1px solid rgba(255,255,255,0.1);
+  background: rgba(255,255,255,0.05); color: var(--text);
+  font: inherit; font-size: 13px; line-height: 1.4;
+  outline: none;
+}
+#input:focus { border-color: rgba(160,130,255,0.5); }
+#send {
+  flex: 0 0 auto; width: 34px; height: 34px; border: 0; border-radius: 9px;
+  background: rgba(126,96,214,0.85); color: #fff; font-size: 15px; cursor: pointer;
+}
+#send:disabled { opacity: 0.4; cursor: default; }
+
+@media (prefers-reduced-motion: reduce) {
+  #thinking span { animation: none; opacity: 0.6; }
+}
+</style>
+</head>
+<body>
+<div id="shell">
+  <div id="bar">
+    <img src="/static/neuron_glyph.svg" alt=""/>
+    <span class="spacer"></span>
+    <button id="expand" title="Open the full desktop">FULL</button>
+  </div>
+  <div id="log" role="log" aria-live="polite"></div>
+  <div id="thinking" aria-hidden="true"><span></span><span></span><span></span></div>
+  <div id="composer">
+    <textarea id="input" rows="1" placeholder="" aria-label="Message Aura"></textarea>
+    <button id="send" aria-label="Send">↑</button>
+  </div>
+</div>
+<script src="/static/companion_chat.js" defer></script>
+</body>
+</html>
