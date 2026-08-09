@@ -2113,10 +2113,11 @@ class UnitaryResponsePhase(Phase):
     ) -> str:
         """Re-derive a verifiable hard-turn answer through the reasoning amplifier.
 
-        Runs only on the foreground lane for code/math/repo/architecture turns, is
-        bounded by the turn's own timeout, and fails open to ``draft``. When the
-        amplifier produces a verifier-clean answer it replaces the first draft; the
-        reasoning receipt is stashed on ``self`` and the state for telemetry.
+        Runs only on the foreground lane for verifiable hard turns, is bounded by
+        the turn's own timeout, and fails open to ``draft``. The first draft remains
+        the incumbent. It is replaced only by an objectively verified result or by
+        independent executable consensus, whose probabilistic authority remains
+        explicit in the receipt.
         """
         if not is_user_facing or is_background or proof_or_benchmark or not draft:
             return draft
@@ -2129,6 +2130,12 @@ class UnitaryResponsePhase(Phase):
         task_type = is_amplifiable(objective)
         if task_type is None:
             return draft
+        from core.brain.executable_reasoning import should_use_executable_reasoning
+
+        executable_reasoning = should_use_executable_reasoning(
+            objective,
+            task_type=task_type,
+        )
 
         def _make_gen(tier: str, allow_cloud: bool) -> Any:
             async def _gen(prompt: str, temperature: float) -> str:
@@ -2159,14 +2166,31 @@ class UnitaryResponsePhase(Phase):
             allow_cloud = str(_FLAG_AMPLIFIER_ESCALATE_CLOUD.value()).strip().lower() in {"1", "true", "on", "yes"}
             escalate_gen = _make_gen("deep", allow_cloud)
 
-        budget = float(min(30.0, max(8.0, (request_timeout or 20.0) * 0.8)))
+        # A resident-32B program-of-thought generation takes roughly 45-55s on
+        # this host. The old universal 30s ceiling made admitted executable
+        # tasks impossible by construction. Spend a larger but still bounded
+        # share of the foreground contract only when structured computation is
+        # actually applicable; evidence-only amplification keeps its 30s cap.
+        budget_floor = 60.0 if executable_reasoning else 8.0
+        budget_ceiling = 150.0 if executable_reasoning else 30.0
+        budget = float(
+            min(
+                budget_ceiling,
+                max(budget_floor, (request_timeout or 20.0) * 0.8),
+            )
+        )
         result = await amplify_turn(
             objective,
             _gen,
             task_type=task_type,
             evidence=list(evidence or []),
             time_budget_s=budget,
-            extra_context={"seed_candidates": list(seed_candidates or [])},
+            sample_budget=3 if executable_reasoning else None,
+            extra_context={
+                "seed_candidates": list(seed_candidates or [draft]),
+                "enable_executable_reasoning": executable_reasoning,
+                "allow_textual_fallback_after_executable": True,
+            },
             escalate_generate=escalate_gen,
         )
         receipt = result.receipt.to_dict()
@@ -2179,10 +2203,23 @@ class UnitaryResponsePhase(Phase):
         logger.info(
             "🧠 [AmplifyV2-live/phase] task=%s mode=%s verified=%s conf=%.2f → %s",
             task_type, receipt.get("mode"), result.verified, result.confidence,
-            "adopted" if (result.verified and result.answer) else "kept draft",
+            (
+                "adopted"
+                if (
+                    result.answer
+                    and receipt.get("promotion_authority")
+                    in {"checked_verifier", "independent_executable_consensus"}
+                )
+                else "kept draft"
+            ),
         )
-        if result.verified and result.answer and len(result.answer.strip()) >= 3:
+        authority = str(receipt.get("promotion_authority") or "none")
+        if authority == "checked_verifier" and result.answer and len(result.answer.strip()) >= 3:
             return result.answer.strip()
+        if authority == "independent_executable_consensus":
+            consensus_answer = str(result.source_answer or result.answer or "").strip()
+            if len(consensus_answer) >= 1:
+                return consensus_answer
         return draft
 
     async def _maybe_amplify_conversation(
@@ -6011,9 +6048,7 @@ class UnitaryResponsePhase(Phase):
                         is_user_facing=is_user_facing,
                         is_background=is_background,
                         proof_or_benchmark=bool(proof_evaluation_turn or benchmark_turn or strict_proof_answer_request),
-                        seed_candidates=(
-                            [response_text] if latent_path_committed else None
-                        ),
+                        seed_candidates=[response_text],
                         evidence=latent_evidence,
                     )
                     if latent_path_committed and self._last_reasoning_receipt:

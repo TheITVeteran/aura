@@ -77,6 +77,31 @@ def test_plain_fact_lookup_stays_on_the_low_latency_path():
     assert is_amplifiable("what is the capital of France") is None
 
 
+@pytest.mark.parametrize(
+    "text",
+    [
+        "Schedule these jobs to minimize makespan: "
+        "[{'name':'A','duration':2}, {'name':'B','duration':3}]",
+        "Can you schedule tasks A and B within horizon 7 given deadlines 4 and 6?",
+    ],
+)
+def test_computational_scheduling_is_reasoning_not_environment_actuation(text):
+    assert is_action_request(text) is False
+    assert is_amplifiable(text) == "planning"
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "Schedule a dentist appointment tomorrow at 3 PM",
+        "Can you schedule my meeting with Alex for Friday?",
+    ],
+)
+def test_calendar_scheduling_remains_an_environment_action(text):
+    assert is_action_request(text) is True
+    assert is_amplifiable(text) is None
+
+
 def test_action_with_number_not_treated_as_math():
     # The specific case raised: a digit in an action must not route to math.
     assert is_amplifiable("Open 3 tabs") is None

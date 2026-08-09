@@ -50,6 +50,111 @@ def _phase_stub() -> ResponseGenerationPhase:
 
 
 @pytest.mark.asyncio
+async def test_structured_live_task_gets_executable_budget_and_draft_incumbent(monkeypatch):
+    from core.brain.reasoning_amplifier_v2 import AmplifiedAnswer, ReasoningReceipt
+
+    captured = {}
+
+    async def fake_amplify_turn(objective, generate, **kwargs):
+        del objective, generate
+        captured.update(kwargs)
+        return AmplifiedAnswer(
+            answer="UNPROMOTED",
+            source_answer="UNPROMOTED",
+            confidence=0.2,
+            verified=False,
+            calibrated=False,
+            receipt=ReasoningReceipt(
+                mode="normal",
+                strategy_used="none",
+                task_type="planning",
+                num_candidates=0,
+                verifiers_run=[],
+                valid_candidates=0,
+                winning_candidate_id=None,
+                confidence=0.2,
+                agreement=0.0,
+                epistemic_status="unverified",
+            ),
+        )
+
+    monkeypatch.setattr(
+        "core.brain.reasoning_amplifier_v2.amplify_turn",
+        fake_amplify_turn,
+    )
+    draft = "The first-pass answer remains authoritative unless improved."
+    out = await UnitaryResponsePhase._maybe_amplify_response(
+        _self_stub(),
+        objective=(
+            "Schedule these jobs to minimize makespan: "
+            "[{'name':'A','duration':2}, {'name':'B','duration':3}]"
+        ),
+        draft=draft,
+        llm=_StubLLM("unused"),
+        state=_state_stub(),
+        request_timeout=180.0,
+        is_user_facing=True,
+        is_background=False,
+        proof_or_benchmark=False,
+    )
+
+    assert out == draft
+    assert captured["time_budget_s"] == 144.0
+    assert captured["sample_budget"] == 3
+    assert captured["extra_context"] == {
+        "seed_candidates": [draft],
+        "enable_executable_reasoning": True,
+        "allow_textual_fallback_after_executable": True,
+    }
+
+
+@pytest.mark.asyncio
+async def test_live_phase_adopts_consensus_without_calling_it_exact_verification(monkeypatch):
+    from core.brain.reasoning_amplifier_v2 import AmplifiedAnswer, ReasoningReceipt
+
+    async def fake_amplify_turn(objective, generate, **kwargs):
+        del objective, generate, kwargs
+        return AmplifiedAnswer(
+            answer="Calibrated presentation that did not earn the consensus.",
+            source_answer="The independently computed answer is 42.",
+            confidence=0.55,
+            verified=False,
+            calibrated=True,
+            receipt=ReasoningReceipt(
+                mode="normal",
+                strategy_used="independent_executable_consensus",
+                task_type="planning",
+                num_candidates=3,
+                verifiers_run=["logic"],
+                valid_candidates=0,
+                winning_candidate_id=None,
+                confidence=0.55,
+                agreement=2 / 3,
+                epistemic_status="uncertain",
+                promotion_authority="independent_executable_consensus",
+            ),
+        )
+
+    monkeypatch.setattr(
+        "core.brain.reasoning_amplifier_v2.amplify_turn",
+        fake_amplify_turn,
+    )
+    out = await UnitaryResponsePhase._maybe_amplify_response(
+        _self_stub(),
+        objective="Given tasks [2,3], compute the optimal schedule within horizon 5.",
+        draft="INCUMBENT",
+        llm=_StubLLM("unused"),
+        state=_state_stub(),
+        request_timeout=180.0,
+        is_user_facing=True,
+        is_background=False,
+        proof_or_benchmark=False,
+    )
+
+    assert out == "The independently computed answer is 42."
+
+
+@pytest.mark.asyncio
 async def test_phase_amplifies_verified_math_turn():
     llm = _StubLLM("The product: 12 * 12 = 144")
     state = _state_stub()

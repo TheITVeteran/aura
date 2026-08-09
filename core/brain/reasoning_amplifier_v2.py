@@ -233,6 +233,7 @@ class ReasoningReceipt:
     confidence: float
     agreement: float
     epistemic_status: str
+    promotion_authority: str = "none"
     evidence_refs: list[str] = field(default_factory=list)
     known_failures: list[str] = field(default_factory=list)
     budget_used: dict[str, Any] = field(default_factory=dict)
@@ -252,6 +253,7 @@ class ReasoningReceipt:
             "confidence": round(self.confidence, 3),
             "agreement": round(self.agreement, 3),
             "epistemic_status": self.epistemic_status,
+            "promotion_authority": self.promotion_authority,
             "evidence_refs": self.evidence_refs[:6],
             "known_failures": self.known_failures[:6],
             "budget_used": self.budget_used,
@@ -1065,6 +1067,11 @@ class ReasoningAmplifierV2:
             except (RuntimeError, AttributeError, TypeError, ValueError) as exc:
                 record_degradation("amplifier_v2_record", exc)
 
+        promotion_authority = (
+            "independent_executable_consensus"
+            if strategy == "independent_executable_consensus"
+            else ("checked_verifier" if verified_pass else "none")
+        )
         receipt = ReasoningReceipt(
             mode=mode.value,
             strategy_used=strategy,
@@ -1076,6 +1083,7 @@ class ReasoningAmplifierV2:
             confidence=confidence,
             agreement=agreement,
             epistemic_status=calibration.overall.value,
+            promotion_authority=promotion_authority,
             evidence_refs=evidence[:6],
             known_failures=verifier_issues[:6],
             budget_used={
@@ -1202,7 +1210,11 @@ class ReasoningAmplifierV2:
                 "independent_executable_consensus",
             )
         seed_candidates = list(context.get("seed_candidates") or [])
-        if executable_was_attempted and seed_candidates:
+        if (
+            executable_was_attempted
+            and seed_candidates
+            and not context.get("allow_textual_fallback_after_executable")
+        ):
             incumbent = str(seed_candidates[0] or "").strip()
             if incumbent:
                 fallbacks.append("executable_budget_exhausted_retained_incumbent")
@@ -1560,6 +1572,12 @@ _ACTION_VERB = (
 )
 _ACTION_RE = re.compile(rf"^\s*(?:please\s+|can you\s+|could you\s+|go\s+|now\s+|hey,?\s+)*(?:{_ACTION_VERB})\b", re.IGNORECASE)
 _GO_TO_RE = re.compile(r"^\s*(?:please\s+)?go to\b", re.IGNORECASE)
+_COMPUTATIONAL_SCHEDULING_RE = re.compile(
+    r"\b(?:optimal|optimi[sz]\w*|minimi[sz]\w*|maximi[sz]\w*|makespan|"
+    r"deadline\w*|horizon|prerequisite\w*|dependenc\w*|resource allocation|"
+    r"execution order|feasible schedule)\b",
+    re.IGNORECASE,
+)
 
 
 def is_action_request(objective: str) -> bool:
@@ -1572,6 +1590,13 @@ def is_action_request(objective: str) -> bool:
     q = str(objective or "").strip()
     if not q:
         return False
+    # ``schedule`` is an overloaded verb. Calendar requests are environment
+    # actions, while job-shop/resource scheduling is a verifiable planning
+    # problem. Preserve the tool lane unless optimization semantics make the
+    # computational meaning explicit.
+    if _ACTION_RE.match(q) and re.search(r"\bschedul\w*\b", q, re.IGNORECASE):
+        if _COMPUTATIONAL_SCHEDULING_RE.search(q):
+            return False
     if _GO_TO_RE.match(q) or _ACTION_RE.match(q):
         return True
     return False
@@ -1610,6 +1635,7 @@ async def amplify_turn(
     evidence: list[str] | None = None,
     risk_level: str = "normal",
     time_budget_s: float = 30.0,
+    sample_budget: int | None = None,
     extra_context: dict[str, Any] | None = None,
     **kw: Any,
 ) -> AmplifiedAnswer:
@@ -1634,6 +1660,7 @@ async def amplify_turn(
         task_type=tt,
         risk_level=risk_level,
         time_budget_s=time_budget_s,
+        sample_budget=sample_budget,
         required_evidence=list(evidence or []),
         context=context,
     )

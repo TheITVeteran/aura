@@ -439,6 +439,7 @@ async def test_distinct_programs_can_establish_non_exact_consensus(tmp_path) -> 
 
     assert result.source_answer == 'FINAL_ANSWER: {"answer":4}'
     assert result.receipt.strategy_used == "independent_executable_consensus"
+    assert result.receipt.promotion_authority == "independent_executable_consensus"
     assert "independent_executable_consensus" in result.receipt.fallbacks_used
 
 

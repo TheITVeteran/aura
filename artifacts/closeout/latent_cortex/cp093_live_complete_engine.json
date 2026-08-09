@@ -1,0 +1,53 @@
+{
+  "schema": "aura.closeout.latent_cortex.cp093.v1",
+  "checkpoint": "CP093",
+  "date": "2026-08-09",
+  "finding": {
+    "classification": "production_complete_engine_wiring_gap",
+    "details": [
+      "Structured causal, planning, and premise turns could pass semantic admission but the sovereign live phase did not explicitly enable their executable-reasoning operation.",
+      "The live phase capped every amplifier episode at 30 seconds even though measured resident-32B program generation takes roughly 45 to 55 seconds.",
+      "Ordinary first-pass output was not consistently carried into amplification as the monotonic incumbent.",
+      "The production action gate treated computational scheduling and calendar scheduling as the same intent."
+    ]
+  },
+  "repair": {
+    "semantic_action_disambiguation": "Optimization, makespan, deadline, dependency, horizon, and resource-allocation scheduling remains a reasoning task; calendar scheduling remains an environment action.",
+    "executable_reasoning_live": true,
+    "structured_sample_budget": 3,
+    "structured_time_budget_floor_s": 60.0,
+    "structured_time_budget_ceiling_s": 150.0,
+    "ordinary_draft_is_incumbent": true,
+    "bounded_textual_repair_after_program_shape_failure": true,
+    "promotion_authorities": {
+      "checked_verifier": "A verifier actually checked and passed the selected answer.",
+      "independent_executable_consensus": "At least two distinct programs from distinct strategy families produced the same result; this remains probabilistic and is not relabeled exact verification."
+    },
+    "consensus_surface": "The exact consensus-bearing source answer is surfaced rather than an unverified post-consensus presentation rewrite.",
+    "sealed_experiment_unchanged": true
+  },
+  "verification": {
+    "focused_contracts": "104 passed",
+    "canonical_smoke": "103 passed",
+    "ruff": "passed",
+    "byte_compile": "passed",
+    "required_negative_controls": [
+      "calendar scheduling remains an action",
+      "casual chat remains outside amplification",
+      "plain fact lookup remains on the low-latency lane",
+      "an unpromoted result retains the original draft",
+      "probabilistic consensus is not reported as exact verification"
+    ]
+  },
+  "campaign_boundary": {
+    "active_campaign": "cp093-wow-pilot-20260809",
+    "campaign_source_commit": "6fc714b90a8b471d2f5b17e87c742a6c306c3675",
+    "reason_current_campaign_remains_valid": "The claim-grade campaign is intentionally frozen on the preceding source. This production patch neither mutates its source nor changes its preregistered tasks, arms, controls, or scoring.",
+    "claim_from_campaign": "pending"
+  },
+  "non_claims": [
+    "This checkpoint does not itself demonstrate a population reasoning gain.",
+    "Independent executable consensus is evidence for promotion, not proof of semantic correctness.",
+    "No frontier result, fusion authority, activation authority, or WOW Signal is claimed."
+  ]
+}

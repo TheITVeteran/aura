@@ -40541,6 +40541,43 @@ difficulty. No reasoning gain, frontier performance, fusion, activation, or
 `WOW Signal` is claimed, and the completion envelope remains `809/920`
 (approximately `87.9%`).
 
+## Checkpoint 2026-08-09-093: The Complete Engine Is Live, Not Laboratory-Only
+
+CP092 made structured causal, planning, and premise requests semantically
+admissible, but tracing the sovereign `UnitaryResponsePhase` found three deeper
+production gaps. The phase did not explicitly enable executable reasoning for
+those newly admitted task types, its universal `30s` amplifier ceiling was
+shorter than the measured `45-55s` resident-32B program-generation time, and it
+did not consistently carry ordinary first-pass output into the complete engine
+as the incumbent. Computational scheduling was also lexically intercepted as
+a calendar/tool action before its optimization semantics were considered.
+
+The live phase now enables executable reasoning only for semantically structured
+compute, grants it three heterogeneous program strategies and a bounded
+`60-150s` share of the existing foreground request contract, and always carries
+the first draft as the monotonic incumbent. If program generation has the wrong
+shape, production may still use a bounded textual repair path while the sealed
+evaluation keeps its stricter no-duplicate-control policy. Scheduling intent is
+now disambiguated: optimization/makespan/dependency problems enter reasoning;
+appointments remain environment actions.
+
+Promotion authority is explicit. A checked verifier result may replace the
+incumbent. Matching answers from distinct programs and strategy families may
+also replace it under `independent_executable_consensus`, but that authority
+remains probabilistic and is never reported as exact verification. Production
+surfaces the exact consensus-bearing source answer rather than a later
+presentation rewrite that did not earn the consensus.
+
+Focused amplifier, executable-reasoning, cache-integrity, phase-wiring, and
+action-disambiguation contracts pass `104/104`; canonical smoke passes
+`103/103`; Ruff and byte compilation pass.
+Compact evidence is
+`artifacts/closeout/latent_cortex/cp093_live_complete_engine.json`. The active
+claim-grade campaign remains frozen on CP092 and is unaffected by this change.
+No population reasoning gain, frontier result, fusion authority, activation
+authority, or `WOW Signal` is claimed, and the completion envelope remains
+`809/920` (approximately `87.9%`).
+
 ## Checkpoint 2026-08-09-092: Structured Problems Reach the Complete Engine
 
 The sovereign healthy-chat path already composed the reasoning amplifier for
