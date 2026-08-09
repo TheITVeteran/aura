@@ -740,6 +740,47 @@ def _resource_target_reached(
     )
 
 
+def _tool_target_reached(
+    control_resource: dict[str, Any],
+    target_resource: dict[str, Any],
+) -> bool:
+    return all(
+        int(control_resource["totals"][name])
+        >= int(target_resource["totals"][name])
+        for name in ("tool_calls", "tool_input_bytes", "tool_result_bytes")
+    )
+
+
+def _tool_progress(resource: dict[str, Any]) -> tuple[int, int, int]:
+    return tuple(
+        int(resource["totals"][name])
+        for name in ("tool_calls", "tool_input_bytes", "tool_result_bytes")
+    )
+
+
+def _equal_tool_cycle_limit(
+    control_resource: dict[str, Any],
+    target_resource: dict[str, Any],
+    *,
+    max_samples: int,
+) -> int:
+    """Derive a bounded tool-control plan from the measured call deficit.
+
+    A valid executable operation advances the call counter by at least one.
+    Two additional cycles allow an inapplicable strategy without restoring the
+    old fixed loop that could run independently of the campaign sample budget.
+    """
+
+    if isinstance(max_samples, bool) or not isinstance(max_samples, int) or max_samples < 1:
+        raise ValueError("resource-dominating sample budget must be positive")
+    current_calls, _, _ = _tool_progress(control_resource)
+    target_calls, target_input, target_result = _tool_progress(target_resource)
+    if target_calls == 0 and (target_input > 0 or target_result > 0):
+        raise RuntimeError("tool-byte target is positive without a measured tool call")
+    call_deficit = max(0, target_calls - current_calls)
+    return min(max_samples, max(0, call_deficit + 2))
+
+
 def _select_verified_candidate(outputs: list[str], scores: list[float]) -> str:
     if not outputs or len(outputs) != len(scores):
         raise ValueError("verified control candidates are incomplete")
@@ -768,6 +809,7 @@ def _run_vanilla_resource_dominating(
     target_information: dict[str, Any],
     treatment_acquisition: dict[str, Any] | None,
     campaign_seed: int,
+    incumbent_text: str | None = None,
     max_samples: int = 128,
 ) -> tuple[
     str,
@@ -889,111 +931,14 @@ def _run_vanilla_resource_dominating(
         "completed_new_context",
         "completed_no_new_context",
     }:
-        import asyncio
-
-        from core.brain.cortex_compute_acquisition import acquire_cognitive_compute
-        from core.brain.llm.latent_cortex.cognitive_context import (
-            normalize_cognitive_context,
+        raise RuntimeError(
+            "resource-dominating control refuses treatment-derived acquisition; "
+            "an independent same-policy acquisition arm is required"
         )
-        from core.brain.llm.latent_cortex.epistemic_state import OperationKind
-        from tools.rlc_complete_system_closed_book import (
-            _contextual_continuation_objective,
-        )
-
-        request = acquisition.get("request")
-        first_text = str(acquisition.get("input_candidate") or "")
-        expected_context = normalize_cognitive_context(
-            list(acquisition.get("acquired_context") or [])
-        )
-        if not isinstance(request, dict) or not first_text:
-            raise RuntimeError("resource-dominating acquisition replay is incomplete")
-        if (
-            acquisition.get("status") == "completed_new_context"
-            and not expected_context
-        ) or (
-            acquisition.get("status") == "completed_no_new_context"
-            and expected_context
-        ):
-            raise RuntimeError("resource-dominating acquisition status differs from context")
-        if acquisition.get("input_candidate_sha256") != hashlib.sha256(
-            first_text.encode("utf-8")
-        ).hexdigest():
-            raise RuntimeError("resource-dominating acquisition candidate differs")
-        action = OperationKind(request.get("action"))
-        timeout_s = acquisition.get("timeout_s")
-        if (
-            isinstance(timeout_s, bool)
-            or not isinstance(timeout_s, (int, float))
-            or not math.isfinite(float(timeout_s))
-            or not 0.1 <= float(timeout_s) <= 12.0
-        ):
-            raise RuntimeError("resource-dominating acquisition timeout is invalid")
-        compute = asyncio.run(
-            acquire_cognitive_compute(
-                objective=task.public.prompt,
-                first_text=first_text,
-                action=action,
-                timeout_s=float(timeout_s),
-            )
-        )
-        observed_context = normalize_cognitive_context(list(compute.context))
-        if observed_context != expected_context:
-            raise RuntimeError("resource-dominating acquisition replay differs")
-        continuation_objective = task.public.prompt
-        if observed_context:
-            continuation_objective = _contextual_continuation_objective(
-                task.public.prompt,
-                observed_context,
-            )
-            if (
-                continuation_objective != acquisition.get("continuation_objective")
-                or hashlib.sha256(continuation_objective.encode("utf-8")).hexdigest()
-                != acquisition.get("continuation_objective_sha256")
-            ):
-                raise RuntimeError("resource-dominating continuation prompt differs")
-        if _render_objective(tokenizer, continuation_objective) != prompt_tokens:
-            raise RuntimeError("resource-dominating continuation prompt differs")
-        request_bytes = len(
-            json.dumps(request, sort_keys=True, separators=(",", ":")).encode("utf-8")
-        )
-        result_bytes = len(
-            json.dumps(
-                compute.receipt,
-                sort_keys=True,
-                separators=(",", ":"),
-                default=str,
-            ).encode("utf-8")
-        )
-        setup_ledger.charge(
-            "matched_cognitive_acquisition",
-            tool_calls=1,
-            tool_input_bytes=request_bytes,
-            tool_result_bytes=result_bytes,
-            host_scalar_ops=max(1, request_bytes + result_bytes),
-        )
-        control_acquisition = {
-            "schema": "aura.rlc.resource_control_acquisition.v1",
-            "status": "replayed_identically",
-            "treatment_status": acquisition.get("status"),
-            "action": action.value,
-            "objective": task.public.prompt,
-            "request": request,
-            "timeout_s": float(timeout_s),
-            "input_candidate_sha256": hashlib.sha256(
-                first_text.encode("utf-8")
-            ).hexdigest(),
-            "context": observed_context,
-            "continuation_objective": continuation_objective,
-            "continuation_objective_sha256": hashlib.sha256(
-                continuation_objective.encode("utf-8")
-            ).hexdigest(),
-            "compute_receipt": compute.receipt,
-        }
     elif acquisition.get("status") not in {
         "",
         None,
         "not_requested",
-        "completed_no_new_context",
         "withheld_by_closed_book_contract",
     }:
         raise RuntimeError("resource-dominating treatment acquisition status is invalid")
@@ -1001,11 +946,123 @@ def _run_vanilla_resource_dominating(
     outputs: list[str] = []
     scores: list[float] = []
     setup_resource = setup_ledger.to_receipt()
+    target_totals = target_resource["totals"]
+    unsupported_external = {
+        name: int(target_totals[name])
+        for name in (
+            "external_model_calls",
+            "external_model_input_tokens",
+            "external_model_output_tokens",
+        )
+        if int(target_totals[name]) > 0
+    }
+    if unsupported_external:
+        raise RuntimeError(
+            "resource-dominating ordinary control cannot match external-model work: "
+            + ",".join(sorted(unsupported_external))
+        )
     resources: list[dict[str, Any]] = [setup_resource]
     candidates: list[dict[str, Any]] = []
     generated_tokens = 0
-    aggregate: dict[str, Any] | None = None
-    for sample_index in range(max_samples):
+    aggregate = ResourceLedger.aggregate(resources).to_receipt()
+    equal_tool_cycles = 0
+    equal_tool_cycle_limit = 0
+    if not _tool_target_reached(aggregate, target_resource):
+        if not str(incumbent_text or "").strip():
+            raise RuntimeError(
+                "resource-dominating control lacks the paired vanilla incumbent "
+                "required for equal tool access"
+            )
+        from tools.rlc_complete_system_closed_book import (
+            _run_equal_tool_ordinary_control,
+        )
+
+        # The treatment may use sandboxed executable reasoning. Give the
+        # ordinary ablation the same real affordance until every measured tool
+        # dimension is met; never fabricate usage counters to close the gap.
+        equal_tool_cycle_limit = _equal_tool_cycle_limit(
+            aggregate,
+            target_resource,
+            max_samples=max_samples,
+        )
+        previous_progress = _tool_progress(aggregate)
+        no_progress_cycles = 0
+        for cycle_index in range(equal_tool_cycle_limit):
+            (
+                text,
+                equal_tool_resource,
+                equal_tool_generated_tokens,
+                equal_tool_receipt,
+            ) = _run_equal_tool_ordinary_control(
+                model,
+                tokenizer,
+                task=task,
+                incumbent_text=str(incumbent_text),
+                max_tokens=max_tokens,
+                campaign_seed=campaign_seed,
+                cycle_index=cycle_index,
+            )
+            verifier = _episode_verifier(task)
+            score = float(verifier(text))
+            verifier_receipt = verifier.to_receipt()
+            verifier_payload = json.dumps(
+                {"score": score, "receipt": verifier_receipt},
+                sort_keys=True,
+                separators=(",", ":"),
+                ensure_ascii=True,
+                allow_nan=False,
+            ).encode("utf-8")
+            cycle_ledger = ResourceLedger.aggregate([equal_tool_resource])
+            cycle_ledger.charge(
+                "candidate_local_verifier",
+                verifier_calls=1,
+                verifier_input_bytes=len(text.encode("utf-8")),
+                verifier_output_bytes=len(verifier_payload),
+                host_scalar_ops=max(1, len(text) + len(verifier_payload)),
+            )
+            sample_resource = cycle_ledger.to_receipt()
+            sample_index = len(outputs)
+            outputs.append(text)
+            scores.append(score)
+            resources.append(sample_resource)
+            candidates.append(
+                {
+                    "sample_index": sample_index,
+                    "control_path": "equal_tool_amplifier_without_recurrence",
+                    "text": text,
+                    "text_sha256": hashlib.sha256(text.encode("utf-8")).hexdigest(),
+                    "verifier_score": score,
+                    "verifier_receipt": verifier_receipt,
+                    "resource_accounting": sample_resource,
+                    "equal_tool_resource_accounting": equal_tool_resource,
+                    "generated_tokens": equal_tool_generated_tokens,
+                    "equal_tool_receipt": equal_tool_receipt,
+                }
+            )
+            generated_tokens += equal_tool_generated_tokens
+            equal_tool_cycles += 1
+            aggregate = ResourceLedger.aggregate(resources).to_receipt()
+            current_progress = _tool_progress(aggregate)
+            if current_progress == previous_progress:
+                no_progress_cycles += 1
+            else:
+                no_progress_cycles = 0
+            previous_progress = current_progress
+            if _tool_target_reached(aggregate, target_resource):
+                break
+            if no_progress_cycles >= 2:
+                raise RuntimeError(
+                    "equal-tool ordinary control made no measured sandbox progress "
+                    "for two consecutive cycles"
+                )
+        else:
+            raise RuntimeError(
+                "equal-tool ordinary control could not reach the treatment's "
+                "measured tool envelope"
+            )
+
+    for _ in range(max_samples - len(outputs)):
+        sample_index = len(outputs)
         text, output_tokens, _, resource = _run_vanilla(
             model,
             tokenizer,
@@ -1038,12 +1095,15 @@ def _run_vanilla_resource_dominating(
         candidates.append(
             {
                 "sample_index": sample_index,
+                "control_path": "ordinary_sample",
                 "text": text,
                 "text_sha256": hashlib.sha256(text.encode("utf-8")).hexdigest(),
                 "verifier_score": score,
                 "verifier_receipt": verifier_receipt,
                 "resource_accounting": sample_resource,
+                "equal_tool_resource_accounting": None,
                 "generated_tokens": len(output_tokens),
+                "equal_tool_receipt": None,
             }
         )
         generated_tokens += len(output_tokens)
@@ -1073,6 +1133,8 @@ def _run_vanilla_resource_dominating(
         "campaign_seed": int(campaign_seed),
         "sample_limit": int(max_samples),
         "sample_count": len(outputs),
+        "equal_tool_cycle_count": equal_tool_cycles,
+        "equal_tool_cycle_limit": equal_tool_cycle_limit,
         "generated_tokens": generated_tokens,
         "setup_resource_accounting": setup_resource,
         "control_acquisition": control_acquisition,
@@ -1301,76 +1363,6 @@ def _resource_dominating_control_receipt_issues(
         "schema"
     ) != "aura.rlc.resource_control_acquisition.v1":
         issues.append("resource_control_acquisition_invalid")
-    elif control_acquisition.get("status") == "replayed_identically":
-        from core.brain.llm.latent_cortex.cognitive_context import (
-            normalize_cognitive_context,
-        )
-        from tools.rlc_complete_system_closed_book import (
-            _contextual_continuation_objective,
-        )
-
-        try:
-            normalized_context = normalize_cognitive_context(
-                list(control_acquisition.get("context") or [])
-            )
-            treatment_status = control_acquisition.get("treatment_status")
-            if treatment_status == "completed_new_context":
-                continuation_objective = _contextual_continuation_objective(
-                    str(control_acquisition.get("objective") or ""),
-                    normalized_context,
-                )
-            elif treatment_status == "completed_no_new_context" and not normalized_context:
-                continuation_objective = str(
-                    control_acquisition.get("objective") or ""
-                ).strip()
-            else:
-                raise ValueError("acquisition treatment status differs from context")
-        except (TypeError, ValueError):
-            issues.append("resource_control_acquisition_context_invalid")
-        else:
-            if (
-                continuation_objective
-                != control_acquisition.get("continuation_objective")
-                or hashlib.sha256(continuation_objective.encode("utf-8")).hexdigest()
-                != control_acquisition.get("continuation_objective_sha256")
-            ):
-                issues.append("resource_control_acquisition_context_mismatch")
-        timeout_s = control_acquisition.get("timeout_s")
-        if (
-            isinstance(timeout_s, bool)
-            or not isinstance(timeout_s, (int, float))
-            or not math.isfinite(float(timeout_s))
-            or not 0.1 <= float(timeout_s) <= 12.0
-        ):
-            issues.append("resource_control_acquisition_timeout_invalid")
-        compute_receipt = control_acquisition.get("compute_receipt")
-        if not isinstance(compute_receipt, dict):
-            issues.append("resource_control_compute_receipt_invalid")
-        else:
-            compute_body = {
-                key: value
-                for key, value in compute_receipt.items()
-                if key != "receipt_sha256"
-            }
-            compute_digest = hashlib.sha256(
-                json.dumps(
-                    compute_body,
-                    sort_keys=True,
-                    separators=(",", ":"),
-                    ensure_ascii=True,
-                    default=lambda item: (
-                        f"<{type(item).__module__}.{type(item).__qualname__}>"
-                    ),
-                ).encode("utf-8")
-            ).hexdigest()
-            if (
-                compute_receipt.get("schema")
-                != "aura.rlc.compute_acquisition.v1"
-                or compute_receipt.get("receipt_sha256") != compute_digest
-            ):
-                issues.append("resource_control_compute_receipt_invalid")
-        if setup_resource is not None and setup_resource["totals"]["tool_calls"] < 1:
-            issues.append("resource_control_acquisition_unmetered")
     elif control_acquisition.get("status") != "not_required":
         issues.append("resource_control_acquisition_status_invalid")
 
@@ -1380,6 +1372,7 @@ def _resource_dominating_control_receipt_issues(
         [setup_resource] if setup_resource is not None else []
     )
     generated_tokens = 0
+    equal_tool_candidates = 0
     for index, candidate in enumerate(candidates):
         if not isinstance(candidate, dict) or candidate.get("sample_index") != index:
             issues.append("resource_control_candidate_identity_invalid")
@@ -1404,6 +1397,55 @@ def _resource_dominating_control_receipt_issues(
         except (TypeError, ValueError):
             issues.append("resource_control_candidate_resource_invalid")
             continue
+        control_path = candidate.get("control_path")
+        equal_tool_receipt = candidate.get("equal_tool_receipt")
+        equal_tool_resource = candidate.get("equal_tool_resource_accounting")
+        if control_path == "equal_tool_amplifier_without_recurrence":
+            equal_tool_candidates += 1
+            try:
+                equal_tool_resource = validate_resource_receipt(equal_tool_resource)
+            except (TypeError, ValueError):
+                issues.append("resource_control_equal_tool_resource_invalid")
+            if (
+                not isinstance(equal_tool_receipt, dict)
+                or equal_tool_receipt.get("schema")
+                != "aura.rlc.equal_tool_ordinary_control.v1"
+                or equal_tool_receipt.get("task_id")
+                != (task.task_id if task is not None else receipt.get("task_id"))
+                or equal_tool_receipt.get("cycle_index") != equal_tool_candidates - 1
+                or equal_tool_receipt.get("answer_key_used") is not False
+                or equal_tool_receipt.get("latent_recurrence_used") is not False
+                or equal_tool_receipt.get("final_text_sha256")
+                != hashlib.sha256(text.encode("utf-8")).hexdigest()
+                or equal_tool_receipt.get("generated_tokens")
+                != candidate.get("generated_tokens")
+                or not isinstance(equal_tool_receipt.get("executable_operations"), list)
+                or not equal_tool_receipt.get("executable_operations")
+                or any(
+                    not isinstance(operation, dict)
+                    or operation.get("sandbox_ok") is not True
+                    or operation.get("network_denied") is not True
+                    or type(operation.get("program_bytes")) is not int
+                    or operation.get("program_bytes") <= 0
+                    or type(operation.get("result_bytes")) is not int
+                    or operation.get("result_bytes") < 0
+                    for operation in equal_tool_receipt.get("executable_operations") or []
+                )
+            ):
+                issues.append("resource_control_equal_tool_receipt_invalid")
+            if (
+                isinstance(equal_tool_resource, dict)
+                and isinstance(equal_tool_receipt, dict)
+                and equal_tool_receipt.get("resource_accounting_sha256")
+                != equal_tool_resource.get("receipt_sha256")
+            ):
+                issues.append("resource_control_equal_tool_resource_mismatch")
+        elif (
+            control_path != "ordinary_sample"
+            or equal_tool_receipt is not None
+            or equal_tool_resource is not None
+        ):
+            issues.append("resource_control_candidate_path_invalid")
         if task is not None:
             verifier = _episode_verifier(task)
             reconstructed_score = float(verifier(text))
@@ -1418,6 +1460,15 @@ def _resource_dominating_control_receipt_issues(
         generated_tokens += candidate["generated_tokens"]
     if len(outputs) != len(candidates):
         return sorted(set(issues))
+    if receipt.get("equal_tool_cycle_count") != equal_tool_candidates:
+        issues.append("resource_control_equal_tool_count_invalid")
+    cycle_limit = receipt.get("equal_tool_cycle_limit")
+    if (
+        type(cycle_limit) is not int
+        or cycle_limit < equal_tool_candidates
+        or cycle_limit > int(receipt.get("sample_limit") or 0)
+    ):
+        issues.append("resource_control_equal_tool_limit_invalid")
     selected = _select_verified_candidate(outputs, scores)
     if (
         selected != candidates[selected_index]["text"]
@@ -1448,6 +1499,26 @@ def _resource_dominating_control_receipt_issues(
             issues.append("resource_control_cell_information_mismatch")
         if cell.get("resource_dominance_certificate") != recorded_certificate:
             issues.append("resource_control_cell_certificate_mismatch")
+        tool_target = recorded_certificate["resource_dimensions"]["tool_calls"][
+            "treatment"
+        ]
+        if tool_target > 0 and equal_tool_candidates == 0:
+            issues.append("resource_control_equal_tool_path_absent")
+        expected_cycle_limit = min(
+            int(receipt.get("sample_limit") or 0),
+            max(
+                0,
+                int(tool_target)
+                - int((setup_resource or {"totals": {"tool_calls": 0}})["totals"][
+                    "tool_calls"
+                ])
+                + 2,
+            ),
+        )
+        if tool_target == 0:
+            expected_cycle_limit = 0
+        if cycle_limit != expected_cycle_limit:
+            issues.append("resource_control_equal_tool_limit_mismatch")
     return sorted(set(issues))
 
 
@@ -1456,7 +1527,7 @@ def _resource_control_treatment_acquisition_issues(
     treatment_cell: dict[str, Any],
     control_cell: dict[str, Any],
 ) -> list[str]:
-    """Bind an advantaged control replay to the treatment's exact acquisition."""
+    """Require an independent acquisition control when treatment acquired context."""
 
     def runtime(cell: dict[str, Any]) -> dict[str, Any]:
         path = cell.get("runtime_receipt_path")
@@ -1487,31 +1558,7 @@ def _resource_control_treatment_acquisition_issues(
             if control.get("status") == "not_required"
             else ["resource_control_unmatched_acquisition"]
         )
-    try:
-        comparisons = {
-            "treatment_status": status,
-            "request": treatment.get("request"),
-            "timeout_s": float(treatment.get("timeout_s")),
-            "input_candidate_sha256": treatment.get("input_candidate_sha256"),
-            "context": treatment.get("acquired_context"),
-            "continuation_objective": (
-                treatment.get("continuation_objective")
-                if status == "completed_new_context"
-                else (treatment_runtime.get("complete_system_closed_book") or {}).get(
-                    "objective"
-                )
-            ),
-            "compute_receipt": treatment.get("compute"),
-        }
-    except (TypeError, ValueError):
-        return ["resource_control_treatment_acquisition_invalid"]
-    issues: list[str] = []
-    if control.get("status") != "replayed_identically":
-        issues.append("resource_control_acquisition_not_replayed")
-    for field, expected in comparisons.items():
-        if control.get(field) != expected:
-            issues.append(f"resource_control_treatment_{field}_mismatch")
-    return issues
+    return ["resource_control_independent_acquisition_arm_absent"]
 
 
 class _OracleTaskVerifier:
@@ -2297,10 +2344,12 @@ def main() -> int:
                         target_resource = complete_resource_by_task.get(task.task_id)
                         target_information = complete_information_by_task.get(task.task_id)
                         target_prompt = complete_prompt_by_task.get(task.task_id)
+                        paired_incumbent = incumbent_by_task.get(task.task_id)
                         if (
                             target_resource is None
                             or target_information is None
                             or target_prompt is None
+                            or paired_incumbent is None
                         ):
                             raise RuntimeError(
                                 "resource-dominating control treatment prerequisite is absent"
@@ -2325,6 +2374,12 @@ def main() -> int:
                                 task.task_id
                             ),
                             campaign_seed=args.seed,
+                            incumbent_text=str(
+                                incumbent_artifact_to_value(paired_incumbent).get(
+                                    "text"
+                                )
+                                or ""
+                            ),
                         )
                     elif config is None:
                         prompt_tokens = _render_prompt(tokenizer, task)

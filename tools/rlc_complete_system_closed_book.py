@@ -206,6 +206,183 @@ def _run_closed_book_sample(
     return text, ledger.to_receipt()
 
 
+def _run_equal_tool_ordinary_control(
+    model: Any,
+    tokenizer: Any,
+    *,
+    task: Any,
+    incumbent_text: str,
+    max_tokens: int,
+    campaign_seed: int,
+    cycle_index: int,
+) -> tuple[str, dict[str, Any], int, dict[str, Any]]:
+    """Run the treatment's executable amplifier without latent recurrence.
+
+    This is the equal-tool ordinary ablation used by the resource-dominating
+    control.  It starts from the paired vanilla answer, uses only the public
+    objective and response contract, and exposes the same sandboxed executable
+    reasoning affordance as the complete treatment.  No treatment candidate,
+    tool output, latent state, memory, retrieval result, or answer key crosses
+    into this path.
+    """
+
+    if not str(incumbent_text).strip():
+        raise ValueError("equal-tool control requires the paired vanilla incumbent")
+
+    from core.brain.llm.latent_cortex.resource_accounting import ResourceLedger
+    from core.brain.llm.latent_cortex.task_verifiers import EpisodeTaskVerifier
+    from core.brain.reasoning_amplifier_v2 import (
+        AmplificationRequest,
+        ReasoningAmplifierV2,
+    )
+    from tools import run_rlc_reconciliation_sweep as sweep
+
+    objective = str(task.public.prompt)
+    response_contract = str(task.public.response_contract)
+    domain = str(task.domain or "general")
+    generation_calls = 0
+    generation_resources: list[dict[str, Any]] = []
+
+    async def generate(prompt: str, temperature: float) -> str:
+        nonlocal generation_calls
+        call_index = generation_calls
+        generation_calls += 1
+        text, resource = _run_closed_book_sample(
+            model,
+            tokenizer,
+            prompt,
+            max_tokens=max_tokens,
+            temperature=temperature,
+            seed=sweep._equal_compute_seed(
+                campaign_seed,
+                task.task_id,
+                10_000 + cycle_index * 100 + call_index,
+            ),
+        )
+        generation_resources.append(resource)
+        return text
+
+    amplifier_verifier = EpisodeTaskVerifier(
+        objective,
+        response_contract=response_contract,
+    )
+    verifier_registry = _ClosedBookVerifierRegistry(
+        amplifier_verifier,
+        domain=domain,
+    )
+    amplified = asyncio.run(
+        ReasoningAmplifierV2(generate, verifier=verifier_registry).amplify(
+            AmplificationRequest(
+                objective=objective,
+                task_type=_task_type_for_domain(domain),
+                time_budget_s=900.0,
+                sample_budget=3,
+                context={
+                    "seed_candidates": [str(incumbent_text).strip()],
+                    "read_only_evaluation": True,
+                    "sealed_evaluation": True,
+                    "skip_evidence": True,
+                    "skip_cache": True,
+                    "skip_precompute_enqueue": True,
+                    "disable_batched_candidates": True,
+                    "generation_max_tokens": max_tokens,
+                    "response_contract": response_contract,
+                    "enable_executable_reasoning": True,
+                },
+            )
+        )
+    )
+    amplifier_candidate = str(amplified.source_answer or "").strip()
+    candidate_verifier = EpisodeTaskVerifier(
+        objective,
+        response_contract=response_contract,
+    )
+    candidate_evaluation = candidate_verifier.evaluate(
+        amplifier_candidate,
+        _record=False,
+    )
+    candidate_quality = _candidate_quality_assessment(candidate_evaluation)
+    if bool(amplified.verified) != bool(candidate_quality["proxy_admitted"]):
+        raise ValueError("equal-tool amplifier verdict is not reconstructible")
+
+    candidate_sha256 = hashlib.sha256(amplifier_candidate.encode()).hexdigest()
+    consensus_programs = {
+        str(operation.get("program_sha256") or "")
+        for operation in amplified.receipt.cognitive_operations
+        if operation.get("status") == "candidate_ready"
+        and operation.get("candidate_sha256") == candidate_sha256
+        and operation.get("program_sha256")
+    }
+    consensus_strategies = {
+        str(operation.get("strategy") or "")
+        for operation in amplified.receipt.cognitive_operations
+        if operation.get("status") == "candidate_ready"
+        and operation.get("candidate_sha256") == candidate_sha256
+        and operation.get("strategy")
+    }
+    if candidate_quality["exact_public_objective_proof"]:
+        authority = "public_objective_deterministic_execution"
+    elif len(consensus_programs) >= 2 and len(consensus_strategies) >= 2:
+        authority = "independent_executable_consensus"
+    else:
+        authority = "candidate_quality_proxy_not_ground_truth"
+    final_text, promotion = _promotion_assessment(
+        verifier=EpisodeTaskVerifier(
+            objective,
+            response_contract=response_contract,
+        ),
+        incumbent_text=str(incumbent_text).strip(),
+        candidate_text=amplifier_candidate,
+        candidate_verified=bool(candidate_quality["proxy_admitted"]),
+        authority=authority,
+    )
+
+    ledger = ResourceLedger.aggregate(generation_resources)
+    verification_input_bytes = (
+        verifier_registry.input_bytes
+        + len(amplifier_candidate.encode("utf-8"))
+        + len(str(incumbent_text).encode("utf-8"))
+    )
+    verification_calls = verifier_registry.calls + 2
+    ledger.charge(
+        "equal_tool_verification_and_promotion",
+        verifier_calls=verification_calls,
+        verifier_input_bytes=verification_input_bytes,
+        verifier_output_bytes=verifier_registry.output_bytes + verification_calls * 8,
+        host_scalar_ops=max(1, verification_input_bytes * 4),
+    )
+    executable_operations = _charge_executable_operations(
+        ledger,
+        amplified.receipt.cognitive_operations,
+        prefix="equal_tool_executable_reasoning",
+    )
+    resource = ledger.to_receipt()
+    generated_tokens = sum(
+        int(item["totals"]["output_head_tokens"]) for item in generation_resources
+    )
+    receipt = {
+        "schema": "aura.rlc.equal_tool_ordinary_control.v1",
+        "task_id": str(task.task_id),
+        "cycle_index": int(cycle_index),
+        "answer_key_used": False,
+        "latent_recurrence_used": False,
+        "seed_source": "paired_vanilla_incumbent",
+        "seed_sha256": hashlib.sha256(
+            str(incumbent_text).strip().encode("utf-8")
+        ).hexdigest(),
+        "generation_calls": generation_calls,
+        "generated_tokens": generated_tokens,
+        "candidate_sha256": candidate_sha256,
+        "final_text_sha256": hashlib.sha256(final_text.encode()).hexdigest(),
+        "candidate_quality": candidate_quality,
+        "promotion": promotion,
+        "executable_operations": executable_operations,
+        "amplifier_receipt": amplified.receipt.to_dict(),
+        "resource_accounting_sha256": resource["receipt_sha256"],
+    }
+    return final_text, resource, generated_tokens, receipt
+
+
 def _promotion_assessment(
     *,
     verifier: Any,
@@ -318,6 +495,54 @@ def _aggregate_complete_system_resources(
     for index, receipt in enumerate(amplifier_resources):
         merge(receipt, prefix=f"amplifier_{index}", resolve_incumbent=False)
     return ledger
+
+
+def _charge_executable_operations(
+    ledger: Any,
+    operations: list[dict[str, Any]] | tuple[dict[str, Any], ...],
+    *,
+    prefix: str,
+) -> list[dict[str, Any]]:
+    """Meter only sandbox invocations, using byte-accurate program input."""
+
+    recorded: list[dict[str, Any]] = []
+    for index, operation in enumerate(operations):
+        if operation.get("schema") != "aura.executable_reasoning.v1":
+            continue
+        sandbox = operation.get("sandbox")
+        program_bytes = operation.get("program_bytes")
+        if (
+            not isinstance(sandbox, dict)
+            or isinstance(program_bytes, bool)
+            or not isinstance(program_bytes, int)
+            or program_bytes <= 0
+        ):
+            continue
+        result_bytes = int(sandbox.get("stdout_total_bytes") or 0) + int(
+            sandbox.get("stderr_total_bytes") or 0
+        )
+        ledger.charge(
+            f"{prefix}_{index}",
+            tool_calls=1,
+            tool_input_bytes=program_bytes,
+            tool_result_bytes=result_bytes,
+            host_scalar_ops=max(1, program_bytes + result_bytes),
+        )
+        recorded.append(
+            {
+                "program_sha256": str(operation.get("program_sha256") or ""),
+                "candidate_sha256": str(operation.get("candidate_sha256") or ""),
+                "strategy": str(operation.get("strategy") or ""),
+                "program_bytes": program_bytes,
+                "result_bytes": result_bytes,
+                "sandbox_ok": sandbox.get("ok") is True,
+                "network_denied": (sandbox.get("isolation") or {}).get(
+                    "network_denied"
+                )
+                is True,
+            }
+        )
+    return recorded
 
 
 def _contextual_continuation_objective(
@@ -672,21 +897,11 @@ def _run_complete_system_closed_book(
         verifier_output_bytes=(verifier_registry.output_bytes + verifier_calls * 8),
         host_scalar_ops=max(1, verifier_input_bytes * 4),
     )
-    for index, operation in enumerate(amplified.receipt.cognitive_operations):
-        if operation.get("schema") != "aura.executable_reasoning.v1":
-            continue
-        sandbox = operation.get("sandbox") or {}
-        program_chars = int(operation.get("program_chars") or 0)
-        result_bytes = int(sandbox.get("stdout_total_bytes") or 0) + int(
-            sandbox.get("stderr_total_bytes") or 0
-        )
-        complete_ledger.charge(
-            f"executable_reasoning_{index}",
-            tool_calls=1,
-            tool_input_bytes=program_chars,
-            tool_result_bytes=result_bytes,
-            host_scalar_ops=max(1, program_chars + result_bytes),
-        )
+    _charge_executable_operations(
+        complete_ledger,
+        amplified.receipt.cognitive_operations,
+        prefix="executable_reasoning",
+    )
     if acquisition_evidence.get("request") and acquisition_evidence.get("compute"):
         request_bytes = len(
             json.dumps(

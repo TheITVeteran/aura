@@ -114,6 +114,28 @@ async def test_receipt_is_complete(tmp_path):
         assert key in d
 
 
+def test_receipt_serialization_preserves_all_bounded_cognitive_operations():
+    from core.brain.reasoning_amplifier_v2 import ReasoningReceipt
+
+    receipt = ReasoningReceipt(
+        mode="normal",
+        strategy_used="fixture",
+        task_type="math",
+        num_candidates=8,
+        verifiers_run=[],
+        valid_candidates=0,
+        winning_candidate_id=None,
+        confidence=0.0,
+        agreement=0.0,
+        epistemic_status="unverified",
+        cognitive_operations=[{"index": index} for index in range(8)],
+    )
+
+    assert receipt.to_dict()["cognitive_operations"] == [
+        {"index": index} for index in range(8)
+    ]
+
+
 @pytest.mark.asyncio
 async def test_read_only_evaluation_cannot_train_on_or_cache_its_items(
     tmp_path,

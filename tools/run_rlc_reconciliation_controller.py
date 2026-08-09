@@ -94,6 +94,29 @@ def _read_json(path: Path, *, role: str) -> dict[str, Any]:
     return value
 
 
+def _terminal_verdict(path: Path) -> dict[str, Any] | None:
+    """Return a verdict only when the scientific sweep finished its coverage.
+
+    The sweep deliberately writes interim verdicts after durable cells so an
+    interrupted campaign remains inspectable.  File existence therefore says
+    evidence is available, not that the campaign is complete.
+    """
+
+    if not path.is_file():
+        return None
+    verdict = _read_json(path, role="sweep_verdict")
+    decision = verdict.get("decision")
+    if (
+        verdict.get("coverage_complete") is not True
+        or verdict.get("arms_complete") is not True
+        or not isinstance(decision, str)
+        or not decision.strip()
+        or decision == "inconclusive_campaign_incomplete"
+    ):
+        return None
+    return verdict
+
+
 def _append_event(path: Path, document: Mapping[str, Any]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
     with path.open("a", encoding="utf-8") as sink:
@@ -963,11 +986,11 @@ def run(config_path: Path, *, launchd_supervised: bool = False) -> int:
         events_path = root / "controller_attempts.jsonl"
         heartbeat_path = root / "controller_heartbeat.json"
         for attempt in range(1, int(config["max_attempts"]) + 1):
-            if (Path(str(config["out_dir"])) / "verdict.json").is_file():
-                _write_status(config, phase="complete", attempt=attempt - 1)
-                return 0
             if (Path(str(config["out_dir"])) / "YIELD").exists():
                 _write_status(config, phase="yielded", attempt=attempt - 1)
+                return 0
+            if _terminal_verdict(Path(str(config["out_dir"])) / "verdict.json"):
+                _write_status(config, phase="complete", attempt=attempt - 1)
                 return 0
             _source_is_current(config)
             command = _sweep_command(config)
@@ -1045,11 +1068,11 @@ def run(config_path: Path, *, launchd_supervised: bool = False) -> int:
                     **snapshot,
                 },
             )
-            if (Path(str(config["out_dir"])) / "verdict.json").is_file():
-                _write_status(config, phase="complete", attempt=attempt, **snapshot)
-                return 0
             if returncode == 4 or (Path(str(config["out_dir"])) / "YIELD").exists():
                 _write_status(config, phase="yielded", attempt=attempt, **snapshot)
+                return 0
+            if _terminal_verdict(Path(str(config["out_dir"])) / "verdict.json"):
+                _write_status(config, phase="complete", attempt=attempt, **snapshot)
                 return 0
             if attempt < int(config["max_attempts"]):
                 _write_status(

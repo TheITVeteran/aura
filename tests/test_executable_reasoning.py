@@ -132,6 +132,7 @@ async def test_model_authored_program_becomes_bounded_candidate() -> None:
     assert result.receipt["status"] == "candidate_ready"
     assert result.receipt["contract_valid"] is True
     assert result.receipt["program_chars"] > 0
+    assert result.receipt["program_bytes"] == len(b"print('private source')")
     serialized = json.dumps(result.receipt)
     assert "private source" not in serialized
     assert "authoring a self-contained pure-Python scratch program" in prompts[0]
@@ -185,6 +186,9 @@ async def test_failed_program_is_withheld_from_disjoint_restart() -> None:
     assert result.receipt["generation_calls"] == 2
     assert result.receipt["attempts"][0]["status"] == "execution_failed"
     assert result.receipt["attempts"][1]["status"] == "executed"
+    assert result.receipt["attempts"][0]["program_bytes"] == len(
+        first_source.encode("utf-8")
+    )
     assert first_source not in prompts[1]
     assert "AssertionError: anchoring literal" not in prompts[1]
     assert "sandbox_execution_failed:AssertionError" in prompts[1]
@@ -488,3 +492,4 @@ async def test_no_execution_constraint_uses_ordinary_candidate(tmp_path) -> None
     assert result.source_answer == "The function returns 4."
     assert sandbox.calls == 0
     assert result.receipt.cognitive_operations[0]["status"] == "not_applicable"
+    assert result.receipt.cognitive_operations[0]["program_bytes"] == 0

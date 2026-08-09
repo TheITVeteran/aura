@@ -259,7 +259,10 @@ class ReasoningReceipt:
             "budget_used": self.budget_used,
             "fallbacks_used": self.fallbacks_used,
             "guards_applied": self.guards_applied[:6],
-            "cognitive_operations": [dict(item) for item in self.cognitive_operations[:6]],
+            # Operations are budget-bounded and form part of scientific resource
+            # accounting. Truncating them made receipts unable to reconstruct
+            # real sandbox use after the sixth operation.
+            "cognitive_operations": [dict(item) for item in self.cognitive_operations],
         }
 
 

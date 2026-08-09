@@ -372,6 +372,7 @@ async def derive_executable_candidate(
         "response_contract_sha256": _sha256(str(response_contract or "")),
         "generation_calls": 0,
         "program_chars": 0,
+        "program_bytes": 0,
         "program_sha256": "",
         "candidate_chars": 0,
         "candidate_sha256": "",
@@ -461,6 +462,7 @@ async def derive_executable_candidate(
                     "status": "duplicate_program_rejected",
                     "program_sha256": program_sha256,
                     "program_chars": len(program),
+                    "program_bytes": len(program.encode("utf-8")),
                 }
             )
             continue
@@ -474,6 +476,7 @@ async def derive_executable_candidate(
                     "status": "sandbox_failed",
                     "program_sha256": _sha256(program),
                     "program_chars": len(program),
+                    "program_bytes": len(program.encode("utf-8")),
                 }
             )
             break
@@ -489,6 +492,7 @@ async def derive_executable_candidate(
                 "status": attempt_status,
                 "program_sha256": _sha256(program),
                 "program_chars": len(program),
+                "program_bytes": len(program.encode("utf-8")),
                 "sandbox": execution_receipt,
             }
         )
@@ -531,6 +535,7 @@ async def derive_executable_candidate(
         "status": status,
         "generation_calls": generation_calls,
         "program_chars": len(program),
+        "program_bytes": len(program.encode("utf-8")),
         "program_sha256": _sha256(program),
         "candidate_chars": len(candidate),
         "candidate_sha256": _sha256(candidate) if candidate else "",

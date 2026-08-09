@@ -40921,3 +40921,46 @@ remain evidence, but its resource-dominating control was found unable to satisfy
 nonzero treatment tool counters and was yielded before wasting its 128-sample
 ceiling. No reasoning-gain, frontier, fusion, activation, or `WOW Signal` claim is
 made. The completion envelope remains `809/920` (approximately `87.9%`).
+
+## Checkpoint 2026-08-09-103: The Ordinary Control Receives Real Tool Work
+
+The preserved CP100 campaign produced an encouraging but incomplete ordering:
+ordinary decode scored `1/7`, preliminary best-of-three scored `2/7`, and the
+complete closed-book system scored `3/7`, with no vanilla-right/system-wrong
+regression. Its fourth arm could never close, however. The complete system had
+performed real sandboxed executable reasoning while the supposed
+resource-dominating ordinary arm could only generate more text. Its tool counters
+therefore remained zero, so the frozen runner could consume all 128 samples and
+still fail the coordinate-wise resource certificate. The campaign was yielded at
+`21/28` cells before that happened. Those cells remain unmodified historical
+evidence; its incomplete `verdict.json` is not a terminal scientific result.
+
+The lifecycle controller now requires complete coverage, complete arms, and a
+non-incomplete decision before accepting a verdict, and a yield request takes
+precedence over a stale interim verdict. The scientific runner gives the ordinary
+arm an independent equal-tool executable search from the paired vanilla incumbent,
+using the same resident checkpoint, public objective, response contract, local
+verifier, sandbox isolation, and deterministic seed schedule without treatment
+text, tool output, latent state, memory, retrieval, or answer-key access.
+
+Resource accounting now charges only an operation that actually entered the
+sandbox. It counts UTF-8 program bytes and real result bytes; refused, failed, or
+timed-out sandbox invocations remain work, while not-applicable and pre-sandbox
+failures count zero. The equal-tool loop is derived from the measured call deficit
+and the campaign sample budget, aborts after two cycles without sandbox progress,
+and rejects impossible external-model targets before model generation. Treatment
+acquisition evidence can no longer be replayed into the control. That future task
+class requires its own independently generated same-policy acquisition arm.
+Scientific reasoning receipts also preserve every budget-bounded cognitive
+operation instead of truncating reconstructible tool evidence after six entries.
+
+Focused controller, resource-control, and executable-reasoning contracts pass
+`113/113`; the expanded proof set passes `108/108`; canonical smoke passes
+`103/103`; Ruff, Python byte compilation, and diff hygiene pass. Evidence is
+`artifacts/closeout/latent_cortex/cp103_resource_control_repair.json`.
+
+The next gate is a fresh immutable-source four-arm resident-32B pilot. The old
+`1/7 -> 2/7 -> 3/7` ordering is a positive tea leaf, not a verdict. No reasoning
+gain, frontier performance, fusion authority, activation authority, or
+`WOW Signal` is claimed, and the completion envelope remains `809/920`
+(approximately `87.9%`).

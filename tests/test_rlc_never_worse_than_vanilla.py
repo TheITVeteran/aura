@@ -94,8 +94,13 @@ def test_the_ablation_is_allowed_to_break_the_floor():
 
 def test_every_arm_declares_which_side_of_the_floor_it_is_on():
     """No arm may be ambiguous about whether it is bounded below by vanilla."""
-    bounded = {"full", "full_oracle"}
-    unbounded = {"mechanism", "ordinary", "ordinary_best_of_3"}
+    bounded = {"complete_closed_book", "full", "full_oracle"}
+    unbounded = {
+        "mechanism",
+        "ordinary",
+        "ordinary_best_of_3",
+        "ordinary_resource_dominating",
+    }
     for arm in sweep.ARMS:
         assert arm.profile in bounded | unbounded, arm
 

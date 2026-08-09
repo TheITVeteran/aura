@@ -207,14 +207,17 @@ def test_resource_dominating_control_spends_until_every_target_dimension_is_met(
     target = ResourceLedger(profile)
     target.charge(
         "target",
-        transformer_layer_apps=20,
-        attention_query_key_pairs=20,
-        output_head_tokens=2,
-        tensor_element_reads=20,
-        tensor_element_writes=20,
-        verifier_calls=2,
+        transformer_layer_apps=40,
+        attention_query_key_pairs=40,
+        output_head_tokens=4,
+        tensor_element_reads=40,
+        tensor_element_writes=40,
+        verifier_calls=4,
         verifier_input_bytes=2,
         verifier_output_bytes=2,
+        tool_calls=2,
+        tool_input_bytes=8,
+        tool_result_bytes=2,
     )
     encoded_tokens = b"[1]"
     evidence_payload = json.dumps(
@@ -303,7 +306,53 @@ def test_resource_dominating_control_spends_until_every_target_dimension_is_met(
 
     monkeypatch.setattr(sweep, "_run_vanilla", fake_vanilla)
     monkeypatch.setattr(sweep, "_episode_verifier", lambda task: FakeVerifier())
-    task = SimpleNamespace(task_id="task-a", domain="fixture")
+    from tools import rlc_complete_system_closed_book as complete_system
+
+    def fake_equal_tool_control(*args, cycle_index, task, **kwargs):
+        ledger = ResourceLedger(profile)
+        ledger.charge(
+            "equal_tool",
+            transformer_layer_apps=10,
+            attention_query_key_pairs=10,
+            output_head_tokens=1,
+            tensor_element_reads=10,
+            tensor_element_writes=10,
+            tool_calls=1,
+            tool_input_bytes=4,
+            tool_result_bytes=1,
+        )
+        resource = ledger.to_receipt()
+        text = f'FINAL_ANSWER: {{"value":{10 + cycle_index}}}'
+        receipt = {
+            "schema": "aura.rlc.equal_tool_ordinary_control.v1",
+            "task_id": task.task_id,
+            "cycle_index": cycle_index,
+            "answer_key_used": False,
+            "latent_recurrence_used": False,
+            "generated_tokens": 1,
+            "final_text_sha256": hashlib.sha256(text.encode()).hexdigest(),
+            "executable_operations": [
+                {
+                    "program_bytes": 4,
+                    "result_bytes": 1,
+                    "sandbox_ok": True,
+                    "network_denied": True,
+                }
+            ],
+            "resource_accounting_sha256": resource["receipt_sha256"],
+        }
+        return text, resource, 1, receipt
+
+    monkeypatch.setattr(
+        complete_system,
+        "_run_equal_tool_ordinary_control",
+        fake_equal_tool_control,
+    )
+    task = SimpleNamespace(
+        task_id="task-a",
+        domain="fixture",
+        public=SimpleNamespace(prompt="fixture", response_contract='{"value":int}'),
+    )
     text, resource, observed_information, certificate, samples, generated, receipt = (
         sweep._run_vanilla_resource_dominating(
             SimpleNamespace(),
@@ -315,17 +364,21 @@ def test_resource_dominating_control_spends_until_every_target_dimension_is_met(
             target_information=information,
             treatment_acquisition=None,
             campaign_seed=7,
-            max_samples=4,
+            incumbent_text='FINAL_ANSWER: {"value":0}',
+            max_samples=6,
         )
     )
 
-    assert calls == samples == generated == 2
+    assert calls == 2
+    assert samples == generated == 4
+    assert receipt["equal_tool_cycle_count"] == 2
     assert text == 'FINAL_ANSWER: {"value":2}'
     assert resource["estimated_flops"] >= target.to_receipt()["estimated_flops"]
     assert observed_information == information
     assert certificate["admitted"] is True
-    assert receipt["selected_index"] == 1
-    assert receipt["sample_count"] == 2
+    assert receipt["selected_index"] == 3
+    assert receipt["sample_count"] == 4
+    assert receipt["equal_tool_cycle_limit"] == 4
     mismatched_sources = [dict(source) for source in information["sources"]]
     prompt_source = next(
         source
@@ -418,7 +471,23 @@ def test_resource_dominating_control_spends_until_every_target_dimension_is_met(
     ]
 
 
-def test_resource_control_replays_treatment_symbolic_context(monkeypatch, tmp_path: Path):
+def test_equal_tool_cycle_plan_is_target_derived_and_rejects_impossible_bytes():
+    setup = {"totals": {"tool_calls": 0, "tool_input_bytes": 0, "tool_result_bytes": 0}}
+    target = {"totals": {"tool_calls": 3, "tool_input_bytes": 9, "tool_result_bytes": 4}}
+
+    assert sweep._equal_tool_cycle_limit(setup, target, max_samples=12) == 5
+    assert sweep._equal_tool_cycle_limit(setup, target, max_samples=4) == 4
+
+    impossible = {
+        "totals": {"tool_calls": 0, "tool_input_bytes": 1, "tool_result_bytes": 0}
+    }
+    with pytest.raises(RuntimeError, match="without a measured tool call"):
+        sweep._equal_tool_cycle_limit(setup, impossible, max_samples=4)
+
+
+def test_resource_control_refuses_treatment_derived_symbolic_context(
+    monkeypatch, tmp_path: Path
+):
     from core.brain import cortex_compute_acquisition
     from core.brain.llm.latent_cortex.resource_accounting import (
         ModelComputeProfile,
@@ -581,148 +650,19 @@ def test_resource_control_replays_treatment_symbolic_context(monkeypatch, tmp_pa
             continuation_objective.encode()
         ).hexdigest(),
     }
-    result = sweep._run_vanilla_resource_dominating(
-        SimpleNamespace(),
-        tokenizer,
-        [11, 12, 13],
-        32,
-        task=task,
-        target_resource=target.to_receipt(),
-        target_information=information,
-        treatment_acquisition=acquisition,
-        campaign_seed=9,
-        max_samples=2,
-    )
-    receipt = result[-1]
-    assert receipt["control_acquisition"]["status"] == "replayed_identically"
-    assert receipt["resource_accounting"]["totals"]["tool_calls"] == 1
-    path, digest = sweep._persist_runtime_receipt(
-        tmp_path,
-        arm=sweep.RESOURCE_DOMINATING_CONTROL_ARM,
-        task_id=task.task_id,
-        receipt=receipt,
-    )
-    cell = {
-        "runtime_receipt_path": path,
-        "runtime_receipt_sha256": digest,
-        "resource_accounting": result[1],
-        "information_accounting": result[2],
-        "resource_dominance_certificate": result[3],
-        "text": result[0],
-    }
-    assert sweep._resource_dominating_control_receipt_issues(
-        tmp_path,
-        cell,
-        task=task,
-    ) == []
-    treatment_path, treatment_digest = sweep._persist_runtime_receipt(
-        tmp_path,
-        arm="complete_system_closed_book",
-        task_id=task.task_id,
-        receipt={
-            "complete_system_closed_book": {
-                "objective": objective,
-                "cognitive_acquisition": acquisition,
-            }
-        },
-    )
-    treatment_cell = {
-        "runtime_receipt_path": treatment_path,
-        "runtime_receipt_sha256": treatment_digest,
-    }
-    assert sweep._resource_control_treatment_acquisition_issues(
-        tmp_path,
-        treatment_cell,
-        cell,
-    ) == []
-
-    async def fake_empty_acquire(**kwargs):
-        return SimpleNamespace(context=(), receipt=compute_receipt)
-
-    empty_tokens = b"[7,8]"
-    empty_sources = [dict(source) for source in information["sources"]]
-    empty_prompt_source = next(
-        source
-        for source in empty_sources
-        if source["source_id"] == "rendered_model_input"
-    )
-    empty_prompt_source.update(
-        {
-            "content_sha256": hashlib.sha256(empty_tokens).hexdigest(),
-            "byte_count": len(empty_tokens),
-            "token_count": 2,
-        }
-    )
-    empty_information = build_information_receipt(
-        sources=empty_sources,
-        policies=information["policies"],
-    )
-    monkeypatch.setattr(
-        cortex_compute_acquisition,
-        "acquire_cognitive_compute",
-        fake_empty_acquire,
-    )
-    empty_result = sweep._run_vanilla_resource_dominating(
-        SimpleNamespace(),
-        tokenizer,
-        [7, 8],
-        32,
-        task=task,
-        target_resource=target.to_receipt(),
-        target_information=empty_information,
-        treatment_acquisition={
-            "status": "completed_no_new_context",
-            "request": {"action": "formalize"},
-            "timeout_s": 12.0,
-            "input_candidate": "candidate",
-            "input_candidate_sha256": hashlib.sha256(b"candidate").hexdigest(),
-            "acquired_context": [],
-        },
-        campaign_seed=10,
-        max_samples=2,
-    )
-    assert empty_result[-1]["control_acquisition"]["treatment_status"] == (
-        "completed_no_new_context"
-    )
-    empty_path, empty_digest = sweep._persist_runtime_receipt(
-        tmp_path,
-        arm=sweep.RESOURCE_DOMINATING_CONTROL_ARM,
-        task_id="task-empty",
-        receipt=empty_result[-1],
-    )
-    empty_cell = {
-        "runtime_receipt_path": empty_path,
-        "runtime_receipt_sha256": empty_digest,
-        "resource_accounting": empty_result[1],
-        "information_accounting": empty_result[2],
-        "resource_dominance_certificate": empty_result[3],
-        "text": empty_result[0],
-    }
-    assert sweep._resource_dominating_control_receipt_issues(
-        tmp_path,
-        empty_cell,
-        task=task,
-    ) == []
-
-    no_tool_target = ResourceLedger(profile)
-    no_tool_target.charge("treatment", transformer_layer_apps=1)
-    withheld = sweep._run_vanilla_resource_dominating(
-        SimpleNamespace(),
-        tokenizer,
-        [7, 8],
-        32,
-        task=task,
-        target_resource=no_tool_target.to_receipt(),
-        target_information=empty_information,
-        treatment_acquisition={
-            "status": "withheld_by_closed_book_contract",
-            "request": {"action": "retrieve_evidence"},
-        },
-        campaign_seed=11,
-        max_samples=2,
-    )
-    assert withheld[-1]["control_acquisition"]["status"] == "not_required"
-    assert withheld[-1]["setup_resource_accounting"]["totals"]["tool_calls"] == 0
+    with pytest.raises(RuntimeError, match="treatment-derived acquisition"):
+        sweep._run_vanilla_resource_dominating(
+            SimpleNamespace(),
+            tokenizer,
+            [11, 12, 13],
+            32,
+            task=task,
+            target_resource=target.to_receipt(),
+            target_information=information,
+            treatment_acquisition=acquisition,
+            campaign_seed=9,
+            max_samples=2,
+        )
 
 
 def test_decode_identity_binds_committed_task_difficulty():
@@ -1725,24 +1665,29 @@ def test_complete_system_can_earn_a_conservative_resource_advantaged_win(
                     "schema": "aura.rlc.resource_dominating_control.v1",
                     "task_id": task.task_id,
                     "campaign_seed": 7,
-                    "sample_limit": 1,
-                    "sample_count": 1,
-                    "generated_tokens": 1,
+                        "sample_limit": 1,
+                        "sample_count": 1,
+                        "equal_tool_cycle_count": 0,
+                        "equal_tool_cycle_limit": 0,
+                        "generated_tokens": 1,
                     "setup_resource_accounting": control_setup,
                     "control_acquisition": {
                         "schema": "aura.rlc.resource_control_acquisition.v1",
                         "status": "not_required",
                     },
                     "candidates": [
-                        {
-                            "sample_index": 0,
-                            "text": wrong,
+                            {
+                                "sample_index": 0,
+                                "control_path": "ordinary_sample",
+                                "text": wrong,
                             "text_sha256": hashlib.sha256(wrong.encode()).hexdigest(),
                             "verifier_score": verifier_score,
                             "verifier_receipt": verifier.to_receipt(),
-                            "resource_accounting": control.to_receipt(),
-                            "generated_tokens": 1,
-                        }
+                                "resource_accounting": control.to_receipt(),
+                                "equal_tool_resource_accounting": None,
+                                "generated_tokens": 1,
+                                "equal_tool_receipt": None,
+                            }
                     ],
                     "selected_index": 0,
                     "selected_text_sha256": hashlib.sha256(wrong.encode()).hexdigest(),
@@ -2334,6 +2279,69 @@ def test_complete_system_replaces_only_the_bound_incumbent_resource_placeholder(
             rlc_resources=[rlc_without_placeholder.to_receipt()],
             amplifier_resources=[amplifier.to_receipt()],
         )
+
+
+def test_executable_accounting_requires_a_real_sandbox_invocation_and_counts_bytes():
+    from core.brain.llm.latent_cortex.resource_accounting import (
+        ModelComputeProfile,
+        ResourceLedger,
+    )
+    from tools.rlc_complete_system_closed_book import (
+        _charge_executable_operations,
+    )
+
+    ledger = ResourceLedger(
+        ModelComputeProfile(
+            model_type="fixture",
+            hidden_size=8,
+            intermediate_size=16,
+            num_hidden_layers=2,
+            num_attention_heads=2,
+            num_key_value_heads=1,
+            vocab_size=32,
+            head_dim=4,
+        )
+    )
+    recorded = _charge_executable_operations(
+        ledger,
+        [
+            {
+                "schema": "aura.executable_reasoning.v1",
+                "status": "not_applicable",
+                "program_chars": 0,
+                "program_bytes": 0,
+            },
+            {
+                "schema": "aura.executable_reasoning.v1",
+                "status": "deadline_exhausted",
+                "program_chars": 0,
+                "program_bytes": 0,
+            },
+            {
+                "schema": "aura.executable_reasoning.v1",
+                "status": "sandbox_execution_failed",
+                "program_chars": 1,
+                "program_bytes": len("\u03c0".encode("utf-8")),
+                "program_sha256": "a" * 64,
+                "candidate_sha256": "",
+                "strategy": "direct",
+                "sandbox": {
+                    "ok": False,
+                    "stdout_total_bytes": 2,
+                    "stderr_total_bytes": 3,
+                    "isolation": {"network_denied": True},
+                },
+            },
+        ],
+        prefix="fixture",
+    )
+
+    receipt = ledger.to_receipt()
+    assert receipt["totals"]["tool_calls"] == 1
+    assert receipt["totals"]["tool_input_bytes"] == 2
+    assert receipt["totals"]["tool_result_bytes"] == 5
+    assert len(recorded) == 1
+    assert recorded[0]["program_bytes"] == 2
 
 
 def test_candidate_quality_separates_proxy_admission_from_exact_public_proof():

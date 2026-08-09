@@ -1,0 +1,46 @@
+{
+  "schema": "aura.closeout.checkpoint.v1",
+  "checkpoint": "CP103",
+  "title": "The ordinary control receives real independent tool work",
+  "date": "2026-08-09",
+  "invalidated_campaign": {
+    "campaign_id": "cp100-wow-pilot-recovery-20260809",
+    "source_commit": "6fc714b90a8b471d2f5b17e87c742a6c306c3675",
+    "preserved_cells": 21,
+    "planned_cells": 28,
+    "yielded": true,
+    "reason": "The frozen resource-dominating ordinary control could not produce treatment tool counters and would have exhausted 128 model samples without satisfying its certificate.",
+    "interim_scores": {
+      "vanilla": "1/7",
+      "preliminary_best_of_3": "2/7",
+      "complete_system_closed_book": "3/7",
+      "vanilla_resource_dominating": "0/7 not run"
+    },
+    "terminal_verdict": false
+  },
+  "implementation": {
+    "incomplete_verdict_is_nonterminal": true,
+    "yield_precedes_verdict_detection": true,
+    "ordinary_control_has_independent_equal_tool_path": true,
+    "paired_vanilla_incumbent_seeds_equal_tool_search": true,
+    "treatment_candidates_and_tool_outputs_are_isolated": true,
+    "treatment_acquisition_replay_is_forbidden": true,
+    "actual_sandbox_invocations_only_are_charged": true,
+    "tool_program_inputs_are_utf8_byte_accurate": true,
+    "failed_real_sandbox_calls_remain_charged": true,
+    "not_applicable_and_pre_sandbox_failures_charge_zero": true,
+    "equal_tool_cycle_limit_is_target_and_sample_budget_derived": true,
+    "two_cycle_no_progress_abort": true,
+    "unsupported_external_model_targets_fail_before_generation": true,
+    "scientific_cognitive_operations_are_not_truncated": true
+  },
+  "verification": {
+    "focused_controller_resource_and_reasoning_contracts": "113 passed",
+    "expanded_proof_contracts": "108 passed",
+    "smoke": "103 passed",
+    "ruff": "passed",
+    "python_compile": "passed",
+    "diff_check": "passed"
+  },
+  "claim_boundary": "The old 21 cells remain preserved historical evidence, not a complete campaign. Their positive ordering is an encouraging bounded signal only. A fresh immutable-source four-arm battery must complete before reasoning gain, frontier performance, fusion, activation, or WOW Signal can be claimed."
+}

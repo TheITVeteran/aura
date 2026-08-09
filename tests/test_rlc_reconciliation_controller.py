@@ -597,7 +597,11 @@ if not marker.exists():
     journal.write_text(json.dumps({'event': 'CELL', 'arm': 'vanilla', 'task_id': 'one'}) + '\\n')
     marker.write_text('durable')
     raise SystemExit(3)
-(out / 'verdict.json').write_text(json.dumps({'decision': 'synthetic-complete'}))
+(out / 'verdict.json').write_text(json.dumps({
+    'decision': 'synthetic-complete',
+    'coverage_complete': True,
+    'arms_complete': True,
+}))
 """.lstrip(),
         encoding="utf-8",
     )
@@ -653,3 +657,33 @@ if not marker.exists():
     status = json.loads((out / "controller_status.json").read_text())
     assert status["phase"] == "complete"
     assert (out / "sweep/first-attempt-complete").read_text() == "durable"
+
+
+def test_interim_verdict_is_not_terminal(tmp_path: Path):
+    verdict = tmp_path / "verdict.json"
+    verdict.write_text(
+        json.dumps(
+            {
+                "decision": "inconclusive_campaign_incomplete",
+                "coverage_complete": False,
+                "arms_complete": False,
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    assert controller._terminal_verdict(verdict) is None
+
+    verdict.write_text(
+        json.dumps(
+            {
+                "decision": "proceed_to_checkpoint_phase",
+                "coverage_complete": True,
+                "arms_complete": True,
+            }
+        ),
+        encoding="utf-8",
+    )
+    assert controller._terminal_verdict(verdict)["decision"] == (
+        "proceed_to_checkpoint_phase"
+    )
