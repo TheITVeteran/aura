@@ -30,6 +30,7 @@ from core.brain.llm.latent_cortex.recurrence_adapter_identity_v2 import (  # noq
 )
 from core.learning.grpo import group_advantages, reward_from_verdict  # noqa: E402
 from core.learning.recurrence_curriculum import task_battery  # noqa: E402
+from core.learning.recurrence_native_objective_v5 import derive_rollin_seed  # noqa: E402
 from core.learning.recurrent_behavioral_probe import (  # noqa: E402
     build_behavioral_probe_report,
     build_ordinary_decode_probe_report,
@@ -202,6 +203,24 @@ def _source_state() -> tuple[str, dict[str, dict[str, Any]]]:
 def _stable_seed(*parts: Any) -> int:
     material = "|".join(str(part) for part in parts).encode("utf-8")
     return int.from_bytes(hashlib.sha256(material).digest()[:4], "big")
+
+
+def _projection_rollin_seed(
+    *,
+    campaign_seed: int,
+    task_id: str,
+    sample_ordinal: int,
+    execution_spec_sha256: str,
+) -> int:
+    """Bind answer-projection roll-ins without extending the sealed phase enum."""
+
+    return derive_rollin_seed(
+        campaign_seed=campaign_seed,
+        phase="train",
+        example_id=f"joint-process-answer-projection:{task_id}",
+        sample_ordinal=sample_ordinal,
+        execution_spec_sha256=execution_spec_sha256,
+    )
 
 
 def _cyclic_task(tasks: list[Any], *, one_based_step: int) -> Any:
@@ -401,7 +420,6 @@ def run_canary(
     )
     from core.learning.recurrence_native_objective_v5 import (
         GeneratedRollinSelectionConfig,
-        derive_rollin_seed,
     )
     from core.learning.recurrence_native_objective_v6 import (
         COMPOSITE_DEPTH_RECEIPT_SCHEMA,
@@ -706,10 +724,9 @@ def run_canary(
                 steps=projection_steps,
                 task_id=row["task_id"],
             )
-            rollin_seed = derive_rollin_seed(
+            rollin_seed = _projection_rollin_seed(
                 campaign_seed=seed,
-                phase="joint_process_answer_projection",
-                example_id=row["task_id"],
+                task_id=row["task_id"],
                 sample_ordinal=projection_step,
                 execution_spec_sha256=spec.sha256,
             )

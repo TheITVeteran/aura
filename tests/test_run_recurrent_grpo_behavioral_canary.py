@@ -81,6 +81,34 @@ def test_stable_seed_binds_every_sampling_coordinate() -> None:
     assert first != canary._stable_seed(17, "grpo", 3, "task-a", 0)
 
 
+def test_projection_rollin_seed_uses_sealed_train_phase_with_domain_identity() -> None:
+    first = canary._projection_rollin_seed(
+        campaign_seed=17,
+        task_id="task-a",
+        sample_ordinal=1,
+        execution_spec_sha256="a" * 64,
+    )
+
+    assert first == canary._projection_rollin_seed(
+        campaign_seed=17,
+        task_id="task-a",
+        sample_ordinal=1,
+        execution_spec_sha256="a" * 64,
+    )
+    assert first != canary._projection_rollin_seed(
+        campaign_seed=17,
+        task_id="task-a",
+        sample_ordinal=2,
+        execution_spec_sha256="a" * 64,
+    )
+    assert first != canary._projection_rollin_seed(
+        campaign_seed=17,
+        task_id="task-b",
+        sample_ordinal=1,
+        execution_spec_sha256="a" * 64,
+    )
+
+
 def test_training_cycle_covers_every_task_before_repeating() -> None:
     tasks = task_battery(["boolean", "modular"], [2], 2, seed=31)
 

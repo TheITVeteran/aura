@@ -31,6 +31,7 @@ from core.learning.recurrence_native_objective_v2 import (
     _logits,
     _prepare_recurrent_prefix,
     cached_live_path_token_logprobs,
+    cached_supervised_live_path_value_and_grad,
     generate_cached_live_path_rollin,
     transformer_layer_group_checkpointing,
 )
@@ -1078,6 +1079,60 @@ def generated_rollin_live_path_value_and_grad(
         or weight_total <= 0.0
     ):
         raise ValueError("token loss weights must be finite and answer-aligned")
+
+    # With one branch and no generated-prefix positions, v5 is definitionally
+    # the v2 teacher-forced objective. Delegating that exact boundary avoids a
+    # second mathematically equivalent float32 adjoint accumulating different
+    # rounding error based on prior MLX allocator/RNG history.
+    if len(indices) == 1 and resolved.student_forcing_probability == 0.0:
+        branch_index = indices[0]
+        rollin, positions, branch_seed, generated_sha256 = _branch_rollin(
+            model,
+            prompt_tokens,
+            answer,
+            bridge,
+            spec=spec,
+            branch_index=branch_index,
+            base_seed=base_seed,
+            config=resolved,
+        )
+        if rollin != answer or positions:
+            raise RuntimeError("zero-forcing roll-in diverged from teacher tokens")
+        exact = cached_supervised_live_path_value_and_grad(
+            model,
+            prompt_tokens,
+            answer,
+            spec=spec,
+            bridge_tokens=bridge,
+            token_loss_weights=weights,
+            branch_indices=indices,
+        )
+        branch_value = float(exact.branch_values[0])
+        evaluation = GeneratedRollinLivePathEvaluation(
+            value=branch_value,
+            branches=(
+                GeneratedRollinBranchEvidence(
+                    branch_index=branch_index,
+                    branch_seed=branch_seed,
+                    loss=branch_value,
+                    selection_weight=1.0,
+                    generated_tokens_sha256=generated_sha256,
+                    effective_rollin_sha256=_sha256_tokens(rollin),
+                    student_forced_positions=positions,
+                ),
+            ),
+            answer_token_count=len(answer),
+            execution_spec_sha256=spec.sha256,
+            prompt_tokens_sha256=_sha256_tokens(prompt_tokens),
+            answer_tokens_sha256=_sha256_tokens(answer),
+            bridge_tokens_sha256=_sha256_tokens(bridge, allow_empty=True),
+            config=resolved,
+            base_seed=base_seed,
+        )
+        return GeneratedRollinLivePathResult(
+            evaluation=evaluation,
+            gradients=exact.gradients,
+        )
     weight_tensor = mx.array(weights, dtype=mx.float32)
 
     gradients_numerator: Any | None = None

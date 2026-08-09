@@ -212,7 +212,8 @@ def test_single_branch_zero_student_forcing_is_exact_v2_gradient():
     assert current.value == pytest.approx(legacy.value, abs=1e-6)
     assert current.branch_values == pytest.approx(legacy.branch_values, abs=1e-6)
     assert current.branch_weights == (1.0,)
-    assert _tree_max_difference(current.gradients, legacy.gradients) < 1e-6
+    assert current.evaluation.branches[0].student_forced_positions == ()
+    assert _tree_max_difference(current.gradients, legacy.gradients) == 0.0
 
 
 def test_decoder_adjoint_matches_full_tail_with_bridge_and_long_answer():

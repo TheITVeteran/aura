@@ -39401,3 +39401,35 @@ reasoning. Reasoning gain, frontier performance, fusion, activation, and
 `WOW Signal` remain false. The completion envelope remains `809/920`
 (approximately `87.9%`). A fresh source-bound 1.5B v3 canary must decide
 whether the joint objective earns a resident-scale campaign.
+
+## Checkpoint 2026-08-08-057: Projection Seeds Obey the Objective Protocol
+
+The first CP056 live canary completed trace bootstrap and all eight structural
+specialization updates, then failed before its first answer-projection forward
+pass. Objective v5 deliberately seals roll-in phases to `train` or
+`validation`; the joint canary had supplied a descriptive third phase name.
+No projection result, GRPO update, behavioral verdict, or model claim was
+produced from that interrupted run.
+
+Answer projection now uses the canonical `train` phase and domain-separates its
+seed through a prefixed example identity. A deterministic regression binds the
+campaign seed, exact task, sample ordinal, and execution-spec digest and proves
+that changing either task or ordinal changes the roll-in. This preserves the
+existing objective protocol instead of broadening its accepted phase surface.
+
+Reasoning gain, frontier performance, fusion, activation, and `WOW Signal`
+remain false. The completion envelope remains `809/920` (approximately
+`87.9%`). The v3 canary must restart from a fresh adapter because the failed
+run's partial structural updates have no checkpoint authority.
+
+The same bounded gate exposed an order-sensitive numerical defect in objective
+v5's declared exact-v2 boundary. A single branch with zero generated-prefix
+forcing was recomputed through a separate exact adjoint and could differ from
+v2 by several float32 ulps depending on prior MLX state. That configuration now
+delegates to the canonical v2 value and gradient while retaining its v5
+generated-sample and effective-roll-in commitments. The regression requires
+bit-identical gradients rather than relaxing its tolerance.
+
+Three independently randomized objective/canary test orders pass `32/32`
+each; canonical smoke passes `103/103`; Ruff, compilation, and diff hygiene
+pass.
