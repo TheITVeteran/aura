@@ -1,0 +1,47 @@
+{
+  "schema": "aura.closeout.rlc_adaptive_learnability.v1",
+  "checkpoint": "CP067",
+  "canary_schema": "aura.recurrent_grpo_behavioral_canary.v5",
+  "policy": "bounded_deterministic_same_family_disjoint_until_nonzero_advantage_v1",
+  "max_attempts_per_step_default": 4,
+  "invariants": {
+    "nominal_task_is_first": true,
+    "same_family": true,
+    "same_depth": true,
+    "process_projection_heldout_disjoint": true,
+    "prior_retry_disjoint": true,
+    "heldout_feedback_allowed": false,
+    "degenerate_group_mutates_policy": false,
+    "updates_per_nominal_step_max": 1,
+    "exhaustion_is_receipted": true
+  },
+  "source_binding_added": [
+    "core/brain/llm/latent_cortex/commitment_extraction.py",
+    "core/brain/llm/latent_cortex/commitment_ratchet.py",
+    "core/brain/llm/latent_cortex/commitment_telemetry.py",
+    "core/brain/llm/latent_cortex/sequential_exclusion.py"
+  ],
+  "verification": {
+    "focused_contracts": {
+      "passed": 85,
+      "failed": 0
+    },
+    "canonical_smoke": {
+      "passed": 103,
+      "failed": 0
+    },
+    "ruff": "pass",
+    "compile": "pass",
+    "diff_check": "pass"
+  },
+  "claim_state": {
+    "adaptive_curriculum_implemented": true,
+    "fresh_canary_required": true,
+    "adapter_training_gain_proven": false,
+    "recurrent_neural_gain_proven": false,
+    "resident_32b_gain_proven": false,
+    "frontier_level_proven": false,
+    "fusion_allowed": false,
+    "wow_signal_allowed": false
+  }
+}

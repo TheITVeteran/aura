@@ -146,6 +146,63 @@ def test_joint_curricula_resample_process_prompt_collisions() -> None:
     assert len({task.prompt for task in all_tasks}) == len(all_tasks)
 
 
+def test_learnability_search_is_deterministic_disjoint_and_same_stratum() -> None:
+    process, answer, proxy = canary._task_sets(2026080903)
+    base = process[0]
+    excluded = [*process, *answer, *proxy]
+
+    first = canary._learnability_task_candidates(
+        base,
+        campaign_seed=2026080903,
+        one_based_step=1,
+        max_attempts=4,
+        excluded_tasks=excluded,
+    )
+    second = canary._learnability_task_candidates(
+        base,
+        campaign_seed=2026080903,
+        one_based_step=1,
+        max_attempts=4,
+        excluded_tasks=excluded,
+    )
+
+    assert [task.task_id for task in first] == [task.task_id for task in second]
+    assert first[0] is base
+    assert len(first) == 4
+    assert {task.family for task in first} == {base.family}
+    assert {task.depth for task in first} == {base.depth}
+    assert len({task.task_id for task in [*excluded, *first[1:]]}) == (
+        len(excluded) + len(first) - 1
+    )
+    assert len({task.prompt for task in [*excluded, *first[1:]]}) == (
+        len(excluded) + len(first) - 1
+    )
+
+
+def test_learnability_search_coordinates_change_the_retry_window() -> None:
+    process, answer, proxy = canary._task_sets(2026080903)
+    excluded = [*process, *answer, *proxy]
+
+    first = canary._learnability_task_candidates(
+        process[0],
+        campaign_seed=2026080903,
+        one_based_step=1,
+        max_attempts=3,
+        excluded_tasks=excluded,
+    )
+    later = canary._learnability_task_candidates(
+        process[0],
+        campaign_seed=2026080903,
+        one_based_step=2,
+        max_attempts=3,
+        excluded_tasks=excluded,
+    )
+
+    assert [task.task_id for task in first[1:]] != [
+        task.task_id for task in later[1:]
+    ]
+
+
 def test_source_contract_binds_every_joint_objective() -> None:
     assert len(canary.SOURCE_PATHS) == len(set(canary.SOURCE_PATHS))
     assert "core/learning/recurrence_native_objective_v2.py" in canary.SOURCE_PATHS
@@ -153,6 +210,10 @@ def test_source_contract_binds_every_joint_objective() -> None:
     assert "core/learning/recurrence_native_objective_v6.py" in canary.SOURCE_PATHS
     assert "core/brain/llm/latent_cortex/incumbent_artifact.py" in canary.SOURCE_PATHS
     assert "core/brain/llm/latent_cortex/task_verifiers.py" in canary.SOURCE_PATHS
+    assert "core/brain/llm/latent_cortex/commitment_extraction.py" in canary.SOURCE_PATHS
+    assert "core/brain/llm/latent_cortex/commitment_ratchet.py" in canary.SOURCE_PATHS
+    assert "core/brain/llm/latent_cortex/commitment_telemetry.py" in canary.SOURCE_PATHS
+    assert "core/brain/llm/latent_cortex/sequential_exclusion.py" in canary.SOURCE_PATHS
 
 
 def test_complete_engine_probe_is_not_the_naked_latent_ablation() -> None:

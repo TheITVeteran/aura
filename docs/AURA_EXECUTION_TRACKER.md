@@ -39718,3 +39718,33 @@ Bounded verified-search gain is now proven. Adapter training gain, recurrent
 neural gain, resident-32B gain, frontier performance, fusion, activation, and
 `WOW Signal` remain false. The completion envelope remains `809/920`
 (approximately `87.9%`).
+
+## Checkpoint 2026-08-09-067: Zero-Variance Seeds Search for Learnable Signal
+
+The CP066 canary produced only two optimizer updates because six nominal GRPO
+groups had identical rewards. Repeating those groups cannot create a gradient,
+but silently treating the seed as saturated would confuse a sampled curriculum
+failure with a model-capacity limit.
+
+Each nominal step now commits a bounded deterministic window of up to four
+same-family, same-depth process tasks. Attempt one remains the original
+curriculum coordinate. A zero-variance group is receipted without mutation and
+the trainer advances to the next prederived task; the first nondegenerate group
+receives exactly one optimizer update. Exhausting all attempts remains explicit
+negative evidence. Retry tasks are disjoint by both identity and prompt from
+the process, answer-projection, held-out, and earlier retry sets. Held-out
+scores never influence generation or selection.
+
+The canary schema advances to v5 and its source identity now binds the live
+commitment extraction, ratchet, telemetry, and sequential-exclusion modules
+introduced by the new search architecture. Every attempt records its sampling
+coordinate, task and prompt identities, policy and adapter lineage, reward
+distribution, samples, rejection receipts, and whether it mutated the policy.
+
+Focused canary, commitment-ratchet, and sequential-exclusion contracts pass
+`85/85`; canonical smoke passes `103/103`; Ruff, compilation, and diff hygiene
+pass. A fresh published-source canary is still required to measure whether the
+larger learnability window produces more verified optimizer updates and whether
+the ratchet changes any held-out answer. No resident, frontier, fusion,
+activation, or `WOW Signal` claim advances. The completion envelope remains
+`809/920` (approximately `87.9%`).

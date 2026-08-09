@@ -68,7 +68,10 @@ from core.runtime.atomic_writer import atomic_write_bytes  # noqa: E402
 from core.runtime.mlx_memory_guard import mlx_memory_envelope  # noqa: E402
 from core.runtime.model_lane_control import standalone_model_lane  # noqa: E402
 
-CANARY_SCHEMA: Final = "aura.recurrent_grpo_behavioral_canary.v4"
+CANARY_SCHEMA: Final = "aura.recurrent_grpo_behavioral_canary.v5"
+LEARNABILITY_SEARCH_POLICY: Final = (
+    "bounded_deterministic_same_family_disjoint_until_nonzero_advantage_v1"
+)
 SOURCE_PATHS: Final = (
     "core/learning/grpo.py",
     "core/learning/recurrence_curriculum.py",
@@ -86,6 +89,9 @@ SOURCE_PATHS: Final = (
     "core/brain/llm/latent_cortex/answer_replacement.py",
     "core/brain/llm/latent_cortex/atomic_decomposition.py",
     "core/brain/llm/latent_cortex/contract_repair.py",
+    "core/brain/llm/latent_cortex/commitment_extraction.py",
+    "core/brain/llm/latent_cortex/commitment_ratchet.py",
+    "core/brain/llm/latent_cortex/commitment_telemetry.py",
     "core/brain/llm/latent_cortex/critic_identity.py",
     "core/brain/llm/latent_cortex/deterministic_verifier_router.py",
     "core/brain/llm/latent_cortex/diagnostic_action_selector.py",
@@ -94,6 +100,7 @@ SOURCE_PATHS: Final = (
     "core/brain/llm/latent_cortex/local_repair.py",
     "core/brain/llm/latent_cortex/objective_program_verifier.py",
     "core/brain/llm/latent_cortex/recurrence_adapter.py",
+    "core/brain/llm/latent_cortex/sequential_exclusion.py",
     "core/brain/llm/latent_cortex/task_verifiers.py",
     "core/learning/depth_conditioned_lora.py",
     "core/learning/role_conditioned_lora.py",
@@ -240,6 +247,67 @@ def _cyclic_task(tasks: list[Any], *, one_based_step: int) -> Any:
     if not tasks or type(one_based_step) is not int or one_based_step < 1:
         raise ValueError("training task cycle coordinates are invalid")
     return tasks[(one_based_step - 1) % len(tasks)]
+
+
+def _learnability_task_candidates(
+    base_task: Any,
+    *,
+    campaign_seed: int,
+    one_based_step: int,
+    max_attempts: int,
+    excluded_tasks: list[Any],
+) -> list[Any]:
+    """Return a sealed task window without consulting model outcomes.
+
+    The nominal curriculum task remains attempt one. Later attempts retain its
+    family and depth but use deterministic campaign coordinates that are
+    disjoint from every training, projection, and held-out task. The caller may
+    inspect rewards only to decide when to stop inside this predeclared window;
+    task generation itself never sees model output or held-out grades.
+    """
+
+    if type(campaign_seed) is not int or not 0 <= campaign_seed <= 2**63 - 1:
+        raise ValueError("campaign_seed must be inside [0, 2^63-1]")
+    if type(one_based_step) is not int or one_based_step < 1:
+        raise ValueError("one_based_step must be positive")
+    if type(max_attempts) is not int or not 1 <= max_attempts <= 16:
+        raise ValueError("max_attempts must be inside [1, 16]")
+    if not getattr(base_task, "family", None) or not getattr(base_task, "depth", None):
+        raise ValueError("base task lacks family/depth coordinates")
+
+    used_ids = {str(task.task_id) for task in excluded_tasks}
+    used_prompts = {str(task.prompt) for task in excluded_tasks}
+    candidates = [base_task]
+    used_ids.add(str(base_task.task_id))
+    used_prompts.add(str(base_task.prompt))
+    for attempt in range(2, max_attempts + 1):
+        for nonce in range(1_024):
+            derived_seed = _stable_seed(
+                campaign_seed,
+                "learnability",
+                one_based_step,
+                attempt,
+                base_task.family,
+                base_task.depth,
+                nonce,
+            )
+            candidate = process_task_battery(
+                [str(base_task.family)],
+                [int(base_task.depth)],
+                1,
+                seed=derived_seed,
+            )[0]
+            if (
+                str(candidate.task_id) not in used_ids
+                and str(candidate.prompt) not in used_prompts
+            ):
+                candidates.append(candidate)
+                used_ids.add(str(candidate.task_id))
+                used_prompts.add(str(candidate.prompt))
+                break
+        else:
+            raise RuntimeError("learnability curriculum resampling exhausted")
+    return candidates
 
 
 def _task_sets(seed: int) -> tuple[list[Any], list[Any], list[Any]]:
@@ -413,6 +481,7 @@ def run_canary(
     out_dir: Path,
     steps: int,
     group_size: int,
+    max_learnability_attempts: int,
     seed: int,
     learning_rate: float,
     bootstrap_steps: int,
@@ -448,6 +517,11 @@ def run_canary(
         raise ValueError("steps must be inside [1, 16]")
     if type(group_size) is not int or not 2 <= group_size <= 8:
         raise ValueError("group_size must be inside [2, 8]")
+    if (
+        type(max_learnability_attempts) is not int
+        or not 1 <= max_learnability_attempts <= 16
+    ):
+        raise ValueError("max_learnability_attempts must be inside [1, 16]")
     if type(bootstrap_steps) is not int or not 1 <= bootstrap_steps <= 32:
         raise ValueError("bootstrap_steps must be inside [1, 32]")
     if type(specialization_steps) is not int or not 1 <= specialization_steps <= 16:
@@ -856,105 +930,213 @@ def run_canary(
         optimizer = build_recurrent_policy_optimizer(float(learning_rate))
         optimizer.init(model.trainable_parameters())
         step_receipts: list[dict[str, Any]] = []
+        learnability_retry_tasks: list[Any] = []
         optimizer_updates = 0
         all_samples_admitted = True
         for step in range(1, steps + 1):
-            task = _cyclic_task(training_tasks, one_based_step=step)
+            base_task = _cyclic_task(training_tasks, one_based_step=step)
+            candidate_tasks = _learnability_task_candidates(
+                base_task,
+                campaign_seed=seed,
+                one_based_step=step,
+                max_attempts=max_learnability_attempts,
+                excluded_tasks=[
+                    *training_tasks,
+                    *answer_tasks,
+                    *proxy_tasks,
+                    *learnability_retry_tasks,
+                ],
+            )
+            learnability_retry_tasks.extend(candidate_tasks[1:])
             _status(
                 out_dir,
                 "sampling",
                 step=step,
                 steps=steps,
-                task_id=task.task_id,
+                task_id=base_task.task_id,
+                learnability_attempt=1,
+                max_learnability_attempts=max_learnability_attempts,
                 optimizer_updates=optimizer_updates,
             )
             policy_before = recurrent_policy_sha256(model, spec)
-            prompt_tokens, samples, rows, rejected = _sample_group(
-                model,
-                tokenizer,
-                task,
-                spec=spec,
-                group_size=group_size,
-                campaign_seed=seed,
-                step=step,
-                model_path=str(model_path),
-                token_trace_adapter=token_trace_adapter,
-            )
-            rewards = [float(row["reward"]) for row in rows]
-            advantage = group_advantages(
-                rewards,
-                clip=grpo_config.advantage_clip,
-            )
             adapter_step_before = adapter_tensor_fingerprint(adapter_tensor_dict(model))
-            objective: dict[str, Any] | None = None
-            if not advantage["degenerate"]:
+            attempt_receipts: list[dict[str, Any]] = []
+            selected_task = base_task
+            selected_advantage: dict[str, Any] | None = None
+            selected_objective: dict[str, Any] | None = None
+            selected_rows: list[dict[str, Any]] = []
+            selected_rejected: list[dict[str, Any]] = []
+            selected_attempt = 0
+            for attempt, task in enumerate(candidate_tasks, start=1):
+                sampling_coordinate = (
+                    (step - 1) * max_learnability_attempts + attempt
+                )
                 _status(
                     out_dir,
-                    "optimizing",
+                    "sampling",
                     step=step,
                     steps=steps,
                     task_id=task.task_id,
+                    nominal_task_id=base_task.task_id,
+                    learnability_attempt=attempt,
+                    max_learnability_attempts=max_learnability_attempts,
                     optimizer_updates=optimizer_updates,
                 )
-                result = exact_adjoint_sampled_group_value_and_grad(
-                    model,
-                    prompt_tokens,
-                    samples,
-                    rewards,
-                    spec=spec,
-                    config=grpo_config,
-                    optimization_token_counts=[
-                        int(row["observable_completion"]["optimization_token_count"])
-                        for row in rows
-                    ],
+                attempt_policy_before = recurrent_policy_sha256(model, spec)
+                attempt_adapter_before = adapter_tensor_fingerprint(
+                    adapter_tensor_dict(model)
                 )
-                optimizer.update(model, result.gradients)
-                mx.eval(model.trainable_parameters(), optimizer.state)
-                optimizer_updates += 1
-                objective = {
-                    "advantage_report": result.advantage_report,
-                    "reference_kl": result.reference_kl,
-                    "old_policy_approx_kl": result.old_policy_approx_kl,
-                    "clip_fraction": result.clip_fraction,
-                    "policy_loss": result.policy_loss,
-                    "objective_at_sampling": result.objective_at_sampling,
-                    "gradient_surrogate_value": result.gradient_surrogate_value,
-                    "completion_count": result.completion_count,
-                    "token_count": result.token_count,
-                    "branch_indices": list(result.branch_indices),
-                }
-                del result
+                prompt_tokens, samples, rows, rejected = _sample_group(
+                    model,
+                    tokenizer,
+                    task,
+                    spec=spec,
+                    group_size=group_size,
+                    campaign_seed=seed,
+                    step=sampling_coordinate,
+                    model_path=str(model_path),
+                    token_trace_adapter=token_trace_adapter,
+                )
+                rewards = [float(row["reward"]) for row in rows]
+                advantage = group_advantages(
+                    rewards,
+                    clip=grpo_config.advantage_clip,
+                )
+                objective: dict[str, Any] | None = None
+                if not advantage["degenerate"]:
+                    _status(
+                        out_dir,
+                        "optimizing",
+                        step=step,
+                        steps=steps,
+                        task_id=task.task_id,
+                        nominal_task_id=base_task.task_id,
+                        learnability_attempt=attempt,
+                        optimizer_updates=optimizer_updates,
+                    )
+                    result = exact_adjoint_sampled_group_value_and_grad(
+                        model,
+                        prompt_tokens,
+                        samples,
+                        rewards,
+                        spec=spec,
+                        config=grpo_config,
+                        optimization_token_counts=[
+                            int(
+                                row["observable_completion"][
+                                    "optimization_token_count"
+                                ]
+                            )
+                            for row in rows
+                        ],
+                    )
+                    optimizer.update(model, result.gradients)
+                    mx.eval(model.trainable_parameters(), optimizer.state)
+                    optimizer_updates += 1
+                    objective = {
+                        "advantage_report": result.advantage_report,
+                        "reference_kl": result.reference_kl,
+                        "old_policy_approx_kl": result.old_policy_approx_kl,
+                        "clip_fraction": result.clip_fraction,
+                        "policy_loss": result.policy_loss,
+                        "objective_at_sampling": result.objective_at_sampling,
+                        "gradient_surrogate_value": result.gradient_surrogate_value,
+                        "completion_count": result.completion_count,
+                        "token_count": result.token_count,
+                        "branch_indices": list(result.branch_indices),
+                    }
+                    del result
+                attempt_policy_after = recurrent_policy_sha256(model, spec)
+                attempt_adapter_after = adapter_tensor_fingerprint(
+                    adapter_tensor_dict(model)
+                )
+                if advantage["degenerate"]:
+                    if (
+                        attempt_policy_after != attempt_policy_before
+                        or attempt_adapter_after != attempt_adapter_before
+                    ):
+                        raise RuntimeError("degenerate recurrent group mutated the policy")
+                elif (
+                    attempt_policy_after == attempt_policy_before
+                    or attempt_adapter_after == attempt_adapter_before
+                ):
+                    raise RuntimeError("recurrent optimizer update did not mutate the policy")
+                all_samples_admitted = all_samples_admitted and all(
+                    bool(sample.behavior_admitted) for sample in samples
+                )
+                attempt_receipts.append(
+                    {
+                        "attempt": attempt,
+                        "sampling_coordinate": sampling_coordinate,
+                        "task_id": task.task_id,
+                        "task_family": task.family,
+                        "task_depth": task.depth,
+                        "task_prompt_sha256": hashlib.sha256(
+                            task.prompt.encode("utf-8")
+                        ).hexdigest(),
+                        "policy_before_sha256": attempt_policy_before,
+                        "policy_after_sha256": attempt_policy_after,
+                        "adapter_before_sha256": attempt_adapter_before,
+                        "adapter_after_sha256": attempt_adapter_after,
+                        "advantage_report": advantage,
+                        "optimizer_updated": not advantage["degenerate"],
+                        "objective": objective,
+                        "samples": rows,
+                        "rejected_sample_receipts": rejected,
+                    }
+                )
+                selected_task = task
+                selected_advantage = advantage
+                selected_objective = objective
+                selected_rows = rows
+                selected_rejected = rejected
+                selected_attempt = attempt
+                del samples
+                mx.synchronize()
+                mx.clear_cache()
+                if not advantage["degenerate"]:
+                    break
+            if selected_advantage is None or selected_attempt < 1:
+                raise RuntimeError("learnability search produced no sampled group")
             policy_after = recurrent_policy_sha256(model, spec)
             adapter_step_after = adapter_tensor_fingerprint(adapter_tensor_dict(model))
-            if advantage["degenerate"]:
-                if policy_after != policy_before or adapter_step_after != adapter_step_before:
-                    raise RuntimeError("degenerate recurrent group mutated the policy")
-            elif policy_after == policy_before or adapter_step_after == adapter_step_before:
-                raise RuntimeError("recurrent optimizer update did not mutate the policy")
-            all_samples_admitted = all_samples_admitted and all(
-                bool(sample.behavior_admitted) for sample in samples
-            )
+            optimizer_updated = not selected_advantage["degenerate"]
+            if optimizer_updated:
+                if selected_attempt != len(attempt_receipts):
+                    raise RuntimeError("learnability search continued after an update")
+            elif len(attempt_receipts) != max_learnability_attempts:
+                raise RuntimeError("learnability search stopped before exhaustion")
             step_receipts.append(
                 {
                     "step": step,
-                    "task_id": task.task_id,
+                    "task_id": base_task.task_id,
+                    "selected_task_id": selected_task.task_id,
+                    "selected_attempt": selected_attempt,
+                    "learnability_search_policy": LEARNABILITY_SEARCH_POLICY,
+                    "learnability_search_exhausted": not optimizer_updated,
+                    "candidate_task_ids": [
+                        candidate.task_id for candidate in candidate_tasks
+                    ],
                     "policy_before_sha256": policy_before,
                     "policy_after_sha256": policy_after,
                     "adapter_before_sha256": adapter_step_before,
                     "adapter_after_sha256": adapter_step_after,
-                    "advantage_report": advantage,
-                    "optimizer_updated": not advantage["degenerate"],
-                    "objective": objective,
-                    "samples": rows,
-                    "rejected_sample_receipts": rejected,
+                    "advantage_report": selected_advantage,
+                    "optimizer_updated": optimizer_updated,
+                    "objective": selected_objective,
+                    "samples": selected_rows,
+                    "rejected_sample_receipts": selected_rejected,
+                    "learnability_attempts": attempt_receipts,
                 }
             )
             journal_body = {
-                "schema": "aura.recurrent_grpo_behavioral_canary.journal.v1",
+                "schema": "aura.recurrent_grpo_behavioral_canary.journal.v2",
                 "source_commit": source_commit,
                 "execution_spec_sha256": spec.sha256,
                 "seed": seed,
                 "configured_steps": steps,
+                "max_learnability_attempts": max_learnability_attempts,
+                "learnability_search_policy": LEARNABILITY_SEARCH_POLICY,
                 "completed_steps": step,
                 "optimizer_updates": optimizer_updates,
                 "step_receipts": step_receipts,
@@ -970,15 +1152,13 @@ def run_canary(
             )
             print(
                 "[recurrent-grpo-canary] "
-                f"step={step}/{steps} task={task.task_id} "
-                f"mean_reward={advantage['mean_reward']:.3f} "
-                f"reward_std={advantage['reward_std']:.3f} "
+                f"step={step}/{steps} task={selected_task.task_id} "
+                f"attempt={selected_attempt}/{max_learnability_attempts} "
+                f"mean_reward={selected_advantage['mean_reward']:.3f} "
+                f"reward_std={selected_advantage['reward_std']:.3f} "
                 f"updates={optimizer_updates}",
                 flush=True,
             )
-            del samples, rows
-            mx.synchronize()
-            mx.clear_cache()
         adapter = adapter_tensor_dict(model)
         adapter_after = adapter_tensor_fingerprint(adapter)
         _status(
@@ -1097,6 +1277,12 @@ def run_canary(
             "learning_rate": float(learning_rate),
             "sampling": free_generation_sampling_config().to_dict(),
             "reward": "exact_correctness_or_bounded_public_transition_prefix",
+            "learnability_search": {
+                "policy": LEARNABILITY_SEARCH_POLICY,
+                "max_attempts_per_step": max_learnability_attempts,
+                "heldout_feedback_allowed": False,
+                "task_family_and_depth_preserved": True,
+            },
         },
         "adapter_config": {
             "lora_rank": 4,
@@ -1128,6 +1314,9 @@ def run_canary(
         "adapter_before_sha256": adapter_before,
         "adapter_after_sha256": adapter_after,
         "process_training_task_ids": [task.task_id for task in training_tasks],
+        "learnability_retry_task_ids": [
+            task.task_id for task in learnability_retry_tasks
+        ],
         "answer_projection_task_ids": [task.task_id for task in answer_tasks],
         "process_bootstrap_trail": bootstrap_trail,
         "branch_specialization_trail": specialization_trail,
@@ -1182,6 +1371,7 @@ def main() -> int:
     parser.add_argument("--out-dir", type=Path, required=True)
     parser.add_argument("--steps", type=int, default=8)
     parser.add_argument("--group-size", type=int, default=4)
+    parser.add_argument("--max-learnability-attempts", type=int, default=4)
     parser.add_argument("--seed", type=int, default=2026080701)
     parser.add_argument("--learning-rate", type=float, default=5e-5)
     parser.add_argument("--bootstrap-steps", type=int, default=32)
@@ -1199,6 +1389,7 @@ def main() -> int:
             out_dir=out_dir,
             steps=args.steps,
             group_size=args.group_size,
+            max_learnability_attempts=args.max_learnability_attempts,
             seed=args.seed,
             learning_rate=args.learning_rate,
             bootstrap_steps=args.bootstrap_steps,
