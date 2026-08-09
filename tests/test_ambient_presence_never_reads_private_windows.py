@@ -493,6 +493,61 @@ class TestTheLatencyPayoff:
 
         assert presence.fresh_observation_for("what's on screen?", max_age_s=0.0) is None
 
+    def test_a_public_observation_is_not_reused_after_switching_to_private(
+        self, presence
+    ):
+        """Private is not read, and an older public screen is not called current."""
+        from core.perception.observation_evidence import get_observation_memory
+
+        get_observation_memory().clear()
+        _with_context(
+            presence,
+            "Google Chrome",
+            "GitHub",
+            text="public pull request content",
+        )
+        assert asyncio.run(presence.tick()).observed is True
+
+        private_reader = _with_context(
+            presence,
+            "Google Chrome",
+            "Bank account - Incognito",
+            text="must never be captured",
+        )
+        private_tick = asyncio.run(presence.tick())
+
+        assert private_tick.skip_reason is SkipReason.PRIVATE_WINDOW
+        assert private_reader.called is False
+        assert presence.fresh_observation_for("what is on my screen?") is None
+        state = presence.state()
+        assert state["foreground_private"] is True
+        assert "Bank" not in str(state)
+
+    def test_hiding_invalidates_current_screen_fast_recall(self, presence):
+        from core.perception.observation_evidence import get_observation_memory
+
+        get_observation_memory().clear()
+        _with_context(presence, "Terminal", "zsh", text="current terminal")
+        assert asyncio.run(presence.tick()).observed is True
+
+        presence.hide()
+
+        assert presence.fresh_observation_for("what is on my screen?") is None
+
+    def test_unknown_foreground_invalidates_current_screen_fast_recall(self, presence):
+        from core.perception.observation_evidence import get_observation_memory
+
+        get_observation_memory().clear()
+        _with_context(presence, "Terminal", "zsh", text="current terminal")
+        assert asyncio.run(presence.tick()).observed is True
+
+        async def _unknown():
+            return None
+
+        presence._current_context = _unknown
+        assert asyncio.run(presence.tick()).skip_reason is SkipReason.CAPTURE_FAILED
+        assert presence.fresh_observation_for("what is on my screen?") is None
+
     def test_the_reframed_observation_follows_the_new_question(self, presence):
         """Ambient captures carry no request; the question supplies the shape."""
         from core.perception.observation_evidence import get_observation_memory

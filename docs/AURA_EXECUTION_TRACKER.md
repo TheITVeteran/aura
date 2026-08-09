@@ -40541,6 +40541,35 @@ difficulty. No reasoning gain, frontier performance, fusion, activation, or
 `WOW Signal` is claimed, and the completion envelope remains `809/920`
 (approximately `87.9%`).
 
+## Checkpoint 2026-08-09-095: Ambient Recall Is Bound to the Current Foreground
+
+Claude's companion stack correctly denied private-window capture before any
+screen read, but a current-screen answer still had a temporal identity gap.
+After observing an ordinary window, a switch to incognito, hidden mode, an
+unknown foreground, or another context could leave the prior public
+observation eligible until its age expired. Nothing private was captured, but
+Aura could answer a question about *this* screen with evidence from the prior
+screen.
+
+The ambient loop now records the cheap foreground app/title identity before
+the capture decision and binds fast recall to the same current, known,
+non-private context that produced the observation. Private titles remain
+absent from state and receipts. Hidden or unknown foreground state invalidates
+the fast lane so the caller must take the ordinary privacy-governed capture
+path. Same-window refresh is shortened from `90s` to `30s`, keeping cached
+context inside the existing `45s` current-screen freshness contract while
+unchanged windows remain capture-throttled.
+
+Privacy, freshness, hidden-mode, bubble-route, unchanged-window, and
+current-screen contracts pass `84/84`; Ruff, byte compilation, and diff hygiene pass. Compact
+evidence is
+`artifacts/closeout/companion/cp095_foreground_bound_ambient_recall.json`.
+This is the first bounded companion audit checkpoint, not its closeout. Native
+Aura-directed bubble movement, semantic page revision, bounded autonomous
+research, self-UI control, camera detail proof, and live native verification
+remain explicit work. The frozen CP093 reasoning campaign is unaffected, and
+the completion envelope remains `809/920` (approximately `87.9%`).
+
 ## Checkpoint 2026-08-09-094: Complete Reasoning Reaches Canonical Desktop Chat
 
 A complete-file route review found a second production response architecture

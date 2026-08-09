@@ -102,7 +102,7 @@ _PRIVATE_RE = re.compile("|".join(re.escape(m) for m in _PRIVATE_WINDOW_MARKERS)
 #: How long a context stays "the same thing" before a re-read is worth paying
 #: for even when the title has not changed — a long document being scrolled is
 #: the same window and different content.
-_RESTALE_AFTER_S = 90.0
+_RESTALE_AFTER_S = 30.0
 
 #: How recently the bubble must have polled for it to count as a surface that
 #: can actually draw. Comfortably longer than its 4s idle cadence, short
@@ -205,6 +205,8 @@ class AmbientPresence:
     def __init__(self) -> None:
         self._lock = checked_lock("ambient_presence.state")
         self._mode = PresenceMode.WINDOW
+        self._foreground_context: ScreenContext | None = None
+        self._foreground_context_at = 0.0
         self._last_context: ScreenContext | None = None
         self._last_observed_at = 0.0
         self._pending_utterance: str = ""
@@ -448,7 +450,18 @@ class AmbientPresence:
 
         context = await self._current_context()
         if context is None:
+            with self._lock:
+                self._foreground_context = None
+                self._foreground_context_at = time.time()
             return self._skip(SkipReason.CAPTURE_FAILED, detail="no frontmost window")
+
+        # Record the cheap foreground identity before the privacy decision.
+        # This never captures content. It prevents a cached observation from a
+        # previous public window being presented as the CURRENT screen after
+        # the person switches to a private or otherwise different window.
+        with self._lock:
+            self._foreground_context = context
+            self._foreground_context_at = time.time()
 
         if context.is_private:
             with self._lock:
@@ -663,6 +676,10 @@ class AmbientPresence:
                 # it is.
                 "private_windows_skipped": self._private_skips,
                 "last_app": self._last_context.app if self._last_context else "",
+                "foreground_context_current": bool(self._foreground_context),
+                "foreground_private": bool(
+                    self._foreground_context and self._foreground_context.is_private
+                ),
                 "running": self._running,
                 "seconds_since_spoke": (
                     round(time.time() - self._last_spoke_at, 1)
@@ -696,6 +713,22 @@ class AmbientPresence:
                 ObservationKind,
                 get_observation_memory,
             )
+
+            with self._lock:
+                mode = self._mode
+                foreground = self._foreground_context
+                foreground_at = self._foreground_context_at
+                observed_context = self._last_context
+                observed_at = self._last_observed_at
+            if mode is PresenceMode.HIDDEN:
+                return None
+            if foreground is None or foreground.is_private:
+                return None
+            if observed_context is None or observed_context.key != foreground.key:
+                return None
+            context_age = time.time() - min(foreground_at, observed_at)
+            if context_age > max(0.0, float(max_age_s)):
+                return None
 
             memory = get_observation_memory()
             age = memory.age_of_latest(ObservationKind.SCREEN_TEXT)

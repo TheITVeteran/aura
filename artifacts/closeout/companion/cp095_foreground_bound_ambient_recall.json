@@ -1,0 +1,43 @@
+{
+  "schema": "aura.closeout.companion.cp095.v1",
+  "checkpoint": "CP095",
+  "date": "2026-08-09",
+  "finding": {
+    "classification": "ambient_recall_not_bound_to_current_foreground",
+    "detail": "Ambient capture correctly refused private windows before reading them, but the fast answer lane could still return the most recent public observation after the foreground changed to a private, hidden, unknown, or different context. That answer was private-safe but temporally and contextually false."
+  },
+  "repair": {
+    "pre_capture_private_denial_retained": true,
+    "current_foreground_identity_recorded_without_capture": true,
+    "fast_recall_requires_same_non_private_foreground": true,
+    "hidden_mode_invalidates_fast_recall": true,
+    "unknown_foreground_invalidates_fast_recall": true,
+    "private_titles_absent_from_state_and_receipts": true,
+    "same_window_refresh_seconds": 30.0,
+    "fast_recall_max_age_seconds": 45.0
+  },
+  "verification": {
+    "affected_contracts": "84 passed",
+    "ruff": "passed",
+    "byte_compile": "passed",
+    "negative_controls": [
+      "private foreground is never captured",
+      "previous public observation is not called the current private screen",
+      "hidden mode cannot serve cached current-screen context",
+      "unknown foreground cannot serve cached current-screen context",
+      "unchanged public windows remain capture-throttled"
+    ]
+  },
+  "campaign_boundary": {
+    "active_campaign": "cp093-wow-pilot-20260809",
+    "campaign_mutated": false
+  },
+  "remaining_companion_work": [
+    "native bubble movement requested by Aura rather than only by user drag",
+    "same-page visual and semantic revision detection beyond title changes",
+    "bounded autonomous public-page research and causal memory integration",
+    "general voice and text self-UI control",
+    "camera-as-eye live detail and spatial-perception proof",
+    "live native application verification after restart"
+  ]
+}
