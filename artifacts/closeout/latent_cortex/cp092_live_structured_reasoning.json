@@ -63,13 +63,13 @@
     "arms": [
       "vanilla",
       "vanilla_equal_compute",
-      "rlc",
-      "rlc_complete"
+      "complete_system_closed_book",
+      "vanilla_resource_dominating"
     ],
     "required_measurements": [
       "paired wrong-to-right recovery",
       "right-to-wrong regression",
-      "full-system incremental capability",
+      "complete-system incremental capability",
       "resource-matched and resource-advantaged control",
       "per-domain mechanism contribution and latency"
     ]

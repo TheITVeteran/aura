@@ -40571,8 +40571,10 @@ Focused production contracts pass `65/65`; canonical smoke passes `103/103`;
 Ruff and byte compilation pass.
 Exact campaign hashes and the calibration interpretation are in
 `artifacts/closeout/latent_cortex/cp092_live_structured_reasoning.json`. The next
-gate is the disjoint four-arm resident battery: ordinary decode, equal-compute
-ordinary decode, recurrent mechanism, and the complete integrated system. No
+gate is the disjoint four-arm resident battery: ordinary decode, preliminary
+best-of-three ordinary decode, the complete integrated system, and its
+resource-dominating ordinary control. A standalone recurrence arm remains a
+diagnostic ablation rather than a claim-bearing substitute. No
 reasoning gain, frontier result, fusion authority, activation authority, or
 `WOW Signal` is claimed, and the completion envelope remains `809/920`
 (approximately `87.9%`).
