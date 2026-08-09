@@ -35,6 +35,14 @@ make layering     # DEPS include-rule gate; baseline in config/ only shrinks
   Use `--continue-on-failure` to collect everything, `--only-chunks 5,6` to
   resume a partial run. One pytest process on the whole suite gets
   OOM-killed (~83%); always use the chunk runner.
+- **Chunk count is a memory budget, not a constant.** 6 chunks (≈353 files
+  per pytest process) is right on an idle host and gets the *runner itself*
+  killed when something else holds ~18GB — a resident 32B, a training sweep.
+  The symptom is a log containing only the chunk header, because
+  `capture_output=True` buffers the chunk's output in a parent that is then
+  gone. Check `free` first; with a 32B up, use `--chunks 40` (≈54 files,
+  ~70s each). `/tmp/aura_test_chunks_progress.log` names the chunk that was
+  in flight, and `--min-free-gb N` refuses rather than gambles.
 - A test failing in-chunk but passing alone is an ORDER-DEPENDENCE defect —
   the runner's isolated-retry pass reports these separately.
 - Never launch test chunks while editing Python files: chunks spawn fresh

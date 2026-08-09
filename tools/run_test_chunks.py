@@ -12,9 +12,31 @@ Failure output is preserved per chunk; the exit code is non-zero if any
 chunk fails, times out, or dies on a signal — a killed chunk is a loud
 failure, never a silent pass.
 
+WHEN THE RUNNER ITSELF IS KILLED. That promise covered the chunk and not
+the parent, and the gap was not theoretical: with a resident 32B holding
+~18GB, ``--chunks 6`` (353 files per pytest process) took the whole process
+group down. Observed three times, and each time the log held exactly one
+line — the chunk header — because ``capture_output=True`` buffers the
+chunk's output in the parent, and the parent was gone. A test gate that
+dies silently is indistinguishable from one that never started.
+
+Two things address that:
+
+* A **progress file** is written before and after every chunk. If the parent
+  disappears, the file names the chunk that was in flight and the memory
+  that was free when it began.
+* A **memory preflight** before each chunk. Marching into an OOM and leaving
+  no note is the failure above; the runner now says what it has and what it
+  is about to attempt, and ``--min-free-gb`` refuses rather than gambles.
+
+Chunk size is a memory budget, not a constant. Six is right on an idle host;
+it is wrong while something else holds 18GB, and the runner should say so
+instead of vanishing.
+
 Usage:
     python tools/run_test_chunks.py [--chunks N] [--marker "not live"]
     python tools/run_test_chunks.py --chunk-timeout 1800
+    python tools/run_test_chunks.py --chunks 40 --min-free-gb 4
 """
 
 from __future__ import annotations
@@ -28,6 +50,58 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 _FAILED_NODE_RE = re.compile(r"^(?:FAILED|ERROR)\s+([^\s].*?)(?:\s+-\s+.*)?$")
+
+#: Where the runner records what it is doing, so a killed parent leaves a
+#: note. Deliberately outside the repo: this is scratch, not evidence.
+DEFAULT_PROGRESS_FILE = Path("/tmp/aura_test_chunks_progress.log")
+
+
+def free_memory_gb() -> float | None:
+    """Free + inactive memory, in GB. None when it cannot be read.
+
+    Inactive pages count: macOS reclaims them under pressure, so a chunk can
+    use them. Free alone reads alarmingly low on a warm machine and would
+    make the preflight cry wolf.
+    """
+    try:
+        out = subprocess.run(
+            ["vm_stat"], capture_output=True, text=True, timeout=10
+        ).stdout
+    except (OSError, subprocess.SubprocessError):
+        return None
+    page_size = 16384
+    pages = {}
+    for line in out.splitlines():
+        if "page size of" in line:
+            match = re.search(r"page size of (\d+)", line)
+            if match:
+                page_size = int(match.group(1))
+        elif ":" in line:
+            key, _, value = line.partition(":")
+            digits = value.strip().rstrip(".")
+            if digits.isdigit():
+                pages[key.strip()] = int(digits)
+    reclaimable = pages.get("Pages free", 0) + pages.get("Pages inactive", 0)
+    if not reclaimable:
+        return None
+    return reclaimable * page_size / (1024**3)
+
+
+def note_progress(path: Path | None, message: str) -> None:
+    """Append one line to the progress file. Never raises.
+
+    This is the only thing that survives the parent being killed, so it
+    flushes immediately and tolerates every filesystem failure — a runner
+    that crashed because its own logging failed would be a poor joke.
+    """
+    if path is None:
+        return
+    try:
+        with path.open("a", encoding="utf-8") as handle:
+            handle.write(f"{time.strftime('%H:%M:%S')} {message}\n")
+            handle.flush()
+    except OSError:
+        pass
 
 
 def _is_valid_pytest_node_id(value: str) -> bool:
@@ -79,6 +153,8 @@ def run_chunk(
     python: str,
     extra_args: list[str],
     coverage: bool = False,
+    progress_file: Path | None = None,
+    min_free_gb: float = 0.0,
 ) -> tuple[bool, str, list[str]]:
     # Each chunk is a FRESH INTERPRETER launched with subprocess.run, so
     # wrapping this runner in `coverage run` measures the runner and nothing
@@ -106,15 +182,39 @@ def run_chunk(
     cmd.extend(extra_args)
 
     started = time.monotonic()
-    print(f"━━ chunk {index}/{total}: {len(files)} files ━━", flush=True)
+    # Preflight. Chunk size is a memory budget: 353 files per pytest process
+    # is fine on an idle host and takes the whole process group down while a
+    # resident 32B holds 18GB. Say what we have before attempting it, so a
+    # kill is never the first news.
+    free_gb = free_memory_gb()
+    free_label = f"{free_gb:.1f}GB free" if free_gb is not None else "free memory unknown"
+    print(
+        f"━━ chunk {index}/{total}: {len(files)} files ━━ ({free_label})", flush=True
+    )
+    note_progress(
+        progress_file, f"START chunk {index}/{total} files={len(files)} {free_label}"
+    )
+    if min_free_gb > 0 and free_gb is not None and free_gb < min_free_gb:
+        message = (
+            f"chunk {index}/{total} REFUSED: {free_gb:.1f}GB reclaimable is "
+            f"below --min-free-gb {min_free_gb:.1f}. Use more, smaller chunks "
+            "or free memory; a chunk that OOMs takes this runner with it."
+        )
+        note_progress(progress_file, message)
+        return False, message, []
     try:
         proc = subprocess.run(cmd, cwd=ROOT, timeout=timeout_s, capture_output=True, text=True)
     except subprocess.TimeoutExpired:
+        note_progress(progress_file, f"TIMEOUT chunk {index}/{total}")
         return False, f"chunk {index}/{total} TIMEOUT after {timeout_s:.0f}s", []
     sys.stdout.write(proc.stdout)
     sys.stderr.write(proc.stderr)
     failed_ids = parse_failed_node_ids(proc.stdout)
     elapsed = time.monotonic() - started
+    note_progress(
+        progress_file,
+        f"END chunk {index}/{total} rc={proc.returncode} in {elapsed:.0f}s",
+    )
     if proc.returncode == 0:
         return True, f"chunk {index}/{total} passed in {elapsed:.0f}s", []
     if proc.returncode < 0 or proc.returncode in (137, 139, 143):
@@ -158,6 +258,24 @@ def main(argv: list[str] | None = None) -> int:
         help="write a machine-readable JSON defect register (order-dependence + "
         "real failures) to this path for the self-repair backlog ingestor",
     )
+    parser.add_argument(
+        "--progress-file",
+        type=Path,
+        default=DEFAULT_PROGRESS_FILE,
+        help=(
+            "append a line per chunk here, so a runner killed by the OS still "
+            "names the chunk that was in flight"
+        ),
+    )
+    parser.add_argument(
+        "--min-free-gb",
+        type=float,
+        default=0.0,
+        help=(
+            "refuse to start a chunk with less than this much reclaimable "
+            "memory. 0 warns without refusing."
+        ),
+    )
     parser.add_argument("extra", nargs="*", help="extra pytest args")
     args = parser.parse_args(argv)
 
@@ -196,6 +314,8 @@ def main(argv: list[str] | None = None) -> int:
             python=args.python,
             extra_args=list(args.extra),
             coverage=args.coverage,
+            progress_file=args.progress_file,
+            min_free_gb=args.min_free_gb,
         )
         results.append(result)
         if not result[0] and not args.continue_on_failure:
