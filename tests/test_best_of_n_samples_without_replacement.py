@@ -13,6 +13,7 @@ rationalised toward — it is removed, not offered — so the blindness survives
 exactly where it was buying something, and the coverage improves where it
 was costing something.
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -62,7 +63,16 @@ def test_excluding_refuted_answers_raises_distinct_coverage():
     the verifier is paid, so the solver walking its pool in order reaches
     the right answer within the same number of verifier calls.
     """
-    pool = ["wrong-1", "wrong-2", "wrong-3", "wrong-4", "right"]
+    pool = [
+        "wrong-1",
+        "wrong-1",
+        "wrong-1",
+        "wrong-1",
+        "wrong-2",
+        "wrong-3",
+        "wrong-4",
+        "right",
+    ]
 
     def _make_solver():
         cursor = {"n": 0}
@@ -79,16 +89,14 @@ def test_excluding_refuted_answers_raises_distinct_coverage():
     async def verify(answer):
         return _Verdict(ok=answer == "right")
 
-    without = _run(
-        solve=_make_solver(), verify=verify, max_passes=5, exclude_refuted=False
-    )
-    with_exclusion = _run(
-        solve=_make_solver(), verify=verify, max_passes=5, exclude_refuted=True
-    )
+    without = _run(solve=_make_solver(), verify=verify, max_passes=5, exclude_refuted=False)
+    with_exclusion = _run(solve=_make_solver(), verify=verify, max_passes=5, exclude_refuted=True)
 
+    assert without.answer != "right"
+    assert without.distinct_answers == 2
     assert with_exclusion.answer == "right"
     assert with_exclusion.distinct_answers == 5
-    assert without.distinct_answers == 5
+    assert with_exclusion.passes == without.passes == 5
 
 
 def test_the_exclusion_count_is_on_the_receipt():
@@ -176,9 +184,7 @@ def test_no_refuted_answer_is_ever_named_in_the_prompt():
     _run(solve=solve, verify=verify, max_passes=4)
 
     for block in blocks:
-        assert "bad" not in block, (
-            f"a refuted answer was named in the prompt: {block!r}"
-        )
+        assert "bad" not in block, f"a refuted answer was named in the prompt: {block!r}"
 
 
 # ───────────────────────────────────────────── compatibility and safety
@@ -286,7 +292,12 @@ def test_a_repeated_refuted_answer_is_redrawn_not_reverified():
         verify_calls.append(answer)
         return _Verdict(ok=answer == "right", checked=True)
 
-    result = _run(solve=solve, verify=verify, max_passes=4)
+    result = _run(
+        solve=solve,
+        verify=verify,
+        max_passes=4,
+        stop_when_verified=True,
+    )
 
     assert result.answer == "right"
     assert verify_calls.count("wrong") == 1, (
@@ -294,6 +305,8 @@ def test_a_repeated_refuted_answer_is_redrawn_not_reverified():
         "times; each repeat should be redrawn before the verifier is paid"
     )
     assert result.rejected_redraws >= 1
+    assert result.rejected_revisions == 0
+    assert result.generations == 4
 
 
 def test_rejection_is_bounded_when_the_model_will_not_move():
@@ -326,4 +339,23 @@ def test_the_receipt_reports_the_verifier_calls_saved():
 
     payload = result.to_dict()
     assert payload["rejected_redraws"] >= 1
+    assert payload["rejected_revisions"] == 1
+    assert payload["generations"] > result.passes
     assert payload["distinct_answers"] < result.passes + payload["rejected_redraws"]
+
+
+def test_two_argument_solver_never_receives_refuted_answer_text():
+    blocks = []
+    answers = ["wrong", "wrong", "right"]
+
+    def solve(index, conditioning=""):
+        blocks.append(conditioning)
+        return answers[min(index, len(answers) - 1)]
+
+    async def verify(answer):
+        return _Verdict(ok=answer == "right", checked=True)
+
+    result = _run(solve=solve, verify=verify, max_passes=2)
+
+    assert result.answer == "right"
+    assert blocks == ["", "", ""]

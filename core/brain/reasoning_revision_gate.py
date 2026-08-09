@@ -27,11 +27,12 @@ generation. It is the gate the reasoning amplifier applies when an incumbent
 answer exists, and the gate the curriculum/deliberation loops apply between
 successive attempts at the same problem.
 """
+
 from __future__ import annotations
 
 import math
 from dataclasses import dataclass, field
-from enum import Enum
+from enum import StrEnum
 from typing import Any
 
 # Tunables, chosen to be conservative (favor the incumbent under doubt).
@@ -50,7 +51,7 @@ _DEFAULT_MARGIN = 0.05
 _MIN_RELIABILITY_TO_DISPLACE = 0.25
 
 
-class RevisionVerdict(str, Enum):
+class RevisionVerdict(StrEnum):
     ACCEPT_CHALLENGER = "accept_challenger"
     KEEP_INCUMBENT = "keep_incumbent"
     ADOPT_FIRST = "adopt_first"  # no incumbent existed
@@ -139,7 +140,10 @@ def quality_bound(
     reliability = _coerce01(reliability, 0.5)
     if verdict is None:
         return QualityBound(
-            point=0.0, half_width=1.0, checked=False, hard_ok=False,
+            point=0.0,
+            half_width=1.0,
+            checked=False,
+            hard_ok=False,
             reliability=reliability,
         )
     hard_ok = bool(getattr(verdict, "ok", False))
@@ -222,7 +226,9 @@ def decide_revision(
         return RevisionDecision(
             RevisionVerdict.KEEP_INCUMBENT,
             "challenger_failed_verification",
-            incumbent, challenger, margin,
+            incumbent,
+            challenger,
+            margin,
         )
 
     # 3. A clean-checked incumbent is not displaced by an UNCHECKED challenger.
@@ -230,7 +236,9 @@ def decide_revision(
         return RevisionDecision(
             RevisionVerdict.KEEP_INCUMBENT,
             "challenger_unchecked_incumbent_verified",
-            incumbent, challenger, margin,
+            incumbent,
+            challenger,
+            margin,
         )
 
     # 4. Challenger has a clean real check the incumbent lacks.
@@ -240,7 +248,9 @@ def decide_revision(
         return RevisionDecision(
             RevisionVerdict.ACCEPT_CHALLENGER,
             "challenger_verified_incumbent_not",
-            incumbent, challenger, margin,
+            incumbent,
+            challenger,
+            margin,
         )
 
     # 5. Both clean (or both unclean): the confidence-bound comparison.
@@ -249,14 +259,18 @@ def decide_revision(
             return RevisionDecision(
                 RevisionVerdict.KEEP_INCUMBENT,
                 "challenger_verifier_too_unreliable_to_displace",
-                incumbent, challenger, margin,
+                incumbent,
+                challenger,
+                margin,
                 detail={"min_reliability": _MIN_RELIABILITY_TO_DISPLACE},
             )
         if challenger.lower > incumbent.upper + margin:
             return RevisionDecision(
                 RevisionVerdict.ACCEPT_CHALLENGER,
                 "challenger_lower_bound_clears_incumbent",
-                incumbent, challenger, margin,
+                incumbent,
+                challenger,
+                margin,
                 detail={
                     "challenger_lower": round(challenger.lower, 4),
                     "incumbent_upper": round(incumbent.upper, 4),
@@ -265,7 +279,9 @@ def decide_revision(
         return RevisionDecision(
             RevisionVerdict.KEEP_INCUMBENT,
             "insufficient_evidence_to_revise",
-            incumbent, challenger, margin,
+            incumbent,
+            challenger,
+            margin,
             detail={
                 "challenger_lower": round(challenger.lower, 4),
                 "incumbent_upper": round(incumbent.upper, 4),
@@ -280,12 +296,16 @@ def decide_revision(
         return RevisionDecision(
             RevisionVerdict.ACCEPT_CHALLENGER,
             "both_unverified_challenger_materially_higher",
-            incumbent, challenger, margin,
+            incumbent,
+            challenger,
+            margin,
         )
     return RevisionDecision(
         RevisionVerdict.KEEP_INCUMBENT,
         "both_unverified_no_clear_gain",
-        incumbent, challenger, margin,
+        incumbent,
+        challenger,
+        margin,
     )
 
 
@@ -311,6 +331,12 @@ class DeliberationResult:
     #: gain comes from — verifier calls fell 3.97 -> 3.19 while the solve
     #: rate rose.
     rejected_redraws: int = 0
+    #: Total model generations, including duplicates rejected before a
+    #: verifier call. This keeps the compute trade visible without pretending
+    #: a discarded redraw was a revision decision.
+    generations: int = 0
+    #: Empty generations rejected before verification.
+    generation_failures: int = 0
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -321,6 +347,8 @@ class DeliberationResult:
             "distinct_answers": self.distinct_answers,
             "exclusions": self.exclusions,
             "rejected_redraws": self.rejected_redraws,
+            "generations": self.generations,
+            "generation_failures": self.generation_failures,
             # passes is what was SPENT; distinct is what was examined. A gap
             # between them is duplicate work, and it is the whole reason the
             # exclusion path exists.
@@ -329,7 +357,7 @@ class DeliberationResult:
         }
 
 
-def _accepts_conditioning(solve: "Any") -> bool:
+def _accepts_conditioning(solve: Any) -> bool:
     """Does this solver accept the exclusion block as a second argument?
 
     Detected once, from the signature, rather than by calling and catching
@@ -346,23 +374,21 @@ def _accepts_conditioning(solve: "Any") -> bool:
     positional = [
         parameter
         for parameter in signature.parameters.values()
-        if parameter.kind
-        in (parameter.POSITIONAL_ONLY, parameter.POSITIONAL_OR_KEYWORD)
+        if parameter.kind in (parameter.POSITIONAL_ONLY, parameter.POSITIONAL_OR_KEYWORD)
     ]
     if any(
-        parameter.kind is parameter.VAR_POSITIONAL
-        for parameter in signature.parameters.values()
+        parameter.kind is parameter.VAR_POSITIONAL for parameter in signature.parameters.values()
     ):
         return True
     return len(positional) >= 2
 
 
 async def deliberate_best_of(
-    solve: "Any",
-    verify: "Any",
+    solve: Any,
+    verify: Any,
     *,
     max_passes: int = 3,
-    reliability_of: "Any" = None,
+    reliability_of: Any = None,
     margin: float = _DEFAULT_MARGIN,
     stop_when_verified: bool = False,
     exclude_refuted: bool = True,
@@ -416,19 +442,21 @@ async def deliberate_best_of(
     for the arithmetic and the three premises that can break it, and
     docs/RLC_COMMITMENT_SEARCH.md for what the measurement does not cover.
     """
+    import inspect
+
     from core.brain.llm.latent_cortex.commitment_ratchet import (
         CommitmentRatchet,
         Constraint,
         ConstraintKind,
+        _normalize,
     )
-    import inspect
 
-    async def _maybe_await(value: "Any") -> "Any":
+    async def _maybe_await(value: Any) -> Any:
         if inspect.isawaitable(value):
             return await value
         return value
 
-    def _reliability(verdict: "Any") -> float:
+    def _reliability(verdict: Any) -> float:
         if reliability_of is None:
             return 0.5
         try:
@@ -446,7 +474,7 @@ async def deliberate_best_of(
     best_reliability = 0.5
     have_best = False
     accepted = 0
-    rejected = 0
+    rejected_revisions = 0
     trail: list[dict[str, Any]] = []
     ratchet = CommitmentRatchet()
     seen_answers: set[str] = set()
@@ -454,7 +482,8 @@ async def deliberate_best_of(
     solve_takes_conditioning = _accepts_conditioning(solve)
 
     refuted_answers: set[str] = set()
-    rejected = 0
+    rejected_redraws = 0
+    generation_failures = 0
     index = -1
     generations = 0
     # Rejection sampling needs headroom to redraw. Bounded, so a model that
@@ -463,21 +492,24 @@ async def deliberate_best_of(
     while len(trail) < passes and generations < max_generations:
         generations += 1
         index += 1
-        block = ratchet.conditioning_block() if exclude_refuted else ""
         if solve_takes_conditioning:
-            raw = solve(index, block)
+            # Rejection sampling must not name the excluded answers. The
+            # measured prompt-conditioned arm lost to ordinary i.i.d.; the
+            # winning arm draws blindly and rejects duplicates locally.
+            raw = solve(index, "")
         else:
             raw = solve(index)
         answer = str(await _maybe_await(raw) or "").strip()
         if not answer:
-            trail.append({"pass": index, "skipped": "empty_answer"})
+            generation_failures += 1
             continue
-        if exclude_refuted and answer.lower() in refuted_answers:
+        normalized_answer = _normalize(answer)
+        if exclude_refuted and normalized_answer in refuted_answers:
             # Already checked and refuted. Redraw rather than paying a
             # verifier call to reach the same verdict twice.
-            rejected += 1
+            rejected_redraws += 1
             continue
-        seen_answers.add(answer.lower())
+        seen_answers.add(normalized_answer)
         verdict = await _maybe_await(verify(answer))
         reliability = _reliability(verdict)
         decision = decide_revision(
@@ -497,7 +529,7 @@ async def deliberate_best_of(
             if decision.verdict is RevisionVerdict.ACCEPT_CHALLENGER:
                 accepted += 1
         else:
-            rejected += 1
+            rejected_revisions += 1
 
         # Sampling without replacement, and ONLY on a checked refutation.
         # An unchecked failure is a verifier that could not decide, and
@@ -508,7 +540,7 @@ async def deliberate_best_of(
             and getattr(verdict, "ok", None) is False
             and getattr(verdict, "checked", False) is True
         ):
-            refuted_answers.add(answer.lower())
+            refuted_answers.add(normalized_answer)
             if ratchet.commit(
                 Constraint(
                     kind=ConstraintKind.EXCLUDES,
@@ -529,21 +561,21 @@ async def deliberate_best_of(
             break
 
     verified = bool(
-        have_best
-        and getattr(best_verdict, "ok", False)
-        and getattr(best_verdict, "checked", False)
+        have_best and getattr(best_verdict, "ok", False) and getattr(best_verdict, "checked", False)
     )
     return DeliberationResult(
         answer=best_answer,
         verdict=best_verdict,
         passes=len(trail),
         accepted_revisions=accepted,
-        rejected_revisions=rejected,
+        rejected_revisions=rejected_revisions,
         verified=verified,
         trail=trail,
         distinct_answers=len(seen_answers),
         exclusions=exclusions,
-        rejected_redraws=rejected,
+        rejected_redraws=rejected_redraws,
+        generations=generations,
+        generation_failures=generation_failures,
     )
 
 

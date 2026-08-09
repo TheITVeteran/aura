@@ -9,6 +9,7 @@ refuted answer is really excluded, that an undecided one is not, and that
 the two premises which can silently break (verifier soundness, model
 compliance) are measured rather than assumed.
 """
+
 from __future__ import annotations
 
 import random
@@ -27,7 +28,6 @@ from core.brain.llm.latent_cortex.sequential_exclusion import (
     predict_distinct_advantage,
     run_sequential_exclusion,
 )
-
 
 # ───────────────────────────────────────────────────── the dominance itself
 
@@ -49,9 +49,7 @@ def test_exclusion_strictly_wins_once_mass_is_removed():
     assert exclusion_success_probability(0.05, [], 8) == pytest.approx(
         iid_success_probability(0.05, 8)
     )
-    assert exclusion_success_probability(0.05, [0.5], 8) > iid_success_probability(
-        0.05, 8
-    )
+    assert exclusion_success_probability(0.05, [0.5], 8) > iid_success_probability(0.05, 8)
 
 
 def test_the_worked_example_is_what_the_docstring_claims():
@@ -190,15 +188,11 @@ def test_the_exclusion_is_enforced_without_naming_it_in_the_prompt():
         seen_blocks.append(conditioning)
         return drawn[min(len(seen_blocks) - 1, len(drawn) - 1)]
 
-    result = run_sequential_exclusion(
-        "q", draw=_draw, verify=_verifier("right"), max_draws=4
-    )
+    result = run_sequential_exclusion("q", draw=_draw, verify=_verifier("right"), max_draws=4)
 
     assert result.answer == "right"
     for block in seen_blocks:
-        assert "wrong" not in block, (
-            f"a refuted answer was named in the prompt: {block!r}"
-        )
+        assert "wrong" not in block, f"a refuted answer was named in the prompt: {block!r}"
     assert result.ratchet_receipt["turns"] >= 1, "nothing was excluded at all"
 
 
@@ -227,13 +221,13 @@ def test_noncompliance_is_measured_not_assumed():
     def _stubborn(objective, conditioning):
         return "always-the-same"
 
-    result = run_sequential_exclusion(
-        "q", draw=_stubborn, verify=_verifier("right"), max_draws=5
-    )
+    result = run_sequential_exclusion("q", draw=_stubborn, verify=_verifier("right"), max_draws=5)
 
     assert result.answer is None
     assert result.compliance < 0.3
     assert any(row.outcome is DrawOutcome.NONCOMPLIANT for row in result.draws)
+    assert result.verifier_calls == 1
+    assert result.rejected_redraws == len(result.draws) - 1
     assert "compliance" in compare_to_iid(result).get("diagnosis", "").lower() or True
 
 
@@ -246,6 +240,35 @@ def test_full_compliance_reports_as_such():
     )
 
     assert result.compliance == 1.0
+
+
+def test_verifier_calls_not_generations_are_the_budget_unit():
+    sequence = ["wrong", "wrong", "wrong", "right"]
+    cursor = {"value": 0}
+    verified = []
+
+    def _draw(_objective, conditioning):
+        assert "wrong" not in conditioning
+        index = min(cursor["value"], len(sequence) - 1)
+        cursor["value"] += 1
+        return sequence[index]
+
+    def _verify(_objective, candidate):
+        verified.append(candidate)
+        return (
+            (DrawOutcome.ACCEPTED, "verified")
+            if candidate == "right"
+            else (DrawOutcome.REFUTED, "wrong")
+        )
+
+    result = run_sequential_exclusion("q", draw=_draw, verify=_verify, max_draws=2)
+
+    assert result.answer == "right"
+    assert verified == ["wrong", "right"]
+    assert result.verifier_calls == 2
+    assert len(result.draws) == 4
+    assert result.rejected_redraws == 2
+    assert result.to_dict()["generations"] == 4
 
 
 # ────────────────────────────────────── the premise that fails silently
@@ -307,9 +330,7 @@ def test_the_gold_answer_never_influences_a_draw_or_a_verdict():
     )
 
     assert without.answer == with_gold.answer
-    assert [row.candidate for row in without.draws] == [
-        row.candidate for row in with_gold.draws
-    ]
+    assert [row.candidate for row in without.draws] == [row.candidate for row in with_gold.draws]
 
 
 # ──────────────────────────────────────────── prediction meets measurement

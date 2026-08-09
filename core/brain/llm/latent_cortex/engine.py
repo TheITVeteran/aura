@@ -127,11 +127,13 @@ def _normalize_decoded_text(value: Any) -> tuple[str, bool]:
 
     raw = str(value)
     normalized = "".join(
-        "\ufffd" if (ord(character) < 32 and character not in "\n\r\t") or ord(character) == 127
+        "\ufffd"
+        if (ord(character) < 32 and character not in "\n\r\t") or ord(character) == 127
         else character
         for character in raw
     )
     return normalized, normalized != raw
+
 
 _ACTION_CONTROL_TEXT: dict[OperationKind, str] = {
     OperationKind.BLIND_RESOLVE: "Derive a candidate directly from the original problem without peer answers.",
@@ -222,9 +224,10 @@ def _repeats_a_refuted_answer(ratchet: Any, candidate: str) -> bool:
     )
 
 
-def _postconditions_lost(
-    baseline: dict[str, Any] | None, adapted: dict[str, Any]
-) -> list[str]:
+_MAX_LOCAL_REPAIR_GENERATIONS = 3
+
+
+def _postconditions_lost(baseline: dict[str, Any] | None, adapted: dict[str, Any]) -> list[str]:
     """Postconditions the base function satisfied and the adapted one does not.
 
     The whole point of a baseline. A canary failing under both is a property
@@ -238,15 +241,9 @@ def _postconditions_lost(
     if not baseline or not baseline.get("evaluated"):
         return []
     satisfied_on_base = {
-        str(item.get("name"))
-        for item in baseline.get("items") or ()
-        if item.get("satisfied")
+        str(item.get("name")) for item in baseline.get("items") or () if item.get("satisfied")
     }
-    return sorted(
-        name
-        for name in (adapted.get("failed") or ())
-        if str(name) in satisfied_on_base
-    )
+    return sorted(name for name in (adapted.get("failed") or ()) if str(name) in satisfied_on_base)
 
 
 class LatentCortexEngine:
@@ -417,8 +414,7 @@ class LatentCortexEngine:
         )
 
         return max(
-            len(self._encode_terminal_instruction(text))
-            for text in terminal_instruction_texts()
+            len(self._encode_terminal_instruction(text)) for text in terminal_instruction_texts()
         )
 
     @staticmethod
@@ -1538,16 +1534,12 @@ class LatentCortexEngine:
                 token_logprobs_out.append(token_logprob)
             contract_disposition = contract_disposition_now()
             contract_satisfied = bool(
-                contract_disposition is not None
-                and contract_disposition.value == "complete"
+                contract_disposition is not None and contract_disposition.value == "complete"
             )
             if contract_satisfied:
                 termination = "contract_complete"
                 break
-            if (
-                contract_disposition is not None
-                and contract_disposition.value == "invalid"
-            ):
+            if contract_disposition is not None and contract_disposition.value == "invalid":
                 termination = "contract_irrecoverable"
                 break
             newline_run = newline_run + 1 if self._is_pure_newline_token(token) else 0
@@ -2328,10 +2320,7 @@ class LatentCortexEngine:
             or not episode_id
             or len(episode_id) > 192
             or not episode_id[0].isalnum()
-            or any(
-                not (character.isalnum() or character in "._:/;=+-")
-                for character in episode_id
-            )
+            or any(not (character.isalnum() or character in "._:/;=+-") for character in episode_id)
         ):
             raise ValueError("episode_id is not a valid campaign identifier")
         if type(action_continuation_capture_only) is not bool:
@@ -2353,29 +2342,23 @@ class LatentCortexEngine:
                 action_continuation_capture
             ):
                 raise TypeError("action_continuation_capture must be callable")
-            if (
-                action_continuation_restore_verified is not None
-                and not callable(action_continuation_restore_verified)
+            if action_continuation_restore_verified is not None and not callable(
+                action_continuation_restore_verified
             ):
-                raise TypeError(
-                    "action_continuation_restore_verified must be callable"
-                )
+                raise TypeError("action_continuation_restore_verified must be callable")
             if (
                 action_continuation_restore_verified is not None
                 and action_continuation_restore is None
             ):
-                raise ValueError(
-                    "action_continuation_restore_verified requires a restore"
-                )
+                raise ValueError("action_continuation_restore_verified requires a restore")
             if action_continuation_restore is not None and not isinstance(
                 action_continuation_restore,
                 ActionOpportunityContinuation,
             ):
                 raise TypeError("action_continuation_restore has the wrong type")
-            if (
-                not isinstance(action_continuation_runner_state, Mapping)
-                or set(action_continuation_runner_state) != {"durable_state", "rng_state"}
-            ):
+            if not isinstance(action_continuation_runner_state, Mapping) or set(
+                action_continuation_runner_state
+            ) != {"durable_state", "rng_state"}:
                 raise ValueError("action continuation requires exact runner state")
             if action_continuation_capture_only and action_continuation_capture is None:
                 raise ValueError("capture-only continuation requires a capture callback")
@@ -2580,9 +2563,7 @@ class LatentCortexEngine:
                         else None
                     ),
                     action_continuation_capture_only=action_continuation_capture_only,
-                    action_continuation_restore_verified=(
-                        action_continuation_restore_verified
-                    ),
+                    action_continuation_restore_verified=(action_continuation_restore_verified),
                     nonparametric_memory_enabled=nonparametric_memory_enabled,
                 )
                 if receipt.answer_replacement.get("decision") == "abstain":
@@ -2607,9 +2588,7 @@ class LatentCortexEngine:
                     if self.config.decode_incumbent_policy == "latent":
                         failure_reason = "answer_replacement_abstained"
                     else:
-                        receipt.flag(
-                            "answer_replacement_abstention_declined_under_incumbent"
-                        )
+                        receipt.flag("answer_replacement_abstention_declined_under_incumbent")
             except _FastWeightCleanupError as exc:
                 record_degradation(
                     "latent_cortex",
@@ -2794,9 +2773,7 @@ class LatentCortexEngine:
             retain_policy_trace = failure_reason.startswith("decode_incomplete:")
             failure_tokens = out_tokens if retain_policy_trace else []
             failure_text = (
-                self._decode_public_text(failure_tokens, receipt=receipt)
-                if failure_tokens
-                else ""
+                self._decode_public_text(failure_tokens, receipt=receipt) if failure_tokens else ""
             )
             return LatentReasoningResult(
                 ok=False,
@@ -2886,9 +2863,7 @@ class LatentCortexEngine:
             * self.n_layers
         )
         persist_cost = self.config.workspace.n_slots * self.n_layers
-        bridge_cost = (
-            len(bridge_tokens) + terminal_instruction_reserve
-        ) * self.n_layers
+        bridge_cost = (len(bridge_tokens) + terminal_instruction_reserve) * self.n_layers
         fast_weight_probe_cost = 8 * self.n_layers if self.config.fast_weights.enabled else 0
         fast_weight_verifier_probe_cost = (
             self._verifier_probe_layer_apps(bridge_tokens)
@@ -2896,8 +2871,7 @@ class LatentCortexEngine:
             else 0
         )
         fast_weight_window_forward_cost = (
-            self.config.workspace.n_slots
-            * (self.coda_start - self.prelude_end)
+            self.config.workspace.n_slots * (self.coda_start - self.prelude_end)
             if self.config.fast_weights.enabled
             else 0
         )
@@ -2929,9 +2903,7 @@ class LatentCortexEngine:
             # it would report "not run" every episode while the receipt kept
             # saying canaries passed. Reserve it so it actually runs.
             if self.config.fast_weights.canary_generated_enabled:
-                canary_reserve += (
-                    canaries.tokens_per_generated_measurement * self.n_layers
-                )
+                canary_reserve += canaries.tokens_per_generated_measurement * self.n_layers
         completion_reserve = (
             persist_cost
             + bridge_cost
@@ -2948,9 +2920,7 @@ class LatentCortexEngine:
         # same-query pre-adaptation verifier probe are all mandatory before
         # temporary learning may start. The completion reserve separately
         # protects the matched post-adaptation probe and cleanup proof.
-        fast_weight_attach_identity_cost = (
-            2 * fast_weight_probe_cost + canary_pass_cost
-        )
+        fast_weight_attach_identity_cost = 2 * fast_weight_probe_cost + canary_pass_cost
         fast_weight_baseline_cost = (
             fast_weight_attach_identity_cost
             + fast_weight_verifier_probe_cost
@@ -2966,9 +2936,7 @@ class LatentCortexEngine:
             )
 
         embeddings, prompt_tail_logits = self._prefill(tokens, cache, budget)
-        receipt.decode_incumbent_prompt_logits_sha256 = _logits_digest(
-            prompt_tail_logits
-        )
+        receipt.decode_incumbent_prompt_logits_sha256 = _logits_digest(prompt_tail_logits)
         from core.brain.llm.latent_cortex.kv_state_tree import KVStateTree
 
         kv_state_tree = KVStateTree(
@@ -3523,9 +3491,7 @@ class LatentCortexEngine:
                             action_policy_evidence=action_policy_evidence,
                             state_signal=current_signal,
                             active_action_executors=current_executors,
-                            durable_state=action_continuation_runner_state[
-                                "durable_state"
-                            ],
+                            durable_state=action_continuation_runner_state["durable_state"],
                             rng_state=action_continuation_runner_state["rng_state"],
                             episode_step=current_action_index,
                             schedule_step=current_op_index,
@@ -3545,9 +3511,7 @@ class LatentCortexEngine:
                         "current_branch_index": prospective_target.index,
                         "current_layer_end": int(op.end),
                     }
-                    rollback_continuation = capture_current_action_frame(
-                        **capture_frame_kwargs
-                    )
+                    rollback_continuation = capture_current_action_frame(**capture_frame_kwargs)
                     active_action_continuation = rollback_continuation
                     if action_continuation_restore is not None:
                         try:
@@ -3678,9 +3642,7 @@ class LatentCortexEngine:
                                 action_policy_evidence=action_policy_evidence,
                                 state_signal=post_signal,
                                 active_action_executors=active_action_executors,
-                                durable_state=action_continuation_runner_state[
-                                    "durable_state"
-                                ],
+                                durable_state=action_continuation_runner_state["durable_state"],
                                 rng_state=action_continuation_runner_state["rng_state"],
                                 episode_step=action_index,
                                 schedule_step=op_index,
@@ -4609,9 +4571,7 @@ class LatentCortexEngine:
                             action_policy_evidence=action_policy_evidence,
                             state_signal=post_signal,
                             active_action_executors=active_action_executors,
-                            durable_state=action_continuation_runner_state[
-                                "durable_state"
-                            ],
+                            durable_state=action_continuation_runner_state["durable_state"],
                             rng_state=action_continuation_runner_state["rng_state"],
                             episode_step=state_signal.step_index + 1,
                             schedule_step=op_index,
@@ -4922,9 +4882,7 @@ class LatentCortexEngine:
                 )
 
                 contract_repair_limit = (
-                    self.config.local_repair_max_attempts
-                    if self.config.local_repair_enabled
-                    else 0
+                    self.config.local_repair_max_attempts if self.config.local_repair_enabled else 0
                 )
                 contract_repair_requests = prepare_contract_repair_requests(
                     branch_candidates=original_branch_probe_texts,
@@ -4950,25 +4908,15 @@ class LatentCortexEngine:
                         generated_context = generated["context"]
                         context = {
                             "prompt_sha256": request["prompt_sha256"],
-                            "generated_token_count": generated_context[
-                                "generated_token_count"
-                            ],
+                            "generated_token_count": generated_context["generated_token_count"],
                             "termination": generated_context["termination"],
-                            "initial_cache_offsets": generated_context[
-                                "initial_cache_offsets"
-                            ],
-                            "final_cache_offsets": generated_context[
-                                "final_cache_offsets"
-                            ],
+                            "initial_cache_offsets": generated_context["initial_cache_offsets"],
+                            "final_cache_offsets": generated_context["final_cache_offsets"],
                             "all_initial_offsets_zero": generated_context[
                                 "all_initial_offsets_zero"
                             ],
-                            "solver_context_imported": generated_context[
-                                "solver_context_imported"
-                            ],
-                            "parameter_relation": generated_context[
-                                "parameter_relation"
-                            ],
+                            "solver_context_imported": generated_context["solver_context_imported"],
+                            "parameter_relation": generated_context["parameter_relation"],
                         }
                         contract_repairs[request_id] = {
                             "candidate": generated["text"],
@@ -4986,9 +4934,7 @@ class LatentCortexEngine:
                             "contract_repair_generation_rejected:"
                             f"{type(exc).__name__}:{str(exc)[:80]}"
                         )
-                        contract_repair_failures[request_id] = (
-                            "generation_contract_invalid"
-                        )
+                        contract_repair_failures[request_id] = "generation_contract_invalid"
                 receipt.contract_repair = build_contract_repair_receipt(
                     branch_candidates=original_branch_probe_texts,
                     objective=verification_objective,
@@ -5012,9 +4958,7 @@ class LatentCortexEngine:
                             branch_probe_texts[index],
                             verification_response_contract,
                         )
-                        state["response_contract_valid"] = bool(
-                            response_state["valid"]
-                        )
+                        state["response_contract_valid"] = bool(response_state["valid"])
                         if state["valid"] and not response_state["valid"]:
                             state["valid"] = False
                             state["reason"] = "response_contract_invalid"
@@ -5025,9 +4969,7 @@ class LatentCortexEngine:
                         "complete": state["complete"],
                         "valid": state["valid"],
                         "reason": str(state["reason"])[:120],
-                        "response_contract_valid": state.get(
-                            "response_contract_valid"
-                        ),
+                        "response_contract_valid": state.get("response_contract_valid"),
                     }
                     for index, state in contract_states.items()
                 ]
@@ -5055,10 +4997,9 @@ class LatentCortexEngine:
                 if not valid_contract_branches and self.config.allow_vanilla_fallback:
                     receipt.flag("branch_selection_no_contract_valid_candidate")
                     raise RuntimeError("no_contract_valid_latent_branch")
-            contract_inventory_incomplete = (
-                valid_contract_branches is not None
-                and len(valid_contract_branches) != len(ensemble.branches)
-            )
+            contract_inventory_incomplete = valid_contract_branches is not None and len(
+                valid_contract_branches
+            ) != len(ensemble.branches)
             if contract_inventory_incomplete:
                 receipt.flag("branch_selection_contract_inventory_incomplete")
                 branch_probe_texts = {}
@@ -5165,10 +5106,7 @@ class LatentCortexEngine:
                     # Probe text is untrusted model output. A malformed branch
                     # is negative evidence for structural diagnosis, not an
                     # infrastructure failure for the completed latent episode.
-                    receipt.flag(
-                        "branch_candidate_decomposition_invalid:"
-                        f"{type(exc).__name__}"
-                    )
+                    receipt.flag(f"branch_candidate_decomposition_invalid:{type(exc).__name__}")
             receipt.disagreement_graph = build_disagreement_graph_receipt(
                 n_branches=len(ensemble.branches),
                 operator_trace=receipt.cognitive_operator_trace,
@@ -5240,7 +5178,9 @@ class LatentCortexEngine:
                 )
             except _LATENT_PHASE_ERRORS as exc:
                 record_degradation(
-                    "latent_cortex_engine", exc, severity="debug",
+                    "latent_cortex_engine",
+                    exc,
+                    severity="debug",
                     action="episode ran without commitment telemetry",
                 )
             prepared_repairs = prepare_local_repair_requests(
@@ -5471,72 +5411,83 @@ class LatentCortexEngine:
             repair_failures: dict[str, str] = {}
             for repair_request in prepared_repairs:
                 request_id = str(repair_request["request_id"])
+                rejected_redraws = 0
+                generation_attempts = 0
                 try:
-                    generated = self._fresh_verifier_generation(
-                        str(repair_request["prompt"]),
-                        budget,
-                        max_tokens=self.config.local_repair_max_tokens,
-                        reserve_layer_apps=safety_reserve,
-                        final_answer_contract=False,
-                    )
-                    generated_context = generated["context"]
-                    termination = str(generated_context.get("termination") or "")
-                    # A repair that reached its token ceiling with a parseable
-                    # suffix is still a repair. Requiring the unrelated
-                    # FINAL_ANSWER contract discarded every candidate -- measured
-                    # on the 32B as
-                    # ('repair_not_executed', 'generation_contract_invalid') on
-                    # every episode, which left the arm able to tie ordinary
-                    # decode but never to beat it. parse_local_repair_generation
-                    # below is the real gate: it accepts one bounded suffix and
-                    # rejects empty, ambiguous, or prefix-repeating output. Text
-                    # satisfying that contract is admissible however sampling
-                    # happened to stop; invalid text is rejected there regardless.
-                    if termination not in {
-                        "eos",
-                        "token_limit",
-                        "token_limit_sentence_grace",
-                    }:
-                        raise ValueError(
-                            f"repair generation terminated {termination!r}"
+                    # `local_repair_max_attempts` bounds repair FRONTIERS, not
+                    # redraws inside one frontier. Give rejection sampling
+                    # small, explicit generation headroom while preserving the
+                    # one-verifier-call budget. A duplicate is never routed
+                    # through decomposition or the deterministic verifier.
+                    for generation_attempt in range(_MAX_LOCAL_REPAIR_GENERATIONS):
+                        generation_attempts += 1
+                        generated = self._fresh_verifier_generation(
+                            str(repair_request["prompt"]),
+                            budget,
+                            max_tokens=self.config.local_repair_max_tokens,
+                            reserve_layer_apps=safety_reserve,
+                            final_answer_contract=False,
                         )
-                    repaired_candidate = parse_local_repair_generation(
-                        generated["text"],
-                        prefix=str(repair_request["prefix"]),
-                        tail=str(repair_request.get("tail") or ""),
-                    )
-                    from core.brain.llm.latent_cortex.atomic_decomposition import (
-                        build_atomic_decomposition,
-                    )
+                        generated_context = generated["context"]
+                        termination = str(generated_context.get("termination") or "")
+                        # A repair that reached its token ceiling with a parseable
+                        # suffix is still a repair. The suffix parser below is the
+                        # real contract; an invalid payload remains inadmissible.
+                        if termination not in {
+                            "eos",
+                            "token_limit",
+                            "token_limit_sentence_grace",
+                        }:
+                            raise ValueError(f"repair generation terminated {termination!r}")
+                        repaired_candidate = parse_local_repair_generation(
+                            generated["text"],
+                            prefix=str(repair_request["prefix"]),
+                            tail=str(repair_request.get("tail") or ""),
+                        )
+                        # Rejection, not prompt-listing. Naming a refuted answer
+                        # lost to i.i.d. in the A/B; an exact redraw is discarded
+                        # locally and does not spend a verifier call.
+                        if _repeats_a_refuted_answer(episode_ratchet, repaired_candidate):
+                            rejected_redraws += 1
+                            receipt.flag(
+                                "local_repair_rejected_redraw:"
+                                f"request={request_id}:generation={generation_attempt + 1}"
+                            )
+                            continue
 
-                    build_atomic_decomposition(
-                        repaired_candidate,
-                        objective=verification_objective,
-                    )
-                    # Rejection, not prompt-listing. A repair that lands back
-                    # on an answer this episode already refuted is discarded
-                    # rather than verified again — the measured form of the
-                    # policy (48.1% -> 59.4%, p=0.044, on fewer verifier
-                    # calls). Describing the excluded answers in the repair
-                    # prompt was measured and lost.
-                    if _repeats_a_refuted_answer(episode_ratchet, repaired_candidate):
+                        from core.brain.llm.latent_cortex.atomic_decomposition import (
+                            build_atomic_decomposition,
+                        )
+
+                        build_atomic_decomposition(
+                            repaired_candidate,
+                            objective=verification_objective,
+                        )
+                        generated_repairs[request_id] = {
+                            "candidate": repaired_candidate,
+                            "generation_context": {
+                                "prompt_sha256": repair_request["prompt_sha256"],
+                                "generated_token_count": generated_context["generated_token_count"],
+                                "termination": generated_context["termination"],
+                                "initial_cache_offsets": generated_context["initial_cache_offsets"],
+                                "final_cache_offsets": generated_context["final_cache_offsets"],
+                                "all_initial_offsets_zero": generated_context[
+                                    "all_initial_offsets_zero"
+                                ],
+                                "solver_context_imported": generated_context[
+                                    "solver_context_imported"
+                                ],
+                                "parameter_relation": generated_context["parameter_relation"],
+                            },
+                        }
+                        break
+                    else:
                         repair_failures[request_id] = "repeated_refuted_answer"
-                        continue
-                    generated_repairs[request_id] = {
-                        "candidate": repaired_candidate,
-                        "generation_context": {
-                            "prompt_sha256": repair_request["prompt_sha256"],
-                            "generated_token_count": generated_context["generated_token_count"],
-                            "termination": generated_context["termination"],
-                            "initial_cache_offsets": generated_context["initial_cache_offsets"],
-                            "final_cache_offsets": generated_context["final_cache_offsets"],
-                            "all_initial_offsets_zero": generated_context[
-                                "all_initial_offsets_zero"
-                            ],
-                            "solver_context_imported": generated_context["solver_context_imported"],
-                            "parameter_relation": generated_context["parameter_relation"],
-                        },
-                    }
+                    receipt.flag(
+                        "local_repair_rejection_sampling:"
+                        f"request={request_id}:generations={generation_attempts}:"
+                        f"rejected_redraws={rejected_redraws}"
+                    )
                 except RuntimeError as exc:
                     repair_failures[request_id] = (
                         "budget_unavailable"
@@ -5550,8 +5501,7 @@ class LatentCortexEngine:
                     # decomposition rebuild, which have entirely different
                     # fixes.
                     receipt.flag(
-                        f"local_repair_generation_rejected:{type(exc).__name__}:"
-                        f"{str(exc)[:80]}"
+                        f"local_repair_generation_rejected:{type(exc).__name__}:{str(exc)[:80]}"
                     )
                     repair_failures[request_id] = "generation_contract_invalid"
             receipt.local_repair = build_local_repair_receipt(
@@ -5920,9 +5870,7 @@ class LatentCortexEngine:
         # language ahead of the decode is a separate, configurable act: the
         # text is an instruction, so an arm that receives it is not comparable
         # to a control arm that does not.
-        terminal_instruction_suppressed = (
-            self.config.terminal_instruction_policy == "suppressed"
-        )
+        terminal_instruction_suppressed = self.config.terminal_instruction_policy == "suppressed"
         if self.tokenizer is not None and not terminal_instruction_suppressed:
             terminal_instruction_tokens = self._encode_terminal_instruction(
                 terminal_decision.instruction
@@ -5994,9 +5942,7 @@ class LatentCortexEngine:
                 # latent drift on the already selected branch, but it receives
                 # no branch-selection or answer-replacement authority.
                 latent_search_verifier = pending_verifier
-                receipt.flag(
-                    "latent_opt_candidate_local_score_without_branch_selection"
-                )
+                receipt.flag("latent_opt_candidate_local_score_without_branch_selection")
             if latent_search_verifier is not None and self.tokenizer is not None:
                 latent_state_score = getattr(
                     latent_search_verifier,
@@ -6032,11 +5978,7 @@ class LatentCortexEngine:
                     z_score,
                     verifier_layer_apps=self._verifier_probe_layer_apps(bridge_tokens),
                     initial_score=(
-                        float(
-                            latent_state_score(
-                                latent_optimization_probe_texts[winner.index]
-                            )
-                        )
+                        float(latent_state_score(latent_optimization_probe_texts[winner.index]))
                         if latent_state_score_enabled
                         and winner.index in latent_optimization_probe_texts
                         else branch_verifier_score
@@ -6101,9 +6043,7 @@ class LatentCortexEngine:
         fw_sham_score: float | None = None
         if self.config.fast_weights.enabled and not heterogeneous_finalized:
             winner_state_sha256 = tensor_sha256(winner.z)
-            objective_sha256 = hashlib.sha256(
-                verification_objective.encode("utf-8")
-            ).hexdigest()
+            objective_sha256 = hashlib.sha256(verification_objective.encode("utf-8")).hexdigest()
             admission = unavailable_admission(
                 source_sha256=hashlib.sha256(b"").hexdigest(),
                 objective_sha256=objective_sha256,
@@ -6117,12 +6057,8 @@ class LatentCortexEngine:
             if verifier is not None and self.tokenizer is not None:
                 probe_cost = self._verifier_probe_layer_apps(bridge_tokens)
                 if probe_cost + safety_reserve > budget.remaining_layer_apps:
-                    raise RuntimeError(
-                        "compute budget cannot admit fast-weight evidence probe"
-                    )
-                evaluation_index = len(
-                    getattr(information_verifier, "evaluations", ())
-                )
+                    raise RuntimeError("compute budget cannot admit fast-weight evidence probe")
+                evaluation_index = len(getattr(information_verifier, "evaluations", ()))
                 fw_verifier_pre_tokens = self._decode_probe(
                     winner,
                     cache,
@@ -6132,13 +6068,9 @@ class LatentCortexEngine:
                     use_cache=False,
                     force_exact_tokens=True,
                 )
-                fw_verifier_pre_text = self.tokenizer.decode(
-                    fw_verifier_pre_tokens
-                )
+                fw_verifier_pre_text = self.tokenizer.decode(fw_verifier_pre_tokens)
                 fw_verifier_pre = float(verifier(fw_verifier_pre_text))
-                source_sha256 = hashlib.sha256(
-                    fw_verifier_pre_text.encode("utf-8")
-                ).hexdigest()
+                source_sha256 = hashlib.sha256(fw_verifier_pre_text.encode("utf-8")).hexdigest()
                 if callable(evidence_provider):
                     try:
                         admission, fast_weight_target_tokens = evidence_provider(
@@ -6152,22 +6084,16 @@ class LatentCortexEngine:
                             expected_source_sha256=source_sha256,
                             expected_objective_sha256=objective_sha256,
                         )
-                        if (
-                            admission["target_token_count"]
-                            != len(fast_weight_target_tokens)
-                            or admission["target_tokens_sha256"]
-                            != token_sequence_sha256(
-                                fast_weight_target_tokens
-                            )
+                        if admission["target_token_count"] != len(
+                            fast_weight_target_tokens
+                        ) or admission["target_tokens_sha256"] != token_sequence_sha256(
+                            fast_weight_target_tokens
                         ):
                             raise ValueError(
                                 "fast-weight private target differs from its admission commitment"
                             )
                     except _LATENT_PHASE_ERRORS as exc:
-                        receipt.flag(
-                            "fast_weight_evidence_rejected:"
-                            f"{type(exc).__name__}"
-                        )
+                        receipt.flag(f"fast_weight_evidence_rejected:{type(exc).__name__}")
                         admission = unavailable_admission(
                             source_sha256=source_sha256,
                             objective_sha256=objective_sha256,
@@ -6200,25 +6126,15 @@ class LatentCortexEngine:
             )
             if admission["admitted"]:
                 vocab_size = int(self.model.model.embed_tokens.weight.shape[0])
-                if any(
-                    not 0 <= token < vocab_size
-                    for token in fast_weight_target_tokens
-                ):
+                if any(not 0 <= token < vocab_size for token in fast_weight_target_tokens):
                     raise RuntimeError(
                         "fast-weight evidence target contains an out-of-vocabulary token"
                     )
-                if (
-                    fast_weight_attach_identity_cost + safety_reserve
-                    > budget.remaining_layer_apps
-                ):
-                    raise RuntimeError(
-                        "compute budget cannot admit fast-weight identity probes"
-                    )
+                if fast_weight_attach_identity_cost + safety_reserve > budget.remaining_layer_apps:
+                    raise RuntimeError("compute budget cannot admit fast-weight identity probes")
                 fast_weights = EpisodicFastWeights(self.config.fast_weights)
                 if self._episode_probe_cache is not None:
-                    fast_weights.on_function_change = (
-                        self._episode_probe_cache.invalidate
-                    )
+                    fast_weights.on_function_change = self._episode_probe_cache.invalidate
                 fw_baseline = self._fw_probe(budget)
                 if canaries is not None:
                     canary_baseline = canaries.measure(
@@ -6233,9 +6149,7 @@ class LatentCortexEngine:
                     # random-weight substrate model fails "answer in exactly
                     # one word" before any adaptation exists; erasing ΔW over
                     # that would be blaming the update for the model.
-                    canary_generated_baseline = self._run_generated_canaries(
-                        canaries, budget
-                    )
+                    canary_generated_baseline = self._run_generated_canaries(canaries, budget)
                 seed_stat = float(mx.mean(per_position_rms(winner.z)))
                 retrieval_seed_vectors = None
                 retrieval_indices = [
@@ -6257,9 +6171,7 @@ class LatentCortexEngine:
                 receipt.fast_weights_layers = wrapped
                 fw_initial_snapshot = fast_weights.snapshot_delta()
                 try:
-                    fast_weight_learning_state["lease"] = (
-                        fast_weights.lease_receipt()
-                    )
+                    fast_weight_learning_state["lease"] = fast_weights.lease_receipt()
                     attach_probe = self._fw_probe(budget)
                     pre_probe_sha256 = tensor_sha256(fw_baseline)
                     post_probe_sha256 = tensor_sha256(attach_probe)
@@ -6270,17 +6182,13 @@ class LatentCortexEngine:
                         "post_probe_sha256": post_probe_sha256,
                         "exact": pre_probe_sha256 == post_probe_sha256,
                         "winner_state_before_sha256": winner_state_sha256,
-                        "winner_state_after_sha256": (
-                            state_after_attach_sha256
-                        ),
+                        "winner_state_after_sha256": (state_after_attach_sha256),
                     }
                     if (
                         pre_probe_sha256 != post_probe_sha256
                         or state_after_attach_sha256 != winner_state_sha256
                     ):
-                        raise RuntimeError(
-                            "fast-weight attachment failed measured identity"
-                        )
+                        raise RuntimeError("fast-weight attachment failed measured identity")
                 except BaseException:  # noqa: BLE001 - mutation cleanup must survive cancellation
                     self._finalize_fast_weights(
                         fast_weights,
@@ -6296,10 +6204,7 @@ class LatentCortexEngine:
                         f"{fast_weights.lifecycle.retrieval_seeded_columns}"
                     )
             else:
-                receipt.flag(
-                    "fast_weight_not_admitted:"
-                    f"{admission['reason']}"
-                )
+                receipt.flag(f"fast_weight_not_admitted:{admission['reason']}")
 
         try:
             if fast_weights is not None:
@@ -6344,9 +6249,7 @@ class LatentCortexEngine:
                     tokens_per_forward=self.config.workspace.n_slots,
                     layers_per_forward=(self.coda_start - self.prelude_end),
                     reserve_layer_apps=safety_reserve,
-                    fixed_line_search_evaluations=(
-                        MATCHED_LINE_SEARCH_EVALUATIONS
-                    ),
+                    fixed_line_search_evaluations=(MATCHED_LINE_SEARCH_EVALUATIONS),
                     operation_prefix="fast_weight_treatment",
                 )
                 fw_treatment_snapshot = fast_weights.snapshot_delta()
@@ -6356,9 +6259,7 @@ class LatentCortexEngine:
                     reason="fast_weights_matched_control_reset",
                 )
                 fast_weights.reset_optimization_trace()
-                vocab_size = int(
-                    self.model.model.embed_tokens.weight.shape[0]
-                )
+                vocab_size = int(self.model.model.embed_tokens.weight.shape[0])
                 fw_sham_target_tokens = deterministic_sham_target(
                     fast_weight_target_tokens,
                     vocab_size=vocab_size,
@@ -6382,17 +6283,12 @@ class LatentCortexEngine:
                     fw_sham_loss,
                     budget=budget,
                     layer_apps_per_forward=(
-                        self.config.workspace.n_slots
-                        * (self.coda_start - self.prelude_end)
+                        self.config.workspace.n_slots * (self.coda_start - self.prelude_end)
                     ),
                     tokens_per_forward=self.config.workspace.n_slots,
-                    layers_per_forward=(
-                        self.coda_start - self.prelude_end
-                    ),
+                    layers_per_forward=(self.coda_start - self.prelude_end),
                     reserve_layer_apps=safety_reserve,
-                    fixed_line_search_evaluations=(
-                        MATCHED_LINE_SEARCH_EVALUATIONS
-                    ),
+                    fixed_line_search_evaluations=(MATCHED_LINE_SEARCH_EVALUATIONS),
                     operation_prefix="fast_weight_sham",
                 )
                 fw_sham_trace = fast_weights.optimization_trace()
@@ -6406,20 +6302,12 @@ class LatentCortexEngine:
                         use_cache=False,
                         force_exact_tokens=True,
                     )
-                    fw_sham_score = float(
-                        verifier(
-                            self.tokenizer.decode(
-                                fw_sham_probe_tokens
-                            )
-                        )
-                    )
+                    fw_sham_score = float(verifier(self.tokenizer.decode(fw_sham_probe_tokens)))
                 fast_weights.restore_delta(
                     fw_treatment_snapshot,
                     reason="fast_weights_matched_treatment_restore",
                 )
-                fast_weights.restore_optimization_trace(
-                    fw_treatment_trace
-                )
+                fast_weights.restore_optimization_trace(fw_treatment_trace)
                 lifecycle = fast_weights.lifecycle
                 fast_weight_learning_state["optimization"] = {
                     "optimizer": lifecycle.optimizer,
@@ -6428,15 +6316,9 @@ class LatentCortexEngine:
                     "rejected_steps": lifecycle.rejected_steps,
                     "budget_exhausted": lifecycle.budget_exhausted,
                     "loss_trail": list(lifecycle.loss_trail),
-                    "gradient_norm_trail": list(
-                        lifecycle.gradient_global_norm_trail
-                    ),
-                    "accepted_step_sizes": list(
-                        lifecycle.accepted_step_sizes
-                    ),
-                    "line_search_backtracks": (
-                        lifecycle.line_search_backtracks
-                    ),
+                    "gradient_norm_trail": list(lifecycle.gradient_global_norm_trail),
+                    "accepted_step_sizes": list(lifecycle.accepted_step_sizes),
+                    "line_search_backtracks": (lifecycle.line_search_backtracks),
                 }
                 stage_started = self._stage_checkpoint(
                     receipt=receipt,
@@ -6471,20 +6353,18 @@ class LatentCortexEngine:
                     )
                     fast_weight_learning_state["controls"] = {
                         "decision": canary_decision,
-                        "capability_canaries": dict(
-                            receipt.fast_weight_canaries
-                        ),
-                        "test_time_training": fast_weight_learning_state[
-                            "controls"
-                        ]["test_time_training"],
+                        "capability_canaries": dict(receipt.fast_weight_canaries),
+                        "test_time_training": fast_weight_learning_state["controls"][
+                            "test_time_training"
+                        ],
                     }
                 else:
                     fast_weight_learning_state["controls"] = {
                         "decision": "accepted",
                         "capability_canaries": {},
-                        "test_time_training": fast_weight_learning_state[
-                            "controls"
-                        ]["test_time_training"],
+                        "test_time_training": fast_weight_learning_state["controls"][
+                            "test_time_training"
+                        ],
                     }
                 if verifier is not None and self.tokenizer is not None:
                     verifier_decision = self._enforce_fast_weight_verifier(
@@ -6520,13 +6400,10 @@ class LatentCortexEngine:
                     )
                 else:
                     fast_weights.canary_erase()
-                    fast_weight_learning_state["disposition"] = (
-                        "rejected_verifier_unavailable"
-                    )
+                    fast_weight_learning_state["disposition"] = "rejected_verifier_unavailable"
 
                 fast_weight_decode_active = bool(
-                    fast_weight_learning_state["disposition"]
-                    == "accepted_causal_improvement"
+                    fast_weight_learning_state["disposition"] == "accepted_causal_improvement"
                     and fast_weights.handles
                     and fast_weights.lifecycle.lease_acquired
                     and not fast_weights.lifecycle.lease_released
@@ -6546,8 +6423,7 @@ class LatentCortexEngine:
             # the adaptation; continue on the clean base function instead.
             if fast_weight_decode_active and fast_weights is not None:
                 lineage_intact = (
-                    tensor_sha256(winner.z)
-                    == fast_weight_learning_state["winner_state_sha256"]
+                    tensor_sha256(winner.z) == fast_weight_learning_state["winner_state_sha256"]
                     and bool(fast_weights.handles)
                     and fast_weights.lifecycle.lease_acquired
                     and not fast_weights.lifecycle.lease_released
@@ -6555,9 +6431,7 @@ class LatentCortexEngine:
                 if not lineage_intact:
                     if fast_weights.handles:
                         fast_weights.canary_erase()
-                    fast_weight_learning_state["disposition"] = (
-                        "rejected_state_lineage_changed"
-                    )
+                    fast_weight_learning_state["disposition"] = "rejected_state_lineage_changed"
                     fast_weight_decode_active = False
                     receipt.flag("fast_weight_state_lineage_changed")
 
@@ -6567,14 +6441,10 @@ class LatentCortexEngine:
             # downstream replacement and research arbitration must never
             # grade the pre-adaptation snapshot as the adapted computation.
             adaptation_changed_candidate_state = bool(
-                receipt.latent_opt_steps > 0
-                or fast_weight_decode_active
-                or ablate_slot is not None
+                receipt.latent_opt_steps > 0 or fast_weight_decode_active or ablate_slot is not None
             )
             deployable_candidate_available = winner.index in branch_probe_texts
-            research_candidate_available = (
-                winner.index in research_oracle_candidates
-            )
+            research_candidate_available = winner.index in research_oracle_candidates
             research_oracle_enabled = callable(
                 getattr(
                     pending_verifier,
@@ -6616,59 +6486,45 @@ class LatentCortexEngine:
                         post_probe_tokens,
                         receipt=receipt,
                     )
-                    transition, admitted_candidate = (
-                        advance_post_adaptation_candidate(
-                            selected_branch=winner.index,
-                            prior_candidate=prior_candidate,
-                            observed_candidate=post_probe_text,
-                            stage="post_final_adaptation",
-                            strict_answer_contract=(
-                                "final_answer_v1"
-                                in {
-                                    self.config.decode_contract,
-                                    self.config.verifier_probe_contract,
-                                }
+                    transition, admitted_candidate = advance_post_adaptation_candidate(
+                        selected_branch=winner.index,
+                        prior_candidate=prior_candidate,
+                        observed_candidate=post_probe_text,
+                        stage="post_final_adaptation",
+                        strict_answer_contract=(
+                            "final_answer_v1"
+                            in {
+                                self.config.decode_contract,
+                                self.config.verifier_probe_contract,
+                            }
+                        ),
+                        response_contract=verification_response_contract,
+                        adaptation_evidence={
+                            "latent_opt_attempts": receipt.latent_opt_attempts,
+                            "latent_opt_accepted_steps": receipt.latent_opt_steps,
+                            "fast_weight_disposition": (
+                                str(fast_weight_learning_state.get("disposition", "not_applied"))
+                                if fast_weight_learning_state is not None
+                                else "not_applied"
                             ),
-                            response_contract=verification_response_contract,
-                            adaptation_evidence={
-                                "latent_opt_attempts": receipt.latent_opt_attempts,
-                                "latent_opt_accepted_steps": receipt.latent_opt_steps,
-                                "fast_weight_disposition": (
-                                    str(
-                                        fast_weight_learning_state.get(
-                                            "disposition", "not_applied"
-                                        )
-                                    )
-                                    if fast_weight_learning_state is not None
-                                    else "not_applied"
-                                ),
-                                "fast_weight_decode_active": fast_weight_decode_active,
-                                "slot_ablation_applied": ablate_slot is not None,
-                                "prior_disagreement_sha256": str(
-                                    receipt.disagreement_graph.get(
-                                        "receipt_sha256", ""
-                                    )
-                                ),
-                                "prior_diagnostic_sha256": str(
-                                    receipt.diagnostic_action_selection.get(
-                                        "receipt_sha256", ""
-                                    )
-                                ),
-                                "prior_local_repair_sha256": str(
-                                    receipt.local_repair.get(
-                                        "receipt_sha256", ""
-                                    )
-                                ),
-                                "prior_blind_review_sha256": str(
-                                    receipt.blind_review.get(
-                                        "receipt_sha256", ""
-                                    )
-                                ),
-                            },
-                        )
+                            "fast_weight_decode_active": fast_weight_decode_active,
+                            "slot_ablation_applied": ablate_slot is not None,
+                            "prior_disagreement_sha256": str(
+                                receipt.disagreement_graph.get("receipt_sha256", "")
+                            ),
+                            "prior_diagnostic_sha256": str(
+                                receipt.diagnostic_action_selection.get("receipt_sha256", "")
+                            ),
+                            "prior_local_repair_sha256": str(
+                                receipt.local_repair.get("receipt_sha256", "")
+                            ),
+                            "prior_blind_review_sha256": str(
+                                receipt.blind_review.get("receipt_sha256", "")
+                            ),
+                        },
                     )
-                    receipt.post_adaptation_candidate = (
-                        build_post_adaptation_candidate_receipt([transition])
+                    receipt.post_adaptation_candidate = build_post_adaptation_candidate_receipt(
+                        [transition]
                     )
                     if admitted_candidate is None:
                         if deployable_candidate_available:
@@ -6679,9 +6535,7 @@ class LatentCortexEngine:
                         if deployable_candidate_available:
                             branch_probe_texts[winner.index] = admitted_candidate
                         if research_oracle_enabled:
-                            research_oracle_candidates[winner.index] = (
-                                admitted_candidate
-                            )
+                            research_oracle_candidates[winner.index] = admitted_candidate
 
                     # Confidence-bound replacement validates candidate text
                     # against these exact receipts. Rebuild them from the
@@ -6699,9 +6553,7 @@ class LatentCortexEngine:
                         build_local_repair_receipt,
                     )
 
-                    post_candidate_decompositions: dict[
-                        str, dict[str, Any]
-                    ] = {}
+                    post_candidate_decompositions: dict[str, dict[str, Any]] = {}
                     if len(branch_probe_texts) == len(ensemble.branches):
                         try:
                             from core.brain.llm.latent_cortex.blind_review import (
@@ -6721,16 +6573,13 @@ class LatentCortexEngine:
                                     runner.cache_discipline_receipt()
                                 ),
                             )
-                            post_candidate_decompositions = (
-                                decompose_branch_candidates(
-                                    branch_probe_texts,
-                                    objective=verification_objective,
-                                )
+                            post_candidate_decompositions = decompose_branch_candidates(
+                                branch_probe_texts,
+                                objective=verification_objective,
                             )
                         except (TypeError, ValueError) as exc:
                             receipt.flag(
-                                "post_adaptation_candidate_evidence_invalid:"
-                                f"{type(exc).__name__}"
+                                f"post_adaptation_candidate_evidence_invalid:{type(exc).__name__}"
                             )
                     receipt.disagreement_graph = build_disagreement_graph_receipt(
                         n_branches=len(ensemble.branches),
@@ -6744,21 +6593,17 @@ class LatentCortexEngine:
                         build_candidate_routes(
                             branch_probe_texts,
                             objective=verification_objective,
-                            candidate_decompositions=(
-                                post_candidate_decompositions
-                            ),
+                            candidate_decompositions=(post_candidate_decompositions),
                         )
                         if post_candidate_decompositions
                         else {}
                     )
-                    receipt.diagnostic_action_selection = (
-                        build_diagnostic_action_selector_receipt(
-                            disagreement_graph=receipt.disagreement_graph,
-                            candidate_routes=post_candidate_routes,
-                            action_policy_evidence=action_policy_evidence,
-                            value_policy=receipt.value_of_computation,
-                            action_trace=receipt.cognitive_action_trace,
-                        )
+                    receipt.diagnostic_action_selection = build_diagnostic_action_selector_receipt(
+                        disagreement_graph=receipt.disagreement_graph,
+                        candidate_routes=post_candidate_routes,
+                        action_policy_evidence=action_policy_evidence,
+                        value_policy=receipt.value_of_computation,
+                        action_trace=receipt.cognitive_action_trace,
                     )
                     repair_limit = (
                         self.config.local_repair_max_attempts
@@ -6767,9 +6612,7 @@ class LatentCortexEngine:
                     )
                     receipt.local_repair = build_local_repair_receipt(
                         disagreement_graph=receipt.disagreement_graph,
-                        diagnostic_selection=(
-                            receipt.diagnostic_action_selection
-                        ),
+                        diagnostic_selection=(receipt.diagnostic_action_selection),
                         branch_candidates=branch_probe_texts,
                         objective=verification_objective,
                         generated_repairs={},
@@ -6916,9 +6759,7 @@ class LatentCortexEngine:
                 kv_state_tree.restore_boundary(cache, kv_state_tree.root_sha256)
                 if incumbent_artifact is not None:
                     out_tokens = list(incumbent_artifact.tokens)
-                    decode_termination = str(
-                        incumbent_artifact.receipt["output"]["termination"]
-                    )
+                    decode_termination = str(incumbent_artifact.receipt["output"]["termination"])
                     final_decode_transaction = kv_state_tree.begin_speculation(
                         cache,
                         start=0,
@@ -6947,9 +6788,7 @@ class LatentCortexEngine:
                         parent_sha256=kv_state_tree.root_sha256,
                     )
                     decode_logits = prompt_tail_logits
-                receipt.first_logits_digest = (
-                    receipt.decode_incumbent_prompt_logits_sha256
-                )
+                receipt.first_logits_digest = receipt.decode_incumbent_prompt_logits_sha256
                 stage_started = self._stage_checkpoint(
                     receipt=receipt,
                     budget=budget,
@@ -6966,13 +6805,9 @@ class LatentCortexEngine:
                     policy_bridge_token_count if latent_decode_authorized else 0
                 ),
                 "candidate_probe_bridge_tokens": policy_bridge_token_count,
-                "terminal_instruction_tokens": len(
-                    effective_terminal_instruction_tokens
-                ),
+                "terminal_instruction_tokens": len(effective_terminal_instruction_tokens),
                 "terminal_instruction_policy": effective_terminal_instruction_policy,
-                "configured_terminal_instruction_policy": (
-                    self.config.terminal_instruction_policy
-                ),
+                "configured_terminal_instruction_policy": (self.config.terminal_instruction_policy),
             }
             if public_bridge_tokens:
                 serialized_bridge = json.dumps(
@@ -7049,9 +6884,7 @@ class LatentCortexEngine:
                         if latent_decode_authorized
                         else "vanilla_incumbent_output"
                     ),
-                    latent_sha256=(
-                        tensor_sha256(winner.z) if latent_decode_authorized else ""
-                    ),
+                    latent_sha256=(tensor_sha256(winner.z) if latent_decode_authorized else ""),
                     final=True,
                 )
             receipt.decode_requested_tokens = decode_limit
@@ -7082,9 +6915,7 @@ class LatentCortexEngine:
                 )
 
                 baseline_text = (
-                    self._decode_public_text(out_tokens, receipt=receipt)
-                    if out_tokens
-                    else ""
+                    self._decode_public_text(out_tokens, receipt=receipt) if out_tokens else ""
                 )
 
                 def encode_replacement(value: str) -> list[int]:
@@ -7227,17 +7058,12 @@ class LatentCortexEngine:
                     # intervention being measured. Prefer any exact-correct
                     # valid candidate; otherwise assess the latent winner (or
                     # first valid survivor) and retain the current output.
-                    for branch_index, candidate_text in sorted(
-                        research_oracle_candidates.items()
-                    ):
+                    for branch_index, candidate_text in sorted(research_oracle_candidates.items()):
                         try:
                             assessment = research_oracle(candidate_text)
                         except (TypeError, ValueError):
                             continue
-                        if (
-                            isinstance(assessment, Mapping)
-                            and assessment.get("correct") is True
-                        ):
+                        if isinstance(assessment, Mapping) and assessment.get("correct") is True:
                             oracle_branch = branch_index
                             break
                     recurrent_text = research_oracle_candidates.get(oracle_branch)
@@ -7254,9 +7080,7 @@ class LatentCortexEngine:
                                 )
                                 != recurrent_text
                             ):
-                                raise ValueError(
-                                    "research oracle recurrent output binding failed"
-                                )
+                                raise ValueError("research oracle recurrent output binding failed")
                             from core.brain.llm.latent_cortex.research_oracle_arbitration import (
                                 build_research_oracle_arbitration,
                             )
@@ -7282,10 +7106,7 @@ class LatentCortexEngine:
                                 f"{type(exc).__name__}:{str(exc)[:80]}"
                             )
                         else:
-                            if (
-                                receipt.research_oracle_arbitration["decision"]
-                                == "replace"
-                            ):
+                            if receipt.research_oracle_arbitration["decision"] == "replace":
                                 out_tokens = oracle_tokens
                                 if token_logprobs_out is not None:
                                     token_logprobs_out.clear()
@@ -7321,15 +7142,11 @@ class LatentCortexEngine:
             fast_weight_learning_state["final_answer"] = {
                 "decoded_under_adaptation": fast_weight_decode_active,
                 "tokens_sha256": token_sequence_sha256(out_tokens),
-                "text_sha256": hashlib.sha256(
-                    final_text.encode("utf-8")
-                ).hexdigest(),
+                "text_sha256": hashlib.sha256(final_text.encode("utf-8")).hexdigest(),
                 "token_count": len(out_tokens),
             }
-            receipt.fast_weight_learning = (
-                finalize_fast_weight_learning_receipt(
-                    fast_weight_learning_state
-                )
+            receipt.fast_weight_learning = finalize_fast_weight_learning_receipt(
+                fast_weight_learning_state
             )
 
         if fast_weights is not None and receipt.fast_weights_erased is not True:
@@ -7472,12 +7289,8 @@ class LatentCortexEngine:
                 "rejected_steps": lifecycle.rejected_steps,
                 "budget_exhausted": lifecycle.budget_exhausted,
                 "loss_trail": list(lifecycle.loss_trail),
-                "gradient_norm_trail": list(
-                    lifecycle.gradient_global_norm_trail
-                ),
-                "accepted_step_sizes": list(
-                    lifecycle.accepted_step_sizes
-                ),
+                "gradient_norm_trail": list(lifecycle.gradient_global_norm_trail),
+                "accepted_step_sizes": list(lifecycle.accepted_step_sizes),
                 "line_search_backtracks": lifecycle.line_search_backtracks,
             }
             learning_state["cleanup"] = {
@@ -7485,19 +7298,11 @@ class LatentCortexEngine:
                 "detached": lifecycle.erased,
                 "erase_proven": lifecycle.erase_proven,
                 "lease_released": lifecycle.lease_released,
-                "conflicts": (
-                    lifecycle.detach_conflicts
-                    + lifecycle.lease_conflicts
-                ),
-                "pre_probe_sha256": (
-                    lifecycle.erase_probe_before_sha256
-                ),
-                "post_probe_sha256": (
-                    lifecycle.erase_probe_after_sha256
-                ),
+                "conflicts": (lifecycle.detach_conflicts + lifecycle.lease_conflicts),
+                "pre_probe_sha256": (lifecycle.erase_probe_before_sha256),
+                "post_probe_sha256": (lifecycle.erase_probe_after_sha256),
                 "erased_layer_ids": [
-                    f"layers.{index}.{lifecycle.target}"
-                    for index in lifecycle.layers
+                    f"layers.{index}.{lifecycle.target}" for index in lifecycle.layers
                 ],
             }
         try:
@@ -7511,22 +7316,14 @@ class LatentCortexEngine:
                 detached=lifecycle.erased,
                 erase_proven=lifecycle.erase_proven,
                 lease_released=lifecycle.lease_released,
-                conflicts=(
-                    lifecycle.detach_conflicts
-                    + lifecycle.lease_conflicts
-                ),
+                conflicts=(lifecycle.detach_conflicts + lifecycle.lease_conflicts),
                 pre_probe_sha256=lifecycle.erase_probe_before_sha256,
                 post_probe_sha256=lifecycle.erase_probe_after_sha256,
-                layer_ids=[
-                    f"layers.{index}.{lifecycle.target}"
-                    for index in lifecycle.layers
-                ],
+                layer_ids=[f"layers.{index}.{lifecycle.target}" for index in lifecycle.layers],
             )
         except (TypeError, ValueError) as exc:
             receipt.fast_weight_cleanup = {}
-            receipt.flag(
-                f"fast_weight_cleanup_proof_failed:{type(exc).__name__}"
-            )
+            receipt.flag(f"fast_weight_cleanup_proof_failed:{type(exc).__name__}")
         if lifecycle.budget_exhausted:
             receipt.flag("fast_weight_budget_exhausted")
         if lifecycle.optimized_steps <= 0:
@@ -8036,9 +7833,7 @@ class LatentCortexEngine:
                 "decision": "erased_matched_control_unavailable",
             }
             receipt.flag("fast_weight_matched_control_unavailable")
-            learning_state["disposition"] = (
-                "rejected_verifier_unavailable"
-            )
+            learning_state["disposition"] = "rejected_verifier_unavailable"
             return "erased_matched_control_unavailable"
         probe_cost = self._verifier_probe_layer_apps(bridge_tokens)
         if probe_cost + safety_reserve > budget.remaining_layer_apps:
@@ -8079,16 +7874,10 @@ class LatentCortexEngine:
             "evaluated": True,
             "pre_tokens_sha256": pre_tokens_sha256,
             "post_tokens_sha256": post_tokens_sha256,
-            "pre_text_sha256": hashlib.sha256(
-                pre_text.encode("utf-8")
-            ).hexdigest(),
-            "post_text_sha256": hashlib.sha256(
-                post_text.encode("utf-8")
-            ).hexdigest(),
+            "pre_text_sha256": hashlib.sha256(pre_text.encode("utf-8")).hexdigest(),
+            "post_text_sha256": hashlib.sha256(post_text.encode("utf-8")).hexdigest(),
             "pre_score": float(pre_score),
-            "post_score": (
-                float(post_score) if math.isfinite(post_score) else None
-            ),
+            "post_score": (float(post_score) if math.isfinite(post_score) else None),
             "token_sequence_changed": token_sequence_changed,
             "strict_improvement": strict_improvement,
             "winner_state_before_sha256": winner_state_before_sha256,
@@ -8104,13 +7893,8 @@ class LatentCortexEngine:
             receipt.flag("fast_weight_verifier_erased")
             learning_state["disposition"] = "rejected_non_improvement"
             return "erased_nonfinite_score"
-        forward_layer_apps = (
-            self.config.workspace.n_slots
-            * (self.coda_start - self.prelude_end)
-        )
-        probe_layer_apps = self._verifier_probe_layer_apps(
-            bridge_tokens
-        )
+        forward_layer_apps = self.config.workspace.n_slots * (self.coda_start - self.prelude_end)
+        probe_layer_apps = self._verifier_probe_layer_apps(bridge_tokens)
 
         def arm_receipt(
             *,
@@ -8124,29 +7908,20 @@ class LatentCortexEngine:
             line_searches = int(trace["line_search_evaluations"])
             return {
                 "arm": arm,
-                "target_tokens_sha256": token_sequence_sha256(
-                    target_tokens
-                ),
+                "target_tokens_sha256": token_sequence_sha256(target_tokens),
                 "optimizer": str(trace["optimizer"]),
                 "attempts": int(trace["attempts"]),
                 "forward_evaluations": gradients + line_searches,
                 "backward_evaluations": gradients,
                 "line_search_evaluations": line_searches,
-                "layer_apps": (
-                    (3 * gradients + line_searches)
-                    * forward_layer_apps
-                ),
+                "layer_apps": ((3 * gradients + line_searches) * forward_layer_apps),
                 "probe_layer_apps": probe_layer_apps,
-                "probe_tokens_sha256": token_sequence_sha256(
-                    probe_tokens
-                ),
+                "probe_tokens_sha256": token_sequence_sha256(probe_tokens),
                 "probe_token_count": len(probe_tokens),
                 "score": float(score),
             }
 
-        critic_before = learning_state["admission"][
-            "critic_recalibration"
-        ]
+        critic_before = learning_state["admission"]["critic_recalibration"]
         critic_after = build_critic_recalibration_receipt()
         matched_compute = build_matched_compute_receipt(
             treatment=arm_receipt(
@@ -8168,14 +7943,10 @@ class LatentCortexEngine:
             critic_before=critic_before,
             critic_after=critic_after,
         )
-        learning_state["controls"]["test_time_training"] = (
-            build_test_time_training_receipt(
-                critic_recalibration=critic_before,
-                pseudo_label_admission=learning_state["admission"][
-                    "pseudo_label_admission"
-                ],
-                matched_compute=matched_compute,
-            )
+        learning_state["controls"]["test_time_training"] = build_test_time_training_receipt(
+            critic_recalibration=critic_before,
+            pseudo_label_admission=learning_state["admission"]["pseudo_label_admission"],
+            matched_compute=matched_compute,
         )
         if not strict_improvement:
             fast_weights.canary_erase()
@@ -8217,15 +7988,9 @@ class LatentCortexEngine:
             "pre_tokens_sha256": pre_tokens_sha256,
             "post_tokens_sha256": post_tokens_sha256,
             "token_sequence_changed": token_sequence_changed,
-            "winner_state_unchanged": (
-                winner_state_before_sha256 == winner_state_after_sha256
-            ),
-            "matched_compute_sha256": matched_compute[
-                "receipt_sha256"
-            ],
-            "incremental_gain_over_sham": matched_compute[
-                "incremental_gain_over_sham"
-            ],
+            "winner_state_unchanged": (winner_state_before_sha256 == winner_state_after_sha256),
+            "matched_compute_sha256": matched_compute["receipt_sha256"],
+            "incremental_gain_over_sham": matched_compute["incremental_gain_over_sham"],
         }
         return decision
 

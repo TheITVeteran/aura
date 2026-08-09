@@ -78,9 +78,8 @@ measured effect misses its prediction tells you which premise broke.
 
 from __future__ import annotations
 
-import math
 from collections import Counter
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
 from enum import StrEnum
 from typing import Any
@@ -92,7 +91,8 @@ from core.brain.llm.latent_cortex.commitment_ratchet import (
     _normalize,
 )
 
-EXCLUSION_SCHEMA = "aura.rlc.sequential_exclusion.v1"
+EXCLUSION_SCHEMA = "aura.rlc.sequential_exclusion.v2"
+MAX_GENERATIONS_PER_VERIFIER_CALL = 4
 
 #: Below this, the distribution is flat enough that i.i.d. sampling already
 #: covers the space and exclusion has little to remove. Reported, not
@@ -273,6 +273,8 @@ class DrawRecord:
     outcome: DrawOutcome
     excluded_mass_estimate: float = 0.0
     was_duplicate_of_excluded: bool = False
+    exclusions_active: bool = False
+    verifier_called: bool = False
     detail: str = ""
 
     def to_dict(self) -> dict[str, Any]:
@@ -282,6 +284,8 @@ class DrawRecord:
             "outcome": self.outcome.value,
             "excluded_mass_estimate": round(self.excluded_mass_estimate, 4),
             "noncompliant": self.was_duplicate_of_excluded,
+            "exclusions_active": self.exclusions_active,
+            "verifier_called": self.verifier_called,
             "detail": self.detail[:200],
         }
 
@@ -298,7 +302,21 @@ class ExclusionResult:
 
     @property
     def distinct_examined(self) -> int:
-        return len({_normalize(row.candidate) for row in self.draws if row.candidate})
+        return len(
+            {
+                _normalize(row.candidate)
+                for row in self.draws
+                if row.candidate and row.verifier_called
+            }
+        )
+
+    @property
+    def verifier_calls(self) -> int:
+        return sum(row.verifier_called for row in self.draws)
+
+    @property
+    def rejected_redraws(self) -> int:
+        return sum(row.was_duplicate_of_excluded for row in self.draws)
 
     @property
     def compliance(self) -> float:
@@ -307,22 +325,23 @@ class ExclusionResult:
         Draw 0 has nothing to comply with and is excluded from the
         denominator; counting it would inflate compliance toward 1 for free.
         """
-        eligible = [row for row in self.draws if row.index > 0]
+        eligible = [row for row in self.draws if row.exclusions_active]
         if not eligible:
             return 1.0
         honoured = sum(1 for row in eligible if not row.was_duplicate_of_excluded)
         return honoured / len(eligible)
 
     def to_dict(self) -> dict[str, Any]:
-        predicted = (
-            self.prediction.distinct_exclusion if self.prediction else None
-        )
+        predicted = self.prediction.distinct_exclusion if self.prediction else None
         return {
             "schema": EXCLUSION_SCHEMA,
             "answer": self.answer,
             "solved": self.answer is not None,
             "draws": [row.to_dict() for row in self.draws],
             "distinct_examined": self.distinct_examined,
+            "generations": len(self.draws),
+            "verifier_calls": self.verifier_calls,
+            "rejected_redraws": self.rejected_redraws,
             "compliance": round(self.compliance, 4),
             # The premise that fails silently. One gold exclusion means the
             # verifier removed the truth, and no amount of search recovers
@@ -350,11 +369,12 @@ def run_sequential_exclusion(
 ) -> ExclusionResult:
     """Draw, verify, exclude, redraw — until verified or out of budget.
 
-    ``draw(objective, conditioning_block) -> candidate`` is the caller's
-    model call; the conditioning block is the ratchet's, so exclusion is
-    implemented by the same mechanism that implements every other
-    commitment. ``verify(objective, candidate) -> (outcome, detail)`` is the
-    caller's verifier, and its soundness is the theorem's first premise.
+    ``draw(objective, requirement_block) -> candidate`` is the caller's model
+    call. Refuted answers are never named in that block: the measured winning
+    policy draws blindly, rejects a duplicate locally, and redraws without a
+    verifier call. ``max_draws`` therefore budgets verifier calls; generation
+    gets bounded headroom so duplicates do not consume the resource the A/B
+    result held equal.
 
     ``gold_answer`` is optional and used ONLY to detect the verifier
     refuting a correct answer. It never influences a draw or a verdict; it
@@ -364,28 +384,42 @@ def run_sequential_exclusion(
     ratchet = ratchet if ratchet is not None else CommitmentRatchet()
     result = ExclusionResult(answer=None)
     if pilot_samples:
-        result.prediction = predict_distinct_advantage(
-            pilot_samples, draws=max_draws
-        )
+        result.prediction = predict_distinct_advantage(pilot_samples, draws=max_draws)
 
     excluded: set[str] = set()
     gold = _normalize(gold_answer) if gold_answer else ""
 
-    for index in range(max(1, int(max_draws))):
+    verifier_budget = max(1, int(max_draws))
+    max_generations = verifier_budget * MAX_GENERATIONS_PER_VERIFIER_CALL
+    generations = 0
+    while result.verifier_calls < verifier_budget and generations < max_generations:
+        index = generations
+        generations += 1
+        exclusions_active = bool(excluded)
         try:
             candidate = str(draw(objective, ratchet.conditioning_block()) or "")
         except (RuntimeError, ValueError, TypeError, OSError) as exc:
             result.draws.append(
-                DrawRecord(index=index, candidate="", outcome=DrawOutcome.UNDECIDED,
-                           detail=f"draw failed: {type(exc).__name__}: {exc}")
+                DrawRecord(
+                    index=index,
+                    candidate="",
+                    outcome=DrawOutcome.UNDECIDED,
+                    exclusions_active=exclusions_active,
+                    detail=f"draw failed: {type(exc).__name__}: {exc}",
+                )
             )
             continue
 
         normalised = _normalize(candidate)
         if not normalised:
             result.draws.append(
-                DrawRecord(index=index, candidate="", outcome=DrawOutcome.UNDECIDED,
-                           detail="empty draw")
+                DrawRecord(
+                    index=index,
+                    candidate="",
+                    outcome=DrawOutcome.UNDECIDED,
+                    exclusions_active=exclusions_active,
+                    detail="empty draw",
+                )
             )
             continue
 
@@ -395,9 +429,11 @@ def run_sequential_exclusion(
             # duplicate work exclusion exists to stop.
             result.draws.append(
                 DrawRecord(
-                    index=index, candidate=candidate,
+                    index=index,
+                    candidate=candidate,
                     outcome=DrawOutcome.NONCOMPLIANT,
                     was_duplicate_of_excluded=True,
+                    exclusions_active=True,
                     detail="redrew an excluded answer",
                 )
             )
@@ -408,8 +444,14 @@ def run_sequential_exclusion(
         except (RuntimeError, ValueError, TypeError, OSError) as exc:
             outcome, detail = DrawOutcome.UNDECIDED, f"{type(exc).__name__}: {exc}"
 
-        record = DrawRecord(index=index, candidate=candidate, outcome=outcome,
-                            detail=str(detail))
+        record = DrawRecord(
+            index=index,
+            candidate=candidate,
+            outcome=outcome,
+            exclusions_active=exclusions_active,
+            verifier_called=True,
+            detail=str(detail),
+        )
 
         if outcome is DrawOutcome.ACCEPTED:
             result.draws.append(record)
@@ -469,18 +511,14 @@ def compare_to_iid(result: ExclusionResult) -> dict[str, Any]:
         "iid_baseline_distinct": round(baseline, 4),
         "beat_iid_baseline": measured > baseline,
         "prediction_error": round(measured - predicted, 4),
-        "relative_error": (
-            round(abs(measured - predicted) / predicted, 4) if predicted else None
-        ),
+        "relative_error": (round(abs(measured - predicted) / predicted, 4) if predicted else None),
         "compliance": round(result.compliance, 4),
         "verifier_sound": result.gold_exclusions == 0,
         "diagnosis": _diagnose(result, predicted, measured, baseline),
     }
 
 
-def _diagnose(
-    result: ExclusionResult, predicted: float, measured: float, baseline: float
-) -> str:
+def _diagnose(result: ExclusionResult, predicted: float, measured: float, baseline: float) -> str:
     if result.gold_exclusions:
         return (
             "verifier refuted a correct answer; the truth was excluded and no "

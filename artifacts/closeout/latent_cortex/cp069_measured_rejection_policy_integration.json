@@ -1,0 +1,57 @@
+{
+  "schema": "aura.closeout.rlc_rejection_policy_integration.v1",
+  "checkpoint": "CP069",
+  "date": "2026-08-09",
+  "measurement_source": "artifacts/rlc/commitment_search/exclusion_ab_aggregate_20260809.json",
+  "measured_boundary": {
+    "model": "Qwen2.5-1.5B-Instruct-4bit",
+    "task_family": "three_digit_multiplication",
+    "paired_tasks": 160,
+    "iid_solved": 77,
+    "prompt_conditioned_solved": 75,
+    "rejection_sampled_solved": 95,
+    "absolute_gain_over_iid": 0.113,
+    "z": 2.018,
+    "p": 0.0436
+  },
+  "defects_closed": [
+    "deliberate_best_of no longer merges rejected revisions with rejected redraws",
+    "deliberate_best_of never sends refuted answer text to a two-argument solver",
+    "sequential exclusion budgets verifier calls rather than raw generations",
+    "sequential exclusion separately receipts generations, verifier calls, rejected redraws, and compliance",
+    "RLC local repair redraws a repeated refuted candidate up to a bounded three-generation ceiling",
+    "RLC local repair rejects duplicates before atomic decomposition or deterministic verification",
+    "repeated_refuted_answer is a valid fail-honest local-repair outcome"
+  ],
+  "verification": {
+    "focused_tests": {
+      "passed": 183,
+      "failed": 0
+    },
+    "smoke_tests": {
+      "passed": 103,
+      "failed": 0
+    },
+    "ruff": "pass",
+    "compileall": "pass",
+    "diff_check": "pass",
+    "engine_behavior": {
+      "first_repair_generation": "exact previously refuted candidate",
+      "second_repair_generation": "distinct verifier-admissible candidate",
+      "generation_count": 2,
+      "rejected_redraws": 1,
+      "final_replacement": "admitted"
+    }
+  },
+  "claim_boundary": {
+    "proven": "bounded rejection sampling improved correctness on one model, task family, and difficulty band; production seams now implement that measured policy",
+    "not_proven": [
+      "resident 32B transfer",
+      "cross-domain generality",
+      "intrinsic recurrent neural gain",
+      "frontier-level reasoning",
+      "fusion authority",
+      "WOW Signal"
+    ]
+  }
+}

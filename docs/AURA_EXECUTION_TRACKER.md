@@ -39784,3 +39784,38 @@ The bounded whole-system verified-search gain remains positive; adapter,
 recurrent-neural, resident-32B, frontier, fusion, activation, and `WOW Signal`
 claims remain false. The completion envelope remains `809/920` (approximately
 `87.9%`).
+
+## Checkpoint 2026-08-09-069: The Measured Search Policy Is the Shipped Policy
+
+The 160-task commitment-search experiment separated three implementations:
+ordinary i.i.d. best-of-six solved `77/160`, prompt-conditioned exclusion
+solved `75/160`, and exact rejection sampling solved `95/160` (`+11.3`
+percentage points, `z=2.018`, `p=0.0436`) while using fewer verifier calls.
+That is bounded positive evidence for a system-level capability mechanism, not
+evidence of resident-32B, cross-domain, recurrent-neural, or frontier gain.
+
+Production inspection found that the measured winner was not yet implemented
+faithfully. The revision gate still merged rejected revisions with duplicate
+redraws. The standalone sequential policy charged duplicates against the raw
+generation budget instead of the verifier-call budget. The RLC repair path
+stopped after its first duplicate instead of redrawing, and its failure reason
+was outside the receipt contract. Those defects could make the shipped policy
+lose even though the experimental implementation won.
+
+All three paths now perform prompt-blind exact rejection. Duplicate generations
+never reach a verifier, receive bounded generation headroom, and are counted
+separately from verifier calls and rejected revision decisions. The RLC repair
+path allows at most three generations for one repair frontier, records each
+rejected redraw in the episode evidence, and either admits a distinct repair or
+fails honestly with `repeated_refuted_answer`. A live engine contract forces a
+refuted first repair and a valid second repair, then proves two generations,
+one rejected redraw, and an admitted final replacement.
+
+Focused revision, sequential-exclusion, commitment, repair, and engine
+contracts pass `183/183`; canonical smoke passes `103/103`; Ruff, compilation,
+and diff hygiene pass. Compact evidence is
+`artifacts/closeout/latent_cortex/cp069_measured_rejection_policy_integration.json`.
+The bounded whole-system gain is integrated more faithfully, but the completion
+envelope remains `809/920` (approximately `87.9%`) because no open resident,
+neural-transfer, generality, frontier, fusion, activation, or `WOW Signal` gate
+has yet closed.

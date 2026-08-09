@@ -151,9 +151,7 @@ def test_full_episode_produces_tokens_and_truthful_receipt(tiny_model):
     assert r.structural_diversity["wording_counted"] is False
     assert r.structural_diversity["independent_support_count"] == 2
     assert r.disagreement_graph["localized"] is True
-    assert r.disagreement_graph["candidate_evidence_status"] == (
-        "decoded_candidates_unavailable"
-    )
+    assert r.disagreement_graph["candidate_evidence_status"] == ("decoded_candidates_unavailable")
     assert r.disagreement_graph["selection_effect"] == "none"
     assert r.disagreement_graph["repair_effect"] == "none"
     assert r.diagnostic_action_selection["localized_plan_count"] == 1
@@ -161,9 +159,7 @@ def test_full_episode_produces_tokens_and_truthful_receipt(tiny_model):
     assert r.diagnostic_action_selection["plans"][0]["selected"]["method"] == (
         "regenerate_from_prefix"
     )
-    assert r.diagnostic_action_selection["authority"] == (
-        "diagnostic_recommendation_only"
-    )
+    assert r.diagnostic_action_selection["authority"] == ("diagnostic_recommendation_only")
     assert r.diagnostic_action_selection["execution_effect"] == "none"
     assert r.local_repair["request_count"] == 0
     assert r.local_repair["repair_effect"] == "none"
@@ -193,20 +189,21 @@ def test_full_episode_produces_tokens_and_truthful_receipt(tiny_model):
     assert r.causal_receipt["required_stages_complete"] is False
     assert r.causal_receipt["integrity_proven"] is False
     assert "identity_and_ingress" in r.causal_receipt["missing_required_stages"]
-    assert "runtime_and_model_integrity" in r.causal_receipt[
-        "missing_required_stages"
-    ]
+    assert "runtime_and_model_integrity" in r.causal_receipt["missing_required_stages"]
     assert r.causal_receipt["privacy_contract"] == {
         "representation": "public_commitments_counts_dispositions_only",
         "private_chain_of_thought_included": False,
         "hidden_state_values_included": False,
         "raw_tool_secret_values_included": False,
     }
-    assert validate_causal_receipt(
-        r.causal_receipt,
-        worker_receipt=r.to_dict(),
-        require_complete=False,
-    ) == r.causal_receipt
+    assert (
+        validate_causal_receipt(
+            r.causal_receipt,
+            worker_receipt=r.to_dict(),
+            require_complete=False,
+        )
+        == r.causal_receipt
+    )
     assert r.schedule_hash
     assert r.budget["spent_layer_apps"] > 0
     assert r.decode_requested_tokens == 8
@@ -250,16 +247,12 @@ def test_vanilla_incumbent_runs_latent_episode_but_preserves_ordinary_decode(
     assert result.tokens == baseline_tokens
     assert result.receipt.decode_termination == baseline_termination
     assert result.receipt.decode_incumbent_policy == "vanilla_incumbent"
-    assert result.receipt.decode_incumbent_prompt_logits_sha256 == _logits_digest(
-        baseline_logits
-    )
+    assert result.receipt.decode_incumbent_prompt_logits_sha256 == _logits_digest(baseline_logits)
     assert result.receipt.first_logits_digest == _logits_digest(baseline_logits)
     assert result.receipt.steps_taken >= 2
     assert result.receipt.branch_selection_admitted is True
     assert result.receipt.answer_replacement["decision"] == "retain"
-    final_nodes = [
-        node for node in result.receipt.kv_state_tree["nodes"] if node["final"]
-    ]
+    final_nodes = [node for node in result.receipt.kv_state_tree["nodes"] if node["final"]]
     assert len(final_nodes) == 1
     assert final_nodes[0]["authority"] == "vanilla_incumbent_output"
     assert final_nodes[0]["latent_sha256"] == ""
@@ -269,8 +262,8 @@ def test_vanilla_incumbent_runs_latent_episode_but_preserves_ordinary_decode(
         if event["purpose"] == "final_vanilla_incumbent_decode"
     ]
     assert len(final_events) == 1
-    assert final_events[0]["parent_node_sha256"] == (
-        result.receipt.kv_state_tree["root_node_sha256"]
+    assert (
+        final_events[0]["parent_node_sha256"] == (result.receipt.kv_state_tree["root_node_sha256"])
     )
 
 
@@ -525,13 +518,34 @@ def test_exact_refutation_repair_replaces_only_after_confidence_bound_authority(
         lambda branch, *_args, **_kwargs: [100 + branch.index],
     )
 
+    from core.brain.llm.latent_cortex.commitment_ratchet import (
+        CommitmentRatchet,
+        Constraint,
+        ConstraintKind,
+    )
+
+    ratchet = CommitmentRatchet(["2 + 2 = 5.", "2 + 2 = 4."])
+    assert ratchet.commit(
+        Constraint(
+            kind=ConstraintKind.EXCLUDES,
+            subject="2 + 2 = 5.",
+            source="test_exact_refutation",
+        )
+    ).committed
+    ratchet.seal()
+    monkeypatch.setattr(engine, "_build_episode_ratchet", lambda **_kwargs: ratchet)
+
     def verifier(text: str) -> float:
         return 0.9 if "= 5" in text else 0.1
 
+    repair_generations = []
+
     def fresh(prompt: str, *_args, **_kwargs):
         assert "PRESERVED_PREFIX_CHARS:" in prompt
+        repair_generations.append(prompt)
+        answer = "2 + 2 = 5." if len(repair_generations) == 1 else "2 + 2 = 4."
         return {
-            "text": "REPLACEMENT_SUFFIX: 2 + 2 = 4.",
+            "text": f"REPLACEMENT_SUFFIX: {answer}",
             "context": {
                 "schema": "aura.rlc.fresh_verifier_context.v1",
                 "prompt_token_count": 1,
@@ -559,8 +573,9 @@ def test_exact_refutation_repair_replaces_only_after_confidence_bound_authority(
     assert repair["admitted_count"] == 1
     assert repair["repair_effect"] == "candidate_pool_addition"
     assert repair["accepted_answer_effect"] == "none"
-    assert repair["original_branch_commitments_before"] == (
-        repair["original_branch_commitments_after"]
+    assert (
+        repair["original_branch_commitments_before"]
+        == (repair["original_branch_commitments_after"])
     )
     replacement = result.receipt.answer_replacement
     assert replacement["intended_decision"] == "replace"
@@ -568,6 +583,9 @@ def test_exact_refutation_repair_replaces_only_after_confidence_bound_authority(
     assert replacement["answer_selection_effect"] == "replaced"
     assert result.text == "2 + 2 = 4."
     assert result.tokens == [102]
+    assert len(repair_generations) == 2
+    assert any("local_repair_rejected_redraw:" in flag for flag in result.receipt.honest_flags)
+    assert any("generations=2:rejected_redraws=1" in flag for flag in result.receipt.honest_flags)
 
 
 def test_counterfactual_verifier_causally_breaks_only_equal_score_tie(
@@ -1036,9 +1054,7 @@ def test_contract_invalid_private_branches_are_repaired_before_verifier_selectio
         row["original_contract_reason"] == "no_marker"
         for row in result.receipt.contract_repair["requests"]
     )
-    assert "branch_selection_contract_inventory_incomplete" not in (
-        result.receipt.honest_flags
-    )
+    assert "branch_selection_contract_inventory_incomplete" not in (result.receipt.honest_flags)
 
     from core.brain.latent_cortex_service import LatentCortexService
 
@@ -1132,10 +1148,7 @@ def test_incomplete_branch_inventory_keeps_candidate_local_latent_score(
     assert result.ok
     receipt = result.receipt
     assert "branch_selection_contract_inventory_incomplete" in receipt.honest_flags
-    assert (
-        "latent_opt_candidate_local_score_without_branch_selection"
-        in receipt.honest_flags
-    )
+    assert "latent_opt_candidate_local_score_without_branch_selection" in receipt.honest_flags
     assert receipt.latent_opt_attempts == 2
     assert receipt.latent_opt_steps == 0
     assert receipt.latent_opt_rejected == 2
@@ -1256,12 +1269,8 @@ def test_malformed_branch_probe_is_normalized_before_diagnostic_evidence(
     )
 
     assert result.ok
-    assert "decoded_text_control_characters_normalized" in (
-        result.receipt.honest_flags
-    )
-    assert not any(
-        flag.startswith("fallback_vanilla:") for flag in result.receipt.honest_flags
-    )
+    assert "decoded_text_control_characters_normalized" in (result.receipt.honest_flags)
+    assert not any(flag.startswith("fallback_vanilla:") for flag in result.receipt.honest_flags)
     assert result.receipt.disagreement_graph["candidate_evidence_status"] == (
         "worker_source_reconstructed_hash_bound_for_service_validation"
     )
@@ -1291,12 +1300,8 @@ def test_malformed_final_decode_is_normalized_before_answer_replacement_and_retu
     assert result.ok
     assert "\x7f" not in result.text
     assert "\ufffd" in result.text
-    assert "decoded_text_control_characters_normalized" in (
-        result.receipt.honest_flags
-    )
-    assert not any(
-        flag.startswith("fallback_vanilla:") for flag in result.receipt.honest_flags
-    )
+    assert "decoded_text_control_characters_normalized" in (result.receipt.honest_flags)
+    assert not any(flag.startswith("fallback_vanilla:") for flag in result.receipt.honest_flags)
     assert result.receipt.answer_replacement["decision"] == "retain"
 
 
@@ -1404,9 +1409,7 @@ def test_fast_weight_episode_proves_erase_and_invariant():
     }
     assert len(cleanup["pre_probe_sha256"]) == 64
     assert cleanup["post_probe_sha256"] == cleanup["pre_probe_sha256"]
-    assert cleanup["erased_layer_ids"] == [
-        f"layers.{index}.o_proj" for index in (2, 3, 4, 5)
-    ]
+    assert cleanup["erased_layer_ids"] == [f"layers.{index}.o_proj" for index in (2, 3, 4, 5)]
     assert parameter_fingerprint(model) == before, "episode must leave W0 untouched"
 
 
@@ -1850,8 +1853,7 @@ def test_bridge_receipt_answers_for_the_policy_not_the_disposition(tiny_model):
     # Whatever the disposition injected is still counted, just not as a bridge.
     assert (
         receipt["decode_prefix_token_count"]
-        == composition["policy_bridge_tokens"]
-        + composition["terminal_instruction_tokens"]
+        == composition["policy_bridge_tokens"] + composition["terminal_instruction_tokens"]
     )
 
 

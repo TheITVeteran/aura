@@ -46,6 +46,7 @@ _ALLOWED_FAILURES = {
     "generation_failed",
     "generation_contract_invalid",
     "replacement_invalid",
+    "repeated_refuted_answer",
 }
 
 
@@ -83,9 +84,7 @@ def _descendant_closure(
                 descendants.add(output_id)
                 changed = True
     ordered_atoms = [
-        str(row["atom_id"])
-        for row in decomposition["atoms"]
-        if row["atom_id"] in descendants
+        str(row["atom_id"]) for row in decomposition["atoms"] if row["atom_id"] in descendants
     ]
     ordered_transitions = [
         str(row["transition_id"])
@@ -121,10 +120,7 @@ def _repair_requests(
         raise ValueError("local repair disagreement graph is missing")
     if not isinstance(diagnostic_selection, Mapping):
         raise ValueError("local repair diagnostic selection is missing")
-    if (
-        type(max_requests) is not int
-        or not 0 <= max_requests <= MAX_REPAIR_REQUESTS
-    ):
+    if type(max_requests) is not int or not 0 <= max_requests <= MAX_REPAIR_REQUESTS:
         raise ValueError("local repair request budget is invalid")
     graph_sha = disagreement_graph.get("receipt_sha256")
     selector_sha = diagnostic_selection.get("receipt_sha256")
@@ -172,18 +168,10 @@ def _repair_requests(
                 continue
             branch = route_row.get("branch")
             atom_id = route_row.get("atom_id")
-            if (
-                type(branch) is not int
-                or branch not in routes
-                or not isinstance(atom_id, str)
-            ):
+            if type(branch) is not int or branch not in routes or not isinstance(atom_id, str):
                 raise ValueError("local repair refutation binding is invalid")
             route = next(
-                (
-                    row
-                    for row in routes[branch]["routes"]
-                    if row["atom_id"] == atom_id
-                ),
+                (row for row in routes[branch]["routes"] if row["atom_id"] == atom_id),
                 None,
             )
             if (
@@ -223,8 +211,7 @@ def _repair_requests(
                     "route_sha256": row["route_sha256"],
                 }
                 for row in routes[branch]["routes"][:atom_index]
-                if row["verifier"] in _EXACT_VERIFIERS
-                and row["outcome"] == "verified"
+                if row["verifier"] in _EXACT_VERIFIERS and row["outcome"] == "verified"
             ]
             invalidated_set = set(invalidated_atoms)
             preserved_unrelated_atoms = [
@@ -255,9 +242,7 @@ def _repair_requests(
                 "verified_ancestor_routes": verified_ancestor_routes,
                 "preserved_unrelated_atoms": preserved_unrelated_atoms,
                 "last_valid_atom_id": (
-                    str(decomposition["atoms"][atom_index - 1]["atom_id"])
-                    if atom_index
-                    else ""
+                    str(decomposition["atoms"][atom_index - 1]["atom_id"]) if atom_index else ""
                 ),
                 "invalidated_atom_ids": invalidated_atoms,
                 "invalidated_transition_ids": invalidated_transitions,
@@ -289,10 +274,7 @@ def _repair_requests(
         for branch, envelope in sorted(routes.items()):
             decomposition = decompositions[str(branch)]
             for route in envelope["routes"]:
-                if (
-                    route["outcome"] != "refuted"
-                    or route["verifier"] not in _EXACT_VERIFIERS
-                ):
+                if route["outcome"] != "refuted" or route["verifier"] not in _EXACT_VERIFIERS:
                     continue
                 atom_id = str(route["atom_id"])
                 atom_index = next(
@@ -330,8 +312,7 @@ def _repair_requests(
                         "route_sha256": row["route_sha256"],
                     }
                     for row in envelope["routes"][:atom_index]
-                    if row["verifier"] in _EXACT_VERIFIERS
-                    and row["outcome"] == "verified"
+                    if row["verifier"] in _EXACT_VERIFIERS and row["outcome"] == "verified"
                 ]
                 invalidated_set = set(invalidated_atoms)
                 preserved_unrelated_atoms = [
@@ -359,9 +340,7 @@ def _repair_requests(
                     "verified_ancestor_routes": verified_ancestor_routes,
                     "preserved_unrelated_atoms": preserved_unrelated_atoms,
                     "last_valid_atom_id": (
-                        str(decomposition["atoms"][atom_index - 1]["atom_id"])
-                        if atom_index
-                        else ""
+                        str(decomposition["atoms"][atom_index - 1]["atom_id"]) if atom_index else ""
                     ),
                     "invalidated_atom_ids": invalidated_atoms,
                     "invalidated_transition_ids": invalidated_transitions,
@@ -451,9 +430,7 @@ def prepare_local_repair_requests(
         # tail is spliced back verbatim, so later independent work is preserved
         # by construction rather than by asking the model to retype it.
         invalidated = set(request["invalidated_atom_ids"])
-        spanned = [
-            atom for atom in decomposition["atoms"] if atom["atom_id"] in invalidated
-        ]
+        spanned = [atom for atom in decomposition["atoms"] if atom["atom_id"] in invalidated]
         tail_start = max(int(atom["end"]) for atom in spanned) if spanned else len(candidate)
         tail = candidate[tail_start:]
         # Instructions FIRST, data LAST, ending on the contract cue.
@@ -476,7 +453,9 @@ def prepare_local_repair_requests(
             "for the invalidated span as plain text, continuing directly from "
             "the preserved prefix. Do not continue past it -- the remainder of "
             "the answer is preserved automatically. Write nothing else.\n"
-            f"{conditioning}\n" if conditioning else ""
+            f"{conditioning}\n"
+            if conditioning
+            else ""
             f"Objective: {objective}\n"
             f"INVALIDATED_ATOM_IDS: {request['invalidated_atom_ids']}\n"
             # The preserved prefix is by definition ORIGINAL_CANDIDATE's first
@@ -503,11 +482,7 @@ def prepare_local_repair_requests(
 def parse_local_repair_generation(value: Any, *, prefix: str, tail: str = "") -> str:
     """Parse a fresh-context repair response and restore its preserved prefix."""
 
-    if (
-        not isinstance(value, str)
-        or not isinstance(prefix, str)
-        or not isinstance(tail, str)
-    ):
+    if not isinstance(value, str) or not isinstance(prefix, str) or not isinstance(tail, str):
         raise TypeError("local repair generation must be text")
     # Plain text, not JSON.
     #
@@ -570,8 +545,7 @@ def _validate_generation_context(value: Any) -> dict[str, Any]:
         # use the unrelated FINAL_ANSWER stop contract. EOS and bounded token
         # limits are admissible only after parse_local_repair_generation has
         # accepted the generated suffix.
-        or value["termination"]
-        not in {"eos", "token_limit", "token_limit_sentence_grace"}
+        or value["termination"] not in {"eos", "token_limit", "token_limit_sentence_grace"}
         or not isinstance(initial, list)
         or not initial
         or len(initial) > 256
@@ -639,13 +613,17 @@ def _unrelated_work_unchanged(
         if index > ordinal:
             trailing.append(preserved)
             continue
-        if index >= len(observed) or {
-            "ordinal": index,
-            "atom_id": observed[index]["atom_id"],
-            "kind": observed[index]["kind"],
-            "text_sha256": observed[index]["text_sha256"],
-            "dependency_cues": list(observed[index]["dependency_cues"]),
-        } != preserved:
+        if (
+            index >= len(observed)
+            or {
+                "ordinal": index,
+                "atom_id": observed[index]["atom_id"],
+                "kind": observed[index]["kind"],
+                "text_sha256": observed[index]["text_sha256"],
+                "dependency_cues": list(observed[index]["dependency_cues"]),
+            }
+            != preserved
+        ):
             return False
     cursor = 0
     observed_tail = observed[ordinal:]
@@ -688,9 +666,7 @@ def _admitted_transaction(
     ]
     prefix_unchanged = observed_prefix == request["preserved_prefix_atoms"]
     unrelated_unchanged = _unrelated_work_unchanged(decomposition, request)
-    failed_verifier_rechecked, failed_verifier_passed = _failed_verifier_recheck(
-        route, request
-    )
+    failed_verifier_rechecked, failed_verifier_passed = _failed_verifier_recheck(route, request)
     no_exact_refutations = not any(
         row["verifier"] in _EXACT_VERIFIERS and row["outcome"] == "refuted"
         for row in route["routes"]
@@ -719,11 +695,7 @@ def _admitted_transaction(
     )
     payload = {
         "request_id": request["request_id"],
-        "status": (
-            "repaired_candidate_admitted"
-            if admitted
-            else "repaired_candidate_rejected"
-        ),
+        "status": ("repaired_candidate_admitted" if admitted else "repaired_candidate_rejected"),
         "reason": reason,
         "generation_context": context,
         "replacement_decomposition": decomposition,
@@ -804,9 +776,7 @@ def build_local_repair_receipt(
                 "failed_verifier_passed": False,
                 "no_exact_refutations": False,
                 "invalidated_atom_ids": list(request["invalidated_atom_ids"]),
-                "invalidated_transition_ids": list(
-                    request["invalidated_transition_ids"]
-                ),
+                "invalidated_transition_ids": list(request["invalidated_transition_ids"]),
                 "repair_candidate_effect": "none",
                 "answer_selection_effect": "none",
                 "latent_state_effect": "none",
@@ -820,17 +790,11 @@ def build_local_repair_receipt(
         # prefix/tail/prompt are generation inputs, not part of the committed
         # request identity, and including them would change every stored
         # commitment hash.
-        {
-            key: value
-            for key, value in request.items()
-            if key not in {"prefix", "tail", "prompt"}
-        }
+        {key: value for key, value in request.items() if key not in {"prefix", "tail", "prompt"}}
         for request in prepared
     ]
     branches = [dict(row) for row in disagreement_graph.get("branches", [])]
-    admitted = sum(
-        row["status"] == "repaired_candidate_admitted" for row in transactions
-    )
+    admitted = sum(row["status"] == "repaired_candidate_admitted" for row in transactions)
     payload = {
         "schema": LOCAL_REPAIR_SCHEMA,
         "disagreement_graph_sha256": disagreement_graph.get("receipt_sha256"),
@@ -898,9 +862,7 @@ def validate_local_repair_receipt(
         max_requests=value["max_requests"],
     )
     repair_requests = value["requests"]
-    if not isinstance(repair_requests, list) or len(repair_requests) != len(
-        expected_requests
-    ):
+    if not isinstance(repair_requests, list) or len(repair_requests) != len(expected_requests):
         raise ValueError("local repair request coverage differs")
     public_expected: list[dict[str, Any]] = []
     for request, request_row in zip(
@@ -914,18 +876,11 @@ def validate_local_repair_receipt(
             or _SHA256_RE.fullmatch(str(request_row.get("prompt_sha256"))) is None
         ):
             raise ValueError("local repair request fields differ")
-        public_expected.append(
-            {**request, "prompt_sha256": request_row["prompt_sha256"]}
-        )
-    if (
-        value["schema"] != LOCAL_REPAIR_SCHEMA
-        or repair_requests != public_expected
-    ):
+        public_expected.append({**request, "prompt_sha256": request_row["prompt_sha256"]})
+    if value["schema"] != LOCAL_REPAIR_SCHEMA or repair_requests != public_expected:
         raise ValueError("local repair request reconstruction differs")
     transactions = value["transactions"]
-    if not isinstance(transactions, list) or len(transactions) != len(
-        repair_requests
-    ):
+    if not isinstance(transactions, list) or len(transactions) != len(repair_requests):
         raise ValueError("local repair transaction coverage differs")
     admitted = 0
     attempted = 0
@@ -964,8 +919,7 @@ def validate_local_repair_receipt(
             transaction["transaction_sha256"] != _sha(transaction_payload)
             or transaction["request_id"] != request["request_id"]
             or transaction["invalidated_atom_ids"] != request["invalidated_atom_ids"]
-            or transaction["invalidated_transition_ids"]
-            != request["invalidated_transition_ids"]
+            or transaction["invalidated_transition_ids"] != request["invalidated_transition_ids"]
             or transaction["answer_selection_effect"] != "none"
             or transaction["latent_state_effect"] != "none"
         ):
@@ -1037,11 +991,7 @@ def validate_local_repair_receipt(
         if (
             context != transaction["generation_context"]
             or transaction["status"]
-            != (
-                "repaired_candidate_admitted"
-                if should_admit
-                else "repaired_candidate_rejected"
-            )
+            != ("repaired_candidate_admitted" if should_admit else "repaired_candidate_rejected")
             or transaction["reason"] != expected_reason
             or transaction["preserved_prefix_unchanged"] is not prefix_unchanged
             or transaction["unrelated_work_unchanged"] is not unrelated_unchanged
@@ -1064,8 +1014,7 @@ def validate_local_repair_receipt(
         or value["worker_source_boundary"]
         != "worker_reconstructs_private_source_service_validates_commitments"
         or value["authority"] != "bounded_epistemic_candidate_repair"
-        or value["repair_effect"]
-        != ("candidate_pool_addition" if admitted else "none")
+        or value["repair_effect"] != ("candidate_pool_addition" if admitted else "none")
         or value["answer_selection_effect"] != "none"
         or value["accepted_answer_effect"] != "none"
         or value["latent_state_effect"] != "none"

@@ -142,9 +142,10 @@ it names which premise broke.
 
 | seam | file | effect |
 |---|---|---|
-| RLC episode | `latent_cortex/engine.py` `_build_episode_ratchet` | refuted branches, stated requirements and unanimous agreement become commitments; the block conditions repair generation |
-| repair redraw | `latent_cortex/local_repair.py` | `conditioning=` — a redraw that knows what was ruled out |
-| live response lane | `brain/reasoning_revision_gate.py` `deliberate_best_of` | best-of-N samples **without replacement**; only a *checked* refutation excludes |
+| RLC episode | `latent_cortex/engine.py` `_build_episode_ratchet` | refuted branches become rejection-set entries; stated requirements and unanimous agreement remain prompt-visible commitments |
+| repair redraw | `latent_cortex/engine.py` local-repair loop | exact repeats are rejected before decomposition or verification and receive up to three bounded generations |
+| live response lane | `brain/reasoning_revision_gate.py` `deliberate_best_of` | verifier-call-bounded best-of-N samples **without replacement**; excluded text never enters the prompt |
+| standalone policy | `latent_cortex/sequential_exclusion.py` | verifier calls, generations, compliance and rejected redraws are independently receipted |
 | receipts | `EpisodeReceipt.commitment_ratchet` | commitments, refusals, measured narrowing |
 | operator view | `latent_cortex/commitment_telemetry.py` | `rlc.duplicate_passes` goes RED at 4 — best-of-8 behaving like best-of-2, visible at last |
 
@@ -235,8 +236,9 @@ generation.
 The theorem's budget is **verifier calls** — the expensive, bounded resource
 in any real deployment, where verifying means running a test, calling a
 tool, or paying a model. Denominated correctly, rejection wins and spends
-less. The live path (`deliberate_best_of`) implements it this way and
-reports `rejected_redraws` so the generation overhead stays visible.
+less. The live revision path, standalone policy, and RLC local-repair path now
+implement that budget explicitly. They report verifier calls separately from
+generations and rejected redraws so the extra model compute stays visible.
 
 ### Three calibration failures, all caught by the harness
 
