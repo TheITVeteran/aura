@@ -39319,3 +39319,29 @@ activation, and `WOW Signal` remain false. The completion envelope remains
 `809/920` (approximately `87.9%`). A fresh source-bound CP052 two-stage canary
 must now demonstrate reward variance, optimizer updates, and strict disjoint
 free-generation improvement.
+
+## Checkpoint 2026-08-08-054: Process Credit Transfers Once, but Not Reliably
+
+The fresh CP053 canary completed in 346 seconds with a source-bound immutable
+1.5B checkpoint. All eight supervised bootstrap updates and all 32 on-policy
+samples completed. EOS control syntax no longer entered observable responses.
+Two samples exposed a correct public-transition prefix, creating two
+nondegenerate groups and two real policy updates; this verifies that the
+formerly dead process-reward channel can now reach the adapter.
+
+The disjoint recurrent probe improved from `2/8` to `3/8`, so the adapter did
+transfer one additional correct answer beyond its untrained initialization.
+That limited effect is not an admissible reasoning gain. Depth-one improved
+from one to two correct while depth-two stayed at one, producing a negative
+depth interaction and one within-task depth regression. Ordinary decoding
+answered all four task identities correctly, so the recurrent treatment also
+failed the vanilla floor. The behavioral gate rejected the checkpoint and no
+weights were promoted.
+
+The compact evidence record is
+`artifacts/closeout/latent_cortex/cp054_bootstrap_process_transfer_1p5b.json`.
+Reasoning gain, frontier performance, fusion, activation, and `WOW Signal`
+remain false. The completion envelope remains `809/920` (approximately
+`87.9%`). The next bounded discriminator must test whether deeper supervised
+trace acquisition turns this sparse transfer into stable depth-conditioned
+behavior; it may not relax the ordinary floor or reuse this failed adapter.

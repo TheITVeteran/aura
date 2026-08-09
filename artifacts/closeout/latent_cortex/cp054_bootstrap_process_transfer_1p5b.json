@@ -1,0 +1,66 @@
+{
+  "schema": "aura.rlc.cp054_bootstrap_process_transfer_1p5b.v1",
+  "checkpoint": "CP054",
+  "source_commit": "af944a3789a56d4b973f4548a7af101690a75f51",
+  "model": "/Users/bryan/.aura/live-source/models/Qwen2.5-1.5B-Instruct-4bit",
+  "model_fingerprint": "d6e4ecf7593b78cb88ded2f4e98dd26b16802b38d2421b2af805eaea2f24f37d",
+  "seed": 2026080805,
+  "bootstrap_steps": 8,
+  "grpo_steps": 8,
+  "group_size": 4,
+  "sample_count": 32,
+  "elapsed_s": 346.137166261673,
+  "optimizer_updates": 2,
+  "degenerate_groups": 6,
+  "nonzero_reward_samples": 2,
+  "exact_correct_training_samples": 0,
+  "parsed_training_samples": 2,
+  "adapter_before_sha256": "1faf4b9885e4ebc09b2b1b0f117b462bfeef7ed6c77db90ae406112e4a429bea",
+  "adapter_after_sha256": "685ae6133a4cc9ccb9abbde96918e4672a14f6ee56226fce90240972f7e62066",
+  "before": {
+    "correct_by_depth": {
+      "1": 1,
+      "2": 1
+    },
+    "total_correct": 2,
+    "total_observations": 8
+  },
+  "after": {
+    "correct_by_depth": {
+      "1": 2,
+      "2": 1
+    },
+    "total_correct": 3,
+    "total_observations": 8
+  },
+  "ordinary_decode": {
+    "correct": 4,
+    "total_task_identities": 4
+  },
+  "admission": {
+    "decision": "reject_checkpoint_behavioral_gain_unproven",
+    "aggregate_correct_gain": 1,
+    "training_by_depth_interaction": -1,
+    "trained_depth_regressions": 1,
+    "strict_heldout_free_generation_gain": true,
+    "beats_ordinary_decode": false,
+    "no_trained_depth_regressions": false,
+    "admitted": false
+  },
+  "source_receipt_sha256": "60f5dd99fe58054eb713e04a3e32466cc0ce1c04790d892e69c68bfc5c0f333a",
+  "interpretation": {
+    "eos_boundary_repair_verified_live": true,
+    "public_process_gradient_channel_observed": true,
+    "strict_disjoint_recurrent_gain_observed": true,
+    "depth_transfer_stable": false,
+    "ordinary_floor_preserved": false,
+    "bootstrap_mastery_demonstrated": false,
+    "resident_training_admitted": false
+  },
+  "claims": {
+    "reasoning_gain_proven": false,
+    "frontier_level_proven": false,
+    "fusion_authorized": false,
+    "wow_signal_authorized": false
+  }
+}
