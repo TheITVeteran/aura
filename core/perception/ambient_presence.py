@@ -494,6 +494,52 @@ class AmbientPresence:
                 ),
             }
 
+    def fresh_observation_for(
+        self, question: str, *, max_age_s: float = 45.0
+    ) -> Any:
+        """A recent-enough observation to answer from, or None.
+
+        The whole reason the loop exists. A question about the screen should
+        be answered from what she saw a moment ago; a capture that starts
+        when the question arrives is the latency this removes.
+
+        ``max_age_s`` is the honesty bound. Screens change, and answering
+        "what's on my screen" from a two-minute-old reading is answering a
+        question about NOW with a fact about THEN. Past the bound this
+        returns None and the caller captures — which is the pre-ambient
+        behaviour, so falling back is always safe.
+        """
+        try:
+            from core.perception.observation_evidence import (
+                ObservationKind,
+                get_observation_memory,
+            )
+
+            memory = get_observation_memory()
+            age = memory.age_of_latest(ObservationKind.SCREEN_TEXT)
+            if age is None or age > max(0.0, float(max_age_s)):
+                return None
+            observation = memory.latest(ObservationKind.SCREEN_TEXT)
+        except (ImportError, AttributeError, RuntimeError, TypeError, ValueError) as exc:
+            record_degradation(
+                "ambient_presence", exc, severity="debug",
+                action="ambient fast path unavailable; the caller captures fresh",
+            )
+            return None
+        if observation is None or observation.is_empty:
+            return None
+        # The stored observation was taken with no request. Re-frame it for
+        # THIS question so the shape of the answer follows the shape of the
+        # ask — describe, locate, or quote — exactly as a fresh capture would.
+        try:
+            import copy
+
+            reframed = copy.copy(observation)
+            reframed.request = str(question or "")
+            return reframed
+        except (TypeError, ValueError):
+            return observation
+
     def recall_for(self, question: str) -> str:
         """What she already saw that bears on this question.
 

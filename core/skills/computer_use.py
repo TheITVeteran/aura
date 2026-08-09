@@ -4483,8 +4483,35 @@ end tell
             ),
         }
 
+    #: Windows the person has marked private. Checked BEFORE the capture, in
+    #: the skill itself, so the rule holds for every caller — the ambient
+    #: loop, an explicit request, a verification step — rather than only in
+    #: the loop that happened to be written with it in mind. A privacy rule
+    #: enforced in one caller is a privacy rule with a hole in it.
+    @staticmethod
+    def _refuse_private_window() -> str:
+        try:
+            from core.perception.ambient_presence import is_private_context
+            from core.senses.screen_context import frontmost_window_hint
+
+            app, title = frontmost_window_hint()
+        except (ImportError, AttributeError, RuntimeError, TypeError, ValueError):
+            return ""
+        try:
+            if is_private_context(app, title):
+                # The refusal names neither the app nor the title: a message
+                # reading "refused: Chase Bank — Incognito" has published the
+                # thing the refusal existed to protect.
+                return "[screen read refused: a private window is in the foreground]"
+        except (TypeError, ValueError):
+            return ""
+        return ""
+
     def read_screen_text(self) -> str:
         """Helper for AgencyCore to read screen text directly."""
+        refusal = self._refuse_private_window()
+        if refusal:
+            return refusal
         try:
             return self._read_screen_text_macos()
         except _COMPUTER_USE_RECOVERABLE_ERRORS as e:

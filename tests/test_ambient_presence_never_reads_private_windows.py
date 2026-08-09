@@ -416,3 +416,145 @@ class TestUtteranceFilter:
         )
 
         assert asyncio.run(ambient_utterance._compose(_Observation(), "traceback")) == ""
+
+
+class TestTheLatencyPayoff:
+    """A question about the screen answered from what she already saw."""
+
+    def test_a_recent_observation_answers_without_a_new_capture(self, presence):
+        from core.perception.observation_evidence import get_observation_memory
+
+        get_observation_memory().clear()
+        _with_context(
+            presence, "Google Chrome", "GitHub", text="PR #412 fix the retry budget"
+        )
+        asyncio.run(presence.tick())
+
+        observation = presence.fresh_observation_for("what's on my screen?")
+
+        assert observation is not None
+        assert "retry budget" in observation.capture
+
+    def test_a_stale_observation_is_refused_so_the_caller_captures(self, presence):
+        """Answering about NOW with a fact about THEN is answering wrong."""
+        from core.perception.observation_evidence import get_observation_memory
+
+        get_observation_memory().clear()
+        _with_context(presence, "Google Chrome", "GitHub", text="something")
+        asyncio.run(presence.tick())
+
+        assert presence.fresh_observation_for("what's on screen?", max_age_s=0.0) is None
+
+    def test_the_reframed_observation_follows_the_new_question(self, presence):
+        """Ambient captures carry no request; the question supplies the shape."""
+        from core.perception.observation_evidence import get_observation_memory
+
+        get_observation_memory().clear()
+        _with_context(
+            presence, "Terminal", "zsh", text="line one\nline two\nline three"
+        )
+        asyncio.run(presence.tick())
+
+        describe = presence.fresh_observation_for("what do you see?")
+        quote = presence.fresh_observation_for("read me the exact text word for word")
+
+        assert describe.for_reasoning() != quote.for_reasoning(), (
+            "the same frame was produced for 'describe it' and 'quote it'"
+        )
+
+    def test_reframing_does_not_mutate_the_stored_observation(self, presence):
+        from core.perception.observation_evidence import (
+            ObservationKind,
+            get_observation_memory,
+        )
+
+        get_observation_memory().clear()
+        _with_context(presence, "Terminal", "zsh", text="content")
+        asyncio.run(presence.tick())
+
+        presence.fresh_observation_for("a question")
+        stored = get_observation_memory().latest(ObservationKind.SCREEN_TEXT)
+
+        assert stored.request == "", (
+            "the stored ambient observation was rewritten by a reader, so the "
+            "next question would inherit the previous question's shape"
+        )
+
+    def test_no_observation_returns_none_rather_than_an_empty_one(self, presence):
+        from core.perception.observation_evidence import get_observation_memory
+
+        get_observation_memory().clear()
+
+        assert presence.fresh_observation_for("anything") is None
+
+
+class TestThePrivacyRuleHoldsForEveryCaller:
+    """A privacy rule enforced in one caller is a rule with a hole in it."""
+
+    def test_the_skill_itself_refuses_a_private_foreground(self, monkeypatch):
+        from core.skills.computer_use import ComputerUseSkill
+
+        monkeypatch.setattr(
+            "core.senses.screen_context.frontmost_window_hint",
+            lambda: ("Google Chrome", "Chase Bank — Incognito"),
+        )
+        captured = {"called": False}
+
+        def _never(self):
+            captured["called"] = True
+            return "SCREEN CONTENTS"
+
+        monkeypatch.setattr(ComputerUseSkill, "_read_screen_text_macos", _never)
+
+        result = ComputerUseSkill.__new__(ComputerUseSkill).read_screen_text()
+
+        assert "refused" in result
+        assert captured["called"] is False, (
+            "an explicit screen read captured a private window; the rule only "
+            "held in the ambient loop"
+        )
+
+    def test_the_refusal_does_not_name_the_private_window(self, monkeypatch):
+        from core.skills.computer_use import ComputerUseSkill
+
+        monkeypatch.setattr(
+            "core.senses.screen_context.frontmost_window_hint",
+            lambda: ("Google Chrome", "Chase Bank — Incognito"),
+        )
+
+        result = ComputerUseSkill.__new__(ComputerUseSkill).read_screen_text()
+
+        assert "Chase" not in result
+
+    def test_an_ordinary_foreground_is_still_read(self, monkeypatch):
+        from core.skills.computer_use import ComputerUseSkill
+
+        monkeypatch.setattr(
+            "core.senses.screen_context.frontmost_window_hint",
+            lambda: ("Terminal", "zsh"),
+        )
+        monkeypatch.setattr(
+            ComputerUseSkill, "_read_screen_text_macos", lambda self: "SCREEN"
+        )
+
+        assert ComputerUseSkill.__new__(ComputerUseSkill).read_screen_text() == "SCREEN"
+
+    def test_an_unknown_foreground_does_not_block_an_explicit_request(
+        self, monkeypatch
+    ):
+        """Empty means "cannot tell", and the caller decides.
+
+        An explicit request proceeds — the person asked. The ambient loop
+        refuses. Both are right for their context, and screen_context does
+        not make that policy.
+        """
+        from core.skills.computer_use import ComputerUseSkill
+
+        monkeypatch.setattr(
+            "core.senses.screen_context.frontmost_window_hint", lambda: ("", "")
+        )
+        monkeypatch.setattr(
+            ComputerUseSkill, "_read_screen_text_macos", lambda self: "SCREEN"
+        )
+
+        assert ComputerUseSkill.__new__(ComputerUseSkill).read_screen_text() == "SCREEN"
