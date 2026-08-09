@@ -1,0 +1,59 @@
+{
+  "schema": "aura.closeout.rlc.cp066.v1",
+  "checkpoint": "CP066",
+  "experiment": {
+    "campaign": "aura-cp065-v4-canary-daea99952-s2026080903",
+    "source_commit": "daea99952e6e54f0b6f51e739f5d2e3b9ab426bf",
+    "seed": 2026080903,
+    "elapsed_s": 527.3630018234253,
+    "receipt_sha256": "1e598c6c3f5d651b1afa4e07fbf3d1176fb96d91b09fe5e346c2485e311e10a7",
+    "observations": 8,
+    "ordinary_correct": 2,
+    "initial_complete_engine_correct": 8,
+    "trained_complete_engine_correct": 8,
+    "authorized_correct_gains": 6,
+    "ordinary_floor_regressions": 0,
+    "training_correct_gain": 0,
+    "optimizer_updates": 2,
+    "intrinsic_recurrent_correct_before": 2,
+    "intrinsic_recurrent_correct_after": 1,
+    "intrinsic_recurrent_depth_regressions": 1
+  },
+  "interpretation": {
+    "verified_search_inference_gain_observed": true,
+    "gain_rate_over_ordinary": 0.75,
+    "initial_and_trained_complete_engine_tied": true,
+    "adapter_training_gain_observed": false,
+    "latent_recurrence_gain_observed": false,
+    "commitment_ratchet_in_source": false,
+    "reason": "the public exact solver independently corrected three failed task identities at both depths while preserving both already-correct identities"
+  },
+  "remaining_gate_failure": {
+    "answer_only_responses": 6,
+    "strict_gain_over_initial_complete_engine": false,
+    "conclusion": "the architecture gain is real but the adapter added nothing and exact corrections lacked a user-facing derivation"
+  },
+  "repair": {
+    "objective_program_solution_schema": "aura.rlc.objective_program_solution.v2",
+    "modular_witness": "every transition is emitted in independently checkable congruence notation",
+    "boolean_witness": "the public expression, precedence, operation count, truth value, and encoding are stated",
+    "terminal_contract_preserved": true,
+    "private_answer_access": false
+  },
+  "verification": {
+    "focused_contracts": {"passed": 146, "failed": 0},
+    "canonical_smoke": {"passed": 103, "failed": 0},
+    "ruff": "pass",
+    "py_compile": "pass",
+    "diff_check": "pass"
+  },
+  "claims": {
+    "bounded_verified_search_gain_proven": true,
+    "adapter_training_gain_proven": false,
+    "recurrent_neural_gain_proven": false,
+    "resident_32b_gain_proven": false,
+    "frontier_level_proven": false,
+    "fusion_allowed": false,
+    "wow_signal": false
+  }
+}

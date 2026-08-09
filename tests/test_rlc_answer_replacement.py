@@ -412,13 +412,14 @@ def test_public_objective_solver_recovers_when_incumbent_and_branches_are_wrong(
         decode=_decode,
         enabled=True,
         margin=0.05,
-        max_output_tokens=64,
+        max_output_tokens=256,
     )
 
     assert receipt["decision"] == "replace"
     assert receipt["selected_request_id"] == "objective-program"
     assert receipt["accepted_output"]["source"] == "objective_program_solution"
-    assert _decode(tokens) == 'FINAL_ANSWER: {"residue":8}'
+    assert _decode(tokens).endswith('FINAL_ANSWER: {"residue":8}')
+    assert "Step 1:" in _decode(tokens)
     validate_answer_replacement_receipt(
         receipt,
         disagreement_graph=graph,
@@ -429,8 +430,8 @@ def test_public_objective_solver_recovers_when_incumbent_and_branches_are_wrong(
         expected_selected_branch=0,
         expected_enabled=True,
         expected_margin=0.05,
-        expected_max_output_tokens=64,
-        expected_output_text='FINAL_ANSWER: {"residue":8}',
+        expected_max_output_tokens=256,
+        expected_output_text=_decode(tokens),
         expected_output_tokens=tokens,
     )
 
@@ -443,7 +444,11 @@ def test_public_objective_solver_replaces_wrong_fenced_json_incumbent():
         "the envelope FINAL_ANSWER: <JSON object>."
     )
     wrong = '```json\n{\n  "value": 0\n}\n```'
-    correct = 'FINAL_ANSWER: {"value":1}'
+    correct = (
+        "Evaluate ((1 and 1) or 0) using not, and, xor, then or precedence.\n"
+        "The bounded parser executed 2 operations and the expression is true, encoded as 1.\n"
+        'FINAL_ANSWER: {"value":1}'
+    )
     objective, candidates, graph, selector, local_repair, generated = _scenario(
         left=wrong,
         right=wrong,
@@ -465,7 +470,7 @@ def test_public_objective_solver_replaces_wrong_fenced_json_incumbent():
         decode=_decode,
         enabled=True,
         margin=0.05,
-        max_output_tokens=64,
+        max_output_tokens=256,
     )
 
     assert receipt["baseline_quality"]["basis"] == "deterministic_exact_refutation"
@@ -483,7 +488,7 @@ def test_public_objective_solver_replaces_wrong_fenced_json_incumbent():
         expected_selected_branch=0,
         expected_enabled=True,
         expected_margin=0.05,
-        expected_max_output_tokens=64,
+        expected_max_output_tokens=256,
         expected_output_text=correct,
         expected_output_tokens=tokens,
     )

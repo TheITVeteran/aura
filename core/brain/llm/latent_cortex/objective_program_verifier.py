@@ -15,7 +15,7 @@ from dataclasses import dataclass
 from typing import Any
 
 OBJECTIVE_PROGRAM_VERIFIER_SCHEMA = "aura.rlc.objective_program_verifier.v2"
-OBJECTIVE_PROGRAM_SOLUTION_SCHEMA = "aura.rlc.objective_program_solution.v1"
+OBJECTIVE_PROGRAM_SOLUTION_SCHEMA = "aura.rlc.objective_program_solution.v2"
 
 _MODULAR_OBJECTIVE_RE = re.compile(
     r"\AStart at the given value and apply each operation modulo "
@@ -214,6 +214,64 @@ def _execute_objective(objective: str) -> tuple[str, dict[str, Any], dict[str, A
     return family, expected, execution
 
 
+def _render_solution_witness(
+    objective: str,
+    *,
+    family: str,
+    expected: dict[str, Any],
+) -> str:
+    """Render a public-input derivation without exposing private grader state."""
+
+    lines: list[str] = []
+    if family == "modular_chain":
+        match = _MODULAR_OBJECTIVE_RE.match(objective)
+        if match is None:  # pragma: no cover - guarded by _execute_objective
+            raise ValueError("modular_solution_witness_parse_failed")
+        modulus = int(match.group("modulus"))
+        value = int(match.group("start")) % modulus
+        lines.append(f"Start with {value} modulo {modulus}.")
+        for index, operation in enumerate(
+            (item.strip() for item in match.group("operations").split(",")),
+            start=1,
+        ):
+            before = value
+            operand = int(operation[1:])
+            if operation[0] == "+":
+                value = (value + operand) % modulus
+            elif operation[0] == "-":
+                value = (value - operand) % modulus
+            else:
+                value = (value * operand) % modulus
+            lines.append(
+                f"Step {index}: {before} {operation[0]} {operand} = {value} (mod {modulus})."
+            )
+    elif family == "nested_boolean":
+        match = _BOOLEAN_OBJECTIVE_RE.match(objective)
+        if match is None:  # pragma: no cover - guarded by _execute_objective
+            raise ValueError("boolean_solution_witness_parse_failed")
+        value = int(expected["value"])
+        truth = "true" if value else "false"
+        lines.append(
+            f"Evaluate {match.group('expression')} using not, and, xor, then or precedence."
+        )
+        lines.append(
+            f"The bounded parser executed {int(match.group('depth'))} operations and the expression is {truth}, encoded as {value}."
+        )
+    else:  # pragma: no cover - family is closed by _execute_objective
+        raise ValueError("objective_solution_witness_family_unknown")
+    lines.append(
+        "FINAL_ANSWER: "
+        + json.dumps(
+            expected,
+            sort_keys=True,
+            separators=(",", ":"),
+            ensure_ascii=True,
+            allow_nan=False,
+        )
+    )
+    return "\n".join(lines)
+
+
 def solve_objective_program(objective: str) -> tuple[str, dict[str, Any]] | None:
     """Compile a recognized public objective into a canonical proven answer.
 
@@ -227,12 +285,10 @@ def solve_objective_program(objective: str) -> tuple[str, dict[str, Any]] | None
     if executed is None:
         return None
     family, expected, execution = executed
-    candidate = "FINAL_ANSWER: " + json.dumps(
-        expected,
-        sort_keys=True,
-        separators=(",", ":"),
-        ensure_ascii=True,
-        allow_nan=False,
+    candidate = _render_solution_witness(
+        objective,
+        family=family,
+        expected=expected,
     )
     payload = {
         "schema": OBJECTIVE_PROGRAM_SOLUTION_SCHEMA,

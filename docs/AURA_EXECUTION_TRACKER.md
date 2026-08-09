@@ -39678,3 +39678,43 @@ Focused curriculum and canary contracts pass `20/20`; canonical smoke passes
 `artifacts/closeout/latent_cortex/cp065_process_curriculum_disjointness.json`.
 All capability and fusion claims remain false pending a fresh source-bound
 canary. The completion envelope remains `809/920` (approximately `87.9%`).
+
+## Checkpoint 2026-08-09-066: Verified Search Produces a Bounded Positive Gain
+
+The fresh CP065-source canary completed in `527.4s` with immutable base weights,
+all samples admitted, all bootstrap/specialization/projection mechanics green,
+and two nondegenerate GRPO updates. Ordinary decode scored `2/8`. The initial
+complete engine scored `8/8`, and the trained complete engine also scored
+`8/8`. Six corrections were independently authorized, every already-correct
+ordinary answer was preserved, and no complete-engine task or depth regressed.
+
+This is the first fresh-seed positive result for the new architecture, with a
+strict boundary. The exact public-objective search layer improved the frozen
+1.5B engine by `6/8` observations over ordinary decode. It did so by correcting
+three failed task identities at both tested depths under the same deterministic
+verifier used to refute the incumbents. The adapter added zero further correct
+answers. The intrinsic recurrent arm regressed from `2/8` to `1/8`, including
+one depth regression. This run predates the commitment-ratchet engine wiring,
+so it contains no evidence about that mechanism.
+
+The complete-engine admission still rejected the run. Its strict training-gain
+gate requires improvement over the untrained complete engine, which was already
+perfect on this small panel, and six exact corrections consisted only of the
+terminal JSON answer. The latter is mechanically correct but too shallow for a
+general user-facing reasoning engine.
+
+Objective-program solution v2 now emits a proof-carrying derivation before the
+canonical final line. Modular programs list every transition using exact
+congruence notation that the independent router checks. Boolean programs state
+the public expression, precedence, executed operation count, truth value, and
+binary encoding. The receipt remains reconstructed from the public objective
+without benchmark-answer access.
+
+Focused verifier, replacement, admission, canary, and newly wired commitment
+contracts pass `146/146`; canonical smoke passes `103/103`; Ruff, compilation,
+and diff hygiene pass. Compact evidence is
+`artifacts/closeout/latent_cortex/cp066_verified_search_gain_1p5b.json`.
+Bounded verified-search gain is now proven. Adapter training gain, recurrent
+neural gain, resident-32B gain, frontier performance, fusion, activation, and
+`WOW Signal` remain false. The completion envelope remains `809/920`
+(approximately `87.9%`).

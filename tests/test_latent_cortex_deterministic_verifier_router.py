@@ -189,7 +189,12 @@ def test_public_objective_solver_emits_canonical_candidate_and_text_free_receipt
     assert solved is not None
     candidate, receipt = solved
 
-    assert candidate == 'FINAL_ANSWER: {"residue":8}'
+    assert candidate == (
+        "Start with 12 modulo 19.\n"
+        "Step 1: 12 * 18 = 7 (mod 19).\n"
+        "Step 2: 7 * 12 = 8 (mod 19).\n"
+        'FINAL_ANSWER: {"residue":8}'
+    )
     assert validate_objective_program_solution(
         receipt,
         objective=objective,
