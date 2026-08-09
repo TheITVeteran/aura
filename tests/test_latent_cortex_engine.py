@@ -1059,6 +1059,93 @@ def test_contract_invalid_private_branches_are_repaired_before_verifier_selectio
     )
 
 
+def test_incomplete_branch_inventory_keeps_candidate_local_latent_score(
+    tiny_model,
+    monkeypatch,
+):
+    class ProbeTokenizer:
+        eos_token_id = None
+
+        @staticmethod
+        def encode(_text, **_kwargs):
+            return [5]
+
+        @staticmethod
+        def decode(tokens):
+            values = list(tokens)
+            if values == [100]:
+                return "The first private candidate says four."
+            if values == [101]:
+                return "The second private candidate is malformed."
+            return 'FINAL_ANSWER: {"answer": 4}'
+
+    engine = LatentCortexEngine(
+        tiny_model,
+        ProbeTokenizer(),
+        config=_config(
+            verifier_probe_contract="final_answer_v1",
+            allow_vanilla_fallback=False,
+            branches=BranchConfig(n_branches=2, exchange_interval=2),
+            latent_opt=LatentOptConfig(enabled=True, steps=2, lr=0.05),
+            verifier_accept_non_regression=True,
+            local_repair_max_attempts=2,
+            local_repair_max_tokens=64,
+            generative_verifier_enabled=False,
+            counterfactual_verifier_enabled=False,
+            prefix_stability_enabled=False,
+        ),
+    )
+    monkeypatch.setattr(
+        engine,
+        "_decode_probe",
+        lambda branch, *_args, **_kwargs: [100 + branch.index],
+    )
+
+    def fresh(prompt: str, *_args, **_kwargs):
+        if "first private candidate" not in prompt:
+            raise ValueError("second branch remains malformed")
+        return {
+            "text": 'FINAL_ANSWER: {"answer": 4}',
+            "context": {
+                "schema": "aura.rlc.fresh_verifier_context.v1",
+                "prompt_token_count": 1,
+                "generated_token_count": 12,
+                "termination": "contract_complete",
+                "initial_cache_offsets": [0] * N_LAYERS,
+                "final_cache_offsets": [12] * N_LAYERS,
+                "all_initial_offsets_zero": True,
+                "solver_context_imported": False,
+                "parameter_relation": "shared_resident_checkpoint",
+            },
+        }
+
+    monkeypatch.setattr(engine, "_fresh_verifier_generation", fresh)
+    result = engine.reason(
+        prompt="Compute two plus two.",
+        verifier=EpisodeTaskVerifier(
+            "Compute two plus two.",
+            response_contract='{"answer":int}',
+        ),
+        budget=ComputeBudget(max_layer_apps=500_000, wall_clock_s=30.0),
+    )
+
+    assert result.ok
+    receipt = result.receipt
+    assert "branch_selection_contract_inventory_incomplete" in receipt.honest_flags
+    assert (
+        "latent_opt_candidate_local_score_without_branch_selection"
+        in receipt.honest_flags
+    )
+    assert receipt.latent_opt_attempts == 2
+    assert receipt.latent_opt_steps == 0
+    assert receipt.latent_opt_rejected == 2
+    assert receipt.latent_opt_verifier["policy"] == (
+        "task_score_nonregression_with_proxy_descent_v1"
+    )
+    assert receipt.latent_opt_verifier["plateau_rollbacks"] == 2
+    assert receipt.post_adaptation_candidate == {}
+
+
 def test_production_episode_refuses_secondary_vanilla_decode(tiny_model):
     bad = LayerSchedule(ops=(StageOp(0, 7, 2),))
     engine = LatentCortexEngine(
@@ -1183,11 +1270,17 @@ def test_malformed_branch_probe_is_normalized_before_diagnostic_evidence(
 
 def test_malformed_final_decode_is_normalized_before_answer_replacement_and_return(
     tiny_model,
+    monkeypatch,
 ):
     engine = LatentCortexEngine(
         tiny_model,
         _ControlCharacterFinalTokenizer(),
         config=_config(local_repair_enabled=False),
+    )
+    monkeypatch.setattr(
+        engine,
+        "_decode",
+        lambda *_args, **_kwargs: ([17], "eos"),
     )
 
     result = engine.reason(
@@ -1236,14 +1329,20 @@ def test_latent_opt_refreshes_the_candidate_and_its_evidence_before_replacement(
         ),
     )
 
+    verifier = _exact_evidence_verifier()
+    latent_scores = iter((0.5, 0.75, 0.75))
+    verifier.latent_state_score = lambda _text: next(latent_scores)
+
     result = engine.reason(
         token_ids=PROMPT_TOKENS,
-        verifier=_exact_evidence_verifier(),
+        verifier=verifier,
     )
 
     assert result.ok
     receipt = result.receipt
-    assert receipt.latent_opt_steps > 0
+    assert receipt.latent_opt_steps == 1
+    assert receipt.latent_opt_verifier["plateau_rollbacks"] == 1
+    assert receipt.latent_opt_verifier["strict_improvement_committed"] is True
     refresh = receipt.post_adaptation_candidate
     assert refresh["selected_branch"] == receipt.selected_branch
     assert refresh["transition_count"] == 1

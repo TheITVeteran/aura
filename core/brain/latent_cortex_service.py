@@ -961,6 +961,11 @@ class LatentCortexService:
                 return False
             score_accepts = arbitration.get("score_improvement_accepts")
             proxy_accepts = arbitration.get("proxy_nonregression_accepts")
+            plateau_accepts = arbitration.get("plateau_exploration_accepts")
+            plateau_rollbacks = arbitration.get("plateau_rollbacks")
+            strict_committed = arbitration.get("strict_improvement_committed")
+            score_source = arbitration.get("score_source")
+            commit_policy = arbitration.get("commit_policy")
             decisions = arbitration.get("decisions")
             score_trail = arbitration.get("score_trail")
             tolerance = arbitration.get("score_tolerance")
@@ -973,6 +978,21 @@ class LatentCortexService:
                 or score_accepts < 0
                 or type(proxy_accepts) is not int
                 or proxy_accepts < 0
+                or type(plateau_accepts) is not int
+                or plateau_accepts < 0
+                or type(plateau_rollbacks) is not int
+                or not 0 <= plateau_rollbacks <= plateau_accepts
+                or type(strict_committed) is not bool
+                or score_source
+                not in {
+                    "unspecified",
+                    "semantic_candidate_score_for_latent_search_only_v1",
+                }
+                or commit_policy
+                not in {
+                    "immediate",
+                    "strict_task_improvement_after_plateau_search_v1",
+                }
                 or score_accepts + proxy_accepts != accepted_steps
                 or not finite_number(tolerance)
                 or not 0.0 <= float(tolerance) <= 1e-3
@@ -990,6 +1010,8 @@ class LatentCortexService:
             receipt_epsilon = 2e-12
             observed_score_accepts = 0
             observed_proxy_accepts = 0
+            observed_plateau_accepts = 0
+            observed_plateau_rollbacks = 0
             allowed_decisions = {
                 "accepted_task_score_improvement",
                 "accepted_task_score_nonregression_with_proxy_descent",
@@ -1074,6 +1096,10 @@ class LatentCortexService:
                         )
                     ):
                         return False
+                    if commit_policy == "strict_task_improvement_after_plateau_search_v1" and row.get(
+                        "commit_disposition"
+                    ) != "committed_to_best_strict_improvement":
+                        return False
                     observed_score_accepts += 1
                 elif decision == ("accepted_task_score_nonregression_with_proxy_descent"):
                     if (
@@ -1088,7 +1114,19 @@ class LatentCortexService:
                         )
                     ):
                         return False
-                    observed_proxy_accepts += 1
+                    observed_plateau_accepts += 1
+                    disposition = row.get("commit_disposition")
+                    if commit_policy == "strict_task_improvement_after_plateau_search_v1":
+                        if disposition == "committed_to_best_strict_improvement":
+                            observed_proxy_accepts += 1
+                        elif disposition == "rolled_back_plateau_without_later_task_gain":
+                            observed_plateau_rollbacks += 1
+                        else:
+                            return False
+                    elif disposition is not None:
+                        return False
+                    else:
+                        observed_proxy_accepts += 1
                 elif decision == "rejected_task_score_regression":
                     if score_nonregressing or not math.isclose(
                         next_score,
@@ -1112,7 +1150,16 @@ class LatentCortexService:
                     ):
                         return False
             return (
-                observed_score_accepts == score_accepts and observed_proxy_accepts == proxy_accepts
+                observed_score_accepts == score_accepts
+                and observed_proxy_accepts == proxy_accepts
+                and observed_plateau_accepts == plateau_accepts
+                and observed_plateau_rollbacks == plateau_rollbacks
+                and strict_committed == bool(score_accepts)
+                and (
+                    commit_policy != "strict_task_improvement_after_plateau_search_v1"
+                    or score_source
+                    == "semantic_candidate_score_for_latent_search_only_v1"
+                )
             )
 
         def sha256(value: Any) -> bool:

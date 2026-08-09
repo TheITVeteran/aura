@@ -234,6 +234,80 @@ def test_interactive_verifier_accepts_only_nonregressing_proxy_descent(tiny_mode
     assert decision["candidate_proxy_loss"] < decision["current_proxy_loss"]
 
 
+def test_interactive_verifier_rolls_back_proxy_only_plateau_without_task_gain(
+    tiny_model,
+):
+    ws = _workspace(tiny_model)
+    cfg = LatentOptConfig(enabled=True, steps=2, lr=0.05)
+    opt = LatentOptimizer(
+        build_proxy_loss(tiny_model, ws.z, PROMPT_TOKENS, cfg),
+        cfg,
+        seed=2,
+    )
+
+    z_out, score = opt.run_with_verifier(
+        ws.z,
+        lambda _z: 0.5,
+        initial_score=0.5,
+        accept_non_regression=True,
+        commit_requires_score_improvement=True,
+    )
+
+    assert score == 0.5
+    assert bool(mx.allclose(z_out, ws.z))
+    assert opt.trace.accepted == opt.trace.steps_taken == 0
+    assert opt.trace.rejected == opt.trace.attempts == 2
+    verifier = opt.trace.verifier_receipt()
+    assert verifier["commit_policy"] == (
+        "strict_task_improvement_after_plateau_search_v1"
+    )
+    assert verifier["plateau_exploration_accepts"] == 2
+    assert verifier["plateau_rollbacks"] == 2
+    assert verifier["strict_improvement_committed"] is False
+    assert verifier["proxy_nonregression_accepts"] == 0
+    assert all(
+        row["commit_disposition"]
+        == "rolled_back_plateau_without_later_task_gain"
+        for row in verifier["decisions"]
+    )
+
+
+def test_interactive_verifier_commits_plateau_that_reaches_strict_task_gain(
+    tiny_model,
+):
+    ws = _workspace(tiny_model)
+    cfg = LatentOptConfig(enabled=True, steps=2, lr=0.05)
+    opt = LatentOptimizer(
+        build_proxy_loss(tiny_model, ws.z, PROMPT_TOKENS, cfg),
+        cfg,
+        seed=2,
+    )
+    scores = iter((0.5, 0.75))
+
+    z_out, score = opt.run_with_verifier(
+        ws.z,
+        lambda _z: next(scores),
+        initial_score=0.5,
+        accept_non_regression=True,
+        commit_requires_score_improvement=True,
+    )
+
+    assert score == 0.75
+    assert not bool(mx.allclose(z_out, ws.z))
+    verifier = opt.trace.verifier_receipt()
+    assert opt.trace.accepted == opt.trace.steps_taken == 2
+    assert opt.trace.rejected == 0
+    assert verifier["plateau_exploration_accepts"] == 1
+    assert verifier["plateau_rollbacks"] == 0
+    assert verifier["strict_improvement_committed"] is True
+    assert verifier["proxy_nonregression_accepts"] == 1
+    assert verifier["score_improvement_accepts"] == 1
+    assert all(
+        row["commit_disposition"] == "committed_to_best_strict_improvement"
+        for row in verifier["decisions"]
+    )
+
+
 def test_interactive_verifier_rejects_score_regression_even_with_proxy_descent(tiny_model):
     ws = _workspace(tiny_model)
     cfg = LatentOptConfig(enabled=True, steps=1, lr=0.05)

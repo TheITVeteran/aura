@@ -4101,6 +4101,8 @@ def test_service_validates_interactive_verifier_profile_and_acceptance_receipt()
         "verifier_probe_max_tokens": 24,
         "latent_opt_verifier": {
             "policy": "task_score_nonregression_with_proxy_descent_v1",
+            "score_source": "unspecified",
+            "commit_policy": "immediate",
             "baseline_source": "caller_reused_verified_branch",
             "score_tolerance": 1e-9,
             "proxy_tolerance_scale": 1e-9,
@@ -4118,6 +4120,9 @@ def test_service_validates_interactive_verifier_profile_and_acceptance_receipt()
             ],
             "score_improvement_accepts": 0,
             "proxy_nonregression_accepts": 1,
+            "plateau_exploration_accepts": 1,
+            "plateau_rollbacks": 0,
+            "strict_improvement_committed": False,
         },
     }
 
@@ -4156,6 +4161,70 @@ def test_service_validates_interactive_verifier_profile_and_acceptance_receipt()
         **receipt["latent_opt_verifier"],
         "score_trail": [0.5, 0.6],
     }
+    assert "latent_optimization_verifier_receipt_invalid" in (
+        LatentCortexService._receipt_contract_errors(tampered, config)
+    )
+
+
+def test_service_replays_strict_commit_plateau_rollbacks():
+    config = {
+        "latent_opt": True,
+        "verifier_probe_max_tokens": 24,
+        "verifier_accept_non_regression": True,
+    }
+    decisions = [
+        {
+            "proposal": index,
+            "baseline_score": 0.5,
+            "candidate_score": 0.5,
+            "current_proxy_loss": 1.0 - 0.1 * index,
+            "candidate_proxy_loss": 0.9 - 0.1 * index,
+            "proxy_required_delta": 1e-9,
+            "decision": "accepted_task_score_nonregression_with_proxy_descent",
+            "commit_disposition": "rolled_back_plateau_without_later_task_gain",
+        }
+        for index in range(2)
+    ]
+    receipt = {
+        "latent_opt_applied": True,
+        "latent_opt_mode": "gradient",
+        "latent_opt_attempts": 2,
+        "latent_opt_steps": 0,
+        "latent_opt_rejected": 2,
+        "latent_opt_budget_exhausted": False,
+        "verifier_probe_max_tokens": 24,
+        "verifier_guidance": {"evaluations": 1},
+        "latent_opt_verifier": {
+            "policy": "task_score_nonregression_with_proxy_descent_v1",
+            "score_source": "semantic_candidate_score_for_latent_search_only_v1",
+            "commit_policy": "strict_task_improvement_after_plateau_search_v1",
+            "baseline_source": "caller_reused_verified_branch",
+            "score_tolerance": 1e-9,
+            "proxy_tolerance_scale": 1e-9,
+            "score_trail": [0.5, 0.5, 0.5],
+            "decisions": decisions,
+            "score_improvement_accepts": 0,
+            "proxy_nonregression_accepts": 0,
+            "plateau_exploration_accepts": 2,
+            "plateau_rollbacks": 2,
+            "strict_improvement_committed": False,
+        },
+    }
+
+    errors = LatentCortexService._receipt_contract_errors(receipt, config)
+
+    assert "latent_optimization_no_accepted_steps" not in errors
+    assert "latent_optimization_accounting_mismatch" not in errors
+    assert "latent_optimization_verifier_receipt_invalid" not in errors
+
+    tampered = copy.deepcopy(receipt)
+    tampered["latent_opt_verifier"]["plateau_rollbacks"] = 1
+    assert "latent_optimization_verifier_receipt_invalid" in (
+        LatentCortexService._receipt_contract_errors(tampered, config)
+    )
+
+    tampered = copy.deepcopy(receipt)
+    del tampered["latent_opt_verifier"]["decisions"][0]["commit_disposition"]
     assert "latent_optimization_verifier_receipt_invalid" in (
         LatentCortexService._receipt_contract_errors(tampered, config)
     )

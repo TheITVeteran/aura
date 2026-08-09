@@ -39024,3 +39024,46 @@ hygiene pass. Reasoning gain, fusion, frontier-level performance, and
 (approximately `87.9%`). The next RLC checkpoint must address the measured
 content failure: final-state optimization changed every probe, but produced
 no correct candidate and malformed five of seven diagnostic outputs.
+
+## Checkpoint 2026-08-08-045: Only Verified Latent Gains Survive
+
+Proxy reconstruction loss no longer has final-state commitment authority.
+Non-regressing semantic plateaus may still be traversed so a multi-step search
+can cross a flat region, but those moves are provisional. The optimizer now
+returns the best state that achieved a strict task-score improvement. If no
+strict improvement occurs, it restores the original state; if an improvement
+is followed by a proxy-only tail, it restores the last improved state. Receipt
+accounting distinguishes plateau exploration, rollback, and committed steps.
+
+The engine also no longer overwrites an acceptance-policy identifier with a
+score-source label. Policy, score source, and commitment policy are separate
+fields, and the service independently replays every decision and final
+disposition. Tampering with a rollback count or commit disposition invalidates
+the receipt.
+
+The first canary exposed one remaining authority conflation. Two cells lost
+branch-selection authority because their strict candidate inventories were
+incomplete, and the engine also discarded the separately admitted
+candidate-local semantic scorer. The roles are now independent: that scorer
+may reject drift on the already selected branch, but it cannot select a
+branch, replace an answer, or grant serving authority.
+
+The final source-bound Qwen2.5-1.5B campaign completed `28/28` cells without
+faults. Across the fourteen recurrent cells, all `56/56` proposals traversed a
+semantic plateau and all `56/56` were rolled back. There were zero strict task
+improvements, zero committed latent steps, zero post-adaptation candidate
+rewrites, and zero unverified proxy commits. Two cells exercised the separated
+candidate-local score while branch-selection authority remained disabled. The
+paired ordinary floor had zero right-to-wrong regressions and zero unpromoted
+byte divergences. The compact evidence record is
+`artifacts/closeout/latent_cortex/cp045_verified_latent_commit_1p5b.json`.
+
+This retires the observed answer-drift defect; it does not manufacture a
+capability result. All arms still scored `0/7`, so the battery remains
+uninformative for reasoning gain. Fusion, frontier-level performance, and
+`WOW Signal` remain unauthorized. The affected contract selection passes
+`208/208`; canonical smoke passes `103/103`; compilation, Ruff, and diff
+hygiene pass. The completion envelope remains `809/920` (approximately
+`87.9%`). The next RLC checkpoint must improve the task-local generation or
+verification signal on a battery where ordinary decoding has measurable
+headroom; repeating this zero-floor battery cannot answer the capability claim.

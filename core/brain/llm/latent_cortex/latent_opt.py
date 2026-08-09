@@ -118,6 +118,8 @@ class OptTrace:
     line_search_backtracks: int = 0
     budget_exhausted: bool = False
     verifier_policy: str = "off"
+    verifier_score_source: str = "unspecified"
+    verifier_commit_policy: str = "immediate"
     verifier_baseline_source: str = ""
     verifier_score_tolerance: float = 0.0
     verifier_proxy_tolerance_scale: float = 1e-9
@@ -125,6 +127,9 @@ class OptTrace:
     verifier_decisions: list[dict[str, Any]] = field(default_factory=list)
     verifier_score_improvement_accepts: int = 0
     verifier_proxy_nonregression_accepts: int = 0
+    verifier_plateau_exploration_accepts: int = 0
+    verifier_plateau_rollbacks: int = 0
+    verifier_strict_improvement_committed: bool = False
 
     def to_receipt(self) -> dict[str, Any]:
         return {
@@ -142,6 +147,8 @@ class OptTrace:
     def verifier_receipt(self) -> dict[str, Any]:
         return {
             "policy": self.verifier_policy,
+            "score_source": self.verifier_score_source,
+            "commit_policy": self.verifier_commit_policy,
             "baseline_source": self.verifier_baseline_source,
             "score_tolerance": round(self.verifier_score_tolerance, 12),
             "proxy_tolerance_scale": round(
@@ -163,6 +170,13 @@ class OptTrace:
             "score_improvement_accepts": self.verifier_score_improvement_accepts,
             "proxy_nonregression_accepts": (
                 self.verifier_proxy_nonregression_accepts
+            ),
+            "plateau_exploration_accepts": (
+                self.verifier_plateau_exploration_accepts
+            ),
+            "plateau_rollbacks": self.verifier_plateau_rollbacks,
+            "strict_improvement_committed": (
+                self.verifier_strict_improvement_committed
             ),
         }
 
@@ -378,6 +392,7 @@ class LatentOptimizer:
         verifier_layer_apps: int = 0,
         initial_score: float | None = None,
         accept_non_regression: bool = False,
+        commit_requires_score_improvement: bool = False,
         score_tolerance: float = 1e-9,
     ):
         """Greedy hill-climb: proxy-guided proposals, verifier-gated accepts.
@@ -394,6 +409,12 @@ class LatentOptimizer:
             raise ValueError("verifier_layer_apps cannot be negative")
         if type(accept_non_regression) is not bool:
             raise TypeError("accept_non_regression must be a boolean")
+        if type(commit_requires_score_improvement) is not bool:
+            raise TypeError("commit_requires_score_improvement must be a boolean")
+        if commit_requires_score_improvement and not accept_non_regression:
+            raise ValueError(
+                "strict latent commitment requires non-regressing plateau search"
+            )
         if (
             isinstance(score_tolerance, bool)
             or not isinstance(score_tolerance, (int, float))
@@ -415,6 +436,11 @@ class LatentOptimizer:
             if accept_non_regression
             else "strict_task_score_improvement_v1"
         )
+        self.trace.verifier_commit_policy = (
+            "strict_task_improvement_after_plateau_search_v1"
+            if commit_requires_score_improvement
+            else "immediate"
+        )
         self.trace.verifier_score_tolerance = float(score_tolerance)
         self.trace.verifier_baseline_source = (
             "caller_reused_verified_branch"
@@ -427,6 +453,9 @@ class LatentOptimizer:
         if not math.isfinite(best_score):
             raise RuntimeError("latent verifier returned a non-finite baseline score")
         self.trace.verifier_score_trail.append(best_score)
+        best_state = z
+        accepted_path_decisions: list[int] = []
+        committed_path_length = 0
         for i in range(max(0, int(proposals))):
             proxy_eval_cost = self._layer_apps_per_loss if accept_non_regression else 0
             candidate, admitted, current_loss = self._propose(
@@ -507,10 +536,14 @@ class LatentOptimizer:
             )
             if score_improved:
                 z, best_score = candidate, candidate_score
+                best_state = candidate
                 self.trace.accepted += 1
                 self.trace.steps_taken += 1
                 self.trace.verifier_score_improvement_accepts += 1
+                self.trace.verifier_strict_improvement_committed = True
                 decision["decision"] = "accepted_task_score_improvement"
+                accepted_path_decisions.append(len(self.trace.verifier_decisions))
+                committed_path_length = len(accepted_path_decisions)
                 if candidate_loss is not None and proxy_improved:
                     self.trace.loss_trail.append(candidate_loss)
             elif accept_non_regression and score_nonregressing and proxy_improved:
@@ -519,10 +552,12 @@ class LatentOptimizer:
                 self.trace.accepted += 1
                 self.trace.steps_taken += 1
                 self.trace.verifier_proxy_nonregression_accepts += 1
+                self.trace.verifier_plateau_exploration_accepts += 1
                 self.trace.loss_trail.append(float(candidate_loss))
                 decision["decision"] = (
                     "accepted_task_score_nonregression_with_proxy_descent"
                 )
+                accepted_path_decisions.append(len(self.trace.verifier_decisions))
             else:
                 self.trace.rejected += 1
                 decision["decision"] = (
@@ -539,6 +574,23 @@ class LatentOptimizer:
             # receipt total, monotonic, and JSON-safe under every verifier
             # outcome.
             self.trace.verifier_score_trail.append(best_score)
+        if commit_requires_score_improvement:
+            rolled_back = accepted_path_decisions[committed_path_length:]
+            for decision_index in accepted_path_decisions[:committed_path_length]:
+                self.trace.verifier_decisions[decision_index]["commit_disposition"] = (
+                    "committed_to_best_strict_improvement"
+                )
+            for decision_index in rolled_back:
+                self.trace.verifier_decisions[decision_index]["commit_disposition"] = (
+                    "rolled_back_plateau_without_later_task_gain"
+                )
+            rollback_count = len(rolled_back)
+            self.trace.verifier_plateau_rollbacks = rollback_count
+            self.trace.accepted -= rollback_count
+            self.trace.steps_taken -= rollback_count
+            self.trace.rejected += rollback_count
+            self.trace.verifier_proxy_nonregression_accepts -= rollback_count
+            z = best_state
         return z, best_score
 
 

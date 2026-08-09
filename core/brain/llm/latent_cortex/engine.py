@@ -5911,8 +5911,29 @@ class LatentCortexEngine:
                 reserve_layer_apps=safety_reserve,
                 protected_slots=winner.workspace.context_slot_indices,
             )
-            if verifier is not None and self.tokenizer is not None:
-                latent_state_score = getattr(verifier, "latent_state_score", None)
+            latent_search_verifier = verifier
+            if (
+                latent_search_verifier is None
+                and pending_verifier is not None
+                and self.tokenizer is not None
+                and receipt.verifier_preflight.get("verifier_admitted") is True
+                and callable(getattr(pending_verifier, "latent_state_score", None))
+            ):
+                # Branch selection can lose authority when the strict candidate
+                # inventory is incomplete. That does not erase the separately
+                # admitted candidate-local semantic scorer: it can still reject
+                # latent drift on the already selected branch, but it receives
+                # no branch-selection or answer-replacement authority.
+                latent_search_verifier = pending_verifier
+                receipt.flag(
+                    "latent_opt_candidate_local_score_without_branch_selection"
+                )
+            if latent_search_verifier is not None and self.tokenizer is not None:
+                latent_state_score = getattr(
+                    latent_search_verifier,
+                    "latent_state_score",
+                    None,
+                )
                 latent_state_score_enabled = callable(latent_state_score)
 
                 def z_score(z) -> float:
@@ -5931,7 +5952,7 @@ class LatentCortexEngine:
                         return float(
                             latent_state_score(decoded)
                             if latent_state_score_enabled
-                            else verifier(decoded)
+                            else latent_search_verifier(decoded)
                         )
                     finally:
                         winner.z = saved
@@ -5952,9 +5973,10 @@ class LatentCortexEngine:
                         else branch_verifier_score
                     ),
                     accept_non_regression=(self.config.verifier_accept_non_regression),
+                    commit_requires_score_improvement=latent_state_score_enabled,
                 )
                 if latent_state_score_enabled:
-                    optimizer.trace.verifier_policy = (
+                    optimizer.trace.verifier_score_source = (
                         "semantic_candidate_score_for_latent_search_only_v1"
                     )
             else:
@@ -6596,13 +6618,13 @@ class LatentCortexEngine:
                     # against these exact receipts. Rebuild them from the
                     # refreshed inventory; pre-adaptation decompositions and
                     # generated repairs cannot transfer to changed text.
-                    from core.brain.llm.latent_cortex.disagreement_graph import (
-                        build_disagreement_graph_receipt,
-                        decompose_branch_candidates,
-                    )
                     from core.brain.llm.latent_cortex.diagnostic_action_selector import (
                         build_candidate_routes,
                         build_diagnostic_action_selector_receipt,
+                    )
+                    from core.brain.llm.latent_cortex.disagreement_graph import (
+                        build_disagreement_graph_receipt,
+                        decompose_branch_candidates,
                     )
                     from core.brain.llm.latent_cortex.local_repair import (
                         build_local_repair_receipt,

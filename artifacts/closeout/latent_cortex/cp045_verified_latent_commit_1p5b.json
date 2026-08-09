@@ -1,0 +1,67 @@
+{
+  "schema": "aura.rlc.cp045_verified_latent_commit_closeout.v1",
+  "checkpoint": "CP045",
+  "base_commit": "53906b4e0",
+  "model": "/Users/bryan/.aura/live-source/models/Qwen2.5-1.5B-Instruct-4bit",
+  "run_directory": "/tmp/aura-rlc-cp045-1p5b-strict-commit-v3",
+  "seed": 20260808,
+  "per_domain": 1,
+  "arms": [
+    "vanilla",
+    "vanilla_equal_compute",
+    "full_stack",
+    "full_stack_oracle"
+  ],
+  "artifact_sha256": {
+    "task_commitment_json": "2ed7779c35d34f1fa355cefe2a7cfd193c4c138e6114af88be9553c085cd57f4",
+    "decode_fingerprint_json": "acd32306fc856fd79e840f50bb5103d4554d5bde5a859445856ed56f8703b73c",
+    "journal_jsonl": "0f7c386514dfe66e4634b89474673a3e07ca731bb8a43326b4ae7e320f2b0c77",
+    "verdict_json": "78a94240f2e2ace374c4b55189b6f914d7f018957eb82a0722094621d3fbb805"
+  },
+  "mechanical_gates": {
+    "planned_cells": 28,
+    "completed_cells": 28,
+    "faulted_arms": {},
+    "coverage_complete": true,
+    "evidence_manifest_valid": true,
+    "full_stack_runtime_measured": true,
+    "paired_vanilla_floor_holds": true,
+    "right_to_wrong_regressions": 0,
+    "unpromoted_byte_divergences": 0
+  },
+  "verified_latent_commit": {
+    "recurrent_cells": 14,
+    "proposal_attempts": 56,
+    "plateau_exploration_accepts": 56,
+    "plateau_rollbacks": 56,
+    "strict_task_score_improvements": 0,
+    "committed_latent_steps": 0,
+    "post_adaptation_candidate_receipts": 0,
+    "unverified_proxy_commits": 0,
+    "candidate_local_score_without_branch_selection_cells": 2,
+    "branch_selection_authority_restored_in_those_cells": false,
+    "service_side_receipt_replay_tested": true
+  },
+  "scores": {
+    "vanilla": "0/7",
+    "vanilla_equal_compute": "0/7",
+    "full_stack": "0/7",
+    "full_stack_oracle": "0/7"
+  },
+  "bounded_gates": {
+    "affected_contracts": "208/208",
+    "canonical_smoke": "103/103",
+    "ruff": "pass",
+    "compile": "pass",
+    "diff_check": "pass"
+  },
+  "conclusion": {
+    "proxy_only_answer_drift_retired": true,
+    "task_score_and_branch_selection_authority_separated": true,
+    "battery_informative_for_reasoning_gain": false,
+    "reasoning_gain_proven": false,
+    "fusion_authorized": false,
+    "frontier_level_proven": false,
+    "wow_signal_authorized": false
+  }
+}
