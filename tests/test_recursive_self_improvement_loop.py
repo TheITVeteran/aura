@@ -218,13 +218,19 @@ def test_structural_improver_reports_rollback_failure(tmp_path: Path, monkeypatc
     issue = improver.scan()[0]
     writes = []
 
-    def flaky_atomic_write(path, text, *, encoding="utf-8"):
-        writes.append(str(text))
-        if len(writes) == 2:
-            raise OSError("rollback target locked")
-        Path(path).write_text(text, encoding=encoding)
+    # Patched at the gateway rather than at atomic_write_text, because the
+    # gateway is now the write path: these two calls modify Aura's own source
+    # and used to reach the primitive directly, skipping the governance check
+    # and the ownership record. Stubbing here asserts the routing as well as
+    # the rollback-failure report.
+    class _FlakyGateway:
+        def write_text(self, path, text, *, encoding="utf-8", source="unknown", **_):
+            writes.append((str(path), source))
+            if len(writes) == 2:
+                raise OSError("rollback target locked")
+            Path(path).write_text(text, encoding=encoding)
 
-    monkeypatch.setattr(module, "atomic_write_text", flaky_atomic_write)
+    monkeypatch.setattr(module, "get_file_write_gateway", _FlakyGateway)
     monkeypatch.setattr(improver, "_validate_files", lambda _paths: {"ok": False})
 
     result = improver.apply_known_repair(issue)
@@ -232,3 +238,8 @@ def test_structural_improver_reports_rollback_failure(tmp_path: Path, monkeypatc
     assert result.success is False
     assert result.message == "validation failed; rollback failed"
     assert result.validation["rollback_error"] == "OSError: rollback target locked"
+    # Both writes went through the gateway, each naming itself.
+    assert [source for _path, source in writes] == [
+        "self_modification.structural_improver.repair:missing_import_os",
+        "self_modification.structural_improver.rollback",
+    ]

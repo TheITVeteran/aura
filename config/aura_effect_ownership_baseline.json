@@ -2777,18 +2777,10 @@
       "scope": "<module>.SafeSelfModification.apply_fix"
     },
     {
-      "callee": "core.runtime.atomic_writer.atomic_write_text",
-      "canonical_owner": false,
-      "category": "direct_atomic_file_write",
-      "count": 1,
-      "path": "core/self_modification/safe_pipeline.py",
-      "scope": "<module>.SafePipeline._rollback_after_deploy"
-    },
-    {
       "callee": "core.runtime.atomic_writer.async_atomic_write_text",
       "canonical_owner": false,
       "category": "direct_atomic_file_write",
-      "count": 3,
+      "count": 2,
       "path": "core/self_modification/safe_pipeline.py",
       "scope": "<module>.SafePipeline.run"
     },
@@ -2799,30 +2791,6 @@
       "count": 1,
       "path": "core/self_modification/self_modification_engine.py",
       "scope": "<module>.AutonomousSelfModificationEngine.trigger_synthetic_test"
-    },
-    {
-      "callee": "core.runtime.atomic_writer.atomic_write_text",
-      "canonical_owner": false,
-      "category": "direct_atomic_file_write",
-      "count": 1,
-      "path": "core/self_modification/shadow_ast_healer.py",
-      "scope": "<module>.ShadowASTHealer.attempt_repair"
-    },
-    {
-      "callee": "core.runtime.atomic_writer.atomic_write_text",
-      "canonical_owner": false,
-      "category": "direct_atomic_file_write",
-      "count": 1,
-      "path": "core/self_modification/structural_improver.py",
-      "scope": "<module>.StructuralImprover._restore_original"
-    },
-    {
-      "callee": "core.runtime.atomic_writer.atomic_write_text",
-      "canonical_owner": false,
-      "category": "direct_atomic_file_write",
-      "count": 1,
-      "path": "core/self_modification/structural_improver.py",
-      "scope": "<module>.StructuralImprover.apply_known_repair"
     },
     {
       "callee": "core.runtime.atomic_writer.atomic_write_bytes",
@@ -5501,6 +5469,30 @@
       "canonical_owner": false,
       "category": "file_write_gateway",
       "count": 1,
+      "path": "core/self_modification/safe_pipeline.py",
+      "scope": "<module>._write_production_source"
+    },
+    {
+      "callee": "core.runtime.file_write_gateway.get_file_write_gateway().write_text",
+      "canonical_owner": false,
+      "category": "file_write_gateway",
+      "count": 1,
+      "path": "core/self_modification/safe_pipeline.py",
+      "scope": "<module>._write_production_source_sync"
+    },
+    {
+      "callee": "core.runtime.file_write_gateway.get_file_write_gateway().write_text_async",
+      "canonical_owner": false,
+      "category": "file_write_gateway",
+      "count": 1,
+      "path": "core/self_modification/shadow_ast_healer.py",
+      "scope": "<module>.ShadowASTHealer.attempt_repair"
+    },
+    {
+      "callee": "core.runtime.file_write_gateway.get_file_write_gateway().write_text_async",
+      "canonical_owner": false,
+      "category": "file_write_gateway",
+      "count": 1,
       "path": "core/self_modification/shadow_runtime.py",
       "scope": "<module>.ShadowRuntime._run_in_subprocess"
     },
@@ -5519,6 +5511,14 @@
       "count": 1,
       "path": "core/self_modification/structural_improver.py",
       "scope": "<module>.StructuralImprover._append_ledger"
+    },
+    {
+      "callee": "core.runtime.file_write_gateway.get_file_write_gateway().write_text",
+      "canonical_owner": false,
+      "category": "file_write_gateway",
+      "count": 1,
+      "path": "core/self_modification/structural_improver.py",
+      "scope": "<module>.StructuralImprover._write_source"
     },
     {
       "callee": "<file_write_gateway>.ensure_directory",
@@ -16466,6 +16466,6 @@
     }
   ],
   "description": "Exact AST effect-ownership debt ratchet; refresh only after reviewed change",
-  "inventory_sha256": "9ea408b2523b12f7e36fa431a26b0b7d39e50ff9f46eaead795e75e8450ce247",
+  "inventory_sha256": "9bac4f0bb0356afe420f0983b01da54f428612f82ea615a53c58cb5ddd30c7b0",
   "schema_version": 1
 }

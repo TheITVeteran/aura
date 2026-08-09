@@ -23,7 +23,6 @@ from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional
 
-from core.runtime.atomic_writer import atomic_write_text
 from core.runtime.errors import record_degradation
 from core.runtime.file_write_gateway import get_file_write_gateway
 from core.runtime.subprocess_gateway import get_subprocess_gateway
@@ -142,7 +141,7 @@ class StructuralImprover:
             if repaired == original:
                 return StructuralRepairResult(issue, False, False, "repair pattern did not change file")
 
-            atomic_write_text(path, repaired, encoding="utf-8")
+            self._write_source(path, repaired, reason=f"repair:{issue.kind}")
             validation = self._validate_files([path])
             if not validation.get("ok", False):
                 if self._restore_original(path, original, validation=validation):
@@ -168,6 +167,40 @@ class StructuralImprover:
                 validation,
             )
 
+    def _write_source(self, path: Path, text: str, *, reason: str) -> None:
+        """Write one of Aura's own source files, through the canonical gateway.
+
+        Both of this module's writes used to call ``atomic_write_text``
+        directly. That is the primitive the gateway wraps, so these — the
+        only writes in the system that modify Aura's *own source* without a
+        model in the loop — were the ones skipping the governance check,
+        the ownership record, and the write ledger. The repair itself may
+        well be authorized by the enclosing RSI operation; that is a
+        different question from whether the write is accounted for.
+
+        The scope is declared as internal maintenance because it is: a
+        deterministic repair of a known defect class in the local checkout,
+        with validation and rollback around it. Without the scope the live
+        runtime refuses the write as a governance violation, which is the
+        correct default for anything writing to source.
+        """
+        from core.governance_context import local_internal_governed_scope
+
+        with local_internal_governed_scope(
+            f"structural_improver.{reason}",
+            constraints={
+                "repository_root": str(self.root),
+                "target": str(path),
+                "validated_and_rolled_back": True,
+            },
+        ):
+            get_file_write_gateway().write_text(
+                path,
+                text,
+                encoding="utf-8",
+                source=f"self_modification.structural_improver.{reason}",
+            )
+
     def _restore_original(
         self,
         path: Path,
@@ -176,7 +209,7 @@ class StructuralImprover:
         validation: Optional[Dict[str, Any]] = None,
     ) -> bool:
         try:
-            atomic_write_text(path, original, encoding="utf-8")
+            self._write_source(path, original, reason="rollback")
             return True
         except (OSError, RuntimeError, AttributeError, TypeError, ValueError) as exc:
             if validation is not None:

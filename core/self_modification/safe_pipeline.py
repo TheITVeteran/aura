@@ -49,7 +49,7 @@ from enum import StrEnum
 from pathlib import Path
 from typing import Any
 
-from core.runtime.atomic_writer import async_atomic_write_text, atomic_write_text
+from core.runtime.atomic_writer import async_atomic_write_text
 from core.runtime.errors import record_degradation
 from core.runtime.file_write_gateway import get_file_write_gateway
 from core.runtime.subprocess_gateway import get_subprocess_gateway
@@ -95,6 +95,49 @@ class PipelineProposal:
     stages_completed: list[str] = field(default_factory=list)
     blocked_at: str | None = None
     blocked_reason: str | None = None
+
+
+def _production_source_scope(target: Path, reason: str):
+    """The governed scope for replacing one of Aura's own source files.
+
+    The staging artifact already went through the gateway; the write that
+    actually replaces production source did not. That is backwards — the
+    less consequential write was accounted for and the more consequential
+    one reached ``atomic_write_text`` directly, past the governance check,
+    the ownership record and the write ledger.
+    """
+    from core.governance_context import local_internal_governed_scope
+
+    return local_internal_governed_scope(
+        f"safe_pipeline.{reason}",
+        constraints={"target": str(target), "stage": reason},
+    )
+
+
+async def _write_production_source(target: Path, source_text: str, *, reason: str) -> None:
+    with _production_source_scope(target, reason):
+        await get_file_write_gateway().write_text_async(
+            target,
+            source_text,
+            encoding="utf-8",
+            source=f"self_modification.safe_pipeline.{reason}",
+        )
+
+
+def _write_production_source_sync(target: Path, source_text: str, *, reason: str) -> None:
+    """The rollback path, which runs where an await is not available.
+
+    Rollback is the one write that must not be deferred or dropped: it is
+    what stands between a failed self-modification and a runtime serving
+    broken source.
+    """
+    with _production_source_scope(target, reason):
+        get_file_write_gateway().write_text(
+            target,
+            source_text,
+            encoding="utf-8",
+            source=f"self_modification.safe_pipeline.{reason}",
+        )
 
 
 def _record(p: PipelineProposal, event: str, payload: dict[str, Any] | None = None) -> None:
@@ -285,7 +328,9 @@ class SafePipeline:
                     ),
                 )
 
-            await async_atomic_write_text(target, after_source, encoding="utf-8")
+            await _write_production_source(
+                target, after_source, reason="staged_deploy"
+            )
             proposal.stages_completed.append(Stage.STAGED_DEPLOY.value)
             _record(proposal, "staged_deployed")
 
@@ -523,7 +568,9 @@ class SafePipeline:
         proposal.blocked_at = Stage.POST_DEPLOY_MONITOR.value
         proposal.blocked_reason = reason
         try:
-            atomic_write_text(target, before_source, encoding="utf-8")
+            _write_production_source_sync(
+                target, before_source, reason="post_deploy_rollback"
+            )
             _record(proposal, "rolled_back", {"reason": reason, "monitor": detail})
         except (OSError, RuntimeError, AttributeError, TypeError, ValueError) as exc:
             proposal.blocked_reason = f"{reason}; rollback_failed:{exc}"

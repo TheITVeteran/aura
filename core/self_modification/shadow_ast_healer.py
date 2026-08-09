@@ -28,7 +28,6 @@ import logging
 from pathlib import Path
 from typing import Any
 
-from core.runtime.atomic_writer import atomic_write_text
 from core.runtime.errors import FallbackClassification, record_degradation
 from core.self_modification.mutation_tiers import MutationTier, classify_mutation_path
 from core.self_modification.repair_import_policy import RepairImportPolicy
@@ -212,12 +211,23 @@ class ShadowASTHealer:
             logger.info("ShadowHealer: Repair blocked by governance for %s", target_path.name)
             return False
 
-        await asyncio.to_thread(
-            atomic_write_text,
-            target_path,
-            proposal["repaired_content"],
-            encoding="utf-8",
-        )
+        # Through the gateway, not straight to the primitive. The governance
+        # check above decides WHETHER the repair may happen; the gateway is
+        # what records that it did, to which file, from which subsystem —
+        # and this write replaces one of Aura's own source files.
+        from core.governance_context import local_internal_governed_scope
+        from core.runtime.file_write_gateway import get_file_write_gateway
+
+        with local_internal_governed_scope(
+            "shadow_ast_healer.repair",
+            constraints={"target": str(target_path)},
+        ):
+            await get_file_write_gateway().write_text_async(
+                target_path,
+                proposal["repaired_content"],
+                encoding="utf-8",
+                source="self_modification.shadow_ast_healer.repair",
+            )
         logger.info(
             "ShadowHealer: Repaired %s (before=%s after=%s)",
             target_path.name,
