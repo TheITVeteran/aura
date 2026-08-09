@@ -1,3 +1,5 @@
+import asyncio
+import threading
 import time
 from pathlib import Path
 from types import SimpleNamespace
@@ -200,6 +202,162 @@ async def test_search_pipeline_skips_ddgs_when_runtime_disables_it(tmp_path: Pat
     assert calls["ddgs"] == 0
     assert calls["legacy"] == 1
     assert hits[0].url == "https://example.com/result"
+
+
+@pytest.mark.asyncio
+async def test_expanded_candidate_searches_run_concurrently(tmp_path: Path, monkeypatch):
+    pipeline = ResearchSearchPipeline(SearchArtifactStore(tmp_path / "web_artifacts.jsonl"))
+    barrier = threading.Barrier(2, timeout=2.0)
+
+    def _fake_legacy(query, _num_results):
+        barrier.wait()
+        return [
+            SearchHit(
+                title=query,
+                url=f"https://example.com/{query}",
+                snippet="Independent result",
+                source_engine="test",
+                position=1,
+            )
+        ]
+
+    monkeypatch.setattr("core.search.research_pipeline._ddgs_enabled", lambda: False)
+    monkeypatch.setattr(pipeline, "_legacy_html_search", _fake_legacy)
+
+    hits = await pipeline._search_candidates(["one", "two"], num_results=2)
+
+    assert [hit.title for hit in hits] == ["one", "two"]
+
+
+@pytest.mark.asyncio
+async def test_deep_fetch_recovers_only_missing_pages_in_parallel(tmp_path: Path, monkeypatch):
+    pipeline = ResearchSearchPipeline(SearchArtifactStore(tmp_path / "web_artifacts.jsonl"))
+    hits = [
+        SearchHit(
+            title=f"Article {index}",
+            url=f"https://example.com/{index}",
+            snippet="Article snippet",
+            source_engine="test",
+            position=index,
+        )
+        for index in range(1, 4)
+    ]
+    active = 0
+    max_active = 0
+    browser_urls = []
+
+    async def _fetch_page(_client, hit, *, timeout_val):
+        del timeout_val
+        if hit is hits[0]:
+            return SearchPage(
+                url=hit.url,
+                title=hit.title,
+                text="complete article body " * 80,
+                snippet=hit.snippet,
+                source_engine="test",
+                position=hit.position,
+            )
+        return None
+
+    async def _fetch_browser(hit):
+        nonlocal active, max_active
+        browser_urls.append(hit.url)
+        active += 1
+        max_active = max(max_active, active)
+        await asyncio.sleep(0)
+        active -= 1
+        return SearchPage(
+            url=hit.url,
+            title=hit.title,
+            text="browser recovered article body " * 50,
+            snippet=hit.snippet,
+            source_engine="browser:test",
+            position=hit.position,
+        )
+
+    monkeypatch.setattr(pipeline, "_fetch_page", _fetch_page)
+    monkeypatch.setattr(pipeline, "_fetch_page_with_browser", _fetch_browser)
+
+    pages = await pipeline._fetch_pages(hits, deep=True)
+
+    assert {page.url for page in pages} == {hit.url for hit in hits}
+    assert hits[0].url not in browser_urls
+    assert set(browser_urls) == {hits[1].url, hits[2].url}
+    assert max_active == 2
+
+
+@pytest.mark.asyncio
+async def test_evidence_only_search_skips_model_work_and_preserves_source_diversity(
+    tmp_path: Path,
+    monkeypatch,
+):
+    pipeline = ResearchSearchPipeline(SearchArtifactStore(tmp_path / "web_artifacts.jsonl"))
+    observed = {}
+
+    async def _no_reason(*_args, **_kwargs):
+        raise AssertionError("evidence-only retrieval must not allocate a synthesis model")
+
+    async def _search_candidates(queries, *, num_results):
+        observed["queries"] = list(queries)
+        observed["num_results"] = num_results
+        return [
+            SearchHit(
+                title=f"Recent article {index}",
+                url=f"https://example.com/article-{index}",
+                snippet="Recent independent reporting",
+                source_engine="test",
+                position=index,
+            )
+            for index in range(1, 4)
+        ]
+
+    async def _fetch_pages(hits, *, deep):
+        observed["fetched"] = len(hits)
+        observed["deep"] = deep
+        return [
+            SearchPage(
+                url=hit.url,
+                title=hit.title,
+                text=(
+                    f"Article {hit.position} reports a distinct current finding about "
+                    "orca cognition, social learning, and cooperative behavior. " * 12
+                ),
+                snippet=hit.snippet,
+                source_engine="test",
+                position=hit.position,
+            )
+            for hit in hits
+        ]
+
+    monkeypatch.setattr(pipeline, "_reason", _no_reason)
+    monkeypatch.setattr(pipeline, "_search_candidates", _search_candidates)
+    monkeypatch.setattr(pipeline, "_fetch_pages", _fetch_pages)
+
+    result = await pipeline.search(
+        "find 3 recent articles about orca cognition",
+        num_results=3,
+        deep=True,
+        retain=False,
+        force_refresh=True,
+        context={"evidence_only": True},
+    )
+
+    assert result["ok"] is True
+    assert result["synthesis_mode"] == "deterministic_evidence"
+    assert set(result["timing_ms"]) == {
+        "query_expansion",
+        "candidate_search",
+        "source_fetch",
+        "synthesis",
+        "total",
+    }
+    assert observed == {
+        "queries": ["find 3 recent articles about orca cognition"],
+        "num_results": 3,
+        "fetched": 3,
+        "deep": True,
+    }
+    assert len({chunk["url"] for chunk in result["chunks"][:3]}) == 3
 
 
 @pytest.mark.asyncio

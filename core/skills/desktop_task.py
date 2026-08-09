@@ -2706,6 +2706,10 @@ class DesktopTaskSkill(BaseSkill):
                 "foreground_request": False,
                 "user_requested_action": True,
                 "user_explicitly_authorized": True,
+                # This layer needs fetched evidence.  It owns the authored
+                # synthesis and semantic completion check below, so the search
+                # subsystem must not allocate another model first.
+                "evidence_only": True,
                 "desktop_task_reason": "Collect live research evidence before composing the requested document.",
                 "desktop_task_expect": "Web search returns sources or an explicit failure.",
             }
@@ -2758,6 +2762,11 @@ class DesktopTaskSkill(BaseSkill):
         research_timing_ms["search"] = round(
             (time.perf_counter() - search_started) * 1000.0,
             1,
+        )
+        pipeline_timing_ms = (
+            dict(result.get("timing_ms") or {})
+            if isinstance(result, dict) and isinstance(result.get("timing_ms"), dict)
+            else {}
         )
         if not isinstance(result, dict):
             result = {"ok": bool(result), "result": result}
@@ -2873,6 +2882,7 @@ class DesktopTaskSkill(BaseSkill):
             "desktop_task_research_deep": deep_search,
             "desktop_task_research_pressure_limited": pressure_limited,
             "desktop_task_research_timing_ms": research_timing_ms,
+            "desktop_task_research_pipeline_timing_ms": pipeline_timing_ms,
         }
         synthesis = self._compose_research_synthesis_from_sources(
             objective=objective,

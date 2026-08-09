@@ -5,8 +5,8 @@ from pathlib import Path
 
 import pytest
 
-from core.skills.desktop_task import DesktopTaskSkill, DesktopTaskStep
 from core.runtime.content_integrity import paragraph_sha256s, text_sha256
+from core.skills.desktop_task import DesktopTaskSkill, DesktopTaskStep
 
 #: Derived rather than naming one developer's home directory. The path
 #: is fixture data, so what matters is its shape, not whose machine it is.
@@ -2922,6 +2922,7 @@ async def test_collect_research_context_uses_shallow_search_under_memory_pressur
     assert calls[0][0] == "web_search"
     assert calls[0][1]["deep"] is False
     assert calls[0][1]["num_results"] == 3
+    assert calls[0][2]["evidence_only"] is True
     assert ctx["desktop_task_research_pressure_limited"] is True
     assert "desktop_task_research_result" not in ctx
     assert "large_raw_body" not in json.dumps(ctx)

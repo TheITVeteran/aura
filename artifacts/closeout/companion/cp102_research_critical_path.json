@@ -1,0 +1,35 @@
+{
+  "schema": "aura.closeout.checkpoint.v1",
+  "checkpoint": "CP102",
+  "title": "Research performs independent work concurrently and synthesizes once",
+  "date": "2026-08-09",
+  "implementation": {
+    "parallel_query_search": true,
+    "parallel_page_fetch": true,
+    "parallel_browser_recovery": true,
+    "browser_recovery_only_for_missing_or_short_pages": true,
+    "evidence_only_skips_duplicate_model_synthesis": true,
+    "requested_source_count_is_exact": true,
+    "source_diversity_before_duplicate_chunks": true,
+    "stage_timings_reported": true,
+    "desktop_result_exposes_pipeline_timing": true
+  },
+  "bounded_measurement": {
+    "candidate_search_elapsed_s": 0.157,
+    "candidate_search_serial_floor_s": 0.45,
+    "browser_recovery_elapsed_s": 0.151,
+    "browser_recovery_serial_floor_s": 0.45,
+    "browser_recovery_peak_concurrency": 3,
+    "scope": "synthetic three-way 150 ms independent operations"
+  },
+  "verification": {
+    "focused_tests": "105 passed",
+    "expanded_research_tests": "115 passed",
+    "broad_research_tests": "184 passed",
+    "smoke": "103 passed",
+    "ruff": "passed",
+    "python_compile": "passed",
+    "diff_check": "passed"
+  },
+  "claim_boundary": "This removes duplicate model synthesis and serial independent retrieval from the desktop research critical path. It does not claim a fixed internet latency, a live rebuilt-app result, or that foreground model prefill, desktop selectors, and host contention are fully optimized."
+}

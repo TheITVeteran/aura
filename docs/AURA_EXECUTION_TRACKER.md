@@ -40885,3 +40885,39 @@ inference contention must be measured and reduced rather than hidden behind a
 larger timeout. Camera authority, visual-detail proof, and rebuilt-app live proof
 also remain open. The completion envelope remains `809/920` (approximately
 `87.9%`).
+
+## Checkpoint 2026-08-09-102: Research Does Independent Work Concurrently
+
+The multi-source desktop workflow previously paid for the same intellectual
+work twice. `web_search` expanded a concrete source-reading request through a
+model, fetched independent queries serially, opened independent blocked pages
+serially, synthesized with the model, and then handed that prose to the desktop
+task layer for a second authored synthesis and semantic completion pass. It also
+over-fetched speculative pages and could fill its evidence window with chunks
+from one source, triggering replacement work later.
+
+The research pipeline now exposes measured query-expansion, candidate-search,
+source-fetch, synthesis, and total stage durations. Independent expanded queries,
+HTTP page reads, and browser recoveries run concurrently with deterministic merge
+order. Browser recovery is limited to missing or short pages. Source-reading
+desktop tasks request the exact bounded source count, skip query paraphrasing and
+duplicate model synthesis, retain one leading chunk per source before duplicates,
+and return the timings with the desktop-task receipt. The final desktop authoring
+and completion verifier remain authoritative; no evidence-only intermediate text
+is presented as the finished document.
+
+A bounded three-way timing probe completed 150 ms independent candidate searches
+in `0.157 s` rather than the `0.450 s` serial floor, and three browser recoveries
+in `0.151 s` with observed peak concurrency `3`. These are concurrency proofs,
+not internet-latency claims. Focused contracts pass `105/105`, the expanded set
+passes `115/115`, the broad research set passes `184/184`, and canonical smoke
+passes `103/103`; Ruff, Python byte compilation, and diff hygiene pass. Evidence
+is `artifacts/closeout/companion/cp102_research_critical_path.json`.
+
+Foreground prompt/prefill cost, desktop selector recovery, dynamic background
+throttling under model pressure, camera authority, visual-detail proof, and a
+rebuilt-app live proof remain open. The frozen proof campaign's 21 admitted cells
+remain evidence, but its resource-dominating control was found unable to satisfy
+nonzero treatment tool counters and was yielded before wasting its 128-sample
+ceiling. No reasoning-gain, frontier, fusion, activation, or `WOW Signal` claim is
+made. The completion envelope remains `809/920` (approximately `87.9%`).

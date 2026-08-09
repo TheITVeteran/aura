@@ -17,9 +17,9 @@ from urllib.parse import urlparse
 
 from core.runtime.errors import record_degradation
 from core.runtime.network_gateway import get_network_gateway
+from core.runtime.state_ownership import state_root
 from core.thought_stream import get_emitter
 from core.utils.task_tracker import get_task_tracker
-from core.runtime.state_ownership import state_root
 
 logger = logging.getLogger("Aura.SearchPipeline")
 
@@ -442,6 +442,8 @@ class ResearchSearchPipeline:
         context: dict[str, Any] | None = None,
         force_refresh: bool = False,
     ) -> dict[str, Any]:
+        search_started = time.perf_counter()
+        timing_ms: dict[str, float] = {}
         emitter = get_emitter()
         ctx = dict(context or {})
         cleaned_query = _normalize_query(query)
@@ -458,8 +460,28 @@ class ResearchSearchPipeline:
             return result
 
         emitter.emit("🔍 Searching...", f"Gathering sources for: {cleaned_query}", category="Research")
+        stage_started = time.perf_counter()
         expanded_queries = await self._expand_queries(cleaned_query, ctx)
-        hits = await self._search_candidates(expanded_queries, num_results=max(num_results, 5))
+        timing_ms["query_expansion"] = round(
+            (time.perf_counter() - stage_started) * 1000.0,
+            1,
+        )
+        source_reading = query_requires_source_reading(cleaned_query)
+        evidence_only = bool(ctx.get("evidence_only"))
+        candidate_count = (
+            max(1, num_results)
+            if evidence_only and source_reading
+            else max(num_results, 5)
+        )
+        stage_started = time.perf_counter()
+        hits = await self._search_candidates(
+            expanded_queries,
+            num_results=candidate_count,
+        )
+        timing_ms["candidate_search"] = round(
+            (time.perf_counter() - stage_started) * 1000.0,
+            1,
+        )
         hits = self._rerank_hits(cleaned_query, hits)
         if not hits:
             emitter.emit("⚠️ Search Failed", f"No results found for '{cleaned_query}'.", level="warning", category="Research")
@@ -473,43 +495,39 @@ class ResearchSearchPipeline:
                 "mode": "standard",
             }
 
-        source_reading = query_requires_source_reading(cleaned_query)
-        max_pages = 6 if deep else 3
-        if deep and source_reading:
-            max_pages = max(max_pages, 4)
+        if source_reading:
+            # A caller asking for three read sources needs three read sources,
+            # not six speculative page loads.  Source-count repair belongs to
+            # the caller after it can inspect which pages were actually usable.
+            max_pages = max(1, min(len(hits), num_results))
+        else:
+            max_pages = min(len(hits), 6 if deep else 3)
         emitter.emit("📖 Reading Sources", f"Fetching top {max_pages} pages...", category="Research")
         
+        stage_started = time.perf_counter()
         pages = await self._fetch_pages(hits[:max_pages], deep=deep)
+        timing_ms["source_fetch"] = round(
+            (time.perf_counter() - stage_started) * 1000.0,
+            1,
+        )
 
-        if deep and source_reading:
-            emitter.emit(
-                "📚 Source Grounding",
-                "This looks like a specific source/story request. Prioritizing direct page reads.",
-                category="Research",
-            )
-            for hit in hits[: min(max_pages, 3)]:
-                browser_page = await self._fetch_page_with_browser(hit)
-                if browser_page:
-                    pages = [page for page in pages if page.url != browser_page.url]
-                    pages.append(browser_page)
-        
-        # Component A2: Multi-pass retrieval / quality gate
-        if len(pages) < 2 and deep:
-            emitter.emit("🔄 Deep Quality Gate", "Insufficient sources fetched. Attempting PhantomBrowser fallback for remaining hits...", category="Research")
-            # Try falling back to PhantomBrowser for first 2 unfetched hits
-            unfetched_hits = [h for h in hits[:max_pages] if not any(p.url == h.url for p in pages)]
-            for hit in unfetched_hits[:2]:
-                browser_page = await self._fetch_page_with_browser(hit)
-                if browser_page:
-                    pages.append(browser_page)
-                    
         if pages:
             emitter.emit("🧠 Synthesizing", f"Cross-referencing {len(pages)} sources to synthesize an accurate answer...", category="Research")
         else:
             emitter.emit("⚠️ Fallback Synthesis", "No full pages could be extracted. Attempting synthesis from search snippets...", level="warning", category="Research")
 
         chunks = self._rerank_chunks(cleaned_query, expanded_queries, pages, hits)
-        synthesized = await self._synthesize_answer(cleaned_query, chunks, ctx)
+        stage_started = time.perf_counter()
+        synthesized = await self._synthesize_answer(
+            cleaned_query,
+            chunks,
+            ctx,
+            allow_model=not evidence_only,
+        )
+        timing_ms["synthesis"] = round(
+            (time.perf_counter() - stage_started) * 1000.0,
+            1,
+        )
 
         # Component A2: Cross-validation warning for low confidence
         if deep and synthesized["confidence"] < 0.5:
@@ -529,12 +547,31 @@ class ResearchSearchPipeline:
             "summary": synthesized["answer"] or hits[0].snippet,
             "source": synthesized["citations"][0]["url"] if synthesized["citations"] else hits[0].url,
             "mode": "deep" if deep else "standard",
+            "synthesis_mode": (
+                "deterministic_evidence" if evidence_only else "model_with_deterministic_fallback"
+            ),
+            "timing_ms": timing_ms,
             "count": len(hits[:num_results]),
             "chunks": synthesized["evidence"],
             "content": "\n\n".join(item["text"] for item in synthesized["evidence"][:3]),
         }
         result["result"] = result["answer"] or result["content"] or self._format_hits(hits[:num_results])
         result["message"] = self._format_message(cleaned_query, result)
+        timing_ms["total"] = round(
+            (time.perf_counter() - search_started) * 1000.0,
+            1,
+        )
+        logger.info(
+            "Research stages for %r: query=%.1fms candidates=%.1fms fetch=%.1fms "
+            "synthesis=%.1fms total=%.1fms mode=%s",
+            cleaned_query[:100],
+            timing_ms["query_expansion"],
+            timing_ms["candidate_search"],
+            timing_ms["source_fetch"],
+            timing_ms["synthesis"],
+            timing_ms["total"],
+            result["synthesis_mode"],
+        )
 
         should_retain = self._should_retain(cleaned_query, deep=deep, retain=retain, context=ctx, result=result)
         if should_retain:
@@ -547,6 +584,13 @@ class ResearchSearchPipeline:
 
     async def _expand_queries(self, query: str, context: dict[str, Any]) -> list[str]:
         expansions = [query]
+
+        # Document workflows already carry a concrete, source-reading query and
+        # perform their own semantic synthesis after retrieval.  Spending a
+        # model call to paraphrase that query adds seconds and often broadens it
+        # away from the exact freshness/source-count contract.
+        if bool(context.get("evidence_only")) and query_requires_source_reading(query):
+            return expansions
 
         llm_prompt = (
             "Rewrite this web research query into 3 concise search variants.\n"
@@ -586,15 +630,29 @@ class ResearchSearchPipeline:
         ordered: list[SearchHit] = []
         use_ddgs = _ddgs_enabled()
 
-        for query in queries:
+        async def _search_one(query: str) -> list[SearchHit]:
             cached_hits = self._load_cached_search_hits(query, limit=num_results)
             if cached_hits:
-                hits = cached_hits
-            elif use_ddgs:
+                return cached_hits
+            if use_ddgs:
                 ddgs_hits = await asyncio.to_thread(self._ddgs_search, query, num_results)
-                hits = ddgs_hits or await asyncio.to_thread(self._legacy_html_search, query, num_results)
-            else:
-                hits = await asyncio.to_thread(self._legacy_html_search, query, num_results)
+                if ddgs_hits:
+                    return ddgs_hits
+            return await asyncio.to_thread(self._legacy_html_search, query, num_results)
+
+        query_list = list(queries)
+        batches = await asyncio.gather(
+            *(_search_one(query) for query in query_list),
+            return_exceptions=True,
+        )
+        for query, batch in zip(query_list, batches, strict=True):
+            if isinstance(batch, asyncio.CancelledError):
+                raise batch
+            if isinstance(batch, Exception):
+                record_degradation("research_pipeline.search_candidates", batch)
+                logger.debug("Candidate search failed for %s: %s", query, batch)
+                continue
+            hits = batch
             for hit in hits:
                 normalized_url = hit.url.rstrip("/")
                 if not normalized_url or normalized_url in aggregated:
@@ -611,10 +669,14 @@ class ResearchSearchPipeline:
 
         ddgs_cls = None
         try:
-            from ddgs import DDGS as ddgs_cls  # type: ignore[assignment]
+            from ddgs import DDGS
+
+            ddgs_cls = DDGS
         except ImportError:
             try:
-                from duckduckgo_search import DDGS as ddgs_cls  # type: ignore[assignment]
+                from duckduckgo_search import DDGS
+
+                ddgs_cls = DDGS
             except ImportError:
                 ddgs_cls = None
 
@@ -890,22 +952,23 @@ class ResearchSearchPipeline:
         timeout_val = 14.0 if deep else 8.0 # Component A3: Timeout hardening
         
         # 1. Fallback / Normal Mode: canonical network gateway
-        tasks = [self._fetch_page(None, hit, timeout_val=timeout_val) for hit in hits[:3]]
+        tasks = [self._fetch_page(None, hit, timeout_val=timeout_val) for hit in hits]
         fetched = await asyncio.gather(*tasks, return_exceptions=True)
 
         for item in fetched:
             if isinstance(item, SearchPage):
                 pages.append(item)
 
-        # 2. Deep Mode: Always invoke Browser on the top 2 hits to bypass bot blockers
+        # 2. Deep mode: browser-recover only pages that HTTP could not read
+        # completely.  Recovery is parallel; a blocked source must not make
+        # every other independent source wait behind its browser timeout.
         if deep:
-            # We want actual digging into the content across multiple links, not just hits[0]
-            browser_tasks = []
-            for hit in hits[:2]: 
-                # Avoid redundant fetching if HTTPX perfectly fetched it
-                if not any(p.url == hit.url and len(p.text) > 1000 for p in pages):
-                    browser_tasks.append(self._fetch_page_with_browser(hit))
-            
+            browser_hits = [
+                hit
+                for hit in hits
+                if not any(page.url == hit.url and len(page.text) > 1000 for page in pages)
+            ]
+            browser_tasks = [self._fetch_page_with_browser(hit) for hit in browser_hits]
             if browser_tasks:
                 browser_results = await asyncio.gather(*browser_tasks, return_exceptions=True)
                 for item in browser_results:
@@ -1080,7 +1143,27 @@ class ResearchSearchPipeline:
                 )
 
         ranked.sort(key=lambda item: float(item["score"]), reverse=True)
-        return ranked[:8]
+
+        # Preserve source diversity before taking additional chunks from the
+        # same page.  Without this, the top eight chunks could all come from one
+        # article even after three pages were fetched, forcing a second search
+        # and making a multi-source synthesis semantically false.
+        diversified: list[dict[str, Any]] = []
+        seen_urls: set[str] = set()
+        for item in ranked:
+            url = str(item.get("url") or "")
+            if url and url not in seen_urls:
+                diversified.append(item)
+                seen_urls.add(url)
+            if len(diversified) >= 8:
+                return diversified
+        for item in ranked:
+            if item in diversified:
+                continue
+            diversified.append(item)
+            if len(diversified) >= 8:
+                break
+        return diversified
 
     def _chunk_page(self, page: SearchPage) -> list[str]:
         paragraphs = [
@@ -1209,6 +1292,8 @@ class ResearchSearchPipeline:
         query: str,
         chunks: list[dict[str, Any]],
         context: dict[str, Any],
+        *,
+        allow_model: bool = True,
     ) -> dict[str, Any]:
         top_chunks = chunks[:5]
         source_reading = query_requires_source_reading(query)
@@ -1251,7 +1336,13 @@ class ResearchSearchPipeline:
 
         # Deep mode gets more synthesis time for thorough analysis
         synthesis_timeout = 20.0 if len(top_chunks) >= 4 else 12.0
-        llm_output = await self._reason("\n\n".join(prompt_lines), context=context, timeout_seconds=synthesis_timeout)
+        llm_output = ""
+        if allow_model:
+            llm_output = await self._reason(
+                "\n\n".join(prompt_lines),
+                context=context,
+                timeout_seconds=synthesis_timeout,
+            )
         if llm_output:
             parsed = self._parse_synthesis_json(llm_output)
             if parsed is not None:
@@ -1717,7 +1808,7 @@ class ResearchSearchPipeline:
                     return _normalize_text(str(result or ""), limit=4000)
                 except (TimeoutError, RuntimeError, AttributeError, TypeError):
                     pass  # no-op: intentional
-            except (TimeoutError, RuntimeError, AttributeError, TypeError):
+            except (TimeoutError, RuntimeError, AttributeError):
                 pass  # no-op: intentional
 
         brain = context.get("brain")
