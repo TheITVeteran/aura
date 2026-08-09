@@ -213,23 +213,36 @@ def build_ordinary_decode_probe_report(
         mx.random.seed(generation_seed)
         rendered = tokenizer.decode(prompt_tokens)
         pieces: list[str] = []
+        decode_termination = "generator_stop"
         for response in stream_generate(
             model, tokenizer, prompt=rendered, max_tokens=320
         ):
             pieces.append(response.text)
             if "}" in response.text and is_contract_complete("".join(pieces)):
+                decode_termination = "contract_complete"
                 break
         text = "".join(pieces)
         tokens = list(tokenizer.encode(text, add_special_tokens=False))
         grade = dict(task.grade(text))
         grade["correct"] = bool(grade.get("correct"))
-        receipt_payload = {
-            "schema": "aura.rlc.ordinary_decode_probe.v1",
-            "arm": "ordinary_decode",
-            "generation_seed": generation_seed,
-            "recurrent_steps": 0,
-        }
         for depth in depths:
+            receipt_payload = {
+                "schema": "aura.rlc.ordinary_decode_probe.v2",
+                "arm": "ordinary_decode",
+                "task_id": task.task_id,
+                "depth_coordinate": depth,
+                "generation_seed": generation_seed,
+                "recurrent_steps": 0,
+                "prompt_tokens_sha256": hashlib.sha256(
+                    canonical_json_bytes(prompt_tokens)
+                ).hexdigest(),
+                "response_sha256": hashlib.sha256(text.encode("utf-8")).hexdigest(),
+                "tokens_sha256": hashlib.sha256(
+                    canonical_json_bytes(tokens)
+                ).hexdigest(),
+                "token_count": len(tokens),
+                "decode_termination": decode_termination,
+            }
             records.append(
                 {
                     "task_id": task.task_id,
@@ -245,7 +258,7 @@ def build_ordinary_decode_probe_report(
                     "grade_receipt": dict(grade),
                     "episode_ok": True,
                     "episode_reason": "",
-                    "decode_termination": "contract_complete",
+                    "decode_termination": decode_termination,
                     "branch_selection_admitted": True,
                     "decode_incumbent_policy": "vanilla_incumbent",
                     "episode_receipt_sha256": hashlib.sha256(

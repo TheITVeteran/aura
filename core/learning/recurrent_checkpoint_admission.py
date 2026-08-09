@@ -133,6 +133,55 @@ def _validate_episode_evidence(
     return receipt
 
 
+def _validate_ordinary_decode_evidence(
+    value: Any,
+    *,
+    task_id: str,
+    depth: int,
+    response_sha256: str,
+    tokens_sha256: str,
+    token_count: int,
+    decode_termination: str,
+    episode_receipt_sha256: str,
+) -> dict[str, Any]:
+    """Validate a control generation without inventing recurrent evidence."""
+
+    if not isinstance(value, Mapping):
+        _fail("recurrent_checkpoint_ordinary_evidence_invalid")
+    receipt = dict(value)
+    if (
+        set(receipt)
+        != {
+            "schema",
+            "arm",
+            "task_id",
+            "depth_coordinate",
+            "generation_seed",
+            "recurrent_steps",
+            "prompt_tokens_sha256",
+            "response_sha256",
+            "tokens_sha256",
+            "token_count",
+            "decode_termination",
+        }
+        or _sha(receipt) != episode_receipt_sha256
+        or receipt.get("schema") != "aura.rlc.ordinary_decode_probe.v2"
+        or receipt.get("arm") != "ordinary_decode"
+        or receipt.get("task_id") != task_id
+        or receipt.get("depth_coordinate") != depth
+        or type(receipt.get("generation_seed")) is not int
+        or receipt["generation_seed"] < 0
+        or receipt.get("recurrent_steps") != 0
+        or not _is_sha256(receipt.get("prompt_tokens_sha256"))
+        or receipt.get("response_sha256") != response_sha256
+        or receipt.get("tokens_sha256") != tokens_sha256
+        or receipt.get("token_count") != token_count
+        or receipt.get("decode_termination") != decode_termination
+    ):
+        _fail("recurrent_checkpoint_ordinary_evidence_invalid")
+    return receipt
+
+
 def build_recurrence_task_manifest(
     tasks: Sequence[Any],
 ) -> tuple[list[dict[str, Any]], str]:
@@ -231,6 +280,9 @@ def build_free_generation_report(
     if len(rows) != len(expected_coordinates):
         _fail("recurrent_checkpoint_report_coverage_invalid")
     normalized_rows: list[dict[str, Any]] = []
+    expected_incumbent_policy = (
+        "vanilla_incumbent" if arm == "ordinary_decode" else "latent"
+    )
     for row, (task_id, depth) in zip(rows, expected_coordinates, strict=True):
         if (
             set(row)
@@ -276,20 +328,32 @@ def build_free_generation_report(
             or not isinstance(row.get("decode_termination"), str)
             or not row["decode_termination"]
             or type(row.get("branch_selection_admitted")) is not bool
-            or row.get("decode_incumbent_policy") != "latent"
+            or row.get("decode_incumbent_policy") != expected_incumbent_policy
             or not _is_sha256(row.get("episode_receipt_sha256"))
             or (row["correct"] and not row["episode_ok"])
             or (row["correct"] and not row["branch_selection_admitted"])
         ):
             _fail("recurrent_checkpoint_report_record_invalid")
-        row["episode_receipt"] = _validate_episode_evidence(
-            row.get("episode_receipt"),
-            depth=depth,
-            token_count=row["token_count"],
-            decode_termination=row["decode_termination"],
-            branch_selection_admitted=row["branch_selection_admitted"],
-            episode_receipt_sha256=row["episode_receipt_sha256"],
-        )
+        if arm == "ordinary_decode":
+            row["episode_receipt"] = _validate_ordinary_decode_evidence(
+                row.get("episode_receipt"),
+                task_id=task_id,
+                depth=depth,
+                response_sha256=row["response_sha256"],
+                tokens_sha256=row["tokens_sha256"],
+                token_count=row["token_count"],
+                decode_termination=row["decode_termination"],
+                episode_receipt_sha256=row["episode_receipt_sha256"],
+            )
+        else:
+            row["episode_receipt"] = _validate_episode_evidence(
+                row.get("episode_receipt"),
+                depth=depth,
+                token_count=row["token_count"],
+                decode_termination=row["decode_termination"],
+                branch_selection_admitted=row["branch_selection_admitted"],
+                episode_receipt_sha256=row["episode_receipt_sha256"],
+            )
         normalized_rows.append(row)
     correct_by_depth = {
         str(depth): sum(int(row["correct"]) for row in normalized_rows if row["depth"] == depth)

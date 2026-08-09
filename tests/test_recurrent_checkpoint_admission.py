@@ -91,6 +91,40 @@ def _record(task_id: str, depth: int, correct: bool) -> dict[str, object]:
     }
 
 
+def _bind_record_arm(
+    row: dict[str, object],
+    *,
+    arm: str,
+) -> dict[str, object]:
+    if arm != "ordinary_decode":
+        return row
+    receipt = {
+        "schema": "aura.rlc.ordinary_decode_probe.v2",
+        "arm": "ordinary_decode",
+        "task_id": row["task_id"],
+        "depth_coordinate": row["depth"],
+        "generation_seed": 17,
+        "recurrent_steps": 0,
+        "prompt_tokens_sha256": _digest(f"prompt:{row['task_id']}"),
+        "response_sha256": row["response_sha256"],
+        "tokens_sha256": row["tokens_sha256"],
+        "token_count": row["token_count"],
+        "decode_termination": row["decode_termination"],
+    }
+    row["decode_incumbent_policy"] = "vanilla_incumbent"
+    row["episode_receipt"] = receipt
+    row["episode_receipt_sha256"] = hashlib.sha256(
+        json.dumps(
+            receipt,
+            sort_keys=True,
+            separators=(",", ":"),
+            ensure_ascii=True,
+            allow_nan=False,
+        ).encode("ascii")
+    ).hexdigest()
+    return row
+
+
 def _report(arm: str, outcomes: dict[tuple[str, int], bool]) -> dict[str, object]:
     task_ids = tuple(task.task_id for task in _TASKS)
     depths = (1, 2)
@@ -102,7 +136,10 @@ def _report(arm: str, outcomes: dict[tuple[str, int], bool]) -> dict[str, object
         task_ids=task_ids,
         depths=depths,
         records=[
-            _record(task_id, depth, outcomes[(task_id, depth)])
+            _bind_record_arm(
+                _record(task_id, depth, outcomes[(task_id, depth)]),
+                arm=arm,
+            )
             for task_id in task_ids
             for depth in depths
         ],
@@ -439,7 +476,7 @@ def _report_with_texts(arm: str, outcomes, reasoned: bool) -> dict[str, object]:
             )
             row["response_text"] = text
             row["response_sha256"] = hashlib.sha256(text.encode("utf-8")).hexdigest()
-            records.append(row)
+            records.append(_bind_record_arm(row, arm=arm))
     return build_free_generation_report(
         arm=arm,
         adapter_sha256=_digest(arm),

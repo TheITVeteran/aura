@@ -55,6 +55,10 @@ from core.learning.recurrent_sft_execution import (  # noqa: E402
     adapter_tensor_dict,
     adapter_tensor_fingerprint,
 )
+from core.learning.verified_token_trace import (  # noqa: E402
+    build_resident_tokenizer_trace_adapter,
+    observable_completion_from_adapter,
+)
 from core.runtime.atomic_writer import atomic_write_bytes  # noqa: E402
 from core.runtime.mlx_memory_guard import mlx_memory_envelope  # noqa: E402
 from core.runtime.model_lane_control import standalone_model_lane  # noqa: E402
@@ -68,6 +72,7 @@ SOURCE_PATHS: Final = (
     "core/learning/recurrent_grpo.py",
     "core/learning/recurrence_native_objective_v2.py",
     "core/learning/recurrent_sft_execution.py",
+    "core/learning/verified_token_trace.py",
     "core/brain/llm/latent_cortex/execution_spec.py",
     "core/brain/llm/latent_cortex/engine.py",
     "core/brain/llm/latent_cortex/recurrence_adapter.py",
@@ -212,6 +217,27 @@ def _grade_reward(
     return verdict, float(reward)
 
 
+def _observable_grade_reward(
+    task: Any,
+    sample: Any,
+    token_trace_adapter: Any,
+    *,
+    format_credit: float,
+) -> tuple[dict[str, Any], dict[str, Any], float]:
+    """Grade only the authenticated response prefix visible before termination."""
+
+    observable = observable_completion_from_adapter(
+        token_trace_adapter,
+        sample.tokens,
+    )
+    verdict, reward = _grade_reward(
+        task,
+        str(observable["response_text"]),
+        format_credit=format_credit,
+    )
+    return observable, verdict, reward
+
+
 def _status(out_dir: Path, phase: str, **detail: Any) -> None:
     body = {
         "schema": "aura.recurrent_grpo_behavioral_canary.status.v1",
@@ -233,6 +259,7 @@ def _sample_group(
     campaign_seed: int,
     step: int,
     model_path: str,
+    token_trace_adapter: Any,
 ) -> tuple[list[int], list[Any], list[dict[str, Any]], list[dict[str, Any]]]:
     prompt_tokens, _answer_tokens = tokenize_task(tokenizer, task.prompt, task.answer)
     sampling = free_generation_sampling_config()
@@ -260,12 +287,13 @@ def _sample_group(
         except RecurrentSamplingAdmissionError as exc:
             rejected.append(exc.sample.receipt())
             continue
-        response_text = tokenizer.decode(list(sample.tokens))
-        verdict, reward = _grade_reward(
+        observable, verdict, reward = _observable_grade_reward(
             task,
-            response_text,
+            sample,
+            token_trace_adapter,
             format_credit=0.1,
         )
+        response_text = str(observable["response_text"])
         samples.append(sample)
         rows.append(
             {
@@ -275,6 +303,7 @@ def _sample_group(
                 "response_sha256": hashlib.sha256(response_text.encode("utf-8")).hexdigest(),
                 "verdict": verdict,
                 "reward": reward,
+                "observable_completion": observable,
                 "sample_receipt": sample.receipt(),
             }
         )
@@ -349,6 +378,10 @@ def run_canary(
     ):
         _status(out_dir, "loading_model")
         model, tokenizer = load(str(model_path))
+        token_trace_adapter = build_resident_tokenizer_trace_adapter(
+            tokenizer,
+            model_path,
+        )
         attach_recurrent_policy_adapters(
             model,
             spec,
@@ -412,6 +445,7 @@ def run_canary(
                 campaign_seed=seed,
                 step=step,
                 model_path=str(model_path),
+                token_trace_adapter=token_trace_adapter,
             )
             rewards = [float(row["reward"]) for row in rows]
             advantage = group_advantages(
@@ -436,6 +470,10 @@ def run_canary(
                     rewards,
                     spec=spec,
                     config=grpo_config,
+                    optimization_token_counts=[
+                        int(row["observable_completion"]["optimization_token_count"])
+                        for row in rows
+                    ],
                 )
                 optimizer.update(model, result.gradients)
                 mx.eval(model.trainable_parameters(), optimizer.state)

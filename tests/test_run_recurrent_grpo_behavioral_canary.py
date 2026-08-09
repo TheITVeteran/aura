@@ -120,6 +120,36 @@ def test_reward_is_correctness_dominant_and_format_credit_bounded() -> None:
     assert invalid_reward == 0.0
 
 
+def test_observable_grade_ignores_tokens_after_the_authenticated_boundary(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    task = task_battery(["boolean"], [2], 1, seed=43)[0]
+    sample = type("Sample", (), {"tokens": (1, 2, 3, 4)})()
+    observable = {
+        "response_text": task.answer,
+        "optimization_token_count": 2,
+        "full_token_count": 4,
+        "termination": "contract_complete",
+    }
+    monkeypatch.setattr(
+        canary,
+        "observable_completion_from_adapter",
+        lambda _adapter, tokens: observable if tuple(tokens) == sample.tokens else None,
+    )
+
+    observed, verdict, reward = canary._observable_grade_reward(
+        task,
+        sample,
+        object(),
+        format_credit=0.1,
+    )
+
+    assert observed is observable
+    assert observed["optimization_token_count"] < observed["full_token_count"]
+    assert verdict["correct"] is True
+    assert reward == 1.0
+
+
 def _rejected_sample_receipt() -> dict[str, object]:
     return {
         "episode_id": "episode-1",

@@ -39185,3 +39185,38 @@ remains `809/920` (approximately `87.9%`). The next bounded step is a
 trace-bearing, revision-aware training/candidate-generation canary that must
 show strict free-generation improvement before resident training or another
 held-out 32B campaign is admitted.
+
+## Checkpoint 2026-08-08-050: Train Only on the Observable Answer
+
+The first on-policy recurrent-GRPO canary exposed two harness defects before
+any optimizer update occurred. Its fixed-budget causal traces continued after
+the first answer/EOS boundary, while the canary decoded and graded the entire
+trace. Model text emitted after termination could therefore turn one visible
+answer into an ambiguous multi-answer response. The same full trace would also
+have received sequence-level gradient credit if any reward variance had been
+present. All 32 sampled groups consequently received zero reward and produced
+zero optimizer updates.
+
+The canary now uses the resident tokenizer's source-bound trace adapter and the
+existing authenticated observable-completion receipt. Grading stops at the
+first verified answer-contract or EOS boundary, and the exact-adjoint objective
+receives the corresponding per-sample optimization-token count. Fixed-length
+parent/child traces remain intact for matched replay, but post-termination
+tokens can neither change the verdict nor receive policy credit.
+
+The post-training control failure was separate. The report validator required
+every arm to claim a latent incumbent and recurrent episode, so the honest
+ordinary-decode control rejected itself. Ordinary decode now carries a strict
+arm-specific receipt binding the task, depth coordinate, prompt, response,
+tokens, termination, and generation seed. It is validated as a vanilla
+incumbent without fabricating recurrence evidence; recurrent treatment arms
+retain the stronger recurrence-adapter and runtime-integrity requirements.
+
+Focused canary, checkpoint-admission, and tokenizer-trace contracts pass
+`33/33`. The broader recurrent-policy, verified-transition, and canonical
+smoke selection passes. Ruff, compilation, and diff hygiene pass. No reasoning
+gain, fusion, frontier result, activation, or `WOW Signal` is claimed, and the
+completion envelope remains `809/920` (approximately `87.9%`). The next bounded
+step is a fresh source-bound 1.5B on-policy canary. It must produce measurable
+reward variance, real optimizer updates, and strict disjoint free-generation
+improvement before any resident-32B training is admitted.
