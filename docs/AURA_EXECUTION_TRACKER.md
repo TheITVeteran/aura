@@ -40185,3 +40185,38 @@ resident-32B reasoning gain, broad or frontier performance, adapter interaction,
 fusion, activation, or `WOW Signal`. Those require the frozen pilot, powered
 held-out battery, four-arm adapter interaction, and independent replay. The
 completion envelope remains `809/920` (approximately `87.9%`).
+
+## Checkpoint 2026-08-09-081: Equal-Compute Means Measured Compute
+
+The first real-checkpoint CP080 complete-system canary finished all `21/21`
+cells against the frozen Qwen2.5 1.5B checkpoint with zero harness, manifest,
+runtime-receipt, coverage, or incumbent-floor faults. It did not produce a
+capability result: ordinary decode, the historical three-sample control, and
+the complete closed-book system each scored `0/7`, so the authoritative verdict
+is `inconclusive_battery_uninformative_ordinary_decode_scored_zero`.
+
+That clean run exposed a separate measurement defect before resident-32B time
+was spent. The complete system's median latency was `9.6s`, or `24.0x` ordinary
+decode, while the arm named `vanilla_equal_compute` cost `1.5s`, or `3.8x`.
+Its implementation is fixed best-of-three self-consistency based on an old
+wall-clock observation, not a per-cell resource match to this adaptive system.
+The arm name remains readable for existing frozen artifacts, but the verdict
+now identifies it as `preliminary_only`, records that resource matching is
+false, and makes `beats_equal_compute_control` impossible without a real
+comparison certificate. A higher score may be reported only as
+`outscored_preliminary_best_of_3`.
+
+Claim-grade comparison remains owned by the existing model-bound
+`ResourceLedger`: operation-level neural FLOPs, non-neural work, verifier and
+tool calls, information sources, and policy commitments must be digest-bound
+for treatment and control before the powered campaign can award equal-compute
+credit. The pilot handoff likewise stopped labeling a preliminary pilot result
+as an equal-compute win. Focused reconciliation and handoff contracts pass
+`56/56`; compact evidence is
+`artifacts/closeout/latent_cortex/cp081_resource_control_truth.json`.
+
+This checkpoint proves measurement honesty, not reasoning gain, resident-32B
+gain, frontier performance, fusion, activation, or `WOW Signal`. The next gate
+is a targeted 1.5B resource/acquisition canary, followed by an informative
+resident-32B calibration and complete-system pilot. The completion envelope
+remains `809/920` (approximately `87.9%`).

@@ -1,0 +1,62 @@
+{
+  "schema": "aura.closeout.latent_cortex.cp081.v1",
+  "checkpoint": "2026-08-09-081",
+  "title": "Reconciliation control cannot impersonate equal compute",
+  "source_parent_commit": "ca06db3876dec8af0f5f5fc59ecca92c929b2ea8",
+  "cp080_canary": {
+    "source_commit": "22f900e57ea1ef656a9bccdb9b76855ca3c1a255",
+    "model": "Qwen2.5-1.5B-Instruct-4bit",
+    "campaign_seed": 20260961,
+    "tasks": 7,
+    "committed_cells": 21,
+    "harness_faults": 0,
+    "scores": {
+      "vanilla": "0/7",
+      "preliminary_best_of_3": "0/7",
+      "complete_system_closed_book": "0/7"
+    },
+    "decision": "inconclusive_battery_uninformative_ordinary_decode_scored_zero",
+    "latency_median_seconds": {
+      "vanilla": 0.4,
+      "preliminary_best_of_3": 1.5,
+      "complete_system_closed_book": 9.6
+    },
+    "latency_ratio_vs_vanilla": {
+      "preliminary_best_of_3": 3.8,
+      "complete_system_closed_book": 24.0
+    },
+    "mechanism_observations": {
+      "complete_system_receipts_valid": 7,
+      "amplifier_candidates_per_task": 3,
+      "amplifier_verifier_calls_per_task": 4,
+      "rlc_rounds_per_task": 1,
+      "acquisition_status": "not_requested_on_all_tasks",
+      "fast_weights": "admission_recorded_but_not_applied",
+      "latent_optimization": "attempted_but_no_step_admitted"
+    },
+    "artifact_sha256": {
+      "verdict.json": "b392ab8b1877a77cd4aaebe713b7434dd92cf05788b15d0f6e29dbc1efd1f0bf",
+      "decode_fingerprint.json": "ad8292ce3bf6bb3be6a85844a22049871dedeb425473bfe4e905d96f051e2169",
+      "task_commitment.json": "5d1692e9cc1fe1a734d6c2e6379ef6082a80f4dac46bc4251ad2b70ac0bd958a",
+      "journal.jsonl": "01c8006413ea06ae93696be8767a77a9bd6c2955e3502c72b79bf9d10cbadac3",
+      "status.json": "2197b7de8d2ae0476090e260db5238e034cc7a17efe951975f1e3d86e0a350ce"
+    }
+  },
+  "correction": {
+    "artifact_compatible_arm_name": "vanilla_equal_compute",
+    "actual_control": "best_of_3_self_consistency",
+    "resource_matched": false,
+    "claim_authority": "preliminary_only",
+    "beats_equal_compute_control_forced_false_without_certificate": true,
+    "required_claim_successor": "digest_bound_paired_resource_certificate"
+  },
+  "validation": {
+    "focused_tests": "56 passed",
+    "claims": {
+      "reasoning_gain_proven": false,
+      "frontier_level_proven": false,
+      "fusion_authorized": false,
+      "wow_signal": false
+    }
+  }
+}

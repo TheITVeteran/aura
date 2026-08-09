@@ -9,7 +9,7 @@ latent optimization, temporary fast weights, verifier-guided local repair,
 adaptive compute, and evidence-bound answer promotion.
 
 This sweep measures that complete engine against two retained controls:
-ordinary greedy decode and an equal-compute textual self-consistency control.
+ordinary greedy decode and a preliminary best-of-three textual control.
 Ordinary decode remains the per-task incumbent, so an unpromoted full-stack
 answer must be byte-identical to it. Diagnostic ablations can explain a result
 but can never win the experiment. The sweep performs no optimizer update and
@@ -87,8 +87,10 @@ class Arm:
 
 ARMS: tuple[Arm, ...] = (
     Arm("vanilla", None, "applied", None, "ordinary"),
-    # Compute-matched control: the full stack measured 164s against vanilla's
-    # 63s on the 32B, so three independent samples sit at the same price.
+    # Historical preliminary control. Three independent textual samples are a
+    # useful stronger-than-greedy baseline, but they are not resource matched
+    # to the adaptive complete system. Claim-grade parity is established only
+    # by the digest-bound operation ledger in the paired campaign.
     Arm("vanilla_equal_compute", None, "applied", None, "ordinary_best_of_3"),
     Arm(
         "complete_system_closed_book",
@@ -561,14 +563,12 @@ def _run_vanilla_best_of(
     campaign_seed: int,
     task_id: str,
 ) -> str:
-    """Equal-compute control: N independent samples, self-consistency vote.
+    """Preliminary N-sample textual control with a self-consistency vote.
 
-    Anima Rationis sets this as the bar the latent system has to clear --
-    "compare eight latent branches against eight ordinary textual samples
-    under equal FLOPs ... otherwise it is just expensive self-consistency."
-    A unified stack that beats a single greedy decode while costing 2.6x has
-    not shown an architectural gain; it has shown that spending more compute
-    helps, which was never in doubt.
+    This historical arm predates operation-level accounting. It must not be
+    called equal-compute merely because an older wall-clock observation made
+    three samples look similar in price. A unified stack that beats this arm
+    has earned a pilot signal, not a compute-matched architectural-gain claim.
 
     Selection is a majority vote over the extracted FINAL_ANSWER payload, not
     a verifier score. Giving this arm the verifier would make it a different
@@ -1888,8 +1888,17 @@ def grade(out_dir: Path, tasks) -> dict[str, Any]:
     reaches_parity = bool(
         complete and informative and measured_recurrence and floor_holds and best_rlc >= vanilla
     )
-    beats_equal_compute = bool(
+    # ``vanilla_equal_compute`` is retained as an artifact-compatible arm name,
+    # but its implementation is fixed best-of-three. The CP080 real-checkpoint
+    # canary measured a 24x complete-system/vanilla latency ratio while this arm
+    # cost only 3.8x. Without per-cell ResourceLedger comparison certificates it
+    # has no equal-compute claim authority, regardless of observed accuracy.
+    resource_matched_control_proven = False
+    outscored_preliminary_best_of_three = bool(
         reaches_parity and equal_compute is not None and best_rlc > int(equal_compute)
+    )
+    beats_equal_compute = bool(
+        resource_matched_control_proven and outscored_preliminary_best_of_three
     )
     contract_neutral_reaches_parity = bool(
         complete
@@ -1898,10 +1907,13 @@ def grade(out_dir: Path, tasks) -> dict[str, Any]:
         and floor_holds
         and best_rlc_contract_neutral >= vanilla_contract_neutral
     )
-    contract_neutral_beats_equal_compute = bool(
+    contract_neutral_outscored_best_of_three = bool(
         contract_neutral_reaches_parity
         and equal_compute_contract_neutral is not None
         and best_rlc_contract_neutral > int(equal_compute_contract_neutral)
+    )
+    contract_neutral_beats_equal_compute = bool(
+        resource_matched_control_proven and contract_neutral_outscored_best_of_three
     )
     if not complete:
         if manifest_issues:
@@ -1928,6 +1940,15 @@ def grade(out_dir: Path, tasks) -> dict[str, Any]:
         "arms": arms,
         "vanilla_correct": vanilla,
         "vanilla_equal_compute_correct": equal_compute,
+        "control_contracts": {
+            "vanilla_equal_compute": {
+                "artifact_compatible_name": True,
+                "selection": "best_of_3_self_consistency",
+                "resource_matched": resource_matched_control_proven,
+                "claim_authority": "preliminary_only",
+                "required_claim_successor": "digest_bound_paired_resource_certificate",
+            }
+        },
         "contract_neutral_diagnostic": {
             "authority": "diagnostic_only_no_serving_fusion_or_claim_authority",
             "vanilla_correct": vanilla_contract_neutral,
@@ -1936,6 +1957,7 @@ def grade(out_dir: Path, tasks) -> dict[str, Any]:
             "battery_informative": contract_neutral_informative,
             "reaches_parity_with_ordinary_decode": (contract_neutral_reaches_parity),
             "beats_equal_compute_control": contract_neutral_beats_equal_compute,
+            "outscored_preliminary_best_of_3": (contract_neutral_outscored_best_of_three),
         },
         "best_recurrent_arm": best_rlc_name,
         "best_recurrent_correct": best_rlc,
@@ -1960,6 +1982,8 @@ def grade(out_dir: Path, tasks) -> dict[str, Any]:
         },
         "reaches_parity_with_ordinary_decode": reaches_parity,
         "beats_equal_compute_control": beats_equal_compute,
+        "outscored_preliminary_best_of_3": outscored_preliminary_best_of_three,
+        "resource_matched_control_proven": resource_matched_control_proven,
         "paired_vanilla_floor": {
             "holds": floor_holds,
             "right_to_wrong_regressions": sorted(floor_violations),

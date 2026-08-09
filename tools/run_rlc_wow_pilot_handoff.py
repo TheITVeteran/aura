@@ -576,7 +576,12 @@ def run(config_path: Path, *, launchd_supervised: bool = False) -> int:
             calibration_decision=calibration_verdict.get("decision"),
             pilot_decision=pilot_verdict.get("decision"),
             pilot_reaches_parity=pilot_verdict.get("reaches_parity_with_ordinary_decode"),
-            pilot_beats_equal_compute=pilot_verdict.get("beats_equal_compute_control"),
+            pilot_outscored_preliminary_best_of_3=pilot_verdict.get(
+                "outscored_preliminary_best_of_3"
+            ),
+            pilot_resource_matched_control_proven=pilot_verdict.get(
+                "resource_matched_control_proven"
+            ),
         )
         return 0
     except Exception as exc:  # noqa: BLE001 - fail-closed unattended boundary

@@ -100,9 +100,10 @@ def test_frontier_verifiers_enforce_each_tasks_public_response_shape():
 
     assert verifier.response_contract == task.public.response_contract
     assert oracle.response_contract == task.public.response_contract
-    assert verifier.evaluate('FINAL_ANSWER: {"wrong_key": 1}')["checks"][
-        "response_contract"
-    ]["valid"] is False
+    assert (
+        verifier.evaluate('FINAL_ANSWER: {"wrong_key": 1}')["checks"]["response_contract"]["valid"]
+        is False
+    )
 
 
 def test_the_battery_leads_with_the_unified_system_not_the_ablation():
@@ -401,12 +402,8 @@ def test_disposition_injection_is_real_when_applied_and_absent_when_suppressed()
     applied_config = sweep._build_config(2, 4, "applied", 8, decode_contract="none")
     _, applied = sweep._run_rlc(model, applied_config, [1, 2, 3, 4, 5], _StubTokenizer())
 
-    suppressed_config = sweep._build_config(
-        2, 4, "suppressed", 8, decode_contract="none"
-    )
-    _, suppressed = sweep._run_rlc(
-        model, suppressed_config, [1, 2, 3, 4, 5], _StubTokenizer()
-    )
+    suppressed_config = sweep._build_config(2, 4, "suppressed", 8, decode_contract="none")
+    _, suppressed = sweep._run_rlc(model, suppressed_config, [1, 2, 3, 4, 5], _StubTokenizer())
 
     applied_prefix = applied["decode_prefix_composition"]
     suppressed_prefix = suppressed["decode_prefix_composition"]
@@ -539,9 +536,7 @@ def test_infrastructure_failure_raises_instead_of_scoring_zero():
     config = sweep._build_config(2, 4, "applied", 8, decode_contract="none")
 
     with pytest.raises(sweep.EpisodeFault) as excinfo:
-        _run_with_dead_engine(
-            model, config, "latent_phase_failed:ValueError:boom", "not_reached"
-        )
+        _run_with_dead_engine(model, config, "latent_phase_failed:ValueError:boom", "not_reached")
     assert "latent_phase_failed" in str(excinfo.value)
 
 
@@ -640,10 +635,7 @@ def test_mutual_failure_is_not_parity(tmp_path: Path):
     assert verdict["best_recurrent_correct"] == 0
     assert verdict["battery_informative"] is False
     assert verdict["reaches_parity_with_ordinary_decode"] is False
-    assert (
-        verdict["decision"]
-        == "inconclusive_battery_uninformative_ordinary_decode_scored_zero"
-    )
+    assert verdict["decision"] == "inconclusive_battery_uninformative_ordinary_decode_scored_zero"
     assert verdict["claims"]["fusion_authorized"] is False
 
 
@@ -865,9 +857,7 @@ def test_per_arm_fingerprints_retire_only_the_arm_that_changed(tmp_path: Path):
             }
         )
 
-    resumed = sweep.Journal(
-        path, {"vanilla": vanilla_fp, "vanilla_long": long_1024}
-    )
+    resumed = sweep.Journal(path, {"vanilla": vanilla_fp, "vanilla_long": long_1024})
     assert resumed.done == {("vanilla", "task-a")}
     assert resumed.superseded == 1
 
@@ -890,16 +880,26 @@ def test_latency_is_reported_beside_accuracy(tmp_path: Path):
         correct = "FINAL_ANSWER: " + json.dumps(reveal["expected"])
         journal.append(
             {
-                "event": "CELL", "arm": "vanilla", "task_id": task.task_id,
-                "domain": task.domain, "text": correct, "error": "",
+                "event": "CELL",
+                "arm": "vanilla",
+                "task_id": task.task_id,
+                "domain": task.domain,
+                "text": correct,
+                "error": "",
                 "latency_s": 40.0,
             }
         )
         journal.append(
             {
-                "event": "CELL", "arm": "full_stack", "task_id": task.task_id,
-                "domain": task.domain, "text": correct, "error": "",
-                "latency_s": 400.0, "steps_taken": 3, "halted_early": True,
+                "event": "CELL",
+                "arm": "full_stack",
+                "task_id": task.task_id,
+                "domain": task.domain,
+                "text": correct,
+                "error": "",
+                "latency_s": 400.0,
+                "steps_taken": 3,
+                "halted_early": True,
             }
         )
 
@@ -944,6 +944,45 @@ def test_equal_compute_control_can_never_be_named_the_recurrent_winner(tmp_path:
     assert verdict["best_recurrent_correct"] == 1
     assert verdict["vanilla_equal_compute_correct"] == len(tasks)
     assert verdict["beats_equal_compute_control"] is False
+    assert verdict["resource_matched_control_proven"] is False
+    assert verdict["control_contracts"]["vanilla_equal_compute"] == {
+        "artifact_compatible_name": True,
+        "selection": "best_of_3_self_consistency",
+        "resource_matched": False,
+        "claim_authority": "preliminary_only",
+        "required_claim_successor": "digest_bound_paired_resource_certificate",
+    }
+
+
+def test_best_of_three_win_is_not_misreported_as_equal_compute(tmp_path: Path):
+    from core.brain.llm.latent_cortex import frontier_tasks as ft
+
+    tasks = ft.generate_task_battery([20260807], difficulty=2)
+    journal = sweep.Journal(tmp_path / "journal.jsonl")
+    for index, task in enumerate(tasks):
+        correct = "FINAL_ANSWER: " + json.dumps(task.reveal_for_verifier()["expected"])
+        wrong = 'FINAL_ANSWER: {"wrong": 1}'
+        for arm, text in (
+            ("vanilla", correct if index == 0 else wrong),
+            ("vanilla_equal_compute", correct if index == 0 else wrong),
+            ("full_stack", correct),
+        ):
+            journal.append(
+                {
+                    "event": "CELL",
+                    "arm": arm,
+                    "task_id": task.task_id,
+                    "domain": task.domain,
+                    "text": text,
+                    "error": "",
+                    "answer_replacement_decision": "replace" if arm == "full_stack" else "",
+                }
+            )
+
+    verdict = sweep.grade(tmp_path, tasks)
+    assert verdict["outscored_preliminary_best_of_3"] is True
+    assert verdict["beats_equal_compute_control"] is False
+    assert verdict["resource_matched_control_proven"] is False
 
 
 def test_manifest_requires_every_control_and_treatment_cell(tmp_path: Path):
@@ -1100,9 +1139,7 @@ def test_full_stack_receipt_must_measure_every_claimed_mechanism(tmp_path: Path)
         "latent_opt_applied": True,
         "latent_opt_attempts": 4,
         "latent_opt_steps": 1,
-        "fast_weight_learning": {
-            "disposition": "not_admitted_high_confidence_evidence_absent"
-        },
+        "fast_weight_learning": {"disposition": "not_admitted_high_confidence_evidence_absent"},
         "value_of_computation": {"continue": False},
         "cognitive_action_trace": [{"action": "halt"}],
         "diagnostic_action_selection": {"selected": "verify"},
@@ -1157,9 +1194,7 @@ def test_full_stack_receipt_must_measure_every_claimed_mechanism(tmp_path: Path)
 
     invalid = dict(valid_receipt)
     invalid.pop("local_repair")
-    invalid["fast_weight_learning"] = {
-        "disposition": "rejected_verifier_unavailable"
-    }
+    invalid["fast_weight_learning"] = {"disposition": "rejected_verifier_unavailable"}
     invalid["causal_receipt"] = build_causal_receipt(invalid)
     evidence = sweep._full_stack_evidence(invalid)
     assert evidence["valid"] is False
@@ -1256,9 +1291,7 @@ def test_complete_system_receipt_requires_acquisition_amplifier_and_promotion(
     }
     assert sweep._runtime_receipt_issues(tmp_path, cell) == []
     cell["text"] = 'FINAL_ANSWER: {"value":2}'
-    assert sweep._runtime_receipt_issues(tmp_path, cell) == [
-        "complete_system_final_text_mismatch"
-    ]
+    assert sweep._runtime_receipt_issues(tmp_path, cell) == ["complete_system_final_text_mismatch"]
 
     del receipt["complete_system_closed_book"]["reasoning_amplifier"]
     invalid = sweep._complete_system_evidence(receipt)
@@ -1281,8 +1314,7 @@ def test_candidate_quality_separates_proxy_admission_from_exact_public_proof():
     assert proxy_assessment["ground_truth_verified"] is False
 
     exact_objective = (
-        "Start at the given value and apply each operation modulo 19: "
-        "start=5. Operations: +3, *2."
+        "Start at the given value and apply each operation modulo 19: start=5. Operations: +3, *2."
     )
     exact = EpisodeTaskVerifier(
         exact_objective,
@@ -1291,6 +1323,7 @@ def test_candidate_quality_separates_proxy_admission_from_exact_public_proof():
     exact_assessment = _candidate_quality_assessment(exact)
     assert exact_assessment["proxy_admitted"] is True
     assert exact_assessment["ground_truth_verified"] is True
+
 
 def test_oracle_diagnostic_is_admitted_but_only_answer_keys_task_outputs():
     from core.brain.llm.latent_cortex import frontier_tasks as ft
@@ -1318,15 +1351,23 @@ def test_unpromoted_full_stack_output_must_be_byte_identical_to_incumbent(tmp_pa
     journal = sweep.Journal(tmp_path / "journal.jsonl")
     journal.append(
         {
-            "event": "CELL", "arm": "vanilla", "task_id": task.task_id,
-            "domain": task.domain, "text": "FINAL_ANSWER: " + expected, "error": "",
+            "event": "CELL",
+            "arm": "vanilla",
+            "task_id": task.task_id,
+            "domain": task.domain,
+            "text": "FINAL_ANSWER: " + expected,
+            "error": "",
         }
     )
     journal.append(
         {
-            "event": "CELL", "arm": "full_stack", "task_id": task.task_id,
-            "domain": task.domain, "text": "Reasoning complete.\nFINAL_ANSWER: " + expected,
-            "error": "", "answer_replacement_decision": "retain",
+            "event": "CELL",
+            "arm": "full_stack",
+            "task_id": task.task_id,
+            "domain": task.domain,
+            "text": "Reasoning complete.\nFINAL_ANSWER: " + expected,
+            "error": "",
+            "answer_replacement_decision": "retain",
         }
     )
 
