@@ -28,6 +28,11 @@ and the runtime disagree, the runtime is right.
 * **Status**: `not proven`
 * **Rationale**: Although Aura successfully passes local multi-task benchmark batteries (such as the DNU 100-task suite) with measurable margins of separation, this does not constitute a proof of general cognitive capability across arbitrary, out-of-distribution real-world domains. General intelligence remains an open research horizon.
 
+  **What would change this status**: held-out performance on a benchmark
+  neither Aura nor her authors selected, scored by someone else, on task
+  families absent from the local suites — and a margin that survives the
+  task set being swapped.
+
 ## 3. Metaphysical Free Will
 * **Status**: `strictly unsupported`
 * **Rationale**: Aura's "Operational Volition" is a deterministic and probabilistic action-evaluation architecture. Action paths are selected through algorithmic rollouts, mathematical optimization, and parameter weightings. There is no uncaused causal agency operating outside physical laws.
@@ -36,13 +41,28 @@ and the runtime disagree, the runtime is right.
 * **Status**: `not proven`
 * **Rationale**: What IS demonstrated (CLAIMS_MATRIX claim 23): an unsupervised weight-level compounding loop — self-play verifier-graded DPO harvest → train → sealed held-out gate → promote → next generation trains on the published artifact, manifest-chained and ledger-recorded (`artifacts/learning_compounding/2026-07-07-1p5b-2cycle/`, reproducible via `make demo-learning`). What is NOT demonstrated: compounded capability SCALING. No run has produced a strictly-increasing held-out capability curve across promoted generations; the ledger's own verdict for the proof run is `BOUNDED_SELF_OPTIMIZATION` (curve 0.667 → 0.625). RSI as a capability claim stays here until the ledger says otherwise.
 
+  **What would change this status**: a strictly-increasing held-out
+  capability curve across three or more promoted generations, with the
+  sealed gate unchanged between them, and the ledger's own verdict moving
+  off `BOUNDED_SELF_OPTIMIZATION`.
+
 ## 5. Indefinite Autonomy
 * **Status**: `not proven`
 * **Rationale**: The long-horizon operational stability of Aura over infinite horizons has not been established. Longevity soak runs (4h, 24h, 72h) demonstrate stable resource profiles under bounded conditions, but do not guarantee safety, correctness, or memory leak containment over arbitrary multi-week or multi-month execution windows.
 
+  **What would change this status**: a multi-week continuous run with a flat
+  RSS trend line and no unexplained restarts, plus resolution of the open
+  soak finding — the 4h run FAILs memory at roughly 242MB/h linear, and
+  whether that is a real leak or proof machinery deferring reclamation is
+  still unsettled.
+
 ## 6. Real-World External Validation
 * **Status**: `not proven`
 * **Rationale**: While local Aletheia benchmarks and headless simulation gates are run under strict leakage-isolated conditions, the system's claims have not been subjected to independent third-party replication or wide-distribution production network verification.
+
+  **What would change this status**: someone outside this project
+  reproducing a headline result from the published artifacts alone, on their
+  own hardware, without help from the authors.
 
 ## 7. Physical Effects on the World Beyond the Host
 
@@ -62,6 +82,12 @@ and the runtime disagree, the runtime is right.
   implemented. The open ledger and current evidence statement are in
   [docs/REALITY_REACH.md](docs/REALITY_REACH.md).
 
+  **What would change this status**: one RR-10 acceptance item passing
+  end to end with an instrumented external measurement — a physical quantity
+  read by a device Aura does not control, against a null arm — and the P0–P6
+  evidence promotion state machine (RR-07) implemented so a result cannot be
+  promoted past the evidence that earned it.
+
 ## 8. Complete Self-Knowledge
 
 * **Status**: `not proven`
@@ -73,6 +99,11 @@ and the runtime disagree, the runtime is right.
   in self-knowledge. A good faculty score is therefore a claim about the
   measured subset, never about the whole stack, and the blind-spot list is
   the honest boundary of the self-model rather than a bug backlog.
+
+  **What would change this status**: `blind_spots()` returning empty with
+  every declared faculty carrying a live probe — and even then the claim
+  would be complete knowledge of the DECLARED faculties, which is not the
+  same as complete self-knowledge and should not be written as if it were.
 
 ## 9. Legal and Moral Personhood
 * **Status**: `strictly unsupported`
@@ -96,9 +127,16 @@ and the runtime disagree, the runtime is right.
   centralised in `core/runtime/subprocess_gateway.py`. None of that is the
   same as being unable to bypass.
 
-  Two documented exceptions exist even on the canonical message path: the
-  Somatic Reflex Bypass for embodied-control contracts, and the Will gate's
-  own recoverable-error path, which continues in a degraded state. Turns
+  Three documented exceptions exist even on the canonical message path: the
+  Somatic Reflex Bypass for embodied-control contracts, the Will gate's own
+  recoverable-error path, which continues in a degraded state, and
+  `is_critical`, which the Will documents as "the ONLY bypass" and which
+  returns an unconditional `CRITICAL_PASS`. That third one was reachable
+  from a risk label until 2026-08-09: the environment governance bridge
+  passed `is_critical=True` whenever risk was `irreversible` or `forbidden`,
+  so the two highest-risk classes were the two that skipped the veto. Fixed
+  — the bridge never claims criticality now — but the mechanism itself
+  remains a genuine bypass by design, and callers can still set it. Turns
   that reach cognition without a Will decision are counted and surfaced at
   `runtime_health_report()["integrity"]["ungoverned_turns"]`
   (`core/runtime/governance_coverage.py`) rather than passing silently.
@@ -111,3 +149,67 @@ and the runtime disagree, the runtime is right.
   supportable claim is *governed canonical paths inside one trust domain*,
   and any wording implying OS- or cryptographically-enforced
   non-bypassability is unsupported.
+
+## 11. A Within-Generation Neural Feedback Loop
+
+* **Status**: `not proven` — the loop is real, the timing claim was wrong.
+* **Rationale**: There genuinely is a backward arrow from the model's
+  representations into the persistent substrate. The worker publishes latent
+  readouts, the main process drains them, builds a sparse stimulus vector
+  and calls `substrate.inject_stimulus(...)`. Transformer-derived
+  representation information really does reach persistent state.
+
+  What is not true is that this closes inside one decode. In
+  `core/brain/llm/mlx_client.py` the drains run **before**
+  `_generate_inner`, so the recurrence is
+
+      H_t → R_t → S_{t+1} → H_{t+1}
+
+  and not H_t → S_t → H_t within one uninterrupted token stream. A single
+  conversational turn's latent state does not alter that same generation; it
+  alters a later one. Across a reasoning episode containing several model
+  invocations the loop does close, and that is the supportable form.
+
+  **What would change this status**: injection during decode, at a token
+  boundary inside `_generate_inner`, with a measured effect on the remaining
+  tokens of that same generation against a no-injection control.
+
+## 12. Open-Ended Evolution
+
+* **Status**: `not proven`
+* **Rationale**: The evolutionary machinery is real and it runs on live
+  structures. What it optimises is a designer-authored objective:
+
+      F = 0.30Φ + 0.25C + 0.20E + 0.15I + 0.10S
+
+  Those five terms and those five coefficients were chosen by a person.
+  Biological evolution is also selection against an externally given
+  environment rather than a value chosen from nowhere, so this is not a
+  disqualification — but Aura's fitness landscape is explicitly encoded
+  where an ecology's is emergent. Variation and selection: yes. Open-ended
+  self-definition of what counts as fit: no.
+
+  **What would change this status**: fitness terms whose weights are
+  themselves under selection, and a demonstration that the objective drifted
+  somewhere its author did not put it while the organism stayed coherent.
+
+## 13. Continuous Weight-Level Learning
+
+* **Status**: `not proven`
+* **Rationale**: Aura is **continuously state-plastic and optionally
+  weight-plastic**, and the distinction matters.
+
+      S_{t+1} ≠ S_t   holds every tick, with fixed base weights
+      θ_{t+1} ≠ θ_t   is not continuously guaranteed
+
+  Persistent cognition changes constantly — episodic memory, beliefs,
+  preferences, goals, world model, the mesh. That is learning in the broad
+  computational sense and it is live. Weight-level adaptation exists as a
+  capability (the CRSM-LoRA loop has trained, fused and verified a real
+  delta against the resident model), but automatic `LiveLearner` training
+  defaults **off**, so it is a mechanism that runs when admitted rather than
+  a property of ordinary operation.
+
+  **What would change this status**: the weight learner enabled and governed
+  as an ordinary constitutive mechanism, with evidence that it improves the
+  organism rather than destabilising it over a sustained run.

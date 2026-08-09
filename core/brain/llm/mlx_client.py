@@ -11881,10 +11881,26 @@ class MLXLocalClient:
             # only thing standing between the encoder and a live Φ.
             self._drain_phi_residual_ring()
 
-            # Close the latent loop: the model's own representations, read in
-            # the worker, injected into the substrate here. Awaited rather
-            # than fired off, so an injection cannot outlive the turn that
-            # produced it and land in the middle of the next one.
+            # Close the latent loop ACROSS invocations, not within one.
+            #
+            # The model's representations are read in the worker and injected
+            # into the substrate here, and that backward arrow is real. But
+            # this drain runs BEFORE _generate_inner below, so the recurrence
+            # is
+            #
+            #     H_t -> R_t -> S_{t+1} -> H_{t+1}
+            #
+            # and NOT H_t -> S_t -> H_t inside one uninterrupted decode. A
+            # single conversational turn's latent state does not alter that
+            # same generation; it alters a later one. Within a reasoning
+            # episode containing several model invocations the loop does
+            # close, which is the honest form of the claim.
+            #
+            # Written here because this is the ordering that decides it, and
+            # a reader of the receipt cannot see it from the outside.
+            #
+            # Awaited rather than fired off, so an injection cannot outlive
+            # the turn that produced it and land in the middle of the next.
             await self._drain_latent_readouts()
 
             # Reliability tracing: inference nests under the HTTP root span
