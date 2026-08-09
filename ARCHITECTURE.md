@@ -457,21 +457,59 @@ Key implementation details:
 
 ## 2. The tick
 
-### Phase pipeline
+### Phase pipeline — one blueprint, two rates
 
-Each tick runs these phases in strict order:
+There is **one** ordered blueprint of 29 phases
+(`core/runtime/pipeline_blueprint.py`). A user turn does not run all of
+them, and describing it as though it does is the single most common way
+this architecture gets misread.
 
-| Phase | Purpose | Timeout |
-|-------|---------|---------|
-| PhiConsciousness | Compute integrated information (φ) | 10s |
-| AffectUpdate | Update valence, arousal, somatic markers | 5s |
-| MotivationUpdate | Compute drive pressures (curiosity, social, energy) | 5s |
-| CognitiveRouting | Classify intent (CHAT / SKILL / SYSTEM) | 10s |
-| ConversationalDynamics | Track discourse state, topic shifts | 5s |
-| UnitaryResponse | Generate LLM response with full cognitive context | 85s |
+`AuraKernel.tick(priority=True)` serves the person at the keyboard and
+suppresses the expensive phases outright. A healthy foreground turn is
+**eleven phases plus conditional tool execution**:
 
-Background-only phases (skipped during user-facing ticks):
-- LearningPhase, RepairPhase, BondingPhase, SelfReviewPhase
+| # | Phase | Purpose |
+|---|-------|---------|
+| 1 | ProprioceptiveLoop | Read Aura's own body: resources, source drift, health |
+| 2 | SocialContextPhase | Who is speaking, and the standing relationship |
+| 3 | SensoryIngestion | Fold in screen, audio, and device observations |
+| 4 | MemoryRetrieval | Dual-memory, episodic and entity-aware recall into `state.cognition.long_term_memory` |
+| 5 | AffectUpdate | Valence, arousal, somatic markers |
+| 6 | MotivationPhase | Drive pressures (curiosity, social, energy) |
+| 7 | ExecutiveClosure | Predictive self-model: predict, observe, compute error, select objective |
+| 8 | ConversationalDynamics | Discourse state, topic shifts, higher-order representation |
+| 9 | CognitiveRouting | Classify the speech act (CHAT / SKILL / SYSTEM) |
+| 10 | UnityBinding | Bind the turn into one coherent state |
+| 11 | ResponseGeneration | Compose the reply with full cognitive context |
+
+`GodModeToolPhase` runs on a priority tick **only** when the routed intent
+is SKILL or TASK — conditional, not part of the always-on set.
+
+Suppressed on a user-facing tick (18 phases): EternalMemory,
+EternalGrowthEngine, TrueEvolution, NativeMultimodalBridge,
+ShadowExecution, PerfectEmotion, **PhiConsciousness**,
+CognitiveIntegration, Inference, Bonding, Repair, MemoryConsolidation,
+IdentityReflection, InitiativeGeneration, Consciousness, SelfReview,
+Learning, Legacy.
+
+**Suppressed is not dormant.** `MindTick` obtains the live kernel and calls
+`kernel.tick(objective, priority=False)`. That background tick traverses
+the complete pipeline and commits the resulting shared state back to the
+state repository. So the accurate mental model is not "every thought passes
+through 29 cognitive organs in sequence" — it is *one persistent cognitive
+runtime whose slower organs update shared state in the background, while
+the foreground reads and updates a latency-bounded subset of that same
+state*. That is a better architecture than the sequential reading; it is
+also a different one.
+
+Foreground persistence does not depend on the suppressed
+MemoryConsolidationPhase: conversation-support paths persist the
+user→assistant experience separately, and the background kernel
+consolidates as well.
+
+This table is generated from the same data the kernel enforces —
+`pipeline_rate_report()` in `core/runtime/pipeline_blueprint.py` — and
+`tests/test_pipeline_two_rates.py` fails if the split drifts from it.
 
 ### Priority preemption
 

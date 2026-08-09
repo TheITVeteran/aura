@@ -375,32 +375,22 @@ class AuraKernel:
         return 8.0
 
     def _should_skip_priority_phase(self, phase_name: str, *, priority: bool) -> bool:
-        """Keep user-facing ticks lean without suppressing explicit tool/task execution."""
+        """Keep user-facing ticks lean without suppressing explicit tool/task execution.
+
+        This is the mechanism behind Aura's two rates, and the set it consults
+        lives in core/runtime/pipeline_blueprint.py rather than inline here.
+        Kept inline, nothing outside the kernel could read which phases a user
+        turn actually runs — so every description of the pipeline was written
+        from the blueprint's length, and "29 phases per turn" is what that
+        produced. It is closer to eleven, and the rest run on MindTick's
+        background pass over the same kernel.
+        """
         if not priority:
             return False
 
-        background_only = {
-            "EternalMemoryPhase",
-            "EternalGrowthEngine",
-            "TrueEvolutionPhase",
-            "NativeMultimodalBridge",
-            "ShadowExecutionPhase",
-            "PerfectEmotionPhase",
-            "PhiConsciousnessPhase",
-            "CognitiveIntegrationPhase",
-            "InferencePhase",
-            "BondingPhase",
-            "RepairPhase",
-            "MemoryConsolidationPhase",
-            "IdentityReflectionPhase",
-            "InitiativeGenerationPhase",
-            "ConsciousnessPhase",
-            "SelfReviewPhase",
-            "LearningPhase",
-            "LegacyPhase",
-            "GodModeToolPhase",
-        }
-        if phase_name not in background_only:
+        from core.runtime.pipeline_blueprint import BACKGROUND_ONLY_PHASES
+
+        if phase_name not in BACKGROUND_ONLY_PHASES:
             return False
 
         if phase_name == "GodModeToolPhase":
