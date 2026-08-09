@@ -16,6 +16,30 @@ core/ or interface/; live cloud fallback goes through
 handles API keys and spend, and an unwired module that looks live is how
 one gets adopted without the review it needs.
 
+KEPT, NOT DELETED, AND NOT WIRED — the reasoning, so nobody has to rederive
+it. This module models a cloud-offload architecture Aura does not use, and
+its twelve contract tests protect properties of THAT architecture: per-task
+authorisation, an unlisted provider never receiving the key, a provider
+unable to declare its own success, a spend cap that concurrent routes cannot
+all claim. Good properties, for a design that is not the live one.
+
+The live path already answers the same questions differently and does it on
+the path that serves:
+
+* Cloud is per-request opt-in. ``allow_cloud_fallback`` defaults to False in
+  ``llm_health_router``; there is no global switch that turns it on.
+* Content is read before it leaves, at both doors —
+  ``network_gateway.request`` (source ``llm_provider:health_router:*``) and
+  ``api_adapter``'s Gemini SDK call, which cannot pass through the gateway.
+  Both land in ``core/security/egress_privacy.py``.
+
+So wiring this in would add a second cloud path and a second key-holder to a
+system that already has a governed one — more surface, not less. Deleting it
+would throw away a worked design and its tests for no gain. It stays here,
+uninvoked, declared, and checked by
+``tests/test_capability_claims_have_call_sites.py``, which fails if that
+stops being true in either direction.
+
 Two claims corrected (CP126). "Graceful fallback: if cloud fails, queue
 for local" described a queue that does not exist — ``_local_queue_depth``
 was initialised and never read or written, and an exhausted backend
