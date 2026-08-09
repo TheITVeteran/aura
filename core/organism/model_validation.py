@@ -1279,6 +1279,14 @@ def _egress_privacy_contract_holds() -> bool:
         body=f'{{"contents":"key {secret}"}}'.encode(),
         source="llm_provider:gemini:probe",
     )
+    # The same secret one character to the left of the colon. The walk used to
+    # read values only, so this exact body left the machine intact while the
+    # one above was caught — and the claim said "never" for both.
+    keyed = filter_outbound_body(
+        url="https://generativelanguage.googleapis.com/v1beta/models/x:generateContent",
+        body=f'{{"{secret}":"quota"}}'.encode(),
+        source="llm_provider:gemini:probe",
+    )
     unreadable = filter_outbound_body(
         url="https://generativelanguage.googleapis.com/v1beta/models/x:generateContent",
         body=b"\xff\xfe\x00binary",
@@ -1293,6 +1301,9 @@ def _egress_privacy_contract_holds() -> bool:
         stripped.allowed
         and stripped.inspected
         and secret not in (stripped.body or b"").decode("utf-8", errors="replace")
+        and keyed.allowed
+        and keyed.inspected
+        and secret not in (keyed.body or b"").decode("utf-8", errors="replace")
         # Refused, and refused for the stated reason rather than by accident.
         and not unreadable.allowed
         and not unreadable.inspected

@@ -102,6 +102,75 @@ class TestCredentialTier:
         assert "bryan@example.com" in result.body.decode()
 
 
+class TestKeysAreContentToo:
+    """The walk read values and skipped keys, so half of JSON was exempt.
+
+    A dict key is the only place in JSON where a string is not a value. The
+    boundary's registered claim says a credential never leaves; it said
+    nothing about which side of the colon the credential was sitting on.
+    """
+
+    def test_a_credential_in_a_key_does_not_leave(self):
+        secret = "sk-abcdefghijklmnopqrstuvwxyz01"
+        body = json.dumps({secret: "quota", "model": "gemini-2.0-flash"}).encode()
+        result = _filter("https://api.example.com/hook", body, TOOL_SOURCE)
+
+        assert secret not in result.body.decode()
+        assert "[REDACTED_API_KEY]" in result.body.decode()
+        # The rest of the object is untouched: this is a redaction, not a drop.
+        assert json.loads(result.body)["model"] == "gemini-2.0-flash"
+
+    def test_a_credential_in_a_nested_key_does_not_leave(self):
+        secret = "ghp_abcdefghijklmnopqrstuvwxyz0123456789"
+        body = json.dumps({"headers": {"auth": {secret: True}}}).encode()
+        result = _filter(GEMINI, body, MODEL_SOURCE)
+
+        assert secret not in result.body.decode()
+        assert json.loads(result.body)["headers"]["auth"] == {
+            "[REDACTED_GITHUB_TOKEN]": True
+        }
+
+    def test_a_personal_identifier_in_a_key_is_held_back_from_a_model(self):
+        body = json.dumps({"seen": {"bryan@example.com": 3}}).encode()
+        result = _filter(GEMINI, body, MODEL_SOURCE)
+
+        assert "bryan@example.com" not in result.body.decode()
+
+    def test_two_keys_redacting_alike_keep_both_values(self):
+        # An object keyed by API key collapses to one placeholder. Dropping a
+        # value silently would surface as an unreproducible provider error.
+        first = "sk-aaaaaaaaaaaaaaaaaaaaaaaaaa"
+        second = "sk-bbbbbbbbbbbbbbbbbbbbbbbbbb"
+        body = json.dumps({first: "one", second: "two"}).encode()
+        result = _filter("https://api.example.com/hook", body, TOOL_SOURCE)
+        sent = json.loads(result.body)
+
+        assert len(sent) == 2
+        assert sorted(sent.values()) == ["one", "two"]
+        assert first not in result.body.decode()
+        assert second not in result.body.decode()
+
+    def test_key_order_survives_a_key_redaction(self):
+        secret = "sk-abcdefghijklmnopqrstuvwxyz01"
+        body = json.dumps({"a": 1, secret: 2, "z": 3}).encode()
+        result = _filter("https://api.example.com/hook", body, TOOL_SOURCE)
+
+        assert list(json.loads(result.body)) == ["a", "[REDACTED_API_KEY]", "z"]
+
+    def test_ordinary_schema_keys_are_never_disturbed(self):
+        # The cost of reading keys must be zero on the traffic that exists.
+        body = json.dumps(
+            {
+                "contents": [{"role": "user", "parts": [{"text": "hello"}]}],
+                "generationConfig": {"maxOutputTokens": 2048, "topK": 40},
+            }
+        ).encode()
+        result = _filter(GEMINI, body, MODEL_SOURCE)
+
+        assert result.body is body
+        assert result.redactions == 0
+
+
 class TestModelProviderTier:
     """A turn's context becomes the provider's log line. Both tiers apply."""
 

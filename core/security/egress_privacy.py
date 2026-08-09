@@ -36,12 +36,15 @@ live. Filtering there would corrupt Aura talking to herself while
 protecting nobody. Those destinations are passed through untouched, and the
 receipt says so rather than implying an inspection happened.
 
-**Structure, not the wire bytes.** Redaction runs over parsed JSON string
-leaves and never over the serialized document. The phone-number pattern
-matches ``1234.5678``, so a regex sweep across raw JSON would silently turn
-an embedding vector into ``[PHONE_REDACTED]`` and the request would fail far
+**Structure, not the wire bytes.** Redaction runs over parsed JSON strings
+and never over the serialized document. The phone-number pattern matches
+``1234.5678``, so a regex sweep across raw JSON would silently turn an
+embedding vector into ``[PHONE_REDACTED]`` and the request would fail far
 from here, looking like a provider bug. Numbers are not strings and are
 never touched. Bodies that parse to no strings come back byte-identical.
+"Every string" means keys too: a dict key is the only place in JSON where a
+string is not a value, and reading values alone let ``{"sk-live-…": 1}``
+through a boundary whose whole claim is that credentials never leave.
 
 **Fail closed means closed.** A body that cannot be decoded cannot be
 inspected, and a model-provider destination therefore does not get it. The
@@ -232,11 +235,20 @@ def _patterns_for(tier: str) -> tuple[tuple[re.Pattern[str], str], ...]:
 def _redact_strings_in_place(
     root: Any, patterns: tuple[tuple[re.Pattern[str], str], ...]
 ) -> tuple[Any, int, set[str]]:
-    """Redact every string leaf of a parsed JSON document.
+    """Redact every string in a parsed JSON document — keys as well as values.
 
     Iterative rather than recursive: ``json.loads`` already proved the
     document is finite and acyclic, so the only thing recursion would add is
     a stack limit that a deeply nested but legitimate payload could hit.
+
+    A dict key is the one place in JSON where a string sits and is not a
+    value, and walking only the values left exactly that hole open:
+    ``{"sk-live-…": "quota"}`` went out intact while the identical secret one
+    field to the right did not. The tier decides *which* patterns apply; it
+    does not get to decide that half the strings in the document are exempt
+    from them. Provider schemas key on fixed names, so this costs nothing on
+    the traffic that exists today and closes the boundary for the traffic
+    that does not exist yet.
     """
     changes = 0
     kinds: set[str] = set()
@@ -253,11 +265,20 @@ def _redact_strings_in_place(
     while stack:
         node = stack.pop()
         if isinstance(node, dict):
-            for key, value in node.items():
+            renamed: dict[str, str] = {}
+            # Snapshot the items: the value assignments below only rebind
+            # existing keys, but the key rewrite that follows resizes the dict.
+            for key, value in list(node.items()):
                 if isinstance(value, str):
                     node[key] = _scrub(value)
                 elif isinstance(value, (dict, list)):
                     stack.append(value)
+                if isinstance(key, str):
+                    scrubbed_key = _scrub(key)
+                    if scrubbed_key != key:
+                        renamed[key] = scrubbed_key
+            if renamed:
+                _rewrite_keys(node, renamed)
         elif isinstance(node, list):
             for index, value in enumerate(node):
                 if isinstance(value, str):
@@ -269,6 +290,32 @@ def _redact_strings_in_place(
             return _scrub(node), changes, kinds
 
     return root, changes, kinds
+
+
+def _rewrite_keys(node: dict[Any, Any], renamed: dict[str, str]) -> None:
+    """Swap redacted keys in without dropping an entry.
+
+    Two distinct keys can redact to the same placeholder — an object keyed by
+    API key does exactly that — and plain reassignment would silently discard
+    one of the values. Quietly sending less than the caller asked for is its
+    own defect and would surface as an unreproducible provider error, so a
+    collision gets a positional discriminator instead of a deletion.
+
+    The dict is rebuilt rather than mutated key-by-key so that insertion
+    order survives; a reordered request body would make this module the first
+    suspect the day a provider changes behaviour, for no benefit.
+    """
+    rebuilt: dict[Any, Any] = {}
+    for key, value in node.items():
+        new_key = renamed.get(key, key) if isinstance(key, str) else key
+        if new_key in rebuilt:
+            discriminator = 2
+            while f"{new_key}~{discriminator}" in rebuilt:
+                discriminator += 1
+            new_key = f"{new_key}~{discriminator}"
+        rebuilt[new_key] = value
+    node.clear()
+    node.update(rebuilt)
 
 
 def filter_outbound_body(
@@ -347,7 +394,7 @@ def filter_outbound_body(
 
     _count_redaction()
     logger.info(
-        "Egress privacy: stripped %d value(s) [%s] from a %s body to %s",
+        "Egress privacy: stripped %d string(s) [%s] from a %s body to %s",
         changes,
         ",".join(sorted(kinds)) or "unclassified",
         tier,

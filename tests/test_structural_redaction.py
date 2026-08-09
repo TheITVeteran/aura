@@ -52,6 +52,29 @@ def test_a_secret_under_an_innocent_key_is_still_caught():
     assert report.redacted_values >= 1
 
 
+def test_a_secret_used_as_a_key_is_caught_too():
+    """The walk read values and copied keys through verbatim.
+
+    ``is_sensitive_key`` asks whether a key *names* a secret. Nothing asked
+    whether a key *was* one, so an object keyed by API key wrote the
+    credential into the audit row it was supposed to be protecting.
+    """
+    redacted, report = redact_mapping({_FAKE_API_KEY: "quota", "ok": 1})
+    assert _FAKE_API_KEY not in json.dumps(redacted)
+    assert report.redacted_values >= 1
+    assert redacted["ok"] == 1
+
+
+def test_two_keys_redacting_alike_both_survive():
+    first = "sk-" + "a" * 24
+    second = "sk-" + "b" * 24
+    redacted, _ = redact_mapping({first: "one", second: "two"})
+    assert len(redacted) == 2
+    assert sorted(redacted.values()) == ["one", "two"]
+    assert first not in json.dumps(redacted)
+    assert second not in json.dumps(redacted)
+
+
 def test_url_userinfo_is_stripped():
     redacted, _ = redact_mapping({"endpoint": "postgres://admin:s3cr3t@db.internal:5432/x"})
     assert "s3cr3t" not in json.dumps(redacted)

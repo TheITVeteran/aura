@@ -303,21 +303,25 @@ def _walk(
                 report.elided_items += remaining
                 out["<elided>"] = f"{remaining} more key(s) omitted"
                 break
-            key_text = key if isinstance(key, str) else repr(key)
-            if is_sensitive_key(key_text):
+            raw_key = key if isinstance(key, str) else repr(key)
+            if is_sensitive_key(raw_key):
                 report.redacted_values += 1
-                report.sensitive_keys.append(key_text)
-                out[key_text] = REDACTED
+                report.sensitive_keys.append(raw_key)
+                _place(out, _redact_key(raw_key, report), REDACTED)
                 continue
-            out[key_text] = _walk(
-                item,
-                depth=depth + 1,
-                max_depth=max_depth,
-                max_items=max_items,
-                max_string=max_string,
-                budget=budget,
-                report=report,
-                seen=seen,
+            _place(
+                out,
+                _redact_key(raw_key, report),
+                _walk(
+                    item,
+                    depth=depth + 1,
+                    max_depth=max_depth,
+                    max_items=max_items,
+                    max_string=max_string,
+                    budget=budget,
+                    report=report,
+                    seen=seen,
+                ),
             )
         return out
 
@@ -348,6 +352,39 @@ def _walk(
     # only safe thing to record, and it goes through text redaction too
     # because plenty of objects put credentials in their repr.
     return _walk_text(repr(value), max_string=max_string, budget=budget, report=report)
+
+
+def _redact_key(key_text: str, report: RedactionReport) -> str:
+    """A key is text, and text is where credentials hide.
+
+    :func:`is_sensitive_key` answers a different question — whether the key
+    *names* a secret, so its value must go. It says nothing about a key that
+    *is* one. An object keyed by API key wrote the credential straight into
+    the audit row while the identical string one field to the right was
+    stripped, which is the opposite of what this module exists to do.
+
+    No truncation and no budget here: a key is short, and a half-written key
+    would corrupt the shape of the record rather than protect anything.
+    """
+    redacted, changed = redact_text(key_text)
+    if changed:
+        report.redacted_values += 1
+    return redacted
+
+
+def _place(out: dict[str, Any], key_text: str, value: Any) -> None:
+    """Insert without letting a redacted key overwrite an earlier entry.
+
+    Two distinct keys can redact — or ``repr`` — to the same text, and a plain
+    assignment would drop one of the values. An audit record that silently
+    holds fewer rows than the call it describes is worse than a noisy one.
+    """
+    if key_text in out:
+        discriminator = 2
+        while f"{key_text}~{discriminator}" in out:
+            discriminator += 1
+        key_text = f"{key_text}~{discriminator}"
+    out[key_text] = value
 
 
 def _walk_text(
