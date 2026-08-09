@@ -1,0 +1,471 @@
+"""Companion mode: she keeps looking, so she already knows when you ask.
+
+WHAT THIS IS FOR
+────────────────
+When the Aura window is closed she is still running, and the only way she can
+answer "what do you think of this?" without a long pause is to have been
+looking already. Latency is the whole point: a question about the screen
+should be answered from something she saw thirty seconds ago, not from a
+capture that starts when you finish typing.
+
+That means a continuous observation loop, and a continuous observation loop
+pointed at a person's screen is the most invasive thing in this codebase. So
+the privacy rules are structural, not policy:
+
+  INCOGNITO IS NEVER READ.       Not read-then-discarded, not read-then-
+                                 redacted. The capture does not happen. A
+                                 private window is the one place a person has
+                                 explicitly said "not this", and honouring
+                                 that after reading it is not honouring it.
+
+  SUPPRESSION WINS.              The same suppression that stops her speaking
+                                 unprompted stops her looking unprompted.
+                                 Reading someone's screen is not a lesser act
+                                 than talking to them.
+
+  NOTHING IS RETAINED RAW.       Captures land in ObservationMemory, which
+                                 ages them out, and reach reasoning through
+                                 Observation.for_reasoning() — labelled, not
+                                 as a blob. That path is already the one that
+                                 stopped a screen dump being reproduced
+                                 verbatim as an answer.
+
+WHAT MAKES IT CHEAP
+───────────────────
+Re-reading an unchanged screen costs a capture and buys nothing. The loop
+watches the frontmost app and window title first — a cheap query — and only
+pays for a text capture when the CONTEXT changed. An idle machine costs
+almost nothing; a person moving between windows costs one capture per move.
+
+WHAT MAKES HER QUIET
+────────────────────
+Having something to say is not a reason to say it. The bubble stays empty
+unless an utterance clears the Will, and the default is silence: a companion
+that comments on everything is a companion you turn off.
+"""
+
+from __future__ import annotations
+
+import re
+import time
+from collections.abc import Mapping
+from dataclasses import dataclass, field
+from enum import StrEnum
+from typing import Any
+
+from core.runtime.errors import record_degradation
+from core.runtime.lockdep import checked_lock
+
+AMBIENT_SCHEMA = "aura.perception.ambient_presence.v1"
+
+#: Never observed. Matched against the frontmost window's title and the app
+#: name, and a match means the capture is not taken at all.
+#:
+#: Deliberately broad, and deliberately biased toward refusing: a false
+#: positive costs one skipped observation, a false negative reads something
+#: the person explicitly marked private.
+_PRIVATE_WINDOW_MARKERS: tuple[str, ...] = (
+    "incognito",
+    "private browsing",
+    "private window",
+    "inprivate",
+    "guest",
+    "1password",
+    "bitwarden",
+    "keychain access",
+    "keeper",
+    "lastpass",
+    "dashlane",
+    "authenticator",
+    "banking",
+    "password",
+)
+
+#: Apps whose whole purpose is holding secrets. Never read regardless of title.
+_PRIVATE_APPS: frozenset[str] = frozenset(
+    {
+        "1password",
+        "1password 7",
+        "bitwarden",
+        "keychain access",
+        "keeper password manager",
+        "lastpass",
+        "dashlane",
+        "gpg keychain",
+        "secretive",
+    }
+)
+
+_PRIVATE_RE = re.compile("|".join(re.escape(m) for m in _PRIVATE_WINDOW_MARKERS), re.I)
+
+#: How long a context stays "the same thing" before a re-read is worth paying
+#: for even when the title has not changed — a long document being scrolled is
+#: the same window and different content.
+_RESTALE_AFTER_S = 90.0
+
+
+class PresenceMode(StrEnum):
+    """What surface she is present on right now."""
+
+    #: The full desktop window is open. The bubble does not exist.
+    WINDOW = "window"
+    #: Window closed, runtime alive. Bubble only.
+    BUBBLE = "bubble"
+    #: The person hid her. She observes nothing and says nothing.
+    HIDDEN = "hidden"
+
+
+class SkipReason(StrEnum):
+    """Why an observation tick did not observe. Every one is reportable."""
+
+    NONE = "none"
+    PRIVATE_WINDOW = "private_window"
+    SUPPRESSED = "proactivity_suppressed"
+    HIDDEN = "hidden_by_user"
+    UNCHANGED = "context_unchanged"
+    NO_PERMISSION = "no_permission"
+    CAPTURE_FAILED = "capture_failed"
+
+
+@dataclass(frozen=True)
+class ScreenContext:
+    """The cheap query: what is in front, without reading anything."""
+
+    app: str = ""
+    title: str = ""
+    at: float = field(default_factory=time.time)
+
+    @property
+    def key(self) -> str:
+        return f"{self.app.strip().lower()}|{self.title.strip().lower()}"
+
+    @property
+    def is_private(self) -> bool:
+        """Is this a window the person has marked as not-for-observation?
+
+        Checked BEFORE any capture. The app name and the window title are
+        both consulted because a private tab shows in the title and a
+        password manager shows in the app.
+        """
+        app = self.app.strip().lower()
+        if app in _PRIVATE_APPS:
+            return True
+        haystack = f"{self.app} {self.title}"
+        return bool(_PRIVATE_RE.search(haystack))
+
+
+@dataclass
+class TickResult:
+    """What one ambient tick did, and why."""
+
+    observed: bool
+    skip_reason: SkipReason = SkipReason.NONE
+    context: ScreenContext | None = None
+    characters: int = 0
+    detail: str = ""
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "schema": AMBIENT_SCHEMA,
+            "observed": self.observed,
+            "skip_reason": self.skip_reason.value,
+            "app": self.context.app if self.context else "",
+            # The TITLE is deliberately absent from the receipt when the
+            # window was private: a receipt naming "Chase Bank — Private" has
+            # leaked the thing the skip existed to protect.
+            "title": (
+                ""
+                if (self.context is None or self.context.is_private)
+                else self.context.title[:120]
+            ),
+            "characters": self.characters,
+            "detail": self.detail[:200],
+        }
+
+
+class AmbientPresence:
+    """The companion-mode organ: keep looking, stay quiet, never read private.
+
+    One instance per runtime. It owns the bubble's state and the observation
+    cadence; it does not own the UI, which reads ``state()``.
+    """
+
+    def __init__(self) -> None:
+        self._lock = checked_lock("ambient_presence.state")
+        self._mode = PresenceMode.WINDOW
+        self._last_context: ScreenContext | None = None
+        self._last_observed_at = 0.0
+        self._pending_utterance: str = ""
+        self._utterance_at = 0.0
+        self._bubble_position: tuple[float, float] = (0.0, 0.0)
+        self._ticks = 0
+        self._observations = 0
+        self._skips: dict[str, int] = {}
+        self._private_skips = 0
+
+    # ── mode ─────────────────────────────────────────────────────────────
+
+    def set_mode(self, mode: PresenceMode | str) -> PresenceMode:
+        resolved = mode if isinstance(mode, PresenceMode) else PresenceMode(str(mode))
+        with self._lock:
+            self._mode = resolved
+            if resolved is PresenceMode.HIDDEN:
+                # Hidden means hidden: the queued thought goes too, rather
+                # than waiting to appear the moment she is unhidden.
+                self._pending_utterance = ""
+        return resolved
+
+    @property
+    def mode(self) -> PresenceMode:
+        with self._lock:
+            return self._mode
+
+    def hide(self) -> None:
+        self.set_mode(PresenceMode.HIDDEN)
+
+    def show(self) -> None:
+        self.set_mode(PresenceMode.BUBBLE)
+
+    # ── the bubble ───────────────────────────────────────────────────────
+
+    def offer_utterance(self, text: str) -> bool:
+        """Queue something for the bubble, if she is allowed to speak.
+
+        Returns whether it was accepted. The gate is the same one that
+        governs unprompted speech everywhere else — companion mode does not
+        get its own, quieter authority.
+        """
+        body = str(text or "").strip()
+        if not body:
+            return False
+        if self.mode is PresenceMode.HIDDEN:
+            return False
+        if _proactivity_suppressed():
+            return False
+        with self._lock:
+            self._pending_utterance = body[:600]
+            self._utterance_at = time.time()
+        return True
+
+    def clear_utterance(self) -> None:
+        """The person dismissed it. It does not come back."""
+        with self._lock:
+            self._pending_utterance = ""
+
+    def move_bubble(self, x: float, y: float) -> tuple[float, float]:
+        with self._lock:
+            self._bubble_position = (float(x), float(y))
+            return self._bubble_position
+
+    # ── the loop ─────────────────────────────────────────────────────────
+
+    async def tick(self) -> TickResult:
+        """One ambient observation cycle. Cheap when nothing changed."""
+        with self._lock:
+            self._ticks += 1
+            mode = self._mode
+
+        if mode is PresenceMode.HIDDEN:
+            return self._skip(SkipReason.HIDDEN)
+        if _proactivity_suppressed():
+            # Not looking is part of not intruding. Reading someone's screen
+            # unprompted is not a lesser act than speaking to them unprompted.
+            return self._skip(SkipReason.SUPPRESSED)
+
+        context = await self._current_context()
+        if context is None:
+            return self._skip(SkipReason.CAPTURE_FAILED, detail="no frontmost window")
+
+        if context.is_private:
+            with self._lock:
+                self._private_skips += 1
+            # No capture is attempted. This is the entire point.
+            return self._skip(SkipReason.PRIVATE_WINDOW, context=context)
+
+        with self._lock:
+            unchanged = (
+                self._last_context is not None
+                and self._last_context.key == context.key
+                and (time.time() - self._last_observed_at) < _RESTALE_AFTER_S
+            )
+        if unchanged:
+            return self._skip(SkipReason.UNCHANGED, context=context)
+
+        return await self._observe(context)
+
+    async def _observe(self, context: ScreenContext) -> TickResult:
+        try:
+            from core.governance_context import local_internal_governed_scope
+            from core.perception.observation_evidence import (
+                Observation,
+                ObservationKind,
+                remember_observation,
+            )
+        except ImportError as exc:
+            return self._skip(SkipReason.NO_PERMISSION, context=context, detail=str(exc))
+
+        try:
+            with local_internal_governed_scope(
+                "ambient_presence.observe", domain="environment_action"
+            ):
+                text = await self._read_screen_text()
+        except (RuntimeError, OSError, TypeError, ValueError) as exc:
+            record_degradation(
+                "ambient_presence",
+                exc,
+                severity="warning",
+                action="ambient observation skipped; she will have to look when asked",
+            )
+            return self._skip(SkipReason.CAPTURE_FAILED, context=context, detail=str(exc))
+
+        if not str(text or "").strip():
+            return self._skip(SkipReason.CAPTURE_FAILED, context=context)
+
+        remember_observation(
+            Observation(
+                kind=ObservationKind.SCREEN_TEXT,
+                capture=str(text),
+                # Ambient, so there is no request. The empty request is
+                # honest: nothing was asked, and a later question will
+                # supply its own shape via recall_for().
+                request="",
+                source=context.app or "screen",
+            )
+        )
+        with self._lock:
+            self._last_context = context
+            self._last_observed_at = time.time()
+            self._observations += 1
+        return TickResult(
+            observed=True, context=context, characters=len(str(text))
+        )
+
+    async def _current_context(self) -> ScreenContext | None:
+        try:
+            from core.capabilities.host_automation import get_host_automation
+
+            receipt = await get_host_automation().get_window_title()
+        except (ImportError, AttributeError, RuntimeError, OSError, TypeError) as exc:
+            record_degradation(
+                "ambient_presence", exc, severity="debug",
+                action="ambient tick could not read the frontmost window",
+            )
+            return None
+        if not getattr(receipt, "success", False):
+            return None
+        raw = str(getattr(receipt, "result", "") or "")
+        app, _, title = raw.partition("|")
+        return ScreenContext(app=app.strip(), title=title.strip())
+
+    async def _read_screen_text(self) -> str:
+        from core.capabilities.host_automation import get_host_automation
+
+        receipt = await get_host_automation().get_screen_text(retain_screenshot=False)
+        if not getattr(receipt, "success", False):
+            return ""
+        return str(getattr(receipt, "result", "") or "")
+
+    def _skip(
+        self,
+        reason: SkipReason,
+        *,
+        context: ScreenContext | None = None,
+        detail: str = "",
+    ) -> TickResult:
+        with self._lock:
+            self._skips[reason.value] = self._skips.get(reason.value, 0) + 1
+        return TickResult(
+            observed=False, skip_reason=reason, context=context, detail=detail
+        )
+
+    # ── what the UI reads ────────────────────────────────────────────────
+
+    def state(self) -> dict[str, Any]:
+        with self._lock:
+            return {
+                "schema": AMBIENT_SCHEMA,
+                "mode": self._mode.value,
+                "has_utterance": bool(self._pending_utterance),
+                "utterance": self._pending_utterance,
+                "utterance_age_s": (
+                    round(time.time() - self._utterance_at, 1)
+                    if self._pending_utterance
+                    else None
+                ),
+                "bubble_position": list(self._bubble_position),
+                "ticks": self._ticks,
+                "observations": self._observations,
+                "skips": dict(self._skips),
+                # Surfaced, because a person should be able to see that the
+                # privacy rule is doing something rather than trusting that
+                # it is.
+                "private_windows_skipped": self._private_skips,
+                "last_app": self._last_context.app if self._last_context else "",
+                "seconds_since_observation": (
+                    round(time.time() - self._last_observed_at, 1)
+                    if self._last_observed_at
+                    else None
+                ),
+            }
+
+    def recall_for(self, question: str) -> str:
+        """What she already saw that bears on this question.
+
+        The latency payoff: the answer comes from ObservationMemory rather
+        than from a capture that starts now. Empty when she has nothing —
+        which the caller must treat as "look now", not as "nothing is there".
+        """
+        try:
+            from core.perception.observation_evidence import get_observation_memory
+
+            return get_observation_memory().recall_for(question)
+        except (ImportError, AttributeError, RuntimeError, TypeError, ValueError) as exc:
+            record_degradation(
+                "ambient_presence", exc, severity="debug",
+                action="ambient recall unavailable; the caller must capture fresh",
+            )
+            return ""
+
+
+def _proactivity_suppressed() -> bool:
+    """Is she currently barred from acting unprompted?
+
+    Fails CLOSED: if the check cannot run, she does not observe. An
+    unavailable permission system is not permission.
+    """
+    try:
+        from core.agency.agency_core import _proactivity_suppressed_now
+
+        return bool(_proactivity_suppressed_now())
+    except (ImportError, AttributeError, RuntimeError, TypeError, ValueError):
+        return True
+
+
+_PRESENCE: AmbientPresence | None = None
+_PRESENCE_LOCK = checked_lock("ambient_presence.singleton")
+
+
+def get_ambient_presence() -> AmbientPresence:
+    global _PRESENCE
+    if _PRESENCE is None:
+        with _PRESENCE_LOCK:
+            if _PRESENCE is None:
+                _PRESENCE = AmbientPresence()
+    return _PRESENCE
+
+
+def is_private_context(app: str, title: str) -> bool:
+    """Public so any other surface can apply the same rule."""
+    return ScreenContext(app=app, title=title).is_private
+
+
+__all__ = [
+    "AMBIENT_SCHEMA",
+    "AmbientPresence",
+    "PresenceMode",
+    "ScreenContext",
+    "SkipReason",
+    "TickResult",
+    "get_ambient_presence",
+    "is_private_context",
+]
