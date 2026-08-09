@@ -1,0 +1,38 @@
+{
+  "schema": "aura.closeout.rlc_checkpoint.v1",
+  "checkpoint": "CP076",
+  "subject": "detached reconciliation difficulty binding",
+  "claim_level": "contract",
+  "defect": "the detached controller omitted the sweep difficulty parameter",
+  "repair": {
+    "cli_choices": [
+      1,
+      2,
+      3
+    ],
+    "config_digest_bound": true,
+    "semantic_validation": true,
+    "sweep_argv_bound": true,
+    "resumable_attempts_preserve_value": true
+  },
+  "verification": {
+    "controller_and_reconciliation_contracts": {
+      "passed": 55,
+      "failed": 0
+    },
+    "canonical_smoke": {
+      "passed": 103,
+      "failed": 0
+    },
+    "ruff": "pass",
+    "compile": "pass",
+    "diff_check": "pass"
+  },
+  "not_claimed": [
+    "reasoning gain",
+    "resident 32B gain",
+    "frontier performance",
+    "fusion authorization",
+    "WOW Signal"
+  ]
+}

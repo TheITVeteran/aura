@@ -83,6 +83,7 @@ def _prepared(tmp_path: Path):
         arms="full_stack",
         seed=7,
         per_domain=1,
+        difficulty=2,
         n_slots=4,
         max_tokens=64,
         memory_fraction=0.2,
@@ -190,6 +191,21 @@ def test_config_digest_rejects_a_changed_scientific_parameter(tmp_path: Path):
         controller.load_config(config_path)
 
 
+@pytest.mark.parametrize("difficulty", [0, 4, True, "2"])
+def test_config_rejects_invalid_task_difficulty_even_with_a_valid_digest(
+    tmp_path: Path,
+    difficulty: object,
+):
+    _source_root, _out, config_path, _config = _prepared(tmp_path)
+    document = json.loads(config_path.read_text(encoding="utf-8"))
+    document["difficulty"] = difficulty
+    document["config_sha256"] = controller._sha(controller._config_body(document))
+    config_path.write_text(json.dumps(document), encoding="utf-8")
+
+    with pytest.raises(controller.ControllerError, match="controller_difficulty_invalid"):
+        controller.load_config(config_path)
+
+
 def test_prepare_preserves_the_venv_entrypoint_while_hashing_its_binary(tmp_path: Path):
     source = _source(tmp_path)
     model = tmp_path / "model"
@@ -209,6 +225,7 @@ def test_prepare_preserves_the_venv_entrypoint_while_hashing_its_binary(tmp_path
         arms="full_stack",
         seed=7,
         per_domain=1,
+        difficulty=2,
         n_slots=4,
         max_tokens=64,
         memory_fraction=0.2,
@@ -314,6 +331,7 @@ def test_sweep_command_preserves_complete_engine_parameters(tmp_path: Path):
     _source_root, _out, _config_path, config = _prepared(tmp_path)
     command = controller._sweep_command(config)
     assert command[command.index("--arms") + 1] == "full_stack"
+    assert command[command.index("--difficulty") + 1] == "2"
     assert command[command.index("--episode-wall-s") + 1] == "20.0"
     assert command[command.index("--max-wall-s") + 1] == "60.0"
     assert command[command.index("--model") + 1] == config["model"]
@@ -373,6 +391,7 @@ if not marker.exists():
         arms="full_stack",
         seed=7,
         per_domain=1,
+        difficulty=2,
         n_slots=4,
         max_tokens=64,
         memory_fraction=0.2,

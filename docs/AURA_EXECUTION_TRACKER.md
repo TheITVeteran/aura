@@ -40032,3 +40032,27 @@ The complete reconciliation contract passes `34/34`; canonical smoke passes
 `artifacts/closeout/latent_cortex/cp075_task_bound_equal_compute_control.json`.
 This hardens the imminent falsification test; it is not itself a gain result.
 The completion envelope remains `809/920` (approximately `87.9%`).
+
+## Checkpoint 2026-08-09-076: Detached Campaigns Preserve Calibrated Difficulty
+
+The reconciliation sweep commits task difficulty into its task and decode
+identities, but the detached resident-model controller did not expose or carry
+that parameter. Preparing a campaign therefore silently selected the sweep's
+default difficulty even when a control-only calibration had identified a
+different informative band.
+
+Difficulty is now a first-class controller parameter. It is accepted by the
+prepare CLI, constrained to the task registry's three supported levels,
+included in the tamper-evident controller config, required and semantically
+validated on load, and passed explicitly to every resumable sweep attempt.
+Direct API callers and correctly rehashed malicious configs cannot inject a
+boolean, string, or out-of-range value. The exact detached process therefore
+runs the same calibrated battery identity the operator reviewed.
+
+The controller and reconciliation contracts pass `55/55`; canonical smoke
+passes `103/103`; Ruff, compilation, and diff hygiene pass. Compact evidence
+is
+`artifacts/closeout/latent_cortex/cp076_controller_difficulty_binding.json`.
+This closes a campaign-reproducibility defect; it is not a reasoning-gain,
+resident-32B, frontier, fusion, activation, or `WOW Signal` result. The
+completion envelope remains `809/920` (approximately `87.9%`).
