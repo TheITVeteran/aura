@@ -23,14 +23,14 @@ The cycle:
                       leak into training.
   4. train          — mlx subprocess (mlx_lm_lora.train for DPO, mlx_lm lora
                       for SFT) against the RESOLVED base, bounded timeout.
-  5. evaluate       — tools/heldout_eval.py run sequentially for incumbent and
-                      candidate (one extra model in memory at a time), plus a
-                      second hidden battery seed on the candidate, plus an
-                      identity-regression scan over the candidate's raw
-                      responses. Writes the evaluation_report.json contract
-                      that core/learning/eval_before_promotion.py reads.
-  6. decide/publish — promote only when capability held (candidate accuracy ≥
-                      incumbent − epsilon) and identity is intact; fuse and
+  5. evaluate       — tools/heldout_eval.py run sequentially (one extra model
+                      in memory at a time) for incumbent and candidate on the
+                      visible battery AND on a second hidden battery seed,
+                      plus an identity-regression scan over the candidate's
+                      raw responses. Writes the evaluation_report.json
+                      contract that core/learning/eval_before_promotion.py
+                      reads.
+  6. decide/publish — promote only when all three gates hold; fuse and
                       publish a chain-preserving manifest (base_model = the
                       actual parent artifact). Refusals are first-class
                       results, recorded with the same rigor.
@@ -38,10 +38,33 @@ The cycle:
                       ledger. Compounding is then a *verdict computed from
                       receipts* (rsi_lineage.evaluate_lineage), never a claim.
 
-Honesty boundary: promotion means "no capability regression, identity intact,
-trained on real harvested experience". The compounding CLAIM (capability curve
-strictly increasing across generations) is only ever made by evaluate_lineage
-over the ledger — this module cannot assert it, only earn it.
+The three gates, and why each is shaped the way it is:
+
+**Capability, against the high-water mark.** ``candidate ≥ high_water −
+epsilon``, where high_water is the best visible-battery accuracy any PROMOTED
+generation has reached. It used to be ``candidate ≥ incumbent − epsilon``,
+which let every generation give back epsilon and still record "no
+regression" — twenty of those walk accuracy down by twenty epsilons with
+twenty clean receipts behind them. Epsilon is tolerance for battery noise
+around a level already reached, not a per-generation allowance.
+
+**Hidden battery, against the incumbent.** The hidden seed now runs on BOTH
+models. It used to run on the candidate only, so the strongest statement
+available was ``hidden is not None`` — the second eval ran every cycle,
+cost a full model load, and could not refuse anything. It exists to catch a
+candidate that gained on the visible battery by learning the visible
+battery, and that is a comparison or it is nothing.
+
+**Identity.** Unchanged: assistant-regression phrases in the candidate's raw
+responses.
+
+Honesty boundary: promotion means "did not regress against the best this
+lineage has reached, held up on an unseen battery, identity intact, trained
+on real harvested experience". It does NOT mean the generation is smarter —
+a candidate exactly at the high-water mark promotes. The compounding CLAIM
+(capability curve strictly increasing across generations) is only ever made
+by evaluate_lineage over the ledger; this module cannot assert it, only
+earn it.
 """
 from __future__ import annotations
 
@@ -164,6 +187,13 @@ class CycleReceipt:
     incumbent_accuracy: float | None = None
     candidate_accuracy: float | None = None
     hidden_accuracy: float | None = None
+    #: The same hidden battery on the incumbent. Without it the hidden eval
+    #: had nothing to be compared against and could not gate anything.
+    hidden_incumbent_accuracy: float | None = None
+    #: Best visible-battery accuracy any promoted generation has reached.
+    #: The promotion floor is measured from here, not from the immediate
+    #: parent, so epsilon cannot be spent again every generation.
+    high_water_accuracy: float | None = None
     identity_ok: bool | None = None
     promoted_model_path: str = ""
     run_dir: str = ""
@@ -182,6 +212,8 @@ class CycleReceipt:
             "incumbent_accuracy": self.incumbent_accuracy,
             "candidate_accuracy": self.candidate_accuracy,
             "hidden_accuracy": self.hidden_accuracy,
+            "hidden_incumbent_accuracy": self.hidden_incumbent_accuracy,
+            "high_water_accuracy": self.high_water_accuracy,
             "identity_ok": self.identity_ok,
             "promoted_model_path": self.promoted_model_path,
             "run_dir": self.run_dir,
@@ -814,25 +846,66 @@ class WeightCompoundingLoop:
                 record(promoted=False)
                 return receipt
 
+            # The hidden battery on BOTH models. It used to run on the
+            # candidate only, which made it unusable as a gate: with nothing
+            # to compare against, `hidden_passed = hidden is not None` was
+            # the best anyone could write, and a full eval ran every cycle
+            # without being able to refuse anything. Its whole purpose is to
+            # catch a candidate that learned the visible battery, and that is
+            # a comparison.
+            hidden_seed = battery_seed + HIDDEN_SEED_OFFSET
+            hidden_incumbent = self._run_heldout(
+                base_model, "", hidden_seed, self.config.hidden_battery_size,
+                run_dir / "hidden_incumbent_eval.json",
+            )
             hidden = self._run_heldout(
                 base_model, str(adapter_dir),
-                battery_seed + HIDDEN_SEED_OFFSET, self.config.hidden_battery_size,
+                hidden_seed, self.config.hidden_battery_size,
                 run_dir / "hidden_eval.json",
             )
 
             receipt.incumbent_accuracy = float(incumbent.get("accuracy", 0.0))
             receipt.candidate_accuracy = float(candidate.get("accuracy", 0.0))
             receipt.hidden_accuracy = float(hidden.get("accuracy", 0.0)) if hidden else None
+            receipt.hidden_incumbent_accuracy = (
+                float(hidden_incumbent.get("accuracy", 0.0)) if hidden_incumbent else None
+            )
 
             identity_ok, identity_hits = self._identity_scan(
                 run_dir / "candidate_eval.responses.jsonl"
             )
             receipt.identity_ok = identity_ok
 
-            regression_passed = (
-                receipt.candidate_accuracy >= receipt.incumbent_accuracy - self.config.epsilon
-            )
-            hidden_passed = hidden is not None
+            # ── the three gates ───────────────────────────────────────────
+            #
+            # epsilon is tolerance for battery noise, not a per-generation
+            # licence to decline. Measured against the lineage's HIGH-WATER
+            # mark rather than the immediate parent: comparing only to the
+            # parent let each generation give back epsilon and still pass, so
+            # twenty "successful" generations could walk accuracy down by
+            # 20*epsilon with every single receipt reading "no regression".
+            # A floor that moves down with you is not a floor.
+            high_water = self._capability_high_water(receipt.incumbent_accuracy)
+            receipt.high_water_accuracy = high_water
+            floor = high_water - self.config.epsilon
+            regression_passed = receipt.candidate_accuracy >= floor
+
+            # The hidden battery now decides something. Same seed on both
+            # models, same comparison: a candidate that gained on the visible
+            # battery and lost on the unseen one has learned the battery, and
+            # that is the failure this second eval was paid for.
+            if hidden is None or hidden_incumbent is None:
+                hidden_passed = False
+                hidden_reason = "hidden_eval_unavailable"
+            else:
+                hidden_passed = (
+                    receipt.hidden_accuracy
+                    >= receipt.hidden_incumbent_accuracy - self.config.epsilon
+                )
+                hidden_reason = (
+                    f"hidden_regressed:{receipt.hidden_accuracy:.3f}"
+                    f"<{receipt.hidden_incumbent_accuracy:.3f}-eps"
+                )
 
             # The contract report that eval_before_promotion.AdapterEvaluator
             # reads — this loop is the producer that contract was waiting for.
@@ -841,13 +914,14 @@ class WeightCompoundingLoop:
                 "accuracy_score": receipt.candidate_accuracy,
                 "regression_passed": regression_passed,
                 "hidden_eval_passed": hidden_passed,
-                "promotion_threshold": max(
-                    0.0, receipt.incumbent_accuracy - self.config.epsilon
-                ),
+                "promotion_threshold": max(0.0, floor),
                 "incumbent_accuracy": receipt.incumbent_accuracy,
+                "high_water_accuracy": high_water,
                 "hidden_accuracy": receipt.hidden_accuracy,
+                "hidden_incumbent_accuracy": receipt.hidden_incumbent_accuracy,
                 "identity_hits": identity_hits,
                 "battery_seed": battery_seed,
+                "hidden_battery_seed": hidden_seed,
                 "generation_id": generation_id,
             }
             atomic_write_text(
@@ -856,13 +930,15 @@ class WeightCompoundingLoop:
                 encoding="utf-8",
             )
 
-            if not (regression_passed and identity_ok):
+            if not (regression_passed and hidden_passed and identity_ok):
                 receipt.status = "refused"
                 if not regression_passed:
                     receipt.reasons.append(
                         f"capability_regressed:{receipt.candidate_accuracy:.3f}"
-                        f"<{receipt.incumbent_accuracy:.3f}-eps"
+                        f"<{high_water:.3f}-eps"
                     )
+                if not hidden_passed:
+                    receipt.reasons.append(hidden_reason)
                 if not identity_ok:
                     receipt.reasons.append(f"identity_regression:{identity_hits}")
                 record(promoted=False)
@@ -946,6 +1022,39 @@ class WeightCompoundingLoop:
             self._release_lock()
 
     # ── ledger ───────────────────────────────────────────────────────────────
+
+    def _capability_high_water(self, incumbent_accuracy: float) -> float:
+        """The best visible-battery accuracy any promoted generation reached.
+
+        The promotion floor was ``incumbent - epsilon``, which meant each
+        generation could give back epsilon and still record "no regression".
+        Twenty such generations walk accuracy down by twenty epsilons with
+        twenty clean receipts behind them — a ratchet pointed the wrong way.
+        Measuring from the high-water mark makes epsilon what it was meant to
+        be: tolerance for battery noise around a level already reached.
+
+        Read from the tamper-evident ledger, and only from generations that
+        actually promoted — a refused candidate's score never set a bar the
+        serving model has to clear. Falls back to the live incumbent, which
+        is the honest answer on generation 1 and after any ledger it cannot
+        read: never a floor lower than what is serving right now.
+        """
+        best = float(incumbent_accuracy)
+        try:
+            for record in self._ledger.load_records():
+                if not getattr(record, "promoted", False):
+                    continue
+                best = max(best, float(getattr(record, "after_score", 0.0) or 0.0))
+        except _RECOVERABLE as exc:
+            record_degradation(
+                "weight_compounding",
+                exc,
+                action=(
+                    "used the live incumbent as the promotion floor after the "
+                    "lineage ledger could not be read"
+                ),
+            )
+        return best
 
     def _record_generation(self, receipt: CycleReceipt, *, promoted: bool) -> None:
         records = self._ledger.load_records()

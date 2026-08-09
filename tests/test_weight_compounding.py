@@ -222,12 +222,14 @@ def make_config(tmp_path: Path, base_model_dir: Path, sft_buffer: Path, **overri
 
 
 PROMOTE_SCRIPT = {
-    (1000, False): 0.50,   # cycle 0 incumbent
-    (1000, True): 0.625,   # cycle 0 candidate — improved
-    (101003, True): 0.55,  # cycle 0 hidden
-    (1001, False): 0.625,  # cycle 1 incumbent (the promoted model)
-    (1001, True): 0.75,    # cycle 1 candidate — improved again
-    (101004, True): 0.70,  # cycle 1 hidden
+    (1000, False): 0.50,    # cycle 0 incumbent, visible battery
+    (1000, True): 0.625,    # cycle 0 candidate — improved
+    (101003, False): 0.50,  # cycle 0 incumbent, hidden battery
+    (101003, True): 0.55,   # cycle 0 candidate, hidden — also improved
+    (1001, False): 0.625,   # cycle 1 incumbent (the promoted model)
+    (1001, True): 0.75,     # cycle 1 candidate — improved again
+    (101004, False): 0.55,  # cycle 1 incumbent, hidden battery
+    (101004, True): 0.70,   # cycle 1 candidate, hidden
 }
 
 
@@ -507,6 +509,141 @@ class TestCycle:
         records = loop._ledger.load_records()
         assert len(records) == 1 and records[0].promoted is False
         assert loop.lineage_verdict().verdict == VERDICT_BOUNDED
+
+    def test_a_candidate_that_learned_the_visible_battery_is_refused(
+        self, tmp_path, base_model_dir, sft_buffer
+    ):
+        """The hidden battery has to be able to say no.
+
+        It ran on the candidate only, so the strongest available statement
+        was `hidden_passed = hidden is not None` — a full extra model load
+        every cycle that could not refuse anything. This is the case it was
+        bought for: up on the battery it saw, down on the one it did not.
+        """
+        script = dict(PROMOTE_SCRIPT)
+        script[(1000, True)] = 0.90     # candidate soars on the visible battery
+        script[(101003, False)] = 0.50  # incumbent, hidden
+        script[(101003, True)] = 0.20   # candidate collapses on the hidden one
+        config = make_config(tmp_path, base_model_dir, sft_buffer)
+        loop = WeightCompoundingLoop(config, command_runner=FakeRunner(script))
+        receipt = loop.run_cycle()
+
+        assert receipt.status == "refused", receipt.reasons
+        assert any("hidden_regressed" in r for r in receipt.reasons), receipt.reasons
+        assert not config.manifest_path.exists()
+
+    def test_a_missing_hidden_eval_refuses_rather_than_passes(
+        self, tmp_path, base_model_dir, sft_buffer
+    ):
+        """No hidden evidence is not the same as good hidden evidence."""
+        script = dict(PROMOTE_SCRIPT)
+        runner = FakeRunner(script)
+        original = runner._run_eval
+
+        def drop_hidden(argv):
+            if int(runner._arg(argv, "--seed", "0")) >= 100000:
+                return FakeResult(ok=False, stderr="hidden eval crashed")
+            return original(argv)
+
+        runner._run_eval = drop_hidden
+        config = make_config(tmp_path, base_model_dir, sft_buffer)
+        loop = WeightCompoundingLoop(config, command_runner=runner)
+        receipt = loop.run_cycle()
+
+        assert receipt.status == "refused", receipt.reasons
+        assert any("hidden_eval_unavailable" in r for r in receipt.reasons)
+
+    def test_the_floor_is_the_high_water_mark_not_the_parent(
+        self, tmp_path, base_model_dir, sft_buffer
+    ):
+        """Epsilon may not be spent again every generation.
+
+        Three cycles, each candidate exactly epsilon below the last. Against
+        the immediate parent every one of them "passes" and accuracy walks
+        down 0.06 with three clean receipts. Against the high-water mark the
+        first holds and the second is refused.
+        """
+        config = make_config(
+            tmp_path, base_model_dir, sft_buffer,
+            model_override="", default_base=str(base_model_dir),
+        )
+        script = {
+            (1000, False): 0.80, (1000, True): 0.80,
+            (101003, False): 0.80, (101003, True): 0.80,
+            # cycle 1: candidate one epsilon below the parent it trained on
+            (1001, False): 0.80, (1001, True): 0.78,
+            (101004, False): 0.80, (101004, True): 0.80,
+            # cycle 2: another epsilon down
+            (1002, False): 0.78, (1002, True): 0.76,
+            (101005, False): 0.80, (101005, True): 0.80,
+        }
+        loop = WeightCompoundingLoop(config, command_runner=FakeRunner(script))
+
+        first = loop.run_cycle()
+        assert first.status == "promoted", first.reasons
+        assert first.high_water_accuracy == 0.80
+
+        second = loop.run_cycle()
+        # 0.78 >= 0.80 - 0.02 exactly: still at the mark, still allowed.
+        assert second.status == "promoted", second.reasons
+        assert second.high_water_accuracy == 0.80
+
+        third = loop.run_cycle()
+        # 0.76 clears the parent (0.78 - eps) but not the high-water floor.
+        assert third.status == "refused", third.reasons
+        assert any("capability_regressed" in r for r in third.reasons)
+        assert third.high_water_accuracy == 0.80
+
+    def test_the_high_water_mark_ignores_refused_generations(
+        self, tmp_path, base_model_dir, sft_buffer
+    ):
+        """A refused candidate's score never becomes a bar to clear.
+
+        Nothing was served at that accuracy, so requiring later generations
+        to match it would refuse work for failing to beat a model that never
+        existed.
+        """
+        config = make_config(
+            tmp_path, base_model_dir, sft_buffer,
+            model_override="", default_base=str(base_model_dir),
+        )
+        script = {
+            # cycle 0 promotes at 0.60
+            (1000, False): 0.50, (1000, True): 0.60,
+            (101003, False): 0.50, (101003, True): 0.60,
+            # cycle 1 scores 0.95 on the visible battery but tanks the hidden
+            # one, so it is refused — 0.95 must not become the floor.
+            (1001, False): 0.60, (1001, True): 0.95,
+            (101004, False): 0.60, (101004, True): 0.10,
+            # cycle 2 is an honest 0.62 and must be allowed to promote
+            (1002, False): 0.60, (1002, True): 0.62,
+            (101005, False): 0.60, (101005, True): 0.62,
+        }
+        loop = WeightCompoundingLoop(config, command_runner=FakeRunner(script))
+
+        assert loop.run_cycle().status == "promoted"
+        refused = loop.run_cycle()
+        assert refused.status == "refused", refused.reasons
+
+        third = loop.run_cycle()
+        assert third.status == "promoted", third.reasons
+        assert third.high_water_accuracy == 0.60
+
+    def test_the_report_carries_both_hidden_scores(
+        self, tmp_path, base_model_dir, sft_buffer
+    ):
+        config = make_config(tmp_path, base_model_dir, sft_buffer)
+        loop = WeightCompoundingLoop(config, command_runner=FakeRunner(PROMOTE_SCRIPT))
+        receipt = loop.run_cycle()
+
+        report = json.loads(
+            (Path(receipt.run_dir) / "adapter" / "evaluation_report.json").read_text()
+        )
+        assert report["hidden_eval_passed"] is True
+        assert report["hidden_incumbent_accuracy"] == 0.50
+        assert report["hidden_accuracy"] == 0.55
+        assert report["high_water_accuracy"] == 0.50
+        assert report["promotion_threshold"] == pytest.approx(0.48)
 
     def test_identity_regression_refused(self, tmp_path, base_model_dir, sft_buffer):
         runner = FakeRunner(
