@@ -1,0 +1,82 @@
+{
+  "schema": "aura.closeout.latent_cortex.cp092.v1",
+  "checkpoint": "CP092",
+  "date": "2026-08-09",
+  "production_repair": {
+    "finding": "The sovereign UnitaryResponsePhase could compose the complete reasoning engine for code, mathematics, and repository tasks, but its semantic admission classifier left structured causal inference, bounded planning, and premise audits on ordinary one-pass decode.",
+    "classification": "production_generality_gap",
+    "repair": {
+      "logic_classification": [
+        "causal and counterfactual inference",
+        "interventions and constraints",
+        "premise and ranking audits"
+      ],
+      "planning_classification": [
+        "scheduling and makespan",
+        "deadlines, prerequisites, dependencies, and horizons",
+        "resource allocation and execution ordering"
+      ],
+      "admission": "Structured logic, planning, and factual tasks enter the amplifier only when semantic compute and structured-input evidence are both present.",
+      "low_latency_negative_control": "Ordinary fact lookup and casual conversation remain outside the amplifier."
+    }
+  },
+  "resident_32b_calibration": {
+    "campaign_id": "cp092-wow-calibration-20260809",
+    "source_commit": "7894653240444ab866eed93bd0cf7a4c22808a44",
+    "model": "Aura-32B-crsm-closeout-jul1-20260701-215118",
+    "registry_version": "2026.08.06.1",
+    "seed": 20261120,
+    "difficulty": 1,
+    "arms": [
+      "vanilla"
+    ],
+    "task_count": 7,
+    "ordinary_correct": 1,
+    "ordinary_total": 7,
+    "infrastructure_errors": 0,
+    "latency_median_s": 46.0,
+    "latency_p90_s": 48.0,
+    "battery_informative": true,
+    "failure_reasons": {
+      "correct": 1,
+      "final_answer_marker_count_invalid": 6
+    },
+    "interpretation": "Difficulty 1 is a low but nonzero control floor and is frozen for the disjoint treatment seed. Six control failures were contract-invalid truncated answers, not runtime failures; treatment must recover them without regressing the one valid incumbent.",
+    "controller_config_sha256": "8e3515c2b5fb5791926eb1b666cbc1beb0165d410bf0e46853cdc86a13556fbc",
+    "signed_config_sha256": "bc55f2b8b0c2b514efedde6819cc92b99c207c4960b1b633e89cf49dd0081829",
+    "task_commitment_sha256": "41cf9ff389f2cb8858edafa8935f0a2438a4a5445c7cfe2e29632093109caa66",
+    "task_manifest_file_sha256": "c9bd16b0a9ee6b5d83bcc4ceb4b29dcb8542846c3d729b26bb390135d9a704c8",
+    "journal_sha256": "7a894a9bf79d78772f6020ee8591988c3b99439984e3a8b0edf4479b57afaa29",
+    "verdict_sha256": "330a4721ec0b45b14f26f1dcf81f9b1eb41fad71beae965287bfeaadde998e48"
+  },
+  "verification": {
+    "focused_contracts": "65 passed",
+    "canonical_smoke": "103 passed",
+    "ruff": "passed",
+    "byte_compile": "passed",
+    "detached_campaign": "launchd -> controller -> caffeinate -> sweep lineage verified; exit code 0",
+    "signed_progress": "7/7 durable cells and complete controller status"
+  },
+  "next_gate": {
+    "evaluation_seed": 20261121,
+    "difficulty": 1,
+    "arms": [
+      "vanilla",
+      "vanilla_equal_compute",
+      "rlc",
+      "rlc_complete"
+    ],
+    "required_measurements": [
+      "paired wrong-to-right recovery",
+      "right-to-wrong regression",
+      "full-system incremental capability",
+      "resource-matched and resource-advantaged control",
+      "per-domain mechanism contribution and latency"
+    ]
+  },
+  "non_claims": [
+    "A control-only calibration cannot demonstrate a reasoning gain.",
+    "The six marker-invalid outputs do not imply six knowledge failures.",
+    "No frontier performance, fusion authority, activation authority, or WOW Signal is claimed."
+  ]
+}

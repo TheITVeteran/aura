@@ -40540,3 +40540,39 @@ by a disjoint four-arm pilot on seed `20261121` at the frozen informative
 difficulty. No reasoning gain, frontier performance, fusion, activation, or
 `WOW Signal` is claimed, and the completion envelope remains `809/920`
 (approximately `87.9%`).
+
+## Checkpoint 2026-08-09-092: Structured Problems Reach the Complete Engine
+
+The sovereign healthy-chat path already composed the reasoning amplifier for
+code, mathematics, and repository questions, but its production admission
+classifier did not recognize the semantics used by the new complete-system
+engines. Structured causal inference, bounded scheduling, and premise audits
+therefore exercised those engines in the laboratory wrapper while ordinary
+live turns could remain on one-pass decode.
+
+The classifier now recognizes causal/counterfactual inference, interventions,
+premise and ranking audits, scheduling, makespan, dependencies, deadlines,
+horizons, resource allocation, and execution ordering. Admission still requires
+both a structured operation and structured input. That keeps casual conversation
+and ordinary fact lookup on the low-latency lane while allowing the production
+`UnitaryResponsePhase` to compose executable reasoning for the hard structured
+turns the experiment measures.
+
+The contamination-safe resident-32B control calibration then completed `7/7`
+cells under launchd with intact signed progress and no infrastructure errors.
+At difficulty `1`, ordinary decode scored `1/7`; the other six cells violated
+the committed single-`FINAL_ANSWER` contract after truncating mid-derivation.
+This is a low but nonzero floor, so difficulty `1` is frozen before exposing the
+disjoint evaluation seed `20261121` to treatment. The result diagnoses a real
+ordinary-decode completion weakness but does not convert formatting failures
+into capability claims.
+
+Focused production contracts pass `65/65`; canonical smoke passes `103/103`;
+Ruff and byte compilation pass.
+Exact campaign hashes and the calibration interpretation are in
+`artifacts/closeout/latent_cortex/cp092_live_structured_reasoning.json`. The next
+gate is the disjoint four-arm resident battery: ordinary decode, equal-compute
+ordinary decode, recurrent mechanism, and the complete integrated system. No
+reasoning gain, frontier result, fusion authority, activation authority, or
+`WOW Signal` is claimed, and the completion envelope remains `809/920`
+(approximately `87.9%`).

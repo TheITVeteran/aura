@@ -47,6 +47,36 @@ def test_casual_chat_not_amplified(text):
     assert is_amplifiable(text) is None
 
 
+@pytest.mark.parametrize(
+    "text,expected",
+    [
+        (
+            "Given baselines A=8, B=24, and C=60, infer the causal order from "
+            "interventions A+2 -> B+6 and C+12, then predict C for A+4.",
+            "logic",
+        ),
+        (
+            "Tasks are [{'name':'A','duration':2,'deadline':5,'reward':7}, "
+            "{'name':'B','duration':3,'deadline':7,'reward':9}]. Find the optimal "
+            "schedule and makespan within horizon 7.",
+            "planning",
+        ),
+        (
+            "The claim says P wins. Given P score 8 and Q score 11, recompute the "
+            "scores and return the actual winner.",
+            "logic",
+        ),
+    ],
+)
+def test_structured_planning_and_inference_turns_amplify(text, expected):
+    assert is_action_request(text) is False
+    assert is_amplifiable(text) == expected
+
+
+def test_plain_fact_lookup_stays_on_the_low_latency_path():
+    assert is_amplifiable("what is the capital of France") is None
+
+
 def test_action_with_number_not_treated_as_math():
     # The specific case raised: a digit in an action must not route to math.
     assert is_amplifiable("Open 3 tabs") is None

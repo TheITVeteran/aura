@@ -43,6 +43,8 @@ def test_classify_task_type():
     assert classify_task_type("which file implements the inference gate") == "repo_audit"
     assert classify_task_type("what is the capital of France") == "factual"
     assert classify_task_type("how would you plan the migration steps") == "planning"
+    assert classify_task_type("find the optimal schedule and makespan within horizon 7") == "planning"
+    assert classify_task_type("infer the causal order from these interventions") == "logic"
 
 
 def test_normalize_problem_attaches_verification_plan():

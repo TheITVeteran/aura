@@ -109,8 +109,18 @@ _MATH_HINT = re.compile(
     re.I,
 )
 _REPO_HINT = re.compile(r"\b(repo|codebase|module|where is|which file|architecture|how does .* work|implemented)\b", re.I)
-_PLAN_HINT = re.compile(r"\b(plan|steps|how (?:do|would) (?:i|we|you)|approach|strategy|roadmap)\b", re.I)
+_PLAN_HINT = re.compile(
+    r"\b(plan|steps|how (?:do|would) (?:i|we|you)|approach|strategy|roadmap|"
+    r"schedul\w*|makespan|deadline\w*|prerequisite\w*|dependenc\w*|"
+    r"resource allocation|execution order|horizon)\b",
+    re.I,
+)
 _FACT_HINT = re.compile(r"\b(what is|who is|when did|define|explain|fact|true that)\b", re.I)
+_LOGIC_HINT = re.compile(
+    r"\b(causal|counterfactual|intervention|premise|claim|deduce|infer|"
+    r"constraint|actual winner|highest score)\w*\b",
+    re.I,
+)
 
 
 def classify_task_type(text: str) -> str:
@@ -138,6 +148,8 @@ def classify_task_type(text: str) -> str:
         return "math"
     if _PLAN_HINT.search(t):
         return "planning"
+    if _LOGIC_HINT.search(t):
+        return "logic"
     if _FACT_HINT.search(t):
         return "factual"
     return "generic"
@@ -150,6 +162,7 @@ _VERIFICATION_PLANS = {
     "architecture": ["require source-span evidence", "confirm cited paths/symbols exist"],
     "factual": ["ground confident claims in supplied evidence", "hedge what cannot be grounded"],
     "planning": ["steps must be actionable", "plan must end with a verification step"],
+    "logic": ["make premises explicit", "search for a counterexample", "cross-check the conclusion"],
     "generic": ["check for non-sequiturs", "calibrate confidence to evidence"],
 }
 
@@ -1581,6 +1594,11 @@ def is_amplifiable(objective: str) -> str | None:
     task_type = classify_task_type(q)
     if task_type in {"code", "math", "repo_audit", "architecture"}:
         return task_type
+    if task_type in {"logic", "planning", "factual"}:
+        from core.brain.executable_reasoning import should_use_executable_reasoning
+
+        if should_use_executable_reasoning(q, task_type=task_type):
+            return task_type
     return None
 
 
