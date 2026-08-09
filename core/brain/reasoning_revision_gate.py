@@ -300,6 +300,12 @@ class DeliberationResult:
     rejected_revisions: int
     verified: bool
     trail: list[dict[str, Any]] = field(default_factory=list)
+    #: Distinct answers actually examined. Under i.i.d. sampling from a
+    #: peaked model this is far below ``passes`` — best-of-8 is best-of-2 —
+    #: and it is the quantity a search improvement has to move.
+    distinct_answers: int = 0
+    #: Candidates excluded after being REFUTED with a checked verdict.
+    exclusions: int = 0
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -307,8 +313,42 @@ class DeliberationResult:
             "accepted_revisions": self.accepted_revisions,
             "rejected_revisions": self.rejected_revisions,
             "verified": self.verified,
+            "distinct_answers": self.distinct_answers,
+            "exclusions": self.exclusions,
+            # passes is what was SPENT; distinct is what was examined. A gap
+            # between them is duplicate work, and it is the whole reason the
+            # exclusion path exists.
+            "duplicate_passes": max(0, self.passes - self.distinct_answers),
             "trail": self.trail,
         }
+
+
+def _accepts_conditioning(solve: "Any") -> bool:
+    """Does this solver accept the exclusion block as a second argument?
+
+    Detected once, from the signature, rather than by calling and catching
+    TypeError — a TypeError raised INSIDE a two-argument solver would then
+    be misread as "it only takes one", and every later pass would silently
+    drop the exclusions while the receipt still claimed they were applied.
+    """
+    import inspect
+
+    try:
+        signature = inspect.signature(solve)
+    except (TypeError, ValueError):
+        return False
+    positional = [
+        parameter
+        for parameter in signature.parameters.values()
+        if parameter.kind
+        in (parameter.POSITIONAL_ONLY, parameter.POSITIONAL_OR_KEYWORD)
+    ]
+    if any(
+        parameter.kind is parameter.VAR_POSITIONAL
+        for parameter in signature.parameters.values()
+    ):
+        return True
+    return len(positional) >= 2
 
 
 async def deliberate_best_of(
@@ -319,6 +359,7 @@ async def deliberate_best_of(
     reliability_of: "Any" = None,
     margin: float = _DEFAULT_MARGIN,
     stop_when_verified: bool = False,
+    exclude_refuted: bool = True,
 ) -> DeliberationResult:
     """Run up to ``max_passes`` INDEPENDENT solves, keeping an answer only when
     the revision gate says its evidence clearly beats the one in hand.
@@ -335,7 +376,32 @@ async def deliberate_best_of(
     verifier's measured reliability (e.g. from the Verifier Foundry) so the
     confidence bounds are grounded in track record; it defaults to a neutral
     0.5. ``solve``/``verify`` may be sync or async.
+
+    ``exclude_refuted`` turns independent sampling into sampling WITHOUT
+    REPLACEMENT. When a pass produces an answer the verifier REFUTES with a
+    checked verdict, that answer is committed to a commitment ratchet and
+    the next pass is conditioned on not producing it again.
+
+    This does not reintroduce the chain the blindness exists to prevent. The
+    hazard of showing a prior candidate is rationalisation — the model sees
+    a plausible answer and agrees with it. A REFUTED candidate is the
+    opposite: it is removed, not offered, and only ever on a checked
+    refutation. Unrefuted and undecided candidates are never shown, so the
+    passes stay blind exactly where blindness was buying something.
+
+    What it buys is coverage. Under i.i.d. sampling from a peaked
+    distribution most passes re-derive the same answer, so best-of-8 is
+    best-of-2 in anything that matters. Each draw after an exclusion has
+    success probability p*/(1 − m) instead of p*, which dominates for every
+    N and every distribution — see
+    ``core.brain.llm.latent_cortex.sequential_exclusion`` for the
+    arithmetic and the three premises that can break it.
     """
+    from core.brain.llm.latent_cortex.commitment_ratchet import (
+        CommitmentRatchet,
+        Constraint,
+        ConstraintKind,
+    )
     import inspect
 
     async def _maybe_await(value: "Any") -> "Any":
@@ -363,12 +429,22 @@ async def deliberate_best_of(
     accepted = 0
     rejected = 0
     trail: list[dict[str, Any]] = []
+    ratchet = CommitmentRatchet()
+    seen_answers: set[str] = set()
+    exclusions = 0
+    solve_takes_conditioning = _accepts_conditioning(solve)
 
     for index in range(passes):
-        answer = str(await _maybe_await(solve(index)) or "").strip()
+        block = ratchet.conditioning_block() if exclude_refuted else ""
+        if solve_takes_conditioning:
+            raw = solve(index, block)
+        else:
+            raw = solve(index)
+        answer = str(await _maybe_await(raw) or "").strip()
         if not answer:
             trail.append({"pass": index, "skipped": "empty_answer"})
             continue
+        seen_answers.add(answer.lower())
         verdict = await _maybe_await(verify(answer))
         reliability = _reliability(verdict)
         decision = decide_revision(
@@ -389,6 +465,26 @@ async def deliberate_best_of(
                 accepted += 1
         else:
             rejected += 1
+
+        # Sampling without replacement, and ONLY on a checked refutation.
+        # An unchecked failure is a verifier that could not decide, and
+        # excluding what was never checked would remove the answer on the
+        # strength of not having looked at it.
+        if (
+            exclude_refuted
+            and getattr(verdict, "ok", None) is False
+            and getattr(verdict, "checked", False) is True
+        ):
+            if ratchet.commit(
+                Constraint(
+                    kind=ConstraintKind.EXCLUDES,
+                    subject=answer[:120],
+                    source="deliberate_best_of",
+                    step=index,
+                )
+            ).committed:
+                exclusions += 1
+                trail[-1]["excluded"] = True
 
         verified = bool(
             have_best
@@ -411,6 +507,8 @@ async def deliberate_best_of(
         rejected_revisions=rejected,
         verified=verified,
         trail=trail,
+        distinct_answers=len(seen_answers),
+        exclusions=exclusions,
     )
 
 
