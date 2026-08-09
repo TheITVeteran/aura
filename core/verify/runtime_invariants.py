@@ -1255,9 +1255,17 @@ def _affect_state_views_are_canonical() -> Iterator[Violation]:
     description="no registered claim about the runtime is currently unsupported",
 )
 def _claims_supported() -> Iterator[Violation]:
-    from core.organism.model_validation import get_suite
+    from core.organism.model_validation import Outcome, get_suite
 
     for entry in get_suite().unsupported_claims():
+        # A claim whose instrument had no population to measure is a claim
+        # with no evidence — but it is not a contradicted claim, and in a
+        # bare process (an offline test run, a partial boot) lockdep, the
+        # rate groups and the health checker legitimately have nothing in
+        # front of them. Contradicted is an error; unevidenced is reported
+        # separately below so it cannot be mistaken for support.
+        if entry.get("outcome") == str(Outcome.NOT_MEASURED):
+            continue
         yield Violation(
             subject=entry["test"],
             message=(
@@ -1265,6 +1273,41 @@ def _claims_supported() -> Iterator[Violation]:
                 f"({entry.get('outcome', 'unrun')})"
             ),
             remedy=f"fix the behaviour, or withdraw the claim from {entry['asserted_in']}",
+        )
+
+
+@invariant(
+    "claims.no_claim_rests_on_an_empty_instrument",
+    scope="cognition",
+    severity=Severity.WARNING,
+    owner=_OWNER,
+    description="every claim's instrument had something to measure",
+)
+def _claims_were_measured() -> Iterator[Violation]:
+    """Claims backed by an instrument that ran over an empty set.
+
+    Three of these used to score a clean zero and PASS: lockdep counted 0
+    splats across 0 known locks, the rate-group test took ``max([])`` of 0
+    groups, and the health checker reported 0 unresponsive of 0 registered.
+    A warning rather than an error because an idle subsystem is normal in a
+    partial process — but never silence, because "measured nothing" reading
+    as "measured fine" is what this whole registry exists to prevent.
+    """
+    from core.organism.model_validation import Outcome, get_suite
+
+    for entry in get_suite().unsupported_claims():
+        if entry.get("outcome") != str(Outcome.NOT_MEASURED):
+            continue
+        yield Violation(
+            subject=entry["test"],
+            message=(
+                f"{entry['statement']} — no evidence this run: "
+                f"{entry.get('reason', 'instrument measured nothing')}"
+            ),
+            remedy=(
+                "exercise the subsystem before reading its claim, or accept that "
+                "this claim is unevidenced in this process"
+            ),
         )
 
 

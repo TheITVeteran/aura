@@ -51,6 +51,24 @@ from typing import Any, Protocol
 logger = logging.getLogger("Aura.Validation")
 
 
+class NothingMeasured(RuntimeError):
+    """The instrument ran and had no population to measure.
+
+    Raised so the suite reports :attr:`Outcome.NOT_MEASURED` rather than
+    PASS. Three tests here scored a clean zero over an empty set — lockdep
+    counted 0 splats across 0 known locks, the rate-group test took
+    ``max([])`` of 0 groups, and the health test counted 0 unresponsive
+    components out of 0 registered. All three passed, and all three were
+    measuring nothing.
+
+    Zero-over-zero is the exact shape this module exists to refuse: the
+    absence of a check reported as a passed check. It is not an ERROR either
+    — the instrument is fine, there was simply nothing in front of it — and
+    the claim it backs is neither confirmed nor refuted, so
+    :meth:`ValidationSuite.unsupported_claims` lists it.
+    """
+
+
 class Outcome(StrEnum):
     PASS = "pass"
     FAIL = "fail"
@@ -59,6 +77,13 @@ class Outcome(StrEnum):
     NOT_APPLICABLE = "n/a"
     #: The test could not run. Also not the same as failing.
     ERROR = "error"
+    #: The instrument ran and had no population to measure — lockdep knowing
+    #: zero locks, zero rate groups having completed a cycle, zero components
+    #: registered with the health checker. Separate from ERROR because the
+    #: instrument is not broken, and emphatically separate from PASS: all
+    #: three of those scored a clean zero and passed, which is the absence of
+    #: a check reported as a passed check.
+    NOT_MEASURED = "not_measured"
 
 
 @dataclass(frozen=True)
@@ -213,6 +238,24 @@ class ValidationTest:
             )
         try:
             prediction = self.predict(model)
+        except NothingMeasured as exc:
+            # Not an error: the instrument works and there was nothing in
+            # front of it. Reported as its own outcome so an idle subsystem
+            # can never be read as a healthy one.
+            logger.info(
+                "Validation %s measured nothing: %s", self.name, exc
+            )
+            return TestResult(
+                test=self.name,
+                model=model.name,
+                score=Score(
+                    kind="not_measured",
+                    value=0.0,
+                    outcome=Outcome.NOT_MEASURED,
+                    interpretation=str(exc),
+                ),
+                duration_s=time.perf_counter() - started,
+            )
         except Exception as exc:  # noqa: BLE001 — could not run is not failed
             logger.warning(
                 "Validation prediction %s failed for model %s",
@@ -439,6 +482,7 @@ class ValidationSuite:
 
         failures = [r for r in results if r.score.outcome is Outcome.FAIL]
         errors = [r for r in results if r.score.outcome is Outcome.ERROR]
+        unmeasured = [r for r in results if r.score.outcome is Outcome.NOT_MEASURED]
         return {
             "at": time.time(),
             "models": [m.name for m in models],
@@ -448,14 +492,31 @@ class ValidationSuite:
             "passed": by_outcome.get(str(Outcome.PASS), 0),
             "failed": len(failures),
             "errored": len(errors),
+            # Instruments that ran with nothing in front of them. Counted
+            # separately from both PASS and ERROR: these used to score a
+            # clean zero and pass.
+            "not_measured": len(unmeasured),
             # A suite where everything is N/A passes vacuously; say so.
             "applicable": len(results) - by_outcome.get(str(Outcome.NOT_APPLICABLE), 0),
+            # ...and neither an N/A nor an empty instrument is evidence.
+            "measured": (
+                len(results)
+                - by_outcome.get(str(Outcome.NOT_APPLICABLE), 0)
+                - len(unmeasured)
+            ),
             "failures": [r.to_dict() for r in failures],
             "errors": [r.to_dict() for r in errors],
+            "unmeasured": [r.to_dict() for r in unmeasured],
         }
 
+    #: Outcomes that leave a claim standing on nothing. NOT_MEASURED belongs
+    #: here for the same reason FAIL does: a claim backed by an instrument
+    #: that had no population is a claim with no evidence behind it, however
+    #: clean the number looked.
+    _UNSUPPORTING = (Outcome.FAIL, Outcome.ERROR, Outcome.NOT_MEASURED)
+
     def unsupported_claims(self) -> list[dict[str, Any]]:
-        """Claims whose test last failed or could not run.
+        """Claims whose test last failed, could not run, or measured nothing.
 
         This is the machine-checked version of CLAIMS_NOT_SUPPORTED.md.
         """
@@ -468,9 +529,9 @@ class ValidationSuite:
             if not relevant:
                 out.append({**claim.to_dict(), "reason": "never run"})
                 continue
-            if any(r.score.outcome in (Outcome.FAIL, Outcome.ERROR) for r in relevant):
+            if any(r.score.outcome in self._UNSUPPORTING for r in relevant):
                 worst = next(
-                    r for r in relevant if r.score.outcome in (Outcome.FAIL, Outcome.ERROR)
+                    r for r in relevant if r.score.outcome in self._UNSUPPORTING
                 )
                 out.append(
                     {
@@ -705,7 +766,7 @@ def install_runtime_validation() -> dict[str, Any]:
                 source="core/runtime/lockdep.py — a clean process has no splats",
                 units="violations",
             ),
-            predict=lambda _m: len(_lockdep()["splats"]),
+            predict=lambda _m: _lockdep_splats(),
             score=lambda p, o: threshold_score(float(p), float(o.value), units=" splats"),
             owner="core/runtime/lockdep.py",
         )
@@ -784,7 +845,7 @@ def install_runtime_validation() -> dict[str, Any]:
                 source="core/fsw/health_checker.py — critical components must answer",
                 units="components",
             ),
-            predict=lambda _m: len(_health()["critical_unresponsive"]),
+            predict=lambda _m: _critical_unresponsive(),
             score=lambda p, o: threshold_score(float(p), float(o.value), units=" components"),
             owner="core/fsw/health_checker.py",
         )
@@ -916,7 +977,17 @@ def install_runtime_validation() -> dict[str, Any]:
             "core/security/state_attestation.py",
         ),
         (
-            "The runtime takes its locks in a consistent order and has no latent ABBA deadlock.",
+            # Scoped deliberately. Lockdep can only order the locks it wraps,
+            # and most of this runtime's locks are still raw threading/asyncio
+            # primitives it never sees — capability_engine was instrumented
+            # *after* it deadlocked the boot path, not before. The unscoped
+            # version of this sentence claimed the whole runtime was clear of
+            # ABBA on evidence covering a minority of its locks.
+            # tools/lint_lock_coverage.py holds the ratchet that shrinks the
+            # gap; when it reaches parity this qualifier can go.
+            "Among the locks lockdep instruments, the runtime takes its locks in a "
+            "consistent order and has no latent ABBA deadlock. Locks not wrapped in "
+            "checked_lock/checked_async_lock are outside this claim.",
             "lockdep_reports_no_order_violations",
             "core/runtime/lockdep.py",
         ),
@@ -1239,6 +1310,28 @@ def _lockdep() -> dict[str, Any]:
     return lockdep_report()
 
 
+def _lockdep_splats() -> int:
+    """Order violations, but only once lockdep has actually seen a lock.
+
+    ``known_locks`` is what lockdep can reason about; ``acquires_checked``
+    is whether anything was taken while it watched. An empty either way means
+    no ordering evidence exists in this process, however clean the number
+    looks.
+    """
+    report = _lockdep()
+    if not report.get("known_locks"):
+        raise NothingMeasured(
+            "lockdep knows 0 locks in this process; 0 splats is not evidence "
+            "of correct lock ordering"
+        )
+    if not report.get("acquires_checked"):
+        raise NothingMeasured(
+            f"lockdep knows {len(report['known_locks'])} lock(s) but observed 0 "
+            "acquisitions; no ordering was exercised"
+        )
+    return len(report["splats"])
+
+
 def _semantic_autonomy_contract_holds() -> bool:
     from core.conversation.request_mood import assess_request_mood
     from core.runtime.overt_action_loop import OvertActionLoop
@@ -1398,7 +1491,36 @@ def _slowest_group_fraction() -> float:
     fractions = [
         g["p50_ms"] / g["period_ms"] for g in groups if g["period_ms"] and g["cycles"]
     ]
-    return max(fractions) if fractions else 0.0
+    if not fractions:
+        # `max([]) if fractions else 0.0` returned 0.0 — a perfect score — for
+        # a process with no rate groups running. "Nothing is late" and
+        # "nothing is scheduled" are not the same finding.
+        raise NothingMeasured(
+            f"{len(groups)} rate group(s) registered and none has completed a "
+            "cycle with a declared period; there is no rate to compare against"
+        )
+    return max(fractions)
+
+
+def _critical_unresponsive() -> int:
+    """Wedged critical components, once there are critical components.
+
+    Counted 0 out of 0 registered and scored a pass. A health checker with
+    nothing registered is the state a boot failure leaves behind, so that
+    zero was most trustworthy exactly when it was least earned.
+    """
+    report = _health()
+    if not report.get("watched"):
+        raise NothingMeasured(
+            "the health checker watches 0 components; 0 unresponsive is not "
+            "evidence that anything is answering"
+        )
+    if not report.get("rounds"):
+        raise NothingMeasured(
+            f"the health checker watches {report['watched']} component(s) but has "
+            "completed 0 ping rounds; nothing has been asked yet"
+        )
+    return len(report["critical_unresponsive"])
 
 
 #: Name of the probe container the attribution test grows. Registered once

@@ -140,17 +140,24 @@ def test_memory_provider_registers_usable_knowledge_graph_and_dreamer(tmp_path, 
 
 
 def test_memory_provider_migrates_legacy_knowledge_graph_file(tmp_path, monkeypatch):
+    import contextlib
     import sqlite3
 
     from core.config import Paths
     from core.container import ServiceContainer
     from core.providers.memory_provider import register_memory_services
 
+    # contextlib.closing, not a bare `with sqlite3.connect(...)`: the
+    # connection's own context manager commits a transaction and leaves the
+    # handle open. That left knowledge.db open past teardown and the hermetic
+    # sandbox reported it as a leak — the test failed for its own plumbing
+    # rather than for the migration it checks.
     legacy_path = tmp_path / "data" / "knowledge_graph"
     legacy_path.parent.mkdir(parents=True)
-    with sqlite3.connect(legacy_path) as conn:
+    with contextlib.closing(sqlite3.connect(legacy_path)) as conn:
         conn.execute("CREATE TABLE migration_marker (value TEXT NOT NULL)")
         conn.execute("INSERT INTO migration_marker(value) VALUES ('preserved')")
+        conn.commit()
 
     ServiceContainer.clear()
     monkeypatch.setattr(Paths, "_runtime_home_cache", tmp_path)
@@ -164,7 +171,7 @@ def test_memory_provider_migrates_legacy_knowledge_graph_file(tmp_path, monkeypa
         canonical_db = legacy_path / "knowledge.db"
         assert kg.db_path == str(canonical_db)
         assert legacy_path.is_dir()
-        with sqlite3.connect(canonical_db) as conn:
+        with contextlib.closing(sqlite3.connect(canonical_db)) as conn:
             assert conn.execute("SELECT value FROM migration_marker").fetchone() == (
                 "preserved",
             )
