@@ -39433,3 +39433,39 @@ bit-identical gradients rather than relaxing its tolerance.
 Three independently randomized objective/canary test orders pass `32/32`
 each; canonical smoke passes `103/103`; Ruff, compilation, and diff hygiene
 pass.
+
+## Checkpoint 2026-08-08-058: Joint Training Executes but Harms Held-Out Output
+
+The fresh CP057 canary completed the complete bounded training sequence on its
+published source: 32 process-bootstrap updates, eight branch-specialization
+updates, eight generated-answer projection updates with paired-depth terms,
+and eight nondegenerate process-GRPO updates. Process loss retained the CP055
+convergence profile, every specialization panel exceeded its `0.30` target by
+more than threefold, and all 32 on-policy samples were causally admitted. The
+experiment therefore failed as a capability treatment, not as infrastructure.
+
+The unchanged disjoint free-generation probe regressed from `2/8` to `1/8`.
+Depth two fell from one correct answer to zero, aggregate gain was `-1`, and
+ordinary decoding remained correct on all four task identities. Three trained
+responses contained the semantically expected value in a noncanonical shape,
+but the exact contract rejected them; accepting all three would still not
+establish a strict full-engine gain over the ordinary floor. The adapter is
+rejected and the same training recipe may not be rerun.
+
+This result also closes a measurement mismatch. The treatment probe forced
+`decode_incumbent_policy=latent`, while Aura's resident complete engine uses a
+canonical ordinary answer as the incumbent and permits a recurrent candidate
+to replace it only through independent confidence-bound verification. The
+negative latent-path result remains valid evidence about intrinsic transfer,
+but it is not a measurement of the complete floor-preserving engine Bryan
+asked to test. The next discriminator must retain the intrinsic probe and add
+a paired full-engine arm bound to the exact ordinary artifact. It may claim a
+gain only when the complete engine preserves every correct ordinary answer and
+independently promotes at least one correct recurrent candidate on a disjoint
+task.
+
+Compact evidence is
+`artifacts/closeout/latent_cortex/cp058_joint_objective_negative_transfer_1p5b.json`.
+Reasoning gain, frontier performance, fusion, activation, and `WOW Signal`
+remain false. The completion envelope remains `809/920` (approximately
+`87.9%`).

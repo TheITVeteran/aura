@@ -1,0 +1,110 @@
+{
+  "schema": "aura.rlc.cp058_joint_objective_negative_transfer_1p5b.v1",
+  "checkpoint": "CP058",
+  "source_commit": "9ab3a7b0b66a45a7b4f9d22a3251b60e94155493",
+  "model": "/Users/bryan/.aura/live-source/models/Qwen2.5-1.5B-Instruct-4bit",
+  "model_fingerprint": "d6e4ecf7593b78cb88ded2f4e98dd26b16802b38d2421b2af805eaea2f24f37d",
+  "seed": 2026080805,
+  "elapsed_s": 505.47724199295044,
+  "process_bootstrap": {
+    "steps": 32,
+    "first_epoch_loss_range": [1.713630497455597, 2.1763031482696533],
+    "last_epoch_loss_range": [0.09264294430613518, 0.5614098310470581]
+  },
+  "branch_specialization": {
+    "steps": 8,
+    "panel_count": 8,
+    "minimum_final_separation": 1.146490216255188,
+    "maximum_final_separation": 1.4572012424468994,
+    "target_separation": 0.3
+  },
+  "answer_projection": {
+    "steps": 8,
+    "losses": [
+      8.037601017951966,
+      10.172919535636902,
+      3.7721395194530487,
+      9.363531851768494,
+      2.5615462005138396,
+      4.561971947550774,
+      5.235755920410156,
+      1.866310179233551
+    ],
+    "paired_depth_losses": [
+      0.6647900581359864,
+      0.29196169376373293,
+      0.0,
+      0.14780833721160888,
+      0.04199252426624298,
+      0.0,
+      0.0,
+      0.0
+    ]
+  },
+  "process_grpo": {
+    "steps": 8,
+    "group_size": 4,
+    "sample_count": 32,
+    "optimizer_updates": 8,
+    "nonzero_reward_samples": 15,
+    "exact_correct_samples": 0,
+    "parsed_samples": 15,
+    "mean_rewards": [
+      0.308333,
+      0.179167,
+      0.391667,
+      0.3,
+      0.070833,
+      0.141667,
+      0.070833,
+      0.083333
+    ]
+  },
+  "adapter_before_sha256": "1faf4b9885e4ebc09b2b1b0f117b462bfeef7ed6c77db90ae406112e4a429bea",
+  "adapter_after_sha256": "4a8c960f12fe7bb620d935e87f5c0169be0da42e912f49d0b8b98341b3dd3493",
+  "before": {
+    "correct_by_depth": {"1": 1, "2": 1},
+    "total_correct": 2,
+    "total_observations": 8
+  },
+  "after": {
+    "correct_by_depth": {"1": 1, "2": 0},
+    "total_correct": 1,
+    "total_observations": 8
+  },
+  "ordinary_decode": {
+    "correct": 4,
+    "total_task_identities": 4
+  },
+  "admission": {
+    "decision": "reject_checkpoint_behavioral_gain_unproven",
+    "aggregate_correct_gain": -1,
+    "training_by_depth_interaction": -1,
+    "trained_depth_regressions": 1,
+    "strict_heldout_free_generation_gain": false,
+    "positive_training_by_depth_interaction": false,
+    "no_trained_depth_regressions": false,
+    "beats_ordinary_decode": false,
+    "admitted": false
+  },
+  "diagnosis": {
+    "training_pipeline_executed": true,
+    "process_language_acquired": true,
+    "branch_specialization_observed": true,
+    "paired_depth_projection_exercised": true,
+    "on_policy_optimizer_signal_observed": true,
+    "heldout_answer_transfer_observed": false,
+    "ordinary_floor_preserved": false,
+    "evaluated_output_policy": "latent",
+    "evaluated_complete_floor_preserving_engine": false,
+    "contract_malformed_but_semantically_plausible_after_responses": 3,
+    "same_recipe_rerun_authorized": false
+  },
+  "source_receipt_sha256": "6415da1822ab8bf1bf1a9ad5f7adb2ccc3e8c5d8e64e4ff7a1fb3ba635c12f20",
+  "claims": {
+    "reasoning_gain_proven": false,
+    "frontier_level_proven": false,
+    "fusion_authorized": false,
+    "wow_signal_authorized": false
+  }
+}
