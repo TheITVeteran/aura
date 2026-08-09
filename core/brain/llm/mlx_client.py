@@ -6774,6 +6774,19 @@ class MLXLocalClient:
                 severity="warning",
             )
             tokens_used = candidate_total
+
+        # Batch decoding runs the same transformer hooks, so it fills the Φ
+        # residual ring too. Drained here rather than left for the next
+        # foreground turn: a verifier sweep is hundreds of states, and several
+        # between turns would wrap the ring and throw away transitions the
+        # complex could have used.
+        #
+        # The LATENT readouts are deliberately NOT drained here. Those inject
+        # into the substrate, and verifier sampling is not Aura having a
+        # thought — feeding it back would make her mood a function of how many
+        # candidates a best-of-N search happened to decode.
+        self._drain_phi_residual_ring()
+
         return {
             "texts": texts,
             "tokens_used_consistent": tokens_used_consistent,

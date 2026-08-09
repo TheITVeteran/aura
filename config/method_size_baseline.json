@@ -1,7 +1,7 @@
 {
   "threshold_lines": 400,
   "tracked": 71,
-  "total_lines": 66141,
+  "total_lines": 66148,
   "functions": {
     "core/brain/cognitive_engine.py::CognitiveEngine._direct_desktop_quick_reply": {
       "lines": 971,
@@ -139,8 +139,8 @@
       "returns": 8
     },
     "core/brain/reasoning_amplifier_v2.py::ReasoningAmplifierV2.amplify": {
-      "lines": 461,
-      "complexity": 91,
+      "lines": 468,
+      "complexity": 92,
       "returns": 4
     },
     "core/capability_engine.py::CapabilityEngine._load_default_trigger_patterns": {
