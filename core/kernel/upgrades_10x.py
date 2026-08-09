@@ -9,7 +9,6 @@ import random
 import re
 import time
 from collections import deque
-from pathlib import Path
 from typing import TYPE_CHECKING
 
 from core.phases.response_contract import (
@@ -25,6 +24,7 @@ from core.runtime.skill_task_bridge import (
     looks_like_multi_step_skill_request,
     normalize_matched_skills,
 )
+from core.runtime.state_ownership import state_root
 from core.runtime.structured_input import looks_like_learning_resource_bundle
 from core.runtime.tool_result_contracts import compact_result_payload
 from core.runtime.turn_analysis import canonical_turn_text
@@ -32,7 +32,6 @@ from core.state.aura_state import AuraState
 from core.utils.task_tracker import get_task_tracker
 
 from .bridge import Phase
-from core.runtime.state_ownership import state_root
 
 if TYPE_CHECKING:
     from core.kernel.aura_kernel import AuraKernel
@@ -1488,6 +1487,9 @@ class GodModeToolPhase(Phase):
             )
             state.response_modifiers["last_skill_run"] = skill_name
             state.response_modifiers["last_skill_ok"] = ok
+            state.response_modifiers["last_skill_turn_marker"] = (
+                state.response_modifiers.get("evidence_turn_marker")
+            )
             state.response_modifiers["last_skill_objective_hash"] = _objective_fingerprint(
                 objective
             )

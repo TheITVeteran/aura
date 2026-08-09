@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import re
 from dataclasses import asdict, dataclass
 from datetime import datetime
@@ -1147,6 +1148,24 @@ def build_response_contract(
         import uuid as _uuid
 
         modifiers["evidence_turn_marker"] = _uuid.uuid4().hex
+        normalized_objective = " ".join(str(text or "").split()).strip()
+        objective_sha256 = (
+            hashlib.sha256(normalized_objective.encode("utf-8")).hexdigest()
+            if normalized_objective
+            else ""
+        )
+        # Tool phases run before response generation. Rebuilding the response
+        # contract used to rotate this marker after the tool had echoed it,
+        # invalidating valid evidence during the same turn. Per-turn modifier
+        # scrubbing prevents an earlier turn's objective-bound skill receipt
+        # from reaching this point.
+        if (
+            modifiers.get("last_skill_ok") is True
+            and objective_sha256
+            and str(modifiers.get("last_skill_objective_hash") or "").strip()
+            == objective_sha256
+        ):
+            modifiers["last_skill_turn_marker"] = modifiers["evidence_turn_marker"]
 
     tool_evidence = has_tool_evidence(state)
     memory_evidence = has_memory_evidence(state)

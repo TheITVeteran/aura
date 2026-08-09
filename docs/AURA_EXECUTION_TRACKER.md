@@ -39858,3 +39858,46 @@ surfaces remains an explicit open RLC unification task. Resident-32B gain,
 cross-domain generality, intrinsic recurrent-neural gain, frontier performance,
 fusion, activation, and `WOW Signal` remain false. The completion envelope
 therefore remains `809/920` (approximately `87.9%`).
+
+## Checkpoint 2026-08-09-071: Governed Observations Enter the Canonical Cortex
+
+The CP070 healthy-chat route could already assemble memory, offline reference
+evidence, body state, goals, Will, affect, self-model, and world-model state.
+It did not consume the governed capability result that the same live turn had
+just obtained. Web research, browser reading, status probes, and Python output
+could therefore inform ordinary response generation while the canonical RLC
+reasoned without them.
+
+A single admission contract now turns a successful current-turn observational
+capability result into a typed recurrent evidence slot. Freshness is proven by
+the normalized objective digest or the response contract's current-turn marker.
+Failed, stale, or state-mutating results are excluded. Retrieved content passes
+the prompt-injection guard and epistemic firewall before admission, carries
+content and retrieval-receipt hashes, and always has
+`instruction_authority=False`. The six-slot workspace limit remains hard; when
+fresh evidence requires a slot, the lowest-priority organ context is displaced
+and identified in the merge receipt instead of being silently dropped.
+
+Response-contract reconstruction now rebinds same-turn tool evidence rather
+than invalidating it with a newly generated marker, and all evidence markers
+are removed with the rest of the turn-transient state. Auto-browsed pages carry
+their source URL and objective binding. The installed runtime validation suite
+now exercises the admission and stale-result refusal instead of merely claiming
+that the route exists.
+
+The wider ordered gate exposed an independent lifecycle defect: a shutdown
+callback could close the governance-vault SQLite connection while leaving its
+singleton available. A later identity attestation then failed only under suite
+ordering. Shutdown now clears the singleton through a stable callback, and the
+accessor atomically rejects either a normally closed instance or an externally
+closed handle.
+
+Ordered capability, foreground, contract, cognition, ingress, validation, and
+SQLite lifecycle tests pass `248/248`; canonical smoke passes `103/103`; Ruff,
+compilation, and diff hygiene pass. Compact evidence is
+`artifacts/closeout/latent_cortex/cp071_capability_evidence_unification.json`.
+This proves causal admission of already-executed governed observations, not
+autonomous mid-episode invocation of arbitrary tools or an installed-app,
+resident-32B, general, neural-transfer, frontier, fusion, activation, or
+`WOW Signal` result. The completion envelope remains `809/920` (approximately
+`87.9%`).

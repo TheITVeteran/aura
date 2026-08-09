@@ -113,6 +113,42 @@ def test_governance_vault_close_is_idempotent(tmp_path: Path) -> None:
         connection.execute("SELECT 1")
 
 
+def test_governance_vault_singleton_is_recreated_after_shutdown(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from core.security import governance_vault
+
+    first = governance_vault.GovernanceVault(tmp_path / "vault.db")
+    monkeypatch.setattr(governance_vault, "_instance", first)
+    monkeypatch.setattr(governance_vault, "_register_vault_lifecycle", lambda: None)
+
+    result = governance_vault.close_governance_vault()
+    monkeypatch.setattr(governance_vault, "_DB_PATH", tmp_path / "vault.db")
+    second = governance_vault.get_governance_vault()
+
+    assert result == {"clean": True, "closed": True}
+    assert second is not first
+    assert second.is_open() is True
+
+
+def test_governance_vault_singleton_rejects_a_dead_external_handle(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from core.security import governance_vault
+
+    first = governance_vault.GovernanceVault(tmp_path / "vault.db")
+    assert first._conn is not None
+    first._conn.close()
+    monkeypatch.setattr(governance_vault, "_instance", first)
+    monkeypatch.setattr(governance_vault, "_DB_PATH", tmp_path / "vault.db")
+    monkeypatch.setattr(governance_vault, "_register_vault_lifecycle", lambda: None)
+
+    second = governance_vault.get_governance_vault()
+
+    assert second is not first
+    assert second.is_open() is True
+
+
 def test_memory_services_expose_path_scoped_container_close(tmp_path: Path) -> None:
     from core.memory.episodic_memory import EpisodicMemory
     from core.memory.knowledge_graph import PersistentKnowledgeGraph

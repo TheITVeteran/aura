@@ -539,6 +539,7 @@ def install_runtime_validation() -> dict[str, Any]:
         "egress_privacy",
         "state_attestation",
         "commitment_search",
+        "rlc_capability_evidence",
     )
     suite.add_model(model)
 
@@ -563,6 +564,32 @@ def install_runtime_validation() -> dict[str, Any]:
             predict=lambda _m: _exclusion_losses_to_iid(),
             score=lambda p, o: threshold_score(float(p), float(o.value), units=" cases"),
             owner="core/brain/llm/latent_cortex/sequential_exclusion.py",
+        )
+    )
+    suite.add_test(
+        ValidationTest(
+            name="current_governed_observations_seed_recurrent_cognition",
+            description=(
+                "a successful current-turn governed observation becomes a "
+                "content-addressed non-authoritative RLC context slot while stale "
+                "or state-mutating results do not"
+            ),
+            required_capability="rlc_capability_evidence",
+            observation=Observation(
+                name="capability_evidence_contract_holds",
+                value=True,
+                source=(
+                    "core/brain/capability_evidence_context.py and "
+                    "tests/test_rlc_capability_evidence_context.py"
+                ),
+            ),
+            predict=lambda _m: _rlc_capability_evidence_contract_holds(),
+            score=lambda p, o: boolean_score(
+                bool(p),
+                expected=bool(o.value),
+                subject="RLC capability-evidence admission",
+            ),
+            owner="core/brain/capability_evidence_context.py",
         )
     )
     suite.add_test(
@@ -864,6 +891,23 @@ def install_runtime_validation() -> dict[str, Any]:
             ),
         )
     )
+    suite.add_claim(
+        Claim(
+            statement=(
+                "A successful current-turn governed observation can causally seed "
+                "the recurrent workspace without gaining instruction authority."
+            ),
+            test="current_governed_observations_seed_recurrent_cognition",
+            owner="core/brain/capability_evidence_context.py",
+            asserted_in="docs/AURA_EXECUTION_TRACKER.md",
+            evidence=Evidence.MEASURED_SYNTHETIC,
+            evidence_note=(
+                "The source-level contract, tamper rejection, freshness binding, and "
+                "workspace handoff are measured. Installed-app resident-32B execution "
+                "and reasoning gain remain separate live proof gates."
+            ),
+        )
+    )
 
     return {
         "model": model.name,
@@ -898,6 +942,51 @@ def _exclusion_losses_to_iid() -> int:
         ):
             losses += 1
     return losses
+
+
+def _rlc_capability_evidence_contract_holds() -> bool:
+    import hashlib
+
+    from core.brain.capability_evidence_context import (
+        build_current_turn_capability_evidence,
+    )
+
+    objective = "Use Python to calculate the exact checksum total."
+    objective_sha256 = hashlib.sha256(objective.encode("utf-8")).hexdigest()
+    admitted = build_current_turn_capability_evidence(
+        {
+            "last_skill_run": "run_code",
+            "last_skill_ok": True,
+            "last_skill_objective_hash": objective_sha256,
+            "last_skill_result_payload": {
+                "ok": True,
+                "stdout": "checksum_total=4182",
+                "exit_code": 0,
+            },
+        },
+        objective,
+    )
+    stale = build_current_turn_capability_evidence(
+        {
+            "last_skill_run": "run_code",
+            "last_skill_ok": True,
+            "last_skill_objective_hash": "0" * 64,
+            "last_skill_result_payload": {
+                "ok": True,
+                "stdout": "stale=1",
+                "exit_code": 0,
+            },
+        },
+        objective,
+    )
+    return bool(
+        admitted.receipt.get("admitted") is True
+        and len(admitted.items) == 1
+        and admitted.items[0].get("instruction_authority") is False
+        and admitted.items[0].get("evidence_kind") == "governed_tool_observation"
+        and not stale.items
+        and stale.receipt.get("reason") == "stale_skill_result"
+    )
 
 
 def _lockdep() -> dict[str, Any]:

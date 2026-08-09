@@ -1,0 +1,66 @@
+{
+  "schema": "aura.closeout.rlc_capability_evidence_unification.v1",
+  "checkpoint": "CP071",
+  "date": "2026-08-09",
+  "implementation": {
+    "canonical_route": "core/brain/foreground_latent_runtime.py",
+    "admission_contract": "core/brain/capability_evidence_context.py",
+    "causal_sources": [
+      "successful current-turn governed web and browser observations",
+      "successful current-turn pure or sandboxed compute including Python output",
+      "successful current-turn read-only and status observations",
+      "existing typed episodic and semantic memory ingress",
+      "existing offline reference acquisition including local corpus evidence",
+      "existing body, goals, Will, affect, self-model, and world-model ingress"
+    ],
+    "integrity": [
+      "objective digest or current-turn marker proves freshness",
+      "state-mutating and failed capability results are excluded",
+      "retrieved text is prompt-injection scanned before admission",
+      "the epistemic firewall admits or refuses every candidate",
+      "admitted observations carry content and retrieval receipt hashes",
+      "tool observations never gain instruction authority",
+      "the six-slot recurrent context limit is preserved with receipted displacement",
+      "turn-bound capability metadata is scrubbed after response completion"
+    ],
+    "lifecycle_repair": [
+      "response-contract reconstruction preserves same-turn evidence identity",
+      "the governance-vault shutdown callback clears the singleton",
+      "a dead SQLite handle is detected and atomically replaced before identity attestation"
+    ]
+  },
+  "verification": {
+    "ordered_contract_tests": {
+      "passed": 248,
+      "failed": 0,
+      "includes": [
+        "capability evidence admission and quarantine",
+        "canonical foreground RLC handoff",
+        "response contract and self-claim verification",
+        "cognitive and reference ingress",
+        "runtime model validation",
+        "governance-vault lifecycle order dependence"
+      ]
+    },
+    "smoke_tests": {
+      "passed": 103,
+      "failed": 0
+    },
+    "ruff": "pass",
+    "compile": "pass",
+    "diff_check": "pass"
+  },
+  "claim_boundary": {
+    "proven": "successful fresh governed observations can causally seed the canonical recurrent workspace without becoming instructions, while stale, failed, mutating, or quarantined results cannot",
+    "not_proven": [
+      "autonomous mid-episode invocation of arbitrary web or compute tools",
+      "installed-app execution of this source before user restart",
+      "resident 32B reasoning gain",
+      "cross-domain generality",
+      "intrinsic recurrent neural gain",
+      "frontier-level reasoning",
+      "fusion authority",
+      "WOW Signal"
+    ]
+  }
+}

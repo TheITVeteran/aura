@@ -27,6 +27,7 @@ import threading
 import time
 from pathlib import Path
 from typing import Any
+
 from core.runtime.state_ownership import state_root
 
 logger = logging.getLogger("Aura.GovernanceVault")
@@ -356,6 +357,17 @@ class GovernanceVault:
                 self._conn.close()
                 self._conn = None
 
+    def is_open(self) -> bool:
+        """Return whether this instance still owns a usable SQLite handle."""
+        with self._lock:
+            if self._conn is None:
+                return False
+            try:
+                self._conn.execute("SELECT 1")
+            except sqlite3.ProgrammingError:
+                return False
+            return True
+
     def get_status(self) -> dict[str, Any]:
         """Return vault status for health endpoints."""
         all_valid, results = self.verify_all()
@@ -371,9 +383,10 @@ class GovernanceVault:
 
 _instance: GovernanceVault | None = None
 _shutdown_registered = False
+_instance_lock = threading.RLock()
 
 
-def _register_vault_lifecycle(vault: GovernanceVault) -> None:
+def _register_vault_lifecycle() -> None:
     global _shutdown_registered
     if _shutdown_registered:
         return
@@ -381,7 +394,7 @@ def _register_vault_lifecycle(vault: GovernanceVault) -> None:
         from core.runtime.shutdown_coordinator import get_shutdown_coordinator
 
         get_shutdown_coordinator().register(
-            vault.close,
+            close_governance_vault,
             phase="state_vault",
             name="governance_vault",
             timeout=5.0,
@@ -393,20 +406,31 @@ def _register_vault_lifecycle(vault: GovernanceVault) -> None:
 
 def close_governance_vault() -> dict[str, object]:
     """Close the singleton without constructing it during shutdown."""
-
-    if _instance is None:
-        return {"clean": True, "closed": False, "reason": "not_initialized"}
-    try:
-        _instance.close()
-    except (sqlite3.Error, OSError) as exc:
-        return {"clean": False, "closed": False, "error": f"{type(exc).__name__}: {exc}"}
-    return {"clean": True, "closed": True}
+    global _instance
+    with _instance_lock:
+        instance = _instance
+        _instance = None
+        if instance is None:
+            return {"clean": True, "closed": False, "reason": "not_initialized"}
+        try:
+            instance.close()
+        except (sqlite3.Error, OSError) as exc:
+            return {
+                "clean": False,
+                "closed": False,
+                "error": f"{type(exc).__name__}: {exc}",
+            }
+        return {"clean": True, "closed": True}
 
 
 def get_governance_vault() -> GovernanceVault:
     """Get or create the singleton GovernanceVault."""
     global _instance
-    if _instance is None:
-        _instance = GovernanceVault()
-    _register_vault_lifecycle(_instance)
-    return _instance
+    with _instance_lock:
+        # A test, fork boundary, or legacy bound shutdown callback can leave a
+        # singleton object whose SQLite handle has already been closed. Never
+        # hand that corpse to identity verification: replace it atomically.
+        if _instance is None or not _instance.is_open():
+            _instance = GovernanceVault()
+        _register_vault_lifecycle()
+        return _instance

@@ -1,3 +1,5 @@
+import hashlib
+
 import pytest
 
 from core.brain.foreground_latent_runtime import (
@@ -97,6 +99,18 @@ async def test_foreground_latent_runner_executes_full_stack_with_typed_ingress(
         request_timeout_s=180.0,
         decode_max_tokens=900,
         recurrent_loops=2,
+        capability_modifiers={
+            "last_skill_run": "run_code",
+            "last_skill_ok": True,
+            "last_skill_objective_hash": hashlib.sha256(
+                b"Compare both designs."
+            ).hexdigest(),
+            "last_skill_result_payload": {
+                "ok": True,
+                "stdout": "measured delta=0.42",
+                "exit_code": 0,
+            },
+        },
     )
 
     assert outcome.succeeded is True
@@ -106,7 +120,15 @@ async def test_foreground_latent_runner_executes_full_stack_with_typed_ingress(
     assert len(service.calls) == 1
     call = service.calls[0]
     assert call["require_full_stack"] is True
-    assert call["cognitive_context"] == [{"source": "memory", "text": "bounded evidence"}]
+    assert call["cognitive_context"][0] == {
+        "source": "memory",
+        "text": "bounded evidence",
+    }
+    assert call["cognitive_context"][1]["source"] == "capability.run_code"
+    assert call["cognitive_context"][1]["text"] == "measured delta=0.42"
+    assert call["cognitive_context"][1]["instruction_authority"] is False
+    assert outcome.trace["latent_cortex_capability_evidence"]["admitted"] is True
+    assert outcome.trace["latent_cortex_context_merge"]["admitted_items"] == 2
     assert call["epistemic_genesis"] == "genesis"
     assert call["config_overrides"]["decode_max_tokens"] == 900
     assert call["runtime_controls"]["clean_user_surface_recurrent_loops"] == 2

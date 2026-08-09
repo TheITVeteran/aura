@@ -278,6 +278,7 @@ async def run_foreground_latent_episode(
     decode_top_p: float = 0.88,
     recurrent_loops: int = 1,
     steering_alpha: float = 0.25,
+    capability_modifiers: dict[str, Any] | None = None,
 ) -> ForegroundLatentOutcome:
     """Select and, when warranted, execute one full-stack latent episode."""
 
@@ -355,6 +356,35 @@ async def run_foreground_latent_episode(
             action="used bounded routing estimates after typed cognitive ingress failed",
             severity="warning",
         )
+
+    try:
+        from core.brain.capability_evidence_context import (
+            build_current_turn_capability_evidence,
+            merge_capability_evidence,
+        )
+
+        capability_bundle = build_current_turn_capability_evidence(
+            capability_modifiers,
+            visible_objective,
+        )
+        ingress_context, merge_receipt = merge_capability_evidence(
+            ingress_context,
+            capability_bundle,
+        )
+        trace["latent_cortex_capability_evidence"] = capability_bundle.receipt
+        trace["latent_cortex_context_merge"] = merge_receipt
+    except _RECOVERABLE_ERRORS as exc:
+        record_degradation(
+            "latent_cortex.capability_evidence",
+            exc,
+            action="retained organ ingress after capability evidence admission failed",
+            severity="warning",
+        )
+        trace["latent_cortex_capability_evidence"] = {
+            "schema": "aura.rlc.capability_evidence.v1",
+            "admitted": False,
+            "reason": f"admission_error:{type(exc).__name__}",
+        }
 
     reasoner = getattr(service, "deep_reason_with_acquisition", None)
     acquisition_kwargs: dict[str, Any] = {}

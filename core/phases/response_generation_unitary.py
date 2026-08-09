@@ -4946,11 +4946,17 @@ class UnitaryResponsePhase(Phase):
                     new_state.response_modifiers["last_skill_run"] = "sovereign_browser"
                     new_state.response_modifiers["last_skill_ok"] = True
                     new_state.response_modifiers["last_skill_turn_marker"] = new_state.response_modifiers.get("evidence_turn_marker")
+                    new_state.response_modifiers["last_skill_objective_hash"] = (
+                        self._objective_fingerprint(objective)
+                    )
                     new_state.response_modifiers["last_skill_result_payload"] = {
                         "ok": True,
                         "content": fetched_block[:250000],
                         "title": fetched_content_parts[0].split("\n")[0]
                         if fetched_content_parts
+                        else "",
+                        "source": str(auto_browse_urls[0])[:1200]
+                        if auto_browse_urls
                         else "",
                     }
                     # Rebuild contract now that tool evidence is available
@@ -5011,6 +5017,9 @@ class UnitaryResponsePhase(Phase):
                         new_state.response_modifiers["last_skill_run"] = grounded_skill
                         new_state.response_modifiers["last_skill_ok"] = True
                         new_state.response_modifiers["last_skill_turn_marker"] = new_state.response_modifiers.get("evidence_turn_marker")
+                        new_state.response_modifiers["last_skill_objective_hash"] = (
+                            self._objective_fingerprint(objective)
+                        )
                         new_state.response_modifiers["last_skill_result_payload"] = grounded_payload
                         contract = build_response_contract(
                             new_state, objective, is_user_facing=is_user_facing
@@ -5815,6 +5824,7 @@ class UnitaryResponsePhase(Phase):
                     steering_alpha=float(
                         controls.get("clean_user_surface_steering_alpha") or 0.25
                     ),
+                    capability_modifiers=dict(new_state.response_modifiers),
                 )
                 new_state.response_modifiers.update(latent_outcome.trace)
                 if latent_outcome.succeeded:
