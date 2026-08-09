@@ -1,0 +1,57 @@
+{
+  "schema": "aura.rlc.cp048_resident_32b_heldout_full_stack.v1",
+  "checkpoint": "CP048",
+  "base_commit": "058826511",
+  "model": "/Users/bryan/.aura/live-source/models/Qwen2.5-32B-Instruct-4bit",
+  "run_directory": "/tmp/aura-rlc-cp048-32b-d2-heldout-1024",
+  "seed": 20260911,
+  "per_domain": 1,
+  "difficulty": 2,
+  "max_tokens": 1024,
+  "artifact_sha256": {
+    "task_commitment_json": "f78387ebab5e1d3e5c9647c5db9f5eb8c26e5c6426c8a7cab6dfdfe518ed2dd7",
+    "decode_fingerprint_json": "de54aa1142604348222e27665acb8a759f7881c8c3dd05baed3e58a287e5f529",
+    "journal_jsonl": "1bfed4bfb9e49644c69b7adbec652ec512c9b89abf88cc645bb419760666719f",
+    "verdict_json": "7026fd0b5c31716e040df4c54a6dee0b93a3ad00e780492b1cd89d73b127fde0"
+  },
+  "scores": {
+    "vanilla": "2/7",
+    "vanilla_equal_compute": "3/7",
+    "full_stack": "2/7",
+    "contract_neutral_matches_strict": true
+  },
+  "mechanical_gates": {
+    "planned_cells": 21,
+    "completed_cells": 21,
+    "faults": 0,
+    "coverage_complete": true,
+    "evidence_manifest_valid": true,
+    "full_stack_runtime_measured": true,
+    "paired_vanilla_floor_holds": true,
+    "right_to_wrong_regressions": 0,
+    "unpromoted_byte_divergences": 0
+  },
+  "mechanism_diagnosis": {
+    "latent_proposals": 28,
+    "latent_strict_task_improvements": 0,
+    "latent_plateau_rollbacks": 28,
+    "fast_weight_optimized_steps": 0,
+    "cells_without_local_repair_candidates": 4,
+    "cells_with_refutation_but_no_dominant_repair": 3,
+    "post_adaptation_candidates": 0,
+    "failure_class": "verified_refutations_do_not_produce_promotable_content"
+  },
+  "latency_median_s": {
+    "vanilla": 72.3,
+    "vanilla_equal_compute": 256.0,
+    "full_stack": 216.8
+  },
+  "claims": {
+    "ordinary_parity_proven_on_this_sample": true,
+    "equal_compute_gain_proven": false,
+    "reasoning_gain_proven": false,
+    "fusion_authorized": false,
+    "frontier_level_proven": false,
+    "wow_signal_authorized": false
+  }
+}

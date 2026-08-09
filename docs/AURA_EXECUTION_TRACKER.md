@@ -39125,3 +39125,32 @@ and `WOW Signal` remain false. The completion envelope remains `809/920`
 (approximately `87.9%`). The held-out treatment must preserve the per-task
 ordinary floor and beat both ordinary and equal-compute controls under the same
 1024-token budget before any next-phase authorization.
+
+## Checkpoint 2026-08-08-048: Held-Out 32B Full Stack Preserves but Does Not Gain
+
+A disjoint seed produced a second source-bound resident-32B battery under the
+same difficulty and 1024-token budget. All `21/21` ordinary, equal-compute, and
+complete-engine cells committed without faults; evidence and runtime manifests
+validate. Ordinary decode scored `2/7`, equal-compute textual self-consistency
+scored `3/7`, and the complete RLC stack scored `2/7`. Strict and
+contract-neutral grades agree. Full stack preserved both ordinary successes,
+with zero right-to-wrong regressions and zero unpromoted byte divergences, but
+did not beat either control.
+
+The mechanism receipts identify the missing bridge. All seven recurrent cells
+attempted four latent proposals; all `28/28` remained semantic ties and rolled
+back under CP045, so no latent state gained commitment authority. Fast weights
+had zero admitted optimization steps. Four cells generated no local repair
+candidate. Three localized a known refutation but could not produce a dominant
+verified repair. No post-adaptation candidate survived. The current bottleneck
+is therefore content generation from verified failure evidence, not recurrence
+depth, transport shape, or incumbent-floor enforcement.
+
+The compact evidence record is
+`artifacts/closeout/latent_cortex/cp048_resident_32b_heldout_full_stack.json`.
+This is a clean non-regression result and a clean negative gain result. Fusion,
+frontier-level performance, and `WOW Signal` remain unauthorized. The
+completion envelope remains `809/920` (approximately `87.9%`). The next RLC
+checkpoint must create and independently verify task-local repair candidates
+from the refutation route; repeating this frozen stack cannot improve the
+verdict.
