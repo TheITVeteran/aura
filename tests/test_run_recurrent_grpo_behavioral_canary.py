@@ -6,7 +6,9 @@ from pathlib import Path
 
 import pytest
 
+from core.brain.llm.latent_cortex.execution_spec import RLCExecutionSpec
 from core.learning.recurrence_curriculum import task_battery
+from core.learning.recurrent_behavioral_probe import _full_engine_config
 from tools import run_recurrent_grpo_behavioral_canary as canary
 
 
@@ -140,6 +142,29 @@ def test_source_contract_binds_every_joint_objective() -> None:
     assert "core/learning/recurrence_native_objective_v2.py" in canary.SOURCE_PATHS
     assert "core/learning/recurrence_native_objective_v5.py" in canary.SOURCE_PATHS
     assert "core/learning/recurrence_native_objective_v6.py" in canary.SOURCE_PATHS
+    assert "core/brain/llm/latent_cortex/incumbent_artifact.py" in canary.SOURCE_PATHS
+    assert "core/brain/llm/latent_cortex/task_verifiers.py" in canary.SOURCE_PATHS
+
+
+def test_complete_engine_probe_is_not_the_naked_latent_ablation() -> None:
+    config = _full_engine_config(
+        RLCExecutionSpec(
+            n_slots=4,
+            branch_roles=("constructive_solution", "critical_audit"),
+            recurrent_steps=2,
+            exchange_interval=1,
+        )
+    )
+
+    assert config.decode_incumbent_policy == "vanilla_incumbent"
+    assert config.answer_replacement_enabled is True
+    assert config.local_repair_enabled is True
+    assert config.local_repair_max_attempts == 2
+    assert config.verifier_probe_contract == "final_answer_v1"
+    assert config.verifier_accept_non_regression is True
+    assert config.latent_opt.enabled is True
+    assert config.fast_weights.enabled is True
+    assert config.allow_vanilla_fallback is False
 
 
 def test_reward_is_correctness_dominant_and_format_credit_bounded() -> None:

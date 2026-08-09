@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+from pathlib import Path
 from typing import Any
 
 from core.brain.llm.latent_cortex.execution_spec import RLCExecutionSpec
@@ -74,6 +75,79 @@ def free_generation_sampling_config() -> RecurrentSamplingConfig:
         temperature=1.0,
         top_p=1.0,
     )
+
+
+def _ordinary_decode_once(
+    model: Any,
+    tokenizer: Any,
+    prompt_tokens: list[int],
+    *,
+    max_tokens: int,
+) -> tuple[str, list[int], str]:
+    """Generate one exact greedy incumbent with engine-equivalent stopping."""
+
+    from mlx_lm import stream_generate
+
+    from core.brain.llm.latent_cortex.answer_contract import is_contract_complete
+
+    pieces: list[str] = []
+    output_tokens: list[int] = []
+    termination = "token_limit"
+    for response in stream_generate(
+        model,
+        tokenizer,
+        prompt=prompt_tokens,
+        max_tokens=max_tokens,
+    ):
+        pieces.append(response.text)
+        if response.finish_reason != "stop":
+            output_tokens.append(int(response.token))
+        if response.finish_reason == "stop":
+            termination = "eos"
+        elif response.finish_reason == "length":
+            termination = "token_limit"
+        if "}" in response.text and is_contract_complete("".join(pieces)):
+            termination = "contract_complete"
+            break
+    text = tokenizer.decode(output_tokens)
+    if text != "".join(pieces):
+        raise RuntimeError("ordinary decode token/text round trip differs")
+    if not text or not output_tokens:
+        raise RuntimeError("ordinary decode produced no incumbent output")
+    return text, output_tokens, termination
+
+
+def _full_engine_config(spec: RLCExecutionSpec) -> Any:
+    """Build the product treatment, not the naked recurrent ablation."""
+
+    from core.brain.llm.latent_cortex.types import FastWeightsConfig, LatentOptConfig
+
+    config = cortex_config_from_execution_spec(
+        spec,
+        sampling=free_generation_sampling_config(),
+    )
+    config.latent_opt = LatentOptConfig(enabled=True, steps=4, lr=0.05)
+    config.fast_weights = FastWeightsConfig(enabled=True, rank=2, opt_steps=4)
+    config.verifier_accept_non_regression = True
+    config.decode_bridge_policy = "assistant_answer_v4"
+    config.decode_incumbent_policy = "vanilla_incumbent"
+    config.answer_replacement_enabled = True
+    config.local_repair_enabled = True
+    config.local_repair_max_attempts = len(spec.branch_roles)
+    config.local_repair_max_tokens = free_generation_sampling_config().max_tokens
+    config.allow_vanilla_fallback = False
+    config.verifier_probe_max_tokens = max(
+        48,
+        min(256, free_generation_sampling_config().max_tokens // 2),
+    )
+    config.verifier_probe_contract = "final_answer_v1"
+    config.decode_contract = "none"
+    config.decode_contract_grace_tokens = 0
+    config.terminal_instruction_policy = "applied"
+    problems = config.validate()
+    if problems:
+        raise ValueError(f"full-engine probe config rejected: {problems}")
+    return config
 
 
 def build_behavioral_probe_report(
@@ -197,9 +271,6 @@ def build_ordinary_decode_probe_report(
     """
 
     import mlx.core as mx
-    from mlx_lm import stream_generate
-
-    from core.brain.llm.latent_cortex.answer_contract import is_contract_complete
 
     depths = tuple(sorted({1, spec.recurrent_steps}))
     records: list[dict[str, Any]] = []
@@ -211,18 +282,12 @@ def build_ordinary_decode_probe_report(
         )
         generation_seed = paired_generation_seed(seed, task_ordinal, task.task_id, 1)
         mx.random.seed(generation_seed)
-        rendered = tokenizer.decode(prompt_tokens)
-        pieces: list[str] = []
-        decode_termination = "generator_stop"
-        for response in stream_generate(
-            model, tokenizer, prompt=rendered, max_tokens=320
-        ):
-            pieces.append(response.text)
-            if "}" in response.text and is_contract_complete("".join(pieces)):
-                decode_termination = "contract_complete"
-                break
-        text = "".join(pieces)
-        tokens = list(tokenizer.encode(text, add_special_tokens=False))
+        text, tokens, decode_termination = _ordinary_decode_once(
+            model,
+            tokenizer,
+            prompt_tokens,
+            max_tokens=free_generation_sampling_config().max_tokens,
+        )
         grade = dict(task.grade(text))
         grade["correct"] = bool(grade.get("correct"))
         for depth in depths:
@@ -278,6 +343,199 @@ def build_ordinary_decode_probe_report(
         depths=depths,
         records=records,
     )
+
+
+def build_paired_full_engine_probe_reports(
+    model: Any,
+    tokenizer: Any,
+    tasks: list[Any],
+    *,
+    model_path: str | Path,
+    spec: RLCExecutionSpec,
+    adapter_sha256: str,
+    task_manifest_sha256: str,
+    seed: int,
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    """Run ordinary and complete-engine arms from one immutable incumbent."""
+
+    import mlx.core as mx
+
+    from core.brain.llm.latent_cortex.engine import LatentCortexEngine
+    from core.brain.llm.latent_cortex.incumbent_artifact import (
+        build_incumbent_artifact,
+    )
+    from core.brain.llm.latent_cortex.recurrence_adapter_identity_v2 import (
+        full_weight_checkpoint_identity,
+    )
+    from core.brain.llm.latent_cortex.task_verifiers import EpisodeTaskVerifier
+
+    checkpoint = full_weight_checkpoint_identity(Path(model_path))
+    depths = tuple(sorted({1, spec.recurrent_steps}))
+    ordinary_records: list[dict[str, Any]] = []
+    full_records: list[dict[str, Any]] = []
+    n_layers = len(model.model.layers)
+    max_tokens = free_generation_sampling_config().max_tokens
+    for task_ordinal, task in enumerate(tasks):
+        prompt_tokens, _answer_tokens = tokenize_task(
+            tokenizer,
+            task.prompt,
+            task.answer,
+        )
+        ordinary_seed = paired_generation_seed(
+            seed,
+            task_ordinal,
+            task.task_id,
+            1,
+        )
+        mx.random.seed(ordinary_seed)
+        ordinary_text, ordinary_tokens, ordinary_termination = _ordinary_decode_once(
+            model,
+            tokenizer,
+            prompt_tokens,
+            max_tokens=max_tokens,
+        )
+        ordinary_grade = dict(task.grade(ordinary_text))
+        ordinary_grade["correct"] = bool(ordinary_grade.get("correct"))
+        incumbent = build_incumbent_artifact(
+            input_tokens=prompt_tokens,
+            output_tokens=ordinary_tokens,
+            output_text=ordinary_text,
+            checkpoint_fingerprint=checkpoint["fingerprint"],
+            checkpoint_fingerprint_method=checkpoint["method"],
+            max_tokens=max_tokens,
+            n_layers=n_layers,
+            termination=ordinary_termination,
+        )
+        for depth in depths:
+            ordinary_receipt = {
+                "schema": "aura.rlc.ordinary_decode_probe.v2",
+                "arm": "ordinary_decode",
+                "task_id": task.task_id,
+                "depth_coordinate": depth,
+                "generation_seed": ordinary_seed,
+                "recurrent_steps": 0,
+                "prompt_tokens_sha256": hashlib.sha256(
+                    canonical_json_bytes(prompt_tokens)
+                ).hexdigest(),
+                "response_sha256": hashlib.sha256(
+                    ordinary_text.encode("utf-8")
+                ).hexdigest(),
+                "tokens_sha256": hashlib.sha256(
+                    canonical_json_bytes(ordinary_tokens)
+                ).hexdigest(),
+                "token_count": len(ordinary_tokens),
+                "decode_termination": ordinary_termination,
+            }
+            ordinary_records.append(
+                {
+                    "task_id": task.task_id,
+                    "depth": depth,
+                    "response_sha256": ordinary_receipt["response_sha256"],
+                    "response_text": ordinary_text,
+                    "tokens_sha256": ordinary_receipt["tokens_sha256"],
+                    "tokens": list(ordinary_tokens),
+                    "token_count": len(ordinary_tokens),
+                    "correct": bool(ordinary_grade["correct"]),
+                    "grade_receipt": dict(ordinary_grade),
+                    "episode_ok": True,
+                    "episode_reason": "",
+                    "decode_termination": ordinary_termination,
+                    "branch_selection_admitted": True,
+                    "decode_incumbent_policy": "vanilla_incumbent",
+                    "episode_receipt_sha256": hashlib.sha256(
+                        canonical_json_bytes(ordinary_receipt)
+                    ).hexdigest(),
+                    "episode_receipt": ordinary_receipt,
+                }
+            )
+
+            depth_spec = spec.with_depth(depth)
+            engine = LatentCortexEngine(
+                model,
+                tokenizer=tokenizer,
+                config=_full_engine_config(depth_spec),
+                model_path=str(model_path),
+                schedule_library=None,
+            )
+            verifier = EpisodeTaskVerifier(
+                task.prompt,
+                response_contract=task.response_contract,
+            )
+            generation_seed = paired_generation_seed(
+                seed,
+                task_ordinal,
+                task.task_id,
+                depth,
+            )
+            mx.random.seed(generation_seed)
+            result = engine.reason(
+                messages=[{"role": "user", "content": task.prompt}],
+                verifier=verifier,
+                domain=task.domain,
+                decode_max_tokens=max_tokens,
+                decode_sentence_grace_tokens=0,
+                nonparametric_memory_enabled=False,
+                sample_seed=generation_seed,
+                incumbent_artifact=incumbent,
+                episode_id=f"full-engine-probe-{seed}-{task_ordinal}-{depth}",
+            )
+            grade = dict(task.grade(result.text if result.ok else ""))
+            grade["correct"] = bool(result.ok and grade.get("correct"))
+            receipt_payload = result.receipt.to_dict()
+            full_records.append(
+                {
+                    "task_id": task.task_id,
+                    "depth": depth,
+                    "response_sha256": hashlib.sha256(
+                        result.text.encode("utf-8")
+                    ).hexdigest(),
+                    "response_text": result.text,
+                    "tokens_sha256": hashlib.sha256(
+                        canonical_json_bytes(result.tokens)
+                    ).hexdigest(),
+                    "tokens": list(result.tokens),
+                    "token_count": len(result.tokens),
+                    "correct": bool(grade["correct"]),
+                    "grade_receipt": grade,
+                    "episode_ok": bool(result.ok),
+                    "episode_reason": str(result.reason or ""),
+                    "decode_termination": str(
+                        result.receipt.decode_termination or "not_reached"
+                    ),
+                    "branch_selection_admitted": bool(
+                        result.receipt.branch_selection_admitted
+                    ),
+                    "decode_incumbent_policy": (
+                        result.receipt.decode_incumbent_policy
+                    ),
+                    "episode_receipt_sha256": hashlib.sha256(
+                        canonical_json_bytes(receipt_payload)
+                    ).hexdigest(),
+                    "episode_receipt": receipt_payload,
+                }
+            )
+            del engine, verifier, result
+            mx.synchronize()
+            mx.clear_cache()
+
+    identity = {
+        "adapter_sha256": adapter_sha256,
+        "execution_spec_sha256": spec.sha256,
+        "task_manifest_sha256": task_manifest_sha256,
+        "task_ids": [task.task_id for task in tasks],
+        "depths": depths,
+    }
+    ordinary = build_free_generation_report(
+        arm="ordinary_decode",
+        records=ordinary_records,
+        **identity,
+    )
+    full_engine = build_free_generation_report(
+        arm="full_engine",
+        records=full_records,
+        **identity,
+    )
+    return ordinary, full_engine
 
 
 __all__ = [

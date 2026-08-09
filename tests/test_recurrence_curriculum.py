@@ -113,6 +113,22 @@ def test_training_task_exposes_exact_grpo_contract():
     assert task.grade(task.answer)["correct"] is True
     assert task.grade('FINAL_ANSWER: {"wrong":1}')["correct"] is False
     assert task.grade("the answer is probably one")["reason"] == "unparseable"
+    assert task.response_contract == '{"x6":int}'
+
+
+def test_response_contract_exposes_shape_without_answer_values():
+    task = RecurrenceTrainingTask(
+        prompt="Return the selected values and status.",
+        answer='FINAL_ANSWER: {"selected":[4,9],"status":"ready"}',
+        depth=1,
+        family="shape",
+        seed=1,
+    )
+
+    assert task.response_contract == '{"selected":list[int],"status":str}'
+    assert "4" not in task.response_contract
+    assert "9" not in task.response_contract
+    assert "ready" not in task.response_contract
 
 
 @pytest.mark.parametrize(

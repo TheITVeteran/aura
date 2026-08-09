@@ -6,14 +6,17 @@ import json
 
 import pytest
 
+from core.brain.llm.latent_cortex.incumbent_artifact import build_incumbent_artifact
 from core.learning.recurrence_curriculum import task_battery
 from core.learning.recurrent_checkpoint_admission import (
     RecurrentCheckpointAdmissionError,
     build_checkpoint_behavioral_admission,
     build_free_generation_report,
+    build_full_engine_behavioral_admission,
     build_recurrence_task_manifest,
     validate_checkpoint_behavioral_admission,
     validate_free_generation_report,
+    validate_full_engine_behavioral_admission,
     validate_recurrence_task_free_generation_report,
     validate_recurrence_task_manifest,
 )
@@ -21,6 +24,18 @@ from core.learning.recurrent_checkpoint_admission import (
 
 def _digest(label: str) -> str:
     return hashlib.sha256(label.encode("ascii")).hexdigest()
+
+
+def _canonical_digest(value: object) -> str:
+    return hashlib.sha256(
+        json.dumps(
+            value,
+            sort_keys=True,
+            separators=(",", ":"),
+            ensure_ascii=True,
+            allow_nan=False,
+        ).encode("ascii")
+    ).hexdigest()
 
 
 _TASKS = task_battery(["boolean"], [2], 2, seed=31_337)
@@ -563,3 +578,239 @@ def test_a_reasoning_checkpoint_clears_the_degeneracy_gate():
     assert admission["decision"] == "admit_bounded_next_scale_proxy"
     # Admission of a bounded proxy still authorizes nothing on its own.
     assert not any(admission["claim_flags"].values())
+
+
+def _ordinary_report_for_adapter(
+    adapter_label: str,
+    outcomes: dict[tuple[str, int], bool],
+) -> dict[str, object]:
+    report = _report("ordinary_decode", outcomes)
+    return build_free_generation_report(
+        arm="ordinary_decode",
+        adapter_sha256=_digest(adapter_label),
+        execution_spec_sha256=report["execution_spec_sha256"],
+        task_manifest_sha256=report["task_manifest_sha256"],
+        task_ids=report["task_ids"],
+        depths=report["depths"],
+        records=report["records"],
+    )
+
+
+def _full_engine_report(
+    adapter_label: str,
+    ordinary: dict[str, object],
+    outcomes: dict[tuple[str, int], bool],
+) -> dict[str, object]:
+    ordinary_rows = {
+        (row["task_id"], row["depth"]): row for row in ordinary["records"]
+    }
+    records = []
+    for task_id in ordinary["task_ids"]:
+        task = _TASK_BY_ID[task_id]
+        for depth in ordinary["depths"]:
+            coordinate = (task_id, depth)
+            ordinary_row = ordinary_rows[coordinate]
+            correct = outcomes[coordinate]
+            full_text = (
+                task.answer
+                if correct
+                else ordinary_row["response_text"]
+                if not ordinary_row["correct"]
+                else 'FINAL_ANSWER: {"wrong":true}'
+            )
+            replaces = full_text != ordinary_row["response_text"]
+            full_tokens = (
+                [91, depth, len(task_id)]
+                if replaces
+                else list(ordinary_row["tokens"])
+            )
+            incumbent = build_incumbent_artifact(
+                input_tokens=[7, 8, depth],
+                output_tokens=ordinary_row["tokens"],
+                output_text=ordinary_row["response_text"],
+                checkpoint_fingerprint="c" * 64,
+                checkpoint_fingerprint_method="sha256",
+                max_tokens=32,
+                n_layers=8,
+                termination=ordinary_row["decode_termination"],
+            )
+            baseline = {
+                "text_sha256": ordinary_row["response_sha256"],
+                "tokens_sha256": ordinary_row["tokens_sha256"],
+                "token_count": ordinary_row["token_count"],
+            }
+            accepted = {
+                "source": "branch_candidate" if replaces else "baseline_decode",
+                "text_sha256": hashlib.sha256(full_text.encode("utf-8")).hexdigest(),
+                "tokens_sha256": _canonical_digest(full_tokens),
+                "token_count": len(full_tokens),
+                "binding_status": (
+                    "exact_text_token_roundtrip" if replaces else "not_required"
+                ),
+            }
+            replacement_body = {
+                "schema": "aura.rlc.answer_replacement.v3",
+                "authority": "confidence_bound_answer_replacement",
+                "decision": "replace" if replaces else "retain",
+                "selected_request_id": "branch-0" if replaces else "",
+                "baseline_decode": baseline,
+                "accepted_output": accepted,
+                "candidates": (
+                    [{"request_id": "branch-0", "dominates": True}]
+                    if replaces
+                    else []
+                ),
+            }
+            replacement = {
+                **replacement_body,
+                "receipt_sha256": _canonical_digest(replacement_body),
+            }
+            episode_receipt = {
+                "episode_id": f"full:{adapter_label}:{task_id}:{depth}",
+                "input_tokens_sha256": _digest(f"prompt:{task_id}"),
+                "input_token_count": 11,
+                "steps_taken": depth,
+                "n_branches": 2,
+                "selected_branch": 0,
+                "branch_selection_admitted": True,
+                "decode_incumbent_policy": "vanilla_incumbent",
+                "decode_termination": (
+                    "confidence_bound_replacement"
+                    if replaces
+                    else ordinary_row["decode_termination"]
+                ),
+                "decode_generated_tokens": len(full_tokens),
+                "params_unchanged": True,
+                "checkpoint_fingerprint": "c" * 64,
+                "checkpoint_fingerprint_method": "sha256",
+                "nonparametric_memory": {"status": "disabled_by_policy"},
+                "honest_flags": [],
+                "recurrence_adapter": {
+                    "schema": "aura.recurrence_adapter_activation.v1",
+                    "scope": "latent_slots_only",
+                    "active": True,
+                    "calls": 2,
+                    "adapted_positions": 8,
+                },
+                "incumbent_artifact": incumbent.receipt,
+                "answer_replacement": replacement,
+            }
+            grade = task.grade(full_text)
+            record = {
+                "task_id": task_id,
+                "depth": depth,
+                "response_sha256": hashlib.sha256(full_text.encode("utf-8")).hexdigest(),
+                "response_text": full_text,
+                "tokens_sha256": _canonical_digest(full_tokens),
+                "tokens": full_tokens,
+                "token_count": len(full_tokens),
+                "correct": correct,
+                "grade_receipt": grade,
+                "episode_ok": True,
+                "episode_reason": "",
+                "decode_termination": episode_receipt["decode_termination"],
+                "branch_selection_admitted": True,
+                "decode_incumbent_policy": "vanilla_incumbent",
+                "episode_receipt_sha256": _canonical_digest(episode_receipt),
+                "episode_receipt": episode_receipt,
+            }
+            records.append(record)
+    return build_free_generation_report(
+        arm="full_engine",
+        adapter_sha256=_digest(adapter_label),
+        execution_spec_sha256=ordinary["execution_spec_sha256"],
+        task_manifest_sha256=ordinary["task_manifest_sha256"],
+        task_ids=ordinary["task_ids"],
+        depths=ordinary["depths"],
+        records=records,
+    )
+
+
+def test_full_engine_admission_requires_floor_preservation_and_verified_gain():
+    task_a, task_b = tuple(task.task_id for task in _TASKS)
+    ordinary_outcomes = {
+        (task_a, 1): True,
+        (task_a, 2): True,
+        (task_b, 1): False,
+        (task_b, 2): False,
+    }
+    initial_ordinary = _ordinary_report_for_adapter("initial-full", ordinary_outcomes)
+    trained_ordinary = _ordinary_report_for_adapter("trained-full", ordinary_outcomes)
+    initial_full = _full_engine_report(
+        "initial-full",
+        initial_ordinary,
+        ordinary_outcomes,
+    )
+    trained_full = _full_engine_report(
+        "trained-full",
+        trained_ordinary,
+        {
+            **ordinary_outcomes,
+            (task_b, 2): True,
+        },
+    )
+
+    admission = build_full_engine_behavioral_admission(
+        initial_full_engine_report=initial_full,
+        trained_full_engine_report=trained_full,
+        initial_ordinary_decode_report=initial_ordinary,
+        trained_ordinary_decode_report=trained_ordinary,
+        task_manifest=_TASK_MANIFEST,
+    )
+
+    assert admission["admitted"] is True
+    assert admission["authorized_correct_gains"] == 1
+    assert admission["ordinary_floor_regressions"] == 0
+    assert admission["training_correct_gain"] == 1
+    assert admission["ordinary_correct_gain"] == 1
+    assert all(admission["gates"].values())
+    assert not any(admission["claim_flags"].values())
+    assert validate_full_engine_behavioral_admission(
+        admission,
+        initial_full_engine_report=initial_full,
+        trained_full_engine_report=trained_full,
+        initial_ordinary_decode_report=initial_ordinary,
+        trained_ordinary_decode_report=trained_ordinary,
+        task_manifest=_TASK_MANIFEST,
+    ) == admission
+
+
+def test_full_engine_admission_rejects_a_gain_that_drops_an_incumbent_answer():
+    task_a, task_b = tuple(task.task_id for task in _TASKS)
+    ordinary_outcomes = {
+        (task_a, 1): True,
+        (task_a, 2): True,
+        (task_b, 1): False,
+        (task_b, 2): False,
+    }
+    initial_ordinary = _ordinary_report_for_adapter("initial-floor", ordinary_outcomes)
+    trained_ordinary = _ordinary_report_for_adapter("trained-floor", ordinary_outcomes)
+    initial_full = _full_engine_report(
+        "initial-floor",
+        initial_ordinary,
+        ordinary_outcomes,
+    )
+    trained_full = _full_engine_report(
+        "trained-floor",
+        trained_ordinary,
+        {
+            (task_a, 1): False,
+            (task_a, 2): True,
+            (task_b, 1): True,
+            (task_b, 2): True,
+        },
+    )
+
+    admission = build_full_engine_behavioral_admission(
+        initial_full_engine_report=initial_full,
+        trained_full_engine_report=trained_full,
+        initial_ordinary_decode_report=initial_ordinary,
+        trained_ordinary_decode_report=trained_ordinary,
+        task_manifest=_TASK_MANIFEST,
+    )
+
+    assert admission["trained_full_engine_correct"] == 3
+    assert admission["ordinary_decode_correct"] == 2
+    assert admission["ordinary_floor_regressions"] == 1
+    assert admission["gates"]["ordinary_correctness_floor_preserved"] is False
+    assert admission["admitted"] is False

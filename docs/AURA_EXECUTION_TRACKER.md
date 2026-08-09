@@ -39469,3 +39469,36 @@ Compact evidence is
 Reasoning gain, frontier performance, fusion, activation, and `WOW Signal`
 remain false. The completion envelope remains `809/920` (approximately
 `87.9%`).
+
+## Checkpoint 2026-08-08-059: Admission Measures the Engine Aura Actually Serves
+
+The behavioral canary now keeps the intrinsic latent-only probe as a diagnostic
+while adding a separate paired treatment for Aura's complete recurrent engine.
+Each held-out task is decoded once through the ordinary model, and that exact
+token sequence, text digest, stopping condition, prompt binding, layer count,
+and immutable checkpoint fingerprint become the canonical incumbent artifact
+for every tested recurrent depth. The complete treatment enables the production
+answer bridge, branch repair, verifier comparison, latent optimization, and
+temporary fast weights. It may retain the incumbent unchanged or replace it
+only through the confidence-bound answer-replacement authority.
+
+Admission replays all four reports: initial and trained complete-engine arms,
+plus their paired initial and trained ordinary controls. It rejects ordinary
+output drift, incumbent-binding mismatch, loss of any formerly correct answer,
+deep-below-shallow regression, answer-only collapse, or a replacement that is
+not exactly bound to an independently dominant verifier candidate. A checkpoint
+can pass only when the complete engine preserves every correct ordinary answer,
+improves over its untrained complete-engine state, beats ordinary decoding in
+aggregate, and produces at least one independently authorized correct gain. The
+canary receipt now retains the full evidence reports rather than only their
+digests, so the decision can be reconstructed without an unrecorded model run.
+
+The response contract supplied to the task verifier contains answer shape only
+(`bool`, `int`, `str`, `list`, or `object`), never the expected value. Focused
+curriculum, report, admission, and runner contracts pass `71/71`; canonical
+smoke passes `103/103`; Ruff, compilation, and diff hygiene pass. These gates
+prove the complete-engine discriminator is executable and fail-closed. They do
+not prove a capability gain. Reasoning gain, frontier performance, fusion,
+activation, and `WOW Signal` remain false. The completion envelope remains
+`809/920` (approximately `87.9%`). A fresh source-bound v4 1.5B canary must now
+decide whether the complete treatment earns a resident-32B campaign.

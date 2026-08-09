@@ -136,6 +136,33 @@ class RecurrenceTrainingTask:
         return value
 
     @property
+    def response_contract(self) -> str:
+        """Expose answer shape without exposing answer values to a verifier."""
+
+        def contract_type(value: Any) -> str:
+            if type(value) is bool:
+                return "bool"
+            if type(value) is int:
+                return "int"
+            if isinstance(value, str):
+                return "str"
+            if isinstance(value, list):
+                if not value:
+                    raise ValueError("empty lists cannot define a response contract")
+                item_types = {contract_type(item) for item in value}
+                if len(item_types) != 1:
+                    raise ValueError("heterogeneous lists cannot define a response contract")
+                return f"list[{item_types.pop()}]"
+            if isinstance(value, dict):
+                return "{" + ",".join(
+                    f"{json.dumps(key, ensure_ascii=True)}:{contract_type(item)}"
+                    for key, item in value.items()
+                ) + "}"
+            raise ValueError("answer value cannot define a response contract")
+
+        return contract_type(self.expected)
+
+    @property
     def metadata(self) -> dict[str, Any]:
         return {
             "source": "recurrence_curriculum",

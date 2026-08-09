@@ -19,12 +19,17 @@ CHECKPOINT_ADMISSION_SCHEMA: Final = "aura.rlc.recurrent_checkpoint_behavioral_a
 CHECKPOINT_ADMISSION_SCHEMA_V2: Final = (
     "aura.rlc.recurrent_checkpoint_behavioral_admission.v2"
 )
+FULL_ENGINE_ADMISSION_SCHEMA: Final = (
+    "aura.rlc.recurrent_full_engine_behavioral_admission.v1"
+)
 # ``ordinary_decode`` is the vanilla control: the same frozen weights answering
 # without the recurrent path at all. Without it an admission can only say a
 # trained adapter beat an untrained adapter on the same degraded path, which is
 # exactly what the 2026-08-06 campaign proved is not enough -- adapter+RLC
 # scored 3/28 while ordinary decode on identical weights scored 13/28.
-_ARMS: Final = frozenset({"initial_adapter", "trained_adapter", "ordinary_decode"})
+_ARMS: Final = frozenset(
+    {"initial_adapter", "trained_adapter", "ordinary_decode", "full_engine"}
+)
 _MAX_TASKS: Final = 256
 _MAX_DEPTHS: Final = 8
 _MAX_RESPONSE_CHARS: Final = 32_768
@@ -79,6 +84,7 @@ def _validate_episode_evidence(
     decode_termination: str,
     branch_selection_admitted: bool,
     episode_receipt_sha256: str,
+    decode_incumbent_policy: str = "latent",
 ) -> dict[str, Any]:
     """Validate the recurrent mechanics behind one graded completion.
 
@@ -111,7 +117,7 @@ def _validate_episode_evidence(
         or type(selected_branch) is not int
         or not 0 <= selected_branch < n_branches
         or receipt.get("branch_selection_admitted") is not branch_selection_admitted
-        or receipt.get("decode_incumbent_policy") != "latent"
+        or receipt.get("decode_incumbent_policy") != decode_incumbent_policy
         or receipt.get("decode_termination") != decode_termination
         or type(receipt.get("decode_generated_tokens")) is not int
         or receipt["decode_generated_tokens"] != token_count
@@ -130,6 +136,119 @@ def _validate_episode_evidence(
         or activation["adapted_positions"] < 1
     ):
         _fail("recurrent_checkpoint_episode_evidence_invalid")
+    return receipt
+
+
+def _validate_full_engine_episode_evidence(
+    value: Any,
+    *,
+    depth: int,
+    response_sha256: str,
+    tokens_sha256: str,
+    token_count: int,
+    decode_termination: str,
+    branch_selection_admitted: bool,
+    episode_receipt_sha256: str,
+) -> dict[str, Any]:
+    """Validate recurrence plus the exact incumbent/replacement output floor."""
+
+    receipt = _validate_episode_evidence(
+        value,
+        depth=depth,
+        token_count=token_count,
+        decode_termination=decode_termination,
+        branch_selection_admitted=branch_selection_admitted,
+        episode_receipt_sha256=episode_receipt_sha256,
+        decode_incumbent_policy="vanilla_incumbent",
+    )
+    incumbent = receipt.get("incumbent_artifact")
+    replacement = receipt.get("answer_replacement")
+    if not isinstance(incumbent, Mapping) or not isinstance(replacement, Mapping):
+        _fail("recurrent_checkpoint_full_engine_evidence_invalid")
+    try:
+        from core.brain.llm.latent_cortex.incumbent_artifact import (
+            validate_incumbent_receipt,
+        )
+
+        incumbent = validate_incumbent_receipt(
+            incumbent,
+            checkpoint_fingerprint=str(receipt.get("checkpoint_fingerprint") or ""),
+            checkpoint_fingerprint_method=str(
+                receipt.get("checkpoint_fingerprint_method") or ""
+            ),
+        )
+    except (KeyError, TypeError, ValueError) as exc:
+        raise RecurrentCheckpointAdmissionError(
+            "recurrent_checkpoint_full_engine_incumbent_invalid"
+        ) from exc
+    baseline = replacement.get("baseline_decode")
+    accepted = replacement.get("accepted_output")
+    incumbent_output = incumbent.get("output")
+    decision = replacement.get("decision")
+    flags = {str(flag) for flag in receipt.get("honest_flags") or []}
+    if (
+        replacement.get("schema") != "aura.rlc.answer_replacement.v3"
+        or replacement.get("authority") != "confidence_bound_answer_replacement"
+        or not _is_sha256(replacement.get("receipt_sha256"))
+        or replacement["receipt_sha256"]
+        != _sha(
+            {
+                key: item
+                for key, item in replacement.items()
+                if key != "receipt_sha256"
+            }
+        )
+        or not isinstance(baseline, Mapping)
+        or not isinstance(accepted, Mapping)
+        or not isinstance(incumbent_output, Mapping)
+        or baseline.get("text_sha256") != incumbent_output.get("text_sha256")
+        or baseline.get("tokens_sha256") != incumbent_output.get("tokens_sha256")
+        or baseline.get("token_count") != incumbent_output.get("token_count")
+        or decision not in {"retain", "replace", "abstain"}
+    ):
+        _fail("recurrent_checkpoint_full_engine_evidence_invalid")
+    output_binding = {
+        "text_sha256": response_sha256,
+        "tokens_sha256": tokens_sha256,
+        "token_count": token_count,
+    }
+    if decision == "replace":
+        candidates = replacement.get("candidates")
+        selected_request_id = replacement.get("selected_request_id")
+        selected_rows = [
+            row
+            for row in candidates or []
+            if isinstance(row, Mapping)
+            and row.get("request_id") == selected_request_id
+        ]
+        if (
+            accepted.get("source")
+            not in {"branch_candidate", "repaired_candidate"}
+            or accepted.get("binding_status") != "exact_text_token_roundtrip"
+            or any(accepted.get(key) != value for key, value in output_binding.items())
+            or len(selected_rows) != 1
+            or selected_rows[0].get("dominates") is not True
+        ):
+            _fail("recurrent_checkpoint_full_engine_replacement_invalid")
+    elif (
+        any(incumbent_output.get(key) != value for key, value in output_binding.items())
+        or (
+            decision == "retain"
+            and (
+                accepted.get("source") != "baseline_decode"
+                or any(accepted.get(key) != value for key, value in output_binding.items())
+            )
+        )
+        or (
+            decision == "abstain"
+            and not {
+                "confidence_bound_abstention_declined_under_incumbent",
+                "answer_replacement_abstention_declined_under_incumbent",
+            }
+            & flags
+        )
+    ):
+        _fail("recurrent_checkpoint_full_engine_floor_invalid")
     return receipt
 
 
@@ -281,7 +400,9 @@ def build_free_generation_report(
         _fail("recurrent_checkpoint_report_coverage_invalid")
     normalized_rows: list[dict[str, Any]] = []
     expected_incumbent_policy = (
-        "vanilla_incumbent" if arm == "ordinary_decode" else "latent"
+        "vanilla_incumbent"
+        if arm in {"ordinary_decode", "full_engine"}
+        else "latent"
     )
     for row, (task_id, depth) in zip(rows, expected_coordinates, strict=True):
         if (
@@ -343,6 +464,17 @@ def build_free_generation_report(
                 tokens_sha256=row["tokens_sha256"],
                 token_count=row["token_count"],
                 decode_termination=row["decode_termination"],
+                episode_receipt_sha256=row["episode_receipt_sha256"],
+            )
+        elif arm == "full_engine":
+            row["episode_receipt"] = _validate_full_engine_episode_evidence(
+                row.get("episode_receipt"),
+                depth=depth,
+                response_sha256=row["response_sha256"],
+                tokens_sha256=row["tokens_sha256"],
+                token_count=row["token_count"],
+                decode_termination=row["decode_termination"],
+                branch_selection_admitted=row["branch_selection_admitted"],
                 episode_receipt_sha256=row["episode_receipt_sha256"],
             )
         else:
@@ -601,6 +733,194 @@ def build_checkpoint_behavioral_admission(
     return {**body, "admission_sha256": _sha(body)}
 
 
+def build_full_engine_behavioral_admission(
+    *,
+    initial_full_engine_report: Mapping[str, Any],
+    trained_full_engine_report: Mapping[str, Any],
+    initial_ordinary_decode_report: Mapping[str, Any],
+    trained_ordinary_decode_report: Mapping[str, Any],
+    task_manifest: Sequence[Mapping[str, Any]],
+) -> dict[str, Any]:
+    """Admit only trained, floor-preserving, independently authorized gain."""
+
+    initial = validate_recurrence_task_free_generation_report(
+        initial_full_engine_report,
+        task_manifest=task_manifest,
+    )
+    trained = validate_recurrence_task_free_generation_report(
+        trained_full_engine_report,
+        task_manifest=task_manifest,
+    )
+    initial_ordinary = validate_recurrence_task_free_generation_report(
+        initial_ordinary_decode_report,
+        task_manifest=task_manifest,
+    )
+    trained_ordinary = validate_recurrence_task_free_generation_report(
+        trained_ordinary_decode_report,
+        task_manifest=task_manifest,
+    )
+    reports = (initial, trained, initial_ordinary, trained_ordinary)
+    if (
+        initial["arm"] != "full_engine"
+        or trained["arm"] != "full_engine"
+        or initial_ordinary["arm"] != "ordinary_decode"
+        or trained_ordinary["arm"] != "ordinary_decode"
+        or initial["adapter_sha256"] == trained["adapter_sha256"]
+        or initial["adapter_sha256"] != initial_ordinary["adapter_sha256"]
+        or trained["adapter_sha256"] != trained_ordinary["adapter_sha256"]
+        or len({report["execution_spec_sha256"] for report in reports}) != 1
+        or len({report["task_manifest_sha256"] for report in reports}) != 1
+        or any(report["task_ids"] != initial["task_ids"] for report in reports[1:])
+        or any(report["depths"] != initial["depths"] for report in reports[1:])
+    ):
+        _fail("recurrent_full_engine_admission_pair_invalid")
+
+    def rows(report: Mapping[str, Any]) -> dict[tuple[str, int], dict[str, Any]]:
+        return {
+            (str(row["task_id"]), int(row["depth"])): dict(row)
+            for row in report["records"]
+        }
+
+    initial_rows = rows(initial)
+    trained_rows = rows(trained)
+    initial_ordinary_rows = rows(initial_ordinary)
+    trained_ordinary_rows = rows(trained_ordinary)
+    coordinates = tuple(initial_rows)
+    ordinary_decode_changed = 0
+    incumbent_binding_failures = 0
+    ordinary_floor_regressions = 0
+    training_regressions = 0
+    authorized_correct_gains = 0
+    trained_depth_regressions = 0
+    for coordinate in coordinates:
+        before = initial_rows[coordinate]
+        after = trained_rows[coordinate]
+        ordinary_before = initial_ordinary_rows[coordinate]
+        ordinary_after = trained_ordinary_rows[coordinate]
+        if (
+            ordinary_before["response_sha256"] != ordinary_after["response_sha256"]
+            or ordinary_before["tokens_sha256"] != ordinary_after["tokens_sha256"]
+            or ordinary_before["correct"] is not ordinary_after["correct"]
+        ):
+            ordinary_decode_changed += 1
+        for full_row, ordinary_row in (
+            (before, ordinary_before),
+            (after, ordinary_after),
+        ):
+            incumbent_output = full_row["episode_receipt"]["incumbent_artifact"][
+                "output"
+            ]
+            if (
+                incumbent_output.get("text_sha256")
+                != ordinary_row["response_sha256"]
+                or incumbent_output.get("tokens_sha256")
+                != ordinary_row["tokens_sha256"]
+                or incumbent_output.get("token_count")
+                != ordinary_row["token_count"]
+            ):
+                incumbent_binding_failures += 1
+        ordinary_floor_regressions += int(
+            bool(ordinary_after["correct"]) and not bool(after["correct"])
+        )
+        training_regressions += int(bool(before["correct"]) and not bool(after["correct"]))
+        replacement = after["episode_receipt"]["answer_replacement"]
+        authorized_correct_gains += int(
+            bool(after["correct"])
+            and not bool(ordinary_after["correct"])
+            and replacement.get("decision") == "replace"
+        )
+    shallow = int(initial["depths"][0])
+    deep = int(initial["depths"][-1])
+    for task_id in initial["task_ids"]:
+        trained_depth_regressions += int(
+            bool(trained_rows[(task_id, shallow)]["correct"])
+            and not bool(trained_rows[(task_id, deep)]["correct"])
+        )
+
+    trained_answer_only = _answer_only_count(trained["records"])
+    ordinary_answer_only = _answer_only_count(trained_ordinary["records"])
+    training_gain = int(trained["total_correct"]) - int(initial["total_correct"])
+    ordinary_gain = int(trained["total_correct"]) - int(
+        trained_ordinary["total_correct"]
+    )
+    gates = {
+        "complete_full_engine_execution": all(
+            row["episode_ok"] and row["branch_selection_admitted"]
+            for row in trained["records"]
+        ),
+        "ordinary_decode_stable_across_adapter": ordinary_decode_changed == 0,
+        "canonical_incumbent_bound": incumbent_binding_failures == 0,
+        "ordinary_correctness_floor_preserved": ordinary_floor_regressions == 0,
+        "no_training_correctness_regressions": training_regressions == 0,
+        "no_trained_depth_regressions": trained_depth_regressions == 0,
+        "strict_gain_over_initial_full_engine": training_gain > 0,
+        "strict_gain_over_ordinary_decode": ordinary_gain > 0,
+        "independently_authorized_correct_gain": authorized_correct_gains > 0,
+        "no_answer_only_collapse": trained_answer_only <= ordinary_answer_only,
+    }
+    body = {
+        "schema": FULL_ENGINE_ADMISSION_SCHEMA,
+        "decision": (
+            "admit_bounded_complete_engine_proxy"
+            if all(gates.values())
+            else "reject_complete_engine_gain_unproven"
+        ),
+        "initial_full_engine_report_sha256": initial["report_sha256"],
+        "trained_full_engine_report_sha256": trained["report_sha256"],
+        "initial_ordinary_decode_report_sha256": initial_ordinary["report_sha256"],
+        "trained_ordinary_decode_report_sha256": trained_ordinary["report_sha256"],
+        "execution_spec_sha256": initial["execution_spec_sha256"],
+        "task_manifest_sha256": initial["task_manifest_sha256"],
+        "task_ids_sha256": _sha(initial["task_ids"]),
+        "depths": list(initial["depths"]),
+        "initial_full_engine_correct": int(initial["total_correct"]),
+        "trained_full_engine_correct": int(trained["total_correct"]),
+        "ordinary_decode_correct": int(trained_ordinary["total_correct"]),
+        "training_correct_gain": training_gain,
+        "ordinary_correct_gain": ordinary_gain,
+        "ordinary_decode_changed": ordinary_decode_changed,
+        "incumbent_binding_failures": incumbent_binding_failures,
+        "ordinary_floor_regressions": ordinary_floor_regressions,
+        "training_regressions": training_regressions,
+        "trained_depth_regressions": trained_depth_regressions,
+        "authorized_correct_gains": authorized_correct_gains,
+        "trained_answer_only_responses": trained_answer_only,
+        "ordinary_answer_only_responses": ordinary_answer_only,
+        "gates": gates,
+        "admitted": all(gates.values()),
+        "claim_flags": {
+            "resident_32b_gain_proven": False,
+            "frontier_level_proven": False,
+            "fusion_allowed": False,
+            "production_activation_allowed": False,
+        },
+    }
+    return {**body, "admission_sha256": _sha(body)}
+
+
+def validate_full_engine_behavioral_admission(
+    value: Mapping[str, Any],
+    *,
+    initial_full_engine_report: Mapping[str, Any],
+    trained_full_engine_report: Mapping[str, Any],
+    initial_ordinary_decode_report: Mapping[str, Any],
+    trained_ordinary_decode_report: Mapping[str, Any],
+    task_manifest: Sequence[Mapping[str, Any]],
+) -> dict[str, Any]:
+    if not isinstance(value, Mapping):
+        _fail("recurrent_full_engine_admission_invalid")
+    expected = build_full_engine_behavioral_admission(
+        initial_full_engine_report=initial_full_engine_report,
+        trained_full_engine_report=trained_full_engine_report,
+        initial_ordinary_decode_report=initial_ordinary_decode_report,
+        trained_ordinary_decode_report=trained_ordinary_decode_report,
+        task_manifest=task_manifest,
+    )
+    if dict(value) != expected:
+        _fail("recurrent_full_engine_admission_replay_mismatch")
+    return expected
+
+
 def validate_checkpoint_behavioral_admission(
     value: Mapping[str, Any],
     *,
@@ -626,12 +946,15 @@ __all__ = [
     "CHECKPOINT_ADMISSION_SCHEMA",
     "CHECKPOINT_ADMISSION_SCHEMA_V2",
     "FREE_GENERATION_REPORT_SCHEMA",
+    "FULL_ENGINE_ADMISSION_SCHEMA",
     "RecurrentCheckpointAdmissionError",
     "build_checkpoint_behavioral_admission",
     "build_free_generation_report",
+    "build_full_engine_behavioral_admission",
     "build_recurrence_task_manifest",
     "validate_checkpoint_behavioral_admission",
     "validate_free_generation_report",
+    "validate_full_engine_behavioral_admission",
     "validate_recurrence_task_free_generation_report",
     "validate_recurrence_task_manifest",
 ]

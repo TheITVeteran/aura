@@ -33,7 +33,7 @@ from core.learning.recurrence_curriculum import task_battery  # noqa: E402
 from core.learning.recurrence_native_objective_v5 import derive_rollin_seed  # noqa: E402
 from core.learning.recurrent_behavioral_probe import (  # noqa: E402
     build_behavioral_probe_report,
-    build_ordinary_decode_probe_report,
+    build_paired_full_engine_probe_reports,
     canonical_json_bytes,
     free_generation_sampling_config,
     tokenize_task,
@@ -41,8 +41,10 @@ from core.learning.recurrent_behavioral_probe import (  # noqa: E402
 from core.learning.recurrent_checkpoint_admission import (  # noqa: E402
     RecurrentCheckpointAdmissionError,
     build_checkpoint_behavioral_admission,
+    build_full_engine_behavioral_admission,
     build_recurrence_task_manifest,
     validate_checkpoint_behavioral_admission,
+    validate_full_engine_behavioral_admission,
 )
 from core.learning.recurrent_grpo import (  # noqa: E402
     RecurrentGRPOConfig,
@@ -66,7 +68,7 @@ from core.runtime.atomic_writer import atomic_write_bytes  # noqa: E402
 from core.runtime.mlx_memory_guard import mlx_memory_envelope  # noqa: E402
 from core.runtime.model_lane_control import standalone_model_lane  # noqa: E402
 
-CANARY_SCHEMA: Final = "aura.recurrent_grpo_behavioral_canary.v3"
+CANARY_SCHEMA: Final = "aura.recurrent_grpo_behavioral_canary.v4"
 SOURCE_PATHS: Final = (
     "core/learning/grpo.py",
     "core/learning/recurrence_curriculum.py",
@@ -81,7 +83,9 @@ SOURCE_PATHS: Final = (
     "core/learning/verified_token_trace.py",
     "core/brain/llm/latent_cortex/execution_spec.py",
     "core/brain/llm/latent_cortex/engine.py",
+    "core/brain/llm/latent_cortex/incumbent_artifact.py",
     "core/brain/llm/latent_cortex/recurrence_adapter.py",
+    "core/brain/llm/latent_cortex/task_verifiers.py",
     "core/learning/depth_conditioned_lora.py",
     "core/learning/role_conditioned_lora.py",
     "tools/run_recurrent_grpo_behavioral_canary.py",
@@ -547,6 +551,17 @@ def run_canary(
             task_manifest_sha256=proxy_manifest_sha256,
             seed=seed,
         )
+        _status(out_dir, "initial_complete_engine_probe")
+        initial_ordinary, initial_full_engine = build_paired_full_engine_probe_reports(
+            model,
+            tokenizer,
+            proxy_tasks,
+            model_path=model_path,
+            spec=spec,
+            adapter_sha256=adapter_before,
+            task_manifest_sha256=proxy_manifest_sha256,
+            seed=seed,
+        )
         bootstrap_optimizer = optim.AdamW(
             learning_rate=float(bootstrap_learning_rate),
             weight_decay=0.0,
@@ -972,11 +987,12 @@ def run_canary(
             task_manifest_sha256=proxy_manifest_sha256,
             seed=seed,
         )
-        # The vanilla floor: same weights, same tasks, no recurrent path.
-        ordinary = build_ordinary_decode_probe_report(
+        _status(out_dir, "trained_complete_engine_probe")
+        trained_ordinary, trained_full_engine = build_paired_full_engine_probe_reports(
             model,
             tokenizer,
             proxy_tasks,
+            model_path=model_path,
             spec=spec,
             adapter_sha256=adapter_after,
             task_manifest_sha256=proxy_manifest_sha256,
@@ -989,17 +1005,37 @@ def run_canary(
                 initial_report=before,
                 trained_report=after,
                 task_manifest=proxy_manifest,
-                ordinary_decode_report=ordinary,
+                ordinary_decode_report=trained_ordinary,
             )
             validate_checkpoint_behavioral_admission(
                 admission,
                 initial_report=before,
                 trained_report=after,
                 task_manifest=proxy_manifest,
-                ordinary_decode_report=ordinary,
+                ordinary_decode_report=trained_ordinary,
             )
         except RecurrentCheckpointAdmissionError as exc:
             admission_error = str(exc)
+        full_engine_admission: dict[str, Any] | None = None
+        full_engine_admission_error = ""
+        try:
+            full_engine_admission = build_full_engine_behavioral_admission(
+                initial_full_engine_report=initial_full_engine,
+                trained_full_engine_report=trained_full_engine,
+                initial_ordinary_decode_report=initial_ordinary,
+                trained_ordinary_decode_report=trained_ordinary,
+                task_manifest=proxy_manifest,
+            )
+            validate_full_engine_behavioral_admission(
+                full_engine_admission,
+                initial_full_engine_report=initial_full_engine,
+                trained_full_engine_report=trained_full_engine,
+                initial_ordinary_decode_report=initial_ordinary,
+                trained_ordinary_decode_report=trained_ordinary,
+                task_manifest=proxy_manifest,
+            )
+        except RecurrentCheckpointAdmissionError as exc:
+            full_engine_admission_error = str(exc)
         mx.save_safetensors(str(out_dir / "adapter.safetensors"), adapter)
 
     base_after = full_weight_checkpoint_identity(model_path)
@@ -1031,8 +1067,8 @@ def run_canary(
             )
         ),
         "adapter_mutated": adapter_before != adapter_after,
-        "heldout_free_generation_strict_gain": bool(
-            admission is not None and admission["admitted"]
+        "complete_engine_heldout_strict_gain": bool(
+            full_engine_admission is not None and full_engine_admission["admitted"]
         ),
     }
     body = {
@@ -1091,10 +1127,16 @@ def run_canary(
         "proxy_task_manifest": proxy_manifest,
         "proxy_task_manifest_sha256": proxy_manifest_sha256,
         "free_generation_before": before,
+        "initial_ordinary_decode": initial_ordinary,
+        "initial_full_engine": initial_full_engine,
         "step_receipts": step_receipts,
         "free_generation_after": after,
+        "trained_ordinary_decode": trained_ordinary,
+        "trained_full_engine": trained_full_engine,
         "checkpoint_behavioral_admission": admission,
         "checkpoint_behavioral_admission_error": admission_error,
+        "full_engine_behavioral_admission": full_engine_admission,
+        "full_engine_behavioral_admission_error": full_engine_admission_error,
         "gates": gates,
         "passed": all(gates.values()),
         "claim_state": {
