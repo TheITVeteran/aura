@@ -2804,10 +2804,49 @@ final class AuraLauncherDelegate: NSObject, NSApplicationDelegate,
         )
         // orderFront, never makeKey: showing her must not take focus.
         bubblePanel?.orderFront(nil)
+        // Showing the bubble is also how a person un-hides her, so this has to
+        // clear HIDDEN rather than only re-draw the panel.
+        postAmbientMode("bubble")
     }
 
-    private func hideBubble() {
+    /// Take the panel off screen WITHOUT changing what she is allowed to do.
+    ///
+    /// Used when another surface is taking over — opening the full desktop
+    /// window retires the bubble, and that is a change of surface, not a
+    /// request for her to stop looking. Keeping this separate from hideBubble
+    /// is the whole distinction: one is a layout decision, the other is
+    /// someone telling her to go away.
+    private func orderBubbleOut() {
         bubblePanel?.orderOut(nil)
+    }
+
+    /// The person asked her to go away.
+    private func hideBubble() {
+        orderBubbleOut()
+        // Hiding her must stop her LOOKING, not just stop her being drawn.
+        // Ordering the panel out on its own left the observation loop reading
+        // the screen of someone who had just dismissed her — the one control
+        // here that must never be cosmetic.
+        postAmbientMode("hidden")
+    }
+
+    /// Tell the runtime which surface she is present on.
+    ///
+    /// The mode is what the observation loop gates on, so it has to follow the
+    /// actual window state rather than being assumed. Fire-and-forget on
+    /// purpose: this is a notification about a UI transition that has already
+    /// happened, and blocking a window close on an HTTP round trip would make
+    /// closing a window feel broken. A missed post self-corrects on the next
+    /// transition, and the mode it could get stuck in is the SAFE one.
+    private func postAmbientMode(_ mode: String) {
+        guard let url = URL(string: "http://127.0.0.1:8000/api/ambient/visibility") else {
+            return
+        }
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.httpBody = Data("{\"mode\":\"\(mode)\"}".utf8)
+        session.dataTask(with: request).resume()
     }
 
     private func defaultBubbleOrigin(for size: NSSize) -> NSPoint {
@@ -2868,8 +2907,13 @@ final class AuraLauncherDelegate: NSObject, NSApplicationDelegate,
         // The window, the bubble and the restrained chat are the same
         // presence on three surfaces; more than one at once is more than one
         // Aura.
-        hideBubble()
+        //
+        // orderBubbleOut, NOT hideBubble: opening the full window is a change
+        // of surface, and routing it through the dismissal path would tell the
+        // runtime she had been sent away every time someone opened her.
+        orderBubbleOut()
         hideCompanionChat()
+        postAmbientMode("window")
         desktopWindow?.center()
         desktopWindow?.makeKeyAndOrderFront(nil)
         desktopWindow?.orderFrontRegardless()

@@ -132,6 +132,42 @@
     }
   });
 
+  /*
+   * Right-click hides her, and hiding is not the same act as clearing.
+   *
+   * × dismisses a MESSAGE. This dismisses HER: she stops observing, not just
+   * being drawn. There was no way to do it at all — the launcher had a hide
+   * handler and nothing ever sent it — so the stronger of the two controls
+   * was the one with no way to reach it.
+   *
+   * The context menu carries it rather than a second visible button: this
+   * sits over other people's windows all day, and the one thing it must not
+   * grow is chrome explaining itself.
+   */
+  async function hideHer() {
+    if (window.webkit?.messageHandlers?.auraBubble) {
+      // The host owns the panel AND tells the runtime; one authority for a
+      // control that must not end up cosmetic on one path and real on the
+      // other.
+      window.webkit.messageHandlers.auraBubble.postMessage({ action: "hide" });
+      return;
+    }
+    try {
+      await api("/api/ambient/visibility", {
+        method: "POST",
+        body: JSON.stringify({ mode: "hidden" }),
+      });
+      render({ has_utterance: false, utterance: "" });
+    } catch (error) {
+      /* nothing to do; she stays visible, which is the safe direction */
+    }
+  }
+
+  pill.addEventListener("contextmenu", (event) => {
+    event.preventDefault();
+    hideHer();
+  });
+
   // Report where the person parked her, so the position survives a restart.
   let moveTimer = null;
   window.addEventListener("aura-bubble-moved", (event) => {
