@@ -1267,7 +1267,27 @@ def test_retrieval_seeding_preserves_exact_identity_at_attach(tiny_model):
         layer, rank=2, scale=1.0, seed_stat=1.0, tag="t:2:o_proj",
         seed_vectors=mx.random.normal((2, 64), key=mx.random.key(7)),
     )
-    assert bool(mx.allclose(wrapper(x), layer(x), atol=0.0, rtol=0.0))
+    from core.brain.llm.latent_cortex.verified_best import tensor_sha256
+
+    assert tensor_sha256(wrapper(x)) == tensor_sha256(layer(x))
+
+
+def test_fast_weight_manager_activates_only_after_identity_measurement(tiny_model):
+    fw = EpisodicFastWeights(
+        FastWeightsConfig(enabled=True, rank=2, target="o_proj", opt_steps=1)
+    )
+    fw.attach(
+        tiny_model.model,
+        (P_END, C_START),
+        seed_stat=1.0,
+        episode_id="ep-activation-boundary",
+    )
+    try:
+        assert all(handle.wrapper.identity_bypass for handle in fw.handles)
+        fw.activate_adaptation_path()
+        assert all(not handle.wrapper.identity_bypass for handle in fw.handles)
+    finally:
+        fw.detach()
 
 
 def test_mismatched_seed_shapes_fall_back_to_random_init(tiny_model):

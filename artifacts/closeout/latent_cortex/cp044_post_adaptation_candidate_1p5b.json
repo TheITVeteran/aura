@@ -1,0 +1,65 @@
+{
+  "schema": "aura.rlc.cp044_post_adaptation_candidate_closeout.v1",
+  "checkpoint": "CP044",
+  "model": "/Users/bryan/.aura/live-source/models/Qwen2.5-1.5B-Instruct-4bit",
+  "base_commit": "467fb1e01",
+  "seed": 20260808,
+  "per_domain": 1,
+  "arms": [
+    "vanilla",
+    "vanilla_equal_compute",
+    "full_stack",
+    "full_stack_oracle"
+  ],
+  "artifact_sha256": {
+    "task_commitment_json": "2ed7779c35d34f1fa355cefe2a7cfd193c4c138e6114af88be9553c085cd57f4",
+    "decode_fingerprint_json": "7fd2a0b1526d8700754f119ea8292d695fd2128512e58b2c63201da26c4fec94",
+    "journal_jsonl": "8d3edc909ccb314c38c54a17c786f00b5b40d554e63a67bf3f4dce38170c610a",
+    "verdict_json": "d0395bdd4a0c0d14d1d18fc01d351f52315d55655ec04147d9946173bb01ca2e"
+  },
+  "mechanical_gates": {
+    "planned_cells": 28,
+    "completed_cells": 28,
+    "faulted_arms": {},
+    "coverage_complete": true,
+    "evidence_manifest_valid": true,
+    "full_stack_runtime_measured": true,
+    "paired_vanilla_floor_holds": true,
+    "right_to_wrong_regressions": 0,
+    "unpromoted_byte_divergences": 0
+  },
+  "post_adaptation_measurement": {
+    "deployable_cells": 7,
+    "deployable_refresh_receipts": 6,
+    "deployable_changed_observations": 6,
+    "deployable_contract_valid_replacements": 2,
+    "deployable_contract_rejections": 4,
+    "deployable_no_candidate_authority": 1,
+    "oracle_cells": 7,
+    "oracle_refresh_receipts": 7,
+    "oracle_changed_observations": 7,
+    "oracle_contract_valid_replacements": 2,
+    "oracle_contract_rejections": 5,
+    "oracle_inputs_hash_bound_to_refreshed_candidate": 2,
+    "oracle_correct_refreshed_candidates": 0
+  },
+  "quantized_fast_weight_identity": {
+    "literal_pass_through_until_identity_probe": true,
+    "adaptation_activated_only_after_identity_proof": true,
+    "attachment_identity_faults_in_final_campaign": 0
+  },
+  "scores": {
+    "vanilla": "0/7",
+    "vanilla_equal_compute": "0/7",
+    "full_stack": "0/7",
+    "full_stack_oracle": "0/7"
+  },
+  "conclusion": {
+    "post_optimization_candidate_measured": true,
+    "stale_candidate_authority_removed": true,
+    "battery_informative_for_reasoning_gain": false,
+    "reasoning_gain_proven": false,
+    "fusion_authorized": false,
+    "frontier_level_proven": false
+  }
+}

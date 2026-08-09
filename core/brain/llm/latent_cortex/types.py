@@ -1345,6 +1345,10 @@ class EpisodeReceipt:
     # This can add a contract-valid candidate but owns no correctness or
     # public-answer authority.
     contract_repair: dict[str, Any] = field(default_factory=dict)
+    # Hash-bound refresh of the selected candidate after accepted latent or
+    # fast-weight adaptation. This prevents downstream arbitration from
+    # grading the pre-adaptation probe as though it came from the final state.
+    post_adaptation_candidate: dict[str, Any] = field(default_factory=dict)
     verifier_preflight: dict[str, Any] = field(default_factory=dict)
     blind_review: dict[str, Any] = field(default_factory=dict)
     decoy_verification: dict[str, Any] = field(default_factory=dict)
@@ -1798,6 +1802,9 @@ class EpisodeReceipt:
             "latent_opt_rejected": self.latent_opt_rejected,
             "latent_opt_budget_exhausted": self.latent_opt_budget_exhausted,
             "latent_opt_verifier": dict(self.latent_opt_verifier),
+            "post_adaptation_candidate": dict(
+                self.post_adaptation_candidate
+            ),
             "verifier_probe_max_tokens": self.verifier_probe_max_tokens,
             "verifier_probe_contract": self.verifier_probe_contract,
             "fast_weights_applied": self.fast_weights_applied,

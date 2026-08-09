@@ -1224,6 +1224,36 @@ def test_latent_opt_episode_records_trace(tiny_model):
     assert r.latent_opt_loss_trail[-1] < r.latent_opt_loss_trail[0]
 
 
+def test_latent_opt_refreshes_the_candidate_and_its_evidence_before_replacement(
+    tiny_model,
+):
+    engine = LatentCortexEngine(
+        tiny_model,
+        _ExactEvidenceTokenizer(),
+        config=_config(
+            latent_opt=LatentOptConfig(enabled=True, steps=2, lr=0.05),
+            verifier_accept_non_regression=True,
+        ),
+    )
+
+    result = engine.reason(
+        token_ids=PROMPT_TOKENS,
+        verifier=_exact_evidence_verifier(),
+    )
+
+    assert result.ok
+    receipt = result.receipt
+    assert receipt.latent_opt_steps > 0
+    refresh = receipt.post_adaptation_candidate
+    assert refresh["selected_branch"] == receipt.selected_branch
+    assert refresh["transition_count"] == 1
+    assert refresh["final_candidate_available"] is True
+    decomposition = receipt.disagreement_graph["candidate_decompositions"][
+        str(receipt.selected_branch)
+    ]
+    assert decomposition["source_sha256"] == refresh["final_candidate_sha256"]
+
+
 def test_fast_weight_episode_proves_erase_and_invariant():
     model = _model()  # fresh model: this test mutates wrappers
     before = parameter_fingerprint(model)

@@ -122,6 +122,11 @@ class EpisodicDeltaLinear:
         self.base = base
         self.scale = float(scale)
         self.tag = tag
+        # Quantized projections can change dtype/evaluation semantics merely
+        # by adding an algebraic zero. Attachment therefore remains a literal
+        # base-function pass-through until the engine has measured identity
+        # and explicitly activates the adaptation path.
+        self.identity_bypass = True
         out_features, in_features = _linear_dims(base)
         seed = int.from_bytes(hashlib.sha256(tag.encode()).digest()[:4], "big")
         key = mx.random.key(seed)
@@ -158,8 +163,11 @@ class EpisodicDeltaLinear:
         mx.eval(self.U, self.V)
 
     def __call__(self, x):
+        base = self.base(x)
+        if self.identity_bypass:
+            return base
         delta = (x @ self.V.T) @ self.U.T
-        return self.base(x) + self.scale * delta
+        return base + self.scale * delta
 
 
 @dataclass
@@ -433,6 +441,21 @@ class EpisodicFastWeights:
         if restored:
             self._notify_function_change("fast_weights_detached")
         return restored
+
+    def activate_adaptation_path(self) -> None:
+        """Release the exact-identity bypass after attachment is proven."""
+
+        if not self.handles:
+            raise RuntimeError(
+                "fast-weight adaptation activation requires attached wrappers"
+            )
+        changed = False
+        for handle in self.handles:
+            if getattr(handle.wrapper, "identity_bypass", False):
+                handle.wrapper.identity_bypass = False
+                changed = True
+        if changed:
+            self._notify_function_change("fast_weights_adaptation_activated")
 
     def rescale(self, factor: float) -> float:
         """Multiply every wrapper's scale — the canary ladder's step-down.
@@ -762,6 +785,14 @@ class EpisodicFastWeights:
             or not operation_prefix.replace("_", "").isalnum()
         ):
             raise ValueError("fast-weight operation prefix is invalid")
+
+        # Direct users of EpisodicFastWeights receive the same boundary as
+        # the engine: attach is exact identity; the first real optimization
+        # explicitly activates the delta path. The engine also calls this
+        # before potentially monkeypatched optimizers, so both interfaces are
+        # safe and the operation is idempotent.
+        if n_steps > 0:
+            self.activate_adaptation_path()
 
         def bind_params(params) -> None:
             parameter_pairs = zip(params[0::2], params[1::2], strict=True)

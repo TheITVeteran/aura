@@ -2705,6 +2705,7 @@ class LatentCortexService:
             for field in (
                 "branch_contract",
                 "contract_repair",
+                "post_adaptation_candidate",
                 "blind_review",
                 "decoy_verification",
             )
@@ -2739,6 +2740,23 @@ class LatentCortexService:
                         raise ValueError("contract repair policy differs")
                 except (ImportError, TypeError, ValueError):
                     errors.append("contract_repair_unproven")
+            if receipt.get("post_adaptation_candidate"):
+                try:
+                    from core.brain.llm.latent_cortex.post_adaptation_candidate import (
+                        validate_post_adaptation_candidate_receipt,
+                    )
+
+                    post_adaptation = validate_post_adaptation_candidate_receipt(
+                        receipt.get("post_adaptation_candidate")
+                    )
+                    if post_adaptation["selected_branch"] != receipt.get(
+                        "selected_branch"
+                    ):
+                        raise ValueError(
+                            "post-adaptation candidate branch differs"
+                        )
+                except (ImportError, TypeError, ValueError):
+                    errors.append("post_adaptation_candidate_unproven")
             try:
                 from core.brain.llm.latent_cortex.blind_review import (
                     validate_blind_review_receipt,

@@ -38972,3 +38972,55 @@ hygiene pass. Reasoning gain, fusion, frontier-level performance, and
 `WOW Signal` remain false. The
 completion envelope stays `809/920` (approximately `87.9%`); the next RLC
 checkpoint must refresh and bind the candidate pool after latent adaptation.
+
+## Checkpoint 2026-08-08-044: Measure the State That Adaptation Left
+
+Candidate arbitration no longer grades a branch probe captured before latent
+optimization as though it were the final recurrent computation. After every
+accepted latent update, accepted fast-weight adaptation, or experimental slot
+ablation, the engine decodes a fresh no-cache probe from the exact state about
+to answer. A new independently validated receipt binds the selected branch,
+prior and observed commitments, deterministic representation disposition,
+adaptation evidence, and final candidate-pool effect. It grants no correctness
+or answer-selection authority.
+
+Changed candidate text invalidates the evidence built over the old text. The
+engine therefore reruns decoy-balanced blind review and reconstructs atomic
+decomposition, deterministic routes, disagreement diagnosis, and local-repair
+state from the refreshed inventory. Old generated repairs do not transfer.
+Confidence-bound replacement consumes this rebuilt deployable envelope; the
+research oracle consumes the same refreshed candidate when one is contract
+valid and records rejection when the final state emits malformed output.
+
+The canary also retired a quantized-checkpoint defect discovered during the
+first bounded rerun. Adding an algebraic zero through a wrapper can change
+dtype/evaluation behavior even with a zero delta. Fast-weight attachment is
+now a literal base-function pass-through until its byte-level identity probe
+passes, after which optimization explicitly activates the adaptation path.
+The final campaign had no attachment-identity faults.
+
+The source-bound Qwen2.5-1.5B campaign completed `28/28` cells across ordinary
+decode, equal-compute control, deployable full stack, and diagnostic oracle.
+All arms were fault-free, runtime evidence was complete, and the paired
+incumbent floor had zero right-to-wrong regressions and zero unpromoted byte
+divergences. Six deployable cells produced final-state refresh receipts; all
+six observations changed, two became contract-valid replacements, four were
+removed as malformed, and one cell correctly retained no candidate authority.
+All seven oracle cells measured changed final-state probes. Its two valid
+recurrent inputs were byte-bound to the refreshed candidate commitments; both
+were wrong. Five invalid final probes were rejected rather than replaced by a
+stale candidate.
+
+The battery is not capability-informative: every arm scored `0/7`, including
+ordinary decode. It proves that the complete engine now measures the
+post-adaptation object and fails closed around malformed output; it does not
+prove a reasoning gain. The compact evidence record is
+`artifacts/closeout/latent_cortex/cp044_post_adaptation_candidate_1p5b.json`.
+
+The complete affected contract selection passes `271/271`; canonical smoke
+passes `103/103`; compilation, Ruff, governance lint, layering, and diff
+hygiene pass. Reasoning gain, fusion, frontier-level performance, and
+`WOW Signal` remain false. The completion envelope stays `809/920`
+(approximately `87.9%`). The next RLC checkpoint must address the measured
+content failure: final-state optimization changed every probe, but produced
+no correct candidate and malformed five of seven diagnostic outputs.

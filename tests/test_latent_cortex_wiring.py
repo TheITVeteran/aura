@@ -4161,6 +4161,36 @@ def test_service_validates_interactive_verifier_profile_and_acceptance_receipt()
     )
 
 
+def test_service_validates_post_adaptation_candidate_commitment():
+    from core.brain.llm.latent_cortex.post_adaptation_candidate import (
+        advance_post_adaptation_candidate,
+        build_post_adaptation_candidate_receipt,
+    )
+
+    transition, _candidate = advance_post_adaptation_candidate(
+        selected_branch=0,
+        prior_candidate="old candidate",
+        observed_candidate="new candidate",
+        stage="post_final_adaptation",
+        strict_answer_contract=False,
+        adaptation_evidence={"latent_opt_accepted_steps": 1},
+    )
+    post_adaptation = build_post_adaptation_candidate_receipt([transition])
+    receipt = {
+        "selected_branch": 0,
+        "post_adaptation_candidate": post_adaptation,
+    }
+
+    errors = LatentCortexService._receipt_contract_errors(receipt, {})
+    assert "post_adaptation_candidate_unproven" not in errors
+
+    tampered = copy.deepcopy(receipt)
+    tampered["post_adaptation_candidate"]["selected_branch"] = 1
+    assert "post_adaptation_candidate_unproven" in (
+        LatentCortexService._receipt_contract_errors(tampered, {})
+    )
+
+
 def test_service_enforces_default_verifier_probe_profile():
     assert "verifier_probe_profile_mismatch" in (
         LatentCortexService._receipt_contract_errors({}, {})

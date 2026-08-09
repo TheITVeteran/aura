@@ -4864,6 +4864,9 @@ class LatentCortexEngine:
         branch_probe_texts: dict[int, str] = {}
         latent_optimization_probe_texts: dict[int, str] = {}
         research_oracle_candidates: dict[int, str] = {}
+        verification_response_contract = str(
+            getattr(information_verifier, "response_contract", "") or ""
+        )
         blind_scores: dict[int, float] = {}
         if (
             pending_verifier is not None
@@ -4901,9 +4904,6 @@ class LatentCortexEngine:
                     self.config.local_repair_max_attempts
                     if self.config.local_repair_enabled
                     else 0
-                )
-                verification_response_contract = str(
-                    getattr(information_verifier, "response_contract", "") or ""
                 )
                 contract_repair_requests = prepare_contract_repair_requests(
                     branch_candidates=original_branch_probe_texts,
@@ -6222,6 +6222,10 @@ class LatentCortexEngine:
                     cancel_check=cancel_check,
                     wrapped_layers=receipt.fast_weights_layers,
                 )
+                # Attachment is a literal pass-through until the byte-level
+                # identity probe above succeeds. Only then may the temporary
+                # adaptation function enter the execution graph.
+                fast_weights.activate_adaptation_path()
                 # The temporary synapses optimize only toward the exact
                 # evidence atoms admitted above. Prompt reconstruction remains
                 # the latent-state optimizer's objective; using it here would
@@ -6465,6 +6469,222 @@ class LatentCortexEngine:
                     )
                     fast_weight_decode_active = False
                     receipt.flag("fast_weight_state_lineage_changed")
+
+            # Branch probes were captured before latent optimization and
+            # fast-weight adaptation. Refresh the selected candidate from the
+            # exact state that is about to decode, or remove the stale entry;
+            # downstream replacement and research arbitration must never
+            # grade the pre-adaptation snapshot as the adapted computation.
+            adaptation_changed_candidate_state = bool(
+                receipt.latent_opt_steps > 0
+                or fast_weight_decode_active
+                or ablate_slot is not None
+            )
+            deployable_candidate_available = winner.index in branch_probe_texts
+            research_candidate_available = (
+                winner.index in research_oracle_candidates
+            )
+            research_oracle_enabled = callable(
+                getattr(
+                    pending_verifier,
+                    "research_oracle_assessment",
+                    None,
+                )
+            )
+            if adaptation_changed_candidate_state and (
+                deployable_candidate_available
+                or research_candidate_available
+                or research_oracle_enabled
+            ):
+                from core.brain.llm.latent_cortex.post_adaptation_candidate import (
+                    advance_post_adaptation_candidate,
+                    build_post_adaptation_candidate_receipt,
+                )
+
+                post_probe_cost = self._verifier_probe_layer_apps(bridge_tokens)
+                if post_probe_cost + safety_reserve > budget.remaining_layer_apps:
+                    branch_probe_texts.pop(winner.index, None)
+                    research_oracle_candidates.pop(winner.index, None)
+                    receipt.flag("post_adaptation_candidate_unmeasured_budget")
+                else:
+                    prior_candidate = (
+                        branch_probe_texts[winner.index]
+                        if deployable_candidate_available
+                        else research_oracle_candidates.get(winner.index)
+                    )
+                    post_probe_tokens = self._decode_probe(
+                        winner,
+                        cache,
+                        runner,
+                        budget,
+                        bridge_tokens=bridge_tokens,
+                        use_cache=False,
+                        force_exact_tokens=True,
+                    )
+                    post_probe_text = self._decode_public_text(
+                        post_probe_tokens,
+                        receipt=receipt,
+                    )
+                    transition, admitted_candidate = (
+                        advance_post_adaptation_candidate(
+                            selected_branch=winner.index,
+                            prior_candidate=prior_candidate,
+                            observed_candidate=post_probe_text,
+                            stage="post_final_adaptation",
+                            strict_answer_contract=(
+                                "final_answer_v1"
+                                in {
+                                    self.config.decode_contract,
+                                    self.config.verifier_probe_contract,
+                                }
+                            ),
+                            response_contract=verification_response_contract,
+                            adaptation_evidence={
+                                "latent_opt_attempts": receipt.latent_opt_attempts,
+                                "latent_opt_accepted_steps": receipt.latent_opt_steps,
+                                "fast_weight_disposition": (
+                                    str(
+                                        fast_weight_learning_state.get(
+                                            "disposition", "not_applied"
+                                        )
+                                    )
+                                    if fast_weight_learning_state is not None
+                                    else "not_applied"
+                                ),
+                                "fast_weight_decode_active": fast_weight_decode_active,
+                                "slot_ablation_applied": ablate_slot is not None,
+                                "prior_disagreement_sha256": str(
+                                    receipt.disagreement_graph.get(
+                                        "receipt_sha256", ""
+                                    )
+                                ),
+                                "prior_diagnostic_sha256": str(
+                                    receipt.diagnostic_action_selection.get(
+                                        "receipt_sha256", ""
+                                    )
+                                ),
+                                "prior_local_repair_sha256": str(
+                                    receipt.local_repair.get(
+                                        "receipt_sha256", ""
+                                    )
+                                ),
+                                "prior_blind_review_sha256": str(
+                                    receipt.blind_review.get(
+                                        "receipt_sha256", ""
+                                    )
+                                ),
+                            },
+                        )
+                    )
+                    receipt.post_adaptation_candidate = (
+                        build_post_adaptation_candidate_receipt([transition])
+                    )
+                    if admitted_candidate is None:
+                        if deployable_candidate_available:
+                            branch_probe_texts.pop(winner.index, None)
+                        research_oracle_candidates.pop(winner.index, None)
+                        receipt.flag("post_adaptation_candidate_contract_rejected")
+                    else:
+                        if deployable_candidate_available:
+                            branch_probe_texts[winner.index] = admitted_candidate
+                        if research_oracle_enabled:
+                            research_oracle_candidates[winner.index] = (
+                                admitted_candidate
+                            )
+
+                    # Confidence-bound replacement validates candidate text
+                    # against these exact receipts. Rebuild them from the
+                    # refreshed inventory; pre-adaptation decompositions and
+                    # generated repairs cannot transfer to changed text.
+                    from core.brain.llm.latent_cortex.disagreement_graph import (
+                        build_disagreement_graph_receipt,
+                        decompose_branch_candidates,
+                    )
+                    from core.brain.llm.latent_cortex.diagnostic_action_selector import (
+                        build_candidate_routes,
+                        build_diagnostic_action_selector_receipt,
+                    )
+                    from core.brain.llm.latent_cortex.local_repair import (
+                        build_local_repair_receipt,
+                    )
+
+                    post_candidate_decompositions: dict[
+                        str, dict[str, Any]
+                    ] = {}
+                    if len(branch_probe_texts) == len(ensemble.branches):
+                        try:
+                            from core.brain.llm.latent_cortex.blind_review import (
+                                run_decoy_balanced_review,
+                            )
+
+                            (
+                                blind_scores,
+                                receipt.blind_review,
+                                receipt.decoy_verification,
+                            ) = run_decoy_balanced_review(
+                                branch_probe_texts,
+                                pending_verifier,
+                                episode_id=receipt.episode_id,
+                                objective_sha256=receipt.input_tokens_sha256,
+                                isolation_receipt=ensemble.isolation_receipt(
+                                    runner.cache_discipline_receipt()
+                                ),
+                            )
+                            post_candidate_decompositions = (
+                                decompose_branch_candidates(
+                                    branch_probe_texts,
+                                    objective=verification_objective,
+                                )
+                            )
+                        except (TypeError, ValueError) as exc:
+                            receipt.flag(
+                                "post_adaptation_candidate_evidence_invalid:"
+                                f"{type(exc).__name__}"
+                            )
+                    receipt.disagreement_graph = build_disagreement_graph_receipt(
+                        n_branches=len(ensemble.branches),
+                        operator_trace=receipt.cognitive_operator_trace,
+                        action_trace=receipt.cognitive_action_trace,
+                        structural_diversity=receipt.structural_diversity,
+                        candidate_decompositions=post_candidate_decompositions,
+                        blind_review=receipt.blind_review,
+                    )
+                    post_candidate_routes = (
+                        build_candidate_routes(
+                            branch_probe_texts,
+                            objective=verification_objective,
+                            candidate_decompositions=(
+                                post_candidate_decompositions
+                            ),
+                        )
+                        if post_candidate_decompositions
+                        else {}
+                    )
+                    receipt.diagnostic_action_selection = (
+                        build_diagnostic_action_selector_receipt(
+                            disagreement_graph=receipt.disagreement_graph,
+                            candidate_routes=post_candidate_routes,
+                            action_policy_evidence=action_policy_evidence,
+                            value_policy=receipt.value_of_computation,
+                            action_trace=receipt.cognitive_action_trace,
+                        )
+                    )
+                    repair_limit = (
+                        self.config.local_repair_max_attempts
+                        if self.config.local_repair_enabled
+                        else 0
+                    )
+                    receipt.local_repair = build_local_repair_receipt(
+                        disagreement_graph=receipt.disagreement_graph,
+                        diagnostic_selection=(
+                            receipt.diagnostic_action_selection
+                        ),
+                        branch_candidates=branch_probe_texts,
+                        objective=verification_objective,
+                        generated_repairs={},
+                        execution_failures={},
+                        max_requests=repair_limit,
+                    )
 
             # ── Commit the winner + decode the answer ────────────────────
             # ``bridge_tokens`` is what the model actually reads before the
