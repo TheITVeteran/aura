@@ -33,12 +33,19 @@ the admission-throughput estimator registers itself instead of being imported.
 from __future__ import annotations
 
 import logging
-import threading
 from typing import Any
+
+from core.runtime.lockdep import LockRank, checked_lock
 
 logger = logging.getLogger("Aura.GovernanceCoverage")
 
-_LOCK = threading.Lock()
+#: checked_lock, not threading.Lock — lockdep only sees the locks it wraps,
+#: and `make lock-coverage` caught this module adding the 716th raw one on
+#: the same day the ratchet was written to stop exactly that.
+#:
+#: REGISTRY rank: a process-wide counter, taken first and held for a dict
+#: update. Nothing is acquired underneath it.
+_LOCK = checked_lock("governance_coverage.ungoverned", rank=LockRank.REGISTRY)
 _UNGOVERNED: dict[str, int] = {}
 
 #: Log the first occurrence, then every Nth. A persistent condition should

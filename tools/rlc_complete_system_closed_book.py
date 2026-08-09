@@ -282,7 +282,7 @@ def _aggregate_complete_system_resources(
         unknown = set(validated["unknown_operations"])
         if resolve_incumbent:
             if "bound_incumbent_generation" not in unknown:
-                raise ValueError("RLC resource receipt lacks bound incumbent placeholder")
+                raise ValueError("RLC resource receipt lacks a bound incumbent generation")
             unknown.remove("bound_incumbent_generation")
         for operation, counters in validated["operations"].items():
             ledger.charge(f"{prefix}:{operation}", **counters)

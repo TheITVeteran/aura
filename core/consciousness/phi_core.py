@@ -816,6 +816,34 @@ class PhiCore:
         except (RuntimeError, AttributeError, TypeError, ValueError, ImportError) as exc:
             record_degradation('phi_core', exc)
 
+    def record_grassmann_state(self, state: int) -> None:
+        """Ingest one already-encoded Grassmann state.
+
+        The encoding happens in the MLX worker, where the activations are —
+        ~5120 floats reduce to one byte, and shipping the vector instead
+        would put a per-token megabyte across the process boundary on the
+        path where latency decides whether a turn survives. This is the
+        parent-side counterpart: the byte arrives over
+        ``core/consciousness/phi_residual_channel.py`` and lands in the same
+        history ``_record_grassmann_residual`` would have filled.
+
+        Without it the channel had a writer and no reader. The worker
+        published a state per sampled token, nothing drained the ring, and
+        the activation-grounded complex reported
+        ``insufficient_history:0/50`` forever — which is the whole reason no
+        activation-grounded live Φ had ever been measured.
+        """
+        try:
+            folded = _fold_modes_to_byte(int(state))
+        except (TypeError, ValueError):
+            return
+        self._grassmann_state_history.append(folded)
+        self._grassmann_state_visits[folded] += 1.0
+
+    def grassmann_history_depth(self) -> int:
+        """How many transitions the residual complex has to work with."""
+        return len(self._grassmann_state_history)
+
     def compute_grassmann_residual_phi(self) -> PhiResult | None:
         """Exact φ over the transformer's Grassmann-geometry state transitions.
 

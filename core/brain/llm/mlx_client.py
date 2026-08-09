@@ -11489,6 +11489,59 @@ class MLXLocalClient:
                 int(getattr(self, "_worker_generation", 0) or 0),
             )
 
+    def _drain_phi_residual_ring(self) -> int:
+        """Move Grassmann states from the worker's ring into PhiCore.
+
+        THE READER THIS CHANNEL NEVER HAD. ``phi_residual_channel`` was built
+        to carry 8-bit residual-stream states out of the MLX worker, because
+        the steering hook's in-process ``ServiceContainer.has("phi_core")``
+        is always False on the far side of the fork. The parent allocated the
+        ring, the worker published a state per sampled token — and nothing
+        ever drained it. The activation-grounded complex went on reporting
+        ``insufficient_history:0/50``, which is the exact symptom the channel
+        was written to cure.
+
+        Called after each generation: that is the cadence the states are
+        produced at, so the ring never has time to wrap under normal load.
+
+        Returns the number of states delivered, and never raises. A Φ sample
+        is telemetry; losing one may not cost a turn.
+        """
+        channel = getattr(self, "_phi_residual_mem", None)
+        if channel is None:
+            return 0
+        try:
+            from core.consciousness.phi_residual_channel import drain
+
+            states, new_cursor = drain(channel, int(getattr(self, "_phi_residual_cursor", 0)))
+            self._phi_residual_cursor = new_cursor
+            if not states:
+                return 0
+
+            from core.runtime.service_registry import get_runtime_service
+
+            phi_core = get_runtime_service("phi_core", default=None)
+            if phi_core is None or not hasattr(phi_core, "record_grassmann_state"):
+                # Keep the cursor advanced regardless: replaying stale states
+                # into a PhiCore that appears later would build a transition
+                # matrix out of samples from a different process lifetime.
+                return 0
+            for state in states:
+                phi_core.record_grassmann_state(state)
+            self._phi_residual_delivered = (
+                int(getattr(self, "_phi_residual_delivered", 0)) + len(states)
+            )
+            return len(states)
+        except Exception as exc:  # noqa: BLE001 — telemetry may not break a turn
+            record_degradation(
+                "mlx_client",
+                exc,
+                severity="debug",
+                action="skipped one phi residual drain",
+                enforce_failure_policy=False,
+            )
+            return 0
+
     async def generate(self, prompt: str, **kwargs) -> str | None:
         """High-level generation endpoint with unified deadlines.
 
@@ -11731,6 +11784,11 @@ class MLXLocalClient:
             # Check steering liveness
             if not request_is_background:
                 self._emit_steering_status(origin_label)
+
+            # Collect the residual-stream states this generation produced in
+            # the worker. Cheap (a deque append per sampled token) and the
+            # only thing standing between the encoder and a live Φ.
+            self._drain_phi_residual_ring()
 
             # Reliability tracing: inference nests under the HTTP root span
             # (contextvars), so a slow turn reads as one connected trace.

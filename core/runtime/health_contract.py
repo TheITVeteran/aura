@@ -1228,6 +1228,22 @@ def _runtime_integrity_block() -> dict[str, Any]:
     except Exception as exc:  # noqa: BLE001 — integrity reporting is additive
         block["ungoverned_turns_error"] = repr(exc)
 
+    # Whether the activation-grounded Φ complex is being fed at all.
+    #
+    # The residual channel carries 8-bit Grassmann states out of the MLX
+    # worker, and for its whole existence nothing in the parent drained it —
+    # so the complex reported insufficient_history:0/50 forever while three
+    # modules and a live writer said otherwise. Depth on the surface means a
+    # regression to zero is visible instead of silent.
+    try:
+        phi_core = get_runtime_service("phi_core", default=None)
+        if phi_core is not None and hasattr(phi_core, "grassmann_history_depth"):
+            block["phi_residual_history"] = {
+                "grassmann_states": int(phi_core.grassmann_history_depth()),
+            }
+    except Exception as exc:  # noqa: BLE001 — integrity reporting is additive
+        block["phi_residual_history_error"] = repr(exc)
+
     # Whether admission is predicting from measurement or still guessing.
     #
     # Read through the runtime service registry rather than by importing the
