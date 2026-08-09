@@ -10,6 +10,29 @@ track which offspring variants survive based on a selection signal.
 This does not claim to be evolution. It is the minimum viable version of
 "heritable variation + selection" — enough that the gap stops being
 "completely absent" and becomes "bounded but auditable".
+
+NOT WIRED INTO THE LIVE RUNTIME.
+--------------------------------
+``LineageManager`` is constructed only by its own factory and by
+``tests/``. ``core/service_registration.py`` registers a ``lineage_manager``
+service, and nothing resolves that key — so the one thing that looks most
+like wiring is the thing doing the least. A registered service with no
+reader is a worse signal than an uncalled function, because registration
+reads as integration.
+
+This matters for what may be claimed. Aura's ALife substrate is genuinely
+causal: the pattern replicator mutates real neural-mesh weight matrices in
+place, and Lenia-style inter-column coupling is blended back into the live
+coupling matrix. That is evolutionary dynamics INSIDE the substrate, and it
+runs. Whole-agent reproduction — parent snapshots producing child Aura
+instances that inherit state, undergo bounded resource competition, and
+persist or die by a selection signal — is this module, and this module has
+no normal-runtime caller. So "adaptive ALife cognitive agent" is supportable
+and "self-reproducing digital organism" is not, and the difference is
+exactly the line drawn here.
+
+``tests/test_capability_claims_have_call_sites.py`` fails if that changes
+without this paragraph changing with it.
 """
 from __future__ import annotations
 

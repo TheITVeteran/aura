@@ -21,6 +21,8 @@ up without updating what the system says about itself.
 from __future__ import annotations
 
 import ast
+import re
+from functools import lru_cache
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -39,13 +41,15 @@ _SKIP_PARTS = frozenset(
 )
 
 
-def _production_call_sites(function_name: str, defining_file: str) -> list[str]:
-    """Production files that CALL ``function_name``.
+@lru_cache(maxsize=1)
+def _call_index() -> dict[str, frozenset[str]]:
+    """{called name: files that call it}, over production sources, built once.
 
-    The defining file is excluded: a function referenced only inside the
-    module that defines it has no caller in any sense that matters.
+    One pass. Re-parsing the whole tree per entry point is what a
+    per-subsystem test could afford; the general rule below asks the same
+    question a dozen times and could not.
     """
-    hits: list[str] = []
+    index: dict[str, set[str]] = {}
     candidates: list[Path] = [
         ROOT / name for name in _PRODUCTION_ENTRYPOINTS if (ROOT / name).is_file()
     ]
@@ -57,8 +61,6 @@ def _production_call_sites(function_name: str, defining_file: str) -> list[str]:
     for path in candidates:
         rel = path.relative_to(ROOT)
         if _SKIP_PARTS.intersection(rel.parts):
-            continue
-        if str(rel) == defining_file:
             continue
         try:
             tree = ast.parse(path.read_text(encoding="utf-8"))
@@ -75,10 +77,18 @@ def _production_call_sites(function_name: str, defining_file: str) -> list[str]:
                 if isinstance(func, ast.Attribute)
                 else ""
             )
-            if name == function_name:
-                hits.append(str(rel))
-                break
-    return sorted(set(hits))
+            if name:
+                index.setdefault(name, set()).add(str(rel))
+    return {name: frozenset(files) for name, files in index.items()}
+
+
+def _production_call_sites(function_name: str, defining_file: str) -> list[str]:
+    """Production files that CALL ``function_name``.
+
+    The defining file is excluded: a function referenced only inside the
+    module that defines it has no caller in any sense that matters.
+    """
+    return sorted(_call_index().get(function_name, frozenset()) - {defining_file})
 
 
 def test_latent_bridge_status_matches_its_wiring():
@@ -254,3 +264,154 @@ def test_compute_router_declares_that_it_is_not_wired():
             "through core/brain/llm_health_router.py. An unwired module that "
             "looks live is how one gets adopted without review."
         )
+
+
+# ── the general rule ─────────────────────────────────────────────────────
+#
+# The tests above are hand-written, one per subsystem, which means a module
+# that declares itself unwired and never gets a test is unchecked — and
+# LineageManager was exactly that: whole-agent reproduction, modelled and
+# tested, no normal-runtime caller, nothing verifying either half.
+#
+# This makes the declaration self-checking for every module, present and
+# future. The convention it enforces is small: a module that says it is not
+# wired must name its entry points in double backticks in the docstring, and
+# every one of those that this module actually defines must have no
+# production caller.
+
+#: Phrases a module uses to declare it has no production caller. Matched
+#: against the module docstring only — a comment deep in a function is not a
+#: declaration anybody reads.
+_UNWIRED_MARKERS = (
+    "NOT WIRED",
+    "UNWIRED",
+    "no production caller",
+    "has no caller",
+)
+
+#: Modules whose "not wired" text is about something other than themselves.
+_NOT_A_SELF_DECLARATION = frozenset(
+    {
+        # Describes the wiring status of OTHER subsystems it inventories.
+        "core/consciousness/candidate_gate_inventory.py",
+    }
+)
+
+
+def _modules_declaring_unwired() -> dict[str, tuple[str, set[str]]]:
+    """{path: (docstring, entry-point names it defines and names in backticks)}."""
+    found: dict[str, tuple[str, set[str]]] = {}
+    for root in _PRODUCTION_ROOTS:
+        base = ROOT / root
+        if not base.is_dir():
+            continue
+        for path in base.rglob("*.py"):
+            rel = str(path.relative_to(ROOT))
+            if _SKIP_PARTS.intersection(Path(rel).parts) or rel in _NOT_A_SELF_DECLARATION:
+                continue
+            try:
+                tree = ast.parse(path.read_text(encoding="utf-8"))
+            except (OSError, SyntaxError, UnicodeDecodeError):
+                continue
+            doc = ast.get_docstring(tree) or ""
+            if not any(marker in doc for marker in _UNWIRED_MARKERS):
+                continue
+            defined = {
+                node.name
+                for node in tree.body
+                if isinstance(
+                    node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)
+                )
+            }
+            quoted = set(re.findall(r"``([A-Za-z_][A-Za-z0-9_]*)(?:\(\))?``", doc))
+            found[rel] = (doc, defined & quoted)
+    return found
+
+
+def test_every_module_declaring_itself_unwired_names_an_entry_point():
+    """A declaration with nothing to check is prose, and prose drifts."""
+    unnamed = [
+        path for path, (_doc, entries) in _modules_declaring_unwired().items()
+        if not entries
+    ]
+    assert not unnamed, (
+        "these modules declare they are not wired but name no entry point this "
+        f"file can verify: {unnamed}. Put the function or class in double "
+        "backticks in the docstring so the claim is checkable."
+    )
+
+
+def test_no_module_declaring_itself_unwired_actually_has_a_caller():
+    """The direction that catches someone wiring it and not saying so."""
+    wired_but_denying: dict[str, dict[str, list[str]]] = {}
+    for path, (_doc, entries) in _modules_declaring_unwired().items():
+        callers = {
+            entry: _production_call_sites(entry, path)
+            for entry in sorted(entries)
+        }
+        real = {entry: hits for entry, hits in callers.items() if hits}
+        if real:
+            wired_but_denying[path] = real
+    assert not wired_but_denying, (
+        "these modules declare they have no production caller and do: "
+        f"{wired_but_denying}. Either the wiring is accidental, or the module "
+        "is live and its docstring is now the misleading part."
+    )
+
+
+def test_the_declarations_cover_the_subsystems_that_were_found_unwired():
+    """A regression guard on the sweep itself.
+
+    If one of these stops declaring its status, it is because someone either
+    wired it (fine — the test above will say so) or deleted the honesty
+    (not fine).
+    """
+    declaring = set(_modules_declaring_unwired())
+    for expected in (
+        "core/being/closed_loop_controller.py",
+        "core/brain/cross_tier_verifier.py",
+        "core/brain/compute_router.py",
+    ):
+        assert expected in declaring, (
+            f"{expected} no longer declares its wiring status. It was found "
+            "substantial, tested and uninvoked; if that changed, say so."
+        )
+
+
+def test_lineage_manager_declares_that_whole_agent_reproduction_is_not_live():
+    """Registered as a service, resolved by nobody.
+
+    The interesting half is what it lets someone claim. Aura's ALife
+    substrate IS causal — the pattern replicator mutates real neural-mesh
+    weight matrices in place. Whole-agent reproduction is this module, and
+    this module does not run. "ALife cognitive agent" is supportable;
+    "self-reproducing digital organism" is not, and the difference is a
+    call site.
+    """
+    module_path = "core/self_modification/lineage.py"
+    constructors = _production_call_sites("LineageManager", module_path)
+    readers = _key_readers("lineage_manager")
+    module = (ROOT / module_path).read_text(encoding="utf-8")
+
+    if constructors or readers:
+        assert "NOT WIRED INTO THE LIVE RUNTIME" not in module, (
+            f"LineageManager is now constructed by {constructors} and/or its "
+            f"service key read by {readers}; the module still declares itself "
+            "unwired. Whole-agent lineage being live changes what may be "
+            "claimed about Aura — say so deliberately."
+        )
+    else:
+        assert "NOT WIRED INTO THE LIVE RUNTIME" in module, (
+            "LineageManager has no production constructor and nothing resolves "
+            "the lineage_manager service key. The module must say so: a "
+            "registered service with no reader reads as integration."
+        )
+
+
+def test_a_registered_service_nobody_reads_is_not_evidence_of_wiring():
+    """The scanner half of the test above, proven not to be vacuous."""
+    # A key that IS read, so an always-empty _key_readers would be caught.
+    assert _key_readers("memory_facade"), (
+        "_key_readers found no reader for a key that is definitely read; "
+        "the helper is broken and the assertions above prove nothing."
+    )
