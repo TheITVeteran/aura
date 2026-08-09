@@ -40990,3 +40990,36 @@ campaign is not a capability result: reasoning gain, frontier performance,
 fusion authority, activation authority, and `WOW Signal` remain false until all
 four arms complete and the source-bound verdict validates. The completion
 envelope remains `809/920` (approximately `87.9%`).
+
+## Checkpoint 2026-08-09-105: The Camera Sidecar Returns A Usable Frame
+
+The new macOS camera sidecar opened the device and transported JPEG bytes, but
+its primary-process adapter then tried to decode those bytes with `cv2`. That is
+the exact import forbidden by Aura's media interlock because OpenCV and PyAV can
+register conflicting AVFoundation classes in the main app process. The claimed
+production path therefore returned `(False, None)` on the machine it existed to
+support even though the worker had captured a real frame.
+
+Sidecar JPEGs now decode through Pillow and NumPy into contiguous OpenCV-compatible
+BGR arrays without importing OpenCV in Aura's primary process. The boundary caps
+encoded bytes and decoded pixels, requires positive dimensions, verifies the
+declared dimensions against the decoded JPEG, and withholds malformed or
+inconsistent frames with a named lease error rather than presenting corrupted
+pixels. A regression explicitly removes `cv2` from the primary interpreter and
+still reconstructs a real frame.
+
+Privacy is now enforced at the worker too. The sidecar checks the live owner
+camera setting before opening and before every frame. If the owner disables the
+camera after acquisition, the worker releases the device immediately and returns
+`owner_disabled`; calling the sensory client directly cannot bypass the switch.
+
+Direct camera contracts pass `59/59`; the expanded sensory/perception set passes
+`172/172`; canonical smoke passes `103/103`; Ruff, Python byte compilation, and
+diff hygiene pass. Evidence is
+`artifacts/closeout/companion/cp105_camera_sidecar_is_a_real_frame_path.json`.
+
+A rebuilt Aura.app live-device proof and a general visual-detail battery remain
+open, including arbitrary object/count/spatial/detail questions rather than a
+hard-coded finger-count path. The resident-32B proof pilot continues from its
+independent CP103 source capsule. The completion envelope remains `809/920`
+(approximately `87.9%`).

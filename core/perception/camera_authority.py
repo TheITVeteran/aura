@@ -49,6 +49,7 @@ denial that slips past the cache still surfaces as an honest
 from __future__ import annotations
 
 import importlib.util
+import io
 import logging
 import threading
 import time
@@ -70,6 +71,12 @@ STALE_LEASE_S = 30.0
 # System Settings at any time, so this must expire; probing per frame would
 # put an AVFoundation call in a 2-second loop.
 TCC_CACHE_TTL_S = 60.0
+
+# A trusted sidecar still crosses a process boundary. Bound encoded and decoded
+# frame sizes before allocation so a corrupt worker reply cannot turn one camera
+# read into an unbounded primary-process allocation.
+MAX_SIDECAR_JPEG_BYTES = 32 * 1024 * 1024
+MAX_SIDECAR_FRAME_PIXELS = 33_554_432  # 8192 x 4096
 
 
 # ─────────────────────────────────────────────────────────── outcomes
@@ -103,6 +110,7 @@ class CameraLease:
     last_used: float
     autonomous: bool = False
     capture: Any = None  # the cv2.VideoCapture, owned by the authority
+    last_error: str = ""
     _released: bool = field(default=False, repr=False)
 
     @property
@@ -117,6 +125,7 @@ class CameraLease:
             "held_for_s": round(time.time() - self.acquired_at, 2),
             "idle_for_s": round(time.time() - self.last_used, 2),
             "autonomous": self.autonomous,
+            "last_error": self.last_error or None,
         }
 
 
@@ -133,9 +142,9 @@ class _SidecarCapture:
     ended up with five owners in the first place.
 
     Frames arrive JPEG-encoded and are decoded here, in the caller's
-    process. Decoding needs cv2, which is exactly what is banned in the
-    primary process, so callers that only need the bytes should read
-    `last_jpeg` instead of the array.
+    process through Pillow and NumPy. OpenCV is deliberately not imported:
+    the entire purpose of this transport is to keep its AVFoundation stack out
+    of Aura's primary macOS process.
     """
 
     def __init__(self, index: int) -> None:
@@ -143,6 +152,7 @@ class _SidecarCapture:
         self.last_jpeg: bytes | None = None
         self.width = 0
         self.height = 0
+        self.last_error = ""
         self._open = self._call("camera_open", {"index": self.index}).get("status") == "ok"
 
     def _call(self, command: str, data: Any = None, *, timeout: float = 5.0) -> dict[str, Any]:
@@ -183,30 +193,50 @@ class _SidecarCapture:
 
     def read(self) -> tuple[bool, Any]:
         if not self._open:
+            self.last_error = "camera_not_open"
             return False, None
         reply = self._call("camera_frame")
         if reply.get("status") != "ok":
+            self.last_error = str(reply.get("msg") or "camera_frame_failed")
             return False, None
         payload = reply.get("data")
-        if not payload:
+        if not isinstance(payload, (bytes, bytearray, memoryview)) or not payload:
+            self.last_error = "camera_frame_payload_invalid"
             return False, None
-        self.last_jpeg = bytes(payload)
-        self.width = int(reply.get("width") or 0)
-        self.height = int(reply.get("height") or 0)
+        jpeg = bytes(payload)
+        width = int(reply.get("width") or 0)
+        height = int(reply.get("height") or 0)
+        if (
+            len(jpeg) > MAX_SIDECAR_JPEG_BYTES
+            or width <= 0
+            or height <= 0
+            or width * height > MAX_SIDECAR_FRAME_PIXELS
+        ):
+            self.last_error = "camera_frame_bounds_invalid"
+            return False, None
         try:
-            import cv2
             import numpy as np
+            from PIL import Image
 
-            frame = cv2.imdecode(
-                np.frombuffer(self.last_jpeg, dtype=np.uint8), cv2.IMREAD_COLOR
-            )
-        except (ImportError, RuntimeError, ValueError):
-            # cv2 is unavailable here — which is the normal case in the
-            # primary macOS process. The JPEG is still real and is kept on
-            # `last_jpeg`; only the decoded array is missing.
+            with Image.open(io.BytesIO(jpeg)) as image:
+                if image.format != "JPEG" or image.size != (width, height):
+                    self.last_error = "camera_frame_metadata_mismatch"
+                    return False, None
+                image.load()
+                rgb = np.asarray(image.convert("RGB"), dtype=np.uint8)
+                # Existing camera consumers receive OpenCV BGR arrays. Keep
+                # that contract without importing OpenCV in the primary process.
+                frame = np.ascontiguousarray(rgb[:, :, ::-1])
+        except (ImportError, OSError, RuntimeError, TypeError, ValueError):
+            self.last_error = "camera_frame_decode_failed"
             return False, None
-        if frame is None:
+        if frame.shape != (height, width, 3):
+            self.last_error = "camera_frame_shape_invalid"
             return False, None
+        self.last_jpeg = jpeg
+        self.width = width
+        self.height = height
+        self.last_error = ""
         return True, frame
 
     def release(self) -> None:
@@ -470,6 +500,9 @@ class CameraAuthority:
             record_degradation("camera_authority", exc, severity="warning",
                                action="camera read raised")
             return None
+        lease.last_error = "" if ok else str(
+            getattr(capture, "last_error", "") or "capture_read_failed"
+        )
         return frame if ok else None
 
     def release(self, lease: CameraLease | None) -> None:

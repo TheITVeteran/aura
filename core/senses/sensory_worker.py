@@ -3,6 +3,7 @@ import os
 import queue
 
 from core.runtime.errors import record_degradation
+from core.runtime.permission_gates import camera_allowed
 from core.security.screen_capture_policy import evaluate_screen_capture_admission
 
 # Configure logging for the worker
@@ -126,6 +127,18 @@ def sensory_worker_loop(request_queue, response_queue):
             # command for it. The documented production path did not exist,
             # and the claim outlived nothing — it was never true.
             elif cmd == "camera_open":
+                if not camera_allowed():
+                    if camera is not None:
+                        try:
+                            camera.release()
+                        except _SENSORY_COMMAND_ERRORS as e:
+                            record_degradation("sensory_worker", e)
+                        camera = None
+                    _safe_put(
+                        response_queue,
+                        {"status": "error", "msg": "owner_disabled"},
+                    )
+                    continue
                 try:
                     import cv2 as _cv2
 
@@ -149,6 +162,22 @@ def sensory_worker_loop(request_queue, response_queue):
                     _safe_put(response_queue, {"status": "error", "msg": str(e)})
 
             elif cmd == "camera_frame":
+                # Re-check every frame. The owner can turn the live setting off
+                # after acquisition; the indicator and device lease must end on
+                # the next request, even if a caller bypasses CameraAuthority
+                # and drives the sidecar client directly.
+                if not camera_allowed():
+                    if camera is not None:
+                        try:
+                            camera.release()
+                        except _SENSORY_COMMAND_ERRORS as e:
+                            record_degradation("sensory_worker", e)
+                        camera = None
+                    _safe_put(
+                        response_queue,
+                        {"status": "error", "msg": "owner_disabled"},
+                    )
+                    continue
                 if camera is None:
                     _safe_put(
                         response_queue,

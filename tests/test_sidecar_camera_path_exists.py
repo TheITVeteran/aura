@@ -22,11 +22,17 @@ in-process capture is banned.
 from __future__ import annotations
 
 import queue
+import sys
+from io import BytesIO
 from pathlib import Path
 
 import pytest
 
-from core.perception.camera_authority import CameraAuthority, CameraDenial
+from core.perception.camera_authority import (
+    CameraAuthority,
+    CameraDenial,
+    _SidecarCapture,
+)
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -141,6 +147,118 @@ def test_the_camera_handle_outlives_a_single_frame():
     )
 
 
+def test_sidecar_jpeg_decodes_when_primary_process_cv2_is_forbidden(monkeypatch):
+    np = pytest.importorskip("numpy")
+    image_module = pytest.importorskip("PIL.Image")
+    encoded = BytesIO()
+    image_module.new("RGB", (2, 1), (255, 0, 0)).save(encoded, format="JPEG")
+    calls: list[str] = []
+
+    def request(_self, command, data=None, **_kwargs):
+        del data
+        calls.append(command)
+        if command == "camera_open":
+            return {"status": "ok"}
+        if command == "camera_frame":
+            return {
+                "status": "ok",
+                "data": encoded.getvalue(),
+                "width": 2,
+                "height": 1,
+            }
+        return {"status": "ok"}
+
+    monkeypatch.setattr(_SidecarCapture, "_call", request)
+    monkeypatch.setitem(sys.modules, "cv2", None)
+
+    capture = _SidecarCapture(0)
+    ok, frame = capture.read()
+    capture.release()
+
+    assert ok is True
+    assert frame.shape == (1, 2, 3)
+    assert frame.dtype == np.uint8
+    assert int(frame[0, 0, 2]) > int(frame[0, 0, 0])  # BGR red channel
+    assert capture.last_jpeg == encoded.getvalue()
+    assert calls == ["camera_open", "camera_frame", "camera_close"]
+
+
+def test_sidecar_rejects_frame_metadata_that_differs_from_decoded_jpeg(monkeypatch):
+    image_module = pytest.importorskip("PIL.Image")
+    encoded = BytesIO()
+    image_module.new("RGB", (2, 1), (0, 255, 0)).save(encoded, format="JPEG")
+
+    def request(_self, command, data=None, **_kwargs):
+        del data
+        if command == "camera_open":
+            return {"status": "ok"}
+        return {
+            "status": "ok",
+            "data": encoded.getvalue(),
+            "width": 200,
+            "height": 100,
+        }
+
+    monkeypatch.setattr(_SidecarCapture, "_call", request)
+    capture = _SidecarCapture(0)
+
+    assert capture.read() == (False, None)
+    assert capture.last_error == "camera_frame_metadata_mismatch"
+    assert capture.last_jpeg is None
+
+
+def test_worker_releases_camera_when_owner_switch_changes(monkeypatch):
+    import core.senses.sensory_worker as worker
+
+    class FakeFrame:
+        shape = (1, 1, 3)
+
+    class FakeBuffer:
+        @staticmethod
+        def tobytes():
+            return b"jpeg"
+
+    class FakeCamera:
+        released = 0
+
+        @staticmethod
+        def isOpened():  # noqa: N802 - mirrors OpenCV's capture contract
+            return True
+
+        @staticmethod
+        def read():
+            return True, FakeFrame()
+
+        def release(self):
+            self.released += 1
+
+    camera = FakeCamera()
+    fake_cv2 = type(
+        "FakeCV2",
+        (),
+        {
+            "VideoCapture": staticmethod(lambda _index: camera),
+            "imencode": staticmethod(lambda _suffix, _frame: (True, FakeBuffer())),
+        },
+    )
+    decisions = iter((True, False))
+    monkeypatch.setattr(worker, "camera_allowed", lambda: next(decisions))
+    monkeypatch.setitem(sys.modules, "cv2", fake_cv2)
+
+    replies = _run_worker(
+        [
+            {"command": "camera_open", "data": {"index": 0}},
+            {"command": "camera_frame"},
+        ]
+    )
+
+    assert replies[:2] == [
+        {"status": "ok"},
+        {"status": "error", "msg": "owner_disabled"},
+    ]
+    assert camera.released == 1
+
+
 # ──────────────────────────────── the client can carry a payload back
 
 
@@ -223,7 +341,7 @@ def test_acquiring_through_the_sidecar_uses_the_sidecar_handle(monkeypatch):
             calls.append(("open", index))
             self.last_jpeg = None
 
-        def isOpened(self):
+        def isOpened(self):  # noqa: N802 - mirrors OpenCV's capture contract
             return True
 
         def read(self):

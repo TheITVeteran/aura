@@ -1,0 +1,30 @@
+{
+  "schema": "aura.closeout.checkpoint.v1",
+  "checkpoint": "CP105",
+  "title": "The camera sidecar returns usable frames without primary-process OpenCV",
+  "date": "2026-08-09",
+  "defect": "The macOS sidecar transported JPEG bytes correctly, then attempted to decode them by importing cv2 in the primary process where that import is intentionally forbidden. The advertised production path therefore returned no frame.",
+  "implementation": {
+    "pillow_numpy_jpeg_decode": true,
+    "primary_process_cv2_import": false,
+    "opencv_compatible_bgr_output": true,
+    "encoded_payload_limit_bytes": 33554432,
+    "decoded_pixel_limit": 33554432,
+    "declared_and_decoded_dimensions_must_match": true,
+    "malformed_frames_abstain_with_named_reason": true,
+    "lease_exposes_last_read_error": true,
+    "worker_checks_owner_setting_before_open": true,
+    "worker_rechecks_owner_setting_before_every_frame": true,
+    "worker_releases_device_when_owner_disables_camera": true,
+    "direct_sidecar_client_cannot_bypass_owner_switch": true
+  },
+  "verification": {
+    "direct_camera_contracts": "59 passed",
+    "expanded_sensory_and_perception_contracts": "172 passed",
+    "smoke": "103 passed",
+    "ruff": "passed",
+    "python_compile": "passed",
+    "diff_check": "passed"
+  },
+  "claim_boundary": "The production transport now yields bounded usable BGR frames while keeping OpenCV out of Aura's primary macOS process, and the lowest worker boundary honors live camera disablement. A rebuilt Aura.app live-device proof and general visual-detail benchmark remain required."
+}
