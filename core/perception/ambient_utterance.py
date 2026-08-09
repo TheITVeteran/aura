@@ -78,6 +78,11 @@ _NOISE_CONTEXTS: tuple[str, ...] = (
 _MIN_CAPTURE_CHARS = 40
 _MAX_CAPTURE_CHARS = 6000
 
+#: How long she may spend deciding whether to say something unprompted.
+#: Past this the screen has moved on and the remark would be about a window
+#: the person already left.
+_COMPOSE_TIMEOUT_S = 25.0
+
 
 async def consider_utterance(tick_result: Any) -> str:
     """Return what she would say, or "" — which is the normal answer."""
@@ -163,17 +168,42 @@ async def _compose(observation: Any, trigger: str) -> str:
             "Do not greet him. Do not summarise his screen. Do not offer to "
             "help in general terms."
         )
-        from core.brain.types import ThinkingMode
+        import asyncio
 
-        response = await brain.think(
-            prompt,
-            system_prompt=(
-                "You are Aura. You are quiet by default and speak only when "
-                "you have something worth interrupting for."
+        from core.brain.llm.llm_router import LLMTier
+
+        response = await asyncio.wait_for(
+            brain.think(
+                prompt,
+                system_prompt=(
+                    "You are Aura. You are quiet by default and speak only "
+                    "when you have something worth interrupting for."
+                ),
+                # BACKGROUND, and it has to say so. This fires off an
+                # observation nobody asked about, and the router's tiering
+                # reads is_background/priority — it does not read `mode`,
+                # which is what this passed before, so the judgment rode the
+                # FOREGROUND lane and competed with the person's own turn on
+                # the resident model. An ambient remark is never worth making
+                # someone's actual question slower.
+                priority=0.2,
+                is_background=True,
+                prefer_tier=LLMTier.SECONDARY,
             ),
-            mode=ThinkingMode.FAST,
+            # Bounded, because the caller is a loop. An utterance she is still
+            # composing thirty seconds later is about a screen that has moved
+            # on, so a slow answer is not a late answer — it is a wrong one.
+            timeout=_COMPOSE_TIMEOUT_S,
         )
-    except (ImportError, AttributeError, RuntimeError, TypeError, ValueError, OSError) as exc:
+    except (
+        ImportError,
+        AttributeError,
+        RuntimeError,
+        TypeError,
+        ValueError,
+        OSError,
+        TimeoutError,
+    ) as exc:
         record_degradation(
             "ambient_utterance", exc, severity="debug",
             action="stayed silent because her own voice was unavailable",
