@@ -40012,3 +40012,23 @@ falsification campaign and frozen resident-32B comparative certificate remain
 the immediate empirical gates for the `WOW Signal`; fusion and activation stay
 forbidden until they pass. The completion envelope remains `809/920`
 (approximately `87.9%`).
+
+## Checkpoint 2026-08-09-075: Equal-Compute Controls Have Independent Draws
+
+Preflight review found that the reconciliation sweep's best-of-three textual
+control reset MLX to the same three random seeds for every task. Prompts still
+changed the conditional distribution, but the repeated random coordinates
+created avoidable cross-task dependence and weakened any aggregate comparison
+against the complete engine.
+
+Every control draw is now deterministically derived from the frozen campaign
+seed, public task identity, and sample index. A resumed cell reconstructs the
+same samples, while different tasks, samples, and campaigns cannot share a
+random coordinate accidentally. The selection rule, sample count, token
+budget, grader, treatment, and statistical thresholds are unchanged.
+
+The complete reconciliation contract passes `34/34`; canonical smoke passes
+`103/103`; Ruff, compilation, and diff hygiene pass. Compact evidence is
+`artifacts/closeout/latent_cortex/cp075_task_bound_equal_compute_control.json`.
+This hardens the imminent falsification test; it is not itself a gain result.
+The completion envelope remains `809/920` (approximately `87.9%`).

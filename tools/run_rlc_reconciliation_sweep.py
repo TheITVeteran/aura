@@ -527,8 +527,22 @@ def _render_prompt_text(tokenizer, task) -> str:
     )
 
 
+def _equal_compute_seed(campaign_seed: int, task_id: str, sample_index: int) -> int:
+    """Bind every control draw to its task instead of reusing one RNG stream."""
+
+    material = f"{campaign_seed}:{task_id}:equal-compute:{sample_index}"
+    return int.from_bytes(hashlib.sha256(material.encode("utf-8")).digest()[:4], "big")
+
+
 def _run_vanilla_best_of(
-    model, tokenizer, rendered: str, max_tokens: int, samples: int
+    model,
+    tokenizer,
+    rendered: str,
+    max_tokens: int,
+    samples: int,
+    *,
+    campaign_seed: int,
+    task_id: str,
 ) -> str:
     """Equal-compute control: N independent samples, self-consistency vote.
 
@@ -551,7 +565,7 @@ def _run_vanilla_best_of(
 
     candidates: list[str] = []
     for index in range(max(1, samples)):
-        mx.random.seed(20260807 + index)
+        mx.random.seed(_equal_compute_seed(campaign_seed, task_id, index))
         pieces: list[str] = []
         for response in stream_generate(
             model,
@@ -1539,6 +1553,8 @@ def main() -> int:
                             _render_prompt_text(tokenizer, task),
                             tokens,
                             samples=3,
+                            campaign_seed=args.seed,
+                            task_id=task.task_id,
                         )
                     elif config is None:
                         prompt_tokens = _render_prompt(tokenizer, task)

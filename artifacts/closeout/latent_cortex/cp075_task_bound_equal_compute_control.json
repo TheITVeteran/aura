@@ -1,0 +1,39 @@
+{
+  "schema": "aura.closeout.rlc_checkpoint.v1",
+  "checkpoint": "CP075",
+  "subject": "task-bound equal-compute control randomization",
+  "claim_level": "contract",
+  "defect": "the same three random coordinates were reused across every task",
+  "repair": {
+    "seed_inputs": [
+      "campaign_seed",
+      "task_id",
+      "sample_index"
+    ],
+    "derivation": "sha256 prefix to uint32",
+    "reproducible": true,
+    "cross_task_stream_reuse": false,
+    "scoring_changed": false,
+    "thresholds_changed": false
+  },
+  "verification": {
+    "reconciliation_contracts": {
+      "passed": 34,
+      "failed": 0
+    },
+    "canonical_smoke": {
+      "passed": 103,
+      "failed": 0
+    },
+    "ruff": "pass",
+    "compile": "pass",
+    "diff_check": "pass"
+  },
+  "not_claimed": [
+    "reasoning gain",
+    "resident 32B gain",
+    "frontier performance",
+    "fusion authorization",
+    "WOW Signal"
+  ]
+}

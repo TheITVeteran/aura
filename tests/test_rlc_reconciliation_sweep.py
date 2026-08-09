@@ -132,6 +132,15 @@ def test_requesting_a_treatment_always_expands_to_both_controls():
         sweep._expand_requested_arms({"not_a_real_arm"})
 
 
+def test_equal_compute_random_streams_are_task_bound_and_reproducible():
+    first = sweep._equal_compute_seed(20260809, "task-a", 0)
+
+    assert first == sweep._equal_compute_seed(20260809, "task-a", 0)
+    assert first != sweep._equal_compute_seed(20260809, "task-b", 0)
+    assert first != sweep._equal_compute_seed(20260809, "task-a", 1)
+    assert first != sweep._equal_compute_seed(20260810, "task-a", 0)
+
+
 def test_decode_identity_binds_committed_task_difficulty():
     common = {
         "model": "/models/Qwen-1.5B",
