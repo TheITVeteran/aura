@@ -68,11 +68,47 @@ def test_suppressed_proactivity_stops_her_drawing(monkeypatch):
     assert "suppressed" in result.reason
 
 
+def test_the_gate_this_overlay_asks_actually_exists():
+    """Reachable, not just fail-closed when unreachable.
+
+    The earlier version of this test deleted the symbol from a module that
+    never defined it and asserted the refusal — which passed for the wrong
+    reason. Every highlight refused in the live runtime while this was green.
+    """
+    from core.brain.initiative_engine import proactivity_suppressed_now
+
+    assert callable(proactivity_suppressed_now)
+
+
+def test_the_gate_is_not_stuck_shut(monkeypatch):
+    """With permission granted the gate must open, or nothing can ever draw."""
+    from core.container import ServiceContainer
+
+    class _PermittingOrchestrator:
+        _suppress_unsolicited_proactivity_until = 0.0
+
+    monkeypatch.setattr(
+        ServiceContainer,
+        "get",
+        staticmethod(
+            lambda name, default=None: (
+                _PermittingOrchestrator() if name == "orchestrator" else default
+            )
+        ),
+    )
+
+    assert _REAL_SUPPRESSION_CHECK() is False
+
+
 def test_an_unavailable_permission_check_refuses(monkeypatch):
     """Fail closed. An unreachable authority is not permission."""
-    monkeypatch.delattr(
-        "core.agency.agency_core._proactivity_suppressed_now", raising=False
-    )
+    from core.container import ServiceContainer
+
+    def _explode(name, default=None):
+        raise RuntimeError("container unavailable")
+
+    monkeypatch.setattr(ServiceContainer, "get", staticmethod(_explode))
+
     assert _REAL_SUPPRESSION_CHECK() is True
 
 

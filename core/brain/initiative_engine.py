@@ -82,6 +82,20 @@ def _proactivity_suppressed_now(now: float | None = None) -> bool:
         return True
 
 
+#: The canonical, PUBLIC name for the one control governing unprompted acts.
+#:
+#: It exists because the private spelling was imported cross-module from a
+#: module that never defined it (companion mode reached for it on
+#: ``core.agency.agency_core``), and the importer's own fail-closed handler
+#: swallowed the ImportError. The gate then read "suppressed" forever: the
+#: observation loop never observed and the highlight overlay never drew, and
+#: every test passed because each one patched the gate out.
+#:
+#: A private name that three subsystems import is not private, it is just
+#: undiscoverable. New callers import THIS one.
+proactivity_suppressed_now = _proactivity_suppressed_now
+
+
 class ProactiveInitiativeEngine:
     def __init__(self, cognitive_engine, voice_engine, affect_manager, memory):
         self.brain = cognitive_engine

@@ -564,12 +564,30 @@ def _proactivity_suppressed() -> bool:
 
     Fails CLOSED: if the check cannot run, she does not observe. An
     unavailable permission system is not permission.
+
+    The failure is RECORDED rather than swallowed. This function used to
+    import the gate from a module that does not define it, so it returned
+    True on every call and the ambient loop skipped every tick for its whole
+    life — silently, because a bare ``return True`` here is indistinguishable
+    from a quiet window that is legitimately in force. Fail-closed is the
+    right default and a silent fail-closed is still a dead subsystem, so the
+    two cases are now told apart in the record.
     """
     try:
-        from core.agency.agency_core import _proactivity_suppressed_now
+        from core.brain.initiative_engine import proactivity_suppressed_now
 
-        return bool(_proactivity_suppressed_now())
-    except (ImportError, AttributeError, RuntimeError, TypeError, ValueError):
+        return bool(proactivity_suppressed_now())
+    except (ImportError, AttributeError, RuntimeError, TypeError, ValueError) as exc:
+        record_degradation(
+            "ambient_presence",
+            exc,
+            severity="warning",
+            action=(
+                "ambient observation suppressed because the proactivity gate "
+                "could not be reached — this is a wiring fault, not a quiet "
+                "window; she will look only when asked"
+            ),
+        )
         return True
 
 

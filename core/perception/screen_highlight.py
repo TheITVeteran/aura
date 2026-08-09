@@ -278,11 +278,27 @@ async def _draw(rect: Rect, seconds: float) -> bool:
 
 
 def _suppressed() -> bool:
-    try:
-        from core.agency.agency_core import _proactivity_suppressed_now
+    """Is she barred from drawing on someone's screen right now? Fails CLOSED.
 
-        return bool(_proactivity_suppressed_now())
-    except (ImportError, AttributeError, RuntimeError, TypeError, ValueError):
+    Recorded, not swallowed: this reached for the gate on a module that does
+    not define it, so it answered "suppressed" forever and every highlight
+    refused before it ever looked for the thing it was asked to point at.
+    """
+    try:
+        from core.brain.initiative_engine import proactivity_suppressed_now
+
+        return bool(proactivity_suppressed_now())
+    except (ImportError, AttributeError, RuntimeError, TypeError, ValueError) as exc:
+        record_degradation(
+            "screen_highlight",
+            exc,
+            severity="warning",
+            action=(
+                "highlight refused because the proactivity gate could not be "
+                "reached — a wiring fault, not a quiet window; she will "
+                "describe the location in words instead"
+            ),
+        )
         return True
 
 

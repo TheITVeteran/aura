@@ -145,15 +145,63 @@ def test_suppressed_proactivity_stops_her_looking(presence, monkeypatch):
     assert reader.called is False
 
 
+def test_the_gate_this_loop_asks_actually_exists():
+    """The gate must be REACHABLE, not merely fail-closed when it is not.
+
+    This is the test that was missing while the loop was dead. The original
+    version deleted the symbol with ``raising=False`` and asserted the check
+    returned True — which it did, but it did so because the import target had
+    never existed, not because the deletion worked. A fail-closed assertion
+    passes identically whether the gate is present or absent, so on its own
+    it proves nothing about wiring.
+
+    Importing the real name here is the half that has teeth: it fails if the
+    gate moves or is renamed, which is exactly how this broke.
+    """
+    from core.brain.initiative_engine import proactivity_suppressed_now
+
+    assert callable(proactivity_suppressed_now)
+
+
+def test_the_gate_is_not_stuck_shut(monkeypatch):
+    """A gate that always says "suppressed" is a dead subsystem, not a safe one.
+
+    The whole organ skipped every tick for its entire life because the gate
+    answered True unconditionally. Fail-closed is right; fail-closed-ALWAYS is
+    an outage that looks like a policy. With an orchestrator that permits
+    speech, the answer must be False and she must actually observe.
+    """
+    from core.container import ServiceContainer
+
+    class _PermittingOrchestrator:
+        _suppress_unsolicited_proactivity_until = 0.0
+
+    monkeypatch.setattr(
+        ServiceContainer,
+        "get",
+        staticmethod(
+            lambda name, default=None: (
+                _PermittingOrchestrator() if name == "orchestrator" else default
+            )
+        ),
+    )
+
+    assert _REAL_SUPPRESSION_CHECK() is False
+
+
 def test_an_unavailable_permission_check_means_no_observation(monkeypatch):
     """Fail closed. An unreachable authority is not permission.
 
-    The autouse fixture replaces the module attribute, so this calls the
-    function object captured at import and removes what it depends on.
+    Paired with the two tests above so that "returns True" is only accepted
+    as correct once the gate has been shown to exist and to be capable of
+    returning False.
     """
-    monkeypatch.delattr(
-        "core.agency.agency_core._proactivity_suppressed_now", raising=False
-    )
+    from core.container import ServiceContainer
+
+    def _explode(name, default=None):
+        raise RuntimeError("container unavailable")
+
+    monkeypatch.setattr(ServiceContainer, "get", staticmethod(_explode))
 
     assert _REAL_SUPPRESSION_CHECK() is True
 
