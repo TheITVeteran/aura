@@ -25,8 +25,11 @@
   --bubble-edge: rgba(160, 130, 255, 0.28);
   --bubble-text: #e8e2f6;
   --bubble-dim: rgba(232, 226, 246, 0.55);
-  --neuron-idle: 0 0 0 rgba(0,0,0,0);
-  --neuron-live: 0 0 14px rgba(150, 110, 255, 0.55);
+  /* drop-shadow, not box-shadow: the glow has to follow the neuron's own
+     silhouette. A box-shadow haloed the square <img> bounding box, which is
+     why the resting mark read as a disc inside a disc. */
+  --neuron-idle: none;
+  --neuron-live: drop-shadow(0 0 5px rgba(150, 110, 255, 0.7));
 }
 * { box-sizing: border-box; }
 html, body {
@@ -59,31 +62,70 @@ html, body {
   -webkit-app-region: drag;
   transition: padding 140ms ease, background 200ms ease;
 }
-#pill.dormant { padding: 7px; gap: 0; }
+
+/*
+  Dormant is the neuron and nothing else.
+
+  It used to be a bordered disc with a 26px glyph floating inside 7px of
+  padding, and the glyph carried its own border-radius and glow — so the
+  resting state was a ring inside a ring around a shrunken mark. Three
+  concentric shapes to say one thing.
+
+  What is left is a scrim, not a button: no border, sized snugly to the mark,
+  dark enough that a light-coloured neuron still reads over a white editor.
+  The disc is there for legibility over an unknown background, which is the
+  only thing it is allowed to be there for.
+*/
+#pill.dormant {
+  padding: 6px;
+  gap: 0;
+  background: rgba(20, 18, 30, 0.9);
+  /* One faint edge, not the old ring-around-a-ring. It has to be readable
+     enough that the unread dot looks like it is ON something — at 0.72 alpha
+     over a dark editor the disc vanished and the dot read as a loose speck
+     floating beside the neuron. */
+  border-color: rgba(160, 130, 255, 0.16);
+  box-shadow: 0 4px 14px rgba(0,0,0,0.38);
+}
 
 #glyph {
-  width: 26px; height: 26px;
-  flex: 0 0 26px;
+  /* One size in every state. Growing the mark when she stops speaking is a
+     tic: the eye reads a resize in the corner of the screen as something
+     having happened, and nothing has. Snug in 6px of scrim, so the resting
+     bubble is 40px across. */
+  width: 28px; height: 28px;
+  flex: 0 0 28px;
   -webkit-app-region: no-drag;
   cursor: pointer;
-  border-radius: 50%;
-  transition: box-shadow 320ms ease, transform 160ms ease;
-  box-shadow: var(--neuron-idle);
+  transition: filter 320ms ease, transform 160ms ease;
+  filter: var(--neuron-idle);
 }
 #glyph:active { transform: scale(0.94); }
-#pill.speaking #glyph { box-shadow: var(--neuron-live); }
 
-/* The unread dot: "open me when you can", not a modal. */
-#glyph-wrap { position: relative; -webkit-app-region: no-drag; }
+/* The unread dot: "open me when you can", not a modal.
+ *
+ * It lights in the UNREAD state, not the speaking one. Lighting it beside a
+ * message already spelled out on screen made it decoration — it said "there
+ * is something here" while the something was legible an inch to its right.
+ *
+ * Its job starts when the text withdraws: after a while unacknowledged she
+ * collapses back to the glyph, and the dot is what is left. That is the whole
+ * "open me when you can" idea — a sentence someone did not read must not sit
+ * over their work forever, and it must not vanish without a trace either. */
+#glyph-wrap { position: relative; -webkit-app-region: no-drag; display: flex; }
 #dot {
-  position: absolute; top: -1px; right: -1px;
-  width: 8px; height: 8px; border-radius: 50%;
+  /* On the disc's RIM, not inside it. Tucked against the glyph it landed
+     within the neuron's own glow and read as a smudge on the artwork rather
+     than as a mark about it. The dark ring punches it back out of the glow. */
+  position: absolute; top: -3px; right: -3px;
+  width: 10px; height: 10px; border-radius: 50%;
   background: #ff9d6e;
-  border: 1.5px solid rgba(22,20,32,0.95);
+  border: 2px solid rgba(20,18,30,0.92);
   opacity: 0; transform: scale(0.4);
   transition: opacity 180ms ease, transform 180ms ease;
 }
-#pill.speaking #dot { opacity: 1; transform: scale(1); }
+#pill.unread #dot { opacity: 1; transform: scale(1); }
+#pill.unread #glyph, #pill.speaking #glyph { filter: var(--neuron-live); }
 
 #say {
   -webkit-app-region: no-drag;

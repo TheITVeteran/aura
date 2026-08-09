@@ -2802,11 +2802,65 @@ final class AuraLauncherDelegate: NSObject, NSApplicationDelegate,
         bubbleWebView?.load(
             URLRequest(url: bubbleURL(), cachePolicy: .reloadIgnoringLocalCacheData)
         )
-        // orderFront, never makeKey: showing her must not take focus.
-        bubblePanel?.orderFront(nil)
-        // Showing the bubble is also how a person un-hides her, so this has to
-        // clear HIDDEN rather than only re-draw the panel.
-        postAmbientMode("bubble")
+        // Put her back where she was parked BEFORE showing her. Placing the
+        // panel and then moving it would drop her in the default corner and
+        // slide her across the screen on every window close.
+        //
+        // The position was persisted and nothing ever read it back, so
+        // "position persists" described a POST with no reader: she reappeared
+        // bottom-left after every restart no matter where she had been left.
+        restoreBubbleOrigin { [weak self] origin in
+            guard let self, let panel = self.bubblePanel else { return }
+            if let origin {
+                panel.setFrameOrigin(self.clampToScreen(origin, size: panel.frame.size))
+            }
+            // orderFront, never makeKey: showing her must not take focus.
+            panel.orderFront(nil)
+            // Showing the bubble is also how a person un-hides her, so this
+            // has to clear HIDDEN rather than only re-draw the panel.
+            self.postAmbientMode("bubble")
+        }
+    }
+
+    /// Fetch the parked origin, or nil to keep the default corner.
+    ///
+    /// Always calls back, on the main queue, exactly once — a failed lookup
+    /// must still show her. The session's 1s timeout is the bound: a runtime
+    /// that is not answering cannot be allowed to mean no bubble at all.
+    private func restoreBubbleOrigin(_ done: @escaping (NSPoint?) -> Void) {
+        guard let url = URL(string: "http://127.0.0.1:8000/api/ambient/state?surface=bubble")
+        else {
+            DispatchQueue.main.async { done(nil) }
+            return
+        }
+        session.dataTask(with: url) { data, _, _ in
+            var origin: NSPoint?
+            if let data,
+               let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+               let position = json["bubble_position"] as? [Double],
+               position.count == 2,
+               // (0, 0) is the runtime's "never parked" sentinel, not a
+               // corner someone chose.
+               position[0] != 0 || position[1] != 0 {
+                origin = NSPoint(x: position[0], y: position[1])
+            }
+            DispatchQueue.main.async { done(origin) }
+        }.resume()
+    }
+
+    /// Keep her reachable when the display arrangement changed underneath her.
+    ///
+    /// A position saved on a second monitor that is no longer attached would
+    /// otherwise put her somewhere with no pixels, which reads exactly like
+    /// the bubble being broken.
+    private func clampToScreen(_ origin: NSPoint, size: NSSize) -> NSPoint {
+        let visible = (NSScreen.screens.first { $0.visibleFrame.contains(origin) }
+            ?? NSScreen.main)?.visibleFrame
+        guard let visible else { return origin }
+        return NSPoint(
+            x: min(max(origin.x, visible.minX), visible.maxX - size.width),
+            y: min(max(origin.y, visible.minY), visible.maxY - size.height)
+        )
     }
 
     /// Take the panel off screen WITHOUT changing what she is allowed to do.

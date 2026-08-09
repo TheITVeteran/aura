@@ -46,10 +46,12 @@ that comments on everything is a companion you turn off.
 
 from __future__ import annotations
 
+import json
 import re
 import time
 from dataclasses import dataclass, field
 from enum import StrEnum
+from pathlib import Path
 from typing import Any
 
 from core.runtime.errors import record_degradation
@@ -207,7 +209,7 @@ class AmbientPresence:
         self._last_observed_at = 0.0
         self._pending_utterance: str = ""
         self._utterance_at = 0.0
-        self._bubble_position: tuple[float, float] = (0.0, 0.0)
+        self._bubble_position: tuple[float, float] = self._load_bubble_position()
         self._ticks = 0
         self._observations = 0
         self._skips: dict[str, int] = {}
@@ -274,9 +276,90 @@ class AmbientPresence:
             self._pending_utterance = ""
 
     def move_bubble(self, x: float, y: float) -> tuple[float, float]:
+        """Remember where she was parked. In memory; the disk write is async.
+
+        Kept synchronous and trivial because it is called from a request
+        handler on the event loop. Durability is ``persist_bubble_position``,
+        which the route awaits — an fsync on this loop once froze the live
+        runtime for twenty minutes.
+        """
         with self._lock:
             self._bubble_position = (float(x), float(y))
             return self._bubble_position
+
+    async def persist_bubble_position(self) -> bool:
+        """Write the parked position so it survives a restart.
+
+        Position was held in memory only and the launcher never read it back,
+        so "she can move it, position persists" was true of the drag and false
+        of the persistence: every restart put her back in the bottom-left
+        corner, including the restarts a person did not choose.
+        """
+        with self._lock:
+            x, y = self._bubble_position
+        try:
+            from core.config import DATA_DIR
+            from core.governance_context import local_internal_governed_scope
+            from core.runtime.file_write_gateway import get_file_write_gateway
+
+            target = Path(DATA_DIR) / "companion" / "bubble_position.json"
+            gateway = get_file_write_gateway()
+            with local_internal_governed_scope(
+                "ambient_presence.persist_bubble_position",
+                domain="file_write",
+            ):
+                # Both calls are the async variants: this runs on the event
+                # loop that serves every request, and a sync fsync here is the
+                # exact shape of the write that froze the live runtime.
+                await gateway.ensure_directory_async(
+                    target.parent, source="ambient_presence.bubble_position"
+                )
+                await gateway.write_json_async(
+                    target,
+                    {"x": x, "y": y, "saved_at": time.time()},
+                    schema_version=1,
+                    schema_name=AMBIENT_SCHEMA,
+                    source="ambient_presence.bubble_position",
+                )
+            return True
+        except (ImportError, AttributeError, OSError, RuntimeError, TypeError, ValueError) as exc:
+            record_degradation(
+                "ambient_presence",
+                exc,
+                severity="debug",
+                action=(
+                    "bubble position not persisted; she reappears in the "
+                    "default corner after a restart"
+                ),
+            )
+            return False
+
+    def _load_bubble_position(self) -> tuple[float, float]:
+        """Where she was parked last time, or the origin meaning "unset".
+
+        (0, 0) is the sentinel the launcher reads as "use the default corner",
+        so a missing or corrupt file degrades to first-run behaviour rather
+        than to a bubble stranded off-screen.
+        """
+        try:
+            from core.config import DATA_DIR
+
+            target = Path(DATA_DIR) / "companion" / "bubble_position.json"
+            if not target.is_file():
+                return (0.0, 0.0)
+            stored = json.loads(target.read_text(encoding="utf-8"))
+            # The gateway writes a schema envelope — {"payload": …, "schema":
+            # …} — so the coordinates live one level down. Both shapes are
+            # accepted because reading only the envelope would silently return
+            # the "never parked" sentinel for any file written another way,
+            # and a position loader that quietly reports "unset" is exactly
+            # the failure this whole change exists to remove.
+            payload = stored.get("payload") if isinstance(stored, dict) else None
+            if not isinstance(payload, dict):
+                payload = stored if isinstance(stored, dict) else {}
+            return (float(payload.get("x", 0.0)), float(payload.get("y", 0.0)))
+        except (ImportError, OSError, TypeError, ValueError, json.JSONDecodeError):
+            return (0.0, 0.0)
 
     # ── pointing at things ───────────────────────────────────────────────
 

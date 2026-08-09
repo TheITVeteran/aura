@@ -20,6 +20,16 @@
   const ACTIVE_POLL_MS = 1500;
   // A failing backend must not become a spin. Back off, cap, recover.
   const MAX_BACKOFF_MS = 60000;
+  /*
+   * How long a sentence she offered stays spelled out before it withdraws to
+   * the dot. A remark nobody acknowledged must not sit over someone's work
+   * all afternoon — but it must not disappear without a trace either, or the
+   * only way to learn she had said something is to have been looking.
+   *
+   * Withdrawing is a PRESENTATION decision and lives here. Whether she has
+   * anything to say is the server's, and stays there.
+   */
+  const WITHDRAW_AFTER_S = 45;
 
   let backoffMs = 0;
   let lastRendered = "";
@@ -37,27 +47,41 @@
 
   function render(state) {
     const text = String((state && state.utterance) || "");
-    const speaking = Boolean(state && state.has_utterance) && text.length > 0;
+    const holding = Boolean(state && state.has_utterance) && text.length > 0;
+    // She still has it; she has just stopped holding it open. The server
+    // remains the authority on WHETHER there is something — this only decides
+    // how long it stays spelled out.
+    const age = Number((state && state.utterance_age_s) || 0);
+    const withdrawn = holding && age >= WITHDRAW_AFTER_S;
+    const speaking = holding && !withdrawn;
 
     // Only touch the DOM when something changed. The bubble sits over other
     // windows; a repaint every poll is a flicker in the corner of someone's
     // eye all day.
-    const signature = speaking ? `1:${text}` : "0";
-    if (signature === lastRendered) return speaking;
+    const signature = speaking ? `1:${text}` : withdrawn ? "2" : "0";
+    if (signature === lastRendered) return holding;
     lastRendered = signature;
+
+    pill.classList.toggle("speaking", speaking);
+    pill.classList.toggle("dormant", !speaking);
+    // Unread outlives the text: the dot is what remains of a sentence nobody
+    // acknowledged, and it is the whole of "open me when you can".
+    pill.classList.toggle("unread", withdrawn);
 
     if (speaking) {
       say.textContent = text;
-      pill.classList.remove("dormant");
-      pill.classList.add("speaking");
       pill.title = text;
     } else {
       say.textContent = "";
-      pill.classList.add("dormant");
-      pill.classList.remove("speaking");
-      pill.removeAttribute("title");
+      // The withdrawn message stays reachable on hover rather than being
+      // lost — the dot says there is something, and this says what.
+      if (withdrawn) pill.title = text;
+      else pill.removeAttribute("title");
     }
-    return speaking;
+    // Keep polling at the active cadence while unread, so acknowledging her
+    // anywhere else clears the dot promptly rather than up to four seconds
+    // later.
+    return holding;
   }
 
   /*

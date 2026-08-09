@@ -1,4 +1,4 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="Aura">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="9.5 6.4 50 50" role="img" aria-label="Aura">
   <!--
     The bubble's only chrome. Aura's neuron: a hexagonal soma, dendrites
     branching up-left, one axon trailing down-right to a terminal.
@@ -7,6 +7,14 @@
     panel and at 2x on a retina display, and so the glow can respond to
     state without shipping a second asset. No label — an instrument does
     not explain itself.
+
+    The viewBox is cropped to the artwork rather than left at 0 0 64 64.
+    The drawing occupies x 11.2–57.8 and y 10–52.8, so a full-square box
+    padded it with dead margin on every side and hung it up-and-left of
+    centre — at bubble size that read as a small mark adrift in a large
+    disc. This box is the content's own bounds, squared and centred on
+    (34.5, 31.4), which is what puts the neuron in the middle of the
+    bubble and lets it fill it.
   -->
   <defs>
     <radialGradient id="soma" cx="42%" cy="38%" r="70%">

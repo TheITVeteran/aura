@@ -91,10 +91,19 @@ async def ambient_clear() -> JSONResponse:
 
 @router.post("/api/ambient/position", dependencies=[Depends(_require_internal)])
 async def ambient_position(payload: BubblePosition) -> JSONResponse:
-    """Where she was parked, so it survives a restart."""
+    """Where she was parked, so it survives a restart.
+
+    The disk write is awaited on the async lane rather than done inside
+    ``move_bubble``: that runs on the event loop, and a sync fsync there once
+    froze the live runtime for twenty minutes. ``persisted`` is reported
+    rather than assumed, because "position persists" was the claim that did
+    not hold — it was held in memory and lost on every restart.
+    """
     try:
-        x, y = _presence().move_bubble(payload.x, payload.y)
-        return JSONResponse({"ok": True, "position": [x, y]})
+        presence = _presence()
+        x, y = presence.move_bubble(payload.x, payload.y)
+        persisted = await presence.persist_bubble_position()
+        return JSONResponse({"ok": True, "position": [x, y], "persisted": persisted})
     except _AMBIENT_ERRORS as exc:
         record_degradation("ambient_routes", exc, severity="debug",
                            action="bubble position not retained")

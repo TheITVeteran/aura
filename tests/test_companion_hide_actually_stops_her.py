@@ -111,7 +111,7 @@ def test_opening_the_full_window_does_not_read_as_being_dismissed():
     assert "orderBubbleOut" in source, (
         "a surface change and a dismissal must not share one code path"
     )
-    opening = source.split("private func openNativeDesktopWindow()", 1)[1][:2500]
+    opening = _function_body(source, "private func openNativeDesktopWindow()")
     assert "orderBubbleOut()" in opening
     assert "hideBubble()" not in opening, (
         "opening the window would report her as hidden and stop her looking"
@@ -119,10 +119,33 @@ def test_opening_the_full_window_does_not_read_as_being_dismissed():
     assert 'postAmbientMode("window")' in opening
 
 
+def _function_body(source: str, signature: str) -> str:
+    """The text of one Swift function, bounded by the next declaration.
+
+    A fixed character window is the wrong bound: it silently shrinks the
+    assertion's reach as the function grows, so a rule can slide out of scope
+    and the test keeps passing while checking less.
+    """
+    after = source.split(signature, 1)[1]
+    # The EARLIEST following declaration, of any visibility. Stopping only at
+    # `private func` ran straight past the `func userContentController` that
+    # follows, swallowing its `case "hide": hideBubble()` and making the
+    # assertion below fail against code that was already correct.
+    ends = [
+        offset
+        for offset in (
+            after.find(marker)
+            for marker in ("\n    private func ", "\n    func ", "\n    // MARK:")
+        )
+        if offset != -1
+    ]
+    return after[: min(ends)] if ends else after
+
+
 def test_showing_the_bubble_clears_hidden():
     """Otherwise hiding her once is permanent until a restart."""
     source = _LAUNCHER.read_text(encoding="utf-8")
-    showing = source.split("private func showBubble()", 1)[1][:3000]
+    showing = _function_body(source, "private func showBubble()")
 
     assert 'postAmbientMode("bubble")' in showing
 
@@ -135,6 +158,41 @@ def test_there_is_a_way_to_ask_her_to_go_away():
     assert 'action: "hide"' in source, (
         "the launcher's hide handler is still unreachable"
     )
+
+
+def test_a_message_withdraws_to_the_dot_instead_of_sitting_there():
+    """The unread dot lit only when the text was already spelled out.
+
+    Which made it decoration: it announced "there is something here" while
+    the something was legible an inch to its right. Meanwhile an unread
+    remark stayed expanded over the person's work indefinitely.
+
+    Both halves are one fix. The message withdraws after a while and the dot
+    is what remains — non-modal, and the only surviving trace of a sentence
+    nobody acknowledged, which is what "open me when you can" means.
+    """
+    source = _BUBBLE_JS.read_text(encoding="utf-8")
+
+    assert "WITHDRAW_AFTER_S" in source
+    assert "utterance_age_s" in source, "nothing measures how long it has sat there"
+    assert '"unread"' in source
+
+    html = Path("interface/static/bubble.html").read_text(encoding="utf-8")
+    assert "#pill.unread #dot" in html
+    assert "#pill.speaking #dot" not in html, (
+        "the dot would light beside text that is already on screen"
+    )
+
+
+def test_a_withdrawn_message_is_still_reachable():
+    """Withdrawing must not mean losing it.
+
+    A remark that vanishes silently can only be learned by having been
+    looking at the moment it appeared.
+    """
+    source = _BUBBLE_JS.read_text(encoding="utf-8")
+
+    assert "if (withdrawn) pill.title = text;" in source
 
 
 def test_hiding_and_clearing_stay_different_acts():
