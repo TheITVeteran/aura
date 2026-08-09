@@ -10,6 +10,10 @@ from core.brain.llm.latent_cortex.deterministic_verifier_router import (
     router_check,
     validate_deterministic_router_envelope,
 )
+from core.brain.llm.latent_cortex.objective_program_verifier import (
+    solve_objective_program,
+    validate_objective_program_solution,
+)
 from core.brain.llm.latent_cortex.task_verifiers import EpisodeTaskVerifier
 
 
@@ -133,3 +137,24 @@ def test_router_executes_public_boolean_objective_with_bounded_parser() -> None:
     assert execution["declared_operations"] == 2
     assert execution["executed_operations"] == 2
     assert len(execution["expression_sha256"]) == 64
+
+
+def test_public_objective_solver_emits_canonical_candidate_and_text_free_receipt() -> None:
+    objective = (
+        "Start at the given value and apply each operation modulo 19: start=12. "
+        "Operations: *18, *12. You may reason before answering. Finish with exactly "
+        "one final line using the envelope FINAL_ANSWER: <JSON object>."
+    )
+    solved = solve_objective_program(objective)
+    assert solved is not None
+    candidate, receipt = solved
+
+    assert candidate == 'FINAL_ANSWER: {"residue":8}'
+    assert validate_objective_program_solution(
+        receipt,
+        objective=objective,
+        candidate=candidate,
+    ) == receipt
+    wire = json.dumps(receipt, sort_keys=True)
+    assert candidate not in wire
+    assert '"residue":8' not in wire

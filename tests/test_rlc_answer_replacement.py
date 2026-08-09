@@ -382,6 +382,59 @@ def test_public_objective_program_promotes_correct_branch_over_wrong_incumbent()
     )
 
 
+def test_public_objective_solver_recovers_when_incumbent_and_branches_are_wrong():
+    objective = (
+        "Start at the given value and apply each operation modulo 19: start=12. "
+        "Operations: *18, *12. You may reason before answering. Finish with exactly "
+        "one final line using the envelope FINAL_ANSWER: <JSON object>."
+    )
+    wrong = 'FINAL_ANSWER: {"residue":7}'
+    objective, candidates, graph, selector, local_repair, generated = _scenario(
+        left=wrong,
+        right=wrong,
+        repaired=wrong,
+        objective=objective,
+    )
+    assert len(local_repair["requests"]) == 1
+    assert local_repair["transactions"][0]["status"] == "repaired_candidate_rejected"
+
+    receipt, tokens, private = build_answer_replacement_receipt(
+        disagreement_graph=graph,
+        diagnostic_selection=selector,
+        local_repair=local_repair,
+        selected_branch=0,
+        branch_candidates=candidates,
+        generated_repairs=generated,
+        objective=objective,
+        baseline_text=wrong,
+        baseline_tokens=_encode(wrong),
+        encode=_encode,
+        decode=_decode,
+        enabled=True,
+        margin=0.05,
+        max_output_tokens=64,
+    )
+
+    assert receipt["decision"] == "replace"
+    assert receipt["selected_request_id"] == "objective-program"
+    assert receipt["accepted_output"]["source"] == "objective_program_solution"
+    assert _decode(tokens) == 'FINAL_ANSWER: {"residue":8}'
+    validate_answer_replacement_receipt(
+        receipt,
+        disagreement_graph=graph,
+        diagnostic_selection=selector,
+        local_repair=local_repair,
+        private_evidence=private,
+        expected_objective=objective,
+        expected_selected_branch=0,
+        expected_enabled=True,
+        expected_margin=0.05,
+        expected_max_output_tokens=64,
+        expected_output_text='FINAL_ANSWER: {"residue":8}',
+        expected_output_tokens=tokens,
+    )
+
+
 def test_no_repair_budget_never_returns_a_deterministically_refuted_decode():
     objective, candidates, graph, selector, local_repair, generated = _scenario(
         left="2 + 2 = 4.",

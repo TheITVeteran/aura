@@ -39547,3 +39547,40 @@ into a gain. Reasoning gain, frontier performance, fusion, activation, and
 (approximately `87.9%`). A fresh published-source v4 canary must test whether
 the exact objective lane now converts trained candidate quality into a strict,
 floor-preserving complete-engine gain.
+
+## Checkpoint 2026-08-08-061: Exact Refutation Can Become Exact Action
+
+The fresh published-source CP060 canary completed in `752.8s` with every
+infrastructure and training-mechanics gate green. It preserved the ordinary
+floor at `6/8` before and after seven GRPO updates, but authorized no gain. On
+the only failed task, both contract-valid recurrent candidates were exactly
+refuted at both depths. The complete engine therefore abstained even though
+its verifier had deterministically executed the public modular program and
+derived the correct result. This is a valid negative training result and a
+specific missing action layer, not a verifier failure.
+
+The objective-program module can now compile each recognized public program
+into a canonical terminal answer as well as verify proposed answers. The
+solver receives only the user-visible objective; it has no benchmark answer,
+grader state, or private task metadata. Its public receipt contains hashes and
+bounded execution evidence, not candidate text. Answer replacement treats the
+result as a distinct `objective_program_solution` candidate, reconstructs the
+solution in the validating trust domain, routes it through the same exact
+verifier, and serves it only when its lower bound strictly dominates the
+canonical ordinary incumbent. A correct branch still wins ties, and an
+unrecognized objective receives no synthetic candidate.
+
+Direct solver, replacement, replay, and tamper contracts pass `49/49`; the
+expanded engine, critic-identity, repair, diagnostic, wiring, replay, and
+checkpoint-admission surface passes `274/274`; canonical smoke passes
+`103/103`. Ruff, compilation, and diff hygiene pass. A broader opportunistic
+sweep reached `1,442` passes before being stopped after five pre-existing
+promotion-fixture failures and one CPU-heavy proof serialization; that stale
+fixture is tracked for immediate repair rather than counted as a CP061 pass.
+
+Compact evidence is
+`artifacts/closeout/latent_cortex/cp061_public_objective_solver_1p5b.json`.
+This checkpoint implements the missing causal path but does not infer a result
+before a fresh run. Reasoning gain, training gain, resident-32B gain, frontier
+performance, fusion, activation, and `WOW Signal` remain false. The completion
+envelope remains `809/920` (approximately `87.9%`).

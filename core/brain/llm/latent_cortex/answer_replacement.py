@@ -30,9 +30,13 @@ from core.brain.llm.latent_cortex.deterministic_verifier_router import (
 from core.brain.llm.latent_cortex.local_repair import (
     validate_local_repair_receipt,
 )
+from core.brain.llm.latent_cortex.objective_program_verifier import (
+    solve_objective_program,
+    validate_objective_program_solution,
+)
 
-ANSWER_REPLACEMENT_SCHEMA = "aura.rlc.answer_replacement.v3"
-ANSWER_REPLACEMENT_PRIVATE_SCHEMA = "aura.rlc.answer_replacement_private.v2"
+ANSWER_REPLACEMENT_SCHEMA = "aura.rlc.answer_replacement.v4"
+ANSWER_REPLACEMENT_PRIVATE_SCHEMA = "aura.rlc.answer_replacement_private.v3"
 DEFAULT_REPLACEMENT_MARGIN = 0.05
 MAX_REPLACEMENT_OUTPUT_TOKENS = 1024
 # Baseline evidence binds output that was already admitted by the engine's
@@ -168,6 +172,8 @@ def _normalize_private_evidence(value: Any) -> dict[str, Any]:
         "objective",
         "branch_candidates",
         "generated_repairs",
+        "objective_program_solution",
+        "objective_program_solution_receipt",
         "baseline_text",
         "baseline_tokens",
     }
@@ -175,6 +181,8 @@ def _normalize_private_evidence(value: Any) -> dict[str, Any]:
         raise ValueError("answer replacement private evidence fields differ")
     branches = value["branch_candidates"]
     repairs = value["generated_repairs"]
+    objective_solution = value["objective_program_solution"]
+    objective_solution_receipt = value["objective_program_solution_receipt"]
     baseline_tokens = value["baseline_tokens"]
     if (
         value["schema"] != ANSWER_REPLACEMENT_PRIVATE_SCHEMA
@@ -199,17 +207,30 @@ def _normalize_private_evidence(value: Any) -> dict[str, Any]:
             or len(text) > 131_072
             for key, text in repairs.items()
         )
+        or not isinstance(objective_solution, str)
+        or len(objective_solution) > 131_072
+        or not isinstance(objective_solution_receipt, Mapping)
     ):
         raise ValueError("answer replacement private evidence is invalid")
     if len(baseline_tokens) > MAX_BASELINE_EVIDENCE_TOKENS:
         raise ValueError(
             "answer replacement private evidence baseline token limit exceeded"
         )
+    if objective_solution:
+        validate_objective_program_solution(
+            objective_solution_receipt,
+            objective=value["objective"],
+            candidate=objective_solution,
+        )
+    elif objective_solution_receipt:
+        raise ValueError("objective program solution receipt has no candidate")
     return {
         "schema": ANSWER_REPLACEMENT_PRIVATE_SCHEMA,
         "objective": value["objective"],
         "branch_candidates": {str(key): str(text) for key, text in sorted(branches.items())},
         "generated_repairs": {str(key): str(text) for key, text in sorted(repairs.items())},
+        "objective_program_solution": objective_solution,
+        "objective_program_solution_receipt": dict(objective_solution_receipt),
         "baseline_text": value["baseline_text"],
         "baseline_tokens": list(baseline_tokens),
     }
@@ -381,6 +402,45 @@ def _candidate_inventory(
             "dominates": dominates,
         }
         rows.append({**payload, "candidate_decision_sha256": _sha(payload)})
+    objective_solution = private_evidence["objective_program_solution"]
+    if objective_solution:
+        solution_receipt = validate_objective_program_solution(
+            private_evidence["objective_program_solution_receipt"],
+            objective=private_evidence["objective"],
+            candidate=objective_solution,
+        )
+        solution_decomposition = build_atomic_decomposition(
+            objective_solution,
+            objective=private_evidence["objective"],
+        )
+        solution_routes = build_deterministic_router_receipt(
+            objective_solution,
+            objective=private_evidence["objective"],
+            atomic_receipt=solution_decomposition,
+        )
+        solution_quality = _quality_interval(
+            solution_decomposition,
+            solution_routes,
+            candidate=objective_solution,
+        )
+        dominates = bool(
+            float(solution_quality["lower_bound"])
+            > float(baseline_quality["upper_bound"]) + margin
+        )
+        payload = {
+            "request_id": "objective-program",
+            "branch": -1,
+            "transaction_sha256": solution_receipt["receipt_sha256"],
+            "transaction_status": "objective_program_solution",
+            "required_verifier": "exact_objective_program",
+            "same_verifier_class": True,
+            "source_branch_quality": solution_quality,
+            "replacement_quality": solution_quality,
+            "dominance_margin": margin,
+            "compared_against": "actual_final_decode",
+            "dominates": dominates,
+        }
+        rows.append({**payload, "candidate_decision_sha256": _sha(payload)})
     return rows, selected_quality
 
 
@@ -498,8 +558,18 @@ def build_answer_replacement_receipt(
         for transaction in local_repair["transactions"]
         if transaction["status"] == "repaired_candidate_admitted"
     }
-    private_evidence_required = bool(branch_candidates) or bool(local_repair["requests"]) or (
-        baseline_quality["basis"] == "deterministic_exact_refutation"
+    objective_program_solution = solve_objective_program(objective)
+    objective_solution_text = (
+        objective_program_solution[0] if objective_program_solution is not None else ""
+    )
+    objective_solution_receipt = (
+        objective_program_solution[1] if objective_program_solution is not None else {}
+    )
+    private_evidence_required = (
+        bool(branch_candidates)
+        or bool(local_repair["requests"])
+        or bool(objective_solution_text)
+        or baseline_quality["basis"] == "deterministic_exact_refutation"
     )
     private_evidence = (
         _normalize_private_evidence(
@@ -515,6 +585,8 @@ def build_answer_replacement_receipt(
                     if request_id in admitted_request_ids
                     if isinstance(result, Mapping) and isinstance(result.get("candidate"), str)
                 },
+                "objective_program_solution": objective_solution_text,
+                "objective_program_solution_receipt": objective_solution_receipt,
                 "baseline_text": baseline_text,
                 "baseline_tokens": baseline,
             }
@@ -550,7 +622,9 @@ def build_answer_replacement_receipt(
         # round-trip, and both fail closed to abstain if that binding cannot be
         # proven. Branch ids carry the "branch-" prefix their row was built
         # with, so the source is unambiguous.
-        if selected_request_id.startswith("branch-"):
+        if selected_request_id == "objective-program":
+            candidate = private_evidence["objective_program_solution"]
+        elif selected_request_id.startswith("branch-"):
             candidate = private_evidence["branch_candidates"].get(
                 selected_request_id.removeprefix("branch-")
             )
@@ -570,6 +644,9 @@ def build_answer_replacement_receipt(
         except (AttributeError, KeyError, TypeError, ValueError):
             decision = "abstain"
             reason = (
+                "objective_program_output_binding_failed"
+                if selected_request_id == "objective-program"
+                else
                 "dominant_branch_output_binding_failed"
                 if selected_request_id.startswith("branch-")
                 else "dominant_repair_output_binding_failed"
@@ -592,7 +669,9 @@ def build_answer_replacement_receipt(
     output_binding = {
         "source": (
             (
-                "branch_candidate"
+                "objective_program_solution"
+                if selected_request_id == "objective-program"
+                else "branch_candidate"
                 if selected_request_id.startswith("branch-")
                 else "repaired_candidate"
             )
@@ -726,9 +805,15 @@ def validate_answer_replacement_receipt(
         diagnostic_selection=diagnostic_selection,
     )
     candidate_decompositions = disagreement_graph.get("candidate_decompositions")
-    private_required = bool(candidate_decompositions) or bool(local_repair["requests"]) or (
-        isinstance(value.get("baseline_quality"), Mapping)
-        and value["baseline_quality"].get("basis") == "deterministic_exact_refutation"
+    expected_objective_solution = solve_objective_program(expected_objective)
+    private_required = (
+        bool(candidate_decompositions)
+        or bool(local_repair["requests"])
+        or expected_objective_solution is not None
+        or (
+            isinstance(value.get("baseline_quality"), Mapping)
+            and value["baseline_quality"].get("basis") == "deterministic_exact_refutation"
+        )
     )
     if value["private_evidence_required"] is not private_required:
         raise ValueError("answer replacement private evidence policy differs")
@@ -829,13 +914,14 @@ def validate_answer_replacement_receipt(
         raise ValueError("answer replacement reconstruction differs")
     decision = value["decision"]
     if decision == "replace":
-        # A promoted candidate is a repair of the incumbent or a branch answer.
-        # Both are validated identically -- exact text/token round-trip against
-        # the private source that produced them -- so neither can be served
-        # without the receipt proving where it came from.
+        # Every promoted source is validated by exact text/token round-trip
+        # against private evidence reconstructed in this trust domain.
+        is_objective_solution = selected_request_id == "objective-program"
         is_branch = selected_request_id.startswith("branch-")
         candidate = (
-            private["branch_candidates"].get(
+            private["objective_program_solution"]
+            if is_objective_solution
+            else private["branch_candidates"].get(
                 selected_request_id.removeprefix("branch-")
             )
             if is_branch
@@ -847,7 +933,13 @@ def validate_answer_replacement_receipt(
             or value["reason"] != expected_reason
             or not isinstance(candidate, str)
             or binding["source"]
-            != ("branch_candidate" if is_branch else "repaired_candidate")
+            != (
+                "objective_program_solution"
+                if is_objective_solution
+                else "branch_candidate"
+                if is_branch
+                else "repaired_candidate"
+            )
             or binding["binding_status"] != "exact_text_token_roundtrip"
             or binding["text_sha256"] != _text_sha(candidate)
             or not 0 < binding["token_count"] <= output_limit
@@ -869,7 +961,12 @@ def validate_answer_replacement_receipt(
         expected_effect = "abstained"
         binding_failure = (
             intended == "replace"
-            and value["reason"] == "dominant_repair_output_binding_failed"
+            and value["reason"]
+            in {
+                "dominant_repair_output_binding_failed",
+                "dominant_branch_output_binding_failed",
+                "objective_program_output_binding_failed",
+            }
             and binding["binding_status"] == "failed_closed"
         )
         if (

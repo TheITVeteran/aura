@@ -15,6 +15,7 @@ from dataclasses import dataclass
 from typing import Any
 
 OBJECTIVE_PROGRAM_VERIFIER_SCHEMA = "aura.rlc.objective_program_verifier.v1"
+OBJECTIVE_PROGRAM_SOLUTION_SCHEMA = "aura.rlc.objective_program_solution.v1"
 
 _MODULAR_OBJECTIVE_RE = re.compile(
     r"\AStart at the given value and apply each operation modulo "
@@ -177,13 +178,9 @@ def _boolean_expected(match: re.Match[str]) -> tuple[dict[str, Any], dict[str, A
     }
 
 
-def verify_objective_program(candidate: str, *, objective: str) -> dict[str, Any] | None:
-    """Return an exact verdict for a recognized public objective, else ``None``."""
-
-    if not isinstance(candidate, str) or not isinstance(objective, str):
-        raise TypeError("objective program verifier inputs must be text")
-    if "FINAL_ANSWER:" not in candidate:
-        return None
+def _execute_objective(objective: str) -> tuple[str, dict[str, Any], dict[str, Any]] | None:
+    if not isinstance(objective, str):
+        raise TypeError("objective program must be text")
     family = ""
     expected: dict[str, Any]
     execution: dict[str, Any]
@@ -197,6 +194,67 @@ def verify_objective_program(candidate: str, *, objective: str) -> dict[str, Any
         expected, execution = _boolean_expected(boolean)
     else:
         return None
+    return family, expected, execution
+
+
+def solve_objective_program(objective: str) -> tuple[str, dict[str, Any]] | None:
+    """Compile a recognized public objective into a canonical proven answer.
+
+    This is a bounded symbolic solver, not benchmark-answer access: the only
+    input is the same user-visible objective given to the generator. The public
+    receipt commits to the output and execution trace without embedding answer
+    text; callers must still run the independent verifier before promotion.
+    """
+
+    executed = _execute_objective(objective)
+    if executed is None:
+        return None
+    family, expected, execution = executed
+    candidate = "FINAL_ANSWER: " + json.dumps(
+        expected,
+        sort_keys=True,
+        separators=(",", ":"),
+        ensure_ascii=True,
+        allow_nan=False,
+    )
+    payload = {
+        "schema": OBJECTIVE_PROGRAM_SOLUTION_SCHEMA,
+        "family": family,
+        "objective_sha256": _text_sha(objective),
+        "candidate_sha256": _text_sha(candidate),
+        "expected_payload_sha256": _sha(expected),
+        "execution": execution,
+        "authority": "public_objective_deterministic_execution",
+    }
+    return candidate, {**payload, "receipt_sha256": _sha(payload)}
+
+
+def validate_objective_program_solution(
+    value: Any,
+    *,
+    objective: str,
+    candidate: str,
+) -> dict[str, Any]:
+    rebuilt = solve_objective_program(objective)
+    if rebuilt is None:
+        raise ValueError("objective program solution is unavailable")
+    expected_candidate, expected_receipt = rebuilt
+    if candidate != expected_candidate or value != expected_receipt:
+        raise ValueError("objective program solution reconstruction differs")
+    return expected_receipt
+
+
+def verify_objective_program(candidate: str, *, objective: str) -> dict[str, Any] | None:
+    """Return an exact verdict for a recognized public objective, else ``None``."""
+
+    if not isinstance(candidate, str) or not isinstance(objective, str):
+        raise TypeError("objective program verifier inputs must be text")
+    if "FINAL_ANSWER:" not in candidate:
+        return None
+    executed = _execute_objective(objective)
+    if executed is None:
+        return None
+    family, expected, execution = executed
     failure_codes: list[str] = []
     try:
         produced = _candidate_payload(candidate)
@@ -220,6 +278,9 @@ def verify_objective_program(candidate: str, *, objective: str) -> dict[str, Any
 
 
 __all__ = [
+    "OBJECTIVE_PROGRAM_SOLUTION_SCHEMA",
     "OBJECTIVE_PROGRAM_VERIFIER_SCHEMA",
+    "solve_objective_program",
+    "validate_objective_program_solution",
     "verify_objective_program",
 ]

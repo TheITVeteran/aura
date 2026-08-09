@@ -1,0 +1,57 @@
+{
+  "schema": "aura.closeout.rlc.cp061.v1",
+  "checkpoint": "CP061",
+  "input_experiment": {
+    "campaign": "aura-cp060-v4-canary-c8fafc9d7-s2026080809",
+    "source_commit": "c8fafc9d7015f00fc963636e6357d44934a38742",
+    "seed": 2026080809,
+    "elapsed_s": 752.8272371292114,
+    "receipt_sha256": "137c94bece9bcc29a08d3c0f24a9de25e9fbaaa1c83181a5c03ac5eab8ebfb68",
+    "ordinary_correct": 6,
+    "initial_full_engine_correct": 6,
+    "trained_full_engine_correct": 6,
+    "observations": 8,
+    "optimizer_updates": 7,
+    "authorized_correct_gains": 0,
+    "scientific_gate": "complete_engine_heldout_strict_gain",
+    "scientific_gate_passed": false
+  },
+  "localized_failure": {
+    "task_id": "recurrence-modular-d2-s8474083184330581625",
+    "depths": [1, 2],
+    "expected_residue": 8,
+    "ordinary_residue": 7,
+    "contract_valid_branch_candidates": 2,
+    "exactly_refuted_branch_candidates": 2,
+    "replacement_decision": "abstain",
+    "reason": "known_refutation_has_no_dominant_repair",
+    "conclusion": "the engine computed an exact refutation from the public objective but had no authority-bearing candidate for the result it had already derived"
+  },
+  "implementation": {
+    "mechanism": "public_objective_deterministic_solver",
+    "supported_families": ["modular_chain", "nested_boolean"],
+    "benchmark_answer_access": false,
+    "candidate_source": "public_user_objective_only",
+    "candidate_receipt_contains_text": false,
+    "independent_reconstruction_required": true,
+    "answer_source_label": "objective_program_solution",
+    "ordinary_incumbent_preserved_without_proven_dominance": true
+  },
+  "verification": {
+    "direct_contracts": {"passed": 49, "failed": 0},
+    "serving_and_trust_contracts": {"passed": 274, "failed": 0},
+    "canonical_smoke": {"passed": 103, "failed": 0},
+    "ruff": "pass",
+    "py_compile": "pass",
+    "diff_check": "pass"
+  },
+  "claims": {
+    "bounded_solver_path_implemented": true,
+    "fresh_seed_architecture_gain_proven": false,
+    "training_gain_proven": false,
+    "resident_32b_gain_proven": false,
+    "frontier_level_proven": false,
+    "fusion_allowed": false,
+    "wow_signal": false
+  }
+}
