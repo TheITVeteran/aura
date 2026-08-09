@@ -39099,3 +39099,29 @@ false. The completion envelope remains `809/920` (approximately `87.9%`). The
 next bounded step is a control-only calibration on the frozen resident 32B;
 only a nonzero, non-ceiling control result may admit a disjoint held-out
 complete-engine treatment.
+
+## Checkpoint 2026-08-08-047: Resident 32B Has a Measurable Control Floor
+
+The first resident-32B control attempt at 320 tokens was stopped after all
+seven greedy outputs terminated mid-solution. The run was not graded as a
+capability result. A fresh source-bound run used a 1024-token budget, which is
+part of every arm fingerprint and must remain identical in the held-out
+treatment comparison.
+
+The frozen Qwen2.5-32B-Instruct-4bit control campaign completed all `14/14`
+cells without faults or evidence-manifest issues. Greedy ordinary decode
+scored `3/7`; three-sample equal-compute textual self-consistency scored `2/7`.
+Strict serving grade and deterministic contract-neutral content grade agreed
+exactly. Ordinary decode solved scientific inference, Bayesian calibration,
+and misleading-premise correction. The baseline is therefore nonzero and
+below ceiling, while additional textual sampling did not automatically improve
+it.
+
+The compact evidence record is
+`artifacts/closeout/latent_cortex/cp047_resident_32b_control_calibration.json`.
+This calibration admits a disjoint held-out complete-engine experiment; it is
+not itself a gain result. Reasoning gain, fusion, frontier-level performance,
+and `WOW Signal` remain false. The completion envelope remains `809/920`
+(approximately `87.9%`). The held-out treatment must preserve the per-task
+ordinary floor and beat both ordinary and equal-compute controls under the same
+1024-token budget before any next-phase authorization.

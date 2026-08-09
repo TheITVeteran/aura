@@ -1,0 +1,43 @@
+{
+  "schema": "aura.rlc.cp047_resident_32b_control_calibration.v1",
+  "checkpoint": "CP047",
+  "base_commit": "c9b1a8261",
+  "model": "/Users/bryan/.aura/live-source/models/Qwen2.5-32B-Instruct-4bit",
+  "run_directory": "/tmp/aura-rlc-cp047-32b-d2-calibration-1024",
+  "seed": 20260901,
+  "per_domain": 1,
+  "difficulty": 2,
+  "max_tokens": 1024,
+  "arms": [
+    "vanilla",
+    "vanilla_equal_compute"
+  ],
+  "artifact_sha256": {
+    "task_commitment_json": "27a20d1426996b941cba31aa13f700a1ebe43f89f6707855010703cfd458cbcc",
+    "decode_fingerprint_json": "9336ef0a83b8dec9e3a1fb995905491effc9869cfbf26b803c683d36f21f91d9",
+    "journal_jsonl": "50a0df336d7820d8be9cf32fc5b38567fe692556cef94762d82325050f4cc0e4",
+    "verdict_json": "fabd59d24dba7d65c46f1a85efc1f9f3bb06eb25b7577e59a6a585b09615b1f1"
+  },
+  "calibration": {
+    "planned_cells": 14,
+    "completed_cells": 14,
+    "faults": 0,
+    "coverage_complete": true,
+    "evidence_manifest_valid": true,
+    "vanilla_strict_correct": "3/7",
+    "vanilla_equal_compute_strict_correct": "2/7",
+    "vanilla_contract_neutral_correct": "3/7",
+    "vanilla_equal_compute_contract_neutral_correct": "2/7",
+    "vanilla_latency_median_s": 71.8,
+    "vanilla_equal_compute_latency_median_s": 256.9,
+    "ability_floor_nonzero": true,
+    "ability_ceiling_not_reached": true,
+    "held_out_treatment_admitted": true
+  },
+  "claims": {
+    "reasoning_gain_proven": false,
+    "fusion_authorized": false,
+    "frontier_level_proven": false,
+    "wow_signal_authorized": false
+  }
+}
