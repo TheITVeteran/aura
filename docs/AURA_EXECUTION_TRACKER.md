@@ -40220,3 +40220,30 @@ gain, frontier performance, fusion, activation, or `WOW Signal`. The next gate
 is a targeted 1.5B resource/acquisition canary, followed by an informative
 resident-32B calibration and complete-system pilot. The completion envelope
 remains `809/920` (approximately `87.9%`).
+
+## Checkpoint 2026-08-09-082: The Complete Treatment Accounts for Its Work
+
+CP081 prevented a fixed best-of-three baseline from impersonating an
+equal-compute control. The treatment side now exposes the claim-grade target
+that a real control must match. Every complete closed-book cell aggregates all
+executed neural RLC rounds and every in-process amplifier generation into one
+model-profile-bound `ResourceLedger`. Amplifier prefill, decode attention,
+output-head work, tensor traffic, candidate verification, final promotion, and
+any selected deterministic acquisition/tool call are charged explicitly.
+
+The complete receipt also binds the final validated information envelope. A
+missing, malformed, incomplete, or model-unbound resource receipt invalidates
+runtime evidence; the same is true for its information receipt. Compact
+evidence publishes the resource and information receipt digests plus estimated
+structural FLOPs, without claiming hardware time, energy, or kernel-specific
+quantized cost.
+
+The reconciliation/controller/pipeline/handoff family passes `85/85`;
+canonical smoke passes `103/103`; Ruff, compilation, and diff hygiene pass.
+Compact evidence is
+`artifacts/closeout/latent_cortex/cp082_complete_system_resource_ledger.json`.
+This is a source-level accounting result. The exact next gate is a real 1.5B
+checkpoint canary that reconstructs these receipts, followed by a dynamically
+matched ordinary control on an informative resident-32B band. No reasoning
+gain, frontier result, fusion authority, activation, or `WOW Signal` is claimed,
+and the completion envelope remains `809/920` (approximately `87.9%`).

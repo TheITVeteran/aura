@@ -1225,6 +1225,45 @@ def test_complete_system_receipt_requires_acquisition_amplifier_and_promotion(
     from tools.rlc_complete_system_closed_book import _candidate_quality_assessment
 
     candidate_quality = _candidate_quality_assessment(candidate_evaluation)
+    from core.brain.llm.latent_cortex.resource_accounting import (
+        ModelComputeProfile,
+        ResourceLedger,
+        build_information_receipt,
+    )
+
+    ledger = ResourceLedger(
+        ModelComputeProfile(
+            model_type="fixture",
+            hidden_size=8,
+            intermediate_size=16,
+            num_hidden_layers=2,
+            num_attention_heads=2,
+            num_key_value_heads=1,
+            vocab_size=32,
+            head_dim=4,
+        )
+    )
+    ledger.charge(
+        "fixture_complete_system",
+        transformer_layer_apps=10,
+        attention_query_key_pairs=20,
+        output_head_tokens=2,
+        verifier_calls=4,
+        verifier_input_bytes=32,
+        verifier_output_bytes=16,
+    )
+    information = build_information_receipt(
+        sources=[
+            {
+                "source_id": "public_prompt",
+                "kind": "prompt",
+                "content_sha256": hashlib.sha256(objective.encode()).hexdigest(),
+                "byte_count": len(objective.encode()),
+                "token_count": 8,
+            }
+        ],
+        policies={"closed_book": hashlib.sha256(b"closed_book").hexdigest()},
+    )
     receipt = {
         "complete_system_closed_book": {
             "schema": "aura.rlc.complete_system_closed_book.v1",
@@ -1257,6 +1296,8 @@ def test_complete_system_receipt_requires_acquisition_amplifier_and_promotion(
             "amplifier_verifier_calls": 4,
             "in_process_generation_calls": 1,
             "seed_candidate_count": 2,
+            "resource_accounting": ledger.to_receipt(),
+            "information_accounting": information,
             "promotion": {
                 "schema": "aura.rlc.closed_book_promotion.v1",
                 "decision": "replace",
@@ -1275,6 +1316,9 @@ def test_complete_system_receipt_requires_acquisition_amplifier_and_promotion(
     assert evidence["amplifier_candidates"] == 3
     assert evidence["amplifier_ground_truth_verified"] is False
     assert evidence["no_regression_guaranteed"] is False
+    assert evidence["estimated_flops"] == ledger.estimated_flops()
+    assert evidence["resource_accounting_sha256"] == ledger.to_receipt()["receipt_sha256"]
+    assert evidence["information_accounting_sha256"] == information["receipt_sha256"]
 
     path, digest = sweep._persist_runtime_receipt(
         tmp_path,
@@ -1298,6 +1342,11 @@ def test_complete_system_receipt_requires_acquisition_amplifier_and_promotion(
     assert invalid["valid"] is False
     assert "amplifier_candidates_absent" in invalid["issues"]
     assert "amplifier_strategy_not_executed" in invalid["issues"]
+
+    del receipt["complete_system_closed_book"]["resource_accounting"]
+    invalid = sweep._complete_system_evidence(receipt)
+    assert "complete_system_resource_accounting_invalid" in invalid["issues"]
+    assert "complete_system_resource_accounting_incomplete" in invalid["issues"]
 
 
 def test_candidate_quality_separates_proxy_admission_from_exact_public_proof():

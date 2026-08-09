@@ -72,6 +72,8 @@ class _ClosedBookVerifierRegistry:
         self.verifier = verifier
         self.domain = str(domain or "general")
         self.calls = 0
+        self.input_bytes = 0
+        self.output_bytes = 0
 
     async def verify(
         self,
@@ -84,8 +86,17 @@ class _ClosedBookVerifierRegistry:
 
         del task_type, context
         self.calls += 1
+        self.input_bytes += len(candidate.encode("utf-8"))
         row = self.verifier.evaluate(candidate)
         assessment = _candidate_quality_assessment(row)
+        self.output_bytes += len(
+            json.dumps(
+                {"evaluation": row, "assessment": assessment},
+                sort_keys=True,
+                separators=(",", ":"),
+                default=str,
+            ).encode("utf-8")
+        )
         checked = bool(row.get("applicable_checks"))
         return VerificationResult(
             domain=self.domain,
@@ -116,7 +127,7 @@ def _run_closed_book_sample(
     max_tokens: int,
     temperature: float,
     seed: int,
-) -> str:
+) -> tuple[str, dict[str, Any]]:
     """Generate one deterministic in-process amplifier candidate.
 
     The benchmark owns exactly one model. Calling the regular batched/live
@@ -132,12 +143,21 @@ def _run_closed_book_sample(
     from core.brain.llm.latent_cortex.answer_contract import is_contract_complete
 
     mx.random.seed(int(seed) & 0xFFFFFFFF)
+    messages = [{"role": "user", "content": str(prompt)}]
     rendered = tokenizer.apply_chat_template(
-        [{"role": "user", "content": str(prompt)}],
+        messages,
         add_generation_prompt=True,
         tokenize=False,
     )
+    prompt_token_ids = list(
+        tokenizer.apply_chat_template(
+            messages,
+            add_generation_prompt=True,
+            tokenize=True,
+        )
+    )
     pieces: list[str] = []
+    generated_tokens = 0
     for response in stream_generate(
         model,
         tokenizer,
@@ -149,9 +169,40 @@ def _run_closed_book_sample(
         ),
     ):
         pieces.append(response.text)
+        generated_tokens = int(response.generation_tokens)
         if "}" in response.text and is_contract_complete("".join(pieces)):
             break
-    return "".join(pieces).strip()
+    text = "".join(pieces).strip()
+
+    from core.brain.llm.latent_cortex.resource_accounting import (
+        ModelComputeProfile,
+        ResourceLedger,
+        triangular_attention_pairs,
+    )
+
+    profile = ModelComputeProfile.from_model(model)
+    ledger = ResourceLedger(profile)
+    prompt_tokens = len(prompt_token_ids)
+    output_tokens = max(1, generated_tokens)
+    decode_forwards = max(0, output_tokens - 1)
+    n_layers = len(model.model.layers)
+    ledger.charge(
+        "amplifier_prefill",
+        transformer_layer_apps=prompt_tokens * n_layers,
+        attention_query_key_pairs=triangular_attention_pairs(prompt_tokens) * n_layers,
+        output_head_tokens=1,
+    )
+    decode_pairs = sum(prompt_tokens + index + 1 for index in range(decode_forwards))
+    ledger.charge(
+        "amplifier_decode",
+        transformer_layer_apps=decode_forwards * n_layers,
+        attention_query_key_pairs=decode_pairs * n_layers,
+        output_head_tokens=decode_forwards,
+        tensor_element_reads=output_tokens * profile.vocab_size,
+        tensor_element_writes=output_tokens * profile.vocab_size,
+        host_scalar_ops=output_tokens * profile.vocab_size * 8,
+    )
+    return text, ledger.to_receipt()
 
 
 def _promotion_assessment(
@@ -372,12 +423,13 @@ def _run_complete_system_closed_book(
             acquisition_evidence["withheld_action"] = action.value
 
     generation_calls = 0
+    amplifier_generation_resources: list[dict[str, Any]] = []
 
     async def generate(prompt: str, temperature: float) -> str:
         nonlocal generation_calls
         index = generation_calls
         generation_calls += 1
-        return _run_closed_book_sample(
+        text, resource = _run_closed_book_sample(
             model,
             tokenizer,
             prompt,
@@ -389,6 +441,8 @@ def _run_complete_system_closed_book(
                 1000 + index,
             ),
         )
+        amplifier_generation_resources.append(resource)
+        return text
 
     amplifier_verifier = EpisodeTaskVerifier(
         objective,
@@ -449,6 +503,62 @@ def _run_complete_system_closed_book(
         candidate_verified=bool(amplifier_candidate_quality["proxy_admitted"]),
         authority=promotion_authority,
     )
+    from core.brain.llm.latent_cortex.resource_accounting import (
+        ResourceLedger,
+        validate_information_receipt,
+        validate_resource_receipt,
+    )
+
+    rlc_receipts = [
+        first_receipt["budget"]["resource_accounting"],
+        *(
+            [final_receipt["budget"]["resource_accounting"]]
+            if acquisition_evidence["continuation_executed"]
+            else []
+        ),
+    ]
+    complete_ledger = ResourceLedger.aggregate([*rlc_receipts, *amplifier_generation_resources])
+    verifier_input_bytes = (
+        verifier_registry.input_bytes
+        + len(amplifier_candidate.encode("utf-8"))
+        + len(incumbent_text.encode("utf-8"))
+        + (len(amplifier_candidate.encode("utf-8")) if amplifier_candidate else 0)
+    )
+    verifier_calls = verifier_registry.calls + 2 + int(bool(amplifier_candidate))
+    complete_ledger.charge(
+        "complete_system_verification_and_promotion",
+        verifier_calls=verifier_calls,
+        verifier_input_bytes=verifier_input_bytes,
+        verifier_output_bytes=(verifier_registry.output_bytes + verifier_calls * 8),
+        host_scalar_ops=max(1, verifier_input_bytes * 4),
+    )
+    if acquisition_evidence.get("request"):
+        request_bytes = len(
+            json.dumps(
+                acquisition_evidence["request"],
+                sort_keys=True,
+                separators=(",", ":"),
+            ).encode("utf-8")
+        )
+        result_bytes = len(
+            json.dumps(
+                acquisition_evidence.get("compute") or acquisition_evidence,
+                sort_keys=True,
+                separators=(",", ":"),
+                default=str,
+            ).encode("utf-8")
+        )
+        complete_ledger.charge(
+            "cognitive_acquisition",
+            tool_calls=1,
+            tool_input_bytes=request_bytes,
+            tool_result_bytes=result_bytes,
+            host_scalar_ops=max(1, request_bytes + result_bytes),
+        )
+    complete_resource_accounting = validate_resource_receipt(complete_ledger.to_receipt())
+    complete_information_accounting = validate_information_receipt(
+        final_receipt["budget"]["information_accounting"]
+    )
     final_receipt["complete_system_closed_book"] = {
         "schema": "aura.rlc.complete_system_closed_book.v1",
         "contract": "same_information_no_memory_rag_web_or_answer_key",
@@ -474,6 +584,8 @@ def _run_complete_system_closed_book(
         "amplifier_verifier_calls": verifier_registry.calls,
         "in_process_generation_calls": generation_calls,
         "seed_candidate_count": len(seeds),
+        "resource_accounting": complete_resource_accounting,
+        "information_accounting": complete_information_accounting,
         "promotion": promotion,
     }
     return final_text, final_receipt
@@ -616,6 +728,29 @@ def _complete_system_evidence(
         "system_promotion_decision_invalid",
     )
     require(bool(promotion.get("final_text_sha256")), "system_final_answer_unbound")
+    from core.brain.llm.latent_cortex.resource_accounting import (
+        validate_information_receipt,
+        validate_resource_receipt,
+    )
+
+    try:
+        resource_accounting = validate_resource_receipt(system.get("resource_accounting"))
+    except (TypeError, ValueError):
+        resource_accounting = {}
+        issues.append("complete_system_resource_accounting_invalid")
+    try:
+        information_accounting = validate_information_receipt(system.get("information_accounting"))
+    except (TypeError, ValueError):
+        information_accounting = {}
+        issues.append("complete_system_information_accounting_invalid")
+    require(
+        resource_accounting.get("accounting_complete") is True,
+        "complete_system_resource_accounting_incomplete",
+    )
+    require(
+        information_accounting.get("accounting_complete") is True,
+        "complete_system_information_accounting_incomplete",
+    )
 
     return {
         "valid": not issues,
@@ -636,6 +771,9 @@ def _complete_system_evidence(
         "promotion_decision": str(promotion.get("decision") or ""),
         "promotion_authority": str(promotion.get("authority") or ""),
         "no_regression_guaranteed": promotion.get("no_regression_guaranteed") is True,
+        "resource_accounting_sha256": str(resource_accounting.get("receipt_sha256") or ""),
+        "information_accounting_sha256": str(information_accounting.get("receipt_sha256") or ""),
+        "estimated_flops": resource_accounting.get("estimated_flops"),
         "final_text_sha256": str(promotion.get("final_text_sha256") or ""),
     }
 
