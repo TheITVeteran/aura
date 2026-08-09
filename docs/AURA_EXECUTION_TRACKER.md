@@ -39655,3 +39655,26 @@ hygiene pass. Compact evidence is
 `artifacts/closeout/latent_cortex/cp064_objective_incumbent_equivalence_1p5b.json`.
 The repair requires a fresh canary. The completion envelope remains `809/920`
 (approximately `87.9%`).
+
+## Checkpoint 2026-08-09-065: Every Canary Seed Produces a Disjoint Curriculum
+
+The first CP064-source relaunch stopped before model load because seed
+`2026080903` produced two different process-task identities with the same
+Boolean prompt. The answer and proxy generators already honor explicit prompt
+and identity exclusions, but the process generator rejected only duplicate
+task IDs. The final cross-split assertion correctly detected the leakage; no
+training or scientific result occurred.
+
+The process battery now requires both task-ID and prompt uniqueness. A
+collision triggers deterministic coordinate-bound resampling for that cell,
+with a bounded `1,024`-attempt exhaustion guard. The original seed derivation
+remains the first attempt, so all noncolliding campaign identities are stable;
+the generator neither drops examples nor silently shrinks a stratum. The
+formerly failing seed now yields all 20 unique process, projection, and held-out
+tasks.
+
+Focused curriculum and canary contracts pass `20/20`; canonical smoke passes
+`103/103`; Ruff, compilation, and diff hygiene pass. Compact evidence is
+`artifacts/closeout/latent_cortex/cp065_process_curriculum_disjointness.json`.
+All capability and fusion claims remain false pending a fresh source-bound
+canary. The completion envelope remains `809/920` (approximately `87.9%`).

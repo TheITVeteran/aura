@@ -302,15 +302,28 @@ def process_task_battery(
     }
     tasks: list[RecurrentProcessTask] = []
     seen: set[str] = set()
+    seen_prompts: set[str] = set()
     for family in families:
         for depth in depths:
             for ordinal in range(per_cell):
-                material = f"{seed}:{family}:{depth}:{ordinal}".encode("ascii")
-                task_seed = int.from_bytes(hashlib.sha256(material).digest()[:8], "big")
-                task = constructors[family](depth, task_seed)
-                if task.task_id in seen:
-                    raise RuntimeError("process battery generated a duplicate task")
+                for attempt in range(1_024):
+                    coordinate = f"{seed}:{family}:{depth}:{ordinal}"
+                    if attempt:
+                        coordinate += f":retry:{attempt}"
+                    material = coordinate.encode("ascii")
+                    task_seed = int.from_bytes(
+                        hashlib.sha256(material).digest()[:8],
+                        "big",
+                    )
+                    task = constructors[family](depth, task_seed)
+                    if task.task_id not in seen and task.prompt not in seen_prompts:
+                        break
+                else:  # pragma: no cover - finite generator exhaustion guard
+                    raise RuntimeError(
+                        f"process battery exhausted unique prompts: {family}/{depth}"
+                    )
                 seen.add(task.task_id)
+                seen_prompts.add(task.prompt)
                 tasks.append(task)
     return tasks
 

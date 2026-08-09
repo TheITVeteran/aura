@@ -137,6 +137,15 @@ def test_joint_curricula_are_balanced_and_strictly_disjoint() -> None:
     assert len({task.prompt for task in all_tasks}) == len(all_tasks)
 
 
+def test_joint_curricula_resample_process_prompt_collisions() -> None:
+    process, answer, proxy = canary._task_sets(2026080903)
+
+    all_tasks = [*process, *answer, *proxy]
+    assert len(all_tasks) == 20
+    assert len({task.task_id for task in all_tasks}) == len(all_tasks)
+    assert len({task.prompt for task in all_tasks}) == len(all_tasks)
+
+
 def test_source_contract_binds_every_joint_objective() -> None:
     assert len(canary.SOURCE_PATHS) == len(set(canary.SOURCE_PATHS))
     assert "core/learning/recurrence_native_objective_v2.py" in canary.SOURCE_PATHS

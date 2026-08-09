@@ -1,0 +1,40 @@
+{
+  "schema": "aura.closeout.rlc.cp065.v1",
+  "checkpoint": "CP065",
+  "failed_launch": {
+    "campaign": "aura-cp064-v4-canary-23afef9b9-s2026080903",
+    "seed": 2026080903,
+    "phase": "task_set_construction",
+    "model_loaded": false,
+    "training_started": false,
+    "scientific_result_produced": false,
+    "failure": "joint recurrent curriculum is not disjoint",
+    "duplicate_kind": "process_prompt",
+    "duplicate_task_ids": false
+  },
+  "repair": {
+    "location": "core.learning.recurrent_process_curriculum.process_task_battery",
+    "policy": "bounded_deterministic_resampling",
+    "maximum_attempts_per_cell": 1024,
+    "preserves_noncolliding_first_attempt_identity": true,
+    "requires_unique_task_id": true,
+    "requires_unique_prompt": true,
+    "drops_curriculum_cells": false
+  },
+  "verification": {
+    "focused_contracts": {"passed": 20, "failed": 0},
+    "canonical_smoke": {"passed": 103, "failed": 0},
+    "formerly_failing_seed_is_disjoint": true,
+    "ruff": "pass",
+    "py_compile": "pass",
+    "diff_check": "pass"
+  },
+  "claims": {
+    "reasoning_gain_proven": false,
+    "training_gain_proven": false,
+    "resident_32b_gain_proven": false,
+    "frontier_level_proven": false,
+    "fusion_allowed": false,
+    "wow_signal": false
+  }
+}
