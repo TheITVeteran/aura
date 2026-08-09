@@ -16,6 +16,7 @@ Usage:
 """
 
 import asyncio
+import inspect
 import logging
 import os
 import re
@@ -218,8 +219,44 @@ class APIAdapter:
         self._gemini_client = None
         self._local_client = None
         self._gemini_backoff_until = 0.0
+        await self._close_http_session()
         logger.info("APIAdapter stopped. Calls: %s | Tokens: %d",
                     self._call_count, self._total_tokens)
+
+    async def _close_http_session(self) -> None:
+        """Close a shared HTTP session, if anything ever sets one.
+
+        ``start()`` no longer opens one — see the note there; the old
+        aiohttp session was created, tracked, closed, and never used to make
+        a request, so it was removed rather than routed. What survived the
+        removal was ``on_stop_async``'s docstring, still describing itself as
+        "the shutdown hook for the shared HTTP session" while closing
+        nothing.
+
+        Kept as a real close rather than deleting the promise, because the
+        next person to add a session will add it to ``start()`` and will not
+        think to add a matching close — an aiohttp session that outlives
+        shutdown holds its connector and its sockets. Now the hook does what
+        it says, whether or not there is anything to do.
+        """
+        session = getattr(self, "_http_session", None)
+        if session is None:
+            return
+        self._http_session = None
+        close = getattr(session, "close", None)
+        if close is None:
+            return
+        try:
+            result = close()
+            if inspect.isawaitable(result):
+                await result
+        except Exception as exc:  # noqa: BLE001 — shutdown must complete
+            record_degradation(
+                "api_adapter",
+                exc,
+                severity="warning",
+                action="dropped the HTTP session reference after close failed",
+            )
 
     async def on_stop_async(self) -> None:
         """ServiceContainer shutdown hook for the shared HTTP session."""

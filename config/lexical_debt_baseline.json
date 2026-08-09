@@ -1,0 +1,22 @@
+{
+  "total_patterns": 183,
+  "total_lines": 8954,
+  "by_file": {
+    "core/conversation/response_reliability.py": {
+      "compiled_patterns": 161,
+      "lines": 8026
+    },
+    "core/conversation/ontology_grounding.py": {
+      "compiled_patterns": 11,
+      "lines": 308
+    },
+    "core/dialogue/shared_history.py": {
+      "compiled_patterns": 7,
+      "lines": 242
+    },
+    "core/dialogue/referents.py": {
+      "compiled_patterns": 4,
+      "lines": 378
+    }
+  }
+}

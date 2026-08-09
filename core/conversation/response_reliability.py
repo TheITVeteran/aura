@@ -1,8 +1,41 @@
 """User-facing conversation reliability checks.
 
-This module intentionally stays small and dependency-light. It is used at
-multiple choke points so bad chat output is treated as a failed generation, not
-as a successful answer that later systems have to explain away.
+Used at several choke points so bad chat output is treated as a failed
+generation rather than a successful answer later systems have to explain
+away. That job is real and this module does it.
+
+READ THIS BEFORE ADDING A PATTERN.
+----------------------------------
+This docstring used to open "This module intentionally stays small and
+dependency-light." It said that at 7,930 lines and 161 compiled regexes. The
+sentence was not a description; it was an intention nobody had enforced in a
+long time, and it made the file look like something it is not to anyone
+skimming it.
+
+The growth has a single shape. A bad answer goes out, someone finds the
+substring that characterised it, and a regex is added. That is fixing the
+words. This codebase's standing rule is to fix the reasoning — and every
+pattern added here is a reason nobody looked for the cause, banked as debt
+against the day a slightly different bad answer needs a slightly different
+regex.
+
+The clearest specimen was ``re.compile(r"\\bm'?lol\\b")``: a regex for one
+garbled token the model emitted once. It has been replaced by
+:func:`has_malformed_contraction`, which asks the question the regex was
+gesturing at — does this token have an apostrophe English cannot put there —
+and answers it from the closed set of real contraction suffixes. One rule,
+the whole class, no list of past accidents. That is the conversion every
+remaining pattern should get.
+
+Not every check here is lexical. Several are genuinely causal — the
+arithmetic check recomputes the sum, the grounding checks compare against
+retrieved evidence, the embodiment check consults the ontology — and those
+belong. The debt is the ones that only know a phrase.
+
+``make lexical-debt`` counts the patterns and holds them to a ceiling that
+only falls. Adding a regex here now requires removing one, which is the
+right price: it forces the question "what actually produced this output?" at
+the moment someone is most tempted to skip it.
 """
 from __future__ import annotations
 
@@ -192,7 +225,26 @@ _ALLOWED_SHORT_TAIL_WORDS = {
     "us",
     "we",
 }
-_CORRUPTED_SOCIAL_FRAGMENT_RE = re.compile(r"\bm'?lol\b", re.IGNORECASE)
+# A token of the shape word'word. Decoding corruption produces these —
+# "m'lol" was the one that got its own regex — but so do contractions,
+# possessives and a lot of real names, so the pattern alone decides nothing.
+_APOSTROPHE_TOKEN_RE = re.compile(r"\b([A-Za-z]+)'([A-Za-z]+)\b")
+
+#: Everything that legitimately follows an apostrophe in English. This is a
+#: closed set, which is the whole reason a general rule is possible here.
+_CONTRACTION_SUFFIXES = frozenset(
+    {
+        "s", "t", "d", "m", "ll", "re", "ve",      # contractions and possessives
+        "am",                                       # ma'am
+        "all", "clock", "em", "er", "n",            # y'all, o'clock, 'em, ne'er, rock'n'roll
+        "til", "tis", "twas", "cause", "bout",      # 'til, 'tis, 'twas, 'cause, 'bout
+    }
+)
+
+#: Python/JS string prefixes. ``f'Model loaded'`` inside a code block is a
+#: quoted string, not a corrupted word — found by sweeping this repo's own
+#: markdown, where these were the only two false positives in 272 files.
+_STRING_LITERAL_PREFIXES = frozenset({"f", "r", "b", "u", "rb", "br", "fr", "rf"})
 _PSEUDO_INTERNAL_JARGON_RE = re.compile(
     r"\b(?:traumacognitive|psycho[- ]?cognitive|neuro[- ]?cognitive field|"
     r"memory decay rate|temperature in my memory|cognitive field|substrate aura|"
@@ -1804,6 +1856,50 @@ def _normalize(text: Any) -> str:
     normalized = " ".join(str(text or "").strip().lower().split())
     normalized = normalized.replace("\u2018", "'").replace("\u2019", "'")
     return re.sub(r"\bdont'?\b", "don't", normalized)
+
+
+def has_malformed_contraction(reply_text: Any, prompt: Any = "") -> bool:
+    """Does the reply contain an apostrophe token English cannot produce?
+
+    This replaces ``re.compile(r"\\bm'?lol\\b")`` — a regex for one garbled
+    token the model emitted once. That is the shape this module is full of,
+    and it is the wrong shape: it catches "m'lol" and nothing else, so the
+    next corruption needs the next regex, forever, and the file grows while
+    the cause goes unexamined.
+
+    The cause is a decoding artifact that splices an apostrophe into a token.
+    English has a *closed* set of things that may follow one — contractions,
+    possessives, a handful of elisions — which is what makes a general rule
+    possible instead of a list of past accidents.
+
+    Deliberately permissive at the edges, because a false positive here
+    suppresses a real answer:
+
+    * anything whose suffix is a real contraction passes;
+    * ``O'Brien``, ``D'Angelo`` and the rest pass on the capitalised
+      short-prefix shape;
+    * anything the person themselves wrote passes, so Aura can quote or
+      correct a typo of theirs without being refused for it.
+    """
+    raw = str(reply_text or "")
+    if "'" not in raw and "’" not in raw:
+        return False
+    prompt_text = _normalize(prompt)
+    for match in _APOSTROPHE_TOKEN_RE.finditer(raw.replace("’", "'")):
+        prefix, suffix = match.group(1), match.group(2)
+        if suffix.lower() in _CONTRACTION_SUFFIXES:
+            continue
+        # O'Brien, D'Angelo, L'Oreal: a capitalised one- or two-letter stem.
+        if len(prefix) <= 2 and prefix[:1].isupper():
+            continue
+        # f'Model loaded' — a string literal in code Aura is writing.
+        if prefix.lower() in _STRING_LITERAL_PREFIXES:
+            continue
+        # Quoting the person, including quoting their typo.
+        if match.group(0).lower() in prompt_text:
+            continue
+        return True
+    return False
 
 
 def is_cognitive_engine_failure_envelope(reply_text: Any) -> bool:
@@ -6961,7 +7057,7 @@ def _model_text_integrity_reasons(
         reasons.append("unsupported_runtime_limits_claim")
     if user_facing:
         reasons.extend(_operational_status_overclaim_reasons(prompt, raw))
-    if _CORRUPTED_SOCIAL_FRAGMENT_RE.search(raw) and "lol" not in _normalize(prompt):
+    if has_malformed_contraction(raw, prompt):
         reasons.append("corrupted_social_fragment")
     return reasons
 
@@ -7434,7 +7530,7 @@ def _assess_user_facing_reply(
         reasons.append("borrowed_owner_first_person_speech")
 
     user_norm = _normalize(user_message)
-    if _CORRUPTED_SOCIAL_FRAGMENT_RE.search(raw) and "lol" not in user_norm:
+    if has_malformed_contraction(raw, user_message):
         reasons.append("corrupted_social_fragment")
     if is_confusion_repair_turn(user_message) and _unexpected_short_foreign_name(user_message, raw):
         reasons.append("foreign_name_intrusion")

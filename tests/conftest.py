@@ -2,6 +2,7 @@
 import asyncio
 import builtins
 import contextlib
+import gc
 import inspect
 import os
 import shutil
@@ -108,7 +109,7 @@ class _ResourceLeakSnapshot:
     open_files: frozenset[str]
 
 
-# Two kinds of open file are not leaks, and counting them as such blamed
+# Three kinds of open file are not leaks, and counting them as such blamed
 # tests for handles they never opened and could not close.
 #
 # 1. aura_json.log — setup_logging() installs one RotatingFileHandler and
@@ -119,13 +120,31 @@ class _ResourceLeakSnapshot:
 # 2. __pycache__/*.pyc — CPython's import machinery, not the test. Which
 #    test gets blamed depends only on which one imported a module first,
 #    which is why these errors wandered between runs.
+# 3. Python SOURCE under this repo — the other half of (2), and it was
+#    missing. When a .pyc is absent or stale the importer opens the .py to
+#    compile it, and that handle can still be in the snapshot. Measured
+#    2026-08-09 on tests/test_inference_gate_tiering.py: 4-5 teardown
+#    failures per run naming core/orchestrator/mixins/autonomy.py,
+#    core/runtime/subprocess_gateway.py,
+#    core/brain/llm/latent_cortex/action_state_key_custody.py — modules
+#    those tests never touch — and a DIFFERENT set each run. Adding a
+#    gc.collect() to the settle loop (see close_and_assert_clean) roughly
+#    halved it, which confirms part of it is cycle-held rather than truly
+#    open, and the remainder still wandered.
+#
+#    Narrow on purpose: only .py, only inside the repository. A test does
+#    not leak handles to source files — this check exists for sqlite
+#    stores, sockets and child processes, and it has never caught a real
+#    defect in this class, only innocent tests.
 #
 # Everything else still fails, which is the point of the check.
 def _is_process_lifetime_log_sink(path) -> bool:
     text = str(path)
     if os.path.basename(text) == "aura_json.log":
         return True
-    return text.endswith(".pyc") and f"{os.sep}__pycache__{os.sep}" in text
+    if text.endswith(".pyc") and f"{os.sep}__pycache__{os.sep}" in text:
+        return True
+    return text.endswith(".py") and text.startswith(f"{PROJECT_ROOT}{os.sep}")
 
 
 # ── Durable sqlite stores that outlive their test ─────────────────────────
@@ -373,10 +392,24 @@ class HermeticResourceSandbox:
         # is why these errors wandered between runs and between tests. A
         # handle that closes on its own was never a leak; a real one is
         # still open when the deadline passes.
+        # Collect before judging, too. Refcounting closes a dropped file
+        # object immediately; a file object caught in a REFERENCE CYCLE waits
+        # for the collector, and the commonest cycle in this codebase is an
+        # exception traceback — a frame holds the file, the traceback holds
+        # the frame, and something held the exception. `record_degradation`
+        # retains exceptions by design, so this is not exotic.
+        #
+        # Observed: unrelated tests failing on an open handle to a .py source
+        # file they never touched — action_state_key_custody.py,
+        # subprocess_gateway.py — which wandered between tests run to run.
+        # An object the collector is about to close was never a leak, the
+        # same reasoning already applied to the settle loop below.
+        gc.collect()
         deadline = time.monotonic() + 0.75
         leaks = self.leaks()
         while (leaks["children"] or leaks["open_files"]) and time.monotonic() < deadline:
             time.sleep(0.05)
+            gc.collect()
             leaks = self.leaks()
 
         child_pids = sorted(int(identity[0]) for identity in leaks["children"])
@@ -426,6 +459,15 @@ class HermeticResourceSandbox:
             if holders:
                 print(f"\n[sqlite-sweeper] closed leaked stores: {'; '.join(holders)}")
                 leaks = self.leaks()
+
+        # Last look, after the sqlite sweeper has dropped its references.
+        # Closing a store releases the connection object but the file handle
+        # behind it can still be reachable from the cycle the sweeper just
+        # broke, so the collect has to come after the sweep, not only before
+        # it. Cheap: this runs only when something already looks wrong.
+        if leaks.get("open_files"):
+            gc.collect()
+            leaks = self.leaks()
 
         if leaked_leases or any(leaks.values()):
             pytest.fail(

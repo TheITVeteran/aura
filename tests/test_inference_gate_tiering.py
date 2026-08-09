@@ -4024,8 +4024,16 @@ def test_cold_cortex_policy_deferred_log_is_rate_limited(monkeypatch):
     from core.brain import inference_gate as inference_gate_module
 
     gate = InferenceGate()
+    # `next(ticks, default)`, not bare `next(ticks)`. `inference_gate_module.time`
+    # IS the global time module, so this replaces time.monotonic for the whole
+    # process. A three-shot iterator then raises StopIteration on the fourth
+    # call from anywhere — and the autouse teardown fixtures call it, which
+    # surfaced as "RuntimeError: generator raised StopIteration" in a fixture
+    # that has nothing to do with clocks.
     ticks = iter([400.0, 420.0, 701.0])
-    monkeypatch.setattr(inference_gate_module.time, "monotonic", lambda: next(ticks))
+    monkeypatch.setattr(
+        inference_gate_module.time, "monotonic", lambda: next(ticks, 701.0)
+    )
 
     gate._log_cold_cortex_policy_deferred()
     assert gate._last_cortex_policy_deferred_log_at == 400.0
@@ -4112,8 +4120,13 @@ def test_explicit_deferred_cortex_prewarm_refusal_is_rate_limited(monkeypatch, c
             }
         ),
     )
+    # See the note on the other fake clock in this file: bare next() on an
+    # exhausted iterator takes down whatever calls time.monotonic() next,
+    # anywhere in the process.
     ticks = iter([100.0, 101.0, 161.0])
-    monkeypatch.setattr(inference_gate_module.time, "monotonic", lambda: next(ticks))
+    monkeypatch.setattr(
+        inference_gate_module.time, "monotonic", lambda: next(ticks, 161.0)
+    )
     monkeypatch.setattr(inference_gate_module, "_LAST_EXPLICIT_DEFERRED_PREWARM_REFUSAL_AT", 0.0)
     monkeypatch.setattr(inference_gate_module, "_LAST_EXPLICIT_DEFERRED_PREWARM_REFUSAL_REASON", "")
 
