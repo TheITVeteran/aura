@@ -1,6 +1,6 @@
 # Commitment search: what to do when depth stopped working
 
-Status: **built, wired, and falsifiable. No gain claimed yet.**
+Status: **measured. +11.3 points on 160 paired tasks (p=0.044), by REJECTION SAMPLING. Prompt-conditioned exclusion was measured and REFUTED.**
 Owner: `core/brain/llm/latent_cortex/commitment_*.py`, `sequential_exclusion.py`
 
 ## The problem, stated as physics
@@ -188,6 +188,70 @@ reconstruct what would have counted as failure after seeing the numbers:
 > the ratchet's score is explained by extra passes and extra prompt text,
 > not by the order in which commitments constrain later passes
 
+## The end-to-end measurement
+
+Qwen2.5-1.5B-Instruct-4bit, 3-digit multiplication, best-of-6, 4 seeds x 40
+tasks = 160 paired tasks, sound non-oracle verifier (recomputation, never
+shown the gold answer).
+`artifacts/rlc/commitment_search/exclusion_ab_aggregate_20260809.json`
+
+| arm | solved | rate | mean verifier calls |
+|---|---|---|---|
+| i.i.d. best-of-6 | 77/160 | 48.1% | 3.97 |
+| exclusion, **prompt-conditioned** | 75/160 | **46.9%** | 4.2 |
+| exclusion, **rejection-sampled** | 95/160 | **59.4%** | **3.19** |
+
+**+11.3 points, z=2.02, p=0.044 — on FEWER verifier calls.**
+
+### The finding that matters: how you implement the restriction IS the result
+
+Prompt-conditioned exclusion lost. Twice, before the difficulty was even
+calibrated, and again here. Describing the excluded answers in context does
+not restrict `p` — it *perturbs* `p`, adding tokens that anchor on the very
+values being excluded. Compliance was 0.43, then 0.64 after the instruction
+was rewritten, and distinct coverage FELL in both.
+
+The first version of the conditioning block ended with
+
+> Work within these. They were committed against evidence; reopening them
+> repeats work already done.
+
+which is a *convergence* instruction. Told to settle, the model settled —
+onto the answers it had been told were wrong. Requirements say "stay inside
+this"; exclusions say "go somewhere else". Rendering both under one heading
+with one closing instruction inverted the mechanism.
+
+Rejection sampling has none of that. Draw from the unconditioned model,
+discard any draw landing in R, redraw. That is `p` restricted to `A \ R`,
+renormalised — the theorem, exactly, with no perturbation.
+
+### And the budget unit decided the sign
+
+Charging a rejected draw against the DRAW budget made rejection lose. That
+was right: a duplicate of an already-refuted answer costs nothing to verify
+when the verifier is arithmetic, so removing it saved nothing and cost a
+generation.
+
+The theorem's budget is **verifier calls** — the expensive, bounded resource
+in any real deployment, where verifying means running a test, calling a
+tool, or paying a model. Denominated correctly, rejection wins and spends
+less. The live path (`deliberate_best_of`) implements it this way and
+reports `rejected_redraws` so the generation overhead stays visible.
+
+### Three calibration failures, all caught by the harness
+
+| band | i.i.d. rate | outcome |
+|---|---|---|
+| two-digit | 100% | ceiling — zero refutations, nothing to exclude |
+| moderate | 91.7% | ceiling |
+| **hard** | **45.8%** | **the only band where a policy can show** |
+| 3x3-digit | 8.3% | floor — p* ≈ 0, the answer is outside the model's reach |
+
+A ceiling and a floor both look exactly like a null result. `run_exclusion_ab`
+returns INCONCLUSIVE for either rather than reporting a policy verdict from a
+saturated band, which is how all three were caught instead of being written
+up as "no effect".
+
 ## What is measured, and what is not
 
 **Measured.** The dominance arithmetic, swept over 400 constructed
@@ -196,13 +260,17 @@ distributions with zero counterexamples (registered claim
 distributions on a real model are peaked enough that i.i.d. best-of-8
 examines ~2.6 distinct answers.
 
-**Not measured.** That exclusion produces a correctness gain end to end.
-The two measurements above establish that the mechanism has room to work and
-that the arithmetic is sound; neither is a reasoning gain, and every prior
-RLC claim that blurred that line had to be walked back.
+**Also measured now.** A correctness gain end to end: +11.3 points on 160
+paired tasks, p=0.044, on fewer verifier calls — by rejection sampling only.
 
-The next step is the five ablation arms against a model on a real task set —
-not more design. What would change the verdict:
+**Not measured.** One model (1.5B), one task family (multiplication), one
+difficulty band. p=0.044 is a real effect at the edge of the noise, not a
+settled one. Nothing here shows the gain transfers to the resident 32B, to
+reasoning tasks with long answers where "the same answer" needs a semantic
+judge rather than string equality, or to a verifier that is expensive enough
+to change the trade in the other direction.
+
+What would change the verdict:
 
 * if the SHUFFLE arm matches the real arm, ordering carries no information
   and this is refuted;

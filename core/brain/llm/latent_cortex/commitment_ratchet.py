@@ -578,14 +578,49 @@ class CommitmentRatchet:
         """
         if not self._teeth:
             return ""
-        lines = [
-            "[ESTABLISHED — decided earlier in this episode, not up for revision]"
+
+        # Exclusions and requirements need OPPOSITE instructions, and the
+        # first version of this block gave them the same one.
+        #
+        # Measured 2026-08-09 on Qwen2.5-1.5B, 24 hard multiplications: the
+        # exclusion arm scored WORSE than i.i.d. (-8%), compliance was 0.43,
+        # and distinct coverage FELL from 5.46 to 2.58. The block ended with
+        # "Work within these ... reopening them repeats work already done" —
+        # a convergence instruction. Told to settle, the model settled, and
+        # collapsed onto the answers it had been told were wrong.
+        #
+        # A requirement says "stay inside this". An exclusion says "go
+        # somewhere else". Rendering them under one heading with one closing
+        # instruction inverted the mechanism.
+        exclusions = [
+            tooth for tooth in self._teeth if tooth.kind is ConstraintKind.EXCLUDES
         ]
-        lines.extend(f"- {tooth.render()}" for tooth in self._teeth)
-        lines.append(
-            "Work within these. They were committed against evidence; "
-            "reopening them repeats work already done."
-        )
+        requirements = [
+            tooth for tooth in self._teeth if tooth.kind is not ConstraintKind.EXCLUDES
+        ]
+
+        lines: list[str] = []
+        if exclusions:
+            lines.append(
+                "[RULED OUT — each of these was CHECKED and found wrong. "
+                "Do not produce any of them again; work out a DIFFERENT "
+                "answer.]"
+            )
+            lines.extend(f"- not {tooth.subject}" for tooth in exclusions)
+        if requirements:
+            if lines:
+                lines.append("")
+            lines.append(
+                "[REQUIRED — established earlier in this episode, not up for "
+                "revision]"
+            )
+            lines.extend(f"- {tooth.render()}" for tooth in requirements)
+        if exclusions:
+            # Last line, because it is the one nearest the generation point.
+            lines.append(
+                f"Your answer must differ from all {len(exclusions)} ruled-out "
+                "answer(s) above."
+            )
         return "\n".join(lines)
 
     def satisfies(self, text: str) -> dict[str, Any]:

@@ -1,0 +1,32 @@
+{
+  "schema": "aura.rlc.exclusion_ab.v1",
+  "model": "models/Qwen2.5-1.5B-Instruct-4bit",
+  "draws": 6,
+  "temperature": 0.7,
+  "tasks": 24,
+  "verifier": "sound_non_oracle_recomputation",
+  "iid": {
+    "tasks": 24,
+    "solved": 2,
+    "solve_rate": 0.0833,
+    "mean_distinct": 5.458,
+    "mean_draws_used": 6.0,
+    "noncompliant_draws": 0,
+    "commitments": 0
+  },
+  "exclusion": {
+    "tasks": 24,
+    "solved": 0,
+    "solve_rate": 0.0,
+    "mean_distinct": 2.583,
+    "mean_draws_used": 6.0,
+    "noncompliant_draws": 82,
+    "commitments": 62
+  },
+  "solve_rate_delta": -0.0833,
+  "coverage_delta": -2.875,
+  "compliance": 0.4306,
+  "verdict": "EXCLUSION_LOSES",
+  "reading": "exclusion scored WORSE (-8%). The policy is not free: a wrong exclusion is irreversible, and conditioning costs context.",
+  "duration_s": 40.8
+}

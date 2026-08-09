@@ -13,6 +13,56 @@ from core.runtime.atomic_writer import atomic_write_text
 from .schemas import ActionCandidate, Episode, Observation, Outcome, clamp, jaccard, stable_hash
 
 
+#: Effects that cannot be undone, keyed by the action kind or capability the
+#: contract reports — NOT by a tag the caller chose to attach. CP126 aa324783:
+#: the tag list was the only gate, and the caller writes the tags.
+_IRREVERSIBLE_KINDS: frozenset[str] = frozenset(
+    {
+        "delete",
+        "file_delete",
+        "send",
+        "send_email",
+        "post",
+        "publish",
+        "deploy",
+        "purchase",
+        "transfer",
+        "self_modify",
+        "overwrite",
+        "execute",
+        "shell",
+    }
+)
+
+_DANGEROUS_TAGS: frozenset[str] = frozenset(
+    {"tag:delete", "tag:deploy", "tag:self_modify", "tag:network_post"}
+)
+
+
+def _contract_says_irreversible(action: ActionCandidate) -> bool:
+    """Ask the capability contract, not the action's own description.
+
+    Falls back to the kind vocabulary when no contract is reachable. The
+    fallback FAILS CLOSED on a recognised destructive verb: an action named
+    "delete_everything" is treated as irreversible whether or not anything
+    was available to confirm it.
+    """
+    kind = str(getattr(action, "kind", "") or "").strip().lower()
+    if not kind:
+        return False
+    try:
+        from core.runtime.desktop_task_contract import irreversible_actions
+
+        contract = {str(name).lower() for name in irreversible_actions()}
+        if kind in contract:
+            return True
+    except (ImportError, AttributeError, TypeError, ValueError):
+        contract = set()
+    if kind in _IRREVERSIBLE_KINDS:
+        return True
+    return any(token in kind for token in ("delete", "remove", "destroy", "wipe", "purge"))
+
+
 @dataclass
 class OutcomePrediction:
     prediction_id: str
@@ -114,14 +164,39 @@ class MultiDomainWorldModel:
                 causal_factors[feature] = round(contribution, 4)
             feature_risk += contribution / max(5.0, math.sqrt(len(features)))
 
-        irreversible_risk = 0.35 if not action.reversible else 0.0
-        if {"tag:delete", "tag:deploy", "tag:self_modify", "tag:network_post"} & action.features():
+        # CP126 aa324783: reversibility, kind and the dangerous tags were all
+        # caller-supplied and taken at face value, so an action could declare
+        # itself reversible and untagged and evade the irreversible prior
+        # entirely. The capability contract knows which effects cannot be
+        # undone; it is asked, and it wins over the self-description.
+        contract_irreversible = _contract_says_irreversible(action)
+        declared_reversible = bool(getattr(action, "reversible", True))
+        effectively_reversible = declared_reversible and not contract_irreversible
+        irreversible_risk = 0.0 if effectively_reversible else 0.35
+        if contract_irreversible and declared_reversible:
+            # It called itself reversible and the contract disagrees. That is
+            # worse than an honest irreversible action, not equal to it.
+            irreversible_risk += 0.20
+        if _DANGEROUS_TAGS & action.features():
             irreversible_risk += 0.25
         social_risk = 0.0
         if observation.domain in {"social", "conversation", "email", "reddit"} or "tag:social" in action.features():
             social_risk = 0.25 + harm * 0.5 + surprise * 0.15
         resource_risk = harm * 0.5 + terminal * 0.3
-        risk = clamp(0.08 + harm * 0.35 + surprise * 0.15 + terminal * 0.25 + feature_risk + irreversible_risk)
+        # CP126 20240c9a: social_risk was computed and then left out of the
+        # overall risk the action gate reads. A socially damaging action —
+        # a reply that dismisses someone, a post that breaks trust — kept the
+        # low base risk of a harmless one, so the gate never saw it. A risk
+        # dimension the decision does not consume is a comment.
+        risk = clamp(
+            0.08
+            + harm * 0.35
+            + surprise * 0.15
+            + terminal * 0.25
+            + feature_risk
+            + irreversible_risk
+            + social_risk * 0.6
+        )
         uncertainty = clamp(0.75 / (1 + evidence_count) + 0.25 * surprise + (0.15 if observation.domain not in self.domain_stats else 0.0))
         prediction_id = stable_hash(
             {

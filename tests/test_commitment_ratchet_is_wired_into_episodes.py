@@ -158,11 +158,12 @@ def test_a_commitment_actually_changes_the_repair_prompt():
     block = ratchet.conditioning_block()
 
     assert "the refuted answer" in block, "nothing was committed to condition on"
+    assert "RULED OUT" in block
 
     # The exclusion is rendered as an instruction the model can act on, not
     # as a bare string — that rendering is what makes a commitment usable by
     # the redraw rather than being another line of context.
-    assert "NOT 'the refuted answer'" in block
+    assert "- not the refuted answer" in block
     assert "a survivor" not in block, (
         "an UNREFUTED branch leaked into the redraw's conditioning, which is "
         "the rationalisation hazard the blind design exists to avoid"

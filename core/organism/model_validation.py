@@ -847,16 +847,20 @@ def install_runtime_validation() -> dict[str, Any]:
             asserted_in="docs/RLC_COMMITMENT_SEARCH.md",
             evidence=Evidence.MEASURED_SYNTHETIC,
             evidence_note=(
-                "Two things ARE measured. The dominance is arithmetic and is "
-                "swept over 400 constructed distributions with zero "
-                "counterexamples. And the premise it depends on was measured "
-                "on a real model 2026-08-09 (Qwen2.5-1.5B, 8 tasks x 8 draws): "
-                "mean peakedness 0.516, 25 distinct answers from 64 draws, so "
-                "i.i.d. best-of-8 examines ~2.6 distinct answers. What is NOT "
-                "measured is a correctness gain end to end: that needs the five "
-                "ablation arms in tools/run_commitment_ablation.py against a "
-                "real task set, with the shuffle arm beaten. Until then this is "
-                "a claim about search coverage, not about Aura reasoning better."
+                "Measured end to end 2026-08-09 on Qwen2.5-1.5B, 160 paired "
+                "tasks, sound non-oracle verifier: 48.1% -> 59.4% solved "
+                "(z=2.02, p=0.044) on FEWER verifier calls (3.97 -> 3.19). The "
+                "dominance arithmetic is separately swept over 400 constructed "
+                "distributions with zero counterexamples, and the peakedness "
+                "premise measured at 0.516 (2.58 distinct answers per 8 i.i.d. "
+                "draws). The gain requires REJECTION SAMPLING: the "
+                "prompt-conditioned form was measured and lost (46.9%), because "
+                "describing excluded answers perturbs the distribution rather "
+                "than restricting it. NOT measured: transfer to the resident "
+                "32B, to long-answer tasks where sameness needs a semantic "
+                "judge, or to a verifier expensive enough to change the trade. "
+                "One model, one task family, one difficulty band, p at the edge "
+                "of noise."
             ),
         )
     )

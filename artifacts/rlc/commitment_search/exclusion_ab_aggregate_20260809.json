@@ -1,0 +1,31 @@
+{
+  "schema": "aura.rlc.exclusion_ab_aggregate.v1",
+  "model": "Qwen2.5-1.5B-Instruct-4bit",
+  "band": "hard",
+  "draws": 6,
+  "seeds": [
+    "artifacts/rlc/commitment_search/rep_11.json",
+    "artifacts/rlc/commitment_search/rep_22.json",
+    "artifacts/rlc/commitment_search/rep_33.json",
+    "artifacts/rlc/commitment_search/rep_44.json"
+  ],
+  "tasks": 160,
+  "iid_solved": 77,
+  "iid_rate": 0.4813,
+  "rejection_solved": 95,
+  "rejection_rate": 0.5938,
+  "prompt_conditioned_solved": 75,
+  "prompt_conditioned_rate": 0.4688,
+  "delta": 0.1125,
+  "z": 2.018,
+  "p_two_sided": 0.0436,
+  "mean_verifier_calls_iid": 3.969,
+  "mean_verifier_calls_rejection": 3.194,
+  "verdict": "REJECTION_SAMPLING_WINS",
+  "reading": "Rejection sampling beat i.i.d. best-of-6 by +11.3 points (48.1% -> 59.4%, z=2.02, p=0.044) on FEWER verifier calls (3.97 -> 3.19). Prompt-conditioned exclusion did NOT (46.9%) \u2014 describing the excluded answers in context perturbs the distribution and anchors on the very values it excludes, which is not what the theorem says to do. The theorem says draw from p restricted to A\\\\R; rejection sampling is that, prompting is a proxy for it.",
+  "caveats": [
+    "one model (1.5B), one task family (3-digit multiplication), one band",
+    "n=160 paired tasks, p=0.044 \u2014 a real effect at the edge of the noise, not a settled one",
+    "the band was CHOSEN by measuring i.i.d. saturation; easy and extreme bands are reported INCONCLUSIVE by the harness rather than being quietly dropped"
+  ]
+}

@@ -1,0 +1,53 @@
+{
+  "schema": "aura.rlc.exclusion_ab.v1",
+  "model": "models/Qwen2.5-1.5B-Instruct-4bit",
+  "draws": 6,
+  "temperature": 0.7,
+  "tasks": 24,
+  "band": "moderate",
+  "verifier": "sound_non_oracle_recomputation",
+  "iid": {
+    "tasks": 24,
+    "solved": 22,
+    "solve_rate": 0.9167,
+    "mean_distinct": 1.042,
+    "mean_draws_used": 1.417,
+    "mean_verifier_calls": 1.417,
+    "mean_generations": 1.417,
+    "noncompliant_draws": 0,
+    "rejected_draws": 0,
+    "commitments": 0
+  },
+  "exclusion_prompt_conditioned": {
+    "tasks": 24,
+    "solved": 22,
+    "solve_rate": 0.9167,
+    "mean_distinct": 1.083,
+    "mean_draws_used": 1.458,
+    "mean_verifier_calls": 1.458,
+    "mean_generations": 1.458,
+    "noncompliant_draws": 9,
+    "rejected_draws": 0,
+    "commitments": 4
+  },
+  "exclusion_rejection_sampled": {
+    "tasks": 24,
+    "solved": 24,
+    "solve_rate": 1.0,
+    "mean_distinct": 1.167,
+    "mean_draws_used": 1.167,
+    "mean_verifier_calls": 1.167,
+    "mean_generations": 1.833,
+    "noncompliant_draws": 0,
+    "rejected_draws": 16,
+    "commitments": 4
+  },
+  "best_exclusion_arm": "rejection",
+  "solve_rate_delta": 0.0833,
+  "coverage_delta": 0.125,
+  "prompt_conditioning_compliance": 0.7429,
+  "rejection_rate": 0.5714,
+  "verdict": "INCONCLUSIVE",
+  "reading": "i.i.d. solve rate 92% in band 'moderate': the band is saturated (ceiling) or unreachable (floor), so no search policy could show a difference. This measured the task set, not the policy.",
+  "duration_s": 12.2
+}

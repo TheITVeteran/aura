@@ -61,8 +61,13 @@ def test_excluding_refuted_answers_raises_distinct_coverage():
 
     def _make_solver():
         def solve(index, conditioning=""):
+            ruled_out = {
+                line[len("- not ") :].strip()
+                for line in conditioning.splitlines()
+                if line.startswith("- not ")
+            }
             for candidate in pool:
-                if f"NOT '{candidate}'" not in conditioning:
+                if candidate not in ruled_out:
                     return candidate
             return pool[-1]
 
@@ -167,7 +172,14 @@ def test_only_the_refuted_text_appears_in_the_block():
     later = [block for block in blocks if block]
     assert later, "nothing was ever excluded"
     for block in later:
-        assert "good" not in block, "an ACCEPTED answer was shown to a later pass"
+        ruled_out = {
+            line[len("- not ") :].strip()
+            for line in block.splitlines()
+            if line.startswith("- not ")
+        }
+        assert "good" not in ruled_out, (
+            "an ACCEPTED answer was shown to a later pass"
+        )
 
 
 # ───────────────────────────────────────────── compatibility and safety
@@ -250,3 +262,69 @@ def test_the_monotonic_invariant_survives_exclusion():
     result = _run(solve=solve, verify=verify, max_passes=3)
 
     assert result.answer == "strong"
+
+
+# ───────────── rejection, not prompting — the measured form of the policy
+
+
+def test_a_repeated_refuted_answer_is_redrawn_not_reverified():
+    """The trade the measured gain comes from.
+
+    Prompt-conditioned exclusion was measured and LOST (46.9% vs 48.1%
+    i.i.d.): describing the excluded answers perturbs the distribution and
+    anchors on the values being excluded. Rejection sampling won (59.4%,
+    p=0.044) on FEWER verifier calls, because a repeat of an already-refuted
+    answer is discarded before the verifier is paid.
+    """
+    verify_calls = []
+
+    answers = ["wrong", "wrong", "wrong", "right"]
+
+    def solve(index, conditioning=""):
+        return answers[min(index, len(answers) - 1)]
+
+    async def verify(answer):
+        verify_calls.append(answer)
+        return _Verdict(ok=answer == "right", checked=True)
+
+    result = _run(solve=solve, verify=verify, max_passes=4)
+
+    assert result.answer == "right"
+    assert verify_calls.count("wrong") == 1, (
+        f"the same refuted answer was verified {verify_calls.count('wrong')} "
+        "times; each repeat should be redrawn before the verifier is paid"
+    )
+    assert result.rejected_redraws >= 1
+
+
+def test_rejection_is_bounded_when_the_model_will_not_move():
+    """A model that always repeats must not spin forever."""
+
+    def solve(index, conditioning=""):
+        return "always the same"
+
+    async def verify(answer):
+        return _Verdict(ok=False, checked=True)
+
+    result = _run(solve=solve, verify=verify, max_passes=4)
+
+    # The first draw IS verified and becomes best-seen — the gate's existing
+    # monotonic promise, unchanged: a refuted answer still beats no answer.
+    # What must be bounded is the redrawing, not the outcome.
+    assert result.answer == "always the same"
+    assert result.rejected_redraws <= 4 * 3
+    assert result.distinct_answers == 1
+
+
+def test_the_receipt_reports_the_verifier_calls_saved():
+    def solve(index, conditioning=""):
+        return "repeat" if index < 3 else "new"
+
+    async def verify(answer):
+        return _Verdict(ok=False, checked=True)
+
+    result = _run(solve=solve, verify=verify, max_passes=4)
+
+    payload = result.to_dict()
+    assert payload["rejected_redraws"] >= 1
+    assert payload["distinct_answers"] < result.passes + payload["rejected_redraws"]

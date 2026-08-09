@@ -1,0 +1,53 @@
+{
+  "schema": "aura.rlc.exclusion_ab.v1",
+  "model": "models/Qwen2.5-1.5B-Instruct-4bit",
+  "draws": 6,
+  "temperature": 0.7,
+  "tasks": 40,
+  "band": "hard",
+  "verifier": "sound_non_oracle_recomputation",
+  "iid": {
+    "tasks": 40,
+    "solved": 20,
+    "solve_rate": 0.5,
+    "mean_distinct": 2.275,
+    "mean_draws_used": 3.825,
+    "mean_verifier_calls": 3.825,
+    "mean_generations": 3.825,
+    "noncompliant_draws": 0,
+    "rejected_draws": 0,
+    "commitments": 0
+  },
+  "exclusion_prompt_conditioned": {
+    "tasks": 40,
+    "solved": 20,
+    "solve_rate": 0.5,
+    "mean_distinct": 2.375,
+    "mean_draws_used": 3.775,
+    "mean_verifier_calls": 3.775,
+    "mean_generations": 3.775,
+    "noncompliant_draws": 56,
+    "rejected_draws": 0,
+    "commitments": 75
+  },
+  "exclusion_rejection_sampled": {
+    "tasks": 40,
+    "solved": 25,
+    "solve_rate": 0.625,
+    "mean_distinct": 3.325,
+    "mean_draws_used": 3.325,
+    "mean_verifier_calls": 3.325,
+    "mean_generations": 8.375,
+    "noncompliant_draws": 0,
+    "rejected_draws": 202,
+    "commitments": 108
+  },
+  "best_exclusion_arm": "rejection",
+  "solve_rate_delta": 0.125,
+  "coverage_delta": 1.05,
+  "prompt_conditioning_compliance": 0.6291,
+  "rejection_rate": 1.5188,
+  "verdict": "EXCLUSION_WINS",
+  "reading": "rejection: solve rate 50% -> 62% (+12%) on the same model, same 6-draw budget, same verifier; distinct answers examined 2.3 -> 3.3",
+  "duration_s": 108.1
+}
