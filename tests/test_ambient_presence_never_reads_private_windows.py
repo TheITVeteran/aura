@@ -282,3 +282,137 @@ def test_recall_is_empty_rather_than_wrong_when_she_has_not_looked(presence):
 def test_the_bubble_can_be_moved(presence):
     assert presence.move_bubble(120.0, 480.0) == (120.0, 480.0)
     assert presence.state()["bubble_position"] == [120.0, 480.0]
+
+
+# ───────────────────────────────── the loop, the voice, and the surface
+
+
+def test_the_loop_backs_off_instead_of_spinning_on_a_broken_capture(presence, monkeypatch):
+    """A revoked accessibility permission must not become a hot loop."""
+    sleeps = []
+
+    async def _boom():
+        raise RuntimeError("accessibility permission revoked")
+
+    async def _sleep(seconds):
+        sleeps.append(seconds)
+        if len(sleeps) >= 4:
+            presence.stop()
+
+    monkeypatch.setattr(presence, "tick", _boom)
+    monkeypatch.setattr(asyncio, "sleep", _sleep)
+
+    asyncio.run(presence.run(interval_s=2.0))
+
+    assert sleeps == sorted(sleeps), f"delay did not grow: {sleeps}"
+    assert max(sleeps) <= 300.0, "back-off is unbounded"
+
+
+def test_she_does_not_speak_twice_in_quick_succession(presence, monkeypatch):
+    """Unsolicited comment is a budget, not a feature."""
+    presence._last_spoke_at = __import__("time").time()
+
+    async def _would_speak(result):
+        raise AssertionError("the speech gap was not honoured")
+
+    monkeypatch.setattr(
+        "core.perception.ambient_utterance.consider_utterance", _would_speak
+    )
+    _with_context(presence, "Terminal", "pytest")
+
+    asyncio.run(presence._consider_speaking(asyncio.run(presence.tick())))
+
+
+def test_a_waiting_message_is_not_replaced(presence, monkeypatch):
+    """A person who has not read the last one does not get a stream."""
+    presence.offer_utterance("the first thing")
+
+    async def _would_speak(result):
+        raise AssertionError("she spoke over an unread message")
+
+    monkeypatch.setattr(
+        "core.perception.ambient_utterance.consider_utterance", _would_speak
+    )
+    _with_context(presence, "Terminal", "pytest")
+
+    asyncio.run(presence._consider_speaking(asyncio.run(presence.tick())))
+    assert presence.state()["utterance"] == "the first thing"
+
+
+class TestUtteranceFilter:
+    """The default is silence, and it takes a fault to leave it."""
+
+    def test_an_ordinary_screen_says_nothing(self):
+        from core.perception.ambient_utterance import _worth_noticing
+
+        assert _worth_noticing("inbox — 4 unread\nCalendar\nDraft: quarterly plan") == ""
+
+    def test_a_traceback_is_worth_noticing(self):
+        from core.perception.ambient_utterance import _worth_noticing
+
+        assert _worth_noticing(
+            "Traceback (most recent call last):\n  File x\nValueError"
+        )
+
+    def test_documentation_about_errors_is_not_a_fault(self):
+        from core.perception.ambient_utterance import _worth_noticing
+
+        assert _worth_noticing(
+            "Stack Overflow — how to fix error: connection refused"
+        ) == ""
+
+    def test_a_single_bare_error_word_is_not_enough(self):
+        from core.perception.ambient_utterance import _worth_noticing
+
+        assert _worth_noticing("the error: field is optional in this schema") == ""
+
+    @pytest.mark.parametrize(
+        "reply",
+        [
+            "NOTHING",
+            "nothing.",
+            "Hi Bryan!",
+            "I see you're working on the parser.",
+            "It looks like you're debugging.",
+            "Would you like help with that?",
+            "I noticed you have a test failing.",
+            "ok",
+            "",
+        ],
+    )
+    def test_template_and_refusal_replies_are_suppressed(self, reply):
+        from core.perception.ambient_utterance import _is_refusal_or_noise
+
+        assert _is_refusal_or_noise(reply) is True
+
+    def test_a_specific_observation_survives(self):
+        from core.perception.ambient_utterance import _is_refusal_or_noise
+
+        assert _is_refusal_or_noise(
+            "That AssertionError is comparing 391 to 391.0 — the fixture "
+            "casts to float but the check uses ==."
+        ) is False
+
+    def test_no_canned_fallback_when_her_voice_is_unavailable(self, monkeypatch):
+        """Silence beats "I noticed an error on your screen!".
+
+        A canned line interrupts and carries no information, and a person
+        cannot tell it from a real observation until after being interrupted.
+        """
+        from core.perception import ambient_utterance
+
+        class _Observation:
+            capture = "Traceback (most recent call last): ValueError somewhere"
+
+            def for_reasoning(self):
+                return "framed"
+
+        monkeypatch.setattr(
+            ambient_utterance, "_latest_observation", lambda: _Observation()
+        )
+        monkeypatch.setattr(
+            "core.container.ServiceContainer.get",
+            staticmethod(lambda name, default=None: None),
+        )
+
+        assert asyncio.run(ambient_utterance._compose(_Observation(), "traceback")) == ""

@@ -202,6 +202,11 @@ class AmbientPresence:
         self._observations = 0
         self._skips: dict[str, int] = {}
         self._private_skips = 0
+        self._running = False
+        self._last_spoke_at = 0.0
+        #: She does not speak twice in quick succession. Unsolicited comment
+        #: is a budget, not a feature, and the budget is deliberately small.
+        self._min_speech_gap_s = 180.0
 
     # ── mode ─────────────────────────────────────────────────────────────
 
@@ -378,6 +383,81 @@ class AmbientPresence:
             observed=False, skip_reason=reason, context=context, detail=detail
         )
 
+    # ── the driver ───────────────────────────────────────────────────────
+
+    async def run(self, *, interval_s: float = 6.0) -> None:
+        """Drive ticks until stopped. Bounded, back-off on failure.
+
+        The cadence is not the observation rate: most ticks are a window-title
+        query that skips. What this bounds is how quickly she notices you
+        moved to a different window, which is the latency the whole organ
+        exists to remove.
+        """
+        import asyncio
+
+        self._running = True
+        consecutive_failures = 0
+        while self._running:
+            try:
+                result = await asyncio.wait_for(self.tick(), timeout=20.0)
+                consecutive_failures = 0
+                if result.observed:
+                    await self._consider_speaking(result)
+            except asyncio.CancelledError:
+                raise
+            except (TimeoutError, RuntimeError, OSError, TypeError, ValueError) as exc:
+                consecutive_failures += 1
+                record_degradation(
+                    "ambient_presence",
+                    exc,
+                    severity="warning" if consecutive_failures > 3 else "debug",
+                    action=(
+                        "ambient tick failed; she will fall back to looking "
+                        "when asked"
+                    ),
+                )
+            # Back off on repeated failure rather than hammering a broken
+            # capture path — an accessibility permission that was revoked
+            # would otherwise spin at the full cadence forever.
+            delay = min(
+                interval_s * (2 ** min(consecutive_failures, 4)), 300.0
+            )
+            await asyncio.sleep(max(1.0, delay))
+
+    def stop(self) -> None:
+        self._running = False
+
+    async def _consider_speaking(self, result: TickResult) -> None:
+        """Does she have something worth saying about what she just saw?
+
+        The default is silence, and it is enforced in three places rather
+        than one, because a companion that comments on everything is a
+        companion you turn off:
+
+          * the judgment itself must return something;
+          * ``offer_utterance`` re-checks suppression and hidden state;
+          * a message already waiting is not replaced, so a person who has
+            not read the last one does not get a stream.
+        """
+        with self._lock:
+            if self._pending_utterance:
+                return
+            if time.time() - self._last_spoke_at < self._min_speech_gap_s:
+                return
+        try:
+            from core.perception.ambient_utterance import consider_utterance
+
+            thought = await consider_utterance(result)
+        except (ImportError, AttributeError, RuntimeError, TypeError, ValueError) as exc:
+            record_degradation(
+                "ambient_presence", exc, severity="debug",
+                action="ambient tick observed but did not consider speaking",
+            )
+            return
+        if thought and self.offer_utterance(thought):
+            with self._lock:
+                self._last_spoke_at = time.time()
+
     # ── what the UI reads ────────────────────────────────────────────────
 
     def state(self) -> dict[str, Any]:
@@ -401,6 +481,12 @@ class AmbientPresence:
                 # it is.
                 "private_windows_skipped": self._private_skips,
                 "last_app": self._last_context.app if self._last_context else "",
+                "running": self._running,
+                "seconds_since_spoke": (
+                    round(time.time() - self._last_spoke_at, 1)
+                    if self._last_spoke_at
+                    else None
+                ),
                 "seconds_since_observation": (
                     round(time.time() - self._last_observed_at, 1)
                     if self._last_observed_at

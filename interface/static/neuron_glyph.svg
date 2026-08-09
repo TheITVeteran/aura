@@ -1,0 +1,65 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="Aura">
+  <!--
+    The bubble's only chrome. Aura's neuron: a hexagonal soma, dendrites
+    branching up-left, one axon trailing down-right to a terminal.
+
+    Drawn rather than bitmapped so it stays crisp at 20px in a floating
+    panel and at 2x on a retina display, and so the glow can respond to
+    state without shipping a second asset. No label — an instrument does
+    not explain itself.
+  -->
+  <defs>
+    <radialGradient id="soma" cx="42%" cy="38%" r="70%">
+      <stop offset="0%" stop-color="#b98cff"/>
+      <stop offset="55%" stop-color="#7b3fe4"/>
+      <stop offset="100%" stop-color="#4a1f9e"/>
+    </radialGradient>
+    <filter id="bloom" x="-60%" y="-60%" width="220%" height="220%">
+      <feGaussianBlur stdDeviation="1.6" result="blur"/>
+      <feMerge>
+        <feMergeNode in="blur"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+  </defs>
+
+  <g filter="url(#bloom)">
+    <!-- dendrites: up and to the left, terminating in synaptic squares -->
+    <g stroke="#7ff3e0" stroke-width="1.5" stroke-linecap="round" fill="none" opacity="0.95">
+      <path d="M28 29 L20 20"/>
+      <path d="M28 29 L24 15"/>
+      <path d="M28 29 L31 13"/>
+      <path d="M28 29 L17 26"/>
+      <path d="M28 29 L15 32"/>
+      <path d="M20 20 L14 17"/>
+    </g>
+    <g fill="#d7fff7">
+      <rect x="17.5" y="17.5" width="4.2" height="4.2" rx="0.8"/>
+      <rect x="21.5" y="12.2" width="4.2" height="4.2" rx="0.8"/>
+      <rect x="29" y="10" width="4.6" height="4.6" rx="0.8"/>
+      <rect x="13.4" y="23.6" width="4.2" height="4.2" rx="0.8"/>
+      <rect x="11.6" y="30" width="4.6" height="4.6" rx="0.8"/>
+      <rect x="11.2" y="14.8" width="3.6" height="3.6" rx="0.7"/>
+    </g>
+
+    <!-- axon: down and to the right, to a branching terminal -->
+    <g stroke="#c9a6ff" stroke-width="1.6" stroke-linecap="round" fill="none" opacity="0.95">
+      <path d="M37 33 L45 41"/>
+      <path d="M45 41 L52 46"/>
+      <path d="M52 46 L56 43"/>
+      <path d="M52 46 L55 51"/>
+    </g>
+    <g fill="#efe4ff">
+      <rect x="43" y="39" width="4.2" height="4.2" rx="0.8"/>
+      <rect x="49.6" y="43.6" width="4.6" height="4.6" rx="0.8"/>
+      <rect x="54.4" y="41" width="3.4" height="3.4" rx="0.7"/>
+      <rect x="53.4" y="49.4" width="3.4" height="3.4" rx="0.7"/>
+    </g>
+
+    <!-- soma -->
+    <path d="M32 18.5 L44 25.4 L44 39.1 L32 46 L20 39.1 L20 25.4 Z"
+          fill="url(#soma)" stroke="#d3b6ff" stroke-width="1.1"/>
+    <!-- nucleus: the one square that is not a synapse -->
+    <rect x="27.6" y="27.6" width="8.8" height="8.8" rx="1.2" fill="#f6f0ff"/>
+  </g>
+</svg>

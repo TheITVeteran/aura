@@ -1332,7 +1332,8 @@ private final class CircleCloseButton: NSButton {
     }
 }
 
-final class AuraLauncherDelegate: NSObject, NSApplicationDelegate {
+final class AuraLauncherDelegate: NSObject, NSApplicationDelegate,
+    WKScriptMessageHandler, NSWindowDelegate {
     private enum BadgeStyle {
         case violet
         case cyan
@@ -1377,6 +1378,17 @@ final class AuraLauncherDelegate: NSObject, NSApplicationDelegate {
     private var forceStopButton: NSButton!
     private var desktopWindow: NSWindow?
     private var desktopWebView: WKWebView?
+
+    // ── the bubble ────────────────────────────────────────────────────
+    //
+    // When the desktop window closes, Aura is still running, and the bubble
+    // is how she stays reachable without occupying the screen. It is a
+    // non-activating floating panel: clicking it must not steal focus from
+    // whatever the person is actually working in, because a companion that
+    // pulls focus is an interruption even when it says nothing.
+    private var bubblePanel: NSPanel?
+    private var bubbleWebView: WKWebView?
+    private var bubbleFrameObserver: Any?
 
     private var auraRoot: URL!
     private var launchScript: URL!
@@ -2730,6 +2742,96 @@ final class AuraLauncherDelegate: NSObject, NSApplicationDelegate {
         return URL(string: "http://127.0.0.1:8000/?build=\(build)&ts=\(ts)&surface=native-app")!
     }
 
+    // MARK: - Bubble
+
+    private func bubbleURL() -> URL {
+        URL(string: "http://127.0.0.1:8000/static/bubble.html?surface=bubble")!
+    }
+
+    /// Present the bubble. Idempotent; safe to call on every window close.
+    private func showBubble() {
+        if bubblePanel == nil {
+            let size = NSSize(width: 520, height: 64)
+            let config = WKWebViewConfiguration()
+            // The page talks back through this handler for "open the chat
+            // window" — the only intent the bubble has that the web layer
+            // cannot serve on its own.
+            config.userContentController.add(self, name: "auraBubble")
+            let webView = WKWebView(
+                frame: NSRect(origin: .zero, size: size), configuration: config
+            )
+            webView.setValue(false, forKey: "drawsBackground")
+            webView.allowsBackForwardNavigationGestures = false
+
+            let panel = NSPanel(
+                contentRect: NSRect(origin: .zero, size: size),
+                // .nonactivatingPanel is the whole point: the bubble takes
+                // clicks without becoming the active application, so the
+                // person's cursor stays where they left it.
+                styleMask: [.borderless, .nonactivatingPanel, .fullSizeContentView],
+                backing: .buffered,
+                defer: false
+            )
+            panel.isFloatingPanel = true
+            panel.level = .floating
+            panel.backgroundColor = .clear
+            panel.isOpaque = false
+            panel.hasShadow = false
+            panel.hidesOnDeactivate = false
+            panel.isMovableByWindowBackground = true
+            panel.collectionBehavior = [
+                // Follows the person between Spaces and survives a
+                // full-screen app rather than being stranded on one desktop.
+                .canJoinAllSpaces,
+                .fullScreenAuxiliary,
+                .ignoresCycle,
+            ]
+            panel.contentView = webView
+            panel.isReleasedWhenClosed = false
+            panel.setFrameOrigin(defaultBubbleOrigin(for: size))
+
+            bubblePanel = panel
+            bubbleWebView = webView
+            observeBubbleMoves(panel)
+        }
+
+        bubbleWebView?.load(
+            URLRequest(url: bubbleURL(), cachePolicy: .reloadIgnoringLocalCacheData)
+        )
+        // orderFront, never makeKey: showing her must not take focus.
+        bubblePanel?.orderFront(nil)
+    }
+
+    private func hideBubble() {
+        bubblePanel?.orderOut(nil)
+    }
+
+    private func defaultBubbleOrigin(for size: NSSize) -> NSPoint {
+        guard let screen = NSScreen.main else { return NSPoint(x: 40, y: 40) }
+        let visible = screen.visibleFrame
+        // Bottom-left, inset. Out of the way of window controls, menu bar
+        // extras, and the notification stack on the right.
+        return NSPoint(x: visible.minX + 24, y: visible.minY + 24)
+    }
+
+    private func observeBubbleMoves(_ panel: NSPanel) {
+        bubbleFrameObserver = NotificationCenter.default.addObserver(
+            forName: NSWindow.didMoveNotification,
+            object: panel,
+            queue: .main
+        ) { [weak self] _ in
+            guard let self, let moved = self.bubblePanel else { return }
+            let origin = moved.frame.origin
+            // Tell the page, which debounces and persists it. The position
+            // is hers to remember, not the launcher's to own.
+            let script = """
+            window.dispatchEvent(new CustomEvent('aura-bubble-moved', \
+            { detail: { x: \(origin.x), y: \(origin.y) } }));
+            """
+            self.bubbleWebView?.evaluateJavaScript(script, completionHandler: nil)
+        }
+    }
+
     private func openNativeDesktopWindow() {
         if desktopWindow == nil {
             let frame = NSRect(x: 0, y: 0, width: 1280, height: 820)
@@ -2749,6 +2851,7 @@ final class AuraLauncherDelegate: NSObject, NSApplicationDelegate {
             desktop.minSize = NSSize(width: 900, height: 640)
             desktop.contentView = webView
             desktop.isReleasedWhenClosed = false
+            desktop.delegate = self
             desktopWindow = desktop
             desktopWebView = webView
         }
@@ -2758,6 +2861,9 @@ final class AuraLauncherDelegate: NSObject, NSApplicationDelegate {
         // diagnostics, but remove it before presenting the live desktop so a
         // Dock activation cannot leave both windows stacked.
         hideLauncherWindow()
+        // The window and the bubble are the same presence on two surfaces;
+        // both at once is two Auras.
+        hideBubble()
         desktopWindow?.center()
         desktopWindow?.makeKeyAndOrderFront(nil)
         desktopWindow?.orderFrontRegardless()
@@ -2766,6 +2872,35 @@ final class AuraLauncherDelegate: NSObject, NSApplicationDelegate {
         NSApp.requestUserAttention(.informationalRequest)
         autoDesktopOpenTriggered = true
         clearGuiWindowLaunchMarker()
+    }
+
+    // MARK: - Bubble intents
+
+    func userContentController(
+        _ userContentController: WKUserContentController,
+        didReceive message: WKScriptMessage
+    ) {
+        guard message.name == "auraBubble" else { return }
+        let body = message.body as? [String: Any] ?? [:]
+        switch String(describing: body["action"] ?? "") {
+        case "open":
+            // Clicking the bubble is an explicit request for her full
+            // attention, so this one IS allowed to activate.
+            openNativeDesktopWindow()
+            NSApp.activate(ignoringOtherApps: true)
+        case "hide":
+            hideBubble()
+        default:
+            break
+        }
+    }
+
+    func windowWillClose(_ notification: Notification) {
+        guard (notification.object as? NSWindow) === desktopWindow else { return }
+        // She does not leave when the window does. Closing the window is a
+        // request for less surface area, not for her to stop; the bubble is
+        // what "still here, out of the way" looks like.
+        showBubble()
     }
 
     private func bootMarkerAge() -> TimeInterval? {

@@ -925,6 +925,7 @@ from interface.routes import memory as memory_routes
 from interface.routes import mission_control as mission_control_routes
 from interface.routes import multimodal as multimodal_routes
 from interface.routes import performance as performance_routes
+from interface.routes import ambient as ambient_routes
 from interface.routes import privacy as privacy_routes
 from interface.routes import reality_reach as reality_reach_routes
 from interface.routes import rpc as rpc_routes
@@ -945,6 +946,10 @@ app.include_router(subsystem_routes.router, prefix="/api", tags=["subsystems"])
 app.include_router(memory_routes.router, prefix="/api", tags=["memory-api"])
 app.include_router(interaction_signal_routes.router, prefix="/api", tags=["interaction-signals"])
 app.include_router(privacy_routes.router, prefix="/api", tags=["privacy"])
+# The bubble's surface. Routes are mounted with their own absolute
+# paths (/api/ambient/...) so the companion endpoints stay findable as
+# a group rather than being scattered under the shared /api prefix.
+app.include_router(ambient_routes.router, tags=["ambient"])
 app.include_router(reality_reach_routes.router, prefix="/api", tags=["reality-reach"])
 app.include_router(rpc_routes.router, prefix="/rpc", tags=["rpc"])
 app.include_router(inner_state_routes.router, tags=["proof-surface"])

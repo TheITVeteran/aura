@@ -2759,6 +2759,55 @@ async def run_server_async(
             await watcher
 
 
+
+def _start_ambient_presence() -> None:
+    """Start companion mode: she keeps looking so the answer is already there.
+
+    Observation is governed at every tick — suppression stops her looking as
+    firmly as it stops her speaking, and private windows are never captured —
+    so starting the loop is not granting anything. It is giving the gates
+    something to gate.
+
+    Failure here must not touch boot. A desktop without ambient observation
+    is a desktop where she looks when asked, which is the behaviour that
+    existed before this loop.
+    """
+    if _env_flag_disabled("AURA_AMBIENT_PRESENCE"):
+        logger.info("Ambient companion mode disabled by AURA_AMBIENT_PRESENCE.")
+        return
+    try:
+        from core.perception.ambient_presence import get_ambient_presence
+
+        interval = _env_float(
+            "AURA_AMBIENT_INTERVAL_S", 6.0, minimum=2.0, maximum=120.0
+        )
+        get_task_tracker().create_task(
+            get_ambient_presence().run(interval_s=interval),
+            name="AmbientPresenceLoop",
+        )
+        logger.info("👁️ Ambient companion mode active (%.0fs cadence).", interval)
+    except (ImportError, AttributeError, RuntimeError, TypeError, ValueError) as exc:
+        record_degradation(
+            "aura_main.ambient_presence",
+            exc,
+            action=(
+                "booted without ambient observation; she will look when asked "
+                "instead of already knowing"
+            ),
+            severity="warning",
+        )
+
+
+def _env_flag_disabled(name: str) -> bool:
+    """Is this feature explicitly turned off?
+
+    Absent means ON. A companion whose observation silently does not start
+    because an env var is missing is the worst of both: the privacy cost of
+    the design without the latency benefit, and nothing says so.
+    """
+    raw = str(os.environ.get(name, "")).strip().lower()
+    return raw in {"0", "false", "no", "off", "disabled"}
+
 async def _stop_orchestrator_once(
     orchestrator: Any,
     *,
@@ -4302,6 +4351,7 @@ def main():
                             orchestrator.run(),
                             name="OrchestratorMainLoop",
                         )
+                        _start_ambient_presence()
                         await run_server_async(
                             host,
                             args.port,

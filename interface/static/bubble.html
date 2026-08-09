@@ -1,0 +1,132 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1"/>
+<title>Aura</title>
+<link rel="stylesheet" href="/static/design_tokens.css"/>
+<style>
+/*
+  The bubble. Small, detached, draggable, and silent until she has something.
+
+  Two states and nothing else:
+
+    dormant   just the neuron. No bar, no label, no placeholder text. A
+              placeholder like "What can I help you with today?" is chrome
+              asking to be noticed; this surface does not ask.
+    speaking  the neuron plus one line of what she said, and a dismiss.
+
+  The whole window is transparent and click-through except the glyph and the
+  message, so a bubble sitting over an editor does not eat clicks meant for
+  the editor.
+*/
+:root {
+  --bubble-bg: rgba(22, 20, 32, 0.92);
+  --bubble-edge: rgba(160, 130, 255, 0.28);
+  --bubble-text: #e8e2f6;
+  --bubble-dim: rgba(232, 226, 246, 0.55);
+  --neuron-idle: 0 0 0 rgba(0,0,0,0);
+  --neuron-live: 0 0 14px rgba(150, 110, 255, 0.55);
+}
+* { box-sizing: border-box; }
+html, body {
+  margin: 0; padding: 0; height: 100%; width: 100%;
+  background: transparent;
+  font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", system-ui, sans-serif;
+  overflow: hidden;
+  /* The window is a passthrough by default; only the pill takes clicks. */
+  pointer-events: none;
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+#pill {
+  pointer-events: auto;
+  position: absolute;
+  left: 8px; top: 8px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 7px 9px;
+  border-radius: 999px;
+  background: var(--bubble-bg);
+  border: 1px solid var(--bubble-edge);
+  backdrop-filter: blur(18px) saturate(140%);
+  -webkit-backdrop-filter: blur(18px) saturate(140%);
+  box-shadow: 0 6px 22px rgba(0,0,0,0.42);
+  max-width: calc(100vw - 16px);
+  /* The drag handle IS the pill. macOS moves the panel from here. */
+  -webkit-app-region: drag;
+  transition: padding 140ms ease, background 200ms ease;
+}
+#pill.dormant { padding: 7px; gap: 0; }
+
+#glyph {
+  width: 26px; height: 26px;
+  flex: 0 0 26px;
+  -webkit-app-region: no-drag;
+  cursor: pointer;
+  border-radius: 50%;
+  transition: box-shadow 320ms ease, transform 160ms ease;
+  box-shadow: var(--neuron-idle);
+}
+#glyph:active { transform: scale(0.94); }
+#pill.speaking #glyph { box-shadow: var(--neuron-live); }
+
+/* The unread dot: "open me when you can", not a modal. */
+#glyph-wrap { position: relative; -webkit-app-region: no-drag; }
+#dot {
+  position: absolute; top: -1px; right: -1px;
+  width: 8px; height: 8px; border-radius: 50%;
+  background: #ff9d6e;
+  border: 1.5px solid rgba(22,20,32,0.95);
+  opacity: 0; transform: scale(0.4);
+  transition: opacity 180ms ease, transform 180ms ease;
+}
+#pill.speaking #dot { opacity: 1; transform: scale(1); }
+
+#say {
+  -webkit-app-region: no-drag;
+  color: var(--bubble-text);
+  font-size: 13px;
+  line-height: 1.35;
+  max-width: 460px;
+  max-height: 3.4em;
+  overflow: hidden;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  cursor: pointer;
+}
+#pill.dormant #say, #pill.dormant #close { display: none; }
+
+#close {
+  -webkit-app-region: no-drag;
+  flex: 0 0 auto;
+  width: 20px; height: 20px;
+  border: 0; border-radius: 50%;
+  background: transparent;
+  color: var(--bubble-dim);
+  font-size: 15px; line-height: 1;
+  cursor: pointer;
+}
+#close:hover { color: var(--bubble-text); background: rgba(255,255,255,0.08); }
+
+@media (prefers-reduced-motion: reduce) {
+  #pill, #glyph, #dot { transition: none; }
+}
+</style>
+</head>
+<body>
+<div id="pill" class="dormant" role="status" aria-live="polite">
+  <div id="glyph-wrap">
+    <img id="glyph" src="/static/neuron_glyph.svg" alt="Aura" title="Aura"/>
+    <span id="dot" aria-hidden="true"></span>
+  </div>
+  <div id="say"></div>
+  <button id="close" title="Clear" aria-label="Clear message">×</button>
+</div>
+
+<script src="/static/bubble.js" defer></script>
+</body>
+</html>
