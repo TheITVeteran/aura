@@ -39220,3 +39220,40 @@ completion envelope remains `809/920` (approximately `87.9%`). The next bounded
 step is a fresh source-bound 1.5B on-policy canary. It must produce measurable
 reward variance, real optimizer updates, and strict disjoint free-generation
 improvement before any resident-32B training is admitted.
+
+The published-source canary then completed all eight groups and 32 causal
+samples in 357 seconds without an infrastructure fault. The repaired boundary
+produced four nondegenerate groups and four real optimizer updates, including
+one exact-correct recurrent sample. The adapter fingerprint changed while the
+base checkpoint remained byte-identical. The disjoint probe nevertheless
+stayed exactly `1/8` before and `1/8` after; depth two stayed `0/4`. The
+checkpoint was correctly rejected. Compact evidence is
+`artifacts/closeout/latent_cortex/cp050_observable_prefix_grpo_1p5b.json`.
+
+## Checkpoint 2026-08-08-051: Supervise Public Recurrent Transitions
+
+CP050 showed that a valid on-policy path is not sufficient when seven of eight
+groups are all-wrong and most valid outputs receive only transport-format
+credit. The existing latent trajectory shaper measures answer cross-entropy.
+That can make a hidden terminal answer easier to decode without teaching the
+public computation and is the same shortcut class exposed by the negative
+role-v6 recurrent-SFT campaign.
+
+A separate process curriculum now emits deterministic Boolean and modular
+state machines. Each prompt publicly specifies the start state and operation
+sequence, and each response must return the start plus every intermediate
+state in one terminal JSON object. Partial reward is computed only from the
+longest correct transition prefix. Correct later states cannot bypass an
+incorrect earlier transition, numeric proximity has no meaning, malformed text
+gets zero, terminal-only success remains bounded partial credit, and only the
+complete exact process can receive reward `1.0`.
+
+The canary trains on these public process tasks while retaining the unchanged,
+disjoint answer-only recurrence battery as checkpoint authority. Process
+receipts remain diagnostic training evidence; they cannot authorize fusion,
+serving, or a reasoning claim. The curriculum and canary contract selection
+passes `40/40`; Ruff, compilation, and diff hygiene pass. Reasoning gain,
+frontier performance, fusion, activation, and `WOW Signal` remain false. The
+completion envelope remains `809/920` (approximately `87.9%`). A fresh
+source-bound process-supervised canary is required before any larger training
+campaign.

@@ -51,6 +51,7 @@ from core.learning.recurrent_grpo import (  # noqa: E402
     recurrent_policy_sha256,
     sample_final_recurrent_transition_completion,
 )
+from core.learning.recurrent_process_curriculum import process_task_battery  # noqa: E402
 from core.learning.recurrent_sft_execution import (  # noqa: E402
     adapter_tensor_dict,
     adapter_tensor_fingerprint,
@@ -70,6 +71,7 @@ SOURCE_PATHS: Final = (
     "core/learning/recurrent_behavioral_probe.py",
     "core/learning/recurrent_checkpoint_admission.py",
     "core/learning/recurrent_grpo.py",
+    "core/learning/recurrent_process_curriculum.py",
     "core/learning/recurrence_native_objective_v2.py",
     "core/learning/recurrent_sft_execution.py",
     "core/learning/verified_token_trace.py",
@@ -210,11 +212,29 @@ def _grade_reward(
     response_text: str,
     *,
     format_credit: float,
-) -> tuple[dict[str, Any], float]:
+) -> tuple[dict[str, Any], float, dict[str, Any]]:
     verdict = dict(task.grade(response_text))
     verdict["correct"] = bool(verdict.get("correct"))
-    reward = reward_from_verdict(verdict, format_credit=format_credit)
-    return verdict, float(reward)
+    process_reward = getattr(task, "process_reward", None)
+    if callable(process_reward):
+        reward_receipt = dict(
+            process_reward(
+                response_text,
+                format_credit=min(float(format_credit), 0.05),
+            )
+        )
+        reward = float(reward_receipt["reward"])
+    else:
+        reward = reward_from_verdict(verdict, format_credit=format_credit)
+        reward_receipt = {
+            "schema": "aura.recurrent_terminal_reward.v1",
+            "policy": "exact_correctness_plus_bounded_format",
+            "correct": verdict["correct"],
+            "parsed": verdict.get("parsed") is not None,
+            "format_credit": float(format_credit),
+            "reward": float(reward),
+        }
+    return verdict, float(reward), reward_receipt
 
 
 def _observable_grade_reward(
@@ -223,19 +243,19 @@ def _observable_grade_reward(
     token_trace_adapter: Any,
     *,
     format_credit: float,
-) -> tuple[dict[str, Any], dict[str, Any], float]:
+) -> tuple[dict[str, Any], dict[str, Any], float, dict[str, Any]]:
     """Grade only the authenticated response prefix visible before termination."""
 
     observable = observable_completion_from_adapter(
         token_trace_adapter,
         sample.tokens,
     )
-    verdict, reward = _grade_reward(
+    verdict, reward, reward_receipt = _grade_reward(
         task,
         str(observable["response_text"]),
         format_credit=format_credit,
     )
-    return observable, verdict, reward
+    return observable, verdict, reward, reward_receipt
 
 
 def _status(out_dir: Path, phase: str, **detail: Any) -> None:
@@ -287,7 +307,7 @@ def _sample_group(
         except RecurrentSamplingAdmissionError as exc:
             rejected.append(exc.sample.receipt())
             continue
-        observable, verdict, reward = _observable_grade_reward(
+        observable, verdict, reward, reward_receipt = _observable_grade_reward(
             task,
             sample,
             token_trace_adapter,
@@ -303,6 +323,7 @@ def _sample_group(
                 "response_sha256": hashlib.sha256(response_text.encode("utf-8")).hexdigest(),
                 "verdict": verdict,
                 "reward": reward,
+                "reward_receipt": reward_receipt,
                 "observable_completion": observable,
                 "sample_receipt": sample.receipt(),
             }
@@ -394,7 +415,7 @@ def run_canary(
             role_conditioned_branches=len(spec.branch_roles),
         )
         adapter_before = adapter_tensor_fingerprint(adapter_tensor_dict(model))
-        training_tasks = task_battery(
+        training_tasks = process_task_battery(
             ["boolean", "modular"],
             [2],
             4,

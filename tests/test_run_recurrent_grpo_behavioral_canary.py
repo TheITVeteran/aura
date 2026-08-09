@@ -96,17 +96,17 @@ def test_training_cycle_covers_every_task_before_repeating() -> None:
 def test_reward_is_correctness_dominant_and_format_credit_bounded() -> None:
     task = task_battery(["boolean"], [2], 1, seed=43)[0]
 
-    correct_verdict, correct_reward = canary._grade_reward(
+    correct_verdict, correct_reward, correct_receipt = canary._grade_reward(
         task,
         task.answer,
         format_credit=0.1,
     )
-    wrong_verdict, wrong_reward = canary._grade_reward(
+    wrong_verdict, wrong_reward, wrong_receipt = canary._grade_reward(
         task,
         'FINAL_ANSWER: {"value":999}',
         format_credit=0.1,
     )
-    invalid_verdict, invalid_reward = canary._grade_reward(
+    invalid_verdict, invalid_reward, invalid_receipt = canary._grade_reward(
         task,
         "not an answer",
         format_credit=0.1,
@@ -114,10 +114,13 @@ def test_reward_is_correctness_dominant_and_format_credit_bounded() -> None:
 
     assert correct_verdict["correct"] is True
     assert correct_reward == 1.0
+    assert correct_receipt["correct"] is True
     assert wrong_verdict["correct"] is False
     assert wrong_reward == 0.1
+    assert wrong_receipt["parsed"] is True
     assert invalid_verdict["correct"] is False
     assert invalid_reward == 0.0
+    assert invalid_receipt["parsed"] is False
 
 
 def test_observable_grade_ignores_tokens_after_the_authenticated_boundary(
@@ -137,7 +140,7 @@ def test_observable_grade_ignores_tokens_after_the_authenticated_boundary(
         lambda _adapter, tokens: observable if tuple(tokens) == sample.tokens else None,
     )
 
-    observed, verdict, reward = canary._observable_grade_reward(
+    observed, verdict, reward, receipt = canary._observable_grade_reward(
         task,
         sample,
         object(),
@@ -148,6 +151,7 @@ def test_observable_grade_ignores_tokens_after_the_authenticated_boundary(
     assert observed["optimization_token_count"] < observed["full_token_count"]
     assert verdict["correct"] is True
     assert reward == 1.0
+    assert receipt["correct"] is True
 
 
 def _rejected_sample_receipt() -> dict[str, object]:

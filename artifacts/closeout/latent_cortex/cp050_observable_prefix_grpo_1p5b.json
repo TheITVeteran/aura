@@ -1,0 +1,56 @@
+{
+  "schema": "aura.rlc.cp050_observable_prefix_grpo_1p5b.v1",
+  "checkpoint": "CP050",
+  "source_commit": "a82ff405a683271c53a4932f75b2a538a5ef153f",
+  "model": "/Users/bryan/.aura/live-source/models/Qwen2.5-1.5B-Instruct-4bit",
+  "model_fingerprint": "d6e4ecf7593b78cb88ded2f4e98dd26b16802b38d2421b2af805eaea2f24f37d",
+  "seed": 2026080802,
+  "steps": 8,
+  "group_size": 4,
+  "sample_count": 32,
+  "elapsed_s": 357.04598116874695,
+  "optimizer_updates": 4,
+  "degenerate_groups": 4,
+  "exact_correct_training_samples": 1,
+  "format_only_training_samples": 4,
+  "adapter_before_sha256": "315aadafd772a1300dff7c79752ba02bebae423d63d85e3065c0e3a808becac4",
+  "adapter_after_sha256": "cfd2945bd97ed8ff0c43683eb999998b3291e4edc30200446b93756313c0c681",
+  "before": {
+    "correct_by_depth": {
+      "1": 1,
+      "2": 0
+    },
+    "total_correct": 1,
+    "total_observations": 8
+  },
+  "after": {
+    "correct_by_depth": {
+      "1": 1,
+      "2": 0
+    },
+    "total_correct": 1,
+    "total_observations": 8
+  },
+  "gates": {
+    "base_checkpoint_immutable": true,
+    "all_samples_admitted": true,
+    "optimizer_signal_observed": true,
+    "adapter_mutated": true,
+    "heldout_free_generation_strict_gain": false
+  },
+  "admission_decision": "reject_checkpoint_behavioral_gain_unproven",
+  "source_receipt_sha256": "7cee9257b627bdb1c916c225486ac22b96a7903b2793cd5efdb965b56cbb83b9",
+  "interpretation": {
+    "observable_prefix_repair_verified": true,
+    "control_report_repair_verified": true,
+    "terminal_reward_signal_sparse": true,
+    "strict_disjoint_gain_observed": false,
+    "resident_training_admitted": false
+  },
+  "claims": {
+    "reasoning_gain_proven": false,
+    "frontier_level_proven": false,
+    "fusion_authorized": false,
+    "wow_signal_authorized": false
+  }
+}
