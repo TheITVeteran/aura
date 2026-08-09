@@ -232,6 +232,47 @@ class SensoryLocalClient:
                 registry.update_task(task_id, status=TaskStatus.FAILED, error=str(e))
                 return False
 
+    async def request(  # noqa: ASYNC109 - timeout bounds blocking sidecar IPC.
+        self,
+        cmd: str,
+        data: Any = None,
+        *,
+        timeout: float = 5.0,  # noqa: ASYNC109 - bounds blocking sidecar IPC.
+        auto_restart: bool = True,
+    ) -> dict[str, Any]:
+        """Send a command and return the worker's FULL reply.
+
+        `_send_command` reduces every reply to a bool, which is fine for
+        ping and init but throws away the payload. A camera frame is a
+        payload, so a bool-only channel cannot carry one — which is part of
+        why the sidecar, documented as the production camera path, never
+        grew a camera command.
+
+        Returns a dict always: `{"status": "error", "msg": ...}` rather than
+        raising, because every caller is a capture path that must turn a
+        failure into a named reason.
+        """
+        if is_shutdown_requested():
+            return {"status": "error", "msg": "runtime_shutdown"}
+        if not self.is_alive():
+            if not auto_restart:
+                return {"status": "error", "msg": "worker_unavailable"}
+            if not await self.start():
+                return {"status": "error", "msg": "worker_start_failed"}
+
+        command_lock, _ = self._ensure_async_locks()
+        async with command_lock:
+            if self._req_q is None or self._res_q is None:
+                return {"status": "error", "msg": "worker_queues_unavailable"}
+            try:
+                self._req_q.put({"command": cmd, "data": data})
+                reply = await asyncio.to_thread(self._res_q.get, timeout=timeout)
+            except (OSError, ConnectionError, TimeoutError, queue.Empty) as exc:
+                record_degradation("sensory_client", exc)
+                logger.error("🛑 Sensory Client request [%s] failed: %s", cmd, exc)
+                return {"status": "error", "msg": str(exc)}
+        return reply if isinstance(reply, dict) else {"status": "error", "msg": "bad_reply"}
+
     def is_alive(self) -> bool:
         return self._process is not None and self._process.is_alive()
 

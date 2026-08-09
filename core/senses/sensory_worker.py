@@ -36,7 +36,11 @@ def sensory_worker_loop(request_queue, response_queue):
     logger.info("[SENSORY] Isolated Worker started (PID: %d)", os.getpid())
     
     mss = None
-    
+    # The camera handle lives for the life of the worker, not per frame.
+    # Reopening the device for every grab is what makes the macOS camera
+    # indicator strobe and adds ~200ms to each read.
+    camera = None
+
     running = True
     while running:
         try:
@@ -107,6 +111,94 @@ def sensory_worker_loop(request_queue, response_queue):
                     # Convert to minimal bytes to send over queue
                     _safe_put(response_queue, {"status": "ok", "data": bytes(sct_img.raw)})
 
+            # ── camera ────────────────────────────────────────────────
+            #
+            # `core/media/safe_imports.py` has always said "the sensory
+            # worker is the production process boundary for camera/screen
+            # media libraries" and "the sidecar sensory worker remains the
+            # production camera path". It handled init_vision,
+            # capture_screen, init_audio, ping and exit — the SCREEN, never
+            # the camera. Meanwhile the main process is forbidden from
+            # importing cv2 on macOS by an import guard that raises.
+            #
+            # So the camera could not be opened anywhere: not in the main
+            # process, which is banned, and not in the sidecar, which had no
+            # command for it. The documented production path did not exist,
+            # and the claim outlived nothing — it was never true.
+            elif cmd == "camera_open":
+                try:
+                    import cv2 as _cv2
+
+                    index = int((req.get("data") or {}).get("index", 0))
+                    if camera is not None:
+                        camera.release()
+                        camera = None
+                    candidate = _cv2.VideoCapture(index)
+                    if candidate is None or not candidate.isOpened():
+                        if candidate is not None:
+                            candidate.release()
+                        _safe_put(
+                            response_queue,
+                            {"status": "error", "msg": "camera_would_not_open"},
+                        )
+                        continue
+                    camera = candidate
+                    _safe_put(response_queue, {"status": "ok"})
+                except _SENSORY_INIT_ERRORS as e:
+                    record_degradation('sensory_worker', e)
+                    _safe_put(response_queue, {"status": "error", "msg": str(e)})
+
+            elif cmd == "camera_frame":
+                if camera is None:
+                    _safe_put(
+                        response_queue,
+                        {"status": "error", "msg": "camera_not_open"},
+                    )
+                    continue
+                try:
+                    import cv2 as _cv2
+
+                    ok, frame = camera.read()
+                    if not ok or frame is None:
+                        _safe_put(
+                            response_queue, {"status": "error", "msg": "no_frame"}
+                        )
+                        continue
+                    # JPEG rather than the raw array: a 1080p BGR frame is
+                    # ~6MB and this crosses a multiprocessing queue every
+                    # couple of seconds. Encoding here also keeps numpy out
+                    # of the pickle, which is what the process boundary
+                    # exists to avoid.
+                    encoded, buffer = _cv2.imencode(".jpg", frame)
+                    if not encoded:
+                        _safe_put(
+                            response_queue,
+                            {"status": "error", "msg": "encode_failed"},
+                        )
+                        continue
+                    height, width = frame.shape[:2]
+                    _safe_put(
+                        response_queue,
+                        {
+                            "status": "ok",
+                            "data": buffer.tobytes(),
+                            "width": int(width),
+                            "height": int(height),
+                        },
+                    )
+                except _SENSORY_COMMAND_ERRORS as e:
+                    record_degradation('sensory_worker', e)
+                    _safe_put(response_queue, {"status": "error", "msg": str(e)})
+
+            elif cmd == "camera_close":
+                if camera is not None:
+                    try:
+                        camera.release()
+                    except _SENSORY_COMMAND_ERRORS as e:
+                        record_degradation('sensory_worker', e)
+                    camera = None
+                _safe_put(response_queue, {"status": "ok"})
+
             elif cmd == "init_audio":
                 try:
                     import sounddevice as _sd
@@ -121,6 +213,15 @@ def sensory_worker_loop(request_queue, response_queue):
                 _safe_put(response_queue, {"status": "ok", "msg": "pong"})
 
             elif cmd == "exit":
+                # Release the device before the process goes away, so the
+                # camera light goes out on shutdown rather than at whatever
+                # moment the OS reclaims the handle.
+                if camera is not None:
+                    try:
+                        camera.release()
+                    except _SENSORY_COMMAND_ERRORS as e:
+                        record_degradation('sensory_worker', e)
+                    camera = None
                 running = False
             else:
                 _safe_put(response_queue, {"status": "error", "msg": f"Unknown command: {cmd}"})

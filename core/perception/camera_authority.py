@@ -120,6 +120,101 @@ class CameraLease:
         }
 
 
+# ───────────────────────────────────────────── the out-of-process device
+
+
+class _SidecarCapture:
+    """A camera handle that lives in the sensory worker process.
+
+    Presents the same `isOpened` / `read` / `release` surface as
+    `cv2.VideoCapture` so the authority has one code path regardless of
+    which side of the process boundary the device is on. The alternative —
+    branching on transport at every call site — is how the in-process path
+    ended up with five owners in the first place.
+
+    Frames arrive JPEG-encoded and are decoded here, in the caller's
+    process. Decoding needs cv2, which is exactly what is banned in the
+    primary process, so callers that only need the bytes should read
+    `last_jpeg` instead of the array.
+    """
+
+    def __init__(self, index: int) -> None:
+        self.index = int(index)
+        self.last_jpeg: bytes | None = None
+        self.width = 0
+        self.height = 0
+        self._open = self._call("camera_open", {"index": self.index}).get("status") == "ok"
+
+    def _call(self, command: str, data: Any = None, *, timeout: float = 5.0) -> dict[str, Any]:
+        """Drive the async sidecar client from synchronous code.
+
+        Two of the camera's callers are OS threads with no event loop, and
+        the authority's whole API is synchronous for that reason.
+        """
+        try:
+            import asyncio
+
+            from core.senses.sensory_client import get_sensory_client
+
+            client = get_sensory_client()
+            coro = client.request(command, data, timeout=timeout)
+            try:
+                asyncio.get_running_loop()
+            except RuntimeError:
+                return asyncio.run(coro)
+            # Called from inside a loop: run the request on its own loop in
+            # a worker thread rather than blocking this one.
+            import concurrent.futures
+
+            with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
+                return pool.submit(asyncio.run, coro).result(timeout=timeout + 2.0)
+        except (ImportError, RuntimeError, OSError, TimeoutError, AttributeError,
+                TypeError, ValueError) as exc:
+            record_degradation(
+                "camera_authority",
+                exc,
+                severity="warning",
+                action=f"sidecar camera command {command} failed",
+            )
+            return {"status": "error", "msg": repr(exc)}
+
+    def isOpened(self) -> bool:  # noqa: N802 - matches cv2's spelling
+        return self._open
+
+    def read(self) -> tuple[bool, Any]:
+        if not self._open:
+            return False, None
+        reply = self._call("camera_frame")
+        if reply.get("status") != "ok":
+            return False, None
+        payload = reply.get("data")
+        if not payload:
+            return False, None
+        self.last_jpeg = bytes(payload)
+        self.width = int(reply.get("width") or 0)
+        self.height = int(reply.get("height") or 0)
+        try:
+            import cv2
+            import numpy as np
+
+            frame = cv2.imdecode(
+                np.frombuffer(self.last_jpeg, dtype=np.uint8), cv2.IMREAD_COLOR
+            )
+        except (ImportError, RuntimeError, ValueError):
+            # cv2 is unavailable here — which is the normal case in the
+            # primary macOS process. The JPEG is still real and is kept on
+            # `last_jpeg`; only the decoded array is missing.
+            return False, None
+        if frame is None:
+            return False, None
+        return True, frame
+
+    def release(self) -> None:
+        if self._open:
+            self._call("camera_close")
+        self._open = False
+
+
 # ───────────────────────────────────────────────────────── the authority
 
 
@@ -147,16 +242,9 @@ class CameraAuthority:
         self._cv2_checked = True
         if importlib.util.find_spec("cv2") is None:
             return None
-        try:
-            from core.perception.sensory_runtime import cv2_main_process_blocked
-
-            if cv2_main_process_blocked():
-                return None
-        except (ImportError, RuntimeError, AttributeError):
-            # The sidecar interlock is an optimisation, not a gate. If it
-            # cannot be consulted, proceed and let the open succeed or fail
-            # on its own merits.
-            pass
+        if self.sidecar_required():
+            # In-process cv2 is banned here; the sidecar owns the device.
+            return None
         try:
             import cv2
 
@@ -170,6 +258,32 @@ class CameraAuthority:
                 action="reported the camera as unavailable because cv2 would not import",
             )
             return None
+
+    def sidecar_required(self) -> bool:
+        """True when this process must not open the camera itself.
+
+        On macOS the primary process is forbidden from importing cv2 at all:
+        faster-whisper pulls in PyAV, and loading OpenCV's AVFoundation
+        stack alongside it registers duplicate Objective-C classes and
+        crashes. An import guard enforces that by raising.
+
+        Which meant the camera could not be opened ANYWHERE — not in the
+        main process, which is banned, and not in the sidecar, which handled
+        `init_vision`, `capture_screen`, `init_audio`, `ping`, `exit` and no
+        camera command at all, despite `safe_imports` describing it as "the
+        production camera path". The sidecar now has `camera_open`,
+        `camera_frame` and `camera_close`, and this is where the two paths
+        meet.
+        """
+        try:
+            from core.media.safe_imports import cv2_main_process_blocked
+
+            return bool(cv2_main_process_blocked())
+        except (ImportError, RuntimeError, AttributeError):
+            # The interlock is a safety measure, not a gate. If it cannot be
+            # consulted, prefer the in-process path and let the open succeed
+            # or fail on its own merits.
+            return False
 
     # -- OS permission ------------------------------------------------
 
@@ -226,7 +340,8 @@ class CameraAuthority:
         holder = str(holder or "unknown")
 
         cv2 = self._backend()
-        if cv2 is None:
+        via_sidecar = cv2 is None and self.sidecar_required()
+        if cv2 is None and not via_sidecar:
             return self._deny(
                 "no_backend",
                 "OpenCV is not importable in this process.",
@@ -290,12 +405,15 @@ class CameraAuthority:
                 )
                 self._close(existing)
 
-            try:
-                capture = cv2.VideoCapture(index)
-            except (RuntimeError, OSError, AttributeError) as exc:
-                record_degradation("camera_authority", exc, severity="warning",
-                                   action="camera open raised")
-                return self._deny("open_failed", repr(exc), "Check that a camera is connected.")
+            if via_sidecar:
+                capture = _SidecarCapture(index)
+            else:
+                try:
+                    capture = cv2.VideoCapture(index)
+                except (RuntimeError, OSError, AttributeError) as exc:
+                    record_degradation("camera_authority", exc, severity="warning",
+                                       action="camera open raised")
+                    return self._deny("open_failed", repr(exc), "Check that a camera is connected.")
 
             if capture is None or not capture.isOpened():
                 if capture is not None:
@@ -439,7 +557,9 @@ class CameraAuthority:
             held = lease.to_dict() if (lease is not None and lease.active) else None
 
         os_grant = self._os_permission()
-        backend = self._backend() is not None
+        in_process = self._backend() is not None
+        via_sidecar = not in_process and self.sidecar_required()
+        backend = in_process or via_sidecar
         owner_allows = camera_allowed()
 
         # "Available" means a capture would be attempted, not that it would
@@ -456,6 +576,11 @@ class CameraAuthority:
 
         return {
             "backend_available": backend,
+            # Which side of the process boundary the device is on. Worth
+            # reporting: "no camera" and "camera behind the sidecar, which
+            # is not running" look identical from the outside and have
+            # entirely different fixes.
+            "transport": "in_process" if in_process else ("sidecar" if via_sidecar else "none"),
             "owner_permission": owner_allows,
             "os_permission": (
                 None if os_grant is None else os_grant.get("granted")
