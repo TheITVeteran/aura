@@ -40056,3 +40056,33 @@ is
 This closes a campaign-reproducibility defect; it is not a reasoning-gain,
 resident-32B, frontier, fusion, activation, or `WOW Signal` result. The
 completion envelope remains `809/920` (approximately `87.9%`).
+
+## Checkpoint 2026-08-09-077: The 1.5B Preflight Is Clean but Uninformative
+
+A fresh disjoint-seed complete-stack preflight ran from clean pushed source
+`405e43eef` against the frozen Qwen2.5 1.5B 4-bit checkpoint. Both controls
+and the treatment committed all `21/21` planned cells. Seven full-stack
+episodes carry separate worker-bound runtime receipts; the implementation
+manifest binds 134 source files; the model fingerprint, source commit, task
+commitment, decode identities, and output journal are cryptographically
+recorded. There were zero harness faults, missing cells, duplicate cells,
+manifest issues, runtime-evidence issues, right-to-wrong regressions, or
+unpromoted incumbent divergences.
+
+The scientific result is deliberately not positive. Greedy decode,
+best-of-three equal-compute sampling, and the complete stack each scored
+`0/7` under both the strict and contract-neutral grades. The full stack
+therefore retained every ordinary answer exactly and the grader returned
+`inconclusive_battery_uninformative_ordinary_decode_scored_zero`. Raw review
+shows a real 1.5B capability/contract floor rather than infrastructure failure:
+some answers violated the required terminal JSON object, while others were
+substantively wrong. No post-hoc parser or easier scoring rule was introduced.
+Because a concurrent non-model test sweep was running, this preflight's latency
+is diagnostic only and earns no equal-latency claim.
+
+Compact evidence and immutable external-artifact hashes are in
+`artifacts/closeout/latent_cortex/cp077_clean_uninformative_1p5b_preflight.json`.
+This admits the resident-32B control calibration as the next capability-bearing
+experiment; it does not prove reasoning gain, resident-32B gain, frontier
+performance, fusion, activation, or a `WOW Signal`. The completion envelope
+remains `809/920` (approximately `87.9%`).

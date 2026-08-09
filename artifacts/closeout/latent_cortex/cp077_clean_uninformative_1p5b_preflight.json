@@ -1,0 +1,56 @@
+{
+  "schema": "aura.closeout.rlc_checkpoint.v1",
+  "checkpoint": "CP077",
+  "subject": "clean but uninformative 1.5B complete-stack preflight",
+  "claim_level": "measured_preflight",
+  "source": {
+    "commit": "405e43eefddb11c1975d51cf58a48ea52448a8c6",
+    "clean": true,
+    "implementation_files": 134,
+    "implementation_sha256": "e1a3302b4d3ac40775dd8e260a3e1fabc228772210eaa27910939cba5325cd0a"
+  },
+  "model": {
+    "name": "Qwen2.5-1.5B-Instruct-4bit",
+    "checkpoint_fingerprint_method": "sha256",
+    "checkpoint_fingerprint": "d6e4ecf7593b78cb88ded2f4e98dd26b16802b38d2421b2af805eaea2f24f37d"
+  },
+  "campaign": {
+    "artifact_root": "/Users/bryan/.aura/rlc-falsification-cp076-d1-20260809-a",
+    "seed": 2026080914,
+    "difficulty": 1,
+    "tasks": 7,
+    "planned_cells": 21,
+    "committed_cells": 21,
+    "runtime_receipts": 7,
+    "task_commitment_file_sha256": "fc90ba50c39bd3802d2847867752abe9703abdbc0ca15fb9b59b0edf7cacd514",
+    "decode_fingerprint_file_sha256": "2158c4ada344a1cd5a7fe3751172a56762795cc22e1c0ca85ade2fe85baf4798",
+    "journal_file_sha256": "3640b94fd8a95349d435c8e76ca53cf611d13209257983ad4dc091608b9ccd2f",
+    "verdict_file_sha256": "dcb75705e5980f052f09c97b03e3842c9defb2b75c535550bd714be8c6027623"
+  },
+  "scores": {
+    "vanilla": "0/7",
+    "vanilla_equal_compute": "0/7",
+    "full_stack": "0/7",
+    "contract_neutral_vanilla": "0/7",
+    "contract_neutral_vanilla_equal_compute": "0/7",
+    "contract_neutral_full_stack": "0/7"
+  },
+  "integrity": {
+    "harness_faults": 0,
+    "missing_cells": 0,
+    "duplicate_cells": 0,
+    "runtime_evidence_issues": 0,
+    "right_to_wrong_regressions": 0,
+    "unpromoted_incumbent_divergences": 0
+  },
+  "verdict": "inconclusive_battery_uninformative_ordinary_decode_scored_zero",
+  "latency_claim_eligible": false,
+  "next_gate": "resident 32B control-only difficulty calibration on an uncontended host",
+  "not_claimed": [
+    "reasoning gain",
+    "resident 32B gain",
+    "frontier performance",
+    "fusion authorization",
+    "WOW Signal"
+  ]
+}
