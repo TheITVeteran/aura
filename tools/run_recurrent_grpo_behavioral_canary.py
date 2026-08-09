@@ -64,7 +64,7 @@ from core.runtime.atomic_writer import atomic_write_bytes  # noqa: E402
 from core.runtime.mlx_memory_guard import mlx_memory_envelope  # noqa: E402
 from core.runtime.model_lane_control import standalone_model_lane  # noqa: E402
 
-CANARY_SCHEMA: Final = "aura.recurrent_grpo_behavioral_canary.v1"
+CANARY_SCHEMA: Final = "aura.recurrent_grpo_behavioral_canary.v2"
 SOURCE_PATHS: Final = (
     "core/learning/grpo.py",
     "core/learning/recurrence_curriculum.py",
@@ -72,6 +72,7 @@ SOURCE_PATHS: Final = (
     "core/learning/recurrent_checkpoint_admission.py",
     "core/learning/recurrent_grpo.py",
     "core/learning/recurrent_process_curriculum.py",
+    "core/learning/recurrence_native_objective_v2.py",
     "core/learning/recurrence_native_objective_v2.py",
     "core/learning/recurrent_sft_execution.py",
     "core/learning/verified_token_trace.py",
@@ -345,26 +346,38 @@ def run_canary(
     group_size: int,
     seed: int,
     learning_rate: float,
+    bootstrap_steps: int,
+    bootstrap_learning_rate: float,
     memory_fraction: float,
 ) -> dict[str, Any]:
     import mlx.core as mx
+    import mlx.optimizers as optim
     from mlx_lm import load
 
     from core.learning.recurrence_curriculum import task_battery
+    from core.learning.recurrence_native_objective_v2 import (
+        cached_supervised_live_path_value_and_grad,
+    )
 
     if type(steps) is not int or not 1 <= steps <= 16:
         raise ValueError("steps must be inside [1, 16]")
     if type(group_size) is not int or not 2 <= group_size <= 8:
         raise ValueError("group_size must be inside [2, 8]")
+    if type(bootstrap_steps) is not int or not 1 <= bootstrap_steps <= 32:
+        raise ValueError("bootstrap_steps must be inside [1, 32]")
     if type(seed) is not int or not 0 <= seed <= 2**63 - 1:
         raise ValueError("seed must be inside [0, 2^63-1]")
-    if (
-        isinstance(learning_rate, bool)
-        or not isinstance(learning_rate, (int, float))
-        or not math.isfinite(float(learning_rate))
-        or not 1e-7 <= float(learning_rate) <= 1e-3
+    for name, value in (
+        ("learning_rate", learning_rate),
+        ("bootstrap_learning_rate", bootstrap_learning_rate),
     ):
-        raise ValueError("learning_rate must be inside [1e-7, 1e-3]")
+        if (
+            isinstance(value, bool)
+            or not isinstance(value, (int, float))
+            or not math.isfinite(float(value))
+            or not 1e-7 <= float(value) <= 1e-3
+        ):
+            raise ValueError(f"{name} must be inside [1e-7, 1e-3]")
 
     started = time.time()
     source_commit, source_bindings = _source_state()
@@ -406,8 +419,8 @@ def run_canary(
         attach_recurrent_policy_adapters(
             model,
             spec,
-            lora_rank=2,
-            lora_layers=2,
+            lora_rank=4,
+            lora_layers=4,
             lora_targets=("o_proj",),
             initialization_seed=(seed ^ 0x51F7A11) & 0xFFFFFFFF,
             lora_scale=1.0,
@@ -441,6 +454,84 @@ def run_canary(
             task_manifest_sha256=proxy_manifest_sha256,
             seed=seed,
         )
+        bootstrap_optimizer = optim.AdamW(
+            learning_rate=float(bootstrap_learning_rate),
+            weight_decay=0.0,
+        )
+        bootstrap_optimizer.init(model.trainable_parameters())
+        bootstrap_trail: list[dict[str, Any]] = []
+        for bootstrap_step in range(1, bootstrap_steps + 1):
+            task = _cyclic_task(training_tasks, one_based_step=bootstrap_step)
+            prompt_tokens, answer_tokens = tokenize_task(
+                tokenizer,
+                task.prompt,
+                task.answer,
+            )
+            _status(
+                out_dir,
+                "process_bootstrap",
+                step=bootstrap_step,
+                steps=bootstrap_steps,
+                task_id=task.task_id,
+            )
+            adapter_step_before = adapter_tensor_fingerprint(adapter_tensor_dict(model))
+            result = cached_supervised_live_path_value_and_grad(
+                model,
+                prompt_tokens,
+                answer_tokens,
+                spec=spec,
+            )
+            bootstrap_optimizer.update(model, result.gradients)
+            mx.eval(model.trainable_parameters(), bootstrap_optimizer.state)
+            adapter_step_after = adapter_tensor_fingerprint(adapter_tensor_dict(model))
+            if adapter_step_after == adapter_step_before:
+                raise RuntimeError("process bootstrap update did not mutate the policy")
+            bootstrap_trail.append(
+                {
+                    "step": bootstrap_step,
+                    "task_id": task.task_id,
+                    "loss": float(result.value),
+                    "branch_values": list(result.branch_values),
+                    "answer_token_count": result.answer_token_count,
+                    "execution_spec_sha256": result.execution_spec_sha256,
+                    "prompt_tokens_sha256": result.prompt_tokens_sha256,
+                    "answer_tokens_sha256": result.answer_tokens_sha256,
+                    "adapter_before_sha256": adapter_step_before,
+                    "adapter_after_sha256": adapter_step_after,
+                }
+            )
+            bootstrap_body = {
+                "schema": "aura.recurrent_process_bootstrap.journal.v1",
+                "source_commit": source_commit,
+                "execution_spec_sha256": spec.sha256,
+                "seed": seed,
+                "configured_steps": bootstrap_steps,
+                "completed_steps": bootstrap_step,
+                "trail": bootstrap_trail,
+            }
+            atomic_write_bytes(
+                out_dir / "bootstrap_journal.json",
+                canonical_json_bytes(
+                    {
+                        **bootstrap_body,
+                        "journal_sha256": hashlib.sha256(
+                            canonical_json_bytes(bootstrap_body)
+                        ).hexdigest(),
+                    }
+                ),
+                mode=0o600,
+            )
+            print(
+                "[recurrent-grpo-canary] "
+                f"bootstrap={bootstrap_step}/{bootstrap_steps} "
+                f"task={task.task_id} loss={result.value:.4f}",
+                flush=True,
+            )
+            del result
+            mx.synchronize()
+            mx.clear_cache()
+        del bootstrap_optimizer
+        mx.clear_cache()
         optimizer = build_recurrent_policy_optimizer(float(learning_rate))
         optimizer.init(model.trainable_parameters())
         step_receipts: list[dict[str, Any]] = []
@@ -619,6 +710,7 @@ def run_canary(
         "base_checkpoint_immutable": base_before == base_after,
         "all_samples_admitted": all_samples_admitted,
         "optimizer_signal_observed": optimizer_updates > 0,
+        "process_bootstrap_completed": len(bootstrap_trail) == bootstrap_steps,
         "adapter_mutated": adapter_before != adapter_after,
         "heldout_free_generation_strict_gain": bool(
             admission is not None and admission["admitted"]
@@ -640,7 +732,21 @@ def run_canary(
             "group_size": group_size,
             "learning_rate": float(learning_rate),
             "sampling": free_generation_sampling_config().to_dict(),
-            "reward": "exact_correctness_plus_at_most_0.1_parseability_credit",
+            "reward": "exact_correctness_or_bounded_public_transition_prefix",
+        },
+        "adapter_config": {
+            "lora_rank": 4,
+            "lora_layers": 4,
+            "lora_targets": ["o_proj"],
+            "depth_conditioned_steps": spec.recurrent_steps,
+            "role_conditioned_branches": len(spec.branch_roles),
+        },
+        "process_bootstrap_config": {
+            "steps": bootstrap_steps,
+            "learning_rate": float(bootstrap_learning_rate),
+            "optimizer": "mlx.optimizers.AdamW",
+            "weight_decay": 0.0,
+            "objective": "exact_cached_live_path_full_public_trace_ce",
         },
         "seed": seed,
         "steps": steps,
@@ -648,6 +754,7 @@ def run_canary(
         "adapter_before_sha256": adapter_before,
         "adapter_after_sha256": adapter_after,
         "training_task_ids": [task.task_id for task in training_tasks],
+        "process_bootstrap_trail": bootstrap_trail,
         "proxy_task_manifest": proxy_manifest,
         "proxy_task_manifest_sha256": proxy_manifest_sha256,
         "free_generation_before": before,
@@ -693,6 +800,8 @@ def main() -> int:
     parser.add_argument("--group-size", type=int, default=4)
     parser.add_argument("--seed", type=int, default=2026080701)
     parser.add_argument("--learning-rate", type=float, default=5e-5)
+    parser.add_argument("--bootstrap-steps", type=int, default=8)
+    parser.add_argument("--bootstrap-learning-rate", type=float, default=1e-4)
     parser.add_argument("--memory-fraction", type=float, default=0.35)
     args = parser.parse_args()
     out_dir = args.out_dir.expanduser().resolve(strict=False)
@@ -704,6 +813,8 @@ def main() -> int:
             group_size=args.group_size,
             seed=args.seed,
             learning_rate=args.learning_rate,
+            bootstrap_steps=args.bootstrap_steps,
+            bootstrap_learning_rate=args.bootstrap_learning_rate,
             memory_fraction=args.memory_fraction,
         )
     except Exception as exc:

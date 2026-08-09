@@ -1,0 +1,35 @@
+{
+  "schema": "aura.rlc.cp051_cold_process_signal_1p5b.v1",
+  "checkpoint": "CP051",
+  "source_commit": "7225c245a48fbee2c885737547128f6bc83a0e6c",
+  "model": "/Users/bryan/.aura/live-source/models/Qwen2.5-1.5B-Instruct-4bit",
+  "seed": 2026080803,
+  "configured_steps": 8,
+  "completed_steps": 6,
+  "group_size": 4,
+  "completed_samples": 24,
+  "optimizer_updates": 0,
+  "nonzero_reward_samples": 0,
+  "policy_before_sha256": "77cac88cd11d2840762cba05fd2773d5aa12401011552ee1866a94cc99ad5943",
+  "policy_after_sha256": "77cac88cd11d2840762cba05fd2773d5aa12401011552ee1866a94cc99ad5943",
+  "journal_sha256": "7365bd7fde8b590c2de085e37275691d66c6d030c905ef0f1ac5e20dbf3f2c27",
+  "terminal_disposition": {
+    "status": "operator_stopped_early",
+    "reason": "six_consecutive_all_zero_public_process_groups",
+    "remaining_groups_run": false,
+    "scientific_result_complete": false,
+    "diagnostic_result_sufficient": true
+  },
+  "interpretation": {
+    "process_verifier_available": true,
+    "cold_policy_emits_scoreable_process": false,
+    "grpo_learning_signal_available": false,
+    "bootstrap_required_before_on_policy_optimization": true
+  },
+  "claims": {
+    "reasoning_gain_proven": false,
+    "frontier_level_proven": false,
+    "fusion_authorized": false,
+    "wow_signal_authorized": false
+  }
+}

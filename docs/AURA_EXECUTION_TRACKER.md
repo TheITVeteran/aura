@@ -39257,3 +39257,38 @@ frontier performance, fusion, activation, and `WOW Signal` remain false. The
 completion envelope remains `809/920` (approximately `87.9%`). A fresh
 source-bound process-supervised canary is required before any larger training
 campaign.
+
+The cold-policy canary completed six groups and 24 causal samples before an
+intentional early stop. Every sample was admitted, but every process reward was
+zero; the policy fingerprint remained byte-identical and no optimizer update
+occurred. Running the final two groups could not repair an absent scoreable
+channel. This is an incomplete capability experiment but a sufficient bounded
+diagnosis that the process language must be bootstrapped before on-policy
+optimization. Compact evidence is
+`artifacts/closeout/latent_cortex/cp051_cold_process_signal_1p5b.json`.
+
+## Checkpoint 2026-08-08-052: Bootstrap the Trace Language Before Policy Search
+
+The process-GRPO canary is now a two-stage experiment. Stage one applies exact
+cached-live-path supervised gradients to complete public process traces. It
+uses the same recurrent window, KV-cache semantics, depth/role-conditioned
+adapter, and branch ensemble as generation; only the small scoped adapter is
+trainable. Every update records branch losses, exact prompt/answer commitments,
+and before/after adapter fingerprints in a durable step journal.
+
+Stage two resets optimizer momentum and samples the bootstrapped policy
+on-policy. Its rewards remain exact correctness or bounded public transition
+prefixes, and its exact-adjoint gradients stop at the authenticated observable
+answer boundary. The final gate remains the original disjoint answer-only
+free-generation battery and the ordinary-decode floor. Neither lower
+teacher-forced loss nor successful trace imitation can authorize a checkpoint
+without strict held-out behavioral gain.
+
+The bounded canary expands its adapter from rank two over two layers to rank
+four over four recurrent-window layers. That topology is explicit in the
+receipt and is still small enough for a fast 1.5B discriminator. Bootstrap and
+GRPO update counts remain separate. The process, canary, exact cached-objective,
+checkpoint, and tokenizer selections pass `113/113`; Ruff, compilation, and
+diff hygiene pass. Reasoning gain, frontier performance, fusion, activation,
+and `WOW Signal` remain false. The completion envelope remains `809/920`
+(approximately `87.9%`). A fresh published-source two-stage canary is next.
