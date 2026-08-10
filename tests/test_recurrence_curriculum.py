@@ -111,9 +111,37 @@ def test_training_task_exposes_exact_grpo_contract():
         "generation_seed": 77,
     }
     assert task.grade(task.answer)["correct"] is True
+    assert task.solution.endswith(task.answer)
+    assert task.training_target == task.solution
+    assert task.grade(task.training_target)["correct"] is True
     assert task.grade('FINAL_ANSWER: {"wrong":1}')["correct"] is False
     assert task.grade("the answer is probably one")["reason"] == "unparseable"
     assert task.response_contract == '{"x6":int}'
+
+
+def test_every_generator_emits_deterministic_verifier_valid_process_supervision():
+    for family, generator in TASK_GENERATORS.items():
+        first = generator(4, 77)
+        second = generator(4, 77)
+        assert first.solution == second.solution
+        assert first.solution.startswith("Derivation:\n")
+        assert first.solution.endswith(first.answer)
+        assert first.grade(first.solution)["correct"] is True
+        assert len(first.solution.splitlines()) >= 3, family
+        assert len(first.training_target) > len(first.answer), family
+
+
+def test_manual_task_without_solution_falls_back_to_public_answer():
+    task = RecurrenceTrainingTask(
+        prompt="Evaluate the value.",
+        answer='FINAL_ANSWER: {"value":0}',
+        depth=1,
+        family="boolean",
+        seed=1,
+    )
+
+    assert task.solution == ""
+    assert task.training_target == task.answer
 
 
 def test_response_contract_exposes_shape_without_answer_values():

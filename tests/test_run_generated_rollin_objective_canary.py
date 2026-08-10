@@ -116,6 +116,16 @@ def test_proxy_task_manifest_binds_answers_and_generation_coordinates() -> None:
 
     assert [row["task_id"] for row in manifest] == [task.task_id for task in tasks]
     assert len(digest) == 64
+    assert all("solution" not in row and "training_target" not in row for row in manifest)
+
+
+def test_canary_trains_on_private_process_targets_without_leaking_them_to_probe() -> None:
+    source = inspect.getsource(canary.run_canary)
+
+    assert "task.training_target" in source
+    assert "validation_task.training_target" in source
+    assert "_free_generation_report(\n            model,\n            tokenizer,\n            proxy_tasks" in source
+    assert '"training_target_manifest"' in source
 
 
 def test_free_generation_uses_matched_random_streams_across_arms() -> None:

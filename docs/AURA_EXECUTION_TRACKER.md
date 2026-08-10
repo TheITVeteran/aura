@@ -42474,3 +42474,40 @@ the topology/ablation mismatch and advances the completion envelope to
 `843/920` (approximately `91.6%`). It does not yet authorize a persistent
 reasoning-gain, resident-32B, frontier, fusion, activation, or `WOW Signal`
 claim.
+
+## Checkpoint 2026-08-10-146: Persistent Tissue Learns the Process, Not Only the Label
+
+The first CP145 site-aligned 1.5B discriminator established a sharper negative
+result before its causal controls. Eight early recurrent `o_proj` adapters were
+fully trainable: branch separation rose from `0.0308` to `0.8120`, held-out
+lexical loss fell from `12.8150` to `0.5054`, and all 32 declared updates
+completed. Nevertheless, held-out free generation remained exactly `0/16`
+before and after training. The run was intentionally interrupted when the
+complete treatment failed; lesion and sham arms could no longer establish a
+treatment gain. The external progress ledger and hashes are preserved by
+`artifacts/closeout/latent_cortex/cp145_answer_only_objective_diagnostic.json`.
+
+Source tracing found the missing bridge. The persistent canary trained against
+only the terminal JSON label, while CP144's successful temporary intervention
+was produced from an independently verified solution trajectory. Lowering the
+teacher-forced likelihood of a short label therefore did not teach the tissue
+how to reach or reliably initiate that label from a fresh prompt.
+
+Every production recurrence-curriculum generator now emits a deterministic,
+verifier-valid private derivation ending in the unchanged public answer. The
+generated-rollin canary trains and measures loss against that private process
+target, but held-out generation still receives only the public prompt and is
+graded only by the exact public answer. Checked-in manifests contain neither
+solution nor target text. Receipts bind target hashes, byte lengths, the
+process-supervision schema, and the curriculum source itself, closing a prior
+source-custody omission.
+
+Process targets have a hard `1024`-byte construction limit and compact exact
+state transitions or deterministic trajectory checkpoints. A tokenizer audit
+across all 12 families, depths `2, 3, 8, 16, 32`, and 120 seeded examples found
+a maximum of 250 tokens and zero targets above the 320-token behavioral window.
+Focused curriculum, canary, and recurrent-objective contracts pass `103/103`;
+Ruff, compilation, and diff hygiene pass. This closes the supervision-object
+and target-budget defects and advances the completion envelope to `844/920`
+(approximately `91.7%`). It does not establish persistent reasoning gain or
+authorize resident-32B, frontier, fusion, activation, or `WOW Signal` claims.

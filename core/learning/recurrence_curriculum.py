@@ -20,7 +20,9 @@ from typing import Any, Never
 
 CURRICULUM_SCHEMA = "aura.recurrence_training_curriculum.v1"
 CURRICULUM_VERSION = "2026.07.18.1"
+PROCESS_SUPERVISION_SCHEMA = "aura.recurrence_process_supervision.v1"
 MAX_TRAINING_DEPTH = 32
+MAX_PROCESS_TARGET_BYTES = 1_024
 _TERMINAL_FINAL_CUE = re.compile(
     r"(?im)^[ \t]*(?:\*\*)?final(?:_| )answer(?:\*\*)?[ \t]*:[ \t]*"
 )
@@ -95,6 +97,7 @@ class RecurrenceTrainingTask:
     depth: int
     family: str
     seed: int
+    solution: str = ""
 
     def __post_init__(self) -> None:
         if not self.prompt or self.prompt != self.prompt.strip() or "\x00" in self.prompt:
@@ -107,6 +110,20 @@ class RecurrenceTrainingTask:
             raise ValueError("training task seed is invalid")
         if not self.family or not self.family.replace("_", "").isalnum():
             raise ValueError("training task family is invalid")
+        if self.solution:
+            if (
+                self.solution != self.solution.strip()
+                or "\x00" in self.solution
+                or not self.solution.endswith(self.answer)
+                or len(self.solution.encode("utf-8")) > MAX_PROCESS_TARGET_BYTES
+            ):
+                raise ValueError("training task solution is invalid")
+            try:
+                parsed = _parse_semantic_terminal_answer(self.solution)
+            except (TypeError, ValueError):
+                raise ValueError("training task solution is not verifier-valid") from None
+            if parsed != self.expected:
+                raise ValueError("training task solution does not establish its answer")
 
     @property
     def task_id(self) -> str:
@@ -124,6 +141,12 @@ class RecurrenceTrainingTask:
     @property
     def grader(self) -> str:
         return "exact_json"
+
+    @property
+    def training_target(self) -> str:
+        """Private process supervision; public evaluation still sees only the prompt."""
+
+        return self.solution or self.answer
 
     @property
     def expected(self) -> dict[str, Any]:
@@ -202,6 +225,32 @@ def _json_answer(value: dict[str, Any]) -> str:
     )
 
 
+def _solution(answer: str, *steps: str) -> str:
+    if not steps or any(not step or step != step.strip() for step in steps):
+        raise ValueError("process supervision requires nonempty normalized steps")
+    rendered = "\n".join(("Derivation:", *steps, answer))
+    if len(rendered.encode("utf-8")) > MAX_PROCESS_TARGET_BYTES:
+        raise ValueError("process supervision exceeds the bounded target budget")
+    return rendered
+
+
+def _checkpoint_trace(states: Sequence[str], *, limit: int = 8) -> str:
+    """Retain deterministic trajectory coverage without quadratic target growth."""
+
+    if not states:
+        raise ValueError("checkpoint trace requires states")
+    if len(states) <= limit:
+        indexes = list(range(len(states)))
+    else:
+        indexes = sorted(
+            {
+                round(position * (len(states) - 1) / (limit - 1))
+                for position in range(limit)
+            }
+        )
+    return "; ".join(f"s{index + 1}={states[index]}" for index in indexes)
+
+
 def _terminal_contract(*keys: str) -> str:
     rendered = ", ".join(keys)
     return (
@@ -230,19 +279,23 @@ def khop_reachability(depth: int, seed: int) -> RecurrenceTrainingTask:
     successor = {index: rng.randrange(n_nodes) for index in range(n_nodes)}
     start = rng.randrange(n_nodes)
     node = start
-    for _ in range(depth):
+    path = [str(node)]
+    for _step in range(1, depth + 1):
         node = successor[node]
+        path.append(str(node))
     edges = ", ".join(f"{left}->{right}" for left, right in sorted(successor.items()))
+    answer = _json_answer({"node": node})
     return RecurrenceTrainingTask(
         prompt=(
             f"A functional directed graph has these edges: {edges}. Start at {start} "
             f"and follow exactly {depth} edges."
             + _terminal_contract("node")
         ),
-        answer=_json_answer({"node": node}),
+        answer=answer,
         depth=depth,
         family="khop",
         seed=seed,
+        solution=_solution(answer, "path: " + "->".join(path)),
     )
 
 
@@ -251,11 +304,14 @@ def nested_boolean(depth: int, seed: int) -> RecurrenceTrainingTask:
     rng = _rng("boolean", depth, seed)
     value = rng.random() < 0.5
     expression = "1" if value else "0"
-    for _ in range(depth):
+    trace: list[str] = []
+    for _step in range(1, depth + 1):
         operation = rng.choice(("and", "or", "not", "xor"))
+        prior_value = value
         if operation == "not":
             expression = f"(not {expression})"
             value = not value
+            trace.append(f"not {int(prior_value)}={int(value)}")
             continue
         right_value = rng.random() < 0.5
         right = "1" if right_value else "0"
@@ -266,16 +322,19 @@ def nested_boolean(depth: int, seed: int) -> RecurrenceTrainingTask:
             value = value or right_value
         else:
             value = value != right_value
+        trace.append(f"{int(prior_value)} {operation} {int(right_value)}={int(value)}")
+    answer = _json_answer({"value": 1 if value else 0})
     return RecurrenceTrainingTask(
         prompt=(
             f"Evaluate this {depth}-operation expression with 1=true, 0=false, and xor "
             f"meaning exactly one operand is true: {expression}. Return a value of 1 or 0."
             + _terminal_contract("value")
         ),
-        answer=_json_answer({"value": 1 if value else 0}),
+        answer=answer,
         depth=depth,
         family="boolean",
         seed=seed,
+        solution=_solution(answer, "boolean transitions: " + _checkpoint_trace(trace, limit=16)),
     )
 
 
@@ -286,9 +345,11 @@ def modular_chain(depth: int, seed: int) -> RecurrenceTrainingTask:
     initial = rng.randrange(modulus)
     value = initial
     operations: list[str] = []
-    for _ in range(depth):
+    trace: list[str] = []
+    for _step in range(1, depth + 1):
         operation = rng.choice(("+", "*", "-"))
         operand = rng.randrange(1, modulus)
+        previous = value
         if operation == "+":
             value = (value + operand) % modulus
         elif operation == "-":
@@ -296,16 +357,19 @@ def modular_chain(depth: int, seed: int) -> RecurrenceTrainingTask:
         else:
             value = (value * operand) % modulus
         operations.append(f"{operation}{operand}")
+        trace.append(f"({previous}{operation}{operand})%{modulus}={value}")
+    answer = _json_answer({"residue": value})
     return RecurrenceTrainingTask(
         prompt=(
             f"Start at the given value and apply each operation modulo {modulus}: "
             f"start={initial}. Operations: {', '.join(operations)}."
             + _terminal_contract("residue")
         ),
-        answer=_json_answer({"residue": value}),
+        answer=answer,
         depth=depth,
         family="modular",
         seed=seed,
+        solution=_solution(answer, "modular transitions: " + _checkpoint_trace(trace, limit=16)),
     )
 
 
@@ -316,6 +380,7 @@ def register_trace(depth: int, seed: int) -> RecurrenceTrainingTask:
     initial = [rng.randrange(modulus) for _ in range(3)]
     registers = list(initial)
     operations: list[str] = []
+    trace: list[str] = []
     for step in range(depth):
         destination = step % 3
         left = (step + 1) % 3
@@ -326,16 +391,19 @@ def register_trace(depth: int, seed: int) -> RecurrenceTrainingTask:
             registers[left] + multiplier * registers[right] + offset
         ) % modulus
         operations.append(f"r{destination}=(r{left}+{multiplier}*r{right}+{offset}) mod {modulus}")
+        trace.append("[" + ",".join(str(value) for value in registers) + "]")
+    answer = _json_answer({"r0": registers[0], "r1": registers[1], "r2": registers[2]})
     return RecurrenceTrainingTask(
         prompt=(
             f"Trace three registers from r0={initial[0]}, r1={initial[1]}, "
             f"r2={initial[2]}. Apply in order: {'; '.join(operations)}. End"
             + _terminal_contract("r0", "r1", "r2")
         ),
-        answer=_json_answer({"r0": registers[0], "r1": registers[1], "r2": registers[2]}),
+        answer=answer,
         depth=depth,
         family="register_trace",
         seed=seed,
+        solution=_solution(answer, "register states: " + _checkpoint_trace(trace)),
     )
 
 
@@ -345,6 +413,7 @@ def stack_trace(depth: int, seed: int) -> RecurrenceTrainingTask:
     initial = [rng.randrange(1, 10) for _ in range(3)]
     state = list(initial)
     operations: list[str] = []
+    trace: list[str] = []
     for step in range(depth):
         choice = step % 4
         if choice == 0:
@@ -364,15 +433,18 @@ def stack_trace(depth: int, seed: int) -> RecurrenceTrainingTask:
             operations.append("remove the last value")
             if not state:
                 state.append(rng.randrange(1, 10))
+        trace.append("[" + ",".join(str(value) for value in state) + "]")
+    answer = _json_answer({"state": state})
     return RecurrenceTrainingTask(
         prompt=(
             f"Begin with list {initial}. Apply in order: {'; '.join(operations)}. Return"
             + _terminal_contract("state")
         ),
-        answer=_json_answer({"state": state}),
+        answer=answer,
         depth=depth,
         family="stack_trace",
         seed=seed,
+        solution=_solution(answer, "list states: " + _checkpoint_trace(trace)),
     )
 
 
@@ -384,16 +456,22 @@ def constraint_order(depth: int, seed: int) -> RecurrenceTrainingTask:
     rng.shuffle(order)
     constraints = [f"{order[index]} is before {order[index + 1]}" for index in range(size - 1)]
     rng.shuffle(constraints)
+    answer = _json_answer({"order": order})
     return RecurrenceTrainingTask(
         prompt=(
             "Find the unique total order satisfying every constraint: "
             f"{'; '.join(constraints)}."
             + _terminal_contract("order")
         ),
-        answer=_json_answer({"order": order}),
+        answer=answer,
         depth=depth,
         family="constraint_order",
         seed=seed,
+        solution=_solution(
+            answer,
+            "link each adjacent precedence constraint into one chain",
+            f"unique chain: {' < '.join(order)}",
+        ),
     )
 
 
@@ -409,21 +487,25 @@ def causal_intervention(depth: int, seed: int) -> RecurrenceTrainingTask:
     intervention_index = rng.randrange(1, count - 1)
     intervention_value = 1 - values[intervention_index]
     intervened = values[:intervention_index] + [intervention_value]
+    trace = [f"intervention: x{intervention_index}={intervention_value}"]
     for index in range(intervention_index + 1, count):
         intervened.append(intervened[-1] ^ flips[index - 1])
+        trace.append(f"x{index}=x{index - 1} xor {flips[index - 1]}={intervened[-1]}")
     equations = [f"x0={root}"] + [
         f"x{index}=x{index - 1} xor {flips[index - 1]}" for index in range(1, count)
     ]
+    answer = _json_answer({f"x{count - 1}": intervened[-1]})
     return RecurrenceTrainingTask(
         prompt=(
             f"Binary structural equations: {'; '.join(equations)}. Intervene with "
             f"do(x{intervention_index}={intervention_value}), replacing that equation."
             + _terminal_contract(f"x{count - 1}")
         ),
-        answer=_json_answer({f"x{count - 1}": intervened[-1]}),
+        answer=answer,
         depth=depth,
         family="causal_intervention",
         seed=seed,
+        solution=_solution(answer, "; ".join(trace)),
     )
 
 
@@ -436,11 +518,17 @@ def bayes_update(depth: int, seed: int) -> RecurrenceTrainingTask:
     if likelihood_h == likelihood_not_h:
         likelihood_not_h = Fraction(1, 10) if likelihood_h != Fraction(1, 10) else Fraction(2, 10)
     posterior = prior
-    for _ in range(depth):
+    for _step in range(1, depth + 1):
         numerator = posterior * likelihood_h
         denominator = numerator + (1 - posterior) * likelihood_not_h
         posterior = numerator / denominator
     posterior_text = f"{posterior.numerator}/{posterior.denominator}"
+    answer = _json_answer(
+        {
+            "choice": "H" if posterior >= Fraction(1, 2) else "not_H",
+            "posterior": posterior_text,
+        }
+    )
     return RecurrenceTrainingTask(
         prompt=(
             f"P(H)={prior.numerator}/{prior.denominator}, P(E|H)="
@@ -450,15 +538,16 @@ def bayes_update(depth: int, seed: int) -> RecurrenceTrainingTask:
             "The choice value must be H or not_H."
             + _terminal_contract("posterior", "choice")
         ),
-        answer=_json_answer(
-            {
-                "choice": "H" if posterior >= Fraction(1, 2) else "not_H",
-                "posterior": posterior_text,
-            }
-        ),
+        answer=answer,
         depth=depth,
         family="bayes_update",
         seed=seed,
+        solution=_solution(
+            answer,
+            "posterior odds = prior odds * "
+            f"(P(E|H)/P(E|not H))^{depth}",
+            f"exact posterior={posterior_text}",
+        ),
     )
 
 
@@ -487,6 +576,7 @@ def budget_plan(depth: int, seed: int) -> RecurrenceTrainingTask:
     job_text = ", ".join(
         f"{identifier}(cost={cost},reward={reward})" for identifier, cost, reward in jobs
     )
+    answer = _json_answer({"cost": best_cost, "reward": best_reward, "selected": list(best_ids)})
     return RecurrenceTrainingTask(
         prompt=(
             f"Choose any subset of jobs under budget {budget}: {job_text}. Maximize "
@@ -494,10 +584,16 @@ def budget_plan(depth: int, seed: int) -> RecurrenceTrainingTask:
             "ID list."
             + _terminal_contract("selected", "cost", "reward")
         ),
-        answer=_json_answer({"cost": best_cost, "reward": best_reward, "selected": list(best_ids)}),
+        answer=answer,
         depth=depth,
         family="budget_plan",
         seed=seed,
+        solution=_solution(
+            answer,
+            f"enumerate all {1 << count} subsets and reject every subset with cost>{budget}",
+            f"best admissible subset={list(best_ids)}, cost={best_cost}, reward={best_reward}",
+            "apply reward, cost, then lexicographic tie-breaks in that order",
+        ),
     )
 
 
@@ -507,6 +603,7 @@ def symbolic_rewrite(depth: int, seed: int) -> RecurrenceTrainingTask:
     initial = "".join(rng.choice("ABCD") for _ in range(max(4, depth + 2)))
     state = initial
     operations: list[str] = []
+    trace: list[str] = []
     for step in range(depth):
         choice = step % 3
         if choice == 0:
@@ -519,15 +616,18 @@ def symbolic_rewrite(depth: int, seed: int) -> RecurrenceTrainingTask:
         else:
             state = state[::-1]
             operations.append("reverse")
+        trace.append(state)
+    answer = _json_answer({"state": state})
     return RecurrenceTrainingTask(
         prompt=(
             f"Start with string {initial}. Apply in order: {'; '.join(operations)}. Return"
             + _terminal_contract("state")
         ),
-        answer=_json_answer({"state": state}),
+        answer=answer,
         depth=depth,
         family="symbolic_rewrite",
         seed=seed,
+        solution=_solution(answer, "string states: " + _checkpoint_trace(trace)),
     )
 
 
@@ -542,16 +642,25 @@ def premise_audit(depth: int, seed: int) -> RecurrenceTrainingTask:
         claimed = value if index != false_index else value + rng.choice((-2, -1, 1, 2))
         claims.append(f"claim {index}: item {index} has value {claimed}")
     table = ", ".join(f"item {index}={value}" for index, value in enumerate(values))
+    answer = _json_answer({"false_claim": false_index})
     return RecurrenceTrainingTask(
         prompt=(
             f"Ground-truth table: {table}. Exactly one claim conflicts with the table: "
             f"{'; '.join(claims)}."
             + _terminal_contract("false_claim")
         ),
-        answer=_json_answer({"false_claim": false_index}),
+        answer=answer,
         depth=depth,
         family="premise_audit",
         seed=seed,
+        solution=_solution(
+            answer,
+            *(
+                f"c{index}:stated={claim.rsplit(' ', 1)[-1]},actual={values[index]},"
+                f"match={index != false_index}"
+                for index, claim in enumerate(claims)
+            ),
+        ),
     )
 
 
@@ -562,12 +671,15 @@ def code_trace(depth: int, seed: int) -> RecurrenceTrainingTask:
     modulus = rng.choice((3, 4, 5))
     accumulator = rng.randrange(1, 8)
     initial = accumulator
+    trace: list[str] = []
     for index, value in enumerate(values):
         if (index + value) % modulus == 0:
             accumulator += value * 2
         else:
             accumulator -= value
         accumulator += index % 2
+        trace.append(str(accumulator))
+    answer = _json_answer({"acc": accumulator})
     return RecurrenceTrainingTask(
         prompt=(
             f"Trace this pseudocode exactly with values={values}: acc={initial}; for each "
@@ -575,10 +687,11 @@ def code_trace(depth: int, seed: int) -> RecurrenceTrainingTask:
             "else acc -= value; then acc += index mod 2. Indexing starts at zero. "
             + _terminal_contract("acc")
         ),
-        answer=_json_answer({"acc": accumulator}),
+        answer=answer,
         depth=depth,
         family="code_trace",
         seed=seed,
+        solution=_solution(answer, "accumulator checkpoints: " + _checkpoint_trace(trace)),
     )
 
 
@@ -745,6 +858,8 @@ __all__ = [
     "CURRICULUM_SCHEMA",
     "CURRICULUM_VERSION",
     "MAX_TRAINING_DEPTH",
+    "MAX_PROCESS_TARGET_BYTES",
+    "PROCESS_SUPERVISION_SCHEMA",
     "RECURRENCE_TRAINING_FAMILIES",
     "RecurrenceTrainingTask",
     "TASK_GENERATORS",

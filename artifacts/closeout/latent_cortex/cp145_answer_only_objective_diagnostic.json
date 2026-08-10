@@ -1,0 +1,43 @@
+{
+  "artifact_path": "/Users/bryan/.aura/experiments/cp145-plasticity-site-distill-a37d93cc4-seed202608101",
+  "claim_boundary": {
+    "frontier_gain_proven": false,
+    "persistent_gain_proven": false,
+    "reasoning_gain_proven": false,
+    "resident_32b_authorized": false,
+    "wow_signal": false
+  },
+  "configuration": {
+    "coda_lora_layers": 0,
+    "joint_steps": 32,
+    "lora_layer_placement": "early",
+    "lora_layers": 8,
+    "lora_rank": 8,
+    "lora_targets": [
+      "o_proj"
+    ],
+    "training_depths": [
+      2,
+      3
+    ],
+    "training_family": "modular",
+    "training_tasks": 16
+  },
+  "diagnosis": "The matched persistent site was optimizable, but answer-only token supervision reduced held-out lexical loss without teaching autonomous answer initiation or completion.",
+  "evidence": {
+    "adapter_after_sha256": "802f141fe1dbc77a514d00eb7fb73da94002fa8c5a2ed67825708646e83e9e51",
+    "branch_separation_after": 0.8120218515396118,
+    "branch_separation_before": 0.030793262645602226,
+    "heldout_lexical_loss_after": 0.5054444223642349,
+    "heldout_lexical_loss_before": 12.815019130706787,
+    "initial_free_generation": "0/16",
+    "joint_steps_completed": 32,
+    "progress_json_sha256": "2236fa146ceedb694a8e06274735401095e58b1307ab6691a10eae02debbc07c",
+    "progress_jsonl_events": 134,
+    "progress_jsonl_sha256": "dc6652daa642a22c7697884f22c664d547f39ebd916b86f1ed841d0e4e3f087c",
+    "trained_free_generation": "0/16"
+  },
+  "execution_disposition": "The run was intentionally interrupted after the complete trained treatment remained 0/16; lesion and sham arms could no longer establish a treatment gain.",
+  "schema": "aura.rlc.persistent_objective_diagnostic.v1",
+  "source_commit": "a37d93cc438cc86050e7c7318b83f0843c81ea2d"
+}

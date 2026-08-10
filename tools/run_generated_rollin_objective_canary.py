@@ -76,7 +76,7 @@ from core.runtime.atomic_writer import atomic_append_text, atomic_write_bytes  #
 from core.runtime.mlx_memory_guard import mlx_memory_envelope  # noqa: E402
 from core.runtime.model_lane_control import standalone_model_lane  # noqa: E402
 
-CANARY_SCHEMA: Final = "aura.generated_rollin_objective_canary.v5"
+CANARY_SCHEMA: Final = "aura.generated_rollin_objective_canary.v6"
 PROGRESS_SCHEMA: Final = "aura.generated_rollin_objective_canary.progress.v1"
 SOURCE_PATHS: Final = (
     "core/learning/recurrence_native_objective_v2.py",
@@ -87,6 +87,7 @@ SOURCE_PATHS: Final = (
     "core/learning/recurrent_grpo.py",
     "core/learning/recurrent_checkpoint_admission.py",
     "core/learning/recurrent_behavioral_probe.py",
+    "core/learning/recurrence_curriculum.py",
     "core/brain/llm/latent_cortex/recurrence_adapter.py",
     "core/learning/depth_conditioned_lora.py",
     "tools/run_generated_rollin_objective_canary.py",
@@ -480,7 +481,10 @@ def run_canary(
     import mlx.optimizers as optim
     from mlx_lm import load
 
-    from core.learning.recurrence_curriculum import task_battery
+    from core.learning.recurrence_curriculum import (
+        PROCESS_SUPERVISION_SCHEMA,
+        task_battery,
+    )
 
     if type(steps) is not int or not 1 <= steps <= 256:
         raise ValueError("steps must be inside [1, 256]")
@@ -611,17 +615,27 @@ def run_canary(
             seed=seed,
         )
         training_rows = []
+        training_target_manifest = []
         for task in training_tasks:
             prompt_tokens, answer_tokens = _tokenize(
                 tokenizer,
                 task.prompt,
-                str(task.answer),
+                task.training_target,
             )
             training_rows.append(
                 {
                     "task_id": task.task_id,
                     "prompt_tokens": prompt_tokens,
                     "answer_tokens": answer_tokens,
+                }
+            )
+            training_target_manifest.append(
+                {
+                    "task_id": task.task_id,
+                    "target_sha256": hashlib.sha256(
+                        task.training_target.encode("utf-8")
+                    ).hexdigest(),
+                    "target_bytes": len(task.training_target.encode("utf-8")),
                 }
             )
         proxy_tasks = task_battery(
@@ -636,7 +650,7 @@ def run_canary(
         validation_prompt_tokens, validation_answer_tokens = _tokenize(
             tokenizer,
             validation_task.prompt,
-            validation_task.answer,
+            validation_task.training_target,
         )
         validation_row = {
             "task_id": validation_task.task_id,
@@ -1050,6 +1064,7 @@ def run_canary(
     body = {
         "schema": CANARY_SCHEMA,
         "objective_schema": RECURRENCE_NATIVE_OBJECTIVE_V6_SCHEMA,
+        "process_supervision_schema": PROCESS_SUPERVISION_SCHEMA,
         "source_commit": source_commit,
         "source_bindings": source_bindings,
         "model_path": str(model_path),
@@ -1080,6 +1095,10 @@ def run_canary(
         "adapter_before_sha256": adapter_before,
         "adapter_after_sha256": adapter_after,
         "training_task_ids": [task.task_id for task in training_tasks],
+        "training_target_manifest": training_target_manifest,
+        "validation_target_sha256": hashlib.sha256(
+            validation_task.training_target.encode("utf-8")
+        ).hexdigest(),
         "validation_task_id": validation_row["task_id"],
         "proxy_task_manifest": proxy_manifest,
         "proxy_task_manifest_sha256": proxy_manifest_sha256,
