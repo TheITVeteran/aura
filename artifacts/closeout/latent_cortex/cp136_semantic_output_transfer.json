@@ -1,0 +1,52 @@
+{
+  "schema": "aura.rlc.semantic_output_transfer_checkpoint.v1",
+  "checkpoint": "CP136",
+  "campaign_receipt": {
+    "path": "/Users/bryan/.aura/campaigns/cp136-semantic-output-transfer-20260810/receipt.json",
+    "sha256": "8a8d6a39c9dd800d241177a2d3cbe5719b56f627352d4f627de499368db39f4c"
+  },
+  "model": "/Users/bryan/.aura/live-source/models/Qwen2.5-1.5B-Instruct-4bit",
+  "protocol": {
+    "families": ["modular", "register_trace"],
+    "depth": 3,
+    "training_tasks": 6,
+    "validation_tasks": 2,
+    "test_tasks": 2,
+    "verified_correction_rows": 23,
+    "gain_grid": [0.0, 0.5, 1.0, 2.0],
+    "teacher_available_during_validation_or_test": false,
+    "producer_available_during_validation_or_test": false,
+    "matched_wrong_label_sham": true
+  },
+  "result": {
+    "selected_gain": 0.0,
+    "validation_baseline": 0.0,
+    "validation_treatment_at_selected_gain": 0.0,
+    "validation_sham_at_selected_gain": 0.0,
+    "test_baseline": 0.0,
+    "test_treatment": 0.0,
+    "test_sham": 0.0,
+    "test_regressions": 0,
+    "accepted": false,
+    "experiment_receipt_sha256": "f0d796f96bbaabd2df9a1e3aa4d336054abe86da50abfd367e38765bd311bc15"
+  },
+  "interpretation": {
+    "proven": [
+      "verified corrections can fit a sparse signed readout over the true tied output boundary",
+      "the learned readout can be frozen before teacher-free disjoint evaluation",
+      "zero gain preserves the base output and private tissue is erased after evaluation"
+    ],
+    "falsified_for_this_protocol": [
+      "a shallow sparse output readout alone transfers verified answer semantics to fresh tasks",
+      "the current final hidden state exposes enough linearly recoverable task solution information for this correction learner"
+    ],
+    "not_claimed": [
+      "general reasoning gain",
+      "resident 32B gain",
+      "frontier gain",
+      "fusion eligibility",
+      "WOW Signal"
+    ]
+  },
+  "next_gate": "move supervised semantic credit into generated-roll-in coda and recurrent-transition computation, then require free-generation lift over baseline and sham before resident work"
+}

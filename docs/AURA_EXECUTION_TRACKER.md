@@ -42172,3 +42172,44 @@ gate must learn a query-to-correction write that succeeds without replaying
 the teacher trajectory. No general neural gain, resident-32B gain, frontier,
 fusion, activation, or `WOW Signal` claim is authorized. The completion
 envelope is `832/920` (approximately `90.4%`).
+
+## Checkpoint 2026-08-10-136: A Shallow Output Readout Does Not Learn the Missing Reasoning
+
+CP135 proved that an exact query-local answer trajectory could control the
+frozen output boundary after the teacher left context. CP136 tests the next
+stronger claim: whether verified corrections from calibration tasks can train
+one sparse semantic readout that transfers to disjoint queries without a
+teacher or executable producer at evaluation time.
+
+The new `SemanticOutputAdapter` fits a signed dual-ridge residual over the
+actual normalized tied-output state. Every calibration row gives positive
+credit to its independently verified next token and negative credit to the
+failed incumbent token. Only the sparse calibration token inventory can move;
+zero gain is exact identity. A temporary tied-embedding proxy captures and
+applies this tissue without changing checkpoint parameters and restores the
+original model object exactly. Training, validation, and test identities are
+hash-committed and disjoint. Gain is frozen on validation before the sealed
+test split. An equal-row, equal-token-inventory wrong-label adapter is built by
+deterministic bipartite derangement, and any test regression rejects an
+aggregate lift.
+
+The source-bound Qwen2.5-1.5B canary collected `23` teacher-forced correction
+rows from six calibration tasks across modular and register-trace reasoning.
+The treatment solved no validation task at any gain. The wrong-label sham
+solved one validation task at gain `0.5`, so the conservative selector chose
+zero. On the sealed two-task test, baseline, treatment, and sham all scored
+`0/2`; no teacher or producer was available, no parameter changed, and erase
+and model-object restoration passed. This is a clean negative localization:
+the missing answer semantics were not linearly recoverable by this shallow
+output readout under the tested protocol. It is not evidence that deeper
+plasticity cannot work.
+
+The reusable learner, tied-output seam, split/sham/verdict contracts, and
+bounded real-checkpoint canary remain useful infrastructure. Focused contracts,
+Ruff, compilation, and the canonical smoke gate pass. Evidence is hash-bound
+in `artifacts/closeout/latent_cortex/cp136_semantic_output_transfer.json`.
+The next gate moves semantic credit into generated-roll-in coda and recurrent-
+transition computation, where training can change how the answer is derived
+rather than merely relabel a final state. No general neural gain, resident-32B
+gain, frontier, fusion, activation, or `WOW Signal` claim is authorized. The
+completion envelope is `833/920` (approximately `90.5%`).

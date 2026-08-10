@@ -1256,8 +1256,13 @@ class LatentCortexEngine:
         else:
             logits = inner.embed_tokens.as_linear(h)
         output_memory = getattr(self, "_active_output_memory", None)
+        semantic_adapter = getattr(self, "_active_semantic_output_adapter", None)
+        if output_memory is not None and semantic_adapter is not None:
+            raise RuntimeError("multiple output-boundary plasticity mechanisms are active")
         if output_memory is not None:
             logits = output_memory.apply(h, logits)
+        if semantic_adapter is not None:
+            logits = semantic_adapter.apply(h, logits)
         return logits
 
     def _prefill(self, tokens: list[int], cache, budget: ComputeBudget):
