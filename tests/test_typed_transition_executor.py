@@ -9,7 +9,11 @@ from core.brain.llm.latent_cortex.typed_transition_executor import (
     TransitionFamily,
     TypedTransitionInput,
 )
-from core.learning.certified_transition_program import execute_program_transition
+from core.learning.certified_transition_program import (
+    execute_action_sequence,
+    execute_program_student_rollin,
+    execute_program_transition,
+)
 from core.learning.recurrence_curriculum import modular_chain, nested_boolean
 
 
@@ -105,6 +109,71 @@ def test_program_bridge_recomputes_every_generated_transition():
                     assert result.next_state == program.state_trace.states[
                         transition_index + 1
                     ]
+
+
+def test_student_rollin_composes_train_shallow_test_deep_without_teacher_states():
+    observed = 0
+    for generator in (nested_boolean, modular_chain):
+        for depth in (1, 2, 4, 8, 16, 32):
+            for seed in range(16):
+                program = generator(depth, 10_000 + seed).transition_program
+                assert program is not None
+                execution = execute_program_student_rollin(program)
+                assert execution.states == program.state_trace.states
+                assert execution.terminal_state == program.state_trace.states[-1]
+                receipt = execution.receipt()
+                assert receipt["student_rollin"] is True
+                assert receipt["transition_count"] == depth
+                assert "states" not in receipt
+                assert "actions" not in receipt
+                observed += depth
+    assert observed == 2_016
+
+
+def test_action_lesion_changes_rollin_and_restoration_recovers_it():
+    actions = tuple((0, 1, 13) for _ in range(8))
+    baseline = execute_action_sequence(
+        family="modular",
+        depth=8,
+        field_names=("pc", "residue", "done"),
+        initial_state=(0, 1, 0),
+        action_field_names=("opcode", "operand", "modulus"),
+        actions=actions,
+    )
+    lesioned_actions = (*actions[:3], (0, 2, 13), *actions[4:])
+    lesioned = execute_action_sequence(
+        family="modular",
+        depth=8,
+        field_names=("pc", "residue", "done"),
+        initial_state=(0, 1, 0),
+        action_field_names=("opcode", "operand", "modulus"),
+        actions=lesioned_actions,
+    )
+    restored = execute_action_sequence(
+        family="modular",
+        depth=8,
+        field_names=("pc", "residue", "done"),
+        initial_state=(0, 1, 0),
+        action_field_names=("opcode", "operand", "modulus"),
+        actions=actions,
+    )
+
+    assert baseline.terminal_state != lesioned.terminal_state
+    assert baseline.chain_sha256 != lesioned.chain_sha256
+    assert restored.terminal_state == baseline.terminal_state
+    assert restored.chain_sha256 == baseline.chain_sha256
+
+
+def test_action_sequence_refuses_length_drift():
+    with pytest.raises(ValueError, match="action sequence"):
+        execute_action_sequence(
+            family="boolean",
+            depth=2,
+            field_names=("pc", "value", "done"),
+            initial_state=(0, 0, 0),
+            action_field_names=("opcode", "operand", "has_operand"),
+            actions=((0, 0, 0),),
+        )
 
 
 def test_executor_rejects_malformed_terminal_and_unknown_requests():

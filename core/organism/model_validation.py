@@ -1039,6 +1039,28 @@ def install_runtime_validation() -> dict[str, Any]:
             owner="core/brain/llm/latent_cortex/typed_transition_executor.py",
         )
     )
+    suite.add_test(
+        ValidationTest(
+            name="certified_programs_compose_from_student_rollin",
+            description=(
+                "each recurrent transition consumes the prior computed state and "
+                "still matches independently generated depth-32 traces"
+            ),
+            required_capability="",
+            observation=Observation(
+                name="student_rollin_matches_verified_trace",
+                value=True,
+                source="core/learning/certified_transition_program.py contract tests",
+            ),
+            predict=lambda _m: _certified_student_rollin_contract_holds(),
+            score=lambda p, o: boolean_score(
+                bool(p),
+                expected=bool(o.value),
+                subject="certified recurrent student roll-in",
+            ),
+            owner="core/learning/certified_transition_program.py",
+        )
+    )
 
     suite.add_test(
         ValidationTest(
@@ -1189,6 +1211,23 @@ def install_runtime_validation() -> dict[str, Any]:
                 "Exhaustive over 504 Boolean and 3,828 modular primitive transitions; "
                 "semantic action compilation, broader families, live use, and reasoning "
                 "gain remain separate gates."
+            ),
+        )
+    )
+    suite.add_claim(
+        Claim(
+            statement=(
+                "Certified typed transitions compose to depth 32 by consuming their "
+                "own prior output rather than private teacher states."
+            ),
+            test="certified_programs_compose_from_student_rollin",
+            owner="core/learning/certified_transition_program.py",
+            asserted_in="docs/AURA_EXECUTION_TRACKER.md",
+            evidence=Evidence.MEASURED_SYNTHETIC,
+            evidence_note=(
+                "Measured on generated Boolean and modular programs with lesion and "
+                "restoration controls; semantic compilation and behavioral gain remain "
+                "separate gates."
             ),
         )
     )
@@ -1399,6 +1438,22 @@ def _certified_transition_contract_holds() -> bool:
                     )
                     if result.next_state != (3, expected, 0):
                         return False
+    return True
+
+
+def _certified_student_rollin_contract_holds() -> bool:
+    from core.learning.certified_transition_program import (
+        execute_program_student_rollin,
+    )
+    from core.learning.recurrence_curriculum import modular_chain, nested_boolean
+
+    for generator in (nested_boolean, modular_chain):
+        program = generator(32, 20260810191).transition_program
+        if program is None:
+            return False
+        execution = execute_program_student_rollin(program)
+        if execution.states != program.state_trace.states:
+            return False
     return True
 
 

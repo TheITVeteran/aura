@@ -43909,3 +43909,28 @@ execution organ, not a reasoning-gain result. Next, the executor must compose
 under student roll-in, the semantic cortex must compile actions without private
 answers, and the completed recurrent path must beat ordinary decode on fresh
 behavioral tasks before any `WOW Signal` or resident-32B gate opens.
+
+## Checkpoint 2026-08-10-191: Exact Transitions Compose From Their Own Output
+
+Certified program execution now starts from the declared initial state and
+feeds each computed next state into the following transition. It never reads a
+teacher state during roll-in. Every transition receipt is chained to the prior
+receipt, and the public program receipt binds initial and terminal state hashes,
+transition count, ordered receipt hashes, and the full chain without disclosing
+private states or actions.
+
+Train-shallow/test-deep contracts execute independent Boolean and modular
+programs at depths `1,2,4,8,16,32`, covering 2,016 student-induced transitions,
+and exactly reproduce every independently generated trace. A causal lesion to
+one modular action changes both terminal state and receipt chain; restoring the
+action restores both exactly. Sequence-length drift, terminal re-entry, and
+family/schema violations fail closed. The depth-32 student-roll-in claim is
+registered with its executable validation test and synthetic-evidence boundary.
+
+The affected transition and runner suite passes `80/80`; validation-discipline
+contracts pass `65/65`; Ruff and compilation pass. This advances the completion
+envelope to `887/920` (approximately `96.4%`). Exact execution and composition
+are now closed for the two declared families. Next is the missing semantic
+compiler: it must derive typed actions from public task evidence without seeing
+answers or private traces, then pass lesion, sham, ambiguity, and held-out prompt
+controls before the full recurrent path can enter behavioral comparison.
