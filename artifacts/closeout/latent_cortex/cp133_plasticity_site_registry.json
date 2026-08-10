@@ -1,0 +1,49 @@
+{
+  "schema": "aura.rlc_plasticity_site_probe.v1",
+  "checkpoint": "CP133",
+  "model": "/Users/bryan/.aura/live-source/models/Qwen2.5-1.5B-Instruct-4bit",
+  "task": {
+    "domain": "misleading_premise",
+    "difficulty": 2,
+    "seed": 2026081018
+  },
+  "historical_serving_default_preserved": "o_proj:early",
+  "probes": [
+    {
+      "site": "o_proj:distributed",
+      "campaign": "/Users/bryan/.aura/campaigns/cp133-site-o-proj-distributed-2026081020",
+      "runtime_receipt_sha256": "8d19d81e9f0e73e170a7f16f78739bca277e602101a6bc22aa39560562412409",
+      "baseline_score": 0.25,
+      "selected_treatment_gain": 0.0,
+      "selected_sham_gain": 0.0,
+      "disposition": "rejected_no_causal_effect"
+    },
+    {
+      "site": "down_proj:distributed",
+      "campaign": "/Users/bryan/.aura/campaigns/cp133-site-down-proj-distributed-2026081020",
+      "runtime_receipt_sha256": "d73d2c2249bad5fe4a8b3bc3e92d59f83d13b6c7aae46e23f143259c67a70a15",
+      "baseline_score": 0.25,
+      "selected_treatment_gain": 0.0,
+      "selected_sham_gain": 0.0,
+      "disposition": "rejected_no_causal_effect"
+    },
+    {
+      "site": "down_proj:late",
+      "campaign": "/Users/bryan/.aura/campaigns/cp133-site-down-proj-late-2026081020",
+      "runtime_receipt_sha256": "d82fc2739a9fccd61f592eacfeda1d092c1da92456894a9fb60ea16e2c6d6375",
+      "baseline_score": 0.25,
+      "selected_treatment_gain": 4.0,
+      "selected_treatment_score": 0.296296,
+      "selected_sham_gain": 4.0,
+      "selected_sham_score": 0.344555,
+      "disposition": "rejected_matched_control"
+    }
+  ],
+  "conclusion": {
+    "projection_has_semantic_leverage": true,
+    "teacher_direction_is_selective": false,
+    "neural_transfer_proven": false,
+    "production_site_promotion_authorized": false,
+    "next_gate": "layer_specific_teacher_trajectory_transplant"
+  }
+}

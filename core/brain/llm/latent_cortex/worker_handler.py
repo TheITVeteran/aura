@@ -240,6 +240,12 @@ def config_from_job(job_config: dict[str, Any] | None) -> CortexConfig:
             rank=_typed_value(raw, "fast_weights_rank", 2, int),
             scale=_typed_value(raw, "fast_weights_scale", 1.0, float),
             target=_typed_value(raw, "fast_weights_target", "o_proj", str),
+            layer_placement=_typed_value(
+                raw,
+                "fast_weights_layer_placement",
+                "early",
+                str,
+            ),
             opt_steps=_typed_value(raw, "fast_weights_opt_steps", 4, int),
             lr=_typed_value(raw, "fast_weights_lr", 0.01, float),
             max_wrapped_layers=_typed_value(raw, "fast_weights_max_layers", 8, int),

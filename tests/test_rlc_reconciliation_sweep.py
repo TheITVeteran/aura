@@ -964,6 +964,37 @@ def test_decode_identity_binds_committed_task_difficulty():
     assert standard == sweep.decode_fingerprint(difficulty=2, **common)
 
 
+def test_decode_identity_binds_fast_weight_site():
+    common = {
+        "model": "/models/Qwen-1.5B",
+        "n_slots": 8,
+        "max_tokens": 224,
+        "episode_wall_s": 120.0,
+        "seed": 20260808,
+        "per_domain": 2,
+        "arm": "complete_system_closed_book",
+        "implementation_sha256": "a" * 64,
+    }
+
+    early_attention = sweep.decode_fingerprint(
+        fast_weight_target="o_proj",
+        fast_weight_layer_placement="early",
+        **common,
+    )
+    late_attention = sweep.decode_fingerprint(
+        fast_weight_target="o_proj",
+        fast_weight_layer_placement="late",
+        **common,
+    )
+    late_mlp = sweep.decode_fingerprint(
+        fast_weight_target="down_proj",
+        fast_weight_layer_placement="late",
+        **common,
+    )
+
+    assert len({early_attention, late_attention, late_mlp}) == 3
+
+
 def test_decode_identity_binds_the_task_registry():
     from core.brain.llm.latent_cortex import frontier_tasks as ft
 

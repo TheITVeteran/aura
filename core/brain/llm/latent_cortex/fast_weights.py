@@ -36,6 +36,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from core.brain.llm.latent_cortex.plasticity_sites import select_plasticity_layers
 from core.brain.llm.latent_cortex.types import ComputeBudget, FastWeightsConfig
 from core.runtime.lockdep import LockRank, checked_lock
 
@@ -406,7 +407,12 @@ class EpisodicFastWeights:
         parent_attr, leaf_attr = target_attrs
         self._acquire_model_lease(inner_model, episode_id)
         start, end = layer_range
-        candidates = list(range(start, end))[: max(1, self.config.max_wrapped_layers)]
+        candidates = select_plasticity_layers(
+            start,
+            end,
+            max(1, self.config.max_wrapped_layers),
+            placement=self.config.layer_placement,
+        )
         attached = False
         try:
             for i in candidates:

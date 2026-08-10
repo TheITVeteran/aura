@@ -455,6 +455,8 @@ def decode_fingerprint(
     adapter: str = "",
     implementation_sha256: str | None = None,
     campaign_stage: str = "certificate",
+    fast_weight_target: str = "o_proj",
+    fast_weight_layer_placement: str = "early",
 ) -> str:
     """Identity of the decode configuration every cell in a run must share.
 
@@ -476,6 +478,8 @@ def decode_fingerprint(
             "campaign_stage": str(campaign_stage),
             "difficulty": int(difficulty),
             "episode_wall_s": float(episode_wall_s),
+            "fast_weight_layer_placement": str(fast_weight_layer_placement),
+            "fast_weight_target": str(fast_weight_target),
             "implementation_sha256": (implementation_sha256 or _implementation_sha256()),
             "max_tokens": int(max_tokens),
             "model": str(model),
@@ -590,6 +594,8 @@ def _build_config(
     max_tokens: int,
     decode_contract: str = "final_answer_v1",
     profile: str = "mechanism",
+    fast_weight_target: str = "o_proj",
+    fast_weight_layer_placement: str = "early",
     # NOTE: the product arm overrides decode_contract to "none" below, which
     # is what the deployed system runs. Contract enforcement inside the engine
     # does not merely stop generation the way the ordinary control does -- it
@@ -651,7 +657,13 @@ def _build_config(
         # and strict proxy descent; enable that conservative continuation rule
         # for the complete-engine arm so latent search can actually move.
         verifier_accept_non_regression=adaptive_neural,
-        fast_weights=FastWeightsConfig(enabled=adaptive_neural, rank=2, opt_steps=4),
+        fast_weights=FastWeightsConfig(
+            enabled=adaptive_neural,
+            rank=2,
+            opt_steps=4,
+            target=fast_weight_target,
+            layer_placement=fast_weight_layer_placement,
+        ),
         prelude_frac=0.25,
         coda_frac=0.25,
         decode_max_tokens=max_tokens,
@@ -1970,6 +1982,22 @@ def _manifest_integrity_issues(
     expected_domains = list(dict.fromkeys(task.domain for task in tasks))
     if recorded_domains != expected_domains:
         issues.append("campaign_domain_set_mismatch")
+    fast_weight_site = recorded.get("fast_weight_site")
+    # Historical evidence predates explicit site identity and remains valid
+    # under its own committed implementation digest. New campaigns always
+    # emit this field and additionally bind it inside every arm fingerprint.
+    if fast_weight_site is not None:
+        if not isinstance(fast_weight_site, dict) or set(fast_weight_site) != {
+            "target",
+            "layer_placement",
+        }:
+            issues.append("fast_weight_site_invalid")
+        elif (
+            fast_weight_site["target"] not in {"o_proj", "down_proj"}
+            or fast_weight_site["layer_placement"]
+            not in {"early", "distributed", "late"}
+        ):
+            issues.append("fast_weight_site_invalid")
 
     required = recorded.get("required_arms")
     requested = recorded.get("requested_arms")
@@ -2281,6 +2309,16 @@ def main() -> int:
     parser.add_argument("--n-slots", type=int, default=16)
     parser.add_argument("--max-tokens", type=int, default=512)
     parser.add_argument(
+        "--fast-weight-target",
+        choices=("o_proj", "down_proj"),
+        default="o_proj",
+    )
+    parser.add_argument(
+        "--fast-weight-layer-placement",
+        choices=("early", "distributed", "late"),
+        default="early",
+    )
+    parser.add_argument(
         "--campaign-stage",
         choices=CAMPAIGN_STAGES,
         default="certificate",
@@ -2392,6 +2430,10 @@ def main() -> int:
                     "execution_arms": [a.name for a in selected],
                     "campaign_stage": args.campaign_stage,
                     "domains": list(domains),
+                    "fast_weight_site": {
+                        "target": args.fast_weight_target,
+                        "layer_placement": args.fast_weight_layer_placement,
+                    },
                 },
                 indent=2,
             )
@@ -2421,6 +2463,8 @@ def main() -> int:
             adapter=args.adapter,
             implementation_sha256=implementation_sha256,
             campaign_stage=args.campaign_stage,
+            fast_weight_target=args.fast_weight_target,
+            fast_weight_layer_placement=args.fast_weight_layer_placement,
         )
         for name, tokens in arm_tokens.items()
     }
@@ -2436,6 +2480,10 @@ def main() -> int:
                 "campaign_stage": args.campaign_stage,
                 "domains": list(domains),
                 "difficulty": args.difficulty,
+                "fast_weight_site": {
+                    "target": args.fast_weight_target,
+                    "layer_placement": args.fast_weight_layer_placement,
+                },
                 "task_registry_version": args.task_registry_version,
                 "implementation_files": implementation_files,
                 "implementation_sha256": implementation_sha256,
@@ -2631,6 +2679,10 @@ def main() -> int:
                         policy,
                         tokens,
                         profile=spec.profile,
+                        fast_weight_target=args.fast_weight_target,
+                        fast_weight_layer_placement=(
+                            args.fast_weight_layer_placement
+                        ),
                     )
                 )
                 key = (arm, task.task_id)

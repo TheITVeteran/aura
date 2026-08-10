@@ -48,6 +48,7 @@ from core.brain.llm.latent_cortex.fast_weight_learning import (
 from core.brain.llm.latent_cortex.fast_weights import EpisodicFastWeights
 from core.brain.llm.latent_cortex.governance import CheckpointInvariant
 from core.brain.llm.latent_cortex.latent_opt import LatentOptimizer, build_proxy_loss
+from core.brain.llm.latent_cortex.plasticity_sites import PLASTICITY_SITE_REGISTRY
 from core.brain.llm.latent_cortex.probe_cache import DecodeProbeCache
 from core.brain.llm.latent_cortex.recurrence import WindowRunner
 from core.brain.llm.latent_cortex.resource_accounting import (
@@ -299,10 +300,14 @@ class LatentCortexEngine:
                 f"recurrent region empty: prelude_end={self.prelude_end} "
                 f"coda_start={self.coda_start} for {self.n_layers} layers"
             )
-        adapted_layers = tuple(
-            list(range(self.prelude_end, self.coda_start))[
-                : max(1, self.config.fast_weights.max_wrapped_layers)
-            ]
+        self.plasticity_site = PLASTICITY_SITE_REGISTRY.resolve(
+            self.config.fast_weights.target,
+            self.config.fast_weights.layer_placement,
+        )
+        adapted_layers = self.plasticity_site.layer_indices(
+            self.prelude_end,
+            self.coda_start,
+            max(1, self.config.fast_weights.max_wrapped_layers),
         )
         self.invariant = CheckpointInvariant(
             model,
@@ -6263,6 +6268,7 @@ class LatentCortexEngine:
                 )
                 receipt.fast_weights_applied = True
                 receipt.fast_weights_layers = wrapped
+                receipt.flag(f"fast_weight_site:{self.plasticity_site.site_id}")
                 fw_initial_snapshot = fast_weights.snapshot_delta()
                 try:
                     fast_weight_learning_state["lease"] = fast_weights.lease_receipt()

@@ -125,6 +125,10 @@ class FastWeightsConfig:
     rank: int = 2
     scale: float = 1.0
     target: str = "o_proj"  # o_proj | down_proj
+    # Where inside the recurrent region the bounded wrappers attach. ``early``
+    # preserves the historical serving function; other placements are
+    # explicit, source-bound experimental choices until causally promoted.
+    layer_placement: str = "early"  # early | distributed | late
     opt_steps: int = 4
     lr: float = 0.01
     # Layers (within the recurrent window) that receive fast weights; None ⇒
@@ -845,6 +849,14 @@ class CortexConfig:
             "down_proj",
         }:
             problems.append("fast_weights.target must be o_proj or down_proj")
+        if self.fast_weights.layer_placement not in {
+            "early",
+            "distributed",
+            "late",
+        }:
+            problems.append(
+                "fast_weights.layer_placement must be early, distributed, or late"
+            )
         if not integer_in(self.fast_weights.opt_steps, 1, ABSOLUTE_MAX_RECURRENT_STEPS):
             problems.append("fast_weights.opt_steps outside recurrent-step limits")
         if not finite(self.fast_weights.lr) or not 0.0 < self.fast_weights.lr <= 1.0:

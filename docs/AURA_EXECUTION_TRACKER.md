@@ -42069,3 +42069,33 @@ The next bounded gate is a measured plasticity-site registry spanning layer
 placement and projection family before another model campaign. No resident,
 neural, frontier, fusion, activation, or `WOW Signal` claim is authorized.
 The completion envelope is `829/920` (approximately `90.1%`).
+
+## Checkpoint 2026-08-10-133: Plasticity Sites Are Explicit and Measured
+
+Fast-weight placement was previously an implicit implementation detail: the
+first `N` attention output projections inside the recurrent window. CP133
+introduces one canonical registry over projection family (`o_proj` or
+`down_proj`) and layer placement (`early`, `distributed`, or `late`). Runtime
+attachment, checkpoint invariants, worker configuration, experimental
+fingerprints, and evidence manifests now resolve the same site identity. The
+historical `o_proj:early` behavior remains the serving default; experiments
+cannot silently promote a different site.
+
+Three source-bound 1.5B probes measured the current verified-semantic write on
+the same misleading-premise cell. Distributed attention and distributed MLP
+sites were inert: every treatment strength tied the `0.25` baseline and zero
+write won. Late MLP was causally stronger: gain `4.0` changed the decode and
+raised the public-objective score to `0.296296`. The deterministic-wrong sham
+rose further to `0.344555`, however, so the matched-control gate correctly
+rejected both. This establishes semantic leverage at the late MLP site, not a
+selective teacher effect.
+
+The evidence is hash-bound in
+`artifacts/closeout/latent_cortex/cp133_plasticity_site_registry.json`.
+Focused site, engine, worker, sweep, and fast-weight contracts pass; canonical
+smoke, Ruff, compile, and diff hygiene pass. The next bounded gate replaces
+sequence-averaged token directions with layer-specific teacher-versus-
+incumbent activation trajectories, then repeats teacher-removal and matched-
+sham testing at the measured site. No neural, resident, frontier, fusion,
+activation, or `WOW Signal` claim is authorized. The completion envelope is
+`830/920` (approximately `90.2%`).
