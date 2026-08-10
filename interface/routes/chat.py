@@ -15882,8 +15882,18 @@ async def _build_grounded_self_process_repair_reply(
                 _clip_conversation_text(candidate, limit=180)
             )
             break
-    if not remembered_user:
-        remembered_user = "Bryan has been checking whether the live desktop path is really connected to Aura's mind instead of a raw assistant lane"
+    # No fallback sentence here on purpose.
+    #
+    # This used to default to "Bryan has been checking whether the live desktop
+    # path is really connected to Aura's mind instead of a raw assistant lane",
+    # which was then spoken as "I still have this recent concern in view: ...".
+    # A hardcoded string presented as a live recollection is a fabricated
+    # memory about a specific person, asserted with the same confidence as a
+    # real one — and it fired exactly when the search for a real one came back
+    # empty, which is the moment it is least likely to be true.
+    #
+    # Nothing found means the clause is dropped below. Saying less is not a
+    # degradation; saying something invented is.
 
     lane = dict(lane or {})
     model_label = _canonical_runtime_model_label(lane)
@@ -15894,7 +15904,9 @@ async def _build_grounded_self_process_repair_reply(
     parts: list[str] = []
     requested_summary = _humanize_self_process_dimensions(requested[:3]) if requested else "this conversation"
     parts.append(f"Right now I am attending to {requested_summary}.")
-    if "memory" in requested or "planning" in requested or "attention" in requested:
+    if remembered_user and (
+        "memory" in requested or "planning" in requested or "attention" in requested
+    ):
         parts.append(f"I still have this recent concern in view: {remembered_user}.")
     if "planning" in requested:
         parts.append(
