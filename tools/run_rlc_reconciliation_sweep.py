@@ -196,7 +196,7 @@ def _next_stage_admission(
     treatment_correct: int,
     preliminary_control_correct: int | None,
 ) -> dict[str, Any]:
-    """Decide whether evidence merits paying for the next model-heavy stage."""
+    """Adjudicate this stage and whether another same-ladder stage is available."""
 
     discordant = treatment_lifts + treatment_regressions
     paired_sign_test_p = (
@@ -270,23 +270,25 @@ def _next_stage_admission(
         "pilot": "certificate",
         "certificate": "none",
     }.get(campaign_stage, "none")
+    stage_admitted = not reasons
     return {
         "schema": "aura.rlc.next_stage_admission.v2",
         "campaign_stage": campaign_stage,
         "next_stage": next_stage,
-        "admitted": not reasons and next_stage != "none",
+        "admitted": stage_admitted,
+        "advance_authorized": stage_admitted and next_stage != "none",
         "reasons": reasons,
         "treatment_lifts": int(treatment_lifts),
         "treatment_regressions": int(treatment_regressions),
         "paired_sign_test_p": round(paired_sign_test_p, 12),
-        "architecture_admitted": not reasons and next_stage != "none",
+        "architecture_admitted": stage_admitted,
         "producer_lifts": int(producer_lifts),
         "producer_regressions": int(producer_regressions),
         "producer_sign_test_p": round(producer_sign_test_p, 12),
         "adaptation_lifts": int(adaptation_lifts),
         "adaptation_regressions": int(adaptation_regressions),
         "adaptation_sign_test_p": round(adaptation_sign_test_p, 12),
-        "adaptive_neural_admitted": (not adaptive_neural_reasons and next_stage != "none"),
+        "adaptive_neural_admitted": stage_admitted and not adaptive_neural_reasons,
         "adaptive_neural_reasons": adaptive_neural_reasons,
         "gain_domains": int(gain_domains),
         "admission_alpha": NEXT_STAGE_ALPHA,

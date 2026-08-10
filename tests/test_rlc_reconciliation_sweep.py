@@ -338,6 +338,34 @@ def test_pilot_must_beat_preliminary_control_before_certificate():
     assert verdict["reasons"] == ["pilot_did_not_beat_preliminary_control"]
 
 
+def test_terminal_certificate_admits_evidence_without_inventing_another_stage():
+    verdict = sweep._next_stage_admission(
+        campaign_stage="certificate",
+        complete=True,
+        floor_holds=True,
+        treatment_lifts=5,
+        treatment_regressions=0,
+        adaptation_lifts=0,
+        adaptation_regressions=0,
+        producer_lifts=5,
+        producer_regressions=0,
+        gain_domains=3,
+        exact_promotions=5,
+        latent_accepted_steps=0,
+        fast_weight_applications=0,
+        completion_limited_cells=0,
+        treatment_correct=5,
+        preliminary_control_correct=0,
+    )
+
+    assert verdict["admitted"] is True
+    assert verdict["architecture_admitted"] is True
+    assert verdict["advance_authorized"] is False
+    assert verdict["next_stage"] == "none"
+    assert verdict["reasons"] == []
+    assert verdict["adaptive_neural_admitted"] is False
+
+
 def test_complete_system_config_runs_the_same_neural_pillars_as_full_stack():
     config = sweep._build_config(
         8,
