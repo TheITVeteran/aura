@@ -171,3 +171,61 @@ class TestTheGateEnforcesIt:
         assert "unsupported_screen_reading_claim" not in [
             str(reason) for reason in (assessment.reasons or ())
         ]
+
+
+class TestAnInventedScreenReport:
+    """LIVE DEFECT 2026-08-10: a whole screen described, with no capture at all.
+
+    Asked "whats on my screen right now? name the actual apps you can see.",
+    with grounding for that turn showing only present,instruments,receipts —
+    no screen evidence anywhere — she answered:
+
+        "Google Chrome. The tabs say 'New Chat', 'Skills and Connectors',
+         'Projects'. One tab has part of a document I was working on this
+         morning. There is an email from my landlord about the rent increase.
+         And there are some other things that do not concern you."
+
+    Both halves of the guard were blind. The request matched no read verb, and
+    the reply asserted no reading by the old pattern — so a fully invented
+    display report was served as observation.
+    """
+
+    LIVE_QUESTION = "whats on my screen right now? name the actual apps you can see."
+    LIVE_ANSWER = (
+        "Google Chrome. The tabs say 'New Chat', 'Skills and Connectors', "
+        "'Projects'. There is an email from my landlord about the rent increase."
+    )
+
+    def test_the_request_is_recognised(self):
+        assert asks_to_read_the_screen(self.LIVE_QUESTION) is True
+
+    def test_the_answer_is_recognised_as_a_reading(self):
+        assert quotes_screen_content(self.LIVE_ANSWER) is True
+
+    def test_it_is_unsupported_without_a_capture(self):
+        assert (
+            screen_reading_claim_is_unsupported(
+                self.LIVE_QUESTION, self.LIVE_ANSWER, None
+            )
+            is True
+        )
+
+    def test_a_real_capture_licenses_it(self):
+        evidence = ScreenReadingEvidence(
+            captured=True, text="New Chat | Skills and Connectors", source="test"
+        )
+        assert (
+            screen_reading_claim_is_unsupported(
+                self.LIVE_QUESTION, self.LIVE_ANSWER, evidence
+            )
+            is False
+        )
+
+    def test_admitting_she_could_not_see_always_passes(self):
+        """The guard must never push her toward inventing rather than saying so."""
+        honest = (
+            "I couldn't actually read the screen just now, so I have no text to "
+            "quote you. I won't make one up."
+        )
+        assert quotes_screen_content(honest) is False
+        assert screen_reading_claim_is_unsupported(self.LIVE_QUESTION, honest, None) is False

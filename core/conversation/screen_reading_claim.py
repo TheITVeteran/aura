@@ -42,7 +42,20 @@ from typing import Any
 #: describing the arrangement of windows (which `occluded_view_intent` owns).
 _READ_THE_SCREEN_RE = re.compile(
     r"\b(?:read|quote|transcribe|type\s+out|spell\s+out|what\s+does\s+it\s+say|"
-    r"what'?s\s+written|word\s+for\s+word|verbatim|literally\s+say)\b",
+    r"what'?s\s+written|word\s+for\s+word|verbatim|literally\s+say)\b"
+    # Asking WHAT IS THERE is a request for a reading just as much as asking
+    # for the words. Live 2026-08-10: "whats on my screen right now? name the
+    # actual apps you can see." matched none of the verbs above, so the guard
+    # stood down — and with no capture on that turn she answered with Chrome,
+    # three tab titles, a document and "an email from my landlord about the
+    # rent increase", all invented.
+    r"|what(?:'?s)?\s+(?:is\s+)?(?:on|up\s+on|showing\s+on)\s+"
+    r"(?:my|the|your)?\s*(?:screen|display|desktop|monitor)\b"
+    r"|\bname\s+the\s+(?:actual\s+)?(?:apps?|applications?|windows?|tabs?)\b"
+    r"|\bwhich\s+(?:app|application|window|tab)\b"
+    r"|\bwhat\s+(?:apps?|applications?|windows?|tabs?)\b"
+    r"|\bwhat\s+(?:do|can)\s+you\s+see\b"
+    r"|\bfrontmost\b|\bin\s+front\b",
     re.IGNORECASE,
 )
 #: "Read me the actual text you can see in the visible part of System Settings
@@ -61,27 +74,78 @@ _QUOTED_TEXT_RE = re.compile(r"[\"“”']{1}[^\"“”']{8,}[\"“”']{1}")
 _ASSERTS_A_READING_RE = re.compile(
     r"\b(?:the\s+visible\s+text|on\s+(?:the\s+)?screen\s+it\s+says|"
     r"it\s+says|i\s+can\s+see\s+the\s+text|reads?\s*:|"
-    r"the\s+text\s+(?:on|in)\s+(?:it|them|the)|showing\s*:)\b",
+    r"the\s+text\s+(?:on|in)\s+(?:it|them|the)|showing\s*:"
+    # Naming what is displayed is a reading. "The tabs say 'New Chat'..." was
+    # served with no capture behind it, and matched nothing above.
+    r"|(?:tabs?|windows?|titles?)\s+(?:say|says|read|reads)"
+    r"|i\s+can\s+see\b|i\s+see\b"
+    r"|(?:is|are)\s+(?:in\s+front|frontmost|open|showing|visible)"
+    r"|behind\s+it\b|partly\s+visible\b)",
+    re.IGNORECASE,
+)
+
+#: Saying she could NOT see is the honest outcome and must always pass.
+_ADMITS_NO_READING_RE = re.compile(
+    r"\b(?:couldn'?t|could\s+not|can'?t|cannot|unable\s+to|did\s*n[o']?t)\s+"
+    r"(?:actually\s+)?(?:read|see|capture|look)"
+    r"|\bno\s+capture\b|\bnothing\s+(?:came\s+back|to\s+quote)\b"
+    r"|\bi\s+won'?t\s+make\s+(?:one|it)\s+up\b"
+    r"|\bhave\s+no\s+text\s+to\s+quote\b",
+    re.IGNORECASE,
+)
+
+
+#: Where things sit relative to each other, which `occluded_view_intent` owns.
+#: "What windows are behind yours" is answered from arrangement, not from
+#: reading, and must not be dragged in by the widened content cues below.
+_ARRANGEMENT_RE = re.compile(
+    r"\b(?:behind|under|underneath|beneath|on\s+top\s+of|over|covering|"
+    r"obscur\w*|overlap\w*|stacked)\b",
     re.IGNORECASE,
 )
 
 
 def asks_to_read_the_screen(user_message: Any) -> bool:
-    """True when the turn asks for the words that are on the screen."""
+    """True when the turn asks what is on the screen."""
     text = str(user_message or "")
     if not text.strip():
         return False
-    return bool(_READ_THE_SCREEN_RE.search(text) and _SCREEN_SUBJECT_RE.search(text))
+    if not _SCREEN_SUBJECT_RE.search(text):
+        return False
+    explicit_read = bool(
+        re.search(
+            r"\b(?:read|quote|transcribe|type\s+out|spell\s+out|verbatim|"
+            r"word\s+for\s+word)\b",
+            text,
+            re.IGNORECASE,
+        )
+    )
+    if _ARRANGEMENT_RE.search(text) and not explicit_read:
+        return False
+    return bool(_READ_THE_SCREEN_RE.search(text))
 
 
 def quotes_screen_content(reply_text: Any) -> bool:
-    """True when the reply presents specific text as read from the screen."""
+    """True when the reply presents specific content as read from the screen.
+
+    Widened from "a quoted string" to "a specific claim about what is
+    displayed". Naming the frontmost application, or what the tabs say, is a
+    checkable assertion about the display exactly as a quotation is, and
+    requires the same evidence — the standard this runtime applies to any tool
+    it did not run.
+
+    An admission that she could not see is the honest outcome and always
+    passes, so the guard can never push her toward inventing rather than
+    saying so.
+    """
     body = str(reply_text or "")
     if not body.strip():
         return False
-    if not _QUOTED_TEXT_RE.search(body):
+    if _ADMITS_NO_READING_RE.search(body):
         return False
-    return bool(_ASSERTS_A_READING_RE.search(body))
+    if _ASSERTS_A_READING_RE.search(body):
+        return True
+    return bool(_QUOTED_TEXT_RE.search(body) and _SCREEN_SUBJECT_RE.search(body))
 
 
 @dataclass(frozen=True)
