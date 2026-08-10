@@ -1,20 +1,20 @@
 # skills/listen.py
 # AURA v5.3: Sovereign Listener (Local-Only)
 
-from core.runtime.errors import record_degradation
 import asyncio
 import logging
-import os
 import struct
 import tempfile
 import threading
-import time
 import uuid
 from pathlib import Path
-from typing import Any, Dict, Optional
-from pydantic import BaseModel, Field
+from typing import Any
 
 import numpy as np
+from pydantic import BaseModel, Field
+
+from core.runtime.errors import record_degradation
+
 try:
     import sounddevice as sd
     _SOUNDDEVICE_IMPORT_ERROR: Exception | None = None
@@ -22,9 +22,10 @@ except (ImportError, AttributeError, RuntimeError) as exc:  # pragma: no cover -
     sd = None
     _SOUNDDEVICE_IMPORT_ERROR = exc
 
-from core.skills.base_skill import BaseSkill
 from core.exceptions import ContainerError
 from core.runtime.file_write_gateway import get_file_write_gateway
+from core.skills.base_skill import BaseSkill
+from core.voice.microphone_authority import record_sounddevice_array
 
 logger = logging.getLogger("Skills.Audio")
 
@@ -100,14 +101,18 @@ def _record_sync(duration: float, fs: int = 16000) -> str:
 
         logger.info("🎙️ Recording from device %s at %sHz for %ss...", device, fs, duration)
         
-        recording = sd.rec(
-            int(duration * fs),
+        recording = record_sounddevice_array(
+            sd,
+            holder="skills.listen",
+            source="listen_skill",
+            mode="focused",
+            frames=int(duration * fs),
             samplerate=fs,
             channels=1,
-            dtype='int16',
-            device=device
+            dtype="int16",
+            device=device,
+            preemptible=False,
         )
-        sd.wait()
         
         # Save to temp WAV file through the canonical write gateway.
         temp_path = str(Path(tempfile.gettempdir()) / f"aura_listen_{uuid.uuid4().hex}.wav")
@@ -118,7 +123,7 @@ def _record_sync(duration: float, fs: int = 16000) -> str:
                 source="skills.listen.recording",
             )
             return temp_path
-        except (OSError, IOError) as e:
+        except OSError as e:
             record_degradation('listen', e)
             Path(temp_path).unlink(missing_ok=True)
             raise e
@@ -170,7 +175,7 @@ class AudioListenerSkill(BaseSkill):
                 logger.error("Failed to resolve voice_engine: %s", e)
         return self._voice_engine
 
-    async def execute(self, params: ListenInput, context: Dict[str, Any]) -> Dict[str, Any]:
+    async def execute(self, params: ListenInput, context: dict[str, Any]) -> dict[str, Any]:
         """Execute audio capture and transcription."""
         if isinstance(params, dict):
             try:
@@ -191,43 +196,40 @@ class AudioListenerSkill(BaseSkill):
             
             logger.info("Audio captured: %s. Transcribing locally...", temp_wav)
             
-            engine = self._get_engine()
-            if not engine:
-                return {"ok": False, "error": "Sovereign Voice Engine unavailable."}
-                
             try:
-                # Transcribe using unified voice engine
-                text = await asyncio.to_thread(engine.transcribe, temp_wav)
-            except (RuntimeError, AttributeError, TypeError, ValueError) as e:
-                record_degradation(
-                    "listen",
-                    e,
-                    severity="warning",
-                    action="returned recorded-audio fallback after unified transcription failed",
-                    extra={"duration_s": duration},
-                )
-                logger.error("Unified transcription failed: %s", e)
-                text = f"[Audio Recorded, Unified Transcription Failed: {e}]"
-            
-            # Cleanup
-            try:
-                if os.path.exists(temp_wav):
-                    os.remove(temp_wav)
-            except OSError as _e:
-                logger.debug('Ignored OSError in listen.py: %s', _e)
+                engine = self._get_engine()
+                if not engine:
+                    return {"ok": False, "error": "Sovereign Voice Engine unavailable."}
+                try:
+                    text = await asyncio.to_thread(engine.transcribe, temp_wav)
+                except (RuntimeError, AttributeError, TypeError, ValueError) as e:
+                    record_degradation(
+                        "listen",
+                        e,
+                        severity="warning",
+                        action="returned recorded-audio fallback after unified transcription failed",
+                        extra={"duration_s": duration},
+                    )
+                    logger.error("Unified transcription failed: %s", e)
+                    text = f"[Audio Recorded, Unified Transcription Failed: {e}]"
 
-            return {
-                "ok": True,
-                "transcription": text,
-                "summary": f"Heard: {text}"
-            }
+                return {
+                    "ok": True,
+                    "transcription": text,
+                    "summary": f"Heard: {text}",
+                }
+            finally:
+                try:
+                    await asyncio.to_thread(Path(temp_wav).unlink, missing_ok=True)
+                except OSError as exc:
+                    logger.debug("Temporary audio cleanup failed: %s", exc)
             
-        except asyncio.TimeoutError:
+        except TimeoutError:
             return {
                 "ok": False,
                 "error": "Microphone access timed out."
             }
-        except (RuntimeError, asyncio.CancelledError, TimeoutError, AttributeError) as e:
+        except (RuntimeError, asyncio.CancelledError, AttributeError) as e:
             record_degradation('listen', e)
             logger.error("Audio capture failed: %s", e)
             return {"ok": False, "error": f"Audio capture failed: {e}"}

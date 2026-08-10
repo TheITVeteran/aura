@@ -19,6 +19,12 @@ from core.runtime.errors import (
 from core.runtime.runtime_settings import get_runtime_setting
 from core.runtime.subprocess_gateway import get_subprocess_gateway
 from core.utils.task_tracker import fire_and_track, get_task_tracker
+from core.voice.microphone_authority import (
+    MicrophoneDenial,
+    MicrophoneLease,
+    get_audio_ingress_broker,
+    get_microphone_authority,
+)
 
 
 def _user_voice_input_enabled() -> bool:
@@ -193,9 +199,14 @@ class LocalVoiceCortex:
         self._pending_audio = bytearray()
         self._dropped_audio_frames = 0
         self._last_drop_receipt_s = 0.0
+        self._mic_lease: MicrophoneLease | None = None
+        self._mic_stream: Any | None = None
+        self._mic_revoked_reason = ""
 
     def _audio_callback(self, in_data, frame_count, time_info, status):
         """Fires in a separate C-thread by PyAudio."""
+        if not get_audio_ingress_broker().admit(self._mic_lease, len(in_data or b"")):
+            return (None, getattr(pyaudio, "paContinue", 0))
         if self._shutdown_event and not self._shutdown_event.is_set() and self.loop and self.audio_queue:
             def safe_put():
                 try:
@@ -204,6 +215,25 @@ class LocalVoiceCortex:
                     self._dropped_audio_frames += 1
             self.loop.call_soon_threadsafe(safe_put)
         return (None, getattr(pyaudio, "paContinue", 0))
+
+    def _microphone_revoked(self, reason: str) -> None:
+        self._mic_revoked_reason = str(reason or "microphone_lease_revoked")
+        self._close_microphone_stream(self._mic_stream)
+
+    def _close_microphone_stream(self, stream: Any | None) -> None:
+        if stream is None:
+            return
+        try:
+            if stream.is_active():
+                stream.stop_stream()
+        except _LOCAL_VOICE_RECOVERABLE_ERRORS:
+            pass
+        try:
+            stream.close()
+        except _LOCAL_VOICE_RECOVERABLE_ERRORS:
+            pass
+        if self._mic_stream is stream:
+            self._mic_stream = None
 
     async def start(self) -> bool:
         """Initializes hardware and starts the listen loop."""
@@ -252,6 +282,12 @@ class LocalVoiceCortex:
     async def stop(self):
         """Clean shutdown of audio hardware with queue drain."""
         self.is_listening = False
+        self._close_microphone_stream(self._mic_stream)
+        get_microphone_authority().release(
+            self._mic_lease,
+            reason="local_voice_cortex_stopped",
+        )
+        self._mic_lease = None
         if self._shutdown_event:
             self._shutdown_event.set()
 
@@ -341,6 +377,22 @@ class LocalVoiceCortex:
                 logger.debug("🎙️🚫 Voice input suppressed: voice.input_enabled=False (user setting)")
                 await asyncio.sleep(2.0)
                 continue
+            lease_result = get_microphone_authority().acquire(
+                "local_voice_cortex",
+                principal="owner:local",
+                source="pyaudio",
+                mode="passive",
+                revoke_callback=self._microphone_revoked,
+            )
+            if isinstance(lease_result, MicrophoneDenial):
+                logger.info(
+                    "Local voice cortex waiting for microphone authority: %s",
+                    lease_result.reason,
+                )
+                await asyncio.sleep(min(2.0, retry_delay))
+                continue
+            self._mic_lease = lease_result
+            self._mic_revoked_reason = ""
             try:
                 stream = self.audio_interface.open(
                     format=self.FORMAT,
@@ -350,9 +402,16 @@ class LocalVoiceCortex:
                     frames_per_buffer=self.DMA_BUFFER,
                     stream_callback=self._audio_callback,
                 )
+                self._mic_stream = stream
                 stream.start_stream()
                 retry_delay = 1.0  # Reset on successful open
-            except OSError as e:
+            except _LOCAL_VOICE_RECOVERABLE_ERRORS as e:
+                self._close_microphone_stream(self._mic_stream)
+                get_microphone_authority().release(
+                    self._mic_lease,
+                    reason="pyaudio_stream_open_failed",
+                )
+                self._mic_lease = None
                 _record_voice_degradation(
                     e,
                     action="backed off and retried microphone stream open",
@@ -366,12 +425,20 @@ class LocalVoiceCortex:
             logger.debug("Listening for voice activity...")
 
             try:
-                while self.is_listening and not self._shutdown_event.is_set():
+                while (
+                    self.is_listening
+                    and not self._shutdown_event.is_set()
+                    and not self._mic_revoked_reason
+                ):
                     frames = []
                     silence_count = 0
                     is_speaking = False
 
-                    while self.is_listening and not self._shutdown_event.is_set():
+                    while (
+                        self.is_listening
+                        and not self._shutdown_event.is_set()
+                        and not self._mic_revoked_reason
+                    ):
                         try:
                             data = await asyncio.wait_for(self.audio_queue.get(), timeout=self._vad_timeout)
                             self._report_queue_drops()
@@ -417,9 +484,12 @@ class LocalVoiceCortex:
                     if frames and self.is_listening:
                         await self._process_audio_segment(frames)
             finally:
-                if stream.is_active():
-                    stream.stop_stream()
-                stream.close()
+                self._close_microphone_stream(stream)
+                get_microphone_authority().release(
+                    self._mic_lease,
+                    reason=self._mic_revoked_reason or "pyaudio_stream_closed",
+                )
+                self._mic_lease = None
 
             if not self.is_listening or self._shutdown_event.is_set():
                 break  # Normal exit

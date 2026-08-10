@@ -1,7 +1,6 @@
 import asyncio
 import logging
 import time
-from typing import Optional
 
 import numpy as np
 from pydantic import BaseModel, ConfigDict
@@ -13,6 +12,7 @@ from core.runtime.errors import record_degradation
 from core.runtime.permission_gates import camera_allowed
 from core.runtime.resource_observation import get_resource_observer
 from core.utils.task_tracker import get_task_tracker
+from core.voice.microphone_authority import record_sounddevice_array
 
 logger = logging.getLogger("Aura.ProactivePerception")
 _cv2 = None
@@ -66,8 +66,8 @@ class ProactivePerceptionV2:
         self._last_action_time = 0
         self._min_action_gap = 120 # 2 minutes between spontaneous comments
         self.camera_enabled, _ = main_process_camera_policy(self.config.consent_granted)
-        self._camera_task: Optional[asyncio.Task] = None
-        self._mic_task: Optional[asyncio.Task] = None
+        self._camera_task: asyncio.Task | None = None
+        self._mic_task: asyncio.Task | None = None
 
     async def start(self):
         if not self.config.consent_granted:
@@ -150,11 +150,16 @@ class ProactivePerceptionV2:
                 duration = 1.0
 
                 def _record_sync(sd=sd, fs=fs, duration=duration) -> np.ndarray:
-                    recording = sd.rec(
-                        int(duration * fs), samplerate=fs, channels=1, dtype="int16"
+                    return record_sounddevice_array(
+                        sd,
+                        holder="proactive_perception_v2",
+                        source="proactive_perception",
+                        mode="ambient",
+                        frames=int(duration * fs),
+                        samplerate=fs,
+                        channels=1,
+                        dtype="int16",
                     )
-                    sd.wait()
-                    return recording
 
                 recording = await asyncio.to_thread(_record_sync)
                 rms = np.sqrt(np.mean(np.square(recording.astype(np.float32))))

@@ -6874,8 +6874,13 @@ async function pollHealth() {
                 muteBtn.removeEventListener('click', muteBtn._clickHandler);
                 muteBtn._clickHandler = muteHandler;
                 muteBtn.addEventListener('click', muteHandler);
-                if (!voiceEnabled && state.voiceActive) {
-                    toggleVoice();
+                const duplexActive = Boolean(
+                    window.AuraVoiceMode
+                    && typeof window.AuraVoiceMode.isActive === 'function'
+                    && window.AuraVoiceMode.isActive()
+                );
+                if (!voiceEnabled && (state.voiceActive || duplexActive)) {
+                    void toggleVoice(false);
                 }
             }
             if (camBtn) {
@@ -6926,8 +6931,13 @@ async function togglePrivacy(type, currentEnabled, btn) {
             state.cameraSignalWanted = false;
             stopCameraSignals();
         }
-        if (type === 'microphone' && !next && state.voiceActive) {
-            toggleVoice();
+        const duplexActive = Boolean(
+            window.AuraVoiceMode
+            && typeof window.AuraVoiceMode.isActive === 'function'
+            && window.AuraVoiceMode.isActive()
+        );
+        if (type === 'microphone' && !next && (state.voiceActive || duplexActive)) {
+            void toggleVoice(false);
         }
         if (btn) {
             if (next) {
@@ -7711,9 +7721,6 @@ if (rebootBtn) rebootBtn.addEventListener('click', async (e) => {
 });
 
 // ── Voice toggle ─────────────────────────────────────────
-let audioContext = null;
-
-
 // One place that owns how the voice control looks, so no caller has to reach
 // into the button's children and no caller can delete them.
 function setMicButtonState(mode) {
@@ -7733,8 +7740,10 @@ function setMicButtonState(mode) {
 }
 
 async function toggleVoice(desiredState = null, { quiet = false } = {}) {
-    const targetState = typeof desiredState === 'boolean' ? desiredState : !state.voiceActive;
-    if (targetState === state.voiceActive) return true;
+    const duplex = window.AuraVoiceMode;
+    const active = Boolean(duplex && typeof duplex.isActive === 'function' && duplex.isActive());
+    const targetState = typeof desiredState === 'boolean' ? desiredState : !active;
+    if (targetState === active) return true;
     if (targetState && state.voiceSummary && state.voiceSummary.available === false) {
         if (!quiet) appendMsg('aura', '⚠ Voice channel is currently unavailable.');
         return false;
@@ -7747,114 +7756,26 @@ async function toggleVoice(desiredState = null, { quiet = false } = {}) {
         if (!quiet) appendMsg('aura', '⚠ Microphone input is disabled in Runtime Settings.');
         return false;
     }
-    const orb = $('voice-orb');
-    state.voiceActive = targetState;
-    $('voice-orb-wrap').classList.toggle('active', state.voiceActive);
-    // Setting textContent on the button deletes #stop-icon — the very element
-    // that shows the state — and replaced it with an emoji that rendered as a
-    // bare ■. State is a class and a hidden toggle now; the drawn icons stay
-    // in the DOM.
-    setMicButtonState(state.voiceActive ? 'listening' : 'idle');
-
-    if (state.voiceActive) {
-        orb.className = 'voice-orb listening';
-        try {
-            const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-            audioContext = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: 16000 });
-
-            // Modern AudioWorklet approach
-            await audioContext.audioWorklet.addModule('/static/voice-processor.js');
-            const source = audioContext.createMediaStreamSource(stream);
-            const voiceNode = new AudioWorkletNode(audioContext, 'voice-capture-processor');
-            resetVoiceSignalAggregation();
-
-            voiceNode.port.onmessage = (e) => {
-                if (!state.voiceActive) return;
-                if (e.data.type === 'pcm' && state.ws && state.ws.readyState === WebSocket.OPEN) {
-                    state.ws.send(e.data.data);
-                } else if (e.data.type === 'features') {
-                    accumulateVoiceSignal(e.data);
-                }
-            };
-
-            // Web Audio AnalyserNode integration for interactive pulsing
-            const analyser = audioContext.createAnalyser();
-            analyser.fftSize = 64;
-            source.connect(analyser);
-
-            source.connect(voiceNode);
-            voiceNode.connect(audioContext.destination);
-            state.audioStream = stream;
-            state.voiceNode = voiceNode;
-
-            const bufferLength = analyser.frequencyBinCount;
-            const dataArray = new Uint8Array(bufferLength);
-
-            function updateVoiceOrbPulse() {
-                if (!state.voiceActive) {
-                    const voiceOrb = $('voice-orb');
-                    if (voiceOrb) {
-                        voiceOrb.style.transform = '';
-                        voiceOrb.style.boxShadow = '';
-                    }
-                    return;
-                }
-                analyser.getByteFrequencyData(dataArray);
-                let sum = 0;
-                for (let i = 0; i < bufferLength; i++) {
-                    sum += dataArray[i];
-                }
-                const avg = sum / bufferLength;
-
-                // dynamic biological scale and shadow glow
-                const scale = 1.0 + (avg / 255.0) * 0.38;
-                const glow = 40 + (avg / 255.0) * 55;
-
-                const voiceOrb = $('voice-orb');
-                if (voiceOrb) {
-                    voiceOrb.style.transform = `scale(${scale})`;
-                    voiceOrb.style.boxShadow = `0 0 ${glow}px var(--border-glow), 0 0 ${glow * 2}px rgba(138, 43, 226, 0.22), inset 0 0 20px rgba(255, 255, 255, 0.4)`;
-                }
-                requestAnimationFrame(updateVoiceOrbPulse);
-            }
-
-            requestAnimationFrame(updateVoiceOrbPulse);
-
-        } catch (err) {
-            console.error('Voice capture failed:', err);
-            if (!quiet) appendMsg('aura', '⚠ I couldn\'t access your microphone.');
-            state.voiceActive = false;
-            $('voice-orb-wrap').classList.remove('active');
-            orb.className = 'voice-orb';
-            setMicButtonState('idle');
-            const voiceOrb = $('voice-orb');
-            if (voiceOrb) {
-                voiceOrb.style.transform = '';
-                voiceOrb.style.boxShadow = '';
-            }
-            return false;
-        }
-    } else {
-        orb.className = 'voice-orb';
-        const voiceOrb = $('voice-orb');
-        if (voiceOrb) {
-            voiceOrb.style.transform = '';
-            voiceOrb.style.boxShadow = '';
-        }
-        flushVoiceSignal();
-        if (state.audioStream) {
-            state.audioStream.getTracks().forEach(t => t.stop());
-            state.audioStream = null;
-        }
-        if (audioContext) {
-            audioContext.close();
-            audioContext = null;
-        }
-        clearTimeout(state.voiceSignalTimer);
-        state.voiceSignalTimer = null;
-        state.voiceSignalAggregation = null;
+    if (!duplex || typeof duplex.enter !== 'function' || typeof duplex.exit !== 'function') {
+        if (!quiet) appendMsg('aura', 'Voice mode did not load. Reload Aura and try again.');
+        return false;
     }
-    return state.voiceActive === targetState;
+    try {
+        const started = targetState ? await duplex.enter() : (await duplex.exit(), false);
+        state.voiceActive = targetState ? Boolean(started && duplex.isActive()) : false;
+        $('voice-orb-wrap').classList.toggle('active', state.voiceActive);
+        $('voice-orb').className = state.voiceActive ? 'voice-orb listening' : 'voice-orb';
+        setMicButtonState(state.voiceActive ? 'listening' : 'idle');
+        return targetState ? state.voiceActive : !duplex.isActive();
+    } catch (err) {
+        console.error('Voice mode transition failed:', err);
+        state.voiceActive = false;
+        $('voice-orb-wrap').classList.remove('active');
+        $('voice-orb').className = 'voice-orb';
+        setMicButtonState('idle');
+        if (!quiet) appendMsg('aura', 'Voice mode could not start.');
+        return false;
+    }
 }
 
 /**
@@ -7932,13 +7853,12 @@ const micBtn = $('mic-btn');
 if (micBtn) micBtn.addEventListener('click', (e) => {
     e.preventDefault();
     e.stopPropagation();
-    // Prefer the full-duplex surface; fall back to the legacy half-duplex
-    // path if that bundle failed to load, so the button is never dead.
+    // The duplex surface is the only browser microphone owner.
     if (window.AuraVoiceMode && typeof window.AuraVoiceMode.toggle === 'function') {
         window.AuraVoiceMode.toggle();
         return;
     }
-    toggleVoice();
+    void toggleVoice();
 });
 
 // Heartbeat is handled by the 25s pingInterval in connect()
@@ -8186,21 +8106,22 @@ async function reconcileAutoListenFromSettings({ reportFailure = true } = {}) {
     const duplex = window.AuraVoiceMode;
     const haveDuplex = duplex && typeof duplex.setAmbient === 'function';
 
-    if (!inputEnabled || !autoListen) {
-        if (haveDuplex && duplex.isAmbient()) await duplex.setAmbient(false);
-        if (!state.voiceActive) return { status: 'applied', detail: 'auto-listen remains stopped' };
-        const stopped = await toggleVoice(false);
+    if (!inputEnabled) {
+        const stopped = !haveDuplex || !duplex.isActive() || await toggleVoice(false);
         return {
             status: stopped ? 'applied' : 'failed',
-            detail: stopped ? 'browser microphone fallback stopped' : 'browser microphone fallback did not stop',
+            detail: stopped ? 'browser microphone stopped' : 'browser microphone did not stop',
         };
+    }
+    if (!autoListen) {
+        if (haveDuplex && duplex.isAmbient()) await duplex.setAmbient(false);
+        return { status: 'applied', detail: 'ambient listening remains stopped' };
     }
 
     // The resident server-side voice engine is the canonical desktop owner.
     // Do not open a second getUserMedia stream when sounddevice owns capture.
     if (state.voiceSummary && state.voiceSummary.server_capture === true) {
-        if (state.voiceActive) await toggleVoice(false);
-        if (haveDuplex && duplex.isAmbient()) await duplex.setAmbient(false);
+        if (haveDuplex && duplex.isActive()) await toggleVoice(false);
         return {
             status: state.voiceSummary.listening ? 'applied' : 'deferred',
             detail: state.voiceSummary.listening
@@ -8209,11 +8130,9 @@ async function reconcileAutoListenFromSettings({ reportFailure = true } = {}) {
         };
     }
 
-    // Prefer the full-duplex ambient lane. It is the one with barge-in,
-    // backchannels, governed clause streaming and the addressivity gate that
-    // decides whether an utterance was even meant for her; the legacy
-    // half-duplex path below is only a fallback for when that bundle failed
-    // to load, so that auto-listen is never simply dead.
+    // The full-duplex lane owns browser capture, barge-in, clause streaming,
+    // and addressivity. A missing bundle is a visible failure, never a second
+    // microphone implementation.
     if (haveDuplex) {
         if (duplex.isActive()) return { status: 'applied', detail: 'ambient listening already active' };
         const started = await duplex.setAmbient(true);
@@ -8224,11 +8143,9 @@ async function reconcileAutoListenFromSettings({ reportFailure = true } = {}) {
         };
     }
 
-    if (state.voiceActive) return { status: 'applied', detail: 'auto-listen already active' };
-    const started = await toggleVoice(true, { quiet: !reportFailure });
     return {
-        status: started ? 'applied' : 'failed',
-        detail: started ? 'desktop microphone lane started' : 'desktop microphone permission or startup failed',
+        status: reportFailure ? 'failed' : 'deferred',
+        detail: 'canonical browser voice bundle is unavailable',
     };
 }
 

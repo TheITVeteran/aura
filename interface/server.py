@@ -915,17 +915,17 @@ from core.health.system_health import router as system_health_router
 from core.session.checkpointing import CheckpointService
 from interface import memory_ui
 from interface.routes import allostasis as allostasis_routes
+from interface.routes import ambient as ambient_routes
 from interface.routes import chat as chat_routes
 from interface.routes import dashboard as dashboard_routes
 from interface.routes import devices as devices_routes
 from interface.routes import inner_state as inner_state_routes
-from interface.routes import media as media_routes
 from interface.routes import interaction_signals as interaction_signal_routes
+from interface.routes import media as media_routes
 from interface.routes import memory as memory_routes
 from interface.routes import mission_control as mission_control_routes
 from interface.routes import multimodal as multimodal_routes
 from interface.routes import performance as performance_routes
-from interface.routes import ambient as ambient_routes
 from interface.routes import privacy as privacy_routes
 from interface.routes import reality_reach as reality_reach_routes
 from interface.routes import rpc as rpc_routes
@@ -1547,13 +1547,11 @@ async def websocket_endpoint(ws: WebSocket):
                         ),
                     }))
                     continue
-                if _voice_engine_fn:
-                    ve = _voice_engine_fn()
-                    if ve:
-                        _spawn_server_bounded_task(
-                            ve.feed_chunk(msg["bytes"]),
-                            name="server.ws.feed_chunk",
-                        )
+                await ws.send_text(json.dumps({
+                    "type": "error",
+                    "status": "legacy_voice_transport_retired",
+                    "message": "Use the authenticated duplex voice endpoint at /ws/voice.",
+                }))
 
     except WebSocketDisconnect as _exc:
         logger.debug("Suppressed WebSocketDisconnect: %s", _exc)

@@ -11,6 +11,7 @@ from typing import Any
 from core.runtime.errors import record_degradation
 from core.utils.exceptions import capture_and_log
 from core.utils.task_tracker import get_task_tracker
+from core.voice.microphone_authority import record_sounddevice_array
 
 logger = logging.getLogger("Aura.VoicePipeline")
 
@@ -611,13 +612,17 @@ class _WhisperWrapper:
             duration = 5  # seconds — adjust for your use case
 
             logger.debug("Recording %ds of audio...", duration)
-            audio = sd.rec(
-                int(duration * sample_rate),
+            audio = record_sounddevice_array(
+                sd,
+                holder="stable_voice_pipeline",
+                source="stable_voice_pipeline",
+                mode="focused",
+                frames=int(duration * sample_rate),
                 samplerate=sample_rate,
                 channels=1,
                 dtype=np.float32,
+                preemptible=False,
             )
-            sd.wait()
 
             with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as f:
                 sf.write(f.name, audio, sample_rate)

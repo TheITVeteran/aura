@@ -44,6 +44,7 @@ from core.perception.multimodal_sync import (
     Modality as SynchronizedModality,
 )
 from core.runtime.service_access import optional_service
+from core.voice.microphone_authority import record_sounddevice_array
 
 logger = logging.getLogger("Perception.Sensory")
 _SENSORY_IMPORT_ERRORS = (ImportError, ModuleNotFoundError)
@@ -192,8 +193,16 @@ class MicProvider:
         except _SENSORY_IMPORT_ERRORS as exc:
             return Sound(captured=False, detail={"reason": f"sounddevice_unavailable:{type(exc).__name__}"})
         try:
-            audio = sd.rec(int(seconds * self._sr), samplerate=self._sr, channels=1, dtype="float32")
-            sd.wait()
+            audio = record_sounddevice_array(
+                sd,
+                holder="sensory_runtime.mic_provider",
+                source="sensory_runtime",
+                mode="snapshot",
+                frames=int(seconds * self._sr),
+                samplerate=self._sr,
+                channels=1,
+                dtype="float32",
+            )
             audio = audio.reshape(-1)
             transcript = self._transcribe(audio)
             return Sound(captured=True, transcript=transcript,

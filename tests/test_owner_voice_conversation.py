@@ -1,7 +1,7 @@
-"""She could hear him and would not respond.
+"""Explicit owner voice sessions remain distinct from ambient hearing.
 
 Measured live on the desktop UI. The owner pressed the voice control, the
-browser streamed audio to /api/voice/chunk, Whisper transcribed it correctly —
+The retired browser chunk route once streamed audio into the resident engine —
 
     Signal Routed: voice_engine -> sensory_gate | Payload: {'event':
     'transcript_candidate', 'text': "You are the coolest freaking be in the
@@ -10,12 +10,10 @@ browser streamed audio to /api/voice/chunk, Whisper transcribed it correctly —
 — and every utterance was filed as a CANDIDATE with
 `requires_wake_word_session=True`. Nothing ever answered.
 
-The wake-word boundary is correct for AMBIENT audio: a video or a nearby
-conversation must not hijack the typed chat lane. But audio arriving on the
-chunk path exists only because the owner pressed a control labelled "Start voice
-conversation" and is deliberately speaking to her. That is the opposite
-situation, and nothing in the dispatch decision could tell the two apart —
-`direct_command_dispatch` was driven purely by two env flags that default off.
+The wake-word boundary remains correct for ambient native audio. Focused
+browser conversation now uses the authenticated duplex endpoint, with one
+microphone lease and its own explicit floor contract. The old unauthenticated
+HTTP chunk endpoint must never return as a second capture owner.
 """
 
 from __future__ import annotations
@@ -76,16 +74,16 @@ def test_a_conversation_cannot_outlive_the_microphone():
     assert engine.owner_voice_conversation_active() is False
 
 
-def test_the_chunk_route_marks_the_conversation():
-    """Pin the wiring, not just the state machine."""
+def test_the_unleased_chunk_route_is_retired():
+    """Pin the removal of the old browser-to-resident-engine bypass."""
     import inspect
 
     from interface.routes import privacy
 
     source = inspect.getsource(privacy.api_voice_chunk)
-    assert "note_owner_voice_chunk" in source, (
-        "the chunk path is the signal the wake-word boundary was missing"
-    )
+    assert "status_code=410" in source
+    assert "_require_internal" in source
+    assert "feed_chunk" not in source
 
 
 def test_the_dispatch_decision_consults_the_owner_conversation():

@@ -76,7 +76,7 @@ def test_scope_grant_is_owner_only(client):
     assert bogus.status_code == 400
 
 
-def test_voice_frames_denied_without_scope_and_flow_with_it(client, monkeypatch):
+def test_legacy_main_socket_voice_frames_are_denied_or_retired(client, monkeypatch):
     issued = _pair(client)
     fed: list[bytes] = []
 
@@ -101,17 +101,17 @@ def test_voice_frames_denied_without_scope_and_flow_with_it(client, monkeypatch)
     with client.websocket_connect("/ws") as websocket:
         assert websocket.receive_json()["type"] == "auth_success"
         websocket.send_bytes(b"pcm-with-scope")
-        websocket.send_json({"type": "ping"})
-        assert websocket.receive_json()["type"] == "pong"
-    assert fed == [b"pcm-with-scope"]
+        retired = websocket.receive_json()
+        assert retired["status"] == "legacy_voice_transport_retired"
+    assert fed == []
 
     # Live revocation: mid-session, the very next frame is denied.
     fed.clear()
     with client.websocket_connect("/ws") as websocket:
         assert websocket.receive_json()["type"] == "auth_success"
         websocket.send_bytes(b"first-ok")
-        websocket.send_json({"type": "ping"})
-        assert websocket.receive_json()["type"] == "pong"
+        retired = websocket.receive_json()
+        assert retired["status"] == "legacy_voice_transport_retired"
         revoke = client.post("/api/devices/revoke-scope",
                              headers={"Authorization": f"Bearer {MASTER}"},
                              json={"device_id": issued["device_id"],
@@ -120,7 +120,7 @@ def test_voice_frames_denied_without_scope_and_flow_with_it(client, monkeypatch)
         websocket.send_bytes(b"after-revocation")
         denied = websocket.receive_json()
         assert denied["status"] == "paired_device_voice_scope_denied"
-    assert fed == [b"first-ok"]
+    assert fed == []
 
 
 # ── local TLS ────────────────────────────────────────────────────

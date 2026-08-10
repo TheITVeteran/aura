@@ -207,14 +207,27 @@ def test_muting_releases_the_physical_browser_track() -> None:
 
 def test_auto_listen_prefers_the_duplex_lane() -> None:
     """The duplex lane is the one with barge-in, backchannels, clause
-    streaming and the addressivity gate. The legacy half-duplex path stays
-    only so that auto-listen is never simply dead."""
+    streaming and the addressivity gate. A missing bundle fails visibly rather
+    than opening a second, unleased microphone implementation."""
     source = _aura()
     reconcile = source[source.index("async function reconcileAutoListenFromSettings") :]
     reconcile = reconcile[: reconcile.index("\n}")]
     assert "duplex.setAmbient(true)" in reconcile
-    assert "toggleVoice(true" in reconcile  # the fallback survives
-    assert reconcile.index("duplex.setAmbient(true)") < reconcile.index("toggleVoice(true")
+    assert "toggleVoice(true" not in reconcile
+    assert "canonical browser voice bundle is unavailable" in reconcile
+
+
+def test_disabling_input_stops_focused_duplex_but_disabling_ambient_does_not() -> None:
+    source = _aura()
+    reconcile = source[source.index("async function reconcileAutoListenFromSettings") :]
+    reconcile = reconcile[: reconcile.index("\n}")]
+    input_off = reconcile[reconcile.index("if (!inputEnabled)") : reconcile.index("if (!autoListen)")]
+    ambient_off = reconcile[reconcile.index("if (!autoListen)") : reconcile.index("// The resident")]
+    assert "duplex.isActive()" in input_off
+    assert "toggleVoice(false)" in input_off
+    assert "duplex.isAmbient()" in ambient_off
+    assert "duplex.setAmbient(false)" in ambient_off
+    assert "toggleVoice(false)" not in ambient_off
 
 
 def test_both_voice_assets_are_actually_loaded() -> None:

@@ -33,6 +33,7 @@ from core.runtime.runtime_settings import get_runtime_setting
 from core.runtime.service_access import optional_service
 from core.runtime.state_ownership import state_root
 from core.runtime.subprocess_gateway import get_subprocess_gateway
+from core.voice.microphone_authority import record_sounddevice_array
 
 logger = logging.getLogger("Aura.SensoryIntegration")
 
@@ -730,8 +731,16 @@ class HearingSystem:
                 channels, rate = 1, 44100
                 
                 # Record as numpy array
-                recording = sd.rec(int(duration * rate), samplerate=rate, channels=channels)
-                sd.wait() # Wait for recording to finish
+                recording = record_sounddevice_array(
+                    sd,
+                    holder="sensory_integration.hearing",
+                    source="sensory_integration",
+                    mode="snapshot",
+                    frames=int(duration * rate),
+                    samplerate=rate,
+                    channels=channels,
+                    dtype="float32",
+                )
                 
                 # Save using soundfile
                 sf.write(path, recording, rate)

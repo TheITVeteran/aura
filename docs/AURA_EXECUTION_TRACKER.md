@@ -41379,3 +41379,52 @@ inconclusive: `1/7` ordinary, `2/7` best-of-three, `3/7` complete system, and
 accepted zero latent steps in the pilot. No reasoning-gain, frontier, fusion,
 activation, or `WOW Signal` claim is authorized. The completion envelope is
 `810/920` (approximately `88.0%`).
+
+## Checkpoint 2026-08-09-114: Every Microphone Owner Uses One Authority
+
+CP113 unified the two primary voice entrances, but six secondary Python paths
+could still open `sounddevice` or PyAudio independently, and the page retained
+an older half-duplex `getUserMedia` implementation that streamed raw PCM over
+the general application WebSocket. The global input setting therefore still
+did not describe every physical handle Aura could open.
+
+Bounded microphone reads now go through canonical helpers that reserve a mode-
+specific lease before touching hardware, meter captured bytes through the
+`AudioIngressBroker`, and release in `finally`. Sensory runtime snapshots,
+proactive ambient sampling, sensory integration, the listen skill, the stable
+voice compatibility pipeline, and Reality Reach acoustic calibration all use
+that path. Acoustic calibration is non-preemptible for its bounded physical
+trial; ordinary snapshots remain preemptible according to their declared mode.
+
+The persistent LocalVoiceCortex now owns one passive PyAudio lease. Every
+callback is broker-admitted, and preemption or settings revocation closes the
+physical stream synchronously before a focused owner can proceed. Stream-open
+failure, retry, cancellation, and shutdown all release the same lease. This
+prevents an authority handoff from being logically exclusive while CoreAudio
+still has two handles open.
+
+The duplicate browser path has been removed. `voice_mode.js` and authenticated
+`/ws/voice` are the only browser capture transport; the old HTTP chunk endpoint
+authenticates then returns 410, the general WebSocket returns
+`legacy_voice_transport_retired` for bytes, and voice SSE now requires the
+internal principal. Turning microphone input off queries and closes the actual
+duplex owner. Turning ambient listening off only closes an ambient session and
+does not interrupt a deliberate focused conversation.
+
+An AST/source ratchet now enumerates direct `rec`, `playrec`, `InputStream`,
+PyAudio input-open, browser audio `getUserMedia`, and retired WS ingress sites.
+Focused authority, route, settings, local-cortex, and acoustic contracts pass
+`86/86`; the broad voice, audio, speech, microphone, privacy, ambient, and
+acoustic set passes `554/554`; canonical smoke passes `103/103`. Ruff,
+touched-file byte compilation, Node syntax, and diff hygiene pass. Evidence is
+`artifacts/closeout/voice/cp114_every_microphone_owner_uses_one_authority.json`.
+
+This is code-level ownership closure, not yet a physical voice verdict. A
+rebuilt app must still prove multilingual/noisy endpointing, barge-in,
+reconnect, default-device switching, physical removal/recovery, and one complete
+microphone-to-mind-to-speaker trace. The WOW pilot remains inconclusive at
+`1/7` ordinary, `2/7` best-of-three, `3/7` complete system, and `4/7`
+resource-heavy vanilla; its receipt and reasoning-engine defects remain the
+next non-physical implementation target. No reasoning-gain, frontier, fusion,
+activation, or `WOW Signal` claim is authorized. The completion envelope is
+`811/920` (approximately `88.2%`).

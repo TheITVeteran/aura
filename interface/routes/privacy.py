@@ -295,30 +295,15 @@ async def api_privacy_microphone(payload: PrivacyPayload, _: None = Depends(_req
 
 
 @router.post("/voice/chunk")
-async def api_voice_chunk(request: Request):
-    """Receive raw PCM audio chunk from browser AudioWorklet.
-    M-01 FIX: Size limit enforced before reading body."""
-    content_length = int(request.headers.get("content-length", 0))
-    max_voice_chunk = 512 * 1024  # 512KB max
-    if content_length > max_voice_chunk:
-        raise HTTPException(status_code=413, detail="Voice chunk too large")
-    chunk = await request.body()
-    if len(chunk) > max_voice_chunk:
-        raise HTTPException(status_code=413, detail="Voice chunk too large")
-    voice = _voice_engine_fn() if _voice_engine_fn else None
-    if voice and hasattr(voice, "feed_chunk"):
-        # Audio on this path exists only because the owner pressed the UI's
-        # voice control and is deliberately speaking to her — categorically
-        # different from a microphone that happens to be listening. That
-        # distinction is what the wake-word boundary was missing: measured live,
-        # Whisper transcribed the owner correctly, every utterance was filed as a
-        # `transcript_candidate` requiring a wake-word session, and nothing ever
-        # answered. She could hear him and would not respond.
-        note = getattr(voice, "note_owner_voice_chunk", None)
-        if callable(note):
-            note()
-        await voice.feed_chunk(chunk)
-    return JSONResponse({"ok": True})
+async def api_voice_chunk(
+    _request: Request,
+    _: None = Depends(_require_internal),
+):
+    """Reject the retired unleased browser PCM ingress."""
+    raise HTTPException(
+        status_code=410,
+        detail="Legacy voice transport retired; use authenticated /ws/voice.",
+    )
 
 
 @router.get("/source")
@@ -349,7 +334,10 @@ async def api_source_download(
 
 
 @router.get("/stream/voice")
-async def voice_sse_stream(request: Request):
+async def voice_sse_stream(
+    request: Request,
+    _: None = Depends(_require_internal),
+):
     """Server-Sent Events stream for voice pipeline output."""
     async def gen():
         sse_q: asyncio.Queue = asyncio.Queue(maxsize=50)

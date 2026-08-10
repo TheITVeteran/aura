@@ -61,6 +61,21 @@ class MicrophoneDenial:
         }
 
 
+class MicrophoneAccessError(RuntimeError):
+    """A capture helper could not obtain or retain microphone authority."""
+
+    def __init__(self, denial: MicrophoneDenial | str) -> None:
+        if isinstance(denial, MicrophoneDenial):
+            self.reason = denial.reason
+            self.detail = denial.detail
+        else:
+            self.reason = str(denial or "microphone_unavailable")
+            self.detail = ""
+        super().__init__(
+            self.reason if not self.detail else f"{self.reason}: {self.detail}"
+        )
+
+
 @dataclass
 class MicrophoneLease:
     lease_id: str
@@ -390,12 +405,151 @@ def get_audio_ingress_broker() -> AudioIngressBroker:
     return _broker
 
 
+def _recording_nbytes(recording: Any) -> int:
+    try:
+        nbytes = int(recording.nbytes)
+    except (AttributeError, TypeError, ValueError):
+        try:
+            nbytes = len(bytes(recording))
+        except (TypeError, ValueError):
+            nbytes = 0
+    return max(0, nbytes)
+
+
+def record_sounddevice_array(
+    sounddevice: Any,
+    *,
+    holder: str,
+    source: str,
+    mode: str,
+    frames: int,
+    samplerate: int,
+    channels: int,
+    dtype: Any,
+    device: Any = None,
+    principal: str = "owner:local",
+    preemptible: bool = True,
+) -> Any:
+    """Perform one bounded ``sounddevice.rec`` under canonical authority."""
+    authority = get_microphone_authority()
+    revoked_reason = ""
+
+    def _stop_capture(reason: str) -> None:
+        nonlocal revoked_reason
+        revoked_reason = str(reason or "microphone_lease_revoked")
+        try:
+            sounddevice.stop()
+        except (AttributeError, OSError, RuntimeError, TypeError, ValueError):
+            pass
+
+    result = authority.acquire(
+        holder,
+        principal=principal,
+        source=source,
+        mode=mode,
+        preemptible=preemptible,
+        revoke_callback=_stop_capture,
+    )
+    if isinstance(result, MicrophoneDenial):
+        raise MicrophoneAccessError(result)
+    lease = result
+    try:
+        kwargs = {
+            "samplerate": int(samplerate),
+            "channels": int(channels),
+            "dtype": dtype,
+        }
+        if device is not None:
+            kwargs["device"] = device
+        try:
+            recording = sounddevice.rec(int(frames), **kwargs)
+            sounddevice.wait()
+        except (AttributeError, OSError, RuntimeError, TypeError, ValueError):
+            _stop_capture("capture_failed")
+            raise
+        if revoked_reason:
+            raise MicrophoneAccessError(revoked_reason)
+        if not get_audio_ingress_broker().admit(
+            lease,
+            _recording_nbytes(recording),
+        ):
+            raise MicrophoneAccessError("microphone_lease_lost_during_capture")
+        return recording
+    finally:
+        authority.release(lease, reason="bounded_capture_complete")
+
+
+def play_and_record_sounddevice_array(
+    sounddevice: Any,
+    output: Any,
+    *,
+    holder: str,
+    source: str,
+    samplerate: int,
+    channels: int,
+    dtype: Any,
+    input_mapping: Any,
+    device: Any,
+    principal: str = "owner:local",
+) -> Any:
+    """Run one non-preemptible acoustic calibration under a calibration lease."""
+    authority = get_microphone_authority()
+    revoked_reason = ""
+
+    def _stop_calibration(reason: str) -> None:
+        nonlocal revoked_reason
+        revoked_reason = str(reason or "microphone_lease_revoked")
+        try:
+            sounddevice.stop()
+        except (AttributeError, OSError, RuntimeError, TypeError, ValueError):
+            pass
+
+    result = authority.acquire(
+        holder,
+        principal=principal,
+        source=source,
+        mode="calibration",
+        preemptible=False,
+        revoke_callback=_stop_calibration,
+    )
+    if isinstance(result, MicrophoneDenial):
+        raise MicrophoneAccessError(result)
+    lease = result
+    try:
+        try:
+            recording = sounddevice.playrec(
+                output,
+                samplerate=int(samplerate),
+                channels=int(channels),
+                dtype=dtype,
+                input_mapping=input_mapping,
+                device=device,
+                blocking=True,
+            )
+        except (AttributeError, OSError, RuntimeError, TypeError, ValueError):
+            _stop_calibration("calibration_failed")
+            raise
+        if revoked_reason:
+            raise MicrophoneAccessError(revoked_reason)
+        if not get_audio_ingress_broker().admit(
+            lease,
+            _recording_nbytes(recording),
+        ):
+            raise MicrophoneAccessError("microphone_lease_lost_during_calibration")
+        return recording
+    finally:
+        authority.release(lease, reason="acoustic_calibration_complete")
+
+
 __all__ = [
     "STALE_MICROPHONE_LEASE_S",
     "AudioIngressBroker",
+    "MicrophoneAccessError",
     "MicrophoneAuthority",
     "MicrophoneDenial",
     "MicrophoneLease",
     "get_audio_ingress_broker",
     "get_microphone_authority",
+    "play_and_record_sounddevice_array",
+    "record_sounddevice_array",
 ]

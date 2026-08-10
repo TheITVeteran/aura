@@ -1,0 +1,55 @@
+{
+  "schema": "aura.closeout.voice_checkpoint.v1",
+  "checkpoint": "CP114",
+  "recorded_at": "2026-08-09",
+  "parent_commit": "d41cef2a93982f8820742039837aff2bdad988e8",
+  "claim": "Every checked-in host microphone capture path acquires the same canonical authority before touching hardware, sends captured bytes through its ingress broker, and cannot revive the retired browser PCM bypasses.",
+  "implemented": [
+    "Bounded sounddevice capture helpers reserve, meter, and release snapshot, focused, ambient, and calibration leases around the actual hardware call.",
+    "SensoryRuntime, ProactivePerceptionV2, SensoryIntegration, the listen skill, StableVoicePipeline, and macOS acoustic Reality Reach now use those helpers instead of opening sounddevice independently.",
+    "LocalVoiceCortex holds one persistent passive PyAudio lease, brokers every callback, closes its physical stream synchronously on preemption or revocation, and releases on every retry and stop path.",
+    "The obsolete aura.js half-duplex getUserMedia implementation was removed; the authenticated duplex surface is the only browser microphone owner.",
+    "The unauthenticated HTTP chunk route returns 410 after internal authentication, the legacy main-WebSocket byte lane returns a named retirement error, and the voice SSE route now requires internal authentication.",
+    "Runtime microphone disable queries and closes the actual duplex owner, while disabling ambient listening alone does not terminate a deliberate focused conversation.",
+    "An AST and client-source ratchet enumerates all direct capture APIs and fails if a new unfenced owner or retired transport returns."
+  ],
+  "verification": {
+    "focused_authority_and_routes": {
+      "command": "pytest -q tests/test_microphone_authority.py tests/test_local_voice_cortex_hardening.py tests/test_runtime_settings.py tests/test_owner_voice_conversation.py tests/test_device_voice_scope.py tests/test_macos_acoustic_reality.py tests/test_ambient_client_contract.py",
+      "result": "86 passed"
+    },
+    "broad_voice_audio_privacy_suite": {
+      "command": "pytest -q $(rg --files tests | rg '/test_.*(voice|audio|speech|microphone|privacy|ambient|acoustic).*\\.py$' | sort)",
+      "result": "554 passed"
+    },
+    "canonical_smoke": {
+      "command": "PYTHON=/Users/bryan/.aura/live-source/.venv/bin/python make smoke",
+      "result": "103 passed"
+    },
+    "static_integrity": {
+      "result": "Ruff touched-file checks, Python byte compilation, Node syntax, AST direct-capture ratchet, and git diff hygiene passed"
+    }
+  },
+  "scientific_campaign": {
+    "campaign": "/Users/bryan/.aura/campaigns/cp103-wow-pilot-repaired-20260809",
+    "terminal_decision": "inconclusive_resource_dominance_unproven",
+    "scores": {
+      "vanilla": "1/7",
+      "vanilla_equal_compute_best_of_3": "2/7",
+      "complete_system_closed_book": "3/7",
+      "vanilla_resource_dominating": "4/7"
+    },
+    "claims_authorized": {
+      "reasoning_gain": false,
+      "frontier_level": false,
+      "fusion": false,
+      "activation": false,
+      "wow_signal": false
+    }
+  },
+  "remaining": [
+    "Prove multilingual and noisy-room endpointing, barge-in, reconnect, default-device change, physical removal, and recovery on the rebuilt Aura.app.",
+    "Expose physical capture activity separately from lease ownership and retain authenticated session-scoped audio receipts through UI recovery.",
+    "Repair the campaign receipt schema, operation-specific code generation, semantic independence checks, and exact objective verification before rerunning the WOW battery."
+  ]
+}

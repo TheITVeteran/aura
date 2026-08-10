@@ -2,8 +2,12 @@
 
 from __future__ import annotations
 
+import ast
 import asyncio
 import time
+from pathlib import Path
+
+import pytest
 
 from core.voice import microphone_authority as microphone_module
 from core.voice.microphone_authority import (
@@ -12,6 +16,7 @@ from core.voice.microphone_authority import (
     MicrophoneAuthority,
     MicrophoneDenial,
     MicrophoneLease,
+    record_sounddevice_array,
 )
 
 
@@ -223,3 +228,154 @@ def test_native_audio_enters_asr_only_through_the_ingress_broker(
     authority.release(lease)
     engine._mic_callback(b"\x03\x04" * 320, 320, None, None)
     assert engine._audio_buffer.empty()
+
+
+def test_bounded_sounddevice_capture_never_opens_without_a_lease(monkeypatch):
+    authority = _authority(monkeypatch)
+    broker = AudioIngressBroker(authority)
+    monkeypatch.setattr(microphone_module, "_authority", authority)
+    monkeypatch.setattr(microphone_module, "_broker", broker)
+
+    class Recording:
+        nbytes = 640
+
+    class SoundDevice:
+        def __init__(self):
+            self.calls = 0
+            self.waited = False
+            self.stopped = 0
+
+        def rec(self, _frames, **_kwargs):
+            self.calls += 1
+            return Recording()
+
+        def wait(self):
+            self.waited = True
+
+        def stop(self):
+            self.stopped += 1
+
+    current = authority.acquire(
+        "focused",
+        principal="owner:local",
+        source="browser_duplex",
+        mode="focused",
+        preemptible=False,
+    )
+    assert isinstance(current, MicrophoneLease)
+    device = SoundDevice()
+
+    with pytest.raises(RuntimeError, match="device_busy"):
+        record_sounddevice_array(
+            device,
+            holder="snapshot",
+            source="test",
+            mode="snapshot",
+            frames=320,
+            samplerate=16_000,
+            channels=1,
+            dtype="int16",
+        )
+    assert device.calls == 0
+
+    authority.release(current)
+    recording = record_sounddevice_array(
+        device,
+        holder="snapshot",
+        source="test",
+        mode="snapshot",
+        frames=320,
+        samplerate=16_000,
+        channels=1,
+        dtype="int16",
+    )
+    assert recording.nbytes == 640
+    assert device.calls == 1
+    assert device.waited is True
+    assert authority.state()["lease_active"] is False
+    assert sum(broker.state()["bytes_by_lease"].values()) == 640
+
+
+def test_bounded_capture_closes_hardware_before_focused_preemption_returns(monkeypatch):
+    authority = _authority(monkeypatch)
+    broker = AudioIngressBroker(authority)
+    monkeypatch.setattr(microphone_module, "_authority", authority)
+    monkeypatch.setattr(microphone_module, "_broker", broker)
+
+    class Recording:
+        nbytes = 640
+
+    class SoundDevice:
+        stopped = 0
+        focused: MicrophoneLease | None = None
+
+        def rec(self, _frames, **_kwargs):
+            return Recording()
+
+        def wait(self):
+            result = authority.acquire(
+                "focused",
+                principal="owner:local",
+                source="browser_duplex",
+                mode="focused",
+            )
+            assert isinstance(result, MicrophoneLease)
+            self.focused = result
+
+        def stop(self):
+            self.stopped += 1
+
+    device = SoundDevice()
+    with pytest.raises(RuntimeError, match="preempted_by:focused:focused"):
+        record_sounddevice_array(
+            device,
+            holder="ambient",
+            source="proactive_perception",
+            mode="ambient",
+            frames=320,
+            samplerate=16_000,
+            channels=1,
+            dtype="int16",
+        )
+
+    assert device.stopped == 1
+    assert device.focused is not None
+    assert authority.state()["holders"]["host_microphone"]["holder"] == "focused"
+    authority.release(device.focused)
+
+
+def test_every_direct_microphone_api_is_fenced_by_canonical_authority():
+    root = Path(__file__).resolve().parents[1]
+    found: set[tuple[str, str]] = set()
+    for path in (root / "core").rglob("*.py"):
+        tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Call) or not isinstance(node.func, ast.Attribute):
+                continue
+            if node.func.attr in {"rec", "playrec", "InputStream"}:
+                found.add((str(path.relative_to(root)), node.func.attr))
+                continue
+            if node.func.attr != "open":
+                continue
+            if any(
+                keyword.arg == "input"
+                and isinstance(keyword.value, ast.Constant)
+                and keyword.value.value is True
+                for keyword in node.keywords
+            ):
+                found.add((str(path.relative_to(root)), "open(input=True)"))
+
+    assert found == {
+        ("core/senses/voice_engine.py", "InputStream"),
+        ("core/voice/local_voice_cortex.py", "open(input=True)"),
+        ("core/voice/microphone_authority.py", "playrec"),
+        ("core/voice/microphone_authority.py", "rec"),
+    }
+
+    aura_js = (root / "interface/static/aura.js").read_text(encoding="utf-8")
+    duplex_js = (root / "interface/static/voice_mode.js").read_text(encoding="utf-8")
+    assert "getUserMedia({ audio: true" not in aura_js
+    assert "getUserMedia({" in duplex_js
+    assert "legacy_voice_transport_retired" in (
+        root / "interface/server.py"
+    ).read_text(encoding="utf-8")

@@ -27,6 +27,7 @@ from core.reality_reach.scalar_adapter import (
 )
 from core.runtime.audit_chain import canonical_json, sha256_hex
 from core.runtime.lockdep import checked_async_lock
+from core.voice.microphone_authority import play_and_record_sounddevice_array
 
 ACOUSTIC_RESOURCE_ID = "macos.acoustic.reference_tone_dbfs"
 ACOUSTIC_FREQUENCY_HZ = 997.0
@@ -140,14 +141,16 @@ class SoundDeviceAcousticBackend:
             import numpy as np
 
             output = np.asarray(tuple(signal), dtype=np.float32)
-            recorded = sounddevice.playrec(
+            recorded = play_and_record_sounddevice_array(
+                sounddevice,
                 output,
+                holder="macos_acoustic_reality",
+                source="reality_reach.acoustic_calibration",
                 samplerate=sample_rate_hz,
                 channels=1,
                 dtype="float32",
                 input_mapping=[1],
                 device=(self._input_device, self._output_device),
-                blocking=True,
             )
             return tuple(float(value) for value in recorded[:, 0])
         except Exception as exc:
