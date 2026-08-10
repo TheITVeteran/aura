@@ -62,6 +62,8 @@ _FAIL_CLOSED_OVERRIDES: dict[str, Any] = {
     "permissions.screen": False,
     "privacy.mode": "isolated",
     "safety.safe_mode": True,
+    "voice.input_enabled": False,
+    "voice.output_enabled": False,
 }
 
 _DESTRUCTIVE_EFFECT_SCOPES = frozenset(

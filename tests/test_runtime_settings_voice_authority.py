@@ -177,6 +177,47 @@ def test_settings_route_registers_truthful_voice_owner(
     }
 
 
+def test_disabling_input_revokes_every_microphone_lease_before_owner_cleanup(
+    _isolated_settings,
+    monkeypatch,
+) -> None:
+    from core.senses import voice_engine as voice_module
+    from core.voice import microphone_authority as microphone_module
+    from interface.routes import settings
+
+    order: list[str] = []
+
+    class Authority:
+        def revoke_all(self, *, reason):
+            order.append(f"revoke:{reason}")
+            return {"revoked": 2, "holders": ["browser", "native"], "reason": reason}
+
+    class Voice:
+        def apply_runtime_setting(self, key, previous, value):
+            order.append(f"apply:{key}:{previous}:{value}")
+            return {
+                "owner": "voice_input",
+                "status": "applied",
+                "detail": "resident capture stopped",
+            }
+
+    monkeypatch.setattr(
+        microphone_module,
+        "get_microphone_authority",
+        lambda: Authority(),
+    )
+    monkeypatch.setattr(voice_module, "get_voice_engine", lambda: Voice())
+
+    receipt = settings._apply_voice_setting("voice.input_enabled", True, False)
+
+    assert order == [
+        "revoke:runtime_setting_disabled",
+        "apply:voice.input_enabled:True:False",
+    ]
+    assert receipt["status"] == "applied"
+    assert "revoked 2 active microphone lease(s)" in receipt["detail"]
+
+
 def test_production_voice_paths_do_not_construct_competing_engines() -> None:
     root = Path(__file__).resolve().parents[1]
     candidates = [root / "aura_main.py", *sorted((root / "core").rglob("*.py"))]

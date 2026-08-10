@@ -173,6 +173,18 @@ def _apply_voice_setting(
             "detail": "setting is outside the resident voice bridge",
         }
     try:
+        revocation: dict[str, Any] | None = None
+        if key == "voice.input_enabled" and not bool(new):
+            from core.voice.microphone_authority import get_microphone_authority
+
+            # Invalidate every browser/native lease before asking individual
+            # consumers to clean up their device handles. This closes ingress
+            # immediately even if a remote browser needs one monitor tick to
+            # receive the close frame and stop its MediaStream track.
+            revocation = get_microphone_authority().revoke_all(
+                reason="runtime_setting_disabled"
+            )
+
         from core.senses.voice_engine import get_voice_engine
 
         voice = get_voice_engine()
@@ -190,6 +202,12 @@ def _apply_voice_setting(
                 "status": "failed",
                 "detail": "resident voice engine returned an invalid application receipt",
             }
+        if revocation and int(revocation.get("revoked", 0)):
+            result = dict(result)
+            result["detail"] = (
+                f"{result.get('detail', 'voice setting applied')}; revoked "
+                f"{revocation['revoked']} active microphone lease(s)"
+            )
         return result
     except (
         ImportError,

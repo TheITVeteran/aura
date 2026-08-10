@@ -47,10 +47,11 @@ def test_legacy_false_value_cannot_override_protected_agency_default(tmp_path):
     )
 
 
-def test_corrupt_file_falls_back_to_default(tmp_path):
+def test_corrupt_file_fails_closed_for_room_io(tmp_path):
     (tmp_path / "runtime.json").write_text("{ not valid json", encoding="utf-8")
     rs.clear_runtime_settings_cache()
-    assert rs.get_runtime_setting("voice.output_enabled", True) is True
+    assert rs.get_runtime_setting("voice.output_enabled", True) is False
+    assert rs.get_runtime_setting("voice.input_enabled", True) is False
 
 
 def test_corrupt_file_activates_conservative_governance_without_erasing_agency(tmp_path):

@@ -1,0 +1,63 @@
+{
+  "schema": "aura.closeout.voice_checkpoint.v1",
+  "checkpoint": "CP113",
+  "recorded_at": "2026-08-09",
+  "parent_commit": "1f342ae3acf4fe8cc3f0f7f1c38af6d4cfbbb6a7",
+  "claim": "Aura's canonical browser-duplex and resident sounddevice voice surfaces cannot contend for the host microphone, cannot ingest audio without a live lease, and cannot retain room I/O after the runtime setting is revoked.",
+  "implemented": [
+    "A process-scoped MicrophoneAuthority assigns explicit leases by physical resource group, principal, source, mode, session, generation, heartbeat, and preemption policy.",
+    "Focused browser conversation preempts passive resident listening; equal-or-lower priority capture is refused with a named denial and paired-device microphones remain physically independent.",
+    "AudioIngressBroker rejects and meters PCM frames unless their source still owns the authoritative lease.",
+    "SovereignVoiceEngine obtains a passive lease before touching sounddevice, closes the native handle when preempted, and sends callbacks through the ingress broker.",
+    "The authenticated duplex route reserves a lease before model/session construction, continuously revalidates principal, runtime settings, and lease ownership, and releases the lease on every exit path.",
+    "Browser getUserMedia starts only after voice.ready proves authentication, lease admission, and ASR/TTS warmup; socket loss and terminal admission failures stop every MediaStream track.",
+    "Mute physically stops the browser microphone track and unmute reacquires it only while the authenticated authoritative socket remains live.",
+    "voice.input_enabled revokes all active leases before resident owner cleanup, while invalid runtime settings fail closed for microphone and room-audio output."
+  ],
+  "verification": {
+    "focused_voice_and_settings": {
+      "command": "pytest -q tests/test_microphone_authority.py tests/test_voice_microphone_route.py tests/test_ambient_client_contract.py tests/test_runtime_settings_voice_authority.py",
+      "result": "33 passed"
+    },
+    "broad_voice_suite": {
+      "command": "pytest -q $(rg --files tests | rg '/test_(voice|ambient_client|owner_voice|streaming_voice|runtime_settings_voice)')",
+      "result": "194 passed"
+    },
+    "canonical_smoke": {
+      "command": "PYTHON=/Users/bryan/.aura/live-source/.venv/bin/python make smoke",
+      "result": "103 passed"
+    },
+    "static_integrity": {
+      "result": "Ruff touched-file checks, Python byte compilation, Node syntax, and git diff hygiene passed"
+    }
+  },
+  "scientific_campaign": {
+    "campaign": "/Users/bryan/.aura/campaigns/cp103-wow-pilot-repaired-20260809",
+    "terminal_decision": "inconclusive_resource_dominance_unproven",
+    "scores": {
+      "vanilla": "1/7",
+      "vanilla_equal_compute_best_of_3": "2/7",
+      "complete_system_closed_book": "3/7",
+      "vanilla_resource_dominating": "4/7"
+    },
+    "diagnosis": [
+      "Six equal-tool receipts are invalid because the producer truthfully records failed/refused sandbox attempts while the validator incorrectly requires every charged operation to succeed.",
+      "The complete system's three successes came from executable amplification; recurrent latent optimization accepted zero steps and applied no fast weights in all seven cells.",
+      "Planning, calibration, coding, and two program branches exhausted a shared 320-token budget; no operation-specific continuation or syntax repair existed.",
+      "Hash-diverse but causally correlated programs promoted the same wrong upper-median interpretation without exact objective proof."
+    ],
+    "claims_authorized": {
+      "reasoning_gain": false,
+      "frontier_level": false,
+      "fusion": false,
+      "activation": false,
+      "wow_signal": false
+    }
+  },
+  "remaining": [
+    "Migrate every secondary native microphone owner and retire or lease-fence legacy chunk/WS ingress; add a static ratchet against new direct capture APIs.",
+    "Make capture-active status distinct from lease ownership and scope TTS/audio streams per authenticated session.",
+    "Run multilingual, noisy-room, device-loss, reconnect, barge-in, and rebuilt-app microphone-to-mind-to-speaker proof on physical hardware.",
+    "Repair the campaign receipt schema and reasoning engine before a new source-bound WOW campaign."
+  ]
+}

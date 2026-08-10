@@ -2,9 +2,10 @@
 
 Thin, layering-clean wrappers over ``core.runtime.runtime_settings`` for the
 permission toggles the settings UI exposes (these are the *in-app* gates, distinct
-from and additional to macOS TCC). Each defaults to allowed so an unset or
-unreadable setting never silently disables a sensor, and reflects user changes on
-the next call (no restart). See docs/SETTINGS_WIRING_AUDIT.md.
+from and additional to macOS TCC). A never-created settings file uses the
+documented first-boot defaults. Once the control plane exists, unreadable or
+invalid state activates conservative overrides in ``runtime_settings``. See
+docs/SETTINGS_WIRING_AUDIT.md.
 """
 from __future__ import annotations
 
@@ -14,6 +15,11 @@ from core.runtime.runtime_settings import get_runtime_setting
 def camera_allowed() -> bool:
     """Whether in-app camera capture is permitted (permissions.camera)."""
     return bool(get_runtime_setting("permissions.camera", True))
+
+
+def microphone_allowed() -> bool:
+    """Whether any microphone input is permitted (voice.input_enabled)."""
+    return bool(get_runtime_setting("voice.input_enabled", True))
 
 
 def screen_allowed() -> bool:

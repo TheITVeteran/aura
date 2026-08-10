@@ -46,6 +46,12 @@ from core.runtime.subprocess_gateway import get_subprocess_gateway
 from core.utils.concurrency import RobustLock
 from core.utils.exceptions import capture_and_log
 from core.utils.task_tracker import get_task_tracker
+from core.voice.microphone_authority import (
+    MicrophoneDenial,
+    MicrophoneLease,
+    get_audio_ingress_broker,
+    get_microphone_authority,
+)
 
 
 def _user_voice_output_enabled() -> bool:
@@ -328,6 +334,7 @@ class SovereignVoiceEngine:
         self._stt_thread: threading.Thread | None = None
         self._mic_start_task: asyncio.Task[Any] | None = None
         self._mic_start_cancel_event: threading.Event | None = None
+        self._mic_lease: MicrophoneLease | None = None
 
         # ── TTS State ─────────────────────────────────────
         self._tts_initialized = False
@@ -1343,16 +1350,40 @@ class SovereignVoiceEngine:
                 logger.error("Cannot start listening — STT model failed to load")
                 return False
 
+        # Acquire before touching PortAudio. The browser duplex lane and every
+        # native capture owner share this authority, so a focused conversation
+        # can deliberately preempt passive listening without two handles ever
+        # contending for CoreAudio.
+        start_cancelled = threading.Event()
+        self._mic_start_cancel_event = start_cancelled
+        authority = get_microphone_authority()
+        lease = authority.acquire(
+            self._voice_owner_generation,
+            principal="owner:local",
+            source="sounddevice",
+            mode="passive",
+            preemptible=True,
+            revoke_callback=self._on_microphone_lease_revoked,
+        )
+        if isinstance(lease, MicrophoneDenial):
+            logger.info(
+                "Microphone capture not admitted: %s (%s)",
+                lease.reason,
+                lease.detail,
+            )
+            return False
+        self._mic_lease = lease
+
         try:
             # v7.0 HARDENING: Wrap Mic activation in a circuit breaker
             from core.resilience.resilience import SmartCircuitBreaker
             if not hasattr(self, "_mic_breaker"):
                 self._mic_breaker = SmartCircuitBreaker("Microphone", failure_threshold=2, base_recovery_timeout=300)
 
-            start_cancelled = threading.Event()
-            self._mic_start_cancel_event = start_cancelled
-
             def _open_and_start_stream():
+                lease_active, _reason = authority.validate(lease)
+                if not lease_active:
+                    return None
                 stream = sd.InputStream(
                     samplerate=SAMPLE_RATE,
                     channels=CHANNELS,
@@ -1409,8 +1440,12 @@ class SovereignVoiceEngine:
                 if start_task.done() and self._mic_start_task is start_task:
                     self._mic_start_task = None
 
-            if stream is None or self._voice_closing():
+            lease_active, _lease_reason = authority.validate(lease)
+            if stream is None or self._voice_closing() or not lease_active:
                 self._close_mic_stream(stream)
+                authority.release(lease, reason="startup_cancelled")
+                if self._mic_lease is lease:
+                    self._mic_lease = None
                 return False
             self._mic_stream = stream
 
@@ -1444,6 +1479,9 @@ class SovereignVoiceEngine:
             )
             self._is_feeding = False
             self._mic_listening = False
+            authority.release(lease, reason="startup_timeout")
+            if self._mic_lease is lease:
+                self._mic_lease = None
             self._pulse_hypha("voice_engine", "cognition", success=False)
             return False
         except (ImportError, AttributeError, RuntimeError, OSError, TypeError, ValueError) as e:
@@ -1452,6 +1490,11 @@ class SovereignVoiceEngine:
             self.stop_listening()
             self._pulse_hypha("voice_engine", "cognition", success=False)
             return False
+
+    def _on_microphone_lease_revoked(self, reason: str) -> None:
+        """Close native capture when a focused session or setting supersedes it."""
+        logger.info("Resident microphone lease revoked: %s", reason)
+        self.stop_listening()
 
     @staticmethod
     def _close_mic_stream(stream: Any) -> None:
@@ -1511,6 +1554,9 @@ class SovereignVoiceEngine:
                     enforce_failure_policy=False,
                 )
 
+        lease, self._mic_lease = self._mic_lease, None
+        get_microphone_authority().release(lease, reason="resident_capture_stopped")
+
         self._signal_mycelium("voice_engine", "cognition", {
             "event": "mic_deactivated"
         })
@@ -1529,7 +1575,9 @@ class SovereignVoiceEngine:
             logger.debug("Mic status: %s", status)
         if self._mic_listening and self.microphone_enabled:
             # indata is numpy int16 array, convert to bytes
-            self._audio_buffer.put(bytes(indata))
+            payload = bytes(indata)
+            if get_audio_ingress_broker().admit(self._mic_lease, len(payload)):
+                self._audio_buffer.put(payload)
 
     # ══════════════════════════════════════════════════════
     # BROWSER PCM INPUT (fallback path)

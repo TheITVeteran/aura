@@ -97,7 +97,10 @@ def test_the_focused_surface_tells_the_server_the_floor_is_open() -> None:
     # authentication/warmup is still in flight are not readiness evidence.
     ready = source[source.index("case 'voice.ready':") :]
     ready = ready[: ready.index("break;")]
-    assert "set_floor" in ready
+    assert "activateAudioAfterReady" in ready
+    activation = source[source.index("async function activateAudioAfterReady") :]
+    activation = activation[: activation.index("function scheduleReconnect")]
+    assert "sendCommand('set_floor'" in activation
 
 
 def test_audio_does_not_flow_before_voice_models_are_ready() -> None:
@@ -110,6 +113,10 @@ def test_audio_does_not_flow_before_voice_models_are_ready() -> None:
     opened = opened[: opened.index("ws.onmessage")]
     assert "setStatus('preparing')" in opened
     assert "setStatus('listening')" not in opened
+    startup = source[source.index("async function openSession") :]
+    startup = startup[: startup.index("function surface")]
+    assert "startCapture()" not in startup
+    assert "connect();" in startup
 
 
 def test_wire_audio_is_rate_converted_and_utterance_bound() -> None:
@@ -126,7 +133,7 @@ def test_live_voice_turns_are_not_exported_into_chat_twice() -> None:
     """The chat mirror is live; exit-time export is repair-only."""
     source = _voice()
     export = source[source.index("function exportTranscript()") :]
-    export = export[: export.index("function toggleMute()")]
+    export = export[: export.index("async function toggleMute()")]
     assert "!line.mirroredToChat" in export
     assert "if (missing.length) sink(missing)" in export
     chunk = source[source.index("case 'voice.chunk':") :]
@@ -183,6 +190,16 @@ def test_leaving_the_focused_surface_does_not_switch_the_microphone_off() -> Non
     leave = source[source.index("async function leaveFocusedMode()") :]
     leave = leave[: leave.index("\n    }")]
     assert "ambient.enabledByUser()" in leave
+
+
+def test_muting_releases_the_physical_browser_track() -> None:
+    source = _voice()
+    mute = source[source.index("async function toggleMute()") :]
+    mute = mute[: mute.index("// ── ambient startup")]
+    assert "await stopCapture()" in mute
+    stop = source[source.index("async function stopCapture()") :]
+    stop = stop[: stop.index("async function startPlayback()")]
+    assert "track.stop()" in stop
 
 
 # ── one control, not two ─────────────────────────────────────────────────

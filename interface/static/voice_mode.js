@@ -57,6 +57,9 @@
         currentVoice: '',
         metrics: null,
         ready: false,
+        serverReady: false,
+        audioStartPromise: null,
+        terminalFailure: false,
         serverState: 'idle',
         speechUtteranceId: 0,
         expectedSpeechSeq: 0,
@@ -342,6 +345,7 @@
     // ── audio capture ────────────────────────────────────────────────────
 
     async function startCapture() {
+        if (state.micStream && state.captureCtx && state.micNode) return true;
         const stream = await navigator.mediaDevices.getUserMedia({
             audio: {
                 // Not optional. See the note at the top of this file.
@@ -378,9 +382,28 @@
         source.connect(node);
         // Do NOT connect the capture node to the destination: routing the
         // microphone to the speakers is a feedback loop.
+        return true;
+    }
+
+    async function stopCapture() {
+        if (state.micNode) {
+            try { state.micNode.disconnect(); } catch (_e) { /* already gone */ }
+            state.micNode = null;
+        }
+        if (state.micStream) {
+            state.micStream.getTracks().forEach((track) => track.stop());
+            state.micStream = null;
+        }
+        const ctx = state.captureCtx;
+        state.captureCtx = null;
+        if (ctx && ctx.state !== 'closed') {
+            try { await ctx.close(); } catch (_e) { /* already closed */ }
+        }
+        state.micLevel = 0;
     }
 
     async function startPlayback() {
+        if (state.playbackCtx && state.speechNode && state.asideNode) return true;
         const ctx = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: PLAYBACK_RATE });
         state.playbackCtx = ctx;
         await ctx.audioWorklet.addModule('/static/voice-playback-processor.js');
@@ -440,17 +463,20 @@
 
         state.speechNode.connect(ctx.destination);
         state.asideNode.connect(ctx.destination);
+        return true;
     }
 
     // ── websocket ────────────────────────────────────────────────────────
 
     function wsUrl() {
         const proto = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-        return `${proto}//${window.location.host}/ws/voice`;
+        const mode = state.ambient ? 'ambient' : 'focused';
+        return `${proto}//${window.location.host}/ws/voice?mode=${mode}`;
     }
 
     function connect() {
         state.ready = false;
+        state.serverReady = false;
         state.serverState = 'idle';
         resetSpeechPlayback();
         const ws = new WebSocket(wsUrl());
@@ -474,13 +500,66 @@
             }
         };
 
-        ws.onclose = () => {
-            state.ready = false;
-            if (state.closingIntentionally || !state.active) return;
-            scheduleReconnect();
-        };
+        ws.onclose = () => { void handleSocketClose(ws); };
 
         ws.onerror = () => { /* onclose handles recovery */ };
+    }
+
+    async function handleSocketClose(closedSocket) {
+        if (state.ws !== closedSocket) return;
+        state.ready = false;
+        state.serverReady = false;
+        await teardownAudio();
+        if (state.closingIntentionally || state.terminalFailure || !state.active) return;
+        scheduleReconnect();
+    }
+
+    async function activateAudioAfterReady(msg) {
+        if (state.audioStartPromise) return state.audioStartPromise;
+        state.audioStartPromise = (async () => {
+            try {
+                await startPlayback();
+                if (!state.muted) await startCapture();
+                await ensureAudioRunning();
+                if (
+                    !state.active
+                    || !state.serverReady
+                    || !state.ws
+                    || state.ws.readyState !== WebSocket.OPEN
+                ) {
+                    await teardownAudio();
+                    return false;
+                }
+                state.ready = true;
+                setStatus(state.serverState === 'idle' ? 'listening' : state.serverState);
+                ambient.setEnabled(state.ambient);
+                showMeta(`${msg.tts_engine} · ${msg.vad_backend}${msg.asr_available ? '' : ' · ASR unavailable'}`);
+                sendCommand('list_voices');
+                sendCommand('set_floor', { open: !state.ambient });
+                return true;
+            } catch (err) {
+                console.error('[voice] authenticated audio init failed', err);
+                const denied = err && err.name === 'NotAllowedError';
+                state.ready = false;
+                state.terminalFailure = true;
+                await teardownAudio();
+                if (state.ambient) {
+                    state.active = false;
+                    state.ambient = false;
+                    ambient.setEnabled(false);
+                } else {
+                    showMeta(denied ? 'Microphone permission denied.' : 'Could not start audio.');
+                    setStatus('error');
+                }
+                if (state.ws && state.ws.readyState === WebSocket.OPEN) {
+                    state.ws.close(4004, 'browser microphone unavailable');
+                }
+                return false;
+            } finally {
+                state.audioStartPromise = null;
+            }
+        })();
+        return state.audioStartPromise;
     }
 
     function scheduleReconnect() {
@@ -509,14 +588,11 @@
     function handleEvent(msg) {
         switch (msg.type) {
             case 'voice.ready':
-                state.ready = true;
-                void ensureAudioRunning();
-                setStatus(state.serverState === 'idle' ? 'listening' : state.serverState);
-                showMeta(`${msg.tts_engine} · ${msg.vad_backend}${msg.asr_available ? '' : ' · ASR unavailable'}`);
-                sendCommand('list_voices');
-                // Re-assert the floor only after the server is ready. A
-                // reconnect gets a fresh session that defaults to ambient.
-                sendCommand('set_floor', { open: !state.ambient });
+                // Device capture begins only after socket authentication,
+                // server-side microphone lease admission, and ASR/TTS warmup.
+                // Before this event getUserMedia is never called.
+                state.serverReady = true;
+                void activateAudioAfterReady(msg);
                 break;
 
             case 'voice.state':
@@ -636,6 +712,24 @@
             case 'voice.error':
                 showMeta(msg.message || 'Voice error');
                 setStatus('error');
+                if (new Set([
+                    'paired_device_voice_scope_denied',
+                    'paired_device_session_revoked',
+                    'owner_session_revoked',
+                    'voice_disabled_in_settings',
+                    'voice_session_capacity_reached',
+                    'microphone_owner_disabled',
+                    'microphone_device_busy',
+                    'microphone_lease_revoked',
+                ]).has(msg.status)) {
+                    state.terminalFailure = true;
+                    state.ready = false;
+                    state.serverReady = false;
+                    void stopCapture();
+                    if (state.ws && state.ws.readyState === WebSocket.OPEN) {
+                        state.ws.close(4004, 'terminal voice admission failure');
+                    }
+                }
                 break;
 
             default:
@@ -890,36 +984,15 @@
         state.active = true;
         state.ambient = Boolean(wantAmbient);
         state.closingIntentionally = false;
+        state.terminalFailure = false;
+        state.serverReady = false;
         setStatus('connecting');
         surface(!state.ambient);
-
-        try {
-            await startPlayback();
-            await startCapture();
-            await ensureAudioRunning();
-        } catch (err) {
-            console.error('[voice] audio init failed', err);
-            const denied = err && err.name === 'NotAllowedError';
-            if (state.ambient) {
-                // Ambient listening must never nag. If the microphone is not
-                // available, it stops silently and the VOICE button — an
-                // explicit act, where a permission prompt is expected —
-                // remains the way in.
-                state.active = false;
-                state.ambient = false;
-                await teardownAudio();
-                ambient.setEnabled(false);
-                return false;
-            }
-            showMeta(denied ? 'Microphone permission denied.' : 'Could not start audio.');
-            setStatus('error');
-            await teardownAudio();
-            return false;
-        }
-
+        // Connect first. The server authenticates the principal, admits the
+        // canonical microphone lease, and warms both models before emitting
+        // voice.ready. Only that event is allowed to call getUserMedia.
         connect();
         state.rafHandle = requestAnimationFrame(tick);
-        ambient.setEnabled(true);
         return true;
     }
 
@@ -952,19 +1025,16 @@
     }
 
     async function teardownAudio() {
-        if (state.micStream) {
-            state.micStream.getTracks().forEach((t) => t.stop());
-            state.micStream = null;
-        }
-        if (state.micNode) { try { state.micNode.disconnect(); } catch (_e) { /* already gone */ } state.micNode = null; }
+        await stopCapture();
         if (state.speechNode) { try { state.speechNode.disconnect(); } catch (_e) { /* already gone */ } state.speechNode = null; }
         if (state.asideNode) { try { state.asideNode.disconnect(); } catch (_e) { /* already gone */ } state.asideNode = null; }
-        for (const key of ['captureCtx', 'playbackCtx']) {
+        for (const key of ['playbackCtx']) {
             const ctx = state[key];
             if (ctx && ctx.state !== 'closed') { try { await ctx.close(); } catch (_e) { /* already closed */ } }
             state[key] = null;
         }
         state.ready = false;
+        state.serverReady = false;
         resetSpeechPlayback();
     }
 
@@ -999,6 +1069,7 @@
         state.active = false;
         state.ambient = false;
         state.closingIntentionally = true;
+        state.serverReady = false;
         clearTimeout(state.reconnectTimer);
         if (state.rafHandle) cancelAnimationFrame(state.rafHandle);
 
@@ -1029,9 +1100,32 @@
         if (el.transcript) el.transcript.innerHTML = '';
     }
 
-    function toggleMute() {
-        state.muted = !state.muted;
-        sendCommand(state.muted ? 'mute' : 'unmute');
+    async function toggleMute() {
+        const muting = !state.muted;
+        if (muting) {
+            state.muted = true;
+            sendCommand('mute');
+            // Muted means the physical browser track is gone, not merely that
+            // PCM is discarded after capture. Reacquisition happens only from
+            // an already-authenticated, still-authoritative voice session.
+            await stopCapture();
+        } else {
+            if (!state.serverReady || !state.ws || state.ws.readyState !== WebSocket.OPEN) {
+                showMeta('Voice is not ready yet.');
+                return;
+            }
+            try {
+                await startCapture();
+                await ensureAudioRunning();
+                state.muted = false;
+                sendCommand('unmute');
+            } catch (err) {
+                console.error('[voice] microphone reacquisition failed', err);
+                state.muted = true;
+                sendCommand('mute');
+                showMeta('Microphone could not be reopened.');
+            }
+        }
         el.mute.classList.toggle('vm-active', state.muted);
         el.muteIco.classList.toggle('vm-ico-muted', state.muted);
         showMeta(state.muted ? 'microphone off' : 'microphone on');

@@ -34,6 +34,12 @@ from core.voice.duplex.model_runtime import (
     voice_model_runtime_status,
 )
 from core.voice.duplex.session import DuplexVoiceSession
+from core.voice.microphone_authority import (
+    MicrophoneDenial,
+    MicrophoneLease,
+    get_audio_ingress_broker,
+    get_microphone_authority,
+)
 
 logger = logging.getLogger("Aura.Routes.VoiceDuplex")
 
@@ -54,6 +60,7 @@ _VOICE_ERRORS = (
 # One live session per socket. Tracked so the runtime can report and close
 # them, and so a reload cannot strand model handles.
 _SESSIONS: dict[str, DuplexVoiceSession] = {}
+_SESSION_MICROPHONE_LEASES: dict[str, MicrophoneLease] = {}
 _SESSION_RESERVATIONS: dict[str, str] = {}
 _SESSION_RESERVATION_LOCK = threading.Lock()
 _CHAT_AUTH_HEADERS = frozenset(
@@ -154,7 +161,17 @@ def conversation_key_for(device_id: str | None, client_host: str) -> str:
 
 def active_sessions() -> dict[str, dict[str, Any]]:
     """Status of every live voice session, for health surfaces."""
-    return {sid: session.status() for sid, session in _SESSIONS.items()}
+    return {
+        sid: {
+            **session.status(),
+            "microphone_lease": (
+                _SESSION_MICROPHONE_LEASES[sid].to_dict()
+                if sid in _SESSION_MICROPHONE_LEASES
+                else None
+            ),
+        }
+        for sid, session in _SESSIONS.items()
+    }
 
 
 def model_runtime_status() -> dict[str, Any]:
@@ -177,25 +194,25 @@ def _voice_output_permitted() -> bool:
         record_degradation(
             "voice_duplex.route",
             exc,
-            action="assumed voice output permitted; runtime settings unreadable",
+            action="refused voice output because runtime settings were unreadable",
             severity="warning",
         )
-        return True
+        return False
 
 
 def _voice_input_permitted() -> bool:
     try:
-        from core.runtime.runtime_settings import get_runtime_setting
+        from core.runtime.permission_gates import microphone_allowed
 
-        return bool(get_runtime_setting("voice.input_enabled", True))
+        return microphone_allowed()
     except _VOICE_ERRORS as exc:
         record_degradation(
             "voice_duplex.route",
             exc,
-            action="assumed voice input permitted; runtime settings unreadable",
+            action="refused microphone input because runtime settings were unreadable",
             severity="warning",
         )
-        return True
+        return False
 
 
 @router.websocket("/ws/voice")
@@ -230,6 +247,7 @@ async def voice_duplex_endpoint(ws: WebSocket) -> None:
             authenticated = bool(explicit_device_token)
 
     reserved_session_id = ""
+    microphone_lease: MicrophoneLease | None = None
     try:
         if not authenticated:
             # Same 5-second credential exchange the chat socket uses.
@@ -313,6 +331,46 @@ async def voice_duplex_endpoint(ws: WebSocket) -> None:
             await ws.close(code=4429, reason="Voice session capacity reached")
             return
         reserved_session_id = session_id
+
+        requested_mode = "focused"
+        query_params = getattr(ws, "query_params", None)
+        if query_params is not None:
+            try:
+                candidate_mode = str(
+                    query_params.get("mode", "focused") or "focused"
+                )
+            except (AttributeError, TypeError, ValueError):
+                candidate_mode = "focused"
+            if candidate_mode.strip().lower() == "ambient":
+                requested_mode = "ambient"
+
+        microphone_authority = get_microphone_authority()
+        lease_result = await asyncio.to_thread(
+            microphone_authority.acquire,
+            f"voice_duplex:{session_id}",
+            principal=principal,
+            source="browser_duplex",
+            mode=requested_mode,
+            session_id=session_id,
+            preemptible=requested_mode != "focused",
+        )
+        if isinstance(lease_result, MicrophoneDenial):
+            await ws.send_text(
+                json.dumps(
+                    {
+                        "type": "voice.error",
+                        "status": f"microphone_{lease_result.reason}",
+                        "message": lease_result.detail
+                        or "The microphone is unavailable.",
+                        "remedy": lease_result.remedy,
+                    }
+                )
+            )
+            await ws.close(code=4004, reason="Microphone unavailable")
+            return
+        microphone_lease = lease_result
+        _SESSION_MICROPHONE_LEASES[session_id] = microphone_lease
+        ingress_broker = get_audio_ingress_broker()
 
         send_lock = asyncio.Lock()
         transport_stop = asyncio.Event()
@@ -412,30 +470,48 @@ async def voice_duplex_endpoint(ws: WebSocket) -> None:
 
         async def authorization_monitor() -> None:
             while not transport_stop.is_set():
-                if not principal_authorized():
+                principal_ok = principal_authorized()
+                input_ok = _voice_input_permitted()
+                output_ok = _voice_output_permitted()
+                lease_ok, lease_reason = microphone_authority.validate(
+                    microphone_lease
+                )
+                if not principal_ok or not input_ok or not output_ok or not lease_ok:
                     paired_revocation = device_session is not None
+                    authorization_revoked.set()
+                    if not principal_ok:
+                        status = (
+                            "paired_device_session_revoked"
+                            if paired_revocation
+                            else "owner_session_revoked"
+                        )
+                        message = "This voice session's authorization was revoked."
+                        close_reason = "Voice authorization revoked"
+                    elif not input_ok or not output_ok:
+                        status = "voice_disabled_in_settings"
+                        message = "Voice was turned off in Runtime Settings."
+                        close_reason = "Voice disabled"
+                    else:
+                        status = "microphone_lease_revoked"
+                        message = f"Microphone ownership ended: {lease_reason}."
+                        close_reason = "Microphone lease revoked"
                     async with send_lock:
                         with contextlib.suppress(*_VOICE_ERRORS):
                             await ws.send_text(
                                 json.dumps(
                                     {
                                         "type": "voice.error",
-                                        "status": (
-                                            "paired_device_session_revoked"
-                                            if paired_revocation
-                                            else "owner_session_revoked"
-                                        ),
-                                        "message": (
-                                            "This voice session's authorization was revoked."
-                                        ),
+                                        "status": status,
+                                        "message": message,
                                     }
                                 )
                             )
                             await ws.close(
-                                code=4003,
-                                reason="Voice authorization revoked",
+                                code=4003 if not principal_ok else 4004,
+                                reason=close_reason,
                             )
                     return
+                microphone_authority.heartbeat(microphone_lease)
                 try:
                     await asyncio.wait_for(transport_stop.wait(), timeout=0.25)
                 except TimeoutError:
@@ -466,6 +542,13 @@ async def voice_duplex_endpoint(ws: WebSocket) -> None:
                         await ws.close(code=1009, reason="Voice audio message too large")
                         connected = False
                         continue
+                    if not ingress_broker.admit(
+                        microphone_lease,
+                        len(message["bytes"]),
+                    ):
+                        await ws.close(code=4004, reason="Microphone lease inactive")
+                        connected = False
+                        continue
                     await session.feed_audio(message["bytes"])
                 elif "text" in message and message["text"]:
                     if (
@@ -488,8 +571,14 @@ async def voice_duplex_endpoint(ws: WebSocket) -> None:
             with contextlib.suppress(asyncio.CancelledError):
                 await authorization_task
             _SESSIONS.pop(session_id, None)
+            _SESSION_MICROPHONE_LEASES.pop(session_id, None)
             with contextlib.suppress(*_VOICE_ERRORS, asyncio.CancelledError):
                 await session.close()
+            microphone_authority.release(
+                microphone_lease,
+                reason="duplex_session_closed",
+            )
+            microphone_lease = None
             _release_voice_session(session_id)
             reserved_session_id = ""
             logger.info("Voice session %s closed", session_id)
@@ -505,5 +594,15 @@ async def voice_duplex_endpoint(ws: WebSocket) -> None:
         with contextlib.suppress(RuntimeError):
             await ws.close(code=1011, reason="Voice lane error")
     finally:
+        if microphone_lease is not None:
+            if microphone_lease.session_id:
+                _SESSION_MICROPHONE_LEASES.pop(
+                    microphone_lease.session_id,
+                    None,
+                )
+            get_microphone_authority().release(
+                microphone_lease,
+                reason="duplex_transport_closed",
+            )
         if reserved_session_id:
             _release_voice_session(reserved_session_id)

@@ -41331,3 +41331,51 @@ also explicit: one canonical microphone authority must replace the multiple
 native/browser hardware owners and make `voice.input_enabled` a real global
 revocation switch. The completion envelope remains `809/920` (approximately
 `87.9%`).
+
+## Checkpoint 2026-08-09-113: Primary Voice Surfaces Share Microphone Authority
+
+Aura's two production voice entrances previously had independent answers to
+"who owns the microphone?" The resident `sounddevice` listener could hold the
+host device while browser duplex opened `getUserMedia`, and the browser opened
+its track before socket authentication or model readiness. The runtime input
+toggle stopped the resident engine but could leave an already-open duplex
+MediaStream capturing. That made the visible setting and each subsystem's
+local state individually plausible while the whole system was false.
+
+`MicrophoneAuthority` now assigns process-scoped leases by physical resource,
+authenticated principal, transport, capture mode, session, generation,
+heartbeat, and preemption policy. Focused conversation can preempt passive
+resident listening; equal-or-lower priority owners receive a named refusal;
+paired-device microphones remain separate from the host resource. The
+`AudioIngressBroker` admits and meters PCM only while its lease is current.
+
+The resident voice engine acquires before touching PortAudio, releases on every
+startup/stop failure, closes when preempted, and sends callbacks through the
+broker. The duplex route acquires after authentication and settings admission
+but before model/session construction, continuously revalidates identity,
+settings, and ownership, and releases on every transport exit. Runtime input
+revocation invalidates every lease before individual owner cleanup, and an
+invalid settings control plane now fails closed for room input and output.
+
+The browser no longer calls `getUserMedia` while connecting or warming. Only
+the authenticated `voice.ready` event may initialize playback/capture. Socket
+loss and terminal admission errors stop all tracks. Mute now means the physical
+track is stopped; unmute reacquires only through an already-authenticated,
+still-authoritative session. Ambient presence is not displayed as listening
+until that sequence completes.
+
+Focused authority, route, client, and settings contracts pass `33/33`; the
+broad duplex, ambient, native, owner-conversation, streaming, and settings
+voice set passes `194/194`; canonical smoke passes `103/103`. Ruff,
+touched-file byte compilation, Node syntax, and diff hygiene pass. Evidence is
+`artifacts/closeout/voice/cp113_primary_voice_surfaces_share_microphone_authority.json`.
+
+This checkpoint intentionally does not overstate global closure. Secondary
+native microphone owners and the legacy chunk/general-WebSocket ingress still
+need migration or retirement, followed by a static direct-capture ratchet and
+physical multilingual/noisy/device-loss proof. The completed WOW pilot remains
+inconclusive: `1/7` ordinary, `2/7` best-of-three, `3/7` complete system, and
+`4/7` resource-heavy vanilla with six invalid equal-tool receipts. Recurrence
+accepted zero latent steps in the pilot. No reasoning-gain, frontier, fusion,
+activation, or `WOW Signal` claim is authorized. The completion envelope is
+`810/920` (approximately `88.0%`).
