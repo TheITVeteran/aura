@@ -151,7 +151,7 @@ _PAST_SCREEN_NARRATION_RE = re.compile(
 )
 
 #: Surfaces that mean "the thing Bryan is looking at".
-_SCREEN_SURFACE = r"(?:screen|display|monitor)"
+_SCREEN_SURFACE = r"(?:screen|display|monitor|window|windows|desktop)"
 
 #: Ways of asking to be told what is there. Deliberately a CUE class rather
 #: than a phrase list.
@@ -167,7 +167,12 @@ _SCREEN_SURFACE = r"(?:screen|display|monitor)"
 #: structural instead: a perception or report cue anywhere near a screen noun.
 _PERCEPTION_CUE = (
     r"(?:read|look(?:ing)?\s+at|inspect|describe|check|examine|capture|view"
-    r"|see|seeing|watch|showing|shows|shown|display(?:ed|ing)?|tell\s+me|what)"
+    r"|see|seeing|watch|showing|shows|shown|display(?:ed|ing)?|tell\s+me"
+    # Question words, with the apostrophe optional. People type "whats on my
+    # screen" constantly, and \bwhat\b cannot match inside "whats" — one
+    # missing punctuation mark was the whole difference between looking and
+    # not. This is the third time this cue class has been one phrasing short.
+    r"|what(?:'?s)?|which|where(?:'?s)?|frontmost|in\s+front)"
 )
 
 _SCREEN_OBSERVATION_RE = re.compile(

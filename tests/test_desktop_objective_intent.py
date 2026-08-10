@@ -109,3 +109,40 @@ def test_real_app_references_still_route_to_desktop_control():
         assert looks_like_desktop_objective(message) is True, (
             f"a real desktop objective was lost: {message[:60]!r}"
         )
+
+
+def test_screen_questions_survive_missing_apostrophes_and_plain_nouns():
+    """LIVE 2026-08-10: the cue class was one phrasing short, for the third time.
+
+    "whats on my screen right now" missed because \\bwhat\\b cannot match inside
+    "whats" — one absent punctuation mark was the whole difference between
+    looking and not. "which window is in front" missed because a window was not
+    a screen surface.
+    """
+    from core.runtime.desktop_objective_intent import _SCREEN_OBSERVATION_RE
+
+    for asked in (
+        "take a look at my screen — which application is frontmost?",
+        "what is on my screen",
+        "whats on my screen right now",
+        "which window is in front",
+        "whats up on the display",
+        "read my screen",
+        "tell me what you see on my screen currently?",
+        "what windows do i have open",
+    ):
+        assert _SCREEN_OBSERVATION_RE.search(asked), asked
+
+
+def test_talking_about_a_screen_is_not_asking_to_read_one():
+    """A capture that fires on a remark is worse than one that misses a request."""
+    from core.runtime.desktop_objective_intent import _SCREEN_OBSERVATION_RE
+
+    for remark in (
+        "close the window",
+        "open a new window",
+        "my screen protector is cracked",
+        "i bought a new monitor yesterday",
+        "what is consciousness",
+    ):
+        assert _SCREEN_OBSERVATION_RE.search(remark) is None, remark
