@@ -7578,8 +7578,7 @@ def _assess_user_facing_reply(
         if _missing_requested_self_process_coverage(user_message, raw):
             reasons.append("missing_requested_self_process_coverage")
     elif is_expansion_request_turn(user_message):
-        words = _word_count(raw)
-        if words < 20 or _EXPANSION_DEFLECTION_RE.search(raw):
+        if _EXPANSION_DEFLECTION_RE.search(raw):
             reasons.append("too_thin_for_expansion_request")
     elif is_status_check_turn(user_message):
         if _LOW_SIGNAL_REASSURANCE_RE.match(raw):
@@ -7595,23 +7594,45 @@ def _assess_user_facing_reply(
         and not memory_pin_confirmation
         and _requires_substantive_reply(user_message)
     ):
-        words = _word_count(raw)
-        explicit_brevity = _explicit_brevity_requested(user_message)
-        # Brevity alone is not a failure: a substantive sentence or two — and
-        # sometimes only a few words — is a legitimate reply. These floors only
-        # catch near-empty non-answers; genuine filler/deflection/reassurance is
-        # caught by the semantic detectors above, not by word count.
-        if not explicit_brevity and (_LOW_SIGNAL_REASSURANCE_RE.match(raw) or words < 2):
+        # NO WORD-COUNT FLOOR.
+        #
+        # There used to be three, stacked: words < 2 -> too_short_for_user_turn,
+        # words < 4 -> too_thin_for_user_turn, words < 6 (open-ended) ->
+        # too_thin_for_open_ended_turn.
+        #
+        # LIVE DEFECT, 2026-08-10. Asked "multiply 7919 by 6421 — actually run
+        # it, give me the number", the Cortex answered 50847899. Correct, and
+        # exactly what was asked for. The floor counted one word:
+        #
+        #   Cortex produced an unsafe user-facing draft
+        #       (too_short_for_user_turn, len=8). Treating it as failed generation.
+        #   Cortex-RETRY-1 produced an unsafe user-facing draft
+        #       (too_short_for_user_turn, len=8). Treating it as failed generation.
+        #   Proof/operator request requires a valid Cortex response; refusing
+        #       lower-lane fallback.
+        #
+        # Two correct answers destroyed and then a refusal — "I couldn't get to
+        # an answer I'd stand behind" — about a multiplication she had already
+        # done right, twice. The same reason string appears in
+        # test_live_recurrence_depth_is_earned with len=5.
+        #
+        # The floors were justified as catching "near-empty non-answers", but
+        # that is a question about information content and the semantic
+        # detector already answers it: _LOW_SIGNAL_REASSURANCE_RE matches
+        # "Sure.", "Okay.", "Yes." and does not match "50847899". The counts
+        # added nothing except a length at which a correct answer becomes
+        # unservable — and the right length is unknowable, because it depends
+        # on the question, which is why every one of these numbers was a guess.
+        #
+        # She does not trend toward one-word replies. The floor was insurance
+        # against a failure mode that does not occur, priced in correct answers
+        # that do.
+        if _LOW_SIGNAL_REASSURANCE_RE.match(raw) and not _explicit_brevity_requested(
+            user_message
+        ):
             reasons.append("too_short_for_user_turn")
-        elif words < 4 and not _is_tiny_direct_turn(user_message) and not explicit_brevity:
-            if not (words >= 3 and any(w in raw.lower() for w in ("thinking", "working", "processing", "online"))):
-                reasons.append("too_thin_for_user_turn")
-        elif not _is_task_turn(user_message):
-            open_ended = any(marker in user_norm for marker in _OPEN_ENDED_MARKERS)
-            if open_ended and words < 6 and not explicit_brevity:
-                reasons.append("too_thin_for_open_ended_turn")
 
-    if is_confusion_repair_turn(user_message) and _word_count(raw) < 8:
+    if is_confusion_repair_turn(user_message) and _LOW_SIGNAL_REASSURANCE_RE.match(raw):
         if not (_word_count(raw) >= 3 and any(w in raw.lower() for w in ("thinking", "working", "processing", "online"))):
             reasons.append("too_thin_for_confusion_repair")
 
