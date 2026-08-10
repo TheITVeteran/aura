@@ -1014,6 +1014,31 @@ def install_runtime_validation() -> dict[str, Any]:
             owner="core/reality_reach/metrology.py",
         )
     )
+    suite.add_test(
+        ValidationTest(
+            name="certified_typed_transitions_are_exact",
+            description=(
+                "the recurrence executor returns exact Boolean and modular next "
+                "states over its complete declared primitive domain"
+            ),
+            required_capability="",
+            observation=Observation(
+                name="all_declared_transitions_exact",
+                value=True,
+                source=(
+                    "core/brain/llm/latent_cortex/typed_transition_executor.py "
+                    "exhaustive contract"
+                ),
+            ),
+            predict=lambda _m: _certified_transition_contract_holds(),
+            score=lambda p, o: boolean_score(
+                bool(p),
+                expected=bool(o.value),
+                subject="certified typed recurrence",
+            ),
+            owner="core/brain/llm/latent_cortex/typed_transition_executor.py",
+        )
+    )
 
     suite.add_test(
         ValidationTest(
@@ -1147,6 +1172,23 @@ def install_runtime_validation() -> dict[str, Any]:
                 "the UNKNOWN-vs-UNSUPPORTED property is measured on constructed "
                 "turns; no live turn has been audited, and the claim-pattern "
                 "table's recall against real confabulations is unmeasured"
+            ),
+        )
+    )
+    suite.add_claim(
+        Claim(
+            statement=(
+                "Given a valid typed state and typed action, the certified recurrent "
+                "executor computes the exact next Boolean or bounded modular state."
+            ),
+            test="certified_typed_transitions_are_exact",
+            owner="core/brain/llm/latent_cortex/typed_transition_executor.py",
+            asserted_in="docs/AURA_EXECUTION_TRACKER.md",
+            evidence=Evidence.MEASURED_SYNTHETIC,
+            evidence_note=(
+                "Exhaustive over 504 Boolean and 3,828 modular primitive transitions; "
+                "semantic action compilation, broader families, live use, and reasoning "
+                "gain remain separate gates."
             ),
         )
     )
@@ -1293,6 +1335,72 @@ def install_runtime_validation() -> dict[str, Any]:
 
 
 # ── prediction helpers, kept small and failure-tolerant ───────────────
+
+
+def _certified_transition_contract_holds() -> bool:
+    from core.brain.llm.latent_cortex.typed_transition_executor import (
+        CertifiedTransitionExecutor,
+        TypedTransitionInput,
+    )
+
+    executor = CertifiedTransitionExecutor()
+    boolean_actions = ((0, 0, 0),) + tuple(
+        (opcode, operand, 1) for opcode in (1, 2, 3) for operand in (0, 1)
+    )
+    for depth in range(1, 9):
+        for pc in range(depth):
+            for value in (0, 1):
+                for opcode, operand, has_operand in boolean_actions:
+                    result = executor.execute(
+                        TypedTransitionInput(
+                            family="boolean",
+                            depth=depth,
+                            field_names=("pc", "value", "done"),
+                            state=(pc, value, 0),
+                            action_field_names=("opcode", "operand", "has_operand"),
+                            action=(opcode, operand, has_operand),
+                        )
+                    )
+                    expected = (
+                        1 - value
+                        if opcode == 0
+                        else value & operand
+                        if opcode == 1
+                        else value | operand
+                        if opcode == 2
+                        else value ^ operand
+                    )
+                    if result.next_state != (
+                        pc + 1,
+                        expected,
+                        int(pc + 1 == depth),
+                    ):
+                        return False
+    for modulus in (13, 17, 19, 23):
+        for residue in range(modulus):
+            for operand in range(1, modulus):
+                for opcode in (0, 1, 2):
+                    result = executor.execute(
+                        TypedTransitionInput(
+                            family="modular",
+                            depth=4,
+                            field_names=("pc", "residue", "done"),
+                            state=(2, residue, 0),
+                            action_field_names=("opcode", "operand", "modulus"),
+                            action=(opcode, operand, modulus),
+                        )
+                    )
+                    expected = (
+                        (residue + operand) % modulus
+                        if opcode == 0
+                        else (residue * operand) % modulus
+                        if opcode == 1
+                        else (residue - operand) % modulus
+                    )
+                    if result.next_state != (3, expected, 0):
+                        return False
+    return True
+
 
 def _fabrication_unknown_turn_findings() -> int:
     """Findings wrongly marked UNSUPPORTED for a turn the ledger never saw.

@@ -11,6 +11,7 @@ from typing import Any
 from core.brain.llm.latent_cortex.recurrent_transition_core import (
     RecurrentTransitionCore,
 )
+from core.learning.certified_transition_program import execute_program_transition
 from core.learning.recurrence_curriculum import StructuredTransitionProgram
 from core.learning.recurrent_transition_supervision import (
     StateCodebookSpec,
@@ -212,6 +213,7 @@ def _validate_program_target(
     ):
         raise ValueError("native transition target is invalid")
     action = program.actions[transition_index]
+    execute_program_transition(program, transition_index=transition_index)
     for field_name, value in zip(program.action_field_names, action, strict=True):
         if not 0 <= value < _action_class_count(
             family=program.state_trace.family,

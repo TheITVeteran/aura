@@ -43868,3 +43868,44 @@ zero, this programme will stop asking an unconstrained MLP to rediscover exact
 arithmetic and introduce a certified extensible transition executor, leaving
 the neural cortex responsible for semantic compilation, control, and residual
 reasoning rather than pretending approximate arithmetic is reliable.
+
+## Checkpoint 2026-08-10-190: Exact Recurrence Stops Pretending Arithmetic Is Approximate
+
+The final generic-neural discriminator consumed 2,048 updates. Its best
+development checkpoint at step 1,088 reached `16/40` exact transitions and the
+untouched holdout reached `25/80` (`0.3125`). Boolean depth-four exact accuracy
+reached `0.75`, demonstrating real learned transfer in that bounded family.
+Modular target accuracy remained `0`, `0`, `0`, and `0.0625` across depths one
+through four. More generic optimization is retired. The embedded receipt
+SHA-256 is
+`757f11b94c9df87f0f916873034a4bc26c548f8182209a536b30e009e4c24605`;
+the receipt file SHA-256 is
+`128169912af548e47750d1917db156b5a7a66ca3de5f5cd1b5e96768090210cf`;
+the selected core SHA-256 is
+`15d65c9121671a8012207f1d7b76b6c9f81eb027e14a18f23ea5492714d353dc`.
+
+A closed-by-default certified transition executor now owns operations whose
+correctness is defined exactly. It accepts typed state and typed action, checks
+family schemas and terminal invariants, executes the registered transition,
+rechecks program-counter and done semantics, and emits hash-bound receipts that
+do not expose private values. Boolean and bounded modular arithmetic are
+built-in families; new families require an explicit immutable contract and
+cannot replace an existing family.
+
+The executor is exhaustively validated over all 504 declared Boolean primitive
+transitions and all 3,828 modular primitive transitions in the curriculum
+domain. A separate bridge recomputes 1,152 transitions from independently
+generated verified programs and refuses any disagreement with their traces.
+Malformed operands, terminal input, unknown families, schema drift, duplicate
+extensions, and invariant-violating implementations fail closed. Native neural
+training now checks every target against this executor before using it. The
+narrow exactness claim is registered in the organism validation system with an
+explicit synthetic-evidence boundary.
+
+Transition and runner contracts pass `77/77`; validation-discipline contracts
+pass `62/62`; new-file Ruff and bytecode compilation pass. This advances the
+completion envelope to `886/920` (approximately `96.3%`). This is an exact
+execution organ, not a reasoning-gain result. Next, the executor must compose
+under student roll-in, the semantic cortex must compile actions without private
+answers, and the completed recurrent path must beat ordinary decode on fresh
+behavioral tasks before any `WOW Signal` or resident-32B gate opens.
