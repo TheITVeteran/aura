@@ -1295,7 +1295,17 @@ class HostAutomationProvider:
             )
 
         self._log_receipt(receipt)
-        if receipt.success and retain_capture:
+        # Retention runs for the ephemeral directory too.
+        #
+        # It used to be gated on retain_capture, so the ONLY thing bounding
+        # ~/.aura/data/ephemeral was the per-call cleanup in get_screen_text —
+        # a single point of failure guarding the directory with by far the
+        # highest churn, roughly one full-screen capture every 7 seconds. When
+        # that cleanup was refused for hours on 2026-08-10 nothing noticed and
+        # nothing pruned. A backstop is the difference between a bug that
+        # leaves stale files and one that fills a disk with pictures of the
+        # person's screen.
+        if receipt.success:
             try:
                 retention = await self._enforce_screenshot_retention(
                     Path(save_path).parent,
@@ -1406,12 +1416,33 @@ class HostAutomationProvider:
 
         if not retain_screenshot:
             try:
-                cleanup = await ActionExecutor.execute(
-                    domain=ActionDomain.FILE_WRITE,
-                    action_name="host_automation.ephemeral_ocr_cleanup",
-                    params={"path": str(ss.result), "op": "delete"},
-                    source="host_automation.ephemeral_ocr_cleanup",
-                )
+                # THIRD instance of the missing-scope defect, after the capture
+                # directory and screenshot retention. Both of those were fixed
+                # by declaring the scope; this path was not, so every ephemeral
+                # capture survived its own deletion.
+                #
+                # LIVE, 2026-08-10, immediately after the capture fix went live:
+                # ~/.aura/data/ephemeral grew to 10 files / 15MB in the first
+                # minutes, one roughly every 7 seconds — about 770MB an hour of
+                # full-screen captures that nothing could ever remove. The
+                # refusal reads "permission_model_blocked: Modality
+                # 'file_delete' is disabled", and that rule is correct: Aura
+                # may not delete a person's files, and file_delete is
+                # deliberately ungrantable. This is not that. It is the file
+                # she created herself, seconds ago, under her own state root,
+                # explicitly as ephemeral — and leaving it there is the privacy
+                # harm the rule exists to prevent, not a way of avoiding one.
+                with local_internal_governed_scope(
+                    "host_automation.ephemeral_ocr_cleanup",
+                    domain=ActionDomain.FILE_WRITE.value,
+                    constraints={"path": str(ss.result), "op": "delete"},
+                ):
+                    cleanup = await ActionExecutor.execute(
+                        domain=ActionDomain.FILE_WRITE,
+                        action_name="host_automation.ephemeral_ocr_cleanup",
+                        params={"path": str(ss.result), "op": "delete"},
+                        source="host_automation.ephemeral_ocr_cleanup",
+                    )
                 if not self._action_completed(cleanup):
                     raise RuntimeError(
                         str(cleanup.get("error") or "ephemeral OCR cleanup was not verified")
