@@ -43360,3 +43360,49 @@ This advances the completion envelope to `870/920` (approximately `94.6%`).
 The unchanged fixed-hyperparameter, multi-seed 1.5B scaling run is next. No
 behavioral, recurrent-workspace, resident-32B, frontier, fusion, activation,
 or `WOW Signal` claim is authorized.
+
+## Checkpoint 2026-08-10-175: Persistent Coda Operator Scales on Fresh Seeds
+
+The unchanged source-bound real-1.5B sample-complexity run completed from
+published commit `202f3a77ba54d20c0a865e84419d5086b9f2ab78`. It captured
+one maximum verified teaching pool and four globally disjoint fresh validation
+cohorts across Boolean and modular families, depths two and three, two branches,
+and eight decode-coda projection sites. Rank `32`, regularization `100`, gain
+`0.25`, phase, sites, model, and source remained frozen while only complete
+teaching evidence increased.
+
+At `16`, `32`, `64`, and `128` captured training rows, mean fresh-cohort
+relative error moved `0.914768 -> 0.866015 -> 0.843329 -> 0.820294`; mean
+direction cosine moved `0.412076 -> 0.500945 -> 0.539232 -> 0.571374`.
+The fitted slopes per log2 row were `-0.030611` for relative error and
+`+0.051618` for cosine. The smallest prefix missed the all-site gate at one of
+32 site/cohort cells (`96.875%` passed), while every site and every cohort beat
+the zero operator with positive direction from `32` rows onward. At `128`
+rows the worst cohort relative error was `0.847627` and the minimum cohort
+cosine was `0.531797`.
+
+All source, model immutability, task/prompt disjointness, site topology,
+artifact publication, and fixed-hyperparameter scaling gates passed. The
+canonical embedded receipt SHA-256 is
+`255b3a37804f6eede97185914e94f95d6507b32cc5290df92e36392684b210ac`;
+the serialized receipt SHA-256 is
+`899a1dae67a417fa23e28754996a4536f88a068fa188b8803c0bfa3cac978a05`;
+the owner-private teaching inventory SHA-256 is
+`f0206b57e90738492b11fb919f230444cfe71e74ff056de4881d42d8c3276c83`.
+Evidence is preserved at
+`~/.aura/experiments/cp174-sample-scaling-202f3a77b-20260810-143652/`.
+
+This proves that the bounded persistent coda operator is not saturated at the
+CP172 evidence scale and learns a more accurate shared internal transformation
+as verified examples increase. Its admitted boundary remains
+`fresh_seed_internal_operator_scaling_only_not_behavioral_or_reasoning_gain`.
+The measured sites are decode-coda tissue, not recurrent workspace transitions;
+therefore this result does not establish algorithmic recurrence, unseen-family
+behavior, resident-32B improvement, fusion, activation, frontier reasoning, or
+the `WOW Signal`.
+
+This advances the completion envelope to `871/920` (approximately `94.7%`).
+The next bounded gate directly localizes structured computational state across
+the current recurrent trajectory and readout, then decides from evidence
+whether to preserve the existing Qwen recurrent operator or replace it with a
+state-supervised shared transition core.
