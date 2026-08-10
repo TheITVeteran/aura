@@ -644,9 +644,32 @@ class ExecutiveCore:
                 IntentSource.DRIVE,
                 IntentSource.REFLECTION,
             }
+            # EMIT_MESSAGE is deliberately NOT here.
+            #
+            # This rule exists so unfinished work constrains STARTING MORE
+            # WORK. Saying something to the person is not competing work: it
+            # spawns nothing, holds nothing, and finishes when the sentence
+            # ends. Deferring it because a background research goal is open is
+            # a category error, and it produced a permanent gag.
+            #
+            # Measured live 2026-08-10: 44 proactive initiations generated, 44
+            # suppressed, 0 ever spoken — `seconds_since_spoke: None` after
+            # 1008 ambient ticks — every one deferred with
+            # "temporal_obligation_active:Find the most obscure fact about
+            # xenobiology concepts."
+            #
+            # That is a structural deadlock, not a tuning problem. The gate
+            # closes on ANY nonzero obligation pressure, and the pressure is
+            # cleared by finishing autonomous work that this same gate defers.
+            # A goal that can only be discharged by autonomous action, blocking
+            # all autonomous action, can never be discharged. It had been
+            # holding since a stale goal list persisted in continuity.json.
+            #
+            # SPAWN_TASK, TOOL_CALL and REFLECT stay: those genuinely compete
+            # with unfinished work, and deferring them is the rule doing its
+            # job.
             and intent.action_type in {
                 ActionType.SPAWN_TASK,
-                ActionType.EMIT_MESSAGE,
                 ActionType.TOOL_CALL,
                 ActionType.REFLECT,
             }
@@ -855,9 +878,32 @@ class ExecutiveCore:
                 IntentSource.DRIVE,
                 IntentSource.REFLECTION,
             }
+            # EMIT_MESSAGE is deliberately NOT here.
+            #
+            # This rule exists so unfinished work constrains STARTING MORE
+            # WORK. Saying something to the person is not competing work: it
+            # spawns nothing, holds nothing, and finishes when the sentence
+            # ends. Deferring it because a background research goal is open is
+            # a category error, and it produced a permanent gag.
+            #
+            # Measured live 2026-08-10: 44 proactive initiations generated, 44
+            # suppressed, 0 ever spoken — `seconds_since_spoke: None` after
+            # 1008 ambient ticks — every one deferred with
+            # "temporal_obligation_active:Find the most obscure fact about
+            # xenobiology concepts."
+            #
+            # That is a structural deadlock, not a tuning problem. The gate
+            # closes on ANY nonzero obligation pressure, and the pressure is
+            # cleared by finishing autonomous work that this same gate defers.
+            # A goal that can only be discharged by autonomous action, blocking
+            # all autonomous action, can never be discharged. It had been
+            # holding since a stale goal list persisted in continuity.json.
+            #
+            # SPAWN_TASK, TOOL_CALL and REFLECT stay: those genuinely compete
+            # with unfinished work, and deferring them is the rule doing its
+            # job.
             and intent.action_type in {
                 ActionType.SPAWN_TASK,
-                ActionType.EMIT_MESSAGE,
                 ActionType.TOOL_CALL,
                 ActionType.REFLECT,
             }

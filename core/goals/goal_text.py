@@ -34,9 +34,72 @@ _INTRINSIC_GOAL_PREFIXES = (
 )
 
 
+#: Fields that carry the human-readable goal, in order of preference.
+_GOAL_TEXT_KEYS = ("goal", "description", "title", "objective", "content", "name", "text")
+
+#: ``{'key': ...`` or ``{"key": ...`` — the opening of a serialized mapping.
+#: Distinguishes a clipped repr from prose that merely starts with a brace.
+_LOOKS_LIKE_SERIALIZED_MAPPING_RE = re.compile(r"""^\{\s*['"][\w.-]+['"]\s*:""")
+
+
+def _mapping_from_serialized(value: str) -> dict | None:
+    """Recover a mapping that was stringified on its way in, or None.
+
+    A goal recorded as ``str(some_dict)`` arrives as a plain string, so the
+    dict branch below never sees it and the repr becomes the goal text. Live
+    2026-08-10, three of five persisted active goals read like this:
+
+        "{'id': 'db847edb9427', 'name': '[AUTONOMOUS INITIATIVE] ...', ...}"
+
+    They passed every actionability check and counted as outstanding
+    obligations, and the first of them was offered to the person as the reason
+    she could not act. Parsing it back is more honest than reading it aloud.
+    """
+    text = value.strip()
+    if not text.startswith("{"):
+        return None
+    if text.endswith("}"):
+        for parse in (_literal_eval, _json_loads):
+            parsed = parse(text)
+            if isinstance(parsed, dict):
+                return parsed
+    # It opened like a mapping and could not be read back as one. The live
+    # record held goals stringified AND then clipped mid-repr —
+    # "{'id': 'db847edb9427', ... 'horizon': 'short_term', 's" — so nothing
+    # can recover the text. An unreadable serialization is not a goal, and
+    # reading the fragment aloud as one is worse than having none: it counted
+    # as an outstanding obligation and was offered to the person as the reason
+    # she could not act.
+    if _LOOKS_LIKE_SERIALIZED_MAPPING_RE.search(text):
+        return {}
+    return None
+
+
+def _literal_eval(text: str) -> Any:
+    import ast
+
+    try:
+        return ast.literal_eval(text)
+    except (ValueError, SyntaxError, TypeError, MemoryError, RecursionError):
+        return None
+
+
+def _json_loads(text: str) -> Any:
+    import json
+
+    try:
+        return json.loads(text)
+    except (ValueError, TypeError):
+        return None
+
+
 def normalize_goal_text(value: Any) -> str:
+    if isinstance(value, str):
+        recovered = _mapping_from_serialized(value)
+        if recovered is not None:
+            value = recovered
     if isinstance(value, dict):
-        for key in ("goal", "description", "title", "objective", "content", "name", "text"):
+        for key in _GOAL_TEXT_KEYS:
             candidate = value.get(key)
             if candidate:
                 return " ".join(str(candidate).split())
