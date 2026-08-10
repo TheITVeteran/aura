@@ -245,6 +245,15 @@
   });
   input.addEventListener("input", autoGrow);
 
+  // Clicking the mark you clicked to get here takes you back. "close" is the
+  // host's word for it and already restores the bubble; there was simply no
+  // surface sending it except the Escape key.
+  document.getElementById("collapse")?.addEventListener("click", () => {
+    if (window.webkit?.messageHandlers?.auraCompanion) {
+      window.webkit.messageHandlers.auraCompanion.postMessage({ action: "close" });
+    }
+  });
+
   expand.addEventListener("click", () => {
     if (window.webkit?.messageHandlers?.auraCompanion) {
       window.webkit.messageHandlers.auraCompanion.postMessage({ action: "expand" });

@@ -1101,13 +1101,24 @@ class HostAutomationProvider:
         *,
         keep_path: Path | None = None,
     ) -> dict[str, int]:
-        """Bound retained captures by age, count, and total bytes."""
-        max_files = cls._retention_limit("AURA_SCREENSHOT_RETENTION_MAX_FILES", 200, 10)
+        """Bound retained captures by age, count, and total bytes.
+
+        The ephemeral directory gets its own, far tighter budget. A retained
+        screenshot is something Aura is meant to still have; an ephemeral one
+        is deleted immediately after its OCR, so ANY file at rest there is the
+        residue of a failure. Sharing the 200-file retained budget meant 67
+        orphans from a few hours of refused cleanups — 112MB of full-screen
+        captures — sat inside the limit and were never reclaimed.
+        """
+        ephemeral = directory.name == "ephemeral"
+        max_files = cls._retention_limit(
+            "AURA_SCREENSHOT_RETENTION_MAX_FILES", 4 if ephemeral else 200, 1
+        )
         max_age_days = cls._retention_limit("AURA_SCREENSHOT_RETENTION_MAX_DAYS", 14, 1)
         max_bytes = cls._retention_limit(
             "AURA_SCREENSHOT_RETENTION_MAX_BYTES",
-            512 * 1024 * 1024,
-            32 * 1024 * 1024,
+            (16 if ephemeral else 512) * 1024 * 1024,
+            8 * 1024 * 1024,
         )
         cutoff = time.time() - max_age_days * 86400
         candidates = await asyncio.to_thread(
