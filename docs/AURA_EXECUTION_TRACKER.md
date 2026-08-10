@@ -41915,3 +41915,28 @@ source-bound resident calibration, independently inspect the generated launch
 packet and liveness contract, and only then load the 32B. No resident transfer,
 broad or frontier gain, fusion, activation, or `WOW Signal` claim is authorized.
 The completion envelope is `824/920` (approximately `89.6%`).
+
+## Checkpoint 2026-08-10-128: A Calibration Is Not a Full Campaign
+
+The durable reconciliation controller previously omitted `campaign_stage` and
+the selected task domains from its signed configuration. The sweep therefore
+inherited `certificate` and all-domain defaults even when the operator intended
+a bounded calibration. This could turn a four-cell mechanism check into an
+expensive certificate while leaving its launch record mislabeled.
+
+Stage and domain subset are now committed scientific inputs. Preparation and
+reload reject unknown stages, unknown domains, empty names, and duplicate
+domains. Recovery preserves the exact stage and ordered domain set, and every
+attempt forwards both values to the sweep. The task commitment and decode
+fingerprints already bind those values at the scientific layer, so lifecycle
+and measurement identities now agree.
+
+The controller and sweep contracts pass `101/101`; Ruff, compile, and diff
+hygiene pass. The next run can therefore begin with one fresh difficulty-3
+task and the four component arms: ordinary decode, complete system,
+adaptation-disabled, and executable-producer-disabled. That run is a mechanics
+and transfer calibration only; it cannot authorize a broad gain claim. A
+positive, non-regressing result will authorize a fresh three-domain pilot, while
+a negative result will expose the failing arm before hours are spent on a full
+certificate. No resident, frontier, fusion, activation, or `WOW Signal` claim
+is authorized. The completion envelope is `825/920` (approximately `89.7%`).

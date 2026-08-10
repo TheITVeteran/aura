@@ -38,6 +38,7 @@ TERMINAL_PHASES: Final = frozenset({"complete", "yielded", "blocked"})
 CONFIG_SUFFIXES: Final = frozenset({".json", ".toml", ".yaml", ".yml", ".jinja"})
 GLOBAL_MODEL_LOCK: Final = Path.home() / ".aura/state/rlc-reconciliation-model.lock"
 CLAIM_TASK_REGISTRY_VERSION: Final = "2026.08.06.1"
+CAMPAIGN_STAGES: Final = frozenset({"component", "pilot", "certificate"})
 
 
 class ControllerError(RuntimeError):
@@ -438,6 +439,8 @@ def load_config(path: Path) -> dict[str, Any]:
         "seed",
         "per_domain",
         "difficulty",
+        "campaign_stage",
+        "domains",
         "task_registry_version",
         "n_slots",
         "max_tokens",
@@ -457,6 +460,19 @@ def load_config(path: Path) -> dict[str, Any]:
         raise ControllerError("controller_attempt_budget_invalid")
     if type(config["difficulty"]) is not int or config["difficulty"] not in {1, 2, 3}:
         raise ControllerError("controller_difficulty_invalid")
+    if config["campaign_stage"] not in CAMPAIGN_STAGES:
+        raise ControllerError("controller_campaign_stage_invalid")
+    domains = config["domains"]
+    if not isinstance(domains, list) or any(
+        not isinstance(domain, str) or not domain for domain in domains
+    ):
+        raise ControllerError("controller_domains_invalid")
+    if len(set(domains)) != len(domains):
+        raise ControllerError("controller_domains_invalid")
+    from core.brain.llm.latent_cortex.frontier_tasks import FRONTIER_DOMAINS
+
+    if any(domain not in FRONTIER_DOMAINS for domain in domains):
+        raise ControllerError("controller_domains_invalid")
     if config["task_registry_version"] != CLAIM_TASK_REGISTRY_VERSION:
         raise ControllerError("controller_task_registry_not_contamination_safe")
     if float(config["stale_after_s"]) <= float(config["episode_wall_s"]):
@@ -499,12 +515,24 @@ def build_config(
     poll_s: float,
     stale_after_s: float,
     retry_backoff_s: float,
+    campaign_stage: str = "certificate",
+    domains: Sequence[str] = (),
     adapter_root: Path | None = None,
     task_registry_version: str = CLAIM_TASK_REGISTRY_VERSION,
     controller_program: Path | None = None,
 ) -> tuple[dict[str, Any], dict[str, Any], bytes]:
     if type(difficulty) is not int or difficulty not in {1, 2, 3}:
         raise ControllerError("controller_difficulty_invalid")
+    if campaign_stage not in CAMPAIGN_STAGES:
+        raise ControllerError("controller_campaign_stage_invalid")
+    from core.brain.llm.latent_cortex.frontier_tasks import FRONTIER_DOMAINS
+
+    normalized_domains = tuple(str(domain).strip() for domain in domains)
+    if (
+        any(not domain or domain not in FRONTIER_DOMAINS for domain in normalized_domains)
+        or len(set(normalized_domains)) != len(normalized_domains)
+    ):
+        raise ControllerError("controller_domains_invalid")
     if task_registry_version != CLAIM_TASK_REGISTRY_VERSION:
         raise ControllerError("controller_task_registry_not_contamination_safe")
     source_root = source_root.expanduser().resolve(strict=True)
@@ -558,6 +586,8 @@ def build_config(
         "seed": int(seed),
         "per_domain": int(per_domain),
         "difficulty": int(difficulty),
+        "campaign_stage": campaign_stage,
+        "domains": list(normalized_domains),
         "task_registry_version": task_registry_version,
         "n_slots": int(n_slots),
         "max_tokens": int(max_tokens),
@@ -697,6 +727,8 @@ def recover_campaign(
             seed=int(previous_config["seed"]),
             per_domain=int(previous_config["per_domain"]),
             difficulty=int(previous_config["difficulty"]),
+            campaign_stage=str(previous_config["campaign_stage"]),
+            domains=tuple(str(value) for value in previous_config["domains"]),
             task_registry_version=str(previous_config["task_registry_version"]),
             n_slots=int(previous_config["n_slots"]),
             max_tokens=int(previous_config["max_tokens"]),
@@ -911,6 +943,10 @@ def _sweep_command(config: Mapping[str, Any]) -> list[str]:
         str(config["per_domain"]),
         "--difficulty",
         str(config["difficulty"]),
+        "--campaign-stage",
+        str(config["campaign_stage"]),
+        "--domains",
+        ",".join(str(value) for value in config["domains"]),
         "--task-registry-version",
         str(config["task_registry_version"]),
         "--n-slots",
@@ -1324,6 +1360,16 @@ def _parser() -> argparse.ArgumentParser:
     prepare.add_argument("--per-domain", type=int, default=4)
     prepare.add_argument("--difficulty", type=int, choices=(1, 2, 3), default=2)
     prepare.add_argument(
+        "--campaign-stage",
+        choices=tuple(sorted(CAMPAIGN_STAGES)),
+        default="certificate",
+    )
+    prepare.add_argument(
+        "--domains",
+        default="",
+        help="comma-separated frontier task domains; empty selects all domains",
+    )
+    prepare.add_argument(
         "--task-registry-version",
         default=CLAIM_TASK_REGISTRY_VERSION,
     )
@@ -1367,6 +1413,10 @@ def main(argv: Sequence[str] | None = None) -> int:
                 seed=args.seed,
                 per_domain=args.per_domain,
                 difficulty=args.difficulty,
+                campaign_stage=args.campaign_stage,
+                domains=tuple(
+                    value.strip() for value in args.domains.split(",") if value.strip()
+                ),
                 task_registry_version=args.task_registry_version,
                 n_slots=args.n_slots,
                 max_tokens=args.max_tokens,

@@ -508,12 +508,99 @@ def test_sweep_command_preserves_complete_engine_parameters(tmp_path: Path):
     command = controller._sweep_command(config)
     assert command[command.index("--arms") + 1] == "full_stack"
     assert command[command.index("--difficulty") + 1] == "2"
+    assert command[command.index("--campaign-stage") + 1] == "certificate"
+    assert command[command.index("--domains") + 1] == ""
     assert command[command.index("--task-registry-version") + 1] == (
         controller.CLAIM_TASK_REGISTRY_VERSION
     )
     assert command[command.index("--episode-wall-s") + 1] == "20.0"
     assert command[command.index("--max-wall-s") + 1] == "60.0"
     assert command[command.index("--model") + 1] == config["model"]
+
+
+def test_bounded_calibration_identity_preserves_stage_and_domain_subset(tmp_path: Path):
+    source = _source(tmp_path)
+    model = tmp_path / "model"
+    model.mkdir()
+    (model / "config.json").write_text("{}\n", encoding="utf-8")
+    (model / "model.safetensors").write_bytes(b"weights")
+    python = tmp_path / "python"
+    python.write_text("runtime", encoding="utf-8")
+    config, _manifest, _key = controller.build_config(
+        source_root=source,
+        source_commit=_source_commit(source),
+        model=model,
+        out_dir=tmp_path / "campaign",
+        python=python,
+        arms="complete_system_closed_book",
+        seed=11,
+        per_domain=1,
+        difficulty=3,
+        campaign_stage="component",
+        domains=("mathematics",),
+        n_slots=4,
+        max_tokens=64,
+        memory_fraction=0.2,
+        episode_wall_s=20.0,
+        attempt_wall_s=60.0,
+        max_attempts=3,
+        poll_s=1.0,
+        stale_after_s=40.0,
+        retry_backoff_s=1.0,
+    )
+    command = controller._sweep_command(config)
+
+    assert config["campaign_stage"] == "component"
+    assert config["domains"] == ["mathematics"]
+    assert command[command.index("--campaign-stage") + 1] == "component"
+    assert command[command.index("--domains") + 1] == "mathematics"
+
+
+@pytest.mark.parametrize(
+    ("stage", "domains", "error"),
+    [
+        ("unknown", (), "controller_campaign_stage_invalid"),
+        ("component", ("mathematics", "mathematics"), "controller_domains_invalid"),
+        ("component", ("not-a-domain",), "controller_domains_invalid"),
+    ],
+)
+def test_prepare_rejects_invalid_experiment_subsets(
+    tmp_path: Path,
+    stage: str,
+    domains: tuple[str, ...],
+    error: str,
+):
+    source = _source(tmp_path)
+    model = tmp_path / "model"
+    model.mkdir()
+    (model / "config.json").write_text("{}\n", encoding="utf-8")
+    (model / "model.safetensors").write_bytes(b"weights")
+    python = tmp_path / "python"
+    python.write_text("runtime", encoding="utf-8")
+
+    with pytest.raises(controller.ControllerError, match=error):
+        controller.build_config(
+            source_root=source,
+            source_commit=_source_commit(source),
+            model=model,
+            out_dir=tmp_path / "campaign",
+            python=python,
+            arms="complete_system_closed_book",
+            seed=11,
+            per_domain=1,
+            difficulty=3,
+            campaign_stage=stage,
+            domains=domains,
+            n_slots=4,
+            max_tokens=64,
+            memory_fraction=0.2,
+            episode_wall_s=20.0,
+            attempt_wall_s=60.0,
+            max_attempts=3,
+            poll_s=1.0,
+            stale_after_s=40.0,
+            retry_backoff_s=1.0,
+        )
 
 
 def test_frozen_adapter_is_bound_and_forwarded_to_the_sweep(
