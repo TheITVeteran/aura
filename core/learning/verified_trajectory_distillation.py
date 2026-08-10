@@ -28,6 +28,7 @@ from typing import Any
 import numpy as np
 
 DISTILLATION_SCHEMA = "aura.verified_trajectory_distillation.v1"
+EPISODIC_TRANSPLANT_SCHEMA = "aura.episodic_delta_transplant.v1"
 
 
 def _canonical_sha256(value: Any) -> str:
@@ -64,9 +65,124 @@ class DistilledTrajectoryFactors:
     """One named recurrent site's bounded low-rank correction."""
 
     site: str
+    target_phase: str
     lora_a: np.ndarray
     lora_b: np.ndarray
     receipt: Mapping[str, Any]
+
+
+def compile_episodic_delta_factors(
+    episodic_u: Any,
+    episodic_v: Any,
+    *,
+    site: str,
+    episodic_scale: float,
+    adapter_scale: float,
+    target_phase: str = "decode",
+) -> DistilledTrajectoryFactors:
+    """Compile one accepted temporary operator into an exact scoped LoRA.
+
+    The episodic wrapper emits ``s * (x @ V.T) @ U.T`` while Aura's persistent
+    scoped LoRA emits ``s * (x @ A) @ B``.  Preserving the scale and setting
+    ``A = V.T`` and ``B = U.T`` keeps both algebra and MLX operation order
+    identical, without fitting, normalization, or teacher text.
+    """
+
+    if not isinstance(site, str) or not site.strip() or site != site.strip():
+        raise ValueError("episodic transplant site is invalid")
+    if target_phase not in {"recurrence", "decode"}:
+        raise ValueError("episodic transplant target phase is invalid")
+    for value, label in (
+        (episodic_scale, "episodic scale"),
+        (adapter_scale, "adapter scale"),
+    ):
+        if (
+            isinstance(value, bool)
+            or not isinstance(value, (int, float))
+            or not math.isfinite(float(value))
+            or float(value) <= 0.0
+        ):
+            raise ValueError(f"episodic transplant {label} must be positive")
+    if float(episodic_scale) != float(adapter_scale):
+        raise ValueError("episodic transplant requires the original operator scale")
+
+    u = _finite_matrix(episodic_u, name="episodic U")
+    v = _finite_matrix(episodic_v, name="episodic V")
+    if u.shape[1] != v.shape[0]:
+        raise ValueError("episodic transplant rank dimensions differ")
+    if np.linalg.norm(u) <= 1e-12 or np.linalg.norm(v) <= 1e-12:
+        raise ValueError("episodic transplant operator is collapsed")
+
+    lora_a = v.T.astype(np.float32)
+    lora_b = u.T.astype(np.float32)
+    body = {
+        "schema": EPISODIC_TRANSPLANT_SCHEMA,
+        "site": site,
+        "target_phase": target_phase,
+        "rank": int(u.shape[1]),
+        "input_width": int(v.shape[1]),
+        "output_width": int(u.shape[0]),
+        "episodic_scale": float(episodic_scale),
+        "adapter_scale": float(adapter_scale),
+        "factor_scale": 1.0,
+        "operator_relation": "A=V.T;B=U.T;adapter_scale=episodic_scale",
+        "bitwise_operation_order_preserved": True,
+        "episodic_u_sha256": _array_sha256(u),
+        "episodic_v_sha256": _array_sha256(v),
+        "lora_a_sha256": _array_sha256(lora_a),
+        "lora_b_sha256": _array_sha256(lora_b),
+    }
+    return DistilledTrajectoryFactors(
+        site=site,
+        target_phase=target_phase,
+        lora_a=lora_a,
+        lora_b=lora_b,
+        receipt={**body, "receipt_sha256": _canonical_sha256(body)},
+    )
+
+
+def compile_episodic_delta_inventory(
+    snapshots: Sequence[Mapping[str, Any]],
+    *,
+    target: str,
+    target_phase: str = "decode",
+) -> dict[str, DistilledTrajectoryFactors]:
+    """Compile a complete ``snapshot_delta`` inventory without proxy pairing."""
+
+    parents = {"o_proj": "self_attn", "down_proj": "mlp"}
+    if target not in parents:
+        raise ValueError("episodic transplant projection target is unsupported")
+    if (
+        not isinstance(snapshots, Sequence)
+        or isinstance(snapshots, (str, bytes, bytearray))
+        or not snapshots
+    ):
+        raise ValueError("episodic transplant snapshot inventory is empty")
+    result: dict[str, DistilledTrajectoryFactors] = {}
+    for snapshot in snapshots:
+        if not isinstance(snapshot, Mapping):
+            raise ValueError("episodic transplant snapshot row is invalid")
+        try:
+            layer = snapshot["layer"]
+            scale = snapshot["scale"]
+            u = snapshot["U"]
+            v = snapshot["V"]
+        except KeyError as exc:
+            raise ValueError("episodic transplant snapshot row is incomplete") from exc
+        if type(layer) is not int or layer < 0:
+            raise ValueError("episodic transplant layer is invalid")
+        site = f"model.layers.{layer}.{parents[target]}.{target}"
+        if site in result:
+            raise ValueError("episodic transplant layer inventory contains duplicates")
+        result[site] = compile_episodic_delta_factors(
+            u,
+            v,
+            site=site,
+            episodic_scale=scale,
+            adapter_scale=scale,
+            target_phase=target_phase,
+        )
+    return result
 
 
 def fit_verified_trajectory_factors(
@@ -79,6 +195,7 @@ def fit_verified_trajectory_factors(
     gain: float,
     adapter_scale: float,
     normalize_corrections: bool = True,
+    target_phase: str = "recurrence",
 ) -> DistilledTrajectoryFactors:
     """Fit a low-rank recurrent operator to verified activation corrections.
 
@@ -91,6 +208,8 @@ def fit_verified_trajectory_factors(
 
     if not isinstance(site, str) or not site.strip() or site != site.strip():
         raise ValueError("trajectory distillation site is invalid")
+    if target_phase not in {"recurrence", "decode"}:
+        raise ValueError("trajectory distillation target phase is invalid")
     if type(rank) is not int or rank < 1:
         raise ValueError("trajectory distillation rank must be positive")
     for value, label, lower, upper in (
@@ -160,6 +279,7 @@ def fit_verified_trajectory_factors(
     receipt_body = {
         "schema": DISTILLATION_SCHEMA,
         "site": site,
+        "target_phase": target_phase,
         "teaching_pairs": int(inputs.shape[0]),
         "input_width": int(inputs.shape[1]),
         "output_width": int(corrections.shape[1]),
@@ -185,6 +305,7 @@ def fit_verified_trajectory_factors(
     }
     return DistilledTrajectoryFactors(
         site=site,
+        target_phase=target_phase,
         lora_a=lora_a,
         lora_b=lora_b,
         receipt=receipt,
@@ -198,12 +319,16 @@ def fit_verified_trajectory_inventory(
     regularization: float,
     gain: float,
     adapter_scale: float,
+    site_phases: Mapping[str, str] | None = None,
 ) -> dict[str, DistilledTrajectoryFactors]:
     """Fit every named site and reject partial or inconsistent inventories."""
 
     if not isinstance(teaching_pairs, Mapping) or not teaching_pairs:
         raise ValueError("trajectory teaching inventory is empty")
     result: dict[str, DistilledTrajectoryFactors] = {}
+    phases = dict(site_phases or {})
+    if phases and set(phases) != set(teaching_pairs):
+        raise ValueError("trajectory site phase inventory differs from teaching pairs")
     pair_counts: set[int] = set()
     for site in sorted(teaching_pairs):
         pair = teaching_pairs[site]
@@ -217,6 +342,7 @@ def fit_verified_trajectory_inventory(
             regularization=regularization,
             gain=gain,
             adapter_scale=adapter_scale,
+            target_phase=phases.get(site, "recurrence"),
         )
         pair_counts.add(int(fitted.receipt["teaching_pairs"]))
         result[site] = fitted
@@ -231,11 +357,14 @@ def install_verified_trajectory_inventory(
     *,
     expected_sites: Sequence[str],
 ) -> dict[str, Any]:
-    """Atomically install fitted factors into exact recurrence-scoped sites."""
+    """Atomically install fitted factors into their exact causal phase."""
 
     import mlx.core as mx
 
-    from core.brain.llm.latent_cortex.recurrence_adapter import ScopedLoRALinear
+    from core.brain.llm.latent_cortex.recurrence_adapter import (
+        ScopedCodaLoRALinear,
+        ScopedLoRALinear,
+    )
 
     expected = tuple(sorted(expected_sites))
     if not expected or len(expected) != len(set(expected)):
@@ -243,7 +372,13 @@ def install_verified_trajectory_inventory(
     if tuple(sorted(inventory)) != expected:
         raise ValueError("fitted trajectory site inventory differs from attachment")
 
-    resolved: list[tuple[str, ScopedLoRALinear, DistilledTrajectoryFactors]] = []
+    resolved: list[
+        tuple[
+            str,
+            ScopedLoRALinear | ScopedCodaLoRALinear,
+            DistilledTrajectoryFactors,
+        ]
+    ] = []
     for site in expected:
         parts = site.split(".")
         if len(parts) != 5 or parts[:2] != ["model", "layers"]:
@@ -254,9 +389,17 @@ def install_verified_trajectory_inventory(
             raise ValueError(f"trajectory site layer is invalid: {site}") from exc
         parent = getattr(model.model.layers[layer_index], parts[3], None)
         projection = getattr(parent, parts[4], None)
-        if not isinstance(projection, ScopedLoRALinear):
-            raise ValueError(f"trajectory site is not recurrence-scoped: {site}")
         factors = inventory[site]
+        expected_type = (
+            ScopedLoRALinear
+            if factors.target_phase == "recurrence"
+            else ScopedCodaLoRALinear
+        )
+        if not isinstance(projection, expected_type):
+            raise ValueError(
+                f"trajectory site phase differs from attachment: "
+                f"{site} expected={factors.target_phase}"
+            )
         if (
             tuple(factors.lora_a.shape) != tuple(projection.lora_a.shape)
             or tuple(factors.lora_b.shape) != tuple(projection.lora_b.shape)
@@ -288,6 +431,9 @@ def install_verified_trajectory_inventory(
     body = {
         "schema": "aura.verified_trajectory_installation.v1",
         "sites": list(expected),
+        "site_phases": {
+            site: inventory[site].target_phase for site in expected
+        },
         "factor_receipt_sha256s": {
             site: str(inventory[site].receipt["receipt_sha256"]) for site in expected
         },
@@ -297,7 +443,10 @@ def install_verified_trajectory_inventory(
 
 __all__ = [
     "DISTILLATION_SCHEMA",
+    "EPISODIC_TRANSPLANT_SCHEMA",
     "DistilledTrajectoryFactors",
+    "compile_episodic_delta_factors",
+    "compile_episodic_delta_inventory",
     "fit_verified_trajectory_factors",
     "fit_verified_trajectory_inventory",
     "install_verified_trajectory_inventory",

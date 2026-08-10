@@ -5,6 +5,9 @@ import pytest
 
 from core.learning.verified_trajectory_distillation import (
     DISTILLATION_SCHEMA,
+    EPISODIC_TRANSPLANT_SCHEMA,
+    compile_episodic_delta_factors,
+    compile_episodic_delta_inventory,
     fit_verified_trajectory_factors,
     fit_verified_trajectory_inventory,
     install_verified_trajectory_inventory,
@@ -44,6 +47,132 @@ def test_verified_trajectory_fit_recovers_low_rank_transition() -> None:
     assert len(fitted.receipt["receipt_sha256"]) == 64
 
 
+def test_episodic_delta_compiles_to_exact_decode_scoped_operator() -> None:
+    import mlx.core as mx
+    import mlx.nn as nn
+
+    from core.brain.llm.latent_cortex.fast_weights import EpisodicDeltaLinear
+    from core.brain.llm.latent_cortex.recurrence_adapter import (
+        ScopedCodaLoRALinear,
+        coda_adapter_scope,
+    )
+
+    rng = np.random.default_rng(41)
+    u = rng.normal(size=(7, 3)).astype(np.float32)
+    v = rng.normal(size=(3, 9)).astype(np.float32)
+    factors = compile_episodic_delta_factors(
+        u,
+        v,
+        site="model.layers.0.self_attn.o_proj",
+        episodic_scale=0.35,
+        adapter_scale=0.35,
+    )
+
+    base = nn.Linear(9, 7)
+    episodic = EpisodicDeltaLinear(
+        base,
+        rank=3,
+        scale=0.35,
+        seed_stat=0.5,
+        tag="exact-transplant",
+    )
+    episodic.U = mx.array(u)
+    episodic.V = mx.array(v)
+    episodic.identity_bypass = False
+    episodic.activation_policy = "decode_only"
+    persistent = ScopedCodaLoRALinear.from_base(
+        base,
+        r=3,
+        scale=0.35,
+        block_index=0,
+        site=factors.site,
+    )
+    persistent.lora_a = mx.array(factors.lora_a)
+    persistent.lora_b = mx.array(factors.lora_b)
+    x = mx.array(rng.normal(size=(2, 4, 9)).astype(np.float32))
+
+    ordinary = persistent(x)
+    base_output = base(x)
+    with coda_adapter_scope():
+        episodic_output = episodic(x)
+        persistent_output = persistent(x)
+    mx.eval(ordinary, base_output, episodic_output, persistent_output)
+
+    assert bool(mx.array_equal(ordinary, base_output))
+    assert bool(mx.array_equal(persistent_output, episodic_output))
+    assert factors.target_phase == "decode"
+    assert factors.receipt["schema"] == EPISODIC_TRANSPLANT_SCHEMA
+    assert len(factors.receipt["receipt_sha256"]) == 64
+
+
+def test_episodic_delta_transplant_rejects_collapsed_or_cross_rank_operator() -> None:
+    kwargs = {
+        "site": "model.layers.0.self_attn.o_proj",
+        "episodic_scale": 0.35,
+        "adapter_scale": 0.35,
+    }
+    with pytest.raises(ValueError, match="collapsed"):
+        compile_episodic_delta_factors(
+            np.ones((7, 3)),
+            np.zeros((3, 9)),
+            **kwargs,
+        )
+    with pytest.raises(ValueError, match="rank dimensions differ"):
+        compile_episodic_delta_factors(
+            np.ones((7, 3)),
+            np.ones((2, 9)),
+            **kwargs,
+        )
+    with pytest.raises(ValueError, match="original operator scale"):
+        compile_episodic_delta_factors(
+            np.ones((7, 3)),
+            np.ones((3, 9)),
+            **{**kwargs, "adapter_scale": 20.0},
+        )
+
+
+def test_episodic_delta_inventory_binds_exact_sites_and_scales() -> None:
+    rng = np.random.default_rng(42)
+    inventory = compile_episodic_delta_inventory(
+        [
+            {
+                "layer": layer,
+                "scale": 0.25,
+                "U": rng.normal(size=(7, 3)),
+                "V": rng.normal(size=(3, 9)),
+            }
+            for layer in (7, 11)
+        ],
+        target="o_proj",
+    )
+
+    assert tuple(inventory) == (
+        "model.layers.7.self_attn.o_proj",
+        "model.layers.11.self_attn.o_proj",
+    )
+    assert {factors.target_phase for factors in inventory.values()} == {"decode"}
+    assert {
+        factors.receipt["adapter_scale"] for factors in inventory.values()
+    } == {0.25}
+
+    with pytest.raises(ValueError, match="duplicates"):
+        compile_episodic_delta_inventory(
+            [
+                {
+                    "layer": 7,
+                    "scale": 0.25,
+                    "U": rng.normal(size=(7, 3)),
+                    "V": rng.normal(size=(3, 9)),
+                },
+                {
+                    "layer": 7,
+                    "scale": 0.25,
+                    "U": rng.normal(size=(7, 3)),
+                    "V": rng.normal(size=(3, 9)),
+                },
+            ],
+            target="o_proj",
+        )
 def test_verified_trajectory_fit_normalizes_teacher_magnitude() -> None:
     inputs, corrections = _low_rank_problem()
     corrections[0] *= 1000.0
@@ -134,6 +263,104 @@ def test_verified_trajectory_inventory_installs_exact_named_site() -> None:
     assert np.allclose(np.asarray(projection.lora_b), fitted.lora_b)
     assert receipt["sites"] == [fitted.site]
     assert len(receipt["receipt_sha256"]) == 64
+
+
+def test_verified_trajectory_inventory_binds_recurrence_and_decode_phases() -> None:
+    import mlx.core as mx
+    import mlx.nn as nn
+
+    from core.brain.llm.latent_cortex.recurrence_adapter import (
+        ScopedCodaLoRALinear,
+        ScopedLoRALinear,
+    )
+
+    recurrence_site = "model.layers.0.self_attn.o_proj"
+    decode_site = "model.layers.1.self_attn.o_proj"
+
+    class _Attention:
+        def __init__(self, projection) -> None:
+            self.o_proj = projection
+
+    class _Layer:
+        def __init__(self, projection) -> None:
+            self.self_attn = _Attention(projection)
+
+    class _Inner:
+        def __init__(self) -> None:
+            self.layers = [
+                _Layer(
+                    ScopedLoRALinear.from_base(
+                        nn.Linear(9, 7),
+                        r=3,
+                        scale=20.0,
+                        block_index=0,
+                        site=recurrence_site,
+                    )
+                ),
+                _Layer(
+                    ScopedCodaLoRALinear.from_base(
+                        nn.Linear(9, 7),
+                        r=3,
+                        scale=20.0,
+                        block_index=1,
+                        site=decode_site,
+                    )
+                ),
+            ]
+
+    class _Model:
+        def __init__(self) -> None:
+            self.model = _Inner()
+
+    inputs, corrections = _low_rank_problem()
+    fitted = fit_verified_trajectory_inventory(
+        {
+            recurrence_site: (inputs, corrections),
+            decode_site: (inputs, corrections),
+        },
+        rank=3,
+        regularization=1e-8,
+        gain=0.75,
+        adapter_scale=20.0,
+        site_phases={recurrence_site: "recurrence", decode_site: "decode"},
+    )
+    model = _Model()
+    receipt = install_verified_trajectory_inventory(
+        model,
+        fitted,
+        expected_sites=[recurrence_site, decode_site],
+    )
+
+    recurrence = model.model.layers[0].self_attn.o_proj
+    decode = model.model.layers[1].self_attn.o_proj
+    mx.eval(recurrence.lora_a, recurrence.lora_b, decode.lora_a, decode.lora_b)
+    assert fitted[recurrence_site].target_phase == "recurrence"
+    assert fitted[decode_site].target_phase == "decode"
+    assert receipt["site_phases"] == {
+        recurrence_site: "recurrence",
+        decode_site: "decode",
+    }
+    assert np.allclose(np.asarray(recurrence.lora_a), fitted[recurrence_site].lora_a)
+    assert np.allclose(np.asarray(decode.lora_b), fitted[decode_site].lora_b)
+
+    crossed = dict(fitted)
+    crossed[decode_site] = fit_verified_trajectory_factors(
+        inputs,
+        corrections,
+        site=decode_site,
+        rank=3,
+        regularization=1e-8,
+        gain=0.75,
+        adapter_scale=20.0,
+        normalize_corrections=False,
+        target_phase="recurrence",
+    )
+    with pytest.raises(ValueError, match="phase differs"):
+        install_verified_trajectory_inventory(
+            model,
+            crossed,
+            expected_sites=[recurrence_site, decode_site],
+        )
 
 
 @pytest.mark.parametrize(

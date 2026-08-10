@@ -450,6 +450,53 @@ def test_position_capture_honors_recurrence_slot_span() -> None:
         fast_weights.detach()
 
 
+def test_position_capture_filters_unscoped_prefill_from_decode_phase() -> None:
+    from core.brain.llm.latent_cortex.recurrence_adapter import coda_adapter_scope
+
+    model = _model()
+    fast_weights = EpisodicFastWeights(
+        FastWeightsConfig(enabled=True, rank=2, max_wrapped_layers=1)
+    )
+    fast_weights.attach(
+        model.model,
+        (1, 2),
+        seed_stat=0.5,
+        episode_id="decode-phase-position-feature-test",
+    )
+    prefill = mx.array([[1, 2, 3, 4]])
+    decode = mx.array([[17, 19]])
+
+    def decode_only():
+        with coda_adapter_scope():
+            return model(decode)
+
+    def prefill_then_decode():
+        model(prefill)
+        return decode_only()
+
+    try:
+        _output, expected = fast_weights.capture_input_position_features(
+            decode_only,
+            max_features=2,
+            phase="decode",
+        )
+        _output, observed = fast_weights.capture_input_position_features(
+            prefill_then_decode,
+            max_features=2,
+            phase="decode",
+        )
+        assert bool(mx.array_equal(observed[1], expected[1]))
+        assert fast_weights.handles[0].wrapper.input_position_phase is None
+        with pytest.raises(ValueError, match="phase is unsupported"):
+            fast_weights.capture_input_position_features(
+                decode_only,
+                max_features=2,
+                phase="dream",
+            )
+    finally:
+        fast_weights.detach()
+
+
 def test_interpolated_delta_is_exact_and_zero_restores_identity():
     model = _model()
     tokens = mx.array([[1, 2, 3]])

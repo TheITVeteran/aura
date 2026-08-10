@@ -42784,3 +42784,43 @@ fast-weight and behavioral-probe tests, Ruff, compilation, and the canonical
 smoke suite (`103 passed`) are green. This advances the completion envelope
 to `851/920` (approximately `92.5%`). The source-bound 1.5B locality run is
 next; resident-32B use remains locked.
+
+## Checkpoint 2026-08-10-156: Accepted Episodic Tissue Can Be Copied Into Its Causal Decode Phase
+
+The source-bound CP155 locality discriminator completed on the frozen 1.5B
+checkpoint and the exact CP154 modular failure. Ordinary decode and the full
+engine remained wrong (`0/2 -> 0/2`), so it is not a capability win. Its
+four-arm lesion nevertheless resolved the causal ambiguity. At depth one the
+same frozen delta scored `0.250000` with no adaptation, `0.155745` when active
+only in recurrence, `0.310185` when active only in decode, and `0.303241` when
+active in both phases. At depth two the corresponding scores were `0.248264`,
+`0.250000`, `0.296296`, and `0.296296`. Every arm retained the same committed
+`U,V` inventory and winner state. The useful movement is therefore carried by
+decode tissue; the old persistent recurrence-only distillation was aimed at
+the wrong phase. The receipt is preserved at
+`~/.aura/experiments/cp155-fast-weight-locality-c62f124eb/receipt.json` with
+SHA-256 `c95bff03db2be7d99ad190e059743fccceca44870b37022f6d1eec72a2cdf92b`.
+
+Aura can now attach `ScopedCodaLoRALinear` tissue at an exact, canonical list
+of non-contiguous middle-layer sites rather than assuming that decode tissue
+must occupy the final anatomical coda window. The complete topology is
+preflighted before mutation and attachment rolls back transactionally on any
+failure. A new exact compiler maps an accepted episodic operator directly into
+persistent coda factors with `A=V.T`, `B=U.T`, and the original scale. It
+refuses rescaling because algebraically equivalent factor rescaling was not
+bit-identical under the real MLX kernel. The resulting persistent projection
+is byte-identical to the temporary projection inside coda scope and remains
+byte-identical to the frozen base outside it. No lexical teacher, ridge fit,
+normalization, or cyclic pairing participates in this mechanism gate.
+
+Phase-filtered position capture also prevents prompt prefill from filling a
+declared decode-state inventory. Installation binds every factor to its exact
+recurrence or decode wrapper and refuses phase crossings. The focused suite
+passes `67/67`, the exact mechanism subset passes `14/14`, canonical smoke
+passes `103/103`, and Ruff, compilation, and diff hygiene pass. This advances
+the completion envelope to `852/920` (approximately `92.6%`). The next gate is
+a source-bound 1.5B temporary-to-persistent model-level transplant requiring
+token/logit parity, complete coda-site activation, ordinary-path darkness, and
+serialization round-trip before any shared-rule scaling experiment. No broad
+neural gain, resident-32B use, frontier result, fusion, activation, or
+`WOW Signal` is authorized.

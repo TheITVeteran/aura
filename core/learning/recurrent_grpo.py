@@ -618,6 +618,104 @@ def attach_recurrent_policy_adapters(
     return tuple(site for _parent, _target, _projection, _index, site, _type in planned)
 
 
+def attach_coda_policy_adapters_at_sites(
+    model: Any,
+    sites: Sequence[str],
+    *,
+    lora_rank: int,
+    initialization_seed: int,
+    lora_dropout: float = 0.0,
+    lora_scale: float = 20.0,
+) -> tuple[str, ...]:
+    """Attach decode-scoped tissue at an exact, non-contiguous site inventory.
+
+    Empirical localization may select middle-layer projections rather than a
+    contiguous anatomical coda window.  The site list is therefore the
+    topology contract: every path is preflighted before mutation, attachment
+    is transactional, and returned order is canonical.
+    """
+
+    from core.brain.llm.latent_cortex.recurrence_adapter import (
+        ScopedCodaLoRALinear,
+        ScopedLoRALinear,
+    )
+
+    if (
+        not isinstance(sites, Sequence)
+        or isinstance(sites, (str, bytes, bytearray))
+        or not sites
+        or type(lora_rank) is not int
+        or lora_rank < 1
+        or type(initialization_seed) is not int
+        or not 0 <= initialization_seed <= 0xFFFFFFFF
+        or isinstance(lora_dropout, bool)
+        or not isinstance(lora_dropout, (int, float))
+        or not math.isfinite(float(lora_dropout))
+        or not 0.0 <= float(lora_dropout) <= 0.5
+        or isinstance(lora_scale, bool)
+        or not isinstance(lora_scale, (int, float))
+        or not math.isfinite(float(lora_scale))
+        or not 0.0 < float(lora_scale) <= 1024.0
+    ):
+        raise ValueError("exact coda adapter configuration is invalid")
+    canonical_sites = tuple(sorted(sites))
+    if (
+        len(canonical_sites) != len(set(canonical_sites))
+        or any(
+            not isinstance(site, str)
+            or not site
+            or site != site.strip()
+            for site in canonical_sites
+        )
+    ):
+        raise ValueError("exact coda adapter site inventory is invalid")
+
+    layers = getattr(getattr(model, "model", None), "layers", None)
+    if not isinstance(layers, (list, tuple)) or not layers:
+        raise ValueError("model exposes no decoder layer inventory")
+    planned: list[tuple[Any, str, Any, int, str]] = []
+    for site in canonical_sites:
+        parts = site.split(".")
+        if len(parts) != 5 or parts[:2] != ["model", "layers"]:
+            raise ValueError(f"exact coda adapter site path is invalid: {site}")
+        try:
+            layer_index = int(parts[2])
+        except ValueError as exc:
+            raise ValueError(f"exact coda adapter layer is invalid: {site}") from exc
+        if not 0 <= layer_index < len(layers) or parts[3] not in {"self_attn", "mlp"}:
+            raise ValueError(f"exact coda adapter site path is invalid: {site}")
+        parent = getattr(layers[layer_index], parts[3], None)
+        projection = getattr(parent, parts[4], None)
+        if projection is None:
+            raise ValueError(f"exact coda adapter site is absent: {site}")
+        if isinstance(projection, (ScopedLoRALinear, ScopedCodaLoRALinear)):
+            raise ValueError(f"exact coda adapter site is already wrapped: {site}")
+        planned.append((parent, parts[4], projection, layer_index, site))
+
+    import mlx.core as mx
+
+    model.freeze()
+    mx.random.seed(initialization_seed)
+    attached: list[tuple[Any, str, Any]] = []
+    try:
+        for parent, target, projection, layer_index, site in planned:
+            wrapped = ScopedCodaLoRALinear.from_base(
+                projection,
+                r=lora_rank,
+                dropout=float(lora_dropout),
+                scale=float(lora_scale),
+                block_index=layer_index,
+                site=site,
+            )
+            setattr(parent, target, wrapped)
+            attached.append((parent, target, projection))
+    except BaseException:
+        for parent, target, projection in reversed(attached):
+            setattr(parent, target, projection)
+        raise
+    return canonical_sites
+
+
 def recurrent_policy_optimizer_config(
     learning_rate: float,
 ) -> dict[str, Any]:
@@ -3669,6 +3767,7 @@ __all__ = [
     "RecurrentSamplingParityError",
     "VerifiedTrajectoryGroupConfig",
     "attach_recurrent_policy_adapters",
+    "attach_coda_policy_adapters_at_sites",
     "branch_token_logprobs",
     "build_recurrent_policy_optimizer",
     "build_verified_trajectory_group_source_binding",

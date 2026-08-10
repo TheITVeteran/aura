@@ -147,6 +147,7 @@ class EpisodicDeltaLinear:
         self.last_input_features = None
         self.capture_input_positions = False
         self.input_position_limit = 0
+        self.input_position_phase: str | None = None
         self.input_position_history = []
         self.capture_output = False
         self.capture_output_start = 0
@@ -215,6 +216,19 @@ class EpisodicDeltaLinear:
         return k
 
     def __call__(self, x):
+        execution_phase: str | None = None
+        if self.capture_input_positions or not self.identity_bypass:
+            from core.brain.llm.latent_cortex.recurrence_adapter import (
+                current_coda_adapter_scope,
+                current_recurrence_adapter_scope,
+            )
+
+            if current_recurrence_adapter_scope() is not None:
+                execution_phase = "recurrence"
+            elif current_coda_adapter_scope() is not None:
+                execution_phase = "decode"
+            else:
+                execution_phase = "unscoped"
         if self.capture_input:
             import mlx.core as mx
 
@@ -223,7 +237,10 @@ class EpisodicDeltaLinear:
             self.last_input_summary = mx.stop_gradient(summary.astype(mx.float32))
             if len(self.input_summary_history) < int(self.U.shape[1]):
                 self.input_summary_history.append(self.last_input_summary)
-        if self.capture_input_positions:
+        if self.capture_input_positions and (
+            self.input_position_phase is None
+            or self.input_position_phase == execution_phase
+        ):
             import mlx.core as mx
 
             from core.brain.llm.latent_cortex.recurrence_adapter import (
@@ -286,17 +303,7 @@ class EpisodicDeltaLinear:
             )
         if self.identity_bypass:
             return base
-        from core.brain.llm.latent_cortex.recurrence_adapter import (
-            current_coda_adapter_scope,
-            current_recurrence_adapter_scope,
-        )
-
-        if current_recurrence_adapter_scope() is not None:
-            phase = "recurrence"
-        elif current_coda_adapter_scope() is not None:
-            phase = "decode"
-        else:
-            phase = "unscoped"
+        phase = execution_phase or "unscoped"
         self.phase_calls[phase] += 1
         policy = self.activation_policy
         active = (
@@ -731,6 +738,7 @@ class EpisodicFastWeights:
         forward_fn: Callable[[], Any],
         *,
         max_features: int,
+        phase: str | None = None,
     ) -> tuple[Any, dict[int, Any]]:
         """Capture distinct recurrent positions without averaging slot roles.
 
@@ -744,6 +752,8 @@ class EpisodicFastWeights:
 
         if type(max_features) is not int or not 1 <= max_features <= 256:
             raise ValueError("position feature limit must be inside [1, 256]")
+        if phase not in {None, *FAST_WEIGHT_EXECUTION_PHASES}:
+            raise ValueError("position feature phase is unsupported")
         if not self.handles:
             raise RuntimeError("position feature capture requires wrappers")
         if any(bool(mx.any(handle.wrapper.V != 0)) for handle in self.handles):
@@ -752,6 +762,7 @@ class EpisodicFastWeights:
             wrapper = handle.wrapper
             wrapper.input_position_history = []
             wrapper.input_position_limit = max_features
+            wrapper.input_position_phase = phase
             wrapper.capture_input_positions = True
         try:
             output = forward_fn()
@@ -770,6 +781,7 @@ class EpisodicFastWeights:
                 wrapper = handle.wrapper
                 wrapper.capture_input_positions = False
                 wrapper.input_position_limit = 0
+                wrapper.input_position_phase = None
 
     def capture_output_features(
         self,

@@ -48,6 +48,7 @@ from core.learning.recurrent_grpo import (  # noqa: E402
     RecurrentGRPOConfig,
     RecurrentSamplingConfig,
     VerifiedTrajectoryGroupConfig,
+    attach_coda_policy_adapters_at_sites,
     attach_recurrent_policy_adapters,
     branch_token_logprobs,
     build_recurrent_policy_optimizer,
@@ -339,6 +340,49 @@ def test_coda_adapter_is_independent_and_dark_outside_rlc_decode():
     assert bool(mx.array_equal(base, disabled))
     assert activation.calls == 1
     assert activation.applied_sites == {"model.layers.3.mlp.down_proj": 1}
+
+
+def test_exact_site_coda_attachment_supports_non_contiguous_middle_layers():
+    model = _model(seed=410)
+    expected = (
+        "model.layers.1.self_attn.o_proj",
+        "model.layers.2.mlp.down_proj",
+    )
+
+    sites = attach_coda_policy_adapters_at_sites(
+        model,
+        tuple(reversed(expected)),
+        lora_rank=2,
+        initialization_seed=31,
+        lora_scale=7.5,
+    )
+
+    assert sites == expected
+    first = model.model.layers[1].self_attn.o_proj
+    second = model.model.layers[2].mlp.down_proj
+    assert isinstance(first, ScopedCodaLoRALinear)
+    assert isinstance(second, ScopedCodaLoRALinear)
+    assert first.scale == second.scale == 7.5
+    assert first.recurrence_site == expected[0]
+    assert second.recurrence_site == expected[1]
+
+
+def test_exact_site_coda_attachment_preflights_entire_inventory() -> None:
+    model = _model(seed=411)
+    original = model.model.layers[1].self_attn.o_proj
+
+    with pytest.raises(ValueError, match="site is absent"):
+        attach_coda_policy_adapters_at_sites(
+            model,
+            (
+                "model.layers.1.self_attn.o_proj",
+                "model.layers.2.self_attn.missing_proj",
+            ),
+            lora_rank=2,
+            initialization_seed=32,
+        )
+
+    assert model.model.layers[1].self_attn.o_proj is original
 
 
 def test_proof_campaign_depth_banks_are_trainable_and_reconstructable():
