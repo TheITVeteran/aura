@@ -43607,3 +43607,46 @@ This advances the completion envelope to `877/920` (approximately `95.3%`).
 The failed invocation consumed only 32 of 256 bounded updates and established
 no model result. The same source-bound discriminator must rerun from clean
 adapter initialization before the Qwen-window operator is retained or retired.
+
+## Checkpoint 2026-08-10-182: The Qwen Window Fails Exact One-Step Transfer
+
+The repaired real-1.5B discriminator completed all 256 fixed updates from
+published source commit `1f6127741a9ddd6089fe3268204ad6f3b08af681`.
+The best development checkpoint occurred at step 160. Development exact
+transition accuracy moved `0/40 -> 3/40`, answer-state accuracy moved
+`0.225 -> 0.35`, aggregate field accuracy moved `0.333333 -> 0.391667`, and
+loss moved `1.441122 -> 1.410823`. That was below the preregistered development
+gain and accuracy requirements.
+
+On the untouched final holdout, exact transition accuracy remained unchanged
+at `3/80` (`0.0375`) and answer-state accuracy remained unchanged at `0.25`.
+Aggregate field accuracy rose `0.30 -> 0.3625` and codebook loss fell
+`1.440480 -> 1.356129`, but multiple family/depth cells regressed and no
+modular cell produced a correct transition after treatment. The adapter did
+change, the base checkpoint remained immutable, source and split gates passed,
+and the loss surrogate improved; the exact object the run was designed to
+test did not.
+
+The canonical embedded receipt SHA-256 is
+`3b6143a5e2a0d5b0e51afc4249355df8461ae95fade130b18d645b0d8314b72a`;
+the serialized receipt SHA-256 is
+`3b560282b15e06b9571e8cbe96bd25d2c3f4c1a447655fd205e9a0f131b2a3ea`;
+the selected owner-private adapter SHA-256 is
+`b01584be4edfd0091a7c96e4dd40661adf78999741ccbdac9fbd169ca1e07be5`.
+Evidence is preserved at
+`~/.aura/experiments/cp181-one-step-transfer-1f6127741-20260810-151223/`.
+
+This is a negative result for the tested operator class, not for recurrence.
+The frozen Qwen middle window with a shared latent-slot LoRA can lower a fixed
+state surrogate but cannot transfer one exact reusable computation step to
+fresh tasks. Per the frozen decision rule, algorithmic RLC will no longer spend
+cycles on higher LoRA rank, more depth, geometry losses, or another mixture of
+terminal objectives. Qwen remains the semantic encoder and coda; iterative
+computation moves to an identity-initialized native recurrent transition core
+with explicit protected control state and fixed-context access.
+
+This advances the completion envelope to `878/920` (approximately `95.4%`).
+Behavioral gain, broad transfer, resident-32B use, fusion, activation, and the
+`WOW Signal` remain locked. The next checkpoint introduces verified
+state/action/state traces and the native recurrent core; it must pass the same
+one-step holdout gate before multi-step composition begins.
