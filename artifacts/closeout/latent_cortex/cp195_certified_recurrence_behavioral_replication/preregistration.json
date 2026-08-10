@@ -1,0 +1,596 @@
+{
+  "arms": [
+    "ordinary_greedy",
+    "ordinary_best_of_3_public_verifier",
+    "certified_recurrence",
+    "recurrence_lesion_t1"
+  ],
+  "best_of_n": 3,
+  "claim_boundary": "bounded architecture gain with executable producer present; not neural-only RLC, frontier intelligence, or resident-32B evidence",
+  "equal_compute_contrast": "certified_recurrence_minus_ordinary_best_of_3_public_verifier",
+  "max_tokens": 192,
+  "model_path": "/Users/bryan/.aura/live-source/models/Qwen2.5-1.5B-Instruct-4bit",
+  "preregistration_sha256": "283b54ed793828e9d0f3d596c16873bdfdc71429392955d0b45f119ddc8b45e5",
+  "primary_contrast": "certified_recurrence_minus_ordinary_greedy",
+  "schema": "aura.certified_recurrence_behavioral_preregistration.v1",
+  "source_commit": "e4bbc29d2ee22bb86c8f5a6d48b16d36a132e0a4",
+  "task_count": 96,
+  "tasks": [
+    {
+      "depth": 1,
+      "family": "boolean",
+      "public_prompt_sha256": "5bc7a8bcad020299acd7c04fdd59af71f9c2ac5ebf0791cb097c2da29713d0d2",
+      "task_id": "recurrence-boolean-d1-s195001"
+    },
+    {
+      "depth": 1,
+      "family": "boolean",
+      "public_prompt_sha256": "e0844c1b42285b17bda129cd1da4bbf1669726065a0eff3f42268dffa60e3a85",
+      "task_id": "recurrence-boolean-d1-s195002"
+    },
+    {
+      "depth": 1,
+      "family": "boolean",
+      "public_prompt_sha256": "5bc7a8bcad020299acd7c04fdd59af71f9c2ac5ebf0791cb097c2da29713d0d2",
+      "task_id": "recurrence-boolean-d1-s195003"
+    },
+    {
+      "depth": 1,
+      "family": "boolean",
+      "public_prompt_sha256": "21eb1381db3f6050a835dfe68b8c18a7e5c35280f3741b3395a0c981fa077591",
+      "task_id": "recurrence-boolean-d1-s195004"
+    },
+    {
+      "depth": 1,
+      "family": "boolean",
+      "public_prompt_sha256": "bcc27d35f1d96af20faae78fd0c166495f4aa15ac2c5024c6a7d69f9399008e6",
+      "task_id": "recurrence-boolean-d1-s195005"
+    },
+    {
+      "depth": 1,
+      "family": "boolean",
+      "public_prompt_sha256": "bcc27d35f1d96af20faae78fd0c166495f4aa15ac2c5024c6a7d69f9399008e6",
+      "task_id": "recurrence-boolean-d1-s195006"
+    },
+    {
+      "depth": 1,
+      "family": "boolean",
+      "public_prompt_sha256": "df95e20c3e43178666b0950f9ddad335f14758a363ef8c321b9b8ed3d7305005",
+      "task_id": "recurrence-boolean-d1-s195007"
+    },
+    {
+      "depth": 1,
+      "family": "boolean",
+      "public_prompt_sha256": "e7b2b1e4ef39bd6a0422341f4d8e42b3bfe360b97a02b91f3d3e69c52f1b3dea",
+      "task_id": "recurrence-boolean-d1-s195008"
+    },
+    {
+      "depth": 2,
+      "family": "boolean",
+      "public_prompt_sha256": "ffce4e1bb7dc43548811519fb41224f45b3cba2ca2157d4780909c3ad278e3cd",
+      "task_id": "recurrence-boolean-d2-s195001"
+    },
+    {
+      "depth": 2,
+      "family": "boolean",
+      "public_prompt_sha256": "c954d633b0d9ae788314400584059590b5f5d2916919d92044d61ac244705474",
+      "task_id": "recurrence-boolean-d2-s195002"
+    },
+    {
+      "depth": 2,
+      "family": "boolean",
+      "public_prompt_sha256": "3846d93afe07d129502c5792b8b978c73b62fda727e81de6101bde5e879fa603",
+      "task_id": "recurrence-boolean-d2-s195003"
+    },
+    {
+      "depth": 2,
+      "family": "boolean",
+      "public_prompt_sha256": "d27a11742ba0c65da761296d5d01a4e17e34c60d3c07b169ae85ab129631b82c",
+      "task_id": "recurrence-boolean-d2-s195004"
+    },
+    {
+      "depth": 2,
+      "family": "boolean",
+      "public_prompt_sha256": "42ca63b3b1c9bc55ac3ad88c05f37d31c3fdb41dd2ad0c2615c862d7b6d7631c",
+      "task_id": "recurrence-boolean-d2-s195005"
+    },
+    {
+      "depth": 2,
+      "family": "boolean",
+      "public_prompt_sha256": "c17be605f4f16b16ff2f24fb91fd53888b9df25b5549a6f6fd607fa8c25f1ebf",
+      "task_id": "recurrence-boolean-d2-s195006"
+    },
+    {
+      "depth": 2,
+      "family": "boolean",
+      "public_prompt_sha256": "c77be1a6c142f2bd47c83e92c1a80d69ffb9cac625622ae3e6eb9eff0b0c4779",
+      "task_id": "recurrence-boolean-d2-s195007"
+    },
+    {
+      "depth": 2,
+      "family": "boolean",
+      "public_prompt_sha256": "dfdad2ee04d6b5f662cdc41436a2de9e47aa969959d178d80758f2349c4b25f5",
+      "task_id": "recurrence-boolean-d2-s195008"
+    },
+    {
+      "depth": 4,
+      "family": "boolean",
+      "public_prompt_sha256": "c351e3cc8b040226ccfd1188d05fca3be1a4b45b7db3f0cb8c7d3a85b40ba777",
+      "task_id": "recurrence-boolean-d4-s195001"
+    },
+    {
+      "depth": 4,
+      "family": "boolean",
+      "public_prompt_sha256": "eb617e220ec2b42b081ac186af4219bac8e5a54a4bfa276107f22bd16b215f1b",
+      "task_id": "recurrence-boolean-d4-s195002"
+    },
+    {
+      "depth": 4,
+      "family": "boolean",
+      "public_prompt_sha256": "ee0871653e73a8b532168f765e5062f29122c5f0ed8f0e64911d8d3b3dd5114c",
+      "task_id": "recurrence-boolean-d4-s195003"
+    },
+    {
+      "depth": 4,
+      "family": "boolean",
+      "public_prompt_sha256": "3a1a79cfb9d7637ea684e1750953c108577c266e21a956ef4690e7061a7061a0",
+      "task_id": "recurrence-boolean-d4-s195004"
+    },
+    {
+      "depth": 4,
+      "family": "boolean",
+      "public_prompt_sha256": "73941d1c0ea5bc9f90633a798fb94fa94eebd22d3b7a617c11bb5b6f1c0f86d3",
+      "task_id": "recurrence-boolean-d4-s195005"
+    },
+    {
+      "depth": 4,
+      "family": "boolean",
+      "public_prompt_sha256": "02a99240695f236d9872c0a9659b45915fef3232cc60417ad2bd91ec64be3e1b",
+      "task_id": "recurrence-boolean-d4-s195006"
+    },
+    {
+      "depth": 4,
+      "family": "boolean",
+      "public_prompt_sha256": "696a3775dcf9813cf7c885e79297ff599cfe57eed0c5f00c923821bbec391fa1",
+      "task_id": "recurrence-boolean-d4-s195007"
+    },
+    {
+      "depth": 4,
+      "family": "boolean",
+      "public_prompt_sha256": "04686386cf5e9c98a55c6391a9ab1db3a0f414eb05271bb2ec8d6742da5fdba1",
+      "task_id": "recurrence-boolean-d4-s195008"
+    },
+    {
+      "depth": 8,
+      "family": "boolean",
+      "public_prompt_sha256": "cb128cc984bc5cc61fac361cf41f9a80dcfafa3056ff8b5728781d68ab335871",
+      "task_id": "recurrence-boolean-d8-s195001"
+    },
+    {
+      "depth": 8,
+      "family": "boolean",
+      "public_prompt_sha256": "dbb4b7fc509856d5ad2e55318a1d0c369c3d4e07044e32dbc9026f5e8cf714e3",
+      "task_id": "recurrence-boolean-d8-s195002"
+    },
+    {
+      "depth": 8,
+      "family": "boolean",
+      "public_prompt_sha256": "f834a811e15dd838c4415803b55173d1696c7ec968e2fa8b2424293b02b1aadc",
+      "task_id": "recurrence-boolean-d8-s195003"
+    },
+    {
+      "depth": 8,
+      "family": "boolean",
+      "public_prompt_sha256": "15add2abb79a6b4fb0624aea56aee01e1b787b4a3922e8f4285b38c5fe4549ff",
+      "task_id": "recurrence-boolean-d8-s195004"
+    },
+    {
+      "depth": 8,
+      "family": "boolean",
+      "public_prompt_sha256": "070c195992446f644e176a0eb572a26f3773f0af85236eb200975766c94b787a",
+      "task_id": "recurrence-boolean-d8-s195005"
+    },
+    {
+      "depth": 8,
+      "family": "boolean",
+      "public_prompt_sha256": "390b0e5b8001d7380eec4b5b713aaadd020c322ad309ae99eaf0cae1b1b52304",
+      "task_id": "recurrence-boolean-d8-s195006"
+    },
+    {
+      "depth": 8,
+      "family": "boolean",
+      "public_prompt_sha256": "fad184320b08107ecc430d151be6ed17461d56721e890631beaf68e7006fa16a",
+      "task_id": "recurrence-boolean-d8-s195007"
+    },
+    {
+      "depth": 8,
+      "family": "boolean",
+      "public_prompt_sha256": "1791e3b2cec74d1258d8b377c198695b87b31a6580ecf3ad183e24b4ffd18302",
+      "task_id": "recurrence-boolean-d8-s195008"
+    },
+    {
+      "depth": 16,
+      "family": "boolean",
+      "public_prompt_sha256": "236bee3d1f7b1405d1d8f5e877218e427a69f3bfc5dc1733d3666f5812fffa95",
+      "task_id": "recurrence-boolean-d16-s195001"
+    },
+    {
+      "depth": 16,
+      "family": "boolean",
+      "public_prompt_sha256": "44c05b3d9c4a01bbce9afa22dc65ee2f28a9bfb1c21f4fc2734e84cdd3961cc0",
+      "task_id": "recurrence-boolean-d16-s195002"
+    },
+    {
+      "depth": 16,
+      "family": "boolean",
+      "public_prompt_sha256": "6dfc8969b453bcdaeb9e8a64d527349413cace4c2c50cea88f162839058d0089",
+      "task_id": "recurrence-boolean-d16-s195003"
+    },
+    {
+      "depth": 16,
+      "family": "boolean",
+      "public_prompt_sha256": "6c14419f0df8a83cb0e88794d8d416b166d00fee5ba1797789b2a494561956ec",
+      "task_id": "recurrence-boolean-d16-s195004"
+    },
+    {
+      "depth": 16,
+      "family": "boolean",
+      "public_prompt_sha256": "bf06401240386bd514d12bfa9f56234bb3db0c2ff298da43869a917e0aa8c58b",
+      "task_id": "recurrence-boolean-d16-s195005"
+    },
+    {
+      "depth": 16,
+      "family": "boolean",
+      "public_prompt_sha256": "0c2bde06403d1117bb2e1150a3f9217a54611eeeb52f6461dec9bc1e9887bcfc",
+      "task_id": "recurrence-boolean-d16-s195006"
+    },
+    {
+      "depth": 16,
+      "family": "boolean",
+      "public_prompt_sha256": "8bde101ee22d81bf287ef9c2a5247675a8a259b08c0459b13728d2dd64a868ea",
+      "task_id": "recurrence-boolean-d16-s195007"
+    },
+    {
+      "depth": 16,
+      "family": "boolean",
+      "public_prompt_sha256": "67affc0f8e49a9fd85ccecbabc3ecdd42d5008f7f2289098b535e8023044b9d4",
+      "task_id": "recurrence-boolean-d16-s195008"
+    },
+    {
+      "depth": 32,
+      "family": "boolean",
+      "public_prompt_sha256": "fa135e2395dd7545e604f786ee60c8b5db0bcf8ecbab13ad7d6e68e821412ffb",
+      "task_id": "recurrence-boolean-d32-s195001"
+    },
+    {
+      "depth": 32,
+      "family": "boolean",
+      "public_prompt_sha256": "ebe7c04409e25f5daa276ceccc3b7461506c3af3a5cfbf1e07687ed379c254c6",
+      "task_id": "recurrence-boolean-d32-s195002"
+    },
+    {
+      "depth": 32,
+      "family": "boolean",
+      "public_prompt_sha256": "c7aed78e8077d00cf21361a6f304a49e23e9777cc5918ab77bce1f10b6105cf0",
+      "task_id": "recurrence-boolean-d32-s195003"
+    },
+    {
+      "depth": 32,
+      "family": "boolean",
+      "public_prompt_sha256": "f53a23898e3c0f46ced96ad1458ff1b57ddb2df7e01a248b8658f8e1c8cf5f33",
+      "task_id": "recurrence-boolean-d32-s195004"
+    },
+    {
+      "depth": 32,
+      "family": "boolean",
+      "public_prompt_sha256": "e84d104cc5670ddcf60188c05a83af56d156dad52596d63194a1e6f8b9202cd7",
+      "task_id": "recurrence-boolean-d32-s195005"
+    },
+    {
+      "depth": 32,
+      "family": "boolean",
+      "public_prompt_sha256": "5c533ad3fc862ea5702fbf7b82e6dc5dcd0e063c57d932581d14e2309621da6d",
+      "task_id": "recurrence-boolean-d32-s195006"
+    },
+    {
+      "depth": 32,
+      "family": "boolean",
+      "public_prompt_sha256": "3b74605575f2b5685880bbbdc066441ac1fd1aa7f3d46e84934a2b33e2ba13a2",
+      "task_id": "recurrence-boolean-d32-s195007"
+    },
+    {
+      "depth": 32,
+      "family": "boolean",
+      "public_prompt_sha256": "d419734f8af9c65c1cd3bd6c1bfe684349b157fd496dee65a152c07c95bfcf64",
+      "task_id": "recurrence-boolean-d32-s195008"
+    },
+    {
+      "depth": 1,
+      "family": "modular",
+      "public_prompt_sha256": "4fe371e0618d927ce4cf7ba40b33e73803d0a8f5f6576a94100290ebf0fb1a19",
+      "task_id": "recurrence-modular-d1-s195001"
+    },
+    {
+      "depth": 1,
+      "family": "modular",
+      "public_prompt_sha256": "cf485b294ae3b7ced87a70fa8be196119978a600db5bd3011e54f7c2b2ab72ae",
+      "task_id": "recurrence-modular-d1-s195002"
+    },
+    {
+      "depth": 1,
+      "family": "modular",
+      "public_prompt_sha256": "7d57a838b5c8d2cf3469a7c75cbe66f711e393fb189172ec551467b29926db91",
+      "task_id": "recurrence-modular-d1-s195003"
+    },
+    {
+      "depth": 1,
+      "family": "modular",
+      "public_prompt_sha256": "2a2c071dfd23a95afc49ee823e24d67873c958709a04d9a620d4a2b2e45f9fd5",
+      "task_id": "recurrence-modular-d1-s195004"
+    },
+    {
+      "depth": 1,
+      "family": "modular",
+      "public_prompt_sha256": "a3c027cb29908170f4c1c1c2c4904527d6051bfa59626bcae638e0b6225ec0ac",
+      "task_id": "recurrence-modular-d1-s195005"
+    },
+    {
+      "depth": 1,
+      "family": "modular",
+      "public_prompt_sha256": "a3d89e46382f75050e84334e197060efb9337e44bd5bcd4ea3ab348a1e9c7428",
+      "task_id": "recurrence-modular-d1-s195006"
+    },
+    {
+      "depth": 1,
+      "family": "modular",
+      "public_prompt_sha256": "7d6e4f52b8442eac861deeb258c4efbbd85dc33aa026a33ce71cdbb8a35ba0cd",
+      "task_id": "recurrence-modular-d1-s195007"
+    },
+    {
+      "depth": 1,
+      "family": "modular",
+      "public_prompt_sha256": "a5c332cf7ae23c8de7edcbdd159fe376d0b500cf38ab24c273bd48382059c554",
+      "task_id": "recurrence-modular-d1-s195008"
+    },
+    {
+      "depth": 2,
+      "family": "modular",
+      "public_prompt_sha256": "55cbeb806bd3bf95e1e214af75102fcccab486470f36d82eaf0074aa2ce762a8",
+      "task_id": "recurrence-modular-d2-s195001"
+    },
+    {
+      "depth": 2,
+      "family": "modular",
+      "public_prompt_sha256": "43b19050fddf65cb515c9bf34a882400999c394b37f0afdf375a921a808edcd7",
+      "task_id": "recurrence-modular-d2-s195002"
+    },
+    {
+      "depth": 2,
+      "family": "modular",
+      "public_prompt_sha256": "6e3c0f03bdb889d794698208fc7cb56d8ced8ef6020b52984476648a1901b5f6",
+      "task_id": "recurrence-modular-d2-s195003"
+    },
+    {
+      "depth": 2,
+      "family": "modular",
+      "public_prompt_sha256": "fec1de336bd6d13e1f08643ecbd3dfda3333ed4d92da558fb37ae4d4fc2db3bc",
+      "task_id": "recurrence-modular-d2-s195004"
+    },
+    {
+      "depth": 2,
+      "family": "modular",
+      "public_prompt_sha256": "9920a328642648dbf6c2f00a2358d146029d65f8e7416f1d3aa5670f3a3c478b",
+      "task_id": "recurrence-modular-d2-s195005"
+    },
+    {
+      "depth": 2,
+      "family": "modular",
+      "public_prompt_sha256": "dce649cb2625b1bc9df3c7e5a64ecf3a42ade591f1c19a2ca69227184fdc1bd0",
+      "task_id": "recurrence-modular-d2-s195006"
+    },
+    {
+      "depth": 2,
+      "family": "modular",
+      "public_prompt_sha256": "33ee424003fa2adbe911e9196ed9174bd67a033e47ef99db546a80c4b27fe285",
+      "task_id": "recurrence-modular-d2-s195007"
+    },
+    {
+      "depth": 2,
+      "family": "modular",
+      "public_prompt_sha256": "6ef16191364a53debad6a44d00e6d51cdb1ccf0a4795c6d471b6b0d955c2c32e",
+      "task_id": "recurrence-modular-d2-s195008"
+    },
+    {
+      "depth": 4,
+      "family": "modular",
+      "public_prompt_sha256": "2583460006c9de5195d489e2dbe3ddb5c7f2564b0a89dbfded3e931cd048ee9c",
+      "task_id": "recurrence-modular-d4-s195001"
+    },
+    {
+      "depth": 4,
+      "family": "modular",
+      "public_prompt_sha256": "9e03eceb3e6299433641ffe37f7384a919fd8b30bf50e2a5d1b67024f05c60a3",
+      "task_id": "recurrence-modular-d4-s195002"
+    },
+    {
+      "depth": 4,
+      "family": "modular",
+      "public_prompt_sha256": "85163b076ebf272fadd714320968747e870bc6b98b6c2615ce157ba59a55a378",
+      "task_id": "recurrence-modular-d4-s195003"
+    },
+    {
+      "depth": 4,
+      "family": "modular",
+      "public_prompt_sha256": "b907d4312d8688df5857849d54002828a607696b693ccdff3435a7fa78dd7cbb",
+      "task_id": "recurrence-modular-d4-s195004"
+    },
+    {
+      "depth": 4,
+      "family": "modular",
+      "public_prompt_sha256": "75ff7375df8b44df64e943bea6be7fed0e465ac299e692cc046c64684a5a9718",
+      "task_id": "recurrence-modular-d4-s195005"
+    },
+    {
+      "depth": 4,
+      "family": "modular",
+      "public_prompt_sha256": "fc39d39e29c4ec68674ce714bc5e6382666b71de8fdf5abf946513e88e68b05d",
+      "task_id": "recurrence-modular-d4-s195006"
+    },
+    {
+      "depth": 4,
+      "family": "modular",
+      "public_prompt_sha256": "99cccdb8fe227af472b2b5a01b7c85e5a206fd23baabae124fb7eb9143377abc",
+      "task_id": "recurrence-modular-d4-s195007"
+    },
+    {
+      "depth": 4,
+      "family": "modular",
+      "public_prompt_sha256": "574dcc305b5bb2639f335ec8df346a0124ec6c89f58da2db26a66b7d723e4cc5",
+      "task_id": "recurrence-modular-d4-s195008"
+    },
+    {
+      "depth": 8,
+      "family": "modular",
+      "public_prompt_sha256": "d44071789af97db0760beb64ee0efb69a41bbf616e58b1eec8b4c99bca0f0b39",
+      "task_id": "recurrence-modular-d8-s195001"
+    },
+    {
+      "depth": 8,
+      "family": "modular",
+      "public_prompt_sha256": "1d4470e5605d842c3a8f5e1b6d6971452003b5f0f65fcf6ce773b6c3e1563f68",
+      "task_id": "recurrence-modular-d8-s195002"
+    },
+    {
+      "depth": 8,
+      "family": "modular",
+      "public_prompt_sha256": "d583c78e8b685fec2e22846de6e028da783e25c95800537c74f1d43a9db6f236",
+      "task_id": "recurrence-modular-d8-s195003"
+    },
+    {
+      "depth": 8,
+      "family": "modular",
+      "public_prompt_sha256": "7e212184bc1d322cd86766f51a6414d990ded6a0f2bf0c25348d6e2535392c8f",
+      "task_id": "recurrence-modular-d8-s195004"
+    },
+    {
+      "depth": 8,
+      "family": "modular",
+      "public_prompt_sha256": "24b2d173a7d0733c2c9fb4687193bafdd5791b09bf9f60d4439bf5f26ee0db4c",
+      "task_id": "recurrence-modular-d8-s195005"
+    },
+    {
+      "depth": 8,
+      "family": "modular",
+      "public_prompt_sha256": "b074692364871e9b26f4b78ea6129de3f8816e6e3b7f1d095ba820ba11a8e0f7",
+      "task_id": "recurrence-modular-d8-s195006"
+    },
+    {
+      "depth": 8,
+      "family": "modular",
+      "public_prompt_sha256": "6da6bc0fa744a366bded56bb116a995903056af21b0eae26a8b4cf6f92c7c6e4",
+      "task_id": "recurrence-modular-d8-s195007"
+    },
+    {
+      "depth": 8,
+      "family": "modular",
+      "public_prompt_sha256": "c4e310df234f9f2ef56e9063fd03eba75d8888f641c3c014b3a6ca810649797f",
+      "task_id": "recurrence-modular-d8-s195008"
+    },
+    {
+      "depth": 16,
+      "family": "modular",
+      "public_prompt_sha256": "81d5624970be19036032c18b55d5d259ce39b2bab302599ae6a64b47f8bdd10e",
+      "task_id": "recurrence-modular-d16-s195001"
+    },
+    {
+      "depth": 16,
+      "family": "modular",
+      "public_prompt_sha256": "2be321600dbafa21ca33f7fa452ccd6394f44bdf35f8002e45d3e790e5065331",
+      "task_id": "recurrence-modular-d16-s195002"
+    },
+    {
+      "depth": 16,
+      "family": "modular",
+      "public_prompt_sha256": "69d0e50f8700cd50d05f08ae29e143b916c3d8487d9cd51510955fbc2b8fd356",
+      "task_id": "recurrence-modular-d16-s195003"
+    },
+    {
+      "depth": 16,
+      "family": "modular",
+      "public_prompt_sha256": "eb85d0f7ff974d749b637b7725b96a97297bd954100a2802256bd2c43651e26f",
+      "task_id": "recurrence-modular-d16-s195004"
+    },
+    {
+      "depth": 16,
+      "family": "modular",
+      "public_prompt_sha256": "0cf2a8f9f870a39b070dea1605f9c37159da4ab8879b5a310493478d66630800",
+      "task_id": "recurrence-modular-d16-s195005"
+    },
+    {
+      "depth": 16,
+      "family": "modular",
+      "public_prompt_sha256": "4bb863fd5582c91f98f4527f78405b5f40cf37c59ff42a019e34ad25e812f480",
+      "task_id": "recurrence-modular-d16-s195006"
+    },
+    {
+      "depth": 16,
+      "family": "modular",
+      "public_prompt_sha256": "b285ab0a205bdebfb4961a01c60768a22e9eb589215506ce2fac2a55e81b97f0",
+      "task_id": "recurrence-modular-d16-s195007"
+    },
+    {
+      "depth": 16,
+      "family": "modular",
+      "public_prompt_sha256": "c1b1ec6fdcaafcd8b7ab7fc71c9cb6101990757264982fdbef28f8acd9e8c306",
+      "task_id": "recurrence-modular-d16-s195008"
+    },
+    {
+      "depth": 32,
+      "family": "modular",
+      "public_prompt_sha256": "bd20e0d9dfb8f906c20b8d156e5fb571cba8b626f5031c32887a563a8bf66258",
+      "task_id": "recurrence-modular-d32-s195001"
+    },
+    {
+      "depth": 32,
+      "family": "modular",
+      "public_prompt_sha256": "aca31148d4bac17a4a6bb27f03712b3da8033d0d0aea47bf3ceeb79bb305b8e8",
+      "task_id": "recurrence-modular-d32-s195002"
+    },
+    {
+      "depth": 32,
+      "family": "modular",
+      "public_prompt_sha256": "1ceab3b79d0222b31fe708fe75da49267e59b54206de0281396058a53d2df00d",
+      "task_id": "recurrence-modular-d32-s195003"
+    },
+    {
+      "depth": 32,
+      "family": "modular",
+      "public_prompt_sha256": "3c83acdf190f99000e3426cc4b56fd15c3bd36f1af3fe161cc152e12fa73f88e",
+      "task_id": "recurrence-modular-d32-s195004"
+    },
+    {
+      "depth": 32,
+      "family": "modular",
+      "public_prompt_sha256": "da374d32f19edbf30175b960c2d923a797e81710dacdf3a285ddf45ad699c9bd",
+      "task_id": "recurrence-modular-d32-s195005"
+    },
+    {
+      "depth": 32,
+      "family": "modular",
+      "public_prompt_sha256": "e5e88825cb8f0b903c488527848aa79afb4513292f131ac41c15c083d4944e72",
+      "task_id": "recurrence-modular-d32-s195006"
+    },
+    {
+      "depth": 32,
+      "family": "modular",
+      "public_prompt_sha256": "8b1437c39d4c19016220ef7d1fb632815e20e6fd2554c6ea1d073abe216b7ccb",
+      "task_id": "recurrence-modular-d32-s195007"
+    },
+    {
+      "depth": 32,
+      "family": "modular",
+      "public_prompt_sha256": "86d62aa1d6c45d7938c854b60ee6a727c709484822eb35227003ea80630ce1f2",
+      "task_id": "recurrence-modular-d32-s195008"
+    }
+  ]
+}

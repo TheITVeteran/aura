@@ -6,6 +6,7 @@ import json
 import subprocess
 import sys
 from pathlib import Path
+from shutil import copytree
 
 import pytest
 
@@ -17,6 +18,7 @@ from tools.run_certified_recurrence_behavioral_gate import (
     exact_paired_pvalue,
     execute_certified_arm,
     execute_t1_lesion,
+    verify_behavioral_bundle,
 )
 
 
@@ -118,3 +120,29 @@ def test_cli_imports_from_an_unrelated_working_directory(tmp_path: Path) -> None
     )
     assert completed.returncode == 0, completed.stderr
     assert "Frozen 1.5B behavioral gate" in completed.stdout
+
+
+def test_checked_in_replication_replays_and_tamper_fails(tmp_path: Path) -> None:
+    source = (
+        Path(__file__).resolve().parent.parent
+        / "artifacts"
+        / "closeout"
+        / "latent_cortex"
+        / "cp195_certified_recurrence_behavioral_replication"
+    )
+    verified = verify_behavioral_bundle(source, verify_model_identity=False)
+    assert verified["verified"] is True
+    assert verified["task_count"] == 96
+    assert verified["observation_count"] == 384
+    assert verified["summary"]["accuracy"]["certified_recurrence"] == 1.0
+    assert verified["summary"]["wow_signal"] is False
+
+    tampered = tmp_path / "bundle"
+    copytree(source, tampered)
+    observations = tampered / "observations.jsonl"
+    observations.write_text(
+        observations.read_text(encoding="utf-8").replace('"correct":false', '"correct":true', 1),
+        encoding="utf-8",
+    )
+    with pytest.raises(RuntimeError, match="commitment differs"):
+        verify_behavioral_bundle(tampered, verify_model_identity=False)

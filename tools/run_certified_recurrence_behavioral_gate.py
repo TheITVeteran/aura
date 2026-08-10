@@ -15,6 +15,7 @@ import hashlib
 import json
 import math
 import os
+import re
 import subprocess
 import sys
 import time
@@ -52,6 +53,7 @@ GENERATORS: Final = {
     "boolean": nested_boolean,
     "modular": modular_chain,
 }
+_TASK_ID = re.compile(r"\Arecurrence-(boolean|modular)-d([1-9][0-9]*)-s([0-9]+)\Z")
 
 
 def _sha(value: Any) -> str:
@@ -376,6 +378,84 @@ def _summarize(rows: list[dict[str, Any]]) -> dict[str, Any]:
         ),
         "wow_signal": False,
         "wow_signal_reason": "executable_producer_present_and_neural_only_gate_not_run",
+    }
+
+
+def verify_behavioral_bundle(
+    bundle_dir: Path,
+    *,
+    verify_model_identity: bool = True,
+) -> dict[str, Any]:
+    bundle = bundle_dir.expanduser().resolve(strict=True)
+    prereg = json.loads((bundle / "preregistration.json").read_text(encoding="utf-8"))
+    report = json.loads((bundle / "report.json").read_text(encoding="utf-8"))
+    if not isinstance(prereg, dict) or not isinstance(report, dict):
+        raise RuntimeError("behavioral bundle records must be objects")
+    prereg_body = {key: value for key, value in prereg.items() if key != "preregistration_sha256"}
+    report_body = {key: value for key, value in report.items() if key != "report_sha256"}
+    if (
+        prereg.get("schema") != PREREG_SCHEMA
+        or prereg.get("preregistration_sha256") != _sha(prereg_body)
+        or report.get("schema") != SCHEMA
+        or report.get("report_sha256") != _sha(report_body)
+        or report.get("preregistration_sha256") != prereg.get("preregistration_sha256")
+        or report.get("source_commit") != prereg.get("source_commit")
+        or report.get("claim_boundary") != prereg.get("claim_boundary")
+    ):
+        raise RuntimeError("behavioral bundle commitments differ")
+    tasks = []
+    for row in prereg.get("tasks", []):
+        if not isinstance(row, dict):
+            raise RuntimeError("behavioral task commitment is invalid")
+        match = _TASK_ID.fullmatch(str(row.get("task_id") or ""))
+        if match is None:
+            raise RuntimeError("behavioral task id is invalid")
+        family, depth_text, seed_text = match.groups()
+        task = GENERATORS[family](int(depth_text), int(seed_text))
+        if (
+            row
+            != {
+                "task_id": task.task_id,
+                "family": task.family,
+                "depth": task.depth,
+                "public_prompt_sha256": _text_sha(task.prompt),
+            }
+        ):
+            raise RuntimeError("behavioral task commitment reconstruction differs")
+        tasks.append(task)
+    if len(tasks) != prereg.get("task_count") or len({task.task_id for task in tasks}) != len(
+        tasks
+    ):
+        raise RuntimeError("behavioral task population differs")
+    observations_path = bundle / "observations.jsonl"
+    observations_text = observations_path.read_text(encoding="utf-8")
+    if report.get("observations_sha256") != _text_sha(observations_text):
+        raise RuntimeError("behavioral observation journal commitment differs")
+    rows, indexed = _load_journal(
+        observations_path,
+        tasks=tuple(tasks),
+        allowed_arms=tuple(prereg["arms"]),
+    )
+    if len(indexed) != len(tasks) * len(prereg["arms"]):
+        raise RuntimeError("behavioral observation matrix is incomplete")
+    summary = _summarize(rows)
+    if summary != report.get("summary"):
+        raise RuntimeError("behavioral summary reconstruction differs")
+    if verify_model_identity:
+        model_path = Path(prereg["model_path"]).expanduser().resolve(strict=True)
+        if (
+            full_weight_checkpoint_identity(model_path) != report.get("model_identity")
+            or model_behavior_bundle_identity(model_path)
+            != report.get("model_behavior_identity")
+        ):
+            raise RuntimeError("behavioral model identity differs")
+    return {
+        "verified": True,
+        "task_count": len(tasks),
+        "observation_count": len(rows),
+        "source_commit": report["source_commit"],
+        "report_sha256": report["report_sha256"],
+        "summary": summary,
     }
 
 

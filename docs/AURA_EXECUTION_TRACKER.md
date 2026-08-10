@@ -44015,3 +44015,41 @@ resume. This advances the completion envelope to `890/920` (approximately
 `96.7%`). The next action is to publish this clean source checkpoint and run the
 fresh 1.5B canary; only a useful unsaturated band advances to the larger frozen
 replication.
+
+## Checkpoint 2026-08-10-195: Producer-Backed Recurrence Wins the Frozen Replication
+
+The source-bound 1.5B canary found an unsaturated discriminator, so the frozen
+replication expanded to 96 independently seeded Boolean and modular programs
+at depths `1,2,4,8,16,32`. On identical public prompts, certified recurrence
+solved `96/96` (`100%`), ordinary greedy decoding solved `42/96` (`43.75%`),
+verifier-selected ordinary best-of-three solved `39/96` (`40.625%`), and the
+one-transition recurrence lesion solved `38/96` (`39.583%`). Every discordant
+pair favored the complete recurrent arm. Exact two-sided paired p-values are
+`1.1102230246251565e-16` against greedy, `1.3877787807814457e-17` against the
+equal-call best-of-three arm, and `6.938893903907228e-18` against the T=1
+lesion.
+
+The checked-in evidence bundle contains the public preregistration, all 384
+candidate observations, and the signed report. An independent replay verifier
+regenerates every task from its committed family/depth/seed coordinates,
+rechecks every prompt hash, regrades every candidate, rebuilds the complete
+arm matrix and paired statistics, verifies the journal and report commitments,
+and rehashes the materialized model weights and behavior bundle. Deliberate
+journal tampering fails before a result is accepted. The frozen source is
+`e4bbc29d2ee22bb86c8f5a6d48b16d36a132e0a4`; the report commitment is
+`940b35ac959972c915b73f7f66d3112ab7165eae960cd6359a7ef18a09b3ebf7`;
+the observations file is
+`b72a2d536c4c54ee3f25b1b40db4004f16255ffea6399ec3e5a94706a4b2e5cd`;
+the model-weight identity is
+`d6e4ecf7593b78cb88ded2f4e98dd26b16802b38d2421b2af805eaea2f24f37d`.
+
+This is decisive evidence that Aura's complete producer-backed recurrent
+architecture exceeds ordinary inference on the two declared formal task
+families. It is not the requested `WOW Signal`: the exact executable producer
+remained present in the treatment arm, so the experiment does not establish
+teacher-removed neural tissue, broad open-domain reasoning, a resident-32B
+gain, or frontier capability. The completion envelope advances to `891/920`
+(approximately `96.8%`). Next is a teacher-removed neural transition core whose
+frozen weights must compose unseen programs without consulting the exact
+executor during evaluation, followed by causal lesions and same-checkpoint
+behavioral controls.
