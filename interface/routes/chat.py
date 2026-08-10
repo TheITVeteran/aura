@@ -12439,6 +12439,45 @@ def _snapshot_field(source: Any, name: str, default: Any = "") -> Any:
     return getattr(source, name, default)
 
 
+#: The vitals `/api/health` publishes as ``liquid_state``.
+_LIQUID_VITALS: tuple[str, ...] = ("energy", "focus", "frustration", "confidence")
+
+
+def _liquid_vitals() -> dict[str, Any]:
+    """Her own headline vitals, read from the substrate every surface reads.
+
+    Sourced from the same service `/api/health` uses, so what she says about
+    herself and what the header displays cannot drift apart. Missing values
+    are omitted rather than defaulted: a vital reported as 0 because nothing
+    answered is worse than one that is absent, and absent is what
+    ``_compact_snapshot_line`` already drops.
+    """
+    try:
+        substrate = ServiceContainer.peek(
+            "liquid_substrate", default=None
+        ) or ServiceContainer.peek("liquid_state", default=None)
+        if substrate is None:
+            return {}
+        vitals: dict[str, Any] = {}
+        for name in _LIQUID_VITALS:
+            value = _snapshot_field(substrate, name, None)
+            if value is None:
+                continue
+            try:
+                vitals[name] = round(float(value), 1)
+            except (TypeError, ValueError):
+                continue
+        return vitals
+    except _CHAT_RECOVERABLE_ERRORS as exc:
+        record_degradation(
+            "chat.liquid_vitals",
+            exc,
+            severity="debug",
+            action="omitted her own vitals from the chat snapshot",
+        )
+        return {}
+
+
 def _resolve_protected_foreground_snapshot() -> dict[str, Any]:
     """Lightweight state snapshot for the protected chat lane.
 
@@ -12465,6 +12504,17 @@ def _resolve_protected_foreground_snapshot() -> dict[str, Any]:
             "current_mode": _snapshot_field(cognition, "current_mode", ""),
             "current_objective": _snapshot_field(cognition, "current_objective", ""),
             "rolling_summary": _snapshot_field(cognition, "rolling_summary", ""),
+            # Energy and focus are the two headline vitals: the UI header shows
+            # them, /api/health serves them as liquid_state, and the neural
+            # feed narrates them. They were the only ones missing from HER
+            # snapshot, so asked "tell me your current energy and focus
+            # numbers" she answered "Not readable" — measured live 2026-08-10,
+            # while energy was 11 and focus was 2.
+            #
+            # That answer was honest. She genuinely did not have them. An
+            # instrument every surface can read except its owner is the wrong
+            # way round.
+            **_liquid_vitals(),
         }
     except _CHAT_RECOVERABLE_ERRORS as exc:
         record_degradation('chat', exc)
@@ -12536,6 +12586,9 @@ def _build_protected_foreground_system_prompt(
         _compact_snapshot_line("Arousal", voice_state.get("arousal") or voice_snapshot.get("arousal")),
         _compact_snapshot_line("Curiosity", voice_state.get("curiosity")),
         _compact_snapshot_line("Coherence", voice_state.get("coherence")),
+        # The two the header shows and she could not read.
+        _compact_snapshot_line("Energy", voice_state.get("energy")),
+        _compact_snapshot_line("Focus", voice_state.get("focus")),
         _compact_snapshot_line("Current mode", voice_state.get("current_mode")),
         _compact_snapshot_line("Objective", voice_state.get("current_objective")),
         _compact_snapshot_line("Continuity", continuity_summary, max_chars=260),
