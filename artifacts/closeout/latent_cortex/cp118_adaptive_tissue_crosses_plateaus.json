@@ -1,0 +1,46 @@
+{
+  "schema": "aura.closeout.checkpoint.v1",
+  "checkpoint": "CP118",
+  "title": "Adaptive tissue can cross discrete plateaus",
+  "date": "2026-08-09",
+  "parent_commit": "f23cf187c",
+  "observed_failure": {
+    "campaign": "/Users/bryan/.aura/campaigns/cp103-wow-pilot-repaired-20260809",
+    "latent_opt_attempts": 28,
+    "latent_opt_committed_steps": 0,
+    "latent_opt_rejected_steps": 28,
+    "proxy_safe_plateau_accepts": 28,
+    "plateau_rollbacks": 28,
+    "fast_weight_verifier_unavailable_cells": 3,
+    "fast_weight_no_exact_local_evidence_cells": 4
+  },
+  "implementation": {
+    "trust_scales": [
+      16.0,
+      8.0,
+      4.0,
+      2.0,
+      1.0
+    ],
+    "effective_learning_rate_ceiling": 1.0,
+    "largest_proxy_safe_candidate_selected": true,
+    "semantic_decode_once_per_proposal": true,
+    "all_proxy_trials_metered": true,
+    "strict_task_gain_required_for_final_commit": true,
+    "semantic_regression_rejected": true,
+    "candidate_local_fast_weight_authority_survives_branch_selection_loss": true,
+    "branch_selection_authority_restored": false
+  },
+  "verification": {
+    "focused_contracts": "286 passed",
+    "static_integrity": "Ruff and Python compilation passed",
+    "discrete_boundary_case": "A proxy-safe effective 0.8 step crossed a score boundary that the base 0.05 step could not reach",
+    "rollback_cases": "Proxy-only plateau and semantic regression remain non-authoritative"
+  },
+  "claim_boundary": "This checkpoint repairs search reachability and fast-weight authority wiring. It does not prove a held-out reasoning gain, model transfer, frontier performance, fusion authority, activation authority, or WOW Signal.",
+  "next": [
+    "Run deterministic producer gates for exact public promotions.",
+    "Run the three-arm component stage on a local small checkpoint.",
+    "Escalate only if CP117 admission passes without exception."
+  ]
+}

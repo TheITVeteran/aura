@@ -8,6 +8,7 @@ bit-for-bit unchanged.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import math
 import re
@@ -1103,6 +1104,7 @@ def test_incomplete_branch_inventory_keeps_candidate_local_latent_score(
             allow_vanilla_fallback=False,
             branches=BranchConfig(n_branches=2, exchange_interval=2),
             latent_opt=LatentOptConfig(enabled=True, steps=2, lr=0.05),
+            fast_weights=FastWeightsConfig(enabled=True, rank=2, opt_steps=1),
             verifier_accept_non_regression=True,
             local_repair_max_attempts=2,
             local_repair_max_tokens=64,
@@ -1156,6 +1158,13 @@ def test_incomplete_branch_inventory_keeps_candidate_local_latent_score(
         "task_score_nonregression_with_proxy_descent_v1"
     )
     assert receipt.latent_opt_verifier["plateau_rollbacks"] == 2
+    assert (
+        "fast_weight_candidate_local_evidence_without_branch_selection"
+        in receipt.honest_flags
+    )
+    admission = receipt.fast_weight_learning["admission"]
+    assert admission["reason"] != "verifier_unavailable"
+    assert admission["source_sha256"] != hashlib.sha256(b"").hexdigest()
     assert receipt.post_adaptation_candidate == {}
 
 

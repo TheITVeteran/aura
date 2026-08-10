@@ -37,6 +37,7 @@ from core.brain.llm.latent_cortex.workspace import per_position_rms
 
 logger = logging.getLogger("Aura.LatentCortex.LatentOpt")
 _LINE_SEARCH_EVALS = 12
+_VERIFIER_TRUST_SCALES = (16.0, 8.0, 4.0, 2.0, 1.0)
 
 
 def prompt_token_distribution(prompt_tokens, vocab_size: int):
@@ -457,7 +458,19 @@ class LatentOptimizer:
         accepted_path_decisions: list[int] = []
         committed_path_length = 0
         for i in range(max(0, int(proposals))):
-            proxy_eval_cost = self._layer_apps_per_loss if accept_non_regression else 0
+            trust_scales = (1.0,)
+            if accept_non_regression:
+                max_scale = max(1.0, 1.0 / float(self.config.lr))
+                trust_scales = tuple(
+                    scale for scale in _VERIFIER_TRUST_SCALES if scale <= max_scale
+                )
+                if 1.0 not in trust_scales:
+                    trust_scales = (*trust_scales, 1.0)
+            proxy_eval_cost = (
+                len(trust_scales) * self._layer_apps_per_loss
+                if accept_non_regression
+                else 0
+            )
             candidate, admitted, current_loss = self._propose(
                 z,
                 i,
@@ -466,18 +479,39 @@ class LatentOptimizer:
             if not admitted:
                 break
             candidate_loss: float | None = None
+            proposal_scale = 1.0
             if accept_non_regression:
                 if current_loss is None:
                     raise RuntimeError(
                         "latent optimizer admitted a proposal without a proxy loss"
                     )
                 if not self._charge_loss_evals(
-                    1, additional_reserve_layer_apps=verifier_layer_apps
+                    len(trust_scales),
+                    additional_reserve_layer_apps=verifier_layer_apps,
                 ):
                     raise RuntimeError(
                         "latent optimizer lost an admitted proxy-verifier reservation"
                     )
-                candidate_loss = float(self._loss_fn(candidate))
+                raw_step = candidate - z
+                proxy_required_delta = self.trace.verifier_proxy_tolerance_scale * max(
+                    1.0,
+                    abs(float(current_loss)),
+                )
+                evaluated: list[tuple[float, Any, float]] = []
+                for scale in trust_scales:
+                    scaled = z + raw_step * scale
+                    scaled_loss = float(self._loss_fn(scaled))
+                    evaluated.append((scale, scaled, scaled_loss))
+                proxy_safe = [
+                    row
+                    for row in evaluated
+                    if math.isfinite(row[2])
+                    and row[2] < float(current_loss) - proxy_required_delta
+                ]
+                if proxy_safe:
+                    proposal_scale, candidate, candidate_loss = proxy_safe[0]
+                else:
+                    proposal_scale, candidate, candidate_loss = evaluated[-1]
             candidate_score = float(score_fn(candidate))
             proxy_required_delta = (
                 self.trace.verifier_proxy_tolerance_scale
@@ -487,6 +521,8 @@ class LatentOptimizer:
             )
             decision: dict[str, Any] = {
                 "proposal": i,
+                "proposal_scale": round(float(proposal_scale), 6),
+                "proxy_candidate_evaluations": len(trust_scales),
                 "baseline_score": round(best_score, 12),
                 "candidate_score": (
                     round(candidate_score, 12)

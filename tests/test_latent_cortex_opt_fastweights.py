@@ -234,6 +234,27 @@ def test_interactive_verifier_accepts_only_nonregressing_proxy_descent(tiny_mode
     assert decision["candidate_proxy_loss"] < decision["current_proxy_loss"]
 
 
+def test_verifier_search_expands_a_proxy_safe_step_across_a_discrete_plateau():
+    z = mx.array([[[1.0]]])
+    cfg = LatentOptConfig(enabled=True, steps=1, lr=0.05)
+    opt = LatentOptimizer(lambda state: mx.sum(mx.square(state)), cfg, seed=2)
+
+    z_out, score = opt.run_with_verifier(
+        z,
+        lambda state: 1.0 if float(state[0, 0, 0]) < 0.5 else 0.0,
+        initial_score=0.0,
+        accept_non_regression=True,
+        commit_requires_score_improvement=True,
+    )
+
+    assert score == 1.0
+    assert float(z_out[0, 0, 0]) == pytest.approx(0.2, abs=1e-5)
+    decision = opt.trace.verifier_receipt()["decisions"][0]
+    assert decision["proposal_scale"] == 16.0
+    assert decision["proxy_candidate_evaluations"] == 5
+    assert decision["decision"] == "accepted_task_score_improvement"
+
+
 def test_interactive_verifier_rolls_back_proxy_only_plateau_without_task_gain(
     tiny_model,
 ):

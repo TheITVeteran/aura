@@ -41556,3 +41556,39 @@ No capability claim follows from a launch gate. Zero accepted latent steps and
 zero fast-weight applications remain the next implementation defect, followed
 by the cheap 1.5B component stage. The completion envelope is `814/920`
 (approximately `88.5%`).
+
+## Checkpoint 2026-08-09-118: Adaptive Tissue Can Cross Discrete Plateaus
+
+The completed CP103 resident-32B receipts supplied a specific producer defect.
+All `28/28` latent proposals reduced the answer-independent proxy without
+lowering the semantic score, yet all `28/28` were rolled back after four tiny
+steps because no proposal crossed a discrete decode boundary. This was not a
+failed gradient; it was a trust region too small to expose a changed candidate.
+
+Verifier-guided optimization now evaluates a geometric trust ladder along the
+same clipped gradient direction. It chooses the largest candidate that still
+proves proxy descent, meters every proxy evaluation, and performs one expensive
+semantic decode at that candidate. The effective learning-rate ceiling remains
+one. A semantic regression is rejected immediately, and an entire plateau path
+still rolls back unless a later candidate strictly improves the admitted task
+score. A deterministic boundary test proves that a base `0.05` move which
+cannot change the score expands safely to `0.8`, crosses the boundary, and is
+committed; the no-gain and regression rollback tests remain green.
+
+The same receipts exposed an independent fast-weight wiring fault. Three of
+seven cells reported `verifier_unavailable` after branch inventory loss even
+though the verifier had passed decoy preflight and retained candidate-local
+authority. Fast weights now preserve that narrower authority exactly as latent
+optimization already did. It can inspect the selected state without regaining
+permission to select among branches; malformed or non-exact evidence remains
+ineligible for learning.
+
+Optimizer, engine, fast-weight receipt, service replay, reconciliation, and
+floor contracts pass `286/286`. Ruff and Python compilation pass. Evidence is
+`artifacts/closeout/latent_cortex/cp118_adaptive_tissue_crosses_plateaus.json`.
+
+This checkpoint proves search reachability and correct authority wiring on the
+real failing path; it does not claim that a held-out model gains correct
+answers. The next admissible evidence is the cheap component/ablation stage,
+not a resident-32B certificate. The completion envelope is `815/920`
+(approximately `88.6%`).

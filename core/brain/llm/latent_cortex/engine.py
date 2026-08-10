@@ -6054,7 +6054,22 @@ class LatentCortexEngine:
                 "fast_weight_learning_evidence",
                 None,
             )
-            if verifier is not None and self.tokenizer is not None:
+            fast_weight_candidate_verifier = verifier
+            if (
+                fast_weight_candidate_verifier is None
+                and pending_verifier is not None
+                and receipt.verifier_preflight.get("verifier_admitted") is True
+            ):
+                # An incomplete branch inventory removes authority to choose
+                # among branches; it does not invalidate a preflight-admitted
+                # verifier's candidate-local evidence on the already selected
+                # state. Latent optimization already preserves this narrower
+                # authority. Fast weights must use the same distinction.
+                fast_weight_candidate_verifier = pending_verifier
+                receipt.flag(
+                    "fast_weight_candidate_local_evidence_without_branch_selection"
+                )
+            if fast_weight_candidate_verifier is not None and self.tokenizer is not None:
                 probe_cost = self._verifier_probe_layer_apps(bridge_tokens)
                 if probe_cost + safety_reserve > budget.remaining_layer_apps:
                     raise RuntimeError("compute budget cannot admit fast-weight evidence probe")
@@ -6069,7 +6084,9 @@ class LatentCortexEngine:
                     force_exact_tokens=True,
                 )
                 fw_verifier_pre_text = self.tokenizer.decode(fw_verifier_pre_tokens)
-                fw_verifier_pre = float(verifier(fw_verifier_pre_text))
+                fw_verifier_pre = float(
+                    fast_weight_candidate_verifier(fw_verifier_pre_text)
+                )
                 source_sha256 = hashlib.sha256(fw_verifier_pre_text.encode("utf-8")).hexdigest()
                 if callable(evidence_provider):
                     try:
@@ -6292,7 +6309,10 @@ class LatentCortexEngine:
                     operation_prefix="fast_weight_sham",
                 )
                 fw_sham_trace = fast_weights.optimization_trace()
-                if verifier is not None and self.tokenizer is not None:
+                if (
+                    fast_weight_candidate_verifier is not None
+                    and self.tokenizer is not None
+                ):
                     fw_sham_probe_tokens = self._decode_probe(
                         winner,
                         cache,
@@ -6302,7 +6322,11 @@ class LatentCortexEngine:
                         use_cache=False,
                         force_exact_tokens=True,
                     )
-                    fw_sham_score = float(verifier(self.tokenizer.decode(fw_sham_probe_tokens)))
+                    fw_sham_score = float(
+                        fast_weight_candidate_verifier(
+                            self.tokenizer.decode(fw_sham_probe_tokens)
+                        )
+                    )
                 fast_weights.restore_delta(
                     fw_treatment_snapshot,
                     reason="fast_weights_matched_treatment_restore",
@@ -6366,9 +6390,12 @@ class LatentCortexEngine:
                             "test_time_training"
                         ],
                     }
-                if verifier is not None and self.tokenizer is not None:
+                if (
+                    fast_weight_candidate_verifier is not None
+                    and self.tokenizer is not None
+                ):
                     verifier_decision = self._enforce_fast_weight_verifier(
-                        verifier,
+                        fast_weight_candidate_verifier,
                         fast_weights,
                         winner,
                         cache,
