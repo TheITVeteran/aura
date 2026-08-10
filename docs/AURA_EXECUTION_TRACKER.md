@@ -43299,3 +43299,39 @@ The next gates are fresh-seed sample-complexity scaling, readout-versus-
 workspace causal localization, and broader unseen-domain replication on the
 1.5B checkpoint. Resident-32B use remains locked until those shorter gates
 support a claim-eligible architecture.
+
+## Checkpoint 2026-08-10-173: Shared-Rule Scaling Has a Fresh-Seed Gate
+
+CP172 proved a bounded persistent coda effect but used only one validation
+seed and eight behavioral observations. Its `8/8` treatment, `6/8` lesion,
+and `7/8` sham establish causal sensitivity inside that bounded run; they do
+not provide enough discordant pairs for a powered general-capability claim.
+Repeating full behavioral campaigns while the representation question remains
+open would spend most of the model budget on a verdict the internal operator
+diagnostic can reject much earlier.
+
+Verified trajectory distillation now has a fixed-hyperparameter, nested sample-
+complexity gate. One model load captures a maximum teaching pool plus at least
+three globally disjoint fresh-seed validation cohorts. Every teaching prefix
+ends at a complete task/branch answer boundary. Rank, regularization, gain,
+sites, phase, and correction policy remain frozen while only admitted teaching
+evidence increases. Each validation cohort and each site is scored separately;
+a favorable concatenated aggregate cannot hide a seed or layer where the
+operator is worse than zero. Admission requires positive direction and lower
+error than the zero operator everywhere at the final sample size, plus improving
+mean error and cosine trends as evidence grows.
+
+The complete private activation inventory is owner-only, hash-bound, and
+atomically written. The final fitted factors cross the existing secure verified-
+trajectory artifact boundary and remain bound to checkpoint, source evidence,
+site, phase, factor receipts, and exact tensors. Task and prompt disjointness,
+checkpoint immutability, complete site topology, and artifact publication are
+top-level gates. Focused learner and canary contracts pass `28/28`; canonical
+smoke passes `103/103`; Ruff, compilation, and diff hygiene pass.
+
+This advances the completion envelope to `869/920` (approximately `94.5%`).
+The next action is the source-bound real-1.5B scaling run with the CP172 learner
+frozen at rank `32`, regularization `100`, and gain `0.25`. Its claim boundary
+is internal operator scaling only. Behavioral power, unseen-family/depth
+transfer, recurrent-workspace causality, resident-32B use, fusion, activation,
+and the `WOW Signal` remain locked.

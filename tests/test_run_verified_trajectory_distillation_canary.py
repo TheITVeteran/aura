@@ -6,7 +6,9 @@ import pytest
 from tools.run_verified_trajectory_distillation_canary import (
     _permuted_recurrence_adapter,
     _report_score,
+    _sample_rows_from_complete_examples,
     _validate_receipt_payload,
+    _write_private_pair_artifact,
     _write_receipt,
     _zeroed_recurrence_adapter,
 )
@@ -116,3 +118,70 @@ def test_receipt_validator_rejects_post_write_mutation(tmp_path) -> None:
 
     with pytest.raises(RuntimeError, match="hash does not bind"):
         _validate_receipt_payload(payload)
+
+
+def test_sample_rows_preserve_complete_example_boundaries() -> None:
+    manifest = [
+        {"row_start": index * 2, "row_stop": (index + 1) * 2}
+        for index in range(16)
+    ]
+
+    rows = _sample_rows_from_complete_examples(
+        manifest,
+        per_cell_levels=(1, 2, 4),
+        stratum_count=2,
+        branch_count=2,
+    )
+
+    assert rows == (8, 16, 32)
+
+
+def test_sample_rows_reject_partial_or_noncontiguous_manifest() -> None:
+    manifest = [
+        {"row_start": 0, "row_stop": 2},
+        {"row_start": 3, "row_stop": 5},
+    ]
+
+    with pytest.raises(ValueError, match="row boundaries"):
+        _sample_rows_from_complete_examples(
+            manifest,
+            per_cell_levels=(1, 2),
+            stratum_count=1,
+            branch_count=1,
+        )
+
+
+def test_private_pair_artifact_binds_every_cohort_and_tensor(tmp_path) -> None:
+    site = "model.layers.3.self_attn.o_proj"
+    training = {
+        site: (
+            np.arange(18, dtype=np.float64).reshape(6, 3),
+            np.arange(24, dtype=np.float64).reshape(6, 4),
+        )
+    }
+    cohorts = {
+        "fresh-b": {site: (training[site][0][:2], training[site][1][:2])},
+        "fresh-a": {site: (training[site][0][2:4], training[site][1][2:4])},
+    }
+
+    receipt = _write_private_pair_artifact(
+        tmp_path,
+        training_pairs=training,
+        validation_cohorts=cohorts,
+    )
+
+    artifact = tmp_path / "private_teaching_pairs.npz"
+    assert artifact.stat().st_mode & 0o777 == 0o600
+    assert receipt["cohort_names"] == {
+        "validation_0000": "fresh-a",
+        "validation_0001": "fresh-b",
+    }
+    with np.load(artifact, allow_pickle=False) as archive:
+        assert set(archive.files) == {
+            "training__site_0000__inputs",
+            "training__site_0000__corrections",
+            "validation_0000__site_0000__inputs",
+            "validation_0000__site_0000__corrections",
+            "validation_0001__site_0000__inputs",
+            "validation_0001__site_0000__corrections",
+        }

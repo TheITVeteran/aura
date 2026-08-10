@@ -14,6 +14,7 @@ from core.learning.verified_trajectory_distillation import (
     evaluate_verified_trajectory_transfer,
     fit_verified_trajectory_factors,
     fit_verified_trajectory_inventory,
+    fit_verified_trajectory_sample_complexity,
     install_verified_trajectory_inventory,
     load_verified_trajectory_artifact,
     publish_verified_trajectory_artifact,
@@ -340,6 +341,107 @@ def test_verified_trajectory_transfer_diagnostic_recovers_shared_rule() -> None:
     assert aggregate["better_than_zero_operator"] is True
     assert aggregate["input_subspace_coverage"] == pytest.approx(1.0)
     assert aggregate["correction_subspace_coverage"] == pytest.approx(1.0)
+
+
+def test_verified_trajectory_sample_complexity_requires_fresh_cohort_transfer() -> None:
+    rng = np.random.default_rng(731)
+    operator = rng.normal(size=(12, 6))
+    train_inputs = rng.normal(size=(64, 12))
+    site = "model.layers.3.self_attn.o_proj"
+    teaching = {site: (train_inputs, train_inputs @ operator)}
+    cohorts = {}
+    for index in range(3):
+        inputs = rng.normal(size=(24, 12))
+        cohorts[f"fresh-{index}"] = {site: (inputs, inputs @ operator)}
+
+    report, fitted = fit_verified_trajectory_sample_complexity(
+        teaching,
+        cohorts,
+        sample_rows=(4, 8, 16, 32, 64),
+        rank=6,
+        regularization=1e-8,
+        gain=0.75,
+        adapter_scale=20.0,
+        site_phases={site: "decode"},
+        normalize_corrections=False,
+    )
+
+    assert report["schema"] == "aura.verified_trajectory_sample_complexity.v1"
+    assert report["sample_rows"] == [4, 8, 16, 32, 64]
+    assert report["stages"][-1]["summary"]["worst_relative_error"] < 1e-5
+    assert report["stages"][-1]["summary"]["all_sites_better_than_zero"] is True
+    assert report["gates"] == {
+        "fresh_cohorts_all_better_than_zero": True,
+        "fresh_cohorts_all_direction_positive": True,
+        "final_worst_case_beats_zero": True,
+        "fresh_site_cells_all_better_than_zero": True,
+        "fresh_site_cells_all_direction_positive": True,
+        "mean_error_improves_with_more_evidence": True,
+        "mean_direction_improves_with_more_evidence": True,
+    }
+    assert report["admitted"] is True
+    assert fitted[site].target_phase == "decode"
+    assert len(report["report_sha256"]) == 64
+
+
+def test_verified_trajectory_sample_complexity_rejects_wrong_shared_rule() -> None:
+    rng = np.random.default_rng(977)
+    operator = rng.normal(size=(10, 7))
+    train_inputs = rng.normal(size=(48, 10))
+    site = "model.layers.5.self_attn.o_proj"
+    teaching = {site: (train_inputs, train_inputs @ operator)}
+    cohorts = {}
+    for index in range(2):
+        inputs = rng.normal(size=(16, 10))
+        cohorts[f"opposite-{index}"] = {site: (inputs, -(inputs @ operator))}
+
+    report, _fitted = fit_verified_trajectory_sample_complexity(
+        teaching,
+        cohorts,
+        sample_rows=(8, 24, 48),
+        rank=7,
+        regularization=1e-8,
+        gain=0.5,
+        adapter_scale=20.0,
+        normalize_corrections=False,
+    )
+
+    assert report["gates"]["fresh_cohorts_all_better_than_zero"] is False
+    assert report["gates"]["fresh_cohorts_all_direction_positive"] is False
+    assert report["admitted"] is False
+
+
+@pytest.mark.parametrize(
+    ("sample_rows", "message"),
+    [
+        ((2,), "at least two validation cohorts|sample rows"),
+        ((2, 5), "ending at all rows"),
+        ((4, 4, 6), "increasing complete prefixes"),
+    ],
+)
+def test_verified_trajectory_sample_complexity_rejects_invalid_prefixes(
+    sample_rows: tuple[int, ...],
+    message: str,
+) -> None:
+    inputs = np.arange(18, dtype=np.float64).reshape(6, 3) + 1.0
+    corrections = np.arange(24, dtype=np.float64).reshape(6, 4) + 2.0
+    site = "model.layers.3.self_attn.o_proj"
+    teaching = {site: (inputs, corrections)}
+    cohorts = {
+        "fresh-a": {site: (inputs[:2], corrections[:2])},
+        "fresh-b": {site: (inputs[2:4], corrections[2:4])},
+    }
+
+    with pytest.raises(ValueError, match=message):
+        fit_verified_trajectory_sample_complexity(
+            teaching,
+            cohorts,
+            sample_rows=sample_rows,
+            rank=2,
+            regularization=1.0,
+            gain=0.25,
+            adapter_scale=1.0,
+        )
 
 
 def test_verified_trajectory_inventory_installs_exact_named_site() -> None:

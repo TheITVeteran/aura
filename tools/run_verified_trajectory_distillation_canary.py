@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import io
 import json
 import os
 import subprocess
@@ -57,13 +58,18 @@ from core.learning.recurrent_sft_execution import (  # noqa: E402
 from core.learning.verified_trajectory_distillation import (  # noqa: E402
     evaluate_verified_trajectory_transfer,
     fit_verified_trajectory_inventory,
+    fit_verified_trajectory_sample_complexity,
     install_verified_trajectory_inventory,
+    publish_verified_trajectory_artifact,
 )
 from core.runtime.atomic_writer import atomic_append_text, atomic_write_bytes  # noqa: E402
 from core.runtime.mlx_memory_guard import mlx_memory_envelope  # noqa: E402
 from core.runtime.model_lane_control import standalone_model_lane  # noqa: E402
 
 CANARY_SCHEMA: Final = "aura.verified_trajectory_distillation_canary.v1"
+SAMPLE_COMPLEXITY_CANARY_SCHEMA: Final = (
+    "aura.verified_trajectory_sample_complexity_canary.v1"
+)
 PROGRESS_SCHEMA: Final = "aura.verified_trajectory_distillation.progress.v1"
 SOURCE_PATHS: Final = (
     "core/brain/llm/latent_cortex/engine.py",
@@ -312,6 +318,13 @@ def _capture_training_inventory(
                         corrections[site].append(
                             np.asarray(layer_corrections[position]).astype(np.float64)
                         )
+                row_counts = {len(values) for values in inputs.values()}
+                if len(row_counts) != 1:
+                    raise RuntimeError("trajectory decode row offsets differ by site")
+                row_stop = row_counts.pop()
+                row_start = int(manifest[-1]["row_stop"]) if manifest else 0
+                if row_stop - row_start != int(len(target_tokens)):
+                    raise RuntimeError("trajectory decode example boundary is invalid")
                 manifest.append(
                     {
                         "task_id": task.task_id,
@@ -323,6 +336,9 @@ def _capture_training_inventory(
                         "incumbent_tokens_sha256": _sha256_bytes(
                             _canonical_bytes(list(incumbent.tokens))
                         ),
+                        "row_start": row_start,
+                        "row_stop": row_stop,
+                        "target_token_count": int(len(target_tokens)),
                     }
                 )
                 progress.emit(
@@ -346,6 +362,125 @@ def _capture_training_inventory(
 
 def _report_score(report: Mapping[str, Any]) -> int:
     return int(report["total_correct"])
+
+
+def _write_private_pair_artifact(
+    out_dir: Path,
+    *,
+    training_pairs: Mapping[str, tuple[np.ndarray, np.ndarray]],
+    validation_cohorts: Mapping[
+        str, Mapping[str, tuple[np.ndarray, np.ndarray]]
+    ],
+) -> dict[str, Any]:
+    """Persist private activation pairs atomically with an exact inventory."""
+
+    arrays: dict[str, np.ndarray] = {}
+    inventory: dict[str, Any] = {}
+    pair_sets: dict[str, Mapping[str, tuple[np.ndarray, np.ndarray]]] = {
+        "training": training_pairs,
+        **{
+            f"validation_{index:04d}": validation_cohorts[name]
+            for index, name in enumerate(sorted(validation_cohorts))
+        },
+    }
+    cohort_names = {
+        f"validation_{index:04d}": name
+        for index, name in enumerate(sorted(validation_cohorts))
+    }
+    for set_name, pairs in pair_sets.items():
+        inventory[set_name] = {}
+        for site_index, site in enumerate(sorted(pairs)):
+            pair = pairs[site]
+            if not isinstance(pair, Sequence) or len(pair) != 2:
+                raise ValueError(f"private trajectory pair is invalid at {set_name}:{site}")
+            inputs = np.ascontiguousarray(pair[0], dtype=np.float64)
+            corrections = np.ascontiguousarray(pair[1], dtype=np.float64)
+            if (
+                inputs.ndim != 2
+                or corrections.ndim != 2
+                or inputs.shape[0] != corrections.shape[0]
+                or not inputs.size
+                or not corrections.size
+                or not np.all(np.isfinite(inputs))
+                or not np.all(np.isfinite(corrections))
+            ):
+                raise ValueError(
+                    f"private trajectory pair geometry is invalid at {set_name}:{site}"
+                )
+            input_key = f"{set_name}__site_{site_index:04d}__inputs"
+            correction_key = f"{set_name}__site_{site_index:04d}__corrections"
+            arrays[input_key] = inputs
+            arrays[correction_key] = corrections
+            inventory[set_name][site] = {
+                "input_key": input_key,
+                "input_shape": list(inputs.shape),
+                "input_sha256": _sha256_bytes(inputs.tobytes(order="C")),
+                "correction_key": correction_key,
+                "correction_shape": list(corrections.shape),
+                "correction_sha256": _sha256_bytes(
+                    corrections.tobytes(order="C")
+                ),
+            }
+    buffer = io.BytesIO()
+    np.savez_compressed(buffer, **arrays)
+    payload = buffer.getvalue()
+    path = out_dir / "private_teaching_pairs.npz"
+    atomic_write_bytes(path, payload, mode=0o600)
+    persisted = path.read_bytes()
+    if persisted != payload:
+        raise RuntimeError("private trajectory pair artifact changed during write")
+    return {
+        "path": str(path.resolve()),
+        "sha256": _sha256_bytes(payload),
+        "size_bytes": len(payload),
+        "mode": "0600",
+        "cohort_names": cohort_names,
+        "inventory": inventory,
+    }
+
+
+def _sample_rows_from_complete_examples(
+    manifest: Sequence[Mapping[str, Any]],
+    *,
+    per_cell_levels: Sequence[int],
+    stratum_count: int,
+    branch_count: int,
+) -> tuple[int, ...]:
+    """Translate nested per-cell levels into complete trajectory row bounds."""
+
+    if (
+        isinstance(per_cell_levels, (str, bytes))
+        or len(per_cell_levels) < 2
+        or any(type(level) is not int or level < 1 for level in per_cell_levels)
+        or tuple(sorted(set(per_cell_levels))) != tuple(per_cell_levels)
+    ):
+        raise ValueError("sample-complexity per-cell levels must increase")
+    if type(stratum_count) is not int or stratum_count < 1:
+        raise ValueError("sample-complexity stratum count is invalid")
+    if type(branch_count) is not int or branch_count < 1:
+        raise ValueError("sample-complexity branch count is invalid")
+    expected_examples = per_cell_levels[-1] * stratum_count * branch_count
+    if len(manifest) != expected_examples:
+        raise ValueError("sample-complexity teaching manifest coverage differs")
+    boundaries = []
+    previous_stop = 0
+    for row in manifest:
+        start = row.get("row_start")
+        stop = row.get("row_stop")
+        if (
+            type(start) is not int
+            or type(stop) is not int
+            or start != previous_stop
+            or stop <= start
+        ):
+            raise ValueError("sample-complexity teaching row boundaries are invalid")
+        previous_stop = stop
+    for level in per_cell_levels:
+        examples = level * stratum_count * branch_count
+        boundaries.append(int(manifest[examples - 1]["row_stop"]))
+    if tuple(sorted(set(boundaries))) != tuple(boundaries):
+        raise ValueError("sample-complexity row boundaries do not increase")
+    return tuple(boundaries)
 
 
 @contextmanager
@@ -400,6 +535,223 @@ def _permuted_recurrence_adapter(model: Any) -> Iterator[None]:
         for projection, value in snapshots:
             projection.lora_b = value
         mx.eval(*(projection.lora_b for projection, _ in snapshots))
+
+
+def run_sample_complexity_canary(
+    *,
+    model_path: Path,
+    out_dir: Path,
+    seed: int,
+    memory_fraction: float,
+    training_families: Sequence[str],
+    training_depths: Sequence[int],
+    training_per_cell_levels: Sequence[int],
+    validation_per_cell: int,
+    validation_cohort_count: int,
+    lora_rank: int,
+    lora_layers: int,
+    regularization: float,
+    gain: float,
+) -> dict[str, Any]:
+    """Measure one fixed trajectory learner across nested evidence volumes."""
+
+    import mlx.core as mx
+    from mlx_lm import load
+
+    levels = tuple(training_per_cell_levels)
+    if (
+        len(levels) < 2
+        or any(type(level) is not int or level < 1 for level in levels)
+        or tuple(sorted(set(levels))) != levels
+    ):
+        raise ValueError("sample-complexity training levels must increase")
+    if type(validation_cohort_count) is not int or validation_cohort_count < 3:
+        raise ValueError("sample complexity requires at least three fresh cohorts")
+    source_commit, source_bindings = _source_state()
+    progress = ProgressLedger(out_dir, source_commit=source_commit)
+    progress.emit(
+        "source_bound",
+        model_path=str(model_path),
+        mode="sample_complexity",
+    )
+    base_before = full_weight_checkpoint_identity(model_path)
+    spec = RLCExecutionSpec(
+        n_slots=4,
+        branch_roles=("constructive_solution", "critical_audit"),
+        recurrent_steps=2,
+        exchange_interval=1,
+    )
+    with (
+        standalone_model_lane(
+            owner_id=f"verified-trajectory-scaling:{out_dir.name}",
+            model_path=str(model_path),
+            purpose="training",
+            preemptible=False,
+            metadata={"tool": Path(__file__).name, "source_commit": source_commit},
+        ),
+        mlx_memory_envelope(fraction=memory_fraction, restore_limits_on_exit=True),
+    ):
+        progress.emit("model_load")
+        model, tokenizer = load(str(model_path))
+        attached_sites = attach_recurrent_policy_adapters(
+            model,
+            spec,
+            lora_rank=lora_rank,
+            lora_layers=lora_layers,
+            lora_targets=("o_proj",),
+            initialization_seed=(seed ^ 0x51F7A11) & 0xFFFFFFFF,
+            lora_scale=1.0,
+            lora_layer_placement="early",
+        )
+        training_tasks = task_battery(
+            list(training_families),
+            list(training_depths),
+            levels[-1],
+            seed=seed,
+        )
+        excluded_prompts = [task.prompt for task in training_tasks]
+        excluded_task_ids = [task.task_id for task in training_tasks]
+        validation_task_cohorts: dict[str, list[Any]] = {}
+        for cohort_index in range(validation_cohort_count):
+            cohort_name = f"fresh_seed_{cohort_index:04d}"
+            cohort_seed = seed + 3_959 + cohort_index * 104_729
+            cohort_tasks = task_battery(
+                list(training_families),
+                list(training_depths),
+                validation_per_cell,
+                seed=cohort_seed,
+                excluded_prompts=tuple(excluded_prompts),
+                excluded_task_ids=tuple(excluded_task_ids),
+            )
+            validation_task_cohorts[cohort_name] = cohort_tasks
+            excluded_prompts.extend(task.prompt for task in cohort_tasks)
+            excluded_task_ids.extend(task.task_id for task in cohort_tasks)
+
+        teaching_pairs, teaching_manifest = _capture_training_inventory(
+            model,
+            tokenizer,
+            training_tasks,
+            spec=spec,
+            rank=min(2, lora_rank),
+            layers=lora_layers,
+            seed=seed,
+            progress=progress,
+        )
+        validation_pairs: dict[
+            str, dict[str, tuple[np.ndarray, np.ndarray]]
+        ] = {}
+        validation_manifests: dict[str, list[dict[str, Any]]] = {}
+        for cohort_index, cohort_name in enumerate(sorted(validation_task_cohorts)):
+            pairs, manifest = _capture_training_inventory(
+                model,
+                tokenizer,
+                validation_task_cohorts[cohort_name],
+                spec=spec,
+                rank=min(2, lora_rank),
+                layers=lora_layers,
+                seed=seed + 3_959 + cohort_index * 104_729,
+                progress=progress,
+            )
+            validation_pairs[cohort_name] = pairs
+            validation_manifests[cohort_name] = manifest
+        sample_rows = _sample_rows_from_complete_examples(
+            teaching_manifest,
+            per_cell_levels=levels,
+            stratum_count=len(training_families) * len(training_depths),
+            branch_count=len(spec.branch_roles),
+        )
+        decode_phases = {site: "decode" for site in teaching_pairs}
+        scaling_report, final_inventory = fit_verified_trajectory_sample_complexity(
+            teaching_pairs,
+            validation_pairs,
+            sample_rows=sample_rows,
+            rank=lora_rank,
+            regularization=regularization,
+            gain=gain,
+            adapter_scale=1.0,
+            site_phases=decode_phases,
+            normalize_corrections=False,
+        )
+        for stage in scaling_report["stages"]:
+            progress.emit(
+                "sample_complexity_stage",
+                training_rows=stage["training_rows"],
+                **stage["summary"],
+            )
+        pair_artifact = _write_private_pair_artifact(
+            out_dir,
+            training_pairs=teaching_pairs,
+            validation_cohorts=validation_pairs,
+        )
+        fitted_artifact = publish_verified_trajectory_artifact(
+            out_dir / "fitted_adapter",
+            final_inventory,
+            checkpoint_fingerprint=str(base_before["fingerprint"]),
+            source_evidence_sha256=str(scaling_report["report_sha256"]),
+        )
+        mx.synchronize()
+        mx.clear_cache()
+
+    all_manifests = [teaching_manifest, *validation_manifests.values()]
+    task_id_sets = [
+        {str(row["task_id"]) for row in manifest} for manifest in all_manifests
+    ]
+    prompt_hash_sets = [
+        {str(row["prompt_sha256"]) for row in manifest}
+        for manifest in all_manifests
+    ]
+    gates = {
+        "base_checkpoint_immutable": (
+            base_before == full_weight_checkpoint_identity(model_path)
+        ),
+        "task_ids_globally_disjoint": sum(map(len, task_id_sets))
+        == len(set().union(*task_id_sets)),
+        "prompts_globally_disjoint": (
+            sum(map(len, prompt_hash_sets))
+            == len(set().union(*prompt_hash_sets))
+        ),
+        "fixed_hyperparameter_scaling_admitted": bool(scaling_report["admitted"]),
+        "fitted_site_topology_complete": set(final_inventory)
+        == set(attached_sites),
+        "fitted_artifact_published": bool(
+            fitted_artifact["manifest"].get("receipt_sha256")
+        ),
+    }
+    body = {
+        "schema": SAMPLE_COMPLEXITY_CANARY_SCHEMA,
+        "mode": "sample_complexity",
+        "source_commit": source_commit,
+        "source_bindings": source_bindings,
+        "model_path": str(model_path),
+        "model_identity": base_before,
+        "execution_spec": spec.to_dict(),
+        "execution_spec_sha256": spec.sha256,
+        "configuration": {
+            "seed": seed,
+            "training_families": list(training_families),
+            "training_depths": list(training_depths),
+            "training_per_cell_levels": list(levels),
+            "validation_per_cell": validation_per_cell,
+            "validation_cohort_count": validation_cohort_count,
+            "lora_rank": lora_rank,
+            "lora_layers": lora_layers,
+            "regularization": regularization,
+            "gain": gain,
+        },
+        "private_teaching_manifest": teaching_manifest,
+        "private_validation_manifests": validation_manifests,
+        "private_pair_artifact": pair_artifact,
+        "sample_complexity": scaling_report,
+        "fitted_adapter_artifact": fitted_artifact,
+        "gates": gates,
+        "admitted": all(gates.values()),
+        "claim_boundary": (
+            "fresh_seed_internal_operator_scaling_only_not_behavioral_or_reasoning_gain"
+        ),
+    }
+    receipt = _write_receipt(out_dir / "receipt.json", body)
+    progress.emit("complete", admitted=receipt["admitted"], **gates)
+    return receipt
 
 
 def run_canary(
@@ -791,7 +1143,17 @@ def main() -> int:
     parser.add_argument("--training-families", default="boolean,modular")
     parser.add_argument("--training-depths", default="2,3")
     parser.add_argument("--training-per-cell", type=int, default=2)
+    parser.add_argument(
+        "--sample-complexity-levels",
+        default="",
+        help=(
+            "Comma-separated nested training examples per family/depth cell. "
+            "When set, run the fixed-hyperparameter multi-seed transfer gate "
+            "instead of behavioral generation."
+        ),
+    )
     parser.add_argument("--validation-per-cell", type=int, default=1)
+    parser.add_argument("--validation-cohorts", type=int, default=3)
     parser.add_argument("--proxy-per-cell", type=int, default=1)
     parser.add_argument("--lora-rank", type=int, default=8)
     parser.add_argument("--lora-layers", type=int, default=8)
@@ -802,31 +1164,55 @@ def main() -> int:
     families = tuple(part.strip() for part in args.training_families.split(",") if part.strip())
     try:
         depths = tuple(int(part.strip()) for part in args.training_depths.split(",") if part.strip())
-        receipt = run_canary(
-            model_path=args.model.expanduser().resolve(strict=True),
-            out_dir=args.out_dir.expanduser().resolve(strict=False),
-            seed=args.seed,
-            memory_fraction=args.memory_fraction,
-            training_families=families,
-            training_depths=depths,
-            training_per_cell=args.training_per_cell,
-            validation_per_cell=args.validation_per_cell,
-            proxy_per_cell=args.proxy_per_cell,
-            lora_rank=args.lora_rank,
-            lora_layers=args.lora_layers,
-            regularization=args.regularization,
-            gain=args.gain,
-            stop_after_transfer_diagnostic=args.stop_after_transfer_diagnostic,
+        levels = tuple(
+            int(part.strip())
+            for part in args.sample_complexity_levels.split(",")
+            if part.strip()
         )
+        if levels:
+            if args.stop_after_transfer_diagnostic:
+                raise ValueError(
+                    "sample-complexity mode already stops before behavioral generation"
+                )
+            receipt = run_sample_complexity_canary(
+                model_path=args.model.expanduser().resolve(strict=True),
+                out_dir=args.out_dir.expanduser().resolve(strict=False),
+                seed=args.seed,
+                memory_fraction=args.memory_fraction,
+                training_families=families,
+                training_depths=depths,
+                training_per_cell_levels=levels,
+                validation_per_cell=args.validation_per_cell,
+                validation_cohort_count=args.validation_cohorts,
+                lora_rank=args.lora_rank,
+                lora_layers=args.lora_layers,
+                regularization=args.regularization,
+                gain=args.gain,
+            )
+        else:
+            receipt = run_canary(
+                model_path=args.model.expanduser().resolve(strict=True),
+                out_dir=args.out_dir.expanduser().resolve(strict=False),
+                seed=args.seed,
+                memory_fraction=args.memory_fraction,
+                training_families=families,
+                training_depths=depths,
+                training_per_cell=args.training_per_cell,
+                validation_per_cell=args.validation_per_cell,
+                proxy_per_cell=args.proxy_per_cell,
+                lora_rank=args.lora_rank,
+                lora_layers=args.lora_layers,
+                regularization=args.regularization,
+                gain=args.gain,
+                stop_after_transfer_diagnostic=args.stop_after_transfer_diagnostic,
+            )
     except BaseException as exc:  # noqa: BLE001 - preserve diagnostic process status
         print(f"trajectory canary failed: {type(exc).__name__}: {exc}", file=sys.stderr)
         return 2
     print(json.dumps(receipt, sort_keys=True, indent=2))
-    accepted = (
-        receipt.get("preflight_admitted")
-        if receipt.get("mode") == "transfer_diagnostic_only"
-        else receipt["admitted"]
-    )
+    accepted = receipt["admitted"]
+    if receipt.get("mode") == "transfer_diagnostic_only":
+        accepted = receipt.get("preflight_admitted")
     return 0 if accepted else 3
 
 

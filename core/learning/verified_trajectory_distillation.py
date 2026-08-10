@@ -33,6 +33,9 @@ import numpy as np
 DISTILLATION_SCHEMA = "aura.verified_trajectory_distillation.v1"
 EPISODIC_TRANSPLANT_SCHEMA = "aura.episodic_delta_transplant.v1"
 TRAJECTORY_ARTIFACT_SCHEMA = "aura.verified_trajectory_artifact.v1"
+TRAJECTORY_SAMPLE_COMPLEXITY_SCHEMA = (
+    "aura.verified_trajectory_sample_complexity.v1"
+)
 TRAJECTORY_FACTORS_FILE = "factors.npz"
 TRAJECTORY_MANIFEST_FILE = "manifest.json"
 _MAX_TRAJECTORY_ARTIFACT_BYTES = 256 * 1024 * 1024
@@ -877,6 +880,252 @@ def evaluate_verified_trajectory_transfer(
     }
 
 
+def fit_verified_trajectory_sample_complexity(
+    teaching_pairs: Mapping[str, tuple[Any, Any]],
+    validation_cohorts: Mapping[str, Mapping[str, tuple[Any, Any]]],
+    *,
+    sample_rows: Sequence[int],
+    rank: int,
+    regularization: float,
+    gain: float,
+    adapter_scale: float,
+    site_phases: Mapping[str, str] | None = None,
+    normalize_corrections: bool = True,
+) -> tuple[dict[str, Any], dict[str, DistilledTrajectoryFactors]]:
+    """Fit nested prefixes and measure transfer on independent cohorts.
+
+    The learner and every hyperparameter remain fixed while only the amount
+    of admitted teaching evidence changes.  Validation cohorts are evaluated
+    independently instead of being concatenated, so a favorable aggregate
+    cannot hide a fresh seed where the operator is worse than zero.
+
+    ``sample_rows`` must end at the complete teaching inventory.  Callers that
+    capture multi-token examples should pass only complete-example boundaries;
+    the model-facing canary records and enforces those boundaries.
+    """
+
+    if not isinstance(teaching_pairs, Mapping) or not teaching_pairs:
+        raise ValueError("trajectory sample-complexity teaching inventory is empty")
+    if not isinstance(validation_cohorts, Mapping) or len(validation_cohorts) < 2:
+        raise ValueError(
+            "trajectory sample complexity requires at least two validation cohorts"
+        )
+    cohort_names = tuple(sorted(validation_cohorts))
+    if any(
+        not isinstance(name, str) or not name.strip() or name != name.strip()
+        for name in cohort_names
+    ):
+        raise ValueError("trajectory sample-complexity cohort identity is invalid")
+
+    sites = tuple(sorted(teaching_pairs))
+    row_counts: set[int] = set()
+    validated_teaching: dict[str, tuple[np.ndarray, np.ndarray]] = {}
+    for site in sites:
+        pair = teaching_pairs[site]
+        if not isinstance(pair, Sequence) or len(pair) != 2:
+            raise ValueError(f"trajectory teaching pair is invalid at {site}")
+        inputs = _finite_matrix(pair[0], name=f"{site} teaching inputs")
+        corrections = _finite_matrix(
+            pair[1], name=f"{site} teaching corrections"
+        )
+        if inputs.shape[0] != corrections.shape[0]:
+            raise ValueError(f"trajectory teaching pair counts differ at {site}")
+        row_counts.add(int(inputs.shape[0]))
+        validated_teaching[site] = (inputs, corrections)
+    if len(row_counts) != 1:
+        raise ValueError("trajectory teaching inventories have unequal pair counts")
+    total_rows = row_counts.pop()
+
+    if (
+        isinstance(sample_rows, (str, bytes))
+        or len(sample_rows) < 2
+        or any(type(value) is not int or value < 2 for value in sample_rows)
+        or tuple(sorted(set(sample_rows))) != tuple(sample_rows)
+        or sample_rows[-1] != total_rows
+    ):
+        raise ValueError(
+            "trajectory sample rows must be increasing complete prefixes ending at all rows"
+        )
+
+    validated_cohorts: dict[str, Mapping[str, tuple[Any, Any]]] = {}
+    cohort_row_counts: dict[str, int] = {}
+    for cohort_name in cohort_names:
+        cohort = validation_cohorts[cohort_name]
+        if not isinstance(cohort, Mapping) or set(cohort) != set(sites):
+            raise ValueError(
+                f"trajectory validation site inventory differs in {cohort_name}"
+            )
+        rows: set[int] = set()
+        for site in sites:
+            pair = cohort[site]
+            if not isinstance(pair, Sequence) or len(pair) != 2:
+                raise ValueError(
+                    f"trajectory validation pair is invalid at {cohort_name}:{site}"
+                )
+            inputs = _finite_matrix(
+                pair[0], name=f"{cohort_name}:{site} validation inputs"
+            )
+            corrections = _finite_matrix(
+                pair[1], name=f"{cohort_name}:{site} validation corrections"
+            )
+            if inputs.shape[0] != corrections.shape[0]:
+                raise ValueError(
+                    f"trajectory validation pair counts differ at {cohort_name}:{site}"
+                )
+            rows.add(int(inputs.shape[0]))
+        if len(rows) != 1:
+            raise ValueError(
+                f"trajectory validation inventories have unequal rows in {cohort_name}"
+            )
+        cohort_row_counts[cohort_name] = rows.pop()
+        validated_cohorts[cohort_name] = cohort
+
+    stages: list[dict[str, Any]] = []
+    final_inventory: dict[str, DistilledTrajectoryFactors] | None = None
+    for row_count in sample_rows:
+        subset = {
+            site: (inputs[:row_count], corrections[:row_count])
+            for site, (inputs, corrections) in validated_teaching.items()
+        }
+        fitted = fit_verified_trajectory_inventory(
+            subset,
+            rank=rank,
+            regularization=regularization,
+            gain=gain,
+            adapter_scale=adapter_scale,
+            site_phases=site_phases,
+            normalize_corrections=normalize_corrections,
+        )
+        cohort_reports = {
+            name: evaluate_verified_trajectory_transfer(
+                fitted,
+                validated_cohorts[name],
+                training_pairs=subset,
+            )
+            for name in cohort_names
+        }
+        aggregates = [
+            cohort_reports[name]["aggregate"] for name in cohort_names
+        ]
+        relative_errors = [float(row["relative_error"]) for row in aggregates]
+        cosines = [float(row["cosine"]) for row in aggregates]
+        site_rows = [
+            site_row
+            for name in cohort_names
+            for site_row in cohort_reports[name]["sites"].values()
+        ]
+        stage = {
+            "training_rows": row_count,
+            "requested_rank": rank,
+            "effective_ranks": {
+                site: int(fitted[site].receipt["effective_rank"])
+                for site in sites
+            },
+            "factor_receipt_sha256s": {
+                site: str(fitted[site].receipt["receipt_sha256"])
+                for site in sites
+            },
+            "cohorts": cohort_reports,
+            "summary": {
+                "mean_relative_error": float(np.mean(relative_errors)),
+                "median_relative_error": float(np.median(relative_errors)),
+                "worst_relative_error": max(relative_errors),
+                "mean_cosine": float(np.mean(cosines)),
+                "minimum_cosine": min(cosines),
+                "all_cohorts_better_than_zero": all(
+                    bool(row["better_than_zero_operator"])
+                    for row in aggregates
+                ),
+                "all_cohorts_direction_positive": all(value > 0.0 for value in cosines),
+                "site_pass_fraction": sum(
+                    bool(row["better_than_zero_operator"]) and float(row["cosine"]) > 0.0
+                    for row in site_rows
+                )
+                / len(site_rows),
+                "all_sites_better_than_zero": all(
+                    bool(row["better_than_zero_operator"]) for row in site_rows
+                ),
+                "all_sites_direction_positive": all(
+                    float(row["cosine"]) > 0.0 for row in site_rows
+                ),
+            },
+        }
+        stages.append(stage)
+        final_inventory = fitted
+
+    if final_inventory is None:  # pragma: no cover - guarded by sample_rows
+        raise RuntimeError("trajectory sample-complexity fit produced no stage")
+    first = stages[0]["summary"]
+    final = stages[-1]["summary"]
+    log_rows = np.log2(np.asarray(sample_rows, dtype=np.float64))
+    error_means = np.asarray(
+        [stage["summary"]["mean_relative_error"] for stage in stages],
+        dtype=np.float64,
+    )
+    cosine_means = np.asarray(
+        [stage["summary"]["mean_cosine"] for stage in stages],
+        dtype=np.float64,
+    )
+    gates = {
+        "fresh_cohorts_all_better_than_zero": bool(
+            final["all_cohorts_better_than_zero"]
+        ),
+        "fresh_cohorts_all_direction_positive": bool(
+            final["all_cohorts_direction_positive"]
+        ),
+        "final_worst_case_beats_zero": float(final["worst_relative_error"]) < 1.0,
+        "fresh_site_cells_all_better_than_zero": bool(
+            final["all_sites_better_than_zero"]
+        ),
+        "fresh_site_cells_all_direction_positive": bool(
+            final["all_sites_direction_positive"]
+        ),
+        "mean_error_improves_with_more_evidence": (
+            float(final["mean_relative_error"])
+            < float(first["mean_relative_error"])
+            and float(np.polyfit(log_rows, error_means, 1)[0]) < 0.0
+        ),
+        "mean_direction_improves_with_more_evidence": (
+            float(final["mean_cosine"]) > float(first["mean_cosine"])
+            and float(np.polyfit(log_rows, cosine_means, 1)[0]) > 0.0
+        ),
+    }
+    body = {
+        "schema": TRAJECTORY_SAMPLE_COMPLEXITY_SCHEMA,
+        "training_rows_total": total_rows,
+        "sample_rows": list(sample_rows),
+        "validation_cohort_rows": cohort_row_counts,
+        "site_count": len(sites),
+        "sites": list(sites),
+        "configuration": {
+            "rank": rank,
+            "regularization": float(regularization),
+            "gain": float(gain),
+            "adapter_scale": float(adapter_scale),
+            "corrections_normalized": bool(normalize_corrections),
+            "site_phases": dict(sorted((site_phases or {}).items())),
+            "training_subset_policy": "ordered_nested_complete_example_prefixes",
+            "hyperparameters_fixed_across_stages": True,
+        },
+        "stages": stages,
+        "trend": {
+            "mean_relative_error_per_log2_row_slope": float(
+                np.polyfit(log_rows, error_means, 1)[0]
+            ),
+            "mean_cosine_per_log2_row_slope": float(
+                np.polyfit(log_rows, cosine_means, 1)[0]
+            ),
+        },
+        "gates": gates,
+        "admitted": all(gates.values()),
+        "claim_boundary": (
+            "fresh_seed_internal_operator_scaling_only_not_behavioral_or_reasoning_gain"
+        ),
+    }
+    report = {**body, "report_sha256": _canonical_sha256(body)}
+    return report, final_inventory
+
+
 def install_verified_trajectory_inventory(
     model: Any,
     inventory: Mapping[str, DistilledTrajectoryFactors],
@@ -1003,6 +1252,7 @@ __all__ = [
     "DISTILLATION_SCHEMA",
     "EPISODIC_TRANSPLANT_SCHEMA",
     "TRAJECTORY_ARTIFACT_SCHEMA",
+    "TRAJECTORY_SAMPLE_COMPLEXITY_SCHEMA",
     "DistilledTrajectoryFactors",
     "build_verified_trajectory_artifact",
     "compile_episodic_delta_factors",
@@ -1010,6 +1260,7 @@ __all__ = [
     "evaluate_verified_trajectory_transfer",
     "fit_verified_trajectory_factors",
     "fit_verified_trajectory_inventory",
+    "fit_verified_trajectory_sample_complexity",
     "install_verified_trajectory_inventory",
     "load_verified_trajectory_artifact",
     "publish_verified_trajectory_artifact",
