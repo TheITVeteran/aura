@@ -220,7 +220,9 @@ class AudioListenerSkill(BaseSkill):
                 }
             finally:
                 try:
-                    await asyncio.to_thread(Path(temp_wav).unlink, missing_ok=True)
+                    await get_file_write_gateway().delete_path_async(
+                        temp_wav, source="skills.listen.cleanup"
+                    )
                 except OSError as exc:
                     logger.debug("Temporary audio cleanup failed: %s", exc)
             

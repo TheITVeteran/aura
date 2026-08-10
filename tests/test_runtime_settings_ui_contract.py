@@ -71,7 +71,12 @@ def test_runtime_settings_client_has_cas_conflict_and_idempotency_contracts():
 
 def test_auto_listen_uses_canonical_server_owner_without_duplicate_browser_capture():
     assert "reconcileAutoListenFromSettings" in JS
-    assert "await toggleVoice(true" in JS
+    # Starting ambient browser capture belongs to the full-duplex lane, which
+    # owns barge-in, clause streaming and addressivity. This asserted
+    # `toggleVoice(true` until the lane took ownership, at which point it was
+    # checking for a call the design had deliberately removed — a green
+    # assertion for a second microphone implementation nobody wanted.
+    assert "await duplex.setAmbient(true)" in JS
     assert "await toggleVoice(false)" in JS
     assert "state.voiceSummary.server_capture === true" in JS
     assert "canonical server microphone lane is active" in JS

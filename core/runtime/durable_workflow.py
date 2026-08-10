@@ -56,11 +56,8 @@ from enum import Enum
 from pathlib import Path
 from typing import Any
 
-from core.runtime.atomic_writer import (
-    async_atomic_write_json,
-    atomic_write_json,
-    read_json_envelope,
-)
+from core.runtime.atomic_writer import read_json_envelope
+from core.runtime.file_write_gateway import get_file_write_gateway
 from core.runtime.state_ownership import state_root
 
 logger = logging.getLogger("Aura.DurableWorkflow")
@@ -212,19 +209,22 @@ class WorkflowStore:
         """Synchronous save. Callers on the event loop want ``async_save``."""
         checkpoint.revision += 1
         payload = self._payload(checkpoint)
-        atomic_write_json(
+        gateway = get_file_write_gateway()
+        gateway.write_json(
             self._latest_path(checkpoint.workflow_id),
             payload,
             schema_version=self.SCHEMA_VERSION,
             schema_name="workflow_checkpoint",
+            source="runtime.durable_workflow.save",
         )
         history = self._history_dir(checkpoint.workflow_id)
-        history.mkdir(parents=True, exist_ok=True)
-        atomic_write_json(
+        gateway.ensure_directory(history, source="runtime.durable_workflow.save")
+        gateway.write_json(
             history / f"{checkpoint.revision:06d}.json",
             payload,
             schema_version=self.SCHEMA_VERSION,
             schema_name="workflow_checkpoint",
+            source="runtime.durable_workflow.save",
         )
 
     async def async_save(self, checkpoint: WorkflowCheckpoint) -> None:
@@ -235,19 +235,24 @@ class WorkflowStore:
         """
         checkpoint.revision += 1
         payload = self._payload(checkpoint)
-        await async_atomic_write_json(
+        gateway = get_file_write_gateway()
+        await gateway.write_json_async(
             self._latest_path(checkpoint.workflow_id),
             payload,
             schema_version=self.SCHEMA_VERSION,
             schema_name="workflow_checkpoint",
+            source="runtime.durable_workflow.async_save",
         )
         history = self._history_dir(checkpoint.workflow_id)
-        await asyncio.to_thread(history.mkdir, parents=True, exist_ok=True)
-        await async_atomic_write_json(
+        await gateway.ensure_directory_async(
+            history, source="runtime.durable_workflow.async_save"
+        )
+        await gateway.write_json_async(
             history / f"{checkpoint.revision:06d}.json",
             payload,
             schema_version=self.SCHEMA_VERSION,
             schema_name="workflow_checkpoint",
+            source="runtime.durable_workflow.async_save",
         )
 
     # -- reads -------------------------------------------------------------

@@ -2257,14 +2257,6 @@
       "scope": "<module>.guarded_write_text"
     },
     {
-      "callee": "core.runtime.atomic_writer.atomic_write_json",
-      "canonical_owner": false,
-      "category": "direct_atomic_file_write",
-      "count": 1,
-      "path": "core/runtime/durable_workflow.py",
-      "scope": "<module>.WorkflowStore.save"
-    },
-    {
       "callee": "core.runtime.atomic_writer.ensure_private_directory",
       "canonical_owner": true,
       "category": "direct_atomic_file_write",
@@ -4377,6 +4369,22 @@
       "scope": "<module>.EpisodeStore.save_event"
     },
     {
+      "callee": "<file_write_gateway>.ensure_directory_async",
+      "canonical_owner": false,
+      "category": "file_write_gateway",
+      "count": 1,
+      "path": "core/memory/interpersonal_store.py",
+      "scope": "<module>.InterpersonalStore.save"
+    },
+    {
+      "callee": "<file_write_gateway>.write_json_async",
+      "canonical_owner": false,
+      "category": "file_write_gateway",
+      "count": 1,
+      "path": "core/memory/interpersonal_store.py",
+      "scope": "<module>.InterpersonalStore.save"
+    },
+    {
       "callee": "core.runtime.file_write_gateway.get_file_write_gateway().write_text",
       "canonical_owner": true,
       "category": "file_write_gateway",
@@ -4983,6 +4991,38 @@
       "count": 1,
       "path": "core/runtime/diagnostics_bundle.py",
       "scope": "<module>._write_text"
+    },
+    {
+      "callee": "<file_write_gateway>.ensure_directory_async",
+      "canonical_owner": false,
+      "category": "file_write_gateway",
+      "count": 1,
+      "path": "core/runtime/durable_workflow.py",
+      "scope": "<module>.WorkflowStore.async_save"
+    },
+    {
+      "callee": "<file_write_gateway>.write_json_async",
+      "canonical_owner": false,
+      "category": "file_write_gateway",
+      "count": 2,
+      "path": "core/runtime/durable_workflow.py",
+      "scope": "<module>.WorkflowStore.async_save"
+    },
+    {
+      "callee": "<file_write_gateway>.ensure_directory",
+      "canonical_owner": false,
+      "category": "file_write_gateway",
+      "count": 1,
+      "path": "core/runtime/durable_workflow.py",
+      "scope": "<module>.WorkflowStore.save"
+    },
+    {
+      "callee": "<file_write_gateway>.write_json",
+      "canonical_owner": false,
+      "category": "file_write_gateway",
+      "count": 2,
+      "path": "core/runtime/durable_workflow.py",
+      "scope": "<module>.WorkflowStore.save"
     },
     {
       "callee": "get_file_write_gateway().write_bytes",
@@ -5631,6 +5671,14 @@
       "count": 1,
       "path": "core/skills/inter_agent_comm.py",
       "scope": "<module>.InterAgentCommSkill._log_communication"
+    },
+    {
+      "callee": "core.runtime.file_write_gateway.get_file_write_gateway().delete_path_async",
+      "canonical_owner": false,
+      "category": "file_write_gateway",
+      "count": 1,
+      "path": "core/skills/listen.py",
+      "scope": "<module>.AudioListenerSkill.execute"
     },
     {
       "callee": "core.runtime.file_write_gateway.get_file_write_gateway().write_bytes",
@@ -13785,14 +13833,6 @@
       "scope": "<module>.SandboxSkill.execute_code_safely"
     },
     {
-      "callee": "os.remove",
-      "canonical_owner": false,
-      "category": "raw_file_mutation",
-      "count": 1,
-      "path": "core/skills/listen.py",
-      "scope": "<module>.AudioListenerSkill.execute"
-    },
-    {
       "callee": "pathlib.Path().unlink",
       "canonical_owner": false,
       "category": "raw_file_mutation",
@@ -16578,6 +16618,6 @@
     }
   ],
   "description": "Exact AST effect-ownership debt ratchet; refresh only after reviewed change",
-  "inventory_sha256": "8f12d98c8e37f2e5617ef8ffa701fabc1aefe700d7e4bc10175ea0ed7157a97d",
+  "inventory_sha256": "50427d2481aeaf209745097d6ce0dbd0377a653eb46d15d6ff50f53b9052fba1",
   "schema_version": 1
 }
