@@ -24,6 +24,7 @@ from typing import Any
 
 from core.container import ServiceContainer
 from core.runtime.errors import record_degradation
+from core.voice.audio_provenance import attribute_wake_audio
 from core.runtime.task_ownership import create_tracked_task
 
 logger = logging.getLogger("Aura.WakeWord")
@@ -248,6 +249,30 @@ class WakeWordDetector:
 
         match = WAKE_PATTERN.search(transcript)
         if match:
+            # Attribution BEFORE the session state is committed.
+            #
+            # OWNER REPORT, 2026-08-10: "videos playing on my computer are not
+            # me speaking." Nothing here could tell the difference. Speaker
+            # verification asks for a voice_identity service that this codebase
+            # never registers — the only verify_current_speaker implementation
+            # is a test double — so the verified branch below is unreachable in
+            # production and every wake phrase, from any sound source in the
+            # room, opened a command session as the owner.
+            voice_evidence = await self._verify_user_voice_print(transcript)
+            voice_evidence = attribute_wake_audio(voice_evidence)
+            if not voice_evidence.get("owner_attributed", True):
+                logger.info(
+                    "🔇 Wake phrase heard while other audio is playing and the "
+                    "speaker is unverified; not opening a command session (%s)",
+                    voice_evidence.get("owner_attribution_reason", "unattributed"),
+                )
+                self._record_wake_observation(
+                    "Wake phrase heard from unattributed audio — no session started",
+                    voice_evidence,
+                    salience=0.4,
+                )
+                return
+
             self._wake_count += 1
             self.state = WakeState.LISTENING
             self._session_start = time.time()
@@ -261,7 +286,6 @@ class WakeWordDetector:
 
             logger.info("🎤 Wake word detected! Starting command session #%d", self._wake_count)
 
-            voice_evidence = await self._verify_user_voice_print(transcript)
             if voice_evidence.get("verified"):
                 try:
                     from core.executive.authority_gateway import get_authority_gateway
@@ -280,19 +304,37 @@ class WakeWordDetector:
                     voice_evidence.get("reason", "unverified"),
                 )
 
-            # Emit salient event
-            try:
-                ws = ServiceContainer.get("world_state", default=None)
-                if ws:
-                    ws.record_event(
-                        "Wake word detected — command session started",
-                        source="voice",
-                        salience=0.9,
-                        ttl=60,
-                        metadata={"voice_identity": voice_evidence},
-                    )
-            except (ImportError, AttributeError, RuntimeError) as exc:
-                record_degradation("wake_word.world_state_event", exc)
+            self._record_wake_observation(
+                "Wake word detected — command session started",
+                voice_evidence,
+                salience=0.9,
+            )
+
+    def _record_wake_observation(
+        self,
+        summary: str,
+        voice_evidence: dict[str, Any],
+        *,
+        salience: float,
+    ) -> None:
+        """Record what was heard AND how it was attributed.
+
+        A refused wake is as much a fact about the room as an accepted one,
+        and it is the only trace the owner would have that Aura heard the
+        phrase and decided it was not him.
+        """
+        try:
+            ws = ServiceContainer.get("world_state", default=None)
+            if ws:
+                ws.record_event(
+                    summary,
+                    source="voice",
+                    salience=salience,
+                    ttl=60,
+                    metadata={"voice_identity": voice_evidence},
+                )
+        except (ImportError, AttributeError, RuntimeError) as exc:
+            record_degradation("wake_word.world_state_event", exc)
 
     @staticmethod
     def _merge_transcript_chunk(existing: str, chunk: str) -> str:
