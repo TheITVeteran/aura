@@ -2803,7 +2803,9 @@ function handleWsEvent(data) {
     } else if (type === 'chat_stream_chunk') {
         appendStreamChunk(data.chunk);
     } else if (type === 'chat_stream_end') {
-        finishStreamMsg();
+        // The stream carries the confidence when the server knows it; the HTTP
+        // response marks it otherwise (see the alreadyStreamed branch).
+        finishStreamMsg(data.response_confidence);
         $('typing-ind').classList.remove('show');
         setChatPanelState('idle');
     } else if (type === 'camera_capture_request') {
@@ -4928,6 +4930,16 @@ async function runChatRequest(value, { messageAlreadyRendered = false } = {}) {
                 // behind this one. The route has always sent it.
                 if (data.response_confidence) chatMeta.responseConfidence = data.response_confidence;
                 appendMsg('aura', data.response, false, chatMeta);
+            } else if (data.response_confidence) {
+                // The text already reached the transcript over the socket, so
+                // there is nothing to render — but the confidence arrives HERE,
+                // on the HTTP response, and dropping it silently is how a
+                // streamed reply came back unmarked. Mark the message that is
+                // already on screen instead of re-adding it.
+                markReplyConfidence(
+                    (DOM.messages || $('messages'))?.lastElementChild,
+                    data.response_confidence,
+                );
             }
         }
     } catch (err) {
@@ -5245,7 +5257,28 @@ function appendStreamChunk(chunk) {
     if (!state.userScrolledUp) messages.scrollTop = messages.scrollHeight;
 }
 
-function finishStreamMsg() {
+/**
+ * Mark a message element with how far she is standing behind it.
+ *
+ * Shared by the streamed and non-streamed paths. Wiring only `appendMsg` left
+ * every STREAMED reply unmarked, which is most of them — including the honest
+ * refusal "I couldn't get to an answer I'd stand behind on that one", the one
+ * turn where the mark is least surprising and most deserved. Fixing the
+ * confidence channel in one path and not the other reproduces exactly the
+ * half-wiring the channel was fixed for.
+ */
+function markReplyConfidence(element, confidence) {
+    if (!element || !confidence) return;
+    if (element.querySelector('.aura-badge')) return;
+    const html = replyConfidenceBadgeHtml(confidence);
+    if (!html) return;
+    element.insertAdjacentHTML('afterbegin', html);
+}
+
+function finishStreamMsg(confidence) {
+    // Applied at the END: the confidence of a reply is not known until the
+    // reply exists, so there is nothing honest to show while it streams.
+    markReplyConfidence(activeStreamDiv, confidence);
     activeStreamDiv = null;
 
     // NEW FIX: Ensure typing indicator is ALWAYS cleared when a stream ends,

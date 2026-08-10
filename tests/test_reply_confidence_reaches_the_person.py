@@ -112,6 +112,43 @@ def test_the_route_actually_carries_the_field_to_the_client():
     assert "replyConfidenceBadgeHtml(metadata.responseConfidence)" in source
 
 
+def test_every_delivery_path_can_carry_the_mark():
+    """A reply reaches the transcript three ways. All three must mark it.
+
+    Wiring only ``appendMsg`` left every STREAMED reply unmarked — which is
+    most of them, including the honest refusal "I couldn't get to an answer
+    I'd stand behind on that one", the turn where the mark is most deserved.
+    Fixing the confidence channel in one path and not the others reproduces
+    exactly the half-wiring the channel was fixed for.
+    """
+    source = AURA_JS.read_text(encoding="utf-8")
+
+    # 1. Non-streamed HTTP response.
+    assert "chatMeta.responseConfidence = data.response_confidence" in source
+
+    # 2. Socket stream that ends with the confidence attached.
+    assert "finishStreamMsg(data.response_confidence)" in source
+    assert re.search(r"function finishStreamMsg\(confidence\)", source)
+    assert re.search(
+        r"function finishStreamMsg\(confidence\)\s*\{\s*(?://[^\n]*\n\s*)*"
+        r"markReplyConfidence\(activeStreamDiv, confidence\)",
+        source,
+    ), "finishStreamMsg does not apply the mark"
+
+    # 3. Text already streamed, confidence arriving late on the HTTP response.
+    already = source.split("const alreadyStreamed", 1)[1][:1600]
+    assert "markReplyConfidence(" in already, (
+        "a streamed reply drops its confidence when the HTTP response lands"
+    )
+
+
+def test_the_mark_is_applied_once():
+    """Two paths can race for the same message; it must not be double-badged."""
+    source = AURA_JS.read_text(encoding="utf-8")
+    body = source.split("function markReplyConfidence", 1)[1].split("\n}", 1)[0]
+    assert "querySelector('.aura-badge')" in body
+
+
 def test_the_mark_reads_as_a_caveat_not_an_error():
     """It marks a reply she MEANT. A solid warning block would say otherwise."""
     css = AURA_CSS.read_text(encoding="utf-8")
