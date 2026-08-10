@@ -43101,3 +43101,33 @@ Ruff, compilation, and diff hygiene pass (`19/19`). Canonical smoke passes
 `103/103`. This advances the completion envelope to `862/920` (approximately
 `93.7%`). A clean source-bound real-checkpoint rerun is next; resident-32B use
 remains locked.
+
+## Checkpoint 2026-08-10-167: Secure Artifact Replay Preserves the Exact Neural Operator
+
+The clean CP166 real-checkpoint rerun completed in `71.269s` after publishing
+and reloading the final coda factors through the new production artifact
+boundary. It reproduced the frozen episodic delta SHA-256
+`d4ff575dc0f78ea09103556e602bcbc0c2e3023bc98be86d9846c2ce6137d1fc`
+again. The deterministic tensor package SHA-256 is
+`57debea3616a0300572f375e70c5035208cacd42b1a49bbc8e61a84c6c9124a6`,
+the canonical manifest receipt SHA-256 is
+`e4fbda16f2de0b2d6bc2c237ac05707b5a9ada77846914b7734b24ba39a3e5ea`,
+and the governed two-file publication receipt is committed in the campaign.
+
+Secure reload did not change the operator. All eight exact coda sites fired;
+ordinary decode fired none; persistent and episodic logits remain
+byte-identical at
+`74c490902d5f4a7dc27798766ca8a464e8f120cffb8a19997b78d0c3e1a50f12`;
+tokens remain identical; and lesion restores base logits exactly. The source-
+bound receipt is preserved at
+`~/.aura/experiments/cp166-trajectory-artifact-f7e5b67d3-20260810123706/receipt.json`.
+Its embedded canonical SHA-256 is
+`198eb591663478b4b008965230289591b4bd694f4d57014c8f5e8a3f21d2d97c`
+and serialized file SHA-256 is
+`33d3eee064686052d2d5371d4d0287a6d553a5384b42dc690ad41ba0e4757890`.
+
+The producer remains incorrect, so the claim boundary remains exact mechanism
+transport rather than reasoning gain. This advances the completion envelope
+to `863/920` (approximately `93.8%`). The next discriminator asks whether
+multiple independently verified corrections share a learnable same-state
+operator that transfers to unseen examples; resident-32B use remains locked.
