@@ -38,9 +38,25 @@ from core.conversation.response_reliability import assess_user_facing_reply
     ],
 )
 def test_a_bare_correct_answer_is_servable(question, answer):
-    assert assess_user_facing_reply(answer, question).ok, (
+    # (user_message, reply_text) — the order matters, and getting it backwards
+    # makes every assertion here pass for the wrong reason.
+    assert assess_user_facing_reply(question, answer).ok, (
         f"{answer!r} answers {question!r} and must not be rejected for length"
     )
+
+
+@pytest.mark.parametrize("empty", ["…", "...", "???", "—", "  .  "])
+def test_a_reply_with_no_content_is_rejected_at_any_length(empty):
+    """CONTENT, NOT LENGTH.
+
+    With the word-count floors gone, "take a look at my screen — which
+    application is frontmost?" was answered live with a bare ellipsis and
+    served. A reply made entirely of punctuation is not an answer to any
+    question, while "50847899" is a complete one at eight characters.
+    """
+    result = assess_user_facing_reply("which app is frontmost?", empty)
+    assert not result.ok
+    assert "no_content_in_user_turn" in result.reasons
 
 
 def test_near_empty_reassurance_is_still_caught_semantically():

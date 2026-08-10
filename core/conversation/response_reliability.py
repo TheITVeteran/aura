@@ -7509,6 +7509,22 @@ def _assess_user_facing_reply(
     ]
     raw = str(reply_text or "").strip()
 
+    # CONTENT, NOT LENGTH — checked before any branch, because a reply made
+    # entirely of punctuation is not an answer to ANY kind of question.
+    #
+    # "50847899" is a complete answer at eight characters; "…" is not one at
+    # three. That is the distinction the removed word-count floors were
+    # groping for and never named: they measured size, so they killed the
+    # short true answer, and once they were gone a bare ellipsis was served
+    # live to "take a look at my screen — which application is frontmost?".
+    if raw and not re.search(r"[A-Za-z0-9]", raw):
+        return ConversationReplyAssessment(
+            ok=False,
+            reasons=("no_content_in_user_turn",),
+            hard_failure=True,
+            retryable=True,
+        )
+
     if _matches_exact_reply_request(user_message, raw):
         return ConversationReplyAssessment(ok=True, reasons=(), hard_failure=False, retryable=False)
 
@@ -7554,6 +7570,7 @@ def _assess_user_facing_reply(
         )
 
     reasons: list[str] = []
+
     operational_status_turn = is_operational_status_turn(user_message)
 
     reasons.extend(
@@ -7724,6 +7741,13 @@ def _assess_user_facing_reply(
             user_message
         ):
             reasons.append("too_short_for_user_turn")
+        elif not re.search(r"[A-Za-z0-9]", raw):
+            # Content, not length. Live 2026-08-10, after the word-count floors
+            # came out, a screen question was answered with a bare "…". That is
+            # the case the floors were groping for and never named: a reply
+            # made entirely of punctuation carries nothing, at any length,
+            # while "50847899" carries everything at eight characters.
+            reasons.append("no_content_in_user_turn")
 
     if is_confusion_repair_turn(user_message) and _LOW_SIGNAL_REASSURANCE_RE.match(raw):
         if not (_word_count(raw) >= 3 and any(w in raw.lower() for w in ("thinking", "working", "processing", "online"))):
@@ -7876,6 +7900,7 @@ def _assess_user_facing_reply(
         "too_thin_for_expansion_request",
         "too_thin_for_operational_status_turn",
         "too_short_for_user_turn",
+        "no_content_in_user_turn",
         "too_thin_for_user_turn",
         "too_thin_for_open_ended_turn",
         "off_topic_self_reflection_reply",
