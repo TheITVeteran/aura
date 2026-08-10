@@ -597,6 +597,20 @@ header {
     color: #120800;
 }
 
+/* How far she is standing behind this answer.
+ *
+ * Deliberately quiet: an outline rather than a fill. This marks a reply she
+ * still MEANT — served on purpose rather than withheld — so it must read as a
+ * caveat on the answer, not as an error replacing it. A solid warning block
+ * on a genuine reply would say the opposite of what is true. */
+.aura-badge.unverified {
+    background: transparent;
+    border: 1px solid var(--warn, #ffb347);
+    color: var(--warn, #ffb347);
+    opacity: 0.75;
+    cursor: help;
+}
+
 /* ── Thought Block: Chain-of-Thought Expansion ────────────── */
 .thought-toggle {
     display: inline-flex;

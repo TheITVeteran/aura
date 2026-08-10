@@ -1237,11 +1237,58 @@ function safeDisplayUrl(rawUrl, { imageOnly = false } = {}) {
     return '';
 }
 
+// How far she is standing behind the answer she just gave.
+//
+// The chat route sets `response_confidence` on 71 exits, across a vocabulary
+// of ten values, and this file referenced it exactly once — to WRITE it into
+// a synthetic local payload. Nothing ever read it. So a turn the pipeline
+// itself had classified as degraded, bounded, or failed-closed reached the
+// person as an ordinary message with no mark on it at all.
+//
+// Measured live 2026-08-10: a reply that failed its own reliability gate
+// (fabricated_shared_history, missing_requested_objective_facets), exhausted
+// bounded correction, was served as a salvaged draft with
+// response_confidence="degraded" — and looked exactly like a good answer.
+// Serving the draft rather than an apology is right; serving it silently is
+// not.
+//
+// Keyed off the general field rather than any one status string, so every
+// path that already sets it is covered, including ones added later.
+const REPLY_CONFIDENCE_BADGES = {
+    // Nothing to say — these are the ordinary, fully-backed cases.
+    high: null,
+    scoped: null,
+    // She answered, but something about the answer did not meet her own bar.
+    degraded: ['Unverified', 'Served without passing her own checks on it.'],
+    bounded: ['Partial', 'Cut short by a limit, not finished on the merits.'],
+    guarded: ['Guarded', 'Held something back on purpose.'],
+    principled_refusal: ['Declined', 'She chose not to answer this one.'],
+    // She could not stand behind it at all.
+    failed: ['Unreliable', 'She could not get to an answer she would stand behind.'],
+    failed_closed: ['Unreliable', 'A check failed and she stopped rather than guess.'],
+    fail_closed: ['Unreliable', 'A check failed and she stopped rather than guess.'],
+    not_generated: ['No answer', 'No reply was produced for this turn.'],
+};
+
+function replyConfidenceBadgeHtml(confidence) {
+    const key = String(confidence || '').trim().toLowerCase();
+    if (!key) return '';
+    if (Object.prototype.hasOwnProperty.call(REPLY_CONFIDENCE_BADGES, key)) {
+        const entry = REPLY_CONFIDENCE_BADGES[key];
+        if (!entry) return '';
+        return `<span class="aura-badge unverified" title="${escHtml(entry[1])}">${escHtml(entry[0])}</span>`;
+    }
+    // An UNKNOWN value is disclosed, never dropped. Silently ignoring the
+    // field is what made this channel invisible for its whole life, and a
+    // value nobody has mapped yet is precisely the one worth seeing.
+    return `<span class="aura-badge unverified" title="Reply confidence: ${escHtml(key)}">Unverified</span>`;
+}
+
 function messageBadgeHtml(metadata = {}) {
     if (metadata.diagnostic) return '<span class="aura-badge diagnostic">Diagnostic</span>';
     if (metadata.reflex) return '<span class="aura-badge reflex">Reflex</span>';
     if (metadata.autonomic) return '<span class="aura-badge autonomic">Autonomic</span>';
-    return '';
+    return replyConfidenceBadgeHtml(metadata.responseConfidence);
 }
 
 function pruneVisibleMessages(messages) {
@@ -4877,6 +4924,9 @@ async function runChatRequest(value, { messageAlreadyRendered = false } = {}) {
                 rememberMessageFingerprint(httpFp);
                 const chatMeta = {};
                 if (data.thought) chatMeta.thought = data.thought;
+                // Carried through so the person sees how far she is standing
+                // behind this one. The route has always sent it.
+                if (data.response_confidence) chatMeta.responseConfidence = data.response_confidence;
                 appendMsg('aura', data.response, false, chatMeta);
             }
         }
