@@ -39,6 +39,7 @@ RESIDENT_RECURRENT_SFT_MANIFEST_SCHEMAS = frozenset(
         RESIDENT_RECURRENT_SFT_MANIFEST_SCHEMA,
         "aura.resident_recurrent_sft_adapter_manifest.v2",
         "aura.resident_recurrent_sft_adapter_manifest.v3",
+        "aura.resident_recurrent_sft_adapter_manifest.v4",
     }
 )
 RESIDENT_RECURRENT_SFT_RECEIPT_SCHEMA = "aura.resident_recurrent_sft_adapter_identity_receipt.v1"

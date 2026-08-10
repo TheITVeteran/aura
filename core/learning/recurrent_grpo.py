@@ -433,6 +433,8 @@ def attach_recurrent_policy_adapters(
     lora_scale: float = 20.0,
     depth_conditioned_steps: int | None = None,
     role_conditioned_branches: int | None = None,
+    coda_lora_layers: int = 0,
+    coda_lora_targets: Sequence[str] = (),
 ) -> tuple[str, ...]:
     """Attach the exact proof-campaign adapter topology to a frozen model.
 
@@ -443,6 +445,7 @@ def attach_recurrent_policy_adapters(
     """
 
     from core.brain.llm.latent_cortex.recurrence_adapter import (
+        ScopedCodaLoRALinear,
         ScopedLoRALinear,
     )
 
@@ -463,6 +466,10 @@ def attach_recurrent_policy_adapters(
         or not 0.0 < float(lora_scale) <= 1024.0
         or not isinstance(lora_targets, Sequence)
         or isinstance(lora_targets, (str, bytes, bytearray))
+        or type(coda_lora_layers) is not int
+        or coda_lora_layers < 0
+        or not isinstance(coda_lora_targets, Sequence)
+        or isinstance(coda_lora_targets, (str, bytes, bytearray))
         or (
             depth_conditioned_steps is not None
             and (
@@ -481,6 +488,7 @@ def attach_recurrent_policy_adapters(
     ):
         raise ValueError("recurrent policy adapter configuration is invalid")
     targets = tuple(lora_targets)
+    coda_targets = tuple(coda_lora_targets)
     if (
         not targets
         or len(targets) != len(set(targets))
@@ -492,6 +500,17 @@ def attach_recurrent_policy_adapters(
         )
     ):
         raise ValueError("recurrent policy adapter targets are invalid")
+    if (
+        bool(coda_lora_layers) != bool(coda_targets)
+        or len(coda_targets) != len(set(coda_targets))
+        or any(
+            not isinstance(target, str)
+            or not target
+            or target != target.strip()
+            for target in coda_targets
+        )
+    ):
+        raise ValueError("coda policy adapter targets are invalid")
     layers = getattr(getattr(model, "model", None), "layers", None)
     if not isinstance(layers, (list, tuple)) or not layers:
         raise ValueError("model exposes no decoder layer inventory")
@@ -505,11 +524,19 @@ def attach_recurrent_policy_adapters(
         raise ValueError(
             "requested recurrent policy adapter layers exceed the recurrent window"
         )
+    available_coda_layers = len(layers) - coda_start
+    if coda_lora_layers > available_coda_layers:
+        raise ValueError("requested coda adapter layers exceed the coda window")
     adapted_indices = range(coda_start - lora_layers, coda_start)
-    planned: list[tuple[Any, str, Any, int, str]] = []
-    for layer_index in adapted_indices:
+    planned: list[tuple[Any, str, Any, int, str, type[Any]]] = []
+
+    def plan_layer(
+        layer_index: int,
+        layer_targets: Sequence[str],
+        adapter_type: type[Any],
+    ) -> None:
         layer = layers[layer_index]
-        for target in targets:
+        for target in layer_targets:
             matches: list[tuple[str, Any, Any]] = []
             for parent_name in ("self_attn", "mlp"):
                 parent = getattr(layer, parent_name, None)
@@ -524,23 +551,28 @@ def attach_recurrent_policy_adapters(
                     f"layer={layer_index} target={target} matches={len(matches)}"
                 )
             parent_name, parent, projection = matches[0]
-            if isinstance(projection, ScopedLoRALinear):
+            if isinstance(projection, (ScopedLoRALinear, ScopedCodaLoRALinear)):
                 raise ValueError(
-                    "recurrent policy adapter target is already wrapped: "
+                    "cognitive policy adapter target is already wrapped: "
                     f"layer={layer_index} target={target}"
                 )
             site = f"model.layers.{layer_index}.{parent_name}.{target}"
-            planned.append((parent, target, projection, layer_index, site))
+            planned.append((parent, target, projection, layer_index, site, adapter_type))
+
+    for layer_index in adapted_indices:
+        plan_layer(layer_index, targets, ScopedLoRALinear)
+    for layer_index in range(coda_start, coda_start + coda_lora_layers):
+        plan_layer(layer_index, coda_targets, ScopedCodaLoRALinear)
 
     import mlx.core as mx
 
     model.freeze()
     mx.random.seed(initialization_seed)
-    for parent, target, projection, layer_index, site in planned:
+    for parent, target, projection, layer_index, site, adapter_type in planned:
         setattr(
             parent,
             target,
-            ScopedLoRALinear.from_base(
+            adapter_type.from_base(
                 projection,
                 r=lora_rank,
                 dropout=float(lora_dropout),
@@ -553,7 +585,11 @@ def attach_recurrent_policy_adapters(
         from core.learning.depth_conditioned_lora import wrap_depth_conditioned
 
         banks = wrap_depth_conditioned(model, depths=depth_conditioned_steps)
-        if set(banks) != {site for *_identity, site in planned}:
+        recurrent_sites = {
+            site for *_identity, site, adapter_type in planned
+            if adapter_type is ScopedLoRALinear
+        }
+        if set(banks) != recurrent_sites:
             raise RuntimeError("depth-conditioned adapter topology drift")
     if role_conditioned_branches is not None:
         from core.learning.role_conditioned_lora import wrap_role_conditioned
@@ -562,9 +598,13 @@ def attach_recurrent_policy_adapters(
             model,
             branches=role_conditioned_branches,
         )
-        if set(role_banks) != {site for *_identity, site in planned}:
+        recurrent_sites = {
+            site for *_identity, site, adapter_type in planned
+            if adapter_type is ScopedLoRALinear
+        }
+        if set(role_banks) != recurrent_sites:
             raise RuntimeError("role-conditioned adapter topology drift")
-    return tuple(site for _parent, _target, _projection, _index, site in planned)
+    return tuple(site for _parent, _target, _projection, _index, site, _type in planned)
 
 
 def recurrent_policy_optimizer_config(
@@ -637,6 +677,7 @@ def _decode_frozen_recurrent_state(
 
     from core.brain.llm.latent_cortex.recurrence import WindowRunner
     from core.brain.llm.latent_cortex.recurrence_adapter import (
+        coda_adapter_scope,
         recurrence_adapter_scope,
     )
     from core.brain.llm.latent_cortex.types import ComputeBudget
@@ -685,13 +726,14 @@ def _decode_frozen_recurrent_state(
             transition.coda_start,
             persist=True,
         )
-    output = runner.run(
-        persisted,
-        cache,
-        transition.coda_start,
-        len(layers),
-        persist=True,
-    )
+    with coda_adapter_scope():
+        output = runner.run(
+            persisted,
+            cache,
+            transition.coda_start,
+            len(layers),
+            persist=True,
+        )
 
     def logits_for(value: Any) -> Any:
         normalized = inner.norm(value)
@@ -714,8 +756,9 @@ def _decode_frozen_recurrent_state(
             break
         hidden = inner.embed_tokens(mx.array([[token]]))
         mask = create_attention_mask(hidden, cache)
-        for index, layer in enumerate(layers):
-            hidden = layer(hidden, mask, cache[index])
+        with coda_adapter_scope():
+            for index, layer in enumerate(layers):
+                hidden = layer(hidden, mask, cache[index])
         logits = logits_for(hidden)[0, -1]
 
     # The durable state digest is recomputed at the decode boundary.  This

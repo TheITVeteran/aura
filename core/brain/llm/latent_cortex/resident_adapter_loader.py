@@ -181,7 +181,10 @@ def load_resident_adapter(
     from mlx_lm.tuner.lora import LoRALinear
 
     from core.brain.llm.latent_cortex.fast_weights import _linear_dims
-    from core.brain.llm.latent_cortex.recurrence_adapter import ScopedLoRALinear
+    from core.brain.llm.latent_cortex.recurrence_adapter import (
+        ScopedCodaLoRALinear,
+        ScopedLoRALinear,
+    )
 
     package_root = _package_root(adapter_dir)
 
@@ -192,6 +195,8 @@ def load_resident_adapter(
     try:
         rank = int(lora["rank"])
         targets = tuple(lora["targets"])
+        coda_targets = tuple(lora.get("coda_targets", ()))
+        coda_paths = frozenset(lora.get("coda_projection_paths", ()))
         expected_paths = sorted(lora["projection_paths"])
         tensor_records = {
             str(record["key"]): dict(record)
@@ -229,7 +234,8 @@ def load_resident_adapter(
     try:
         for path in projections:
             target = path.rsplit(".", 1)[-1]
-            if target not in targets:
+            expected_targets = coda_targets if path in coda_paths else targets
+            if target not in expected_targets:
                 _fail("resident_adapter_projection_target_undeclared")
             parent, leaf, original = resolve_resident_adapter_projection(
                 model,
@@ -256,7 +262,10 @@ def load_resident_adapter(
                     raise ResidentAdapterLoadError(
                         "resident_adapter_projection_layer_invalid"
                     ) from exc
-                wrapped = ScopedLoRALinear.from_base(
+                scoped_type = (
+                    ScopedCodaLoRALinear if path in coda_paths else ScopedLoRALinear
+                )
+                wrapped = scoped_type.from_base(
                     original,
                     r=rank,
                     scale=scale,
@@ -275,7 +284,8 @@ def load_resident_adapter(
             )
 
             depth_banks = wrap_depth_conditioned(model, depths=depth_count)
-            if sorted(depth_banks) != projections:
+            recurrent_projections = sorted(set(projections) - coda_paths)
+            if sorted(depth_banks) != recurrent_projections:
                 _fail("resident_adapter_depth_inventory_mismatch")
         role_count = int(lora.get("role_bank_size", 0))
         if role_count:
@@ -284,7 +294,8 @@ def load_resident_adapter(
             )
 
             role_banks = wrap_role_conditioned(model, branches=role_count)
-            if sorted(role_banks) != projections:
+            recurrent_projections = sorted(set(projections) - coda_paths)
+            if sorted(role_banks) != recurrent_projections:
                 _fail("resident_adapter_role_inventory_mismatch")
 
         binding = _adapter_binding(manifest)

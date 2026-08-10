@@ -148,3 +148,9 @@ def test_training_rows_cycle_across_the_balanced_battery() -> None:
     assert observed == ["a", "b", "c", "a", "b", "c", "a"]
     with pytest.raises(ValueError, match="cycle coordinates"):
         canary._cyclic_training_row(rows, one_based_step=0)
+
+
+def test_coda_causal_arms_are_admitted_report_identities() -> None:
+    from core.learning.recurrent_checkpoint_admission import _ARMS
+
+    assert {"trained_coda_lesion", "trained_coda_sham"}.issubset(_ARMS)

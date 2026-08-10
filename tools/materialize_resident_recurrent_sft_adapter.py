@@ -39,6 +39,7 @@ from core.brain.llm.latent_cortex.recurrence_adapter_identity_v2 import (  # noq
     strict_json_loads,
 )
 from core.brain.llm.latent_cortex.resident_recurrent_sft_adapter_identity import (  # noqa: E402
+    CODA_INTERPRETING_MANIFEST_SCHEMA,
     LEGACY_MANIFEST_SCHEMA,
     MANIFEST_SCHEMA,
     ROLE_CONDITIONED_MANIFEST_SCHEMA,
@@ -61,6 +62,7 @@ from core.learning.resident_recurrent_sft_bootstrap_authority import (  # noqa: 
     OBJECTIVE_NAME_V2,
     OBJECTIVE_NAME_V3,
     OBJECTIVE_NAME_V4,
+    OBJECTIVE_NAME_V5,
     authorize_bound_artifacts,
     sha256_bytes,
     sha256_json,
@@ -500,9 +502,9 @@ def _verify_objective_evidence(
             _fail("resident_sft_materialize_legacy_objective_receipt_unexpected")
         return
     if objective != OBJECTIVE_NAME_V2:
-        if objective not in {OBJECTIVE_NAME_V3, OBJECTIVE_NAME_V4}:
+        if objective not in {OBJECTIVE_NAME_V3, OBJECTIVE_NAME_V4, OBJECTIVE_NAME_V5}:
             _fail("resident_sft_materialize_objective_unsupported")
-        depth_required = objective == OBJECTIVE_NAME_V4
+        depth_required = objective in {OBJECTIVE_NAME_V4, OBJECTIVE_NAME_V5}
         for record in state["loss_trail"]:
             _verify_specialization_record(
                 record,
@@ -797,12 +799,31 @@ def _lora_metadata(
     )
     lora_layers = trainer["lora_layers"]
     targets = list(trainer["lora_targets"])
+    coda_lora_layers = int(trainer.get("coda_lora_layers", 0))
+    coda_targets = list(trainer.get("coda_lora_targets", ()))
     indices = list(range(coda_start - lora_layers, coda_start))
     if len(indices) != lora_layers or indices[0] < prelude_end:
         _fail("resident_sft_materialize_recurrent_layer_window_invalid")
-    expected_projections = [
-        f"model.layers.{index}.self_attn.{target}" for index in indices for target in targets
+    def projection_path(index: int, target: str) -> str:
+        parent = (
+            "self_attn"
+            if target in {"q_proj", "k_proj", "v_proj", "o_proj"}
+            else "mlp"
+        )
+        return f"model.layers.{index}.{parent}.{target}"
+
+    recurrent_projections = [
+        projection_path(index, target) for index in indices for target in targets
     ]
+    coda_indices = list(range(coda_start, coda_start + coda_lora_layers))
+    if coda_indices and coda_indices[-1] >= layer_count:
+        _fail("resident_sft_materialize_coda_layer_window_invalid")
+    coda_projections = [
+        projection_path(index, target)
+        for index in coda_indices
+        for target in coda_targets
+    ]
+    expected_projections = recurrent_projections + coda_projections
     actual_keys = {tensor.key for tensor in tensors}
     has_depth_bank = any(".depth_a." in key or ".depth_b." in key for key in actual_keys)
     depth_bank_size = max(authority["dataset"]["depths"]) if has_depth_bank else 0
@@ -821,18 +842,20 @@ def _lora_metadata(
     }
     expected_keys.update(
         f"{projection}.{suffix}.{depth}"
-        for projection in expected_projections
+        for projection in recurrent_projections
         for suffix in ("depth_a", "depth_b")
         for depth in range(depth_bank_size)
     )
     expected_keys.update(
         f"{projection}.{suffix}.{role}"
-        for projection in expected_projections
+        for projection in recurrent_projections
         for suffix in ("role_a", "role_b")
         for role in range(role_bank_size)
     )
-    expected_tensor_count = len(expected_projections) * (
-        2 + 2 * depth_bank_size + 2 * role_bank_size
+    expected_tensor_count = (
+        len(recurrent_projections)
+        * (2 + 2 * depth_bank_size + 2 * role_bank_size)
+        + len(coda_projections) * 2
     )
     if len(tensors) != expected_tensor_count or actual_keys != expected_keys:
         _fail("resident_sft_materialize_exact_lora_topology_mismatch")
@@ -867,10 +890,24 @@ def _lora_metadata(
                 "role_bank_size": role_bank_size,
             }
         )
+    if coda_projections:
+        metadata.update(
+            {
+                "coda_conditioning_schema": "aura.coda_interpreting_lora.v1",
+                "coda_layers": coda_lora_layers,
+                "coda_targets": coda_targets,
+                "coda_wrapped_projections": len(coda_projections),
+                "coda_projection_paths": coda_projections,
+            }
+        )
     return metadata
 
 
 def _manifest_schema_for_lora(lora: Mapping[str, Any]) -> str:
+    if lora.get("coda_wrapped_projections"):
+        if not lora.get("role_bank_size") or not lora.get("depth_bank_size"):
+            _fail("resident_sft_materialize_coda_manifest_requires_recurrent_banks")
+        return CODA_INTERPRETING_MANIFEST_SCHEMA
     if lora.get("role_bank_size"):
         if not lora.get("depth_bank_size"):
             _fail("resident_sft_materialize_role_manifest_requires_depth_bank")

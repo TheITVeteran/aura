@@ -18,6 +18,8 @@ import math
 import subprocess
 import sys
 import time
+from collections.abc import Iterator
+from contextlib import contextmanager
 from pathlib import Path
 from typing import Any, Final
 
@@ -73,7 +75,7 @@ from core.runtime.atomic_writer import atomic_write_bytes  # noqa: E402
 from core.runtime.mlx_memory_guard import mlx_memory_envelope  # noqa: E402
 from core.runtime.model_lane_control import standalone_model_lane  # noqa: E402
 
-CANARY_SCHEMA: Final = "aura.generated_rollin_objective_canary.v3"
+CANARY_SCHEMA: Final = "aura.generated_rollin_objective_canary.v4"
 SOURCE_PATHS: Final = (
     "core/learning/recurrence_native_objective_v2.py",
     "core/learning/recurrence_native_objective_v5.py",
@@ -250,6 +252,46 @@ def _free_generation_sampling_config() -> Any:
     return free_generation_sampling_config()
 
 
+@contextmanager
+def _permuted_coda_sham(model: Any) -> Iterator[dict[str, Any]]:
+    """Apply a norm-preserving semantic sham and restore exact coda tensors."""
+
+    import mlx.core as mx
+
+    from core.brain.llm.latent_cortex.recurrence_adapter import ScopedCodaLoRALinear
+
+    snapshots: list[tuple[Any, Any]] = []
+    sites: list[str] = []
+    layers = getattr(getattr(model, "model", None), "layers", None) or []
+    for layer_index, layer in enumerate(layers):
+        for parent_name in ("self_attn", "mlp"):
+            parent = getattr(layer, parent_name, None)
+            if parent is None:
+                continue
+            for target in ("o_proj", "down_proj"):
+                projection = getattr(parent, target, None)
+                if not isinstance(projection, ScopedCodaLoRALinear):
+                    continue
+                snapshots.append((projection, projection.lora_b))
+                sites.append(f"model.layers.{layer_index}.{parent_name}.{target}")
+                width = int(projection.lora_b.shape[-1])
+                permutation = mx.array(list(reversed(range(width))))
+                projection.lora_b = projection.lora_b[:, permutation]
+    if not snapshots:
+        raise RuntimeError("coda sham found no coda-scoped projections")
+    mx.eval(model.trainable_parameters())
+    try:
+        yield {
+            "method": "reverse_output_basis_permutation_v1",
+            "sites": sites,
+            "norm_preserved": True,
+        }
+    finally:
+        for projection, original in snapshots:
+            projection.lora_b = original
+        mx.eval(model.trainable_parameters())
+
+
 def run_canary(
     *,
     model_path: Path,
@@ -337,6 +379,8 @@ def run_canary(
             lora_scale=1.0,
             depth_conditioned_steps=spec.recurrent_steps,
             role_conditioned_branches=len(spec.branch_roles),
+            coda_lora_layers=2,
+            coda_lora_targets=("o_proj", "down_proj"),
         )
         adapter_before = adapter_tensor_fingerprint(adapter_tensor_dict(model))
         training_tasks = task_battery(
@@ -529,6 +573,36 @@ def run_canary(
             task_manifest_sha256=proxy_manifest_sha256,
             seed=seed,
         )
+        from core.brain.llm.latent_cortex.recurrence_adapter import (
+            coda_adapter_disabled,
+        )
+
+        with coda_adapter_disabled():
+            free_generation_coda_lesion = _free_generation_report(
+                model,
+                tokenizer,
+                proxy_tasks,
+                spec=spec,
+                arm="trained_coda_lesion",
+                adapter_sha256=adapter_after,
+                task_manifest_sha256=proxy_manifest_sha256,
+                seed=seed,
+            )
+        with _permuted_coda_sham(model) as coda_sham:
+            sham_sha256 = adapter_tensor_fingerprint(adapter_tensor_dict(model))
+            free_generation_coda_sham = _free_generation_report(
+                model,
+                tokenizer,
+                proxy_tasks,
+                spec=spec,
+                arm="trained_coda_sham",
+                adapter_sha256=sham_sha256,
+                task_manifest_sha256=proxy_manifest_sha256,
+                seed=seed,
+            )
+        coda_restore_exact = (
+            adapter_tensor_fingerprint(adapter_tensor_dict(model)) == adapter_after
+        )
         # The vanilla floor. Measured on the same weights and the same tasks,
         # after training, because the base weights never move -- only the
         # adapter does, and the ordinary path does not read it.
@@ -596,6 +670,15 @@ def run_canary(
         "heldout_depth_improvement_non_regression": after["trajectory_loss"]
         <= before["trajectory_loss"] + 1e-6,
         "heldout_free_generation_strict_gain": behavioral_admission["admitted"],
+        "coda_causal_contribution": (
+            free_generation_after["total_correct"]
+            > free_generation_coda_lesion["total_correct"]
+        ),
+        "coda_outperforms_norm_preserving_sham": (
+            free_generation_after["total_correct"]
+            > free_generation_coda_sham["total_correct"]
+        ),
+        "coda_sham_restored_exactly": coda_restore_exact,
     }
     body = {
         "schema": CANARY_SCHEMA,
@@ -611,6 +694,8 @@ def run_canary(
             "generated": objective_config.to_dict(),
             "specialization": specialization_config.to_dict(),
             "trajectory": trajectory_config.to_dict(),
+            "coda_lora_layers": 2,
+            "coda_lora_targets": ["o_proj", "down_proj"],
             "warmup_steps": warmup_steps,
             "warmup_learning_rate": float(warmup_learning_rate),
             "joint_learning_rate": float(joint_learning_rate),
@@ -625,6 +710,9 @@ def run_canary(
         "proxy_task_manifest_sha256": proxy_manifest_sha256,
         "free_generation_before": free_generation_before,
         "free_generation_after": free_generation_after,
+        "free_generation_coda_lesion": free_generation_coda_lesion,
+        "free_generation_coda_sham": free_generation_coda_sham,
+        "coda_sham": coda_sham,
         "checkpoint_behavioral_admission": behavioral_admission,
         "validation_before": before,
         "branch_separation_before": separation_before,

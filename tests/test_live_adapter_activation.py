@@ -120,10 +120,11 @@ def _fixture(
     tmp_path: Path,
     *,
     verdict_tier: str = "PROVEN",
+    manifest_schema: str = activation.ROLE_CONDITIONED_MANIFEST_SCHEMA,
 ) -> tuple[Path, bytes, dict[str, Any]]:
     campaign_name = "resident-32b-live-activation-test"
     package_manifest = {
-        "schema": activation.ROLE_CONDITIONED_MANIFEST_SCHEMA,
+        "schema": manifest_schema,
         "adapter_id": "role-v6-test",
     }
     adapter_identity = {
@@ -142,7 +143,7 @@ def _fixture(
         metadata={
             "claim_eligible": True,
             "adapter_identity": {
-                "format": activation.ROLE_CONDITIONED_MANIFEST_SCHEMA,
+                "format": manifest_schema,
                 "identity_receipt": adapter_identity,
             },
             "model_identity": {
@@ -310,6 +311,20 @@ def test_live_adapter_activation_requires_signed_positive_independent_evidence(
     assert receipt["adapter_identity"] == identity
     assert receipt["runtime_contract"] == activation._RUNTIME_CONTRACT
     assert len(receipt["receipt_sha256"]) == 64
+
+
+def test_live_adapter_activation_accepts_signed_coda_interpreter_package(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    pointer, root_pem, identity = _fixture(
+        tmp_path,
+        manifest_schema=activation.CODA_INTERPRETING_MANIFEST_SCHEMA,
+    )
+
+    receipt = _admit(monkeypatch, pointer, root_pem, identity, tmp_path)
+
+    assert receipt["manifest"]["schema"] == activation.CODA_INTERPRETING_MANIFEST_SCHEMA
 
 
 def test_live_adapter_builders_reject_invalid_activation_window(tmp_path: Path) -> None:

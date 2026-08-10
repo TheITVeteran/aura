@@ -49,12 +49,14 @@ TRAINER_CONFIG_SCHEMA_V2: Final = "aura.resident_recurrent_sft_bootstrap_config.
 TRAINER_CONFIG_SCHEMA_V3: Final = "aura.resident_recurrent_sft_bootstrap_config.v3"
 TRAINER_CONFIG_SCHEMA_V4: Final = "aura.resident_recurrent_sft_bootstrap_config.v4"
 TRAINER_CONFIG_SCHEMA_V5: Final = "aura.resident_recurrent_sft_bootstrap_config.v5"
+TRAINER_CONFIG_SCHEMA_V6: Final = "aura.resident_recurrent_sft_bootstrap_config.v6"
 TRAINING_AUTHORITY: Final = "resident_32b_cached_recurrent_sft_bootstrap_only"
 CAMPAIGN_SCOPES: Final = frozenset({"canary_lifecycle", "full_bootstrap"})
 OBJECTIVE_NAME: Final = "cached_supervised_live_path_ce.v1"
 OBJECTIVE_NAME_V2: Final = "generated_rollin_branch_softmin_cached_ce.v2"
 OBJECTIVE_NAME_V3: Final = "generated_rollin_role_specialized_cached_ce.v3"
 OBJECTIVE_NAME_V4: Final = "generated_rollin_depth_specialized_cached_ce.v4"
+OBJECTIVE_NAME_V5: Final = "generated_rollin_coda_depth_specialized_cached_ce.v5"
 SAMPLER_NAME: Final = "seeded_family_depth_balanced_without_replacement"
 
 LEGACY_REQUIRED_SOURCE_ROLES: Final = frozenset(
@@ -245,6 +247,8 @@ class ResidentSFTBootstrapConfig:
     lora_dropout: float = 0.0
     lora_targets: tuple[str, ...] = ("q_proj", "v_proj", "o_proj")
     lora_layers: int = 8
+    coda_lora_targets: tuple[str, ...] = ()
+    coda_lora_layers: int = 0
     checkpoint_every: int = 1
     evaluate_every: int = 8
     validation_examples: int = 24
@@ -271,7 +275,7 @@ class ResidentSFTBootstrapConfig:
             TRAINER_CONFIG_SCHEMA_V3,
             TRAINER_CONFIG_SCHEMA_V4,
             TRAINER_CONFIG_SCHEMA_V5,
-            TRAINER_CONFIG_SCHEMA_V5,
+            TRAINER_CONFIG_SCHEMA_V6,
         }:
             _fail("resident_sft_config_schema_invalid")
         expected_objective = {
@@ -280,6 +284,7 @@ class ResidentSFTBootstrapConfig:
             TRAINER_CONFIG_SCHEMA_V3: OBJECTIVE_NAME_V3,
             TRAINER_CONFIG_SCHEMA_V4: OBJECTIVE_NAME_V3,
             TRAINER_CONFIG_SCHEMA_V5: OBJECTIVE_NAME_V4,
+            TRAINER_CONFIG_SCHEMA_V6: OBJECTIVE_NAME_V5,
         }[self.schema]
         if self.objective != expected_objective:
             _fail("resident_sft_config_objective_invalid")
@@ -292,6 +297,7 @@ class ResidentSFTBootstrapConfig:
             TRAINER_CONFIG_SCHEMA_V3,
             TRAINER_CONFIG_SCHEMA_V4,
             TRAINER_CONFIG_SCHEMA_V5,
+            TRAINER_CONFIG_SCHEMA_V6,
         }
         if self.schema not in specialization_schemas:
             if (
@@ -327,7 +333,7 @@ class ResidentSFTBootstrapConfig:
             )
             if self.role_conditioned_branches != len(self.branch_indices):
                 _fail("resident_sft_role_conditioned_branch_count_mismatch")
-            if self.schema == TRAINER_CONFIG_SCHEMA_V5:
+            if self.schema in {TRAINER_CONFIG_SCHEMA_V5, TRAINER_CONFIG_SCHEMA_V6}:
                 if not isinstance(
                     self.trajectory_objective,
                     ExactAdjointTrajectoryConfig,
@@ -335,7 +341,11 @@ class ResidentSFTBootstrapConfig:
                     _fail("resident_sft_config_trajectory_required")
             elif self.trajectory_objective is not None:
                 _fail("resident_sft_config_trajectory_not_supported")
-        if self.schema in {TRAINER_CONFIG_SCHEMA_V4, TRAINER_CONFIG_SCHEMA_V5}:
+        if self.schema in {
+            TRAINER_CONFIG_SCHEMA_V4,
+            TRAINER_CONFIG_SCHEMA_V5,
+            TRAINER_CONFIG_SCHEMA_V6,
+        }:
             _integer(
                 self.intermediate_validation_examples,
                 role="resident_sft_intermediate_validation_examples",
@@ -415,6 +425,21 @@ class ResidentSFTBootstrapConfig:
         ):
             _fail("resident_sft_lora_targets_invalid")
         _integer(self.lora_layers, role="resident_sft_lora_layers", minimum=1, maximum=256)
+        if self.schema == TRAINER_CONFIG_SCHEMA_V6:
+            if (
+                not self.coda_lora_targets
+                or len(self.coda_lora_targets) != len(set(self.coda_lora_targets))
+                or any(target not in allowed_targets for target in self.coda_lora_targets)
+            ):
+                _fail("resident_sft_coda_lora_targets_invalid")
+            _integer(
+                self.coda_lora_layers,
+                role="resident_sft_coda_lora_layers",
+                minimum=1,
+                maximum=256,
+            )
+        elif self.coda_lora_targets or self.coda_lora_layers != 0:
+            _fail("resident_sft_coda_lora_not_supported")
         _integer(
             self.checkpoint_every,
             role="resident_sft_checkpoint_every",
@@ -487,6 +512,7 @@ class ResidentSFTBootstrapConfig:
             TRAINER_CONFIG_SCHEMA_V3,
             TRAINER_CONFIG_SCHEMA_V4,
             TRAINER_CONFIG_SCHEMA_V5,
+            TRAINER_CONFIG_SCHEMA_V6,
         }:
             assert self.generated_rollin is not None
             result["generated_rollin"] = self.generated_rollin.to_dict()
@@ -494,6 +520,7 @@ class ResidentSFTBootstrapConfig:
             TRAINER_CONFIG_SCHEMA_V3,
             TRAINER_CONFIG_SCHEMA_V4,
             TRAINER_CONFIG_SCHEMA_V5,
+            TRAINER_CONFIG_SCHEMA_V6,
         }:
             assert self.branch_specialization is not None
             result.update(
@@ -506,13 +533,20 @@ class ResidentSFTBootstrapConfig:
                     "role_conditioned_branches": self.role_conditioned_branches,
                 }
             )
-        if self.schema in {TRAINER_CONFIG_SCHEMA_V4, TRAINER_CONFIG_SCHEMA_V5}:
+        if self.schema in {
+            TRAINER_CONFIG_SCHEMA_V4,
+            TRAINER_CONFIG_SCHEMA_V5,
+            TRAINER_CONFIG_SCHEMA_V6,
+        }:
             result["intermediate_validation_examples"] = (
                 self.intermediate_validation_examples
             )
-        if self.schema == TRAINER_CONFIG_SCHEMA_V5:
+        if self.schema in {TRAINER_CONFIG_SCHEMA_V5, TRAINER_CONFIG_SCHEMA_V6}:
             assert self.trajectory_objective is not None
             result["trajectory_objective"] = self.trajectory_objective.to_dict()
+        if self.schema == TRAINER_CONFIG_SCHEMA_V6:
+            result["coda_lora_targets"] = list(self.coda_lora_targets)
+            result["coda_lora_layers"] = self.coda_lora_layers
         return result
 
     @classmethod
@@ -587,6 +621,30 @@ class ResidentSFTBootstrapConfig:
                     role_conditioned_branches=2,
                 ).to_dict()
             )
+        elif schema == TRAINER_CONFIG_SCHEMA_V6:
+            expected = set(
+                cls(
+                    seed=0,
+                    max_steps=2,
+                    max_invocation_steps=1,
+                    evaluate_every=1,
+                    validation_examples=2,
+                    intermediate_validation_examples=1,
+                    schema=TRAINER_CONFIG_SCHEMA_V6,
+                    objective=OBJECTIVE_NAME_V5,
+                    generated_rollin=GeneratedRollinSelectionConfig(),
+                    branch_specialization=BranchSpecializationConfig(),
+                    trajectory_objective=ExactAdjointTrajectoryConfig(
+                        probe_steps=(1, 2),
+                        improvement_weight=1.0,
+                    ),
+                    structural_warmup_steps=1,
+                    structural_warmup_learning_rate=1e-4,
+                    role_conditioned_branches=2,
+                    coda_lora_targets=("down_proj",),
+                    coda_lora_layers=1,
+                ).to_dict()
+            )
         else:
             _fail("resident_sft_config_schema_invalid")
         record = _exact(raw, expected, role="resident_sft_config")
@@ -609,12 +667,27 @@ class ResidentSFTBootstrapConfig:
                 lora_dropout=record["lora_dropout"],
                 lora_targets=tuple(record["lora_targets"]),
                 lora_layers=record["lora_layers"],
+                coda_lora_targets=(
+                    tuple(record["coda_lora_targets"])
+                    if schema == TRAINER_CONFIG_SCHEMA_V6
+                    else ()
+                ),
+                coda_lora_layers=(
+                    record["coda_lora_layers"]
+                    if schema == TRAINER_CONFIG_SCHEMA_V6
+                    else 0
+                ),
                 checkpoint_every=record["checkpoint_every"],
                 evaluate_every=record["evaluate_every"],
                 validation_examples=record["validation_examples"],
                 intermediate_validation_examples=(
                     record["intermediate_validation_examples"]
-                    if schema in {TRAINER_CONFIG_SCHEMA_V4, TRAINER_CONFIG_SCHEMA_V5}
+                    if schema
+                    in {
+                        TRAINER_CONFIG_SCHEMA_V4,
+                        TRAINER_CONFIG_SCHEMA_V5,
+                        TRAINER_CONFIG_SCHEMA_V6,
+                    }
                     else 0
                 ),
                 max_seq_length=record["max_seq_length"],
@@ -630,6 +703,7 @@ class ResidentSFTBootstrapConfig:
                         TRAINER_CONFIG_SCHEMA_V3,
                         TRAINER_CONFIG_SCHEMA_V4,
                         TRAINER_CONFIG_SCHEMA_V5,
+                        TRAINER_CONFIG_SCHEMA_V6,
                     }
                     else None
                 ),
@@ -642,6 +716,7 @@ class ResidentSFTBootstrapConfig:
                         TRAINER_CONFIG_SCHEMA_V3,
                         TRAINER_CONFIG_SCHEMA_V4,
                         TRAINER_CONFIG_SCHEMA_V5,
+                        TRAINER_CONFIG_SCHEMA_V6,
                     }
                     else None
                 ),
@@ -649,7 +724,7 @@ class ResidentSFTBootstrapConfig:
                     ExactAdjointTrajectoryConfig.from_dict(
                         record["trajectory_objective"]
                     )
-                    if schema == TRAINER_CONFIG_SCHEMA_V5
+                    if schema in {TRAINER_CONFIG_SCHEMA_V5, TRAINER_CONFIG_SCHEMA_V6}
                     else None
                 ),
                 structural_warmup_steps=(
@@ -659,6 +734,7 @@ class ResidentSFTBootstrapConfig:
                         TRAINER_CONFIG_SCHEMA_V3,
                         TRAINER_CONFIG_SCHEMA_V4,
                         TRAINER_CONFIG_SCHEMA_V5,
+                        TRAINER_CONFIG_SCHEMA_V6,
                     }
                     else 0
                 ),
@@ -669,6 +745,7 @@ class ResidentSFTBootstrapConfig:
                         TRAINER_CONFIG_SCHEMA_V3,
                         TRAINER_CONFIG_SCHEMA_V4,
                         TRAINER_CONFIG_SCHEMA_V5,
+                        TRAINER_CONFIG_SCHEMA_V6,
                     }
                     else 0.0
                 ),
@@ -679,6 +756,7 @@ class ResidentSFTBootstrapConfig:
                         TRAINER_CONFIG_SCHEMA_V3,
                         TRAINER_CONFIG_SCHEMA_V4,
                         TRAINER_CONFIG_SCHEMA_V5,
+                        TRAINER_CONFIG_SCHEMA_V6,
                     }
                     else 0
                 ),
@@ -1319,6 +1397,7 @@ __all__ = [
     "OBJECTIVE_NAME_V2",
     "OBJECTIVE_NAME_V3",
     "OBJECTIVE_NAME_V4",
+    "OBJECTIVE_NAME_V5",
     "PREVIOUS_AUTHORITY_SCHEMA",
     "PREVIOUS_REQUIRED_SOURCE_ROLES",
     "REQUIRED_SOURCE_ROLES",
@@ -1330,6 +1409,7 @@ __all__ = [
     "TRAINER_CONFIG_SCHEMA_V3",
     "TRAINER_CONFIG_SCHEMA_V4",
     "TRAINER_CONFIG_SCHEMA_V5",
+    "TRAINER_CONFIG_SCHEMA_V6",
     "TRAINING_AUTHORITY",
     "artifact_binding",
     "authorize_bound_artifacts",

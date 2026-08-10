@@ -290,7 +290,9 @@ def test_invalid_campaign_id_is_rejected_before_any_artifact_write(
 
 def test_profile_plan_covers_exact_steps_without_gaps() -> None:
     config, *_ = prepare._profile_config("full", seed=23)
-    assert config.objective == prepare.OBJECTIVE_NAME_V4
+    assert config.objective == prepare.OBJECTIVE_NAME_V5
+    assert config.coda_lora_layers == 4
+    assert config.coda_lora_targets == ("o_proj", "down_proj")
     assert config.generated_rollin is not None
     assert config.branch_specialization is not None
     assert config.trajectory_objective is not None

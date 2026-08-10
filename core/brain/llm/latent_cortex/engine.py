@@ -23,6 +23,7 @@ import math
 import time
 import uuid
 from collections.abc import Callable, Mapping, Sequence
+from contextlib import nullcontext
 from dataclasses import replace
 from pathlib import Path
 from typing import Any
@@ -656,6 +657,8 @@ class LatentCortexEngine:
         import mlx.core as mx
         from mlx_lm.models.base import create_attention_mask
 
+        from core.brain.llm.latent_cortex.recurrence_adapter import coda_adapter_scope
+
         if not tokens:
             raise ValueError("decode bridge tokens cannot be empty")
         if not budget.can_afford(len(tokens), self.n_layers):
@@ -674,8 +677,9 @@ class LatentCortexEngine:
         inner = self.model.model
         h = inner.embed_tokens(mx.array([tokens]))
         mask = create_attention_mask(h, cache)
-        for index, layer in enumerate(inner.layers):
-            h = layer(h, mask, cache[index])
+        with coda_adapter_scope():
+            for index, layer in enumerate(inner.layers):
+                h = layer(h, mask, cache[index])
         logits = self._logits(h)[0, -1]
         mx.eval(logits)
         return logits
@@ -1363,6 +1367,7 @@ class LatentCortexEngine:
         external_step_lanes: int = 1,
         sample_seed: int | None = None,
         final_answer_contract: bool | None = None,
+        coda_adapter_active: bool = False,
     ) -> tuple[list[int], str]:
         """Minimal sampler: first token from ``initial_logits`` (the logits of
         the last persisted position — prompt tail or final thought slot), then
@@ -1404,6 +1409,8 @@ class LatentCortexEngine:
             raise ValueError("sample_seed must be null or an integer inside [0, 2^32-1]")
         if final_answer_contract is not None and type(final_answer_contract) is not bool:
             raise TypeError("final_answer_contract must be boolean or null")
+        if type(coda_adapter_active) is not bool:
+            raise TypeError("coda_adapter_active must be boolean")
         if (
             type(external_step_lanes) is not int
             or external_step_lanes < 1
@@ -1623,8 +1630,17 @@ class LatentCortexEngine:
                 )
                 h = inner.embed_tokens(mx.array([[token]]))
                 mask = create_attention_mask(h, cache)
-                for i, layer in enumerate(inner.layers):
-                    h = layer(h, mask, cache[i])
+                if coda_adapter_active:
+                    from core.brain.llm.latent_cortex.recurrence_adapter import (
+                        coda_adapter_scope,
+                    )
+
+                    scope = coda_adapter_scope()
+                else:
+                    scope = nullcontext()
+                with scope:
+                    for i, layer in enumerate(inner.layers):
+                        h = layer(h, mask, cache[i])
                 logits = self._logits(h)[0, -1]
             else:
                 logits = external_step_logits(token)
@@ -1725,6 +1741,7 @@ class LatentCortexEngine:
                 contract_grace_tokens=0,
                 force_exact_tokens=force_exact_tokens,
                 final_answer_contract=probe_contract == "final_answer_v1",
+                coda_adapter_active=True,
             )[0]
             execution_failed = False
         finally:
@@ -2044,12 +2061,17 @@ class LatentCortexEngine:
                     )
                     hidden = inner.embed_tokens(mx.array([[token]]))
                     mask = create_attention_mask(hidden, lane_cache)
-                    for index, layer in enumerate(inner.layers):
-                        hidden = layer(
-                            hidden,
-                            mask,
-                            lane_cache[index],
-                        )
+                    from core.brain.llm.latent_cortex.recurrence_adapter import (
+                        coda_adapter_scope,
+                    )
+
+                    with coda_adapter_scope():
+                        for index, layer in enumerate(inner.layers):
+                            hidden = layer(
+                                hidden,
+                                mask,
+                                lane_cache[index],
+                            )
                     logits = self._logits(hidden)[0, -1]
                     mx.eval(logits)
                     lane_logits.append(logits)
@@ -2254,6 +2276,7 @@ class LatentCortexEngine:
         """
         import mlx.core as mx
 
+        from core.brain.llm.latent_cortex.recurrence_adapter import coda_adapter_scope
         from core.learning.role_conditioned_lora import recurrent_branch_index
 
         with recurrent_branch_index(branch.index):
@@ -2271,13 +2294,14 @@ class LatentCortexEngine:
                 self.coda_start,
                 persist=True,
             )
-            z_out = runner.run(
-                z_fin,
-                cache,
-                self.coda_start,
-                self.n_layers,
-                persist=True,
-            )
+            with coda_adapter_scope():
+                z_out = runner.run(
+                    z_fin,
+                    cache,
+                    self.coda_start,
+                    self.n_layers,
+                    persist=True,
+                )
         logits = self._logits(
             z_out[:, -1:, :],
             budget=budget,
@@ -7254,6 +7278,7 @@ class LatentCortexEngine:
                     token_logprobs_out=token_logprobs_out,
                     sentence_grace_tokens=decode_sentence_grace_tokens,
                     sample_seed=sample_seed,
+                    coda_adapter_active=latent_decode_authorized,
                 )
                 final_decode_transaction.observe_mutation(cache)
                 winner.kv_boundary_sha256 = final_decode_transaction.commit(
@@ -8605,8 +8630,13 @@ class LatentCortexEngine:
                 )
                 h = inner.embed_tokens(mx.array([[token]]))
                 mask = create_attention_mask(h, cache)
-                for index, layer in enumerate(inner.layers):
-                    h = layer(h, mask, cache[index])
+                from core.brain.llm.latent_cortex.recurrence_adapter import (
+                    coda_adapter_scope,
+                )
+
+                with coda_adapter_scope():
+                    for index, layer in enumerate(inner.layers):
+                        h = layer(h, mask, cache[index])
                 self._logits(h)
                 keys.append(
                     mx.stop_gradient(self._last_output_hidden[0, -1].astype(mx.float32))

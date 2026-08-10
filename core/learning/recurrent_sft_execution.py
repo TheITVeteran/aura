@@ -224,7 +224,13 @@ def assert_adapter_tensor_topology(
     expected: Mapping[str, Any],
     observed: Mapping[str, Any],
 ) -> None:
-    """Require exactly the slot-scoped LoRA tensor names and no base weights."""
+    """Require exact cognitive-adapter tensor names and no base weights.
+
+    A coda interpreter intentionally has only its shared LoRA pair, while the
+    recurrent operator may also carry depth and role banks.  Mixed profiles are
+    therefore valid only when every non-empty bank profile is identical; this
+    still rejects partial or inconsistent recurrent banks.
+    """
 
     def inventory(
         tensors: Mapping[str, Any],
@@ -291,7 +297,10 @@ def assert_adapter_tensor_topology(
                 _fail("recurrent_sft_adapter_tensor_topology_invalid")
             bank_counts.add((len(depths), len(roles)))
             normalized[projection] = (depths, roles)
-        if not normalized or len(bank_counts) != 1:
+        nonempty_bank_counts = {
+            counts for counts in bank_counts if counts != (0, 0)
+        }
+        if not normalized or len(nonempty_bank_counts) > 1:
             _fail("recurrent_sft_adapter_tensor_topology_invalid")
         return normalized
 

@@ -47,6 +47,7 @@ from core.brain.llm.latent_cortex.resident_adapter_loader import (
     load_resident_adapter,
 )
 from core.brain.llm.latent_cortex.resident_recurrent_sft_adapter_identity import (
+    CODA_INTERPRETING_MANIFEST_SCHEMA,
     ROLE_CONDITIONED_MANIFEST_SCHEMA,
     declared_bindings,
     validate_resident_recurrent_sft_adapter_identity,
@@ -67,10 +68,14 @@ MAX_TRUST_ROOT_BYTES: Final = 1024 * 1024
 _BINDING_KEYS = {"path", "sha256", "size_bytes"}
 _RUNTIME_CONTRACT = {
     "activation_default": "on",
-    "activation_scope": "recurrence_adapter_scope_only",
-    "manifest_schema": ROLE_CONDITIONED_MANIFEST_SCHEMA,
+    "activation_scope": "recurrence_and_rlc_coda_adapter_scopes_only",
+    "manifest_schemas": [
+        ROLE_CONDITIONED_MANIFEST_SCHEMA,
+        CODA_INTERPRETING_MANIFEST_SCHEMA,
+    ],
     "depth_conditioning_required": True,
     "role_conditioning_required": True,
+    "coda_interpretation_supported": True,
     "ordinary_decode_unchanged_outside_scope": True,
     "rollback_contract": "exact_original_module_graph_v1",
 }
@@ -674,7 +679,8 @@ def admit_live_adapter_activation(
     )
     if (
         not isinstance(manifest, Mapping)
-        or manifest.get("schema") != ROLE_CONDITIONED_MANIFEST_SCHEMA
+        or manifest.get("schema")
+        not in {ROLE_CONDITIONED_MANIFEST_SCHEMA, CODA_INTERPRETING_MANIFEST_SCHEMA}
         or manifest.get("adapter_id") != activation["adapter_id"]
     ):
         _fail("live_adapter_role_conditioned_package_required")

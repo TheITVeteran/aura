@@ -66,6 +66,7 @@ from core.learning.recurrence_native_objective_v2 import (  # noqa: E402
     validate_final_recurrent_transition_receipt,
 )
 from core.learning.recurrent_grpo import (  # noqa: E402
+    attach_recurrent_policy_adapters,
     cortex_config_from_execution_spec,
     recurrent_policy_sha256,
 )
@@ -236,6 +237,50 @@ def test_cached_supervised_objective_matches_branch_ensemble_and_has_gradient():
     assert flattened
     assert all(bool(mx.all(mx.isfinite(value))) for _path, value in flattened)
     assert any(float(mx.max(mx.abs(value))) > 0.0 for _path, value in flattened)
+
+
+def test_cached_objective_sends_answer_credit_into_recurrence_and_coda():
+    model = Model(
+        ModelArgs(
+            model_type="qwen2",
+            hidden_size=32,
+            num_hidden_layers=4,
+            intermediate_size=64,
+            num_attention_heads=4,
+            rms_norm_eps=1e-6,
+            vocab_size=64,
+            num_key_value_heads=2,
+            max_position_embeddings=128,
+            rope_theta=10000.0,
+        )
+    )
+    spec = _spec()
+    attach_recurrent_policy_adapters(
+        model,
+        spec,
+        lora_rank=2,
+        lora_layers=1,
+        lora_targets=("o_proj",),
+        initialization_seed=20260810,
+        coda_lora_layers=1,
+        coda_lora_targets=("down_proj",),
+    )
+    result = cached_supervised_live_path_value_and_grad(
+        model,
+        PROMPT,
+        ANSWER,
+        spec=spec,
+    )
+    gradients = dict(tree_flatten(result.gradients))
+    recurrent = [
+        value for path, value in gradients.items() if path.startswith("model.layers.2.")
+    ]
+    coda = [value for path, value in gradients.items() if path.startswith("model.layers.3.")]
+    mx.eval(recurrent, coda)
+
+    assert recurrent and coda
+    assert any(float(mx.max(mx.abs(value))) > 0.0 for value in recurrent)
+    assert any(float(mx.max(mx.abs(value))) > 0.0 for value in coda)
 
 
 def test_cached_supervised_objective_normalizes_token_weights():

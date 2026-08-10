@@ -46,6 +46,7 @@ from core.brain.llm.latent_cortex.campaign_trust import (  # noqa: E402
     verify_role_attestation,
 )
 from core.brain.llm.latent_cortex.live_adapter_activation import (  # noqa: E402
+    CODA_INTERPRETING_MANIFEST_SCHEMA,
     ROLE_CONDITIONED_MANIFEST_SCHEMA,
     LiveAdapterActivationError,
     admit_live_adapter_activation,
@@ -782,11 +783,16 @@ def prepare_activation(
     metadata = plan.to_dict().get("metadata")
     adapter = metadata.get("adapter_identity") if isinstance(metadata, Mapping) else None
     identity = adapter.get("identity_receipt") if isinstance(adapter, Mapping) else None
+    supported_manifest_schemas = {
+        ROLE_CONDITIONED_MANIFEST_SCHEMA,
+        CODA_INTERPRETING_MANIFEST_SCHEMA,
+    }
+    adapter_format = adapter.get("format") if isinstance(adapter, Mapping) else None
     if (
         not isinstance(metadata, Mapping)
         or metadata.get("claim_eligible") is not True
         or not isinstance(adapter, Mapping)
-        or adapter.get("format") != ROLE_CONDITIONED_MANIFEST_SCHEMA
+        or adapter_format not in supported_manifest_schemas
         or not isinstance(identity, Mapping)
     ):
         _fail("activation_materialization_claim_eligible_adapter_required")
@@ -797,7 +803,7 @@ def prepare_activation(
         role="adapter_manifest",
     )
     if (
-        manifest.get("schema") != ROLE_CONDITIONED_MANIFEST_SCHEMA
+        manifest.get("schema") != adapter_format
         or manifest.get("adapter_id") != identity.get("adapter_id")
         or hashlib.sha256(manifest_raw).hexdigest() != identity.get("manifest_sha256")
     ):
@@ -896,6 +902,7 @@ def prepare_activation(
         "policy_sha256": policy.policy_sha256,
         "adapter_id": activation["adapter_id"],
         "adapter_package_path": str(package),
+        "adapter_manifest_schema": adapter_format,
         "activation": _binding(activation_path, activation_raw),
         "signature_request": _binding(
             request_path,
@@ -1047,7 +1054,12 @@ def finalize_activation(
         "admission_receipt": admission,
         "published": True,
         "static_weight_fusion_performed": False,
-        "activation_mode": "signed_default_on_role_and_depth_conditioned_adapter",
+        "activation_mode": (
+            "signed_default_on_recurrent_and_coda_conditioned_adapter"
+            if preparation.get("adapter_manifest_schema")
+            == CODA_INTERPRETING_MANIFEST_SCHEMA
+            else "signed_default_on_role_and_depth_conditioned_adapter"
+        ),
     }
     publication = {
         **publication_material,

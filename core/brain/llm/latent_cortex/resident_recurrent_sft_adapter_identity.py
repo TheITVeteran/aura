@@ -39,11 +39,15 @@ MANIFEST_SCHEMA: Final = "aura.resident_recurrent_sft_adapter_manifest.v2"
 ROLE_CONDITIONED_MANIFEST_SCHEMA: Final = (
     "aura.resident_recurrent_sft_adapter_manifest.v3"
 )
+CODA_INTERPRETING_MANIFEST_SCHEMA: Final = (
+    "aura.resident_recurrent_sft_adapter_manifest.v4"
+)
 MANIFEST_SCHEMAS: Final = frozenset(
     {
         LEGACY_MANIFEST_SCHEMA,
         MANIFEST_SCHEMA,
         ROLE_CONDITIONED_MANIFEST_SCHEMA,
+        CODA_INTERPRETING_MANIFEST_SCHEMA,
     }
 )
 IDENTITY_RECEIPT_SCHEMA: Final = "aura.resident_recurrent_sft_adapter_identity_receipt.v1"
@@ -138,8 +142,13 @@ def _lora(value: Any, *, manifest_schema: str) -> dict[str, Any]:
     depth_conditioned = manifest_schema in {
         MANIFEST_SCHEMA,
         ROLE_CONDITIONED_MANIFEST_SCHEMA,
+        CODA_INTERPRETING_MANIFEST_SCHEMA,
     }
-    role_conditioned = manifest_schema == ROLE_CONDITIONED_MANIFEST_SCHEMA
+    role_conditioned = manifest_schema in {
+        ROLE_CONDITIONED_MANIFEST_SCHEMA,
+        CODA_INTERPRETING_MANIFEST_SCHEMA,
+    }
+    coda_interpreting = manifest_schema == CODA_INTERPRETING_MANIFEST_SCHEMA
     keys = {
         "rank",
         "scale",
@@ -154,6 +163,16 @@ def _lora(value: Any, *, manifest_schema: str) -> dict[str, Any]:
         keys.update({"conditioning_schema", "depth_bank_size"})
     if role_conditioned:
         keys.update({"role_conditioning_schema", "role_bank_size"})
+    if coda_interpreting:
+        keys.update(
+            {
+                "coda_conditioning_schema",
+                "coda_layers",
+                "coda_targets",
+                "coda_wrapped_projections",
+                "coda_projection_paths",
+            }
+        )
     record = _exact(
         value,
         keys,
@@ -169,6 +188,14 @@ def _lora(value: Any, *, manifest_schema: str) -> dict[str, Any]:
     trainable = _positive_int(record["trainable_params"], role="lora_trainable")
     targets = record["targets"]
     paths = record["projection_paths"]
+    declared_coda_targets = (
+        record.get("coda_targets", []) if coda_interpreting else []
+    )
+    allowed_path_targets = (
+        set(targets) | set(declared_coda_targets)
+        if isinstance(targets, list) and isinstance(declared_coda_targets, list)
+        else set()
+    )
     if (
         not isinstance(targets, list)
         or not targets
@@ -180,7 +207,7 @@ def _lora(value: Any, *, manifest_schema: str) -> dict[str, Any]:
         or any(
             not isinstance(path, str)
             or not path.startswith("model.layers.")
-            or path.rsplit(".", 1)[-1] not in targets
+            or path.rsplit(".", 1)[-1] not in allowed_path_targets
             for path in paths
         )
         or wrapped != len(paths)
@@ -233,6 +260,49 @@ def _lora(value: Any, *, manifest_schema: str) -> dict[str, Any]:
                 ),
             }
         )
+    if coda_interpreting:
+        if record.get("coda_conditioning_schema") != "aura.coda_interpreting_lora.v1":
+            _fail("resident_sft_adapter_coda_conditioning_schema_invalid")
+        coda_layers = _positive_int(
+            record.get("coda_layers"),
+            role="coda_layers",
+            maximum=1 << 20,
+        )
+        coda_wrapped = _positive_int(
+            record.get("coda_wrapped_projections"),
+            role="coda_wrapped_projections",
+            maximum=MAX_TENSORS // 2,
+        )
+        coda_targets = record.get("coda_targets")
+        coda_paths = record.get("coda_projection_paths")
+        if (
+            not isinstance(coda_targets, list)
+            or not coda_targets
+            or len(coda_targets) != len(set(coda_targets))
+            or any(not isinstance(target, str) or not target for target in coda_targets)
+            or not isinstance(coda_paths, list)
+            or not coda_paths
+            or len(coda_paths) != len(set(coda_paths))
+            or any(
+                not isinstance(path, str)
+                or not path.startswith("model.layers.")
+                or path.rsplit(".", 1)[-1] not in coda_targets
+                for path in coda_paths
+            )
+            or coda_wrapped != len(coda_paths)
+            or not set(coda_paths).issubset(paths)
+            or len(paths) - len(coda_paths) < 1
+        ):
+            _fail("resident_sft_adapter_coda_topology_invalid")
+        normalized.update(
+            {
+                "coda_conditioning_schema": record["coda_conditioning_schema"],
+                "coda_layers": coda_layers,
+                "coda_targets": list(coda_targets),
+                "coda_wrapped_projections": coda_wrapped,
+                "coda_projection_paths": list(coda_paths),
+            }
+        )
     return normalized
 
 
@@ -257,18 +327,22 @@ def _tensor_inventory(
     depth_bank_size = int(lora.get("depth_bank_size", 0))
     role_bank_size = int(lora.get("role_bank_size", 0))
     projections = sorted(lora["projection_paths"])
+    coda_projections = set(lora.get("coda_projection_paths", ()))
+    recurrent_projections = [
+        projection for projection in projections if projection not in coda_projections
+    ]
     expected_keys = {
         f"{projection}.{suffix}" for projection in projections for suffix in ("lora_a", "lora_b")
     }
     expected_keys.update(
         f"{projection}.{suffix}.{depth}"
-        for projection in projections
+        for projection in recurrent_projections
         for suffix in ("depth_a", "depth_b")
         for depth in range(depth_bank_size)
     )
     expected_keys.update(
         f"{projection}.{suffix}.{role}"
-        for projection in projections
+        for projection in recurrent_projections
         for suffix in ("role_a", "role_b")
         for role in range(role_bank_size)
     )
@@ -522,12 +596,16 @@ def validate_resident_recurrent_sft_adapter_identity(
     if manifest_schema in {
         MANIFEST_SCHEMA,
         ROLE_CONDITIONED_MANIFEST_SCHEMA,
+        CODA_INTERPRETING_MANIFEST_SCHEMA,
     } and lora["depth_bank_size"] != max(
         authority["dataset"]["depths"]
     ):
         _fail("resident_sft_adapter_depth_bank_authority_mismatch")
     trainer = authority["trainer"]
-    if manifest_schema == ROLE_CONDITIONED_MANIFEST_SCHEMA:
+    if manifest_schema in {
+        ROLE_CONDITIONED_MANIFEST_SCHEMA,
+        CODA_INTERPRETING_MANIFEST_SCHEMA,
+    }:
         if lora["role_bank_size"] != trainer.get("role_conditioned_branches"):
             _fail("resident_sft_adapter_role_bank_authority_mismatch")
     elif trainer.get("role_conditioned_branches", 0):
@@ -540,6 +618,14 @@ def validate_resident_recurrent_sft_adapter_identity(
         or lora["targets"] != trainer["lora_targets"]
     ):
         _fail("resident_sft_adapter_lora_authority_mismatch")
+    if manifest_schema == CODA_INTERPRETING_MANIFEST_SCHEMA:
+        if (
+            lora["coda_layers"] != trainer.get("coda_lora_layers")
+            or lora["coda_targets"] != trainer.get("coda_lora_targets")
+        ):
+            _fail("resident_sft_adapter_coda_authority_mismatch")
+    elif trainer.get("coda_lora_layers", 0) or trainer.get("coda_lora_targets", []):
+        _fail("resident_sft_adapter_coda_manifest_missing")
     tensors = _tensor_inventory(record["tensors"], tensor_metadata, lora=lora)
     if topology_sha256(tensors) != state["adapter_topology_sha256"]:
         _fail("resident_sft_adapter_topology_digest_mismatch")
@@ -626,6 +712,7 @@ def validate_resident_recurrent_sft_adapter_identity(
 
 __all__ = [
     "IDENTITY_RECEIPT_SCHEMA",
+    "CODA_INTERPRETING_MANIFEST_SCHEMA",
     "LEGACY_MANIFEST_SCHEMA",
     "MANIFEST_SCHEMA",
     "MANIFEST_SCHEMAS",

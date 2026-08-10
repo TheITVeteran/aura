@@ -47,9 +47,9 @@ from core.learning.recurrence_native_objective_v6 import (  # noqa: E402
     BranchSpecializationConfig,
 )
 from core.learning.resident_recurrent_sft_bootstrap_authority import (  # noqa: E402
-    OBJECTIVE_NAME_V4,
+    OBJECTIVE_NAME_V5,
     REQUIRED_SOURCE_ROLES,
-    TRAINER_CONFIG_SCHEMA_V5,
+    TRAINER_CONFIG_SCHEMA_V6,
     ResidentSFTBootstrapConfig,
     build_authority,
     build_dataset_commitment,
@@ -366,8 +366,8 @@ def _profile_config(
         return (
             ResidentSFTBootstrapConfig(
                 seed=seed,
-                schema=TRAINER_CONFIG_SCHEMA_V5,
-                objective=OBJECTIVE_NAME_V4,
+                schema=TRAINER_CONFIG_SCHEMA_V6,
+                objective=OBJECTIVE_NAME_V5,
                 generated_rollin=GeneratedRollinSelectionConfig(),
                 branch_specialization=BranchSpecializationConfig(
                     weight=8.0,
@@ -391,6 +391,8 @@ def _profile_config(
                 lora_scale=20.0,
                 lora_targets=("q_proj", "v_proj", "o_proj"),
                 lora_layers=8,
+                coda_lora_targets=("o_proj", "down_proj"),
+                coda_lora_layers=4,
                 evaluate_every=1,
                 validation_examples=4,
                 intermediate_validation_examples=1,
@@ -409,8 +411,8 @@ def _profile_config(
         return (
             ResidentSFTBootstrapConfig(
                 seed=seed,
-                schema=TRAINER_CONFIG_SCHEMA_V5,
-                objective=OBJECTIVE_NAME_V4,
+                schema=TRAINER_CONFIG_SCHEMA_V6,
+                objective=OBJECTIVE_NAME_V5,
                 generated_rollin=GeneratedRollinSelectionConfig(),
                 branch_specialization=BranchSpecializationConfig(
                     weight=8.0,
@@ -434,6 +436,8 @@ def _profile_config(
                 lora_scale=20.0,
                 lora_targets=("q_proj", "v_proj", "o_proj"),
                 lora_layers=8,
+                coda_lora_targets=("o_proj", "down_proj"),
+                coda_lora_layers=4,
                 evaluate_every=8,
                 validation_examples=24,
                 intermediate_validation_examples=4,

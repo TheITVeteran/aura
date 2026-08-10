@@ -22,6 +22,7 @@ from core.learning.resident_recurrent_sft_bootstrap_authority import (
     OBJECTIVE_NAME_V2,
     OBJECTIVE_NAME_V3,
     OBJECTIVE_NAME_V4,
+    OBJECTIVE_NAME_V5,
     PREVIOUS_AUTHORITY_SCHEMA,
     PREVIOUS_REQUIRED_SOURCE_ROLES,
     REQUIRED_SOURCE_ROLES,
@@ -29,6 +30,7 @@ from core.learning.resident_recurrent_sft_bootstrap_authority import (
     TRAINER_CONFIG_SCHEMA_V3,
     TRAINER_CONFIG_SCHEMA_V4,
     TRAINER_CONFIG_SCHEMA_V5,
+    TRAINER_CONFIG_SCHEMA_V6,
     TRAINING_AUTHORITY,
     ResidentSFTBootstrapAuthorityError,
     ResidentSFTBootstrapConfig,
@@ -223,6 +225,46 @@ def test_v5_config_requires_and_round_trips_depth_improvement_objective() -> Non
     invalid.pop("trajectory_objective")
     with pytest.raises(ResidentSFTBootstrapAuthorityError, match="schema_invalid"):
         ResidentSFTBootstrapConfig.from_dict(invalid)
+
+
+def test_v6_config_requires_and_round_trips_coda_interpretation_tissue() -> None:
+    config = ResidentSFTBootstrapConfig(
+        seed=2026081019,
+        max_steps=12,
+        max_invocation_steps=2,
+        evaluate_every=2,
+        validation_examples=4,
+        intermediate_validation_examples=2,
+        schema=TRAINER_CONFIG_SCHEMA_V6,
+        objective=OBJECTIVE_NAME_V5,
+        generated_rollin=GeneratedRollinSelectionConfig(),
+        branch_specialization=BranchSpecializationConfig(),
+        trajectory_objective=ExactAdjointTrajectoryConfig(
+            probe_steps=(1, 2),
+            improvement_weight=1.0,
+        ),
+        structural_warmup_steps=2,
+        structural_warmup_learning_rate=1e-4,
+        role_conditioned_branches=2,
+        branch_indices=(0, 1),
+        coda_lora_targets=("down_proj",),
+        coda_lora_layers=1,
+    )
+
+    assert ResidentSFTBootstrapConfig.from_dict(config.to_dict()) == config
+    missing = config.to_dict()
+    missing.pop("coda_lora_targets")
+    with pytest.raises(ResidentSFTBootstrapAuthorityError, match="schema_invalid"):
+        ResidentSFTBootstrapConfig.from_dict(missing)
+    with pytest.raises(
+        ResidentSFTBootstrapAuthorityError,
+        match="coda_lora_not_supported",
+    ):
+        ResidentSFTBootstrapConfig(
+            seed=1,
+            coda_lora_targets=("down_proj",),
+            coda_lora_layers=1,
+        )
 
 
 def test_current_authority_requires_depth_conditioned_source_closure() -> None:

@@ -93,12 +93,20 @@ _ACTIVE_SCOPE: ContextVar[RecurrenceAdapterActivation | None] = ContextVar(
     "aura_recurrence_adapter_scope",
     default=None,
 )
+_ACTIVE_CODA_SCOPE: ContextVar[RecurrenceAdapterActivation | None] = ContextVar(
+    "aura_coda_adapter_scope",
+    default=None,
+)
 _ACTIVATION_COLLECTOR: ContextVar[RecurrenceAdapterActivation | None] = ContextVar(
     "aura_recurrence_adapter_activation_collector",
     default=None,
 )
 _DISABLE_DEPTH: ContextVar[int] = ContextVar(
     "aura_recurrence_adapter_disable_depth",
+    default=0,
+)
+_CODA_DISABLE_DEPTH: ContextVar[int] = ContextVar(
+    "aura_coda_adapter_disable_depth",
     default=0,
 )
 
@@ -117,6 +125,12 @@ def current_recurrence_adapter_scope() -> RecurrenceAdapterActivation | None:
     """Return the current task-local activation, if one is open."""
 
     return _ACTIVE_SCOPE.get()
+
+
+def current_coda_adapter_scope() -> RecurrenceAdapterActivation | None:
+    """Return the active RLC-only coda interpretation scope, if any."""
+
+    return _ACTIVE_CODA_SCOPE.get()
 
 
 @contextmanager
@@ -171,6 +185,41 @@ def scoped_recurrence_adapter_sites(
     return tuple(sorted(sites))
 
 
+def scoped_coda_adapter_sites(
+    model: Any,
+    *,
+    layer_indices: Iterable[int],
+) -> tuple[str, ...]:
+    """Enumerate and verify every RLC-only coda projection in a layer set."""
+
+    layers = getattr(getattr(model, "model", None), "layers", None)
+    if not isinstance(layers, (list, tuple)):
+        raise ValueError("model exposes no decoder layer inventory")
+    sites: list[str] = []
+    for index in layer_indices:
+        if type(index) is not int or not 0 <= index < len(layers):
+            raise ValueError("coda adapter layer inventory is invalid")
+        layer = layers[index]
+        for parent_name in ("self_attn", "mlp"):
+            parent = getattr(layer, parent_name, None)
+            if parent is None:
+                continue
+            for target in _KNOWN_SCOPED_PROJECTIONS:
+                projection = getattr(parent, target, None)
+                if not isinstance(projection, ScopedCodaLoRALinear):
+                    continue
+                expected = f"model.layers.{index}.{parent_name}.{target}"
+                if (
+                    getattr(projection, "recurrence_block_index", None) != index
+                    or getattr(projection, "recurrence_site", None) != expected
+                ):
+                    raise ValueError(f"coda adapter identity is incomplete: {expected}")
+                sites.append(expected)
+    if not sites:
+        raise ValueError("no coda-scoped projection is attached")
+    return tuple(sorted(sites))
+
+
 @contextmanager
 def recurrence_adapter_disabled() -> Iterator[None]:
     """Run the same recurrent graph against the frozen base projection.
@@ -186,6 +235,17 @@ def recurrence_adapter_disabled() -> Iterator[None]:
         yield
     finally:
         _DISABLE_DEPTH.reset(token)
+
+
+@contextmanager
+def coda_adapter_disabled() -> Iterator[None]:
+    """Lesion only the RLC coda interpreter while recurrence remains active."""
+
+    token = _CODA_DISABLE_DEPTH.set(_CODA_DISABLE_DEPTH.get() + 1)
+    try:
+        yield
+    finally:
+        _CODA_DISABLE_DEPTH.reset(token)
 
 
 @contextmanager
@@ -225,8 +285,47 @@ def recurrence_adapter_scope(
                 collector.absorb(activation)
 
 
-class ScopedLoRALinear(LoRALinear):  # type: ignore[misc]
-    """A load-compatible LoRA projection gated by ``recurrence_adapter_scope``."""
+@contextmanager
+def coda_adapter_scope(
+    *,
+    start: int | None = None,
+    stop: int | None = None,
+) -> Iterator[RecurrenceAdapterActivation]:
+    """Activate interpretation tissue only for an RLC persistence/decode path.
+
+    This scope is deliberately independent from ``recurrence_adapter_scope``.
+    The recurrent operator learns how to transform latent slots; the coda
+    operator learns how to interpret the resulting state.  Ordinary model
+    calls open neither scope and therefore remain exact base-checkpoint
+    inference.
+    """
+
+    if (start is None) != (stop is None):
+        raise ValueError("coda adapter start and stop must be supplied together")
+    if start is not None and (
+        type(start) is not int
+        or type(stop) is not int
+        or start < 0
+        or stop <= start
+    ):
+        raise ValueError("coda adapter span must be a non-empty positive slice")
+    parent = _ACTIVE_CODA_SCOPE.get()
+    activation = RecurrenceAdapterActivation(start=start, stop=stop)
+    token = _ACTIVE_CODA_SCOPE.set(activation)
+    try:
+        yield activation
+    finally:
+        _ACTIVE_CODA_SCOPE.reset(token)
+        if parent is not None:
+            parent.absorb(activation)
+        else:
+            collector = _ACTIVATION_COLLECTOR.get()
+            if collector is not None:
+                collector.absorb(activation)
+
+
+class _ScopedLoRALinearBase(LoRALinear):  # type: ignore[misc]
+    """Common implementation for independently scoped cognitive adapters."""
 
     @classmethod
     def from_base(
@@ -269,7 +368,7 @@ class ScopedLoRALinear(LoRALinear):  # type: ignore[misc]
         return scoped
 
     def __call__(self, x: Any) -> Any:
-        activation = _ACTIVE_SCOPE.get()
+        activation = self._active_scope()
         y = self.linear(x)
         if activation is None or _DISABLE_DEPTH.get() > 0:
             return y
@@ -323,13 +422,37 @@ class ScopedLoRALinear(LoRALinear):  # type: ignore[misc]
         activation.record_application(block_index=block_index, site=site)
         return y + (self.scale * z * mx.reshape(mask, shape)).astype(x.dtype)
 
+    def _active_scope(self) -> RecurrenceAdapterActivation | None:
+        raise NotImplementedError
+
+
+class ScopedLoRALinear(_ScopedLoRALinearBase):
+    """LoRA projection active only in the recurrent latent-slot window."""
+
+    def _active_scope(self) -> RecurrenceAdapterActivation | None:
+        return _ACTIVE_SCOPE.get()
+
+
+class ScopedCodaLoRALinear(_ScopedLoRALinearBase):
+    """LoRA projection active only while interpreting an RLC-derived state."""
+
+    def _active_scope(self) -> RecurrenceAdapterActivation | None:
+        if _CODA_DISABLE_DEPTH.get() > 0:
+            return None
+        return _ACTIVE_CODA_SCOPE.get()
+
 
 __all__ = [
     "RecurrenceAdapterActivation",
+    "ScopedCodaLoRALinear",
     "ScopedLoRALinear",
+    "coda_adapter_disabled",
+    "coda_adapter_scope",
+    "current_coda_adapter_scope",
     "current_recurrence_adapter_scope",
     "recurrence_adapter_activation_collector",
     "recurrence_adapter_disabled",
     "recurrence_adapter_scope",
+    "scoped_coda_adapter_sites",
     "scoped_recurrence_adapter_sites",
 ]

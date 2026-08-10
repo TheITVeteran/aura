@@ -22,6 +22,7 @@ from core.brain.llm.latent_cortex.recurrence_adapter_identity_v2 import (
     model_behavior_bundle_identity,
 )
 from core.brain.llm.latent_cortex.resident_recurrent_sft_adapter_identity import (
+    CODA_INTERPRETING_MANIFEST_SCHEMA,
     MANIFEST_SCHEMA,
     ROLE_CONDITIONED_MANIFEST_SCHEMA,
     declared_bindings,
@@ -1040,6 +1041,82 @@ def test_role_manifest_refuses_role_bank_without_depth_bank() -> None:
         match="role_manifest_requires_depth_bank",
     ):
         materializer._manifest_schema_for_lora({"role_bank_size": 2})
+
+
+def test_lora_metadata_separates_recurrent_banks_from_coda_interpreter() -> None:
+    spec = RLCExecutionSpec(recurrent_steps=2)
+    recurrent = [
+        "model.layers.47.self_attn.o_proj",
+        "model.layers.47.mlp.down_proj",
+    ]
+    coda = [
+        "model.layers.48.self_attn.o_proj",
+        "model.layers.48.mlp.down_proj",
+    ]
+    tensors = [
+        TensorIdentity(
+            key=f"{projection}.{suffix}",
+            shape=((2, 8) if suffix.endswith("a") else (8, 2)),
+            dtype="float32",
+        )
+        for projection in [*recurrent, *coda]
+        for suffix in ("lora_a", "lora_b")
+    ]
+    tensors.extend(
+        TensorIdentity(
+            key=f"{projection}.{suffix}.{bank}",
+            shape=((2, 8) if suffix.endswith("a") else (8, 2)),
+            dtype="float32",
+        )
+        for projection in recurrent
+        for suffix in ("depth_a", "depth_b", "role_a", "role_b")
+        for bank in range(2)
+    )
+    authority = {
+        "trainer": {
+            "lora_layers": 1,
+            "lora_targets": ["o_proj", "down_proj"],
+            "coda_lora_layers": 1,
+            "coda_lora_targets": ["o_proj", "down_proj"],
+            "lora_rank": 8,
+            "lora_scale": 20.0,
+            "lora_dropout": 0.0,
+            "role_conditioned_branches": 2,
+        },
+        "dataset": {"depths": [2]},
+    }
+
+    metadata = materializer._lora_metadata(
+        tensors=tensors,
+        authority=authority,
+        spec=spec,
+        model_config={"num_hidden_layers": 64},
+    )
+
+    assert metadata["projection_paths"] == [*recurrent, *coda]
+    assert metadata["coda_projection_paths"] == coda
+    assert metadata["coda_conditioning_schema"] == "aura.coda_interpreting_lora.v1"
+    assert materializer._manifest_schema_for_lora(metadata) == (
+        CODA_INTERPRETING_MANIFEST_SCHEMA
+    )
+
+    with pytest.raises(
+        materializer.ResidentRecurrentSFTMaterializationError,
+        match="exact_lora_topology_mismatch",
+    ):
+        materializer._lora_metadata(
+            tensors=[
+                *tensors,
+                TensorIdentity(
+                    key=f"{coda[0]}.depth_a.0",
+                    shape=(2, 8),
+                    dtype="float32",
+                ),
+            ],
+            authority=authority,
+            spec=spec,
+            model_config={"num_hidden_layers": 64},
+        )
 
 
 def test_refuses_rehashed_historical_prefix_drift(

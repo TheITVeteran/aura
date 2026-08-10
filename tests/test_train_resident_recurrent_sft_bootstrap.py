@@ -589,7 +589,11 @@ def test_tiny_real_mlx_training_exactly_resumes_cached_update(
                 ),
                 "branch_specialization": BranchSpecializationConfig(
                     weight=8.0,
-                    target_separation=0.15,
+                    # This case proves crash/resume identity, not convergence
+                    # to the production target. The tiny deterministic model
+                    # reaches roughly 0.136 after one update; 0.10 retains a
+                    # real gradient while making the phase transition stable.
+                    target_separation=0.10,
                 ),
                 "structural_warmup_steps": 1,
                 "structural_warmup_learning_rate": 1e-2,

@@ -28,7 +28,14 @@ FULL_ENGINE_ADMISSION_SCHEMA: Final = (
 # exactly what the 2026-08-06 campaign proved is not enough -- adapter+RLC
 # scored 3/28 while ordinary decode on identical weights scored 13/28.
 _ARMS: Final = frozenset(
-    {"initial_adapter", "trained_adapter", "ordinary_decode", "full_engine"}
+    {
+        "initial_adapter",
+        "trained_adapter",
+        "trained_coda_lesion",
+        "trained_coda_sham",
+        "ordinary_decode",
+        "full_engine",
+    }
 )
 _MAX_TASKS: Final = 256
 _MAX_DEPTHS: Final = 8

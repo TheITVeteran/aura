@@ -487,10 +487,11 @@ def branch_specialization_live_path_value_and_grad(
         spec=spec,
     )
     layer_pattern = re.compile(r"model\.layers\.(\d+)\.")
+    layer_count = len(model.model.layers)
     for path, _value in tree_flatten(parameters):
         match = layer_pattern.match(path)
-        if match is None or not (prelude_end <= int(match.group(1)) < coda_start):
-            raise RuntimeError("branch_specialization_requires_window_only_trainables")
+        if match is None or not (prelude_end <= int(match.group(1)) < layer_count):
+            raise RuntimeError("branch_specialization_requires_recurrent_or_coda_trainables")
 
     final_states = _recomputed_recurrent_state(
         model,

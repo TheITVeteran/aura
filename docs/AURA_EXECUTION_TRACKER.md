@@ -42213,3 +42213,41 @@ transition computation, where training can change how the answer is derived
 rather than merely relabel a final state. No general neural gain, resident-32B
 gain, frontier, fusion, activation, or `WOW Signal` claim is authorized. The
 completion envelope is `833/920` (approximately `90.5%`).
+
+## Checkpoint 2026-08-10-137: Recurrent State Has Dedicated Interpretation Tissue
+
+CP136 found no linearly recoverable answer in the final frozen output state.
+CP137 moves the trainable boundary into the computation itself. The recurrent
+window retains its role- and depth-conditioned operator bank, while a separate
+coda LoRA is attached to the first configured coda layers. Recurrent weights
+can fire only during latent transitions. Coda weights can fire only while an
+RLC-derived state is persisted or decoded. Ordinary model calls open neither
+scope and remain on the unchanged base checkpoint.
+
+The generated-roll-in objective now sends answer-token credit through both
+the recurrent transition and coda interpretation path. The resident trainer's
+v6 authority binds coda targets and layers, rejects those fields from older
+schemas, and includes them in topology and policy identity. A v4 adapter
+manifest represents the split exactly: recurrent projections alone own depth
+and role banks; coda projections own only their scoped LoRA pair. The
+materializer, independent scorer, signed activation path, and transactional
+loader all understand this topology. Loading reconstructs the two concrete
+wrapper classes, verifies every tensor and byte, and restores the original
+module graph on failure.
+
+The bounded canary now has three post-training causal arms on matched held-out
+generations: the complete trained path, the same recurrent tissue with only
+the coda lesioned, and a norm-preserving output-basis permutation of the coda.
+The sham restores the exact trained tensor fingerprint after evaluation. This
+prevents a falling teacher-forced loss from being mistaken for semantic gain
+and supplies a short discriminator before resident-32B work.
+
+Contract evidence covers independent coda scope and lesion behavior, answer
+gradients reaching both tissues, mixed tensor topology, v4 identity tampering,
+real tiny-MLX transactional loading, signed activation admission, historical
+schema compatibility, and crash/resume behavior. Canonical smoke passes
+`103/103`; focused authority, identity, materializer, loader, activation,
+scoring, and canary contracts pass. The next bounded gate is the source-bound
+1.5B free-generation treatment/lesion/sham run. No general reasoning gain,
+resident-32B gain, frontier, fusion, live activation, or `WOW Signal` claim is
+authorized. The completion envelope is `834/920` (approximately `90.7%`).

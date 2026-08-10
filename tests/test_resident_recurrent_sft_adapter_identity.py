@@ -16,6 +16,7 @@ from core.brain.llm.latent_cortex.recurrence_adapter_identity_v2 import (
     canonical_json_bytes,
 )
 from core.brain.llm.latent_cortex.resident_recurrent_sft_adapter_identity import (
+    CODA_INTERPRETING_MANIFEST_SCHEMA,
     CONTROLLER_COMPLETION_SCHEMA,
     INVOCATION_SCHEMA,
     LEGACY_MANIFEST_SCHEMA,
@@ -26,17 +27,20 @@ from core.brain.llm.latent_cortex.resident_recurrent_sft_adapter_identity import
     topology_sha256,
     validate_resident_recurrent_sft_adapter_identity,
 )
+from core.learning.recurrence_curriculum import RECURRENCE_TRAINING_FAMILIES
+from core.learning.recurrence_native_objective_v2 import ExactAdjointTrajectoryConfig
 from core.learning.recurrence_native_objective_v5 import (
     GeneratedRollinSelectionConfig,
 )
 from core.learning.recurrence_native_objective_v6 import (
     BranchSpecializationConfig,
 )
-from core.learning.recurrence_curriculum import RECURRENCE_TRAINING_FAMILIES
 from core.learning.resident_recurrent_sft_bootstrap_authority import (
     OBJECTIVE_NAME_V3,
+    OBJECTIVE_NAME_V5,
     REQUIRED_SOURCE_ROLES,
     TRAINER_CONFIG_SCHEMA_V3,
+    TRAINER_CONFIG_SCHEMA_V6,
     TRAINING_AUTHORITY,
     ResidentSFTBootstrapConfig,
     build_authority,
@@ -167,16 +171,39 @@ def _bundle(*, manifest_schema: str = MANIFEST_SCHEMA) -> _Bundle:
     training_runtime_body = {**runtime_body, "interpreter": "/frozen/python"}
     training_runtime = _runtime(training_runtime_body)
     config_kwargs: dict[str, Any] = {}
-    if manifest_schema == ROLE_CONDITIONED_MANIFEST_SCHEMA:
+    if manifest_schema in {
+        ROLE_CONDITIONED_MANIFEST_SCHEMA,
+        CODA_INTERPRETING_MANIFEST_SCHEMA,
+    }:
         config_kwargs = {
-            "schema": TRAINER_CONFIG_SCHEMA_V3,
-            "objective": OBJECTIVE_NAME_V3,
+            "schema": (
+                TRAINER_CONFIG_SCHEMA_V6
+                if manifest_schema == CODA_INTERPRETING_MANIFEST_SCHEMA
+                else TRAINER_CONFIG_SCHEMA_V3
+            ),
+            "objective": (
+                OBJECTIVE_NAME_V5
+                if manifest_schema == CODA_INTERPRETING_MANIFEST_SCHEMA
+                else OBJECTIVE_NAME_V3
+            ),
             "generated_rollin": GeneratedRollinSelectionConfig(),
             "branch_specialization": BranchSpecializationConfig(),
             "structural_warmup_steps": 2,
             "structural_warmup_learning_rate": 1e-4,
             "role_conditioned_branches": 2,
         }
+        if manifest_schema == CODA_INTERPRETING_MANIFEST_SCHEMA:
+            config_kwargs.update(
+                {
+                    "trajectory_objective": ExactAdjointTrajectoryConfig(
+                        probe_steps=(1, 2),
+                        improvement_weight=1.0,
+                    ),
+                    "intermediate_validation_examples": 1,
+                    "coda_lora_targets": ("down_proj",),
+                    "coda_lora_layers": 1,
+                }
+            )
     config = ResidentSFTBootstrapConfig(
         seed=2026080107,
         max_steps=8,
@@ -236,7 +263,11 @@ def _bundle(*, manifest_schema: str = MANIFEST_SCHEMA) -> _Bundle:
             "dtype": "float32",
         },
     ]
-    if manifest_schema in {MANIFEST_SCHEMA, ROLE_CONDITIONED_MANIFEST_SCHEMA}:
+    if manifest_schema in {
+        MANIFEST_SCHEMA,
+        ROLE_CONDITIONED_MANIFEST_SCHEMA,
+        CODA_INTERPRETING_MANIFEST_SCHEMA,
+    }:
         for depth in range(2):
             tensors.extend(
                 [
@@ -252,7 +283,10 @@ def _bundle(*, manifest_schema: str = MANIFEST_SCHEMA) -> _Bundle:
                     },
                 ]
             )
-    if manifest_schema == ROLE_CONDITIONED_MANIFEST_SCHEMA:
+    if manifest_schema in {
+        ROLE_CONDITIONED_MANIFEST_SCHEMA,
+        CODA_INTERPRETING_MANIFEST_SCHEMA,
+    }:
         for role in range(2):
             tensors.extend(
                 [
@@ -268,6 +302,21 @@ def _bundle(*, manifest_schema: str = MANIFEST_SCHEMA) -> _Bundle:
                     },
                 ]
             )
+    if manifest_schema == CODA_INTERPRETING_MANIFEST_SCHEMA:
+        tensors.extend(
+            [
+                {
+                    "key": "model.layers.2.mlp.down_proj.lora_a",
+                    "shape": [4, 2],
+                    "dtype": "float32",
+                },
+                {
+                    "key": "model.layers.2.mlp.down_proj.lora_b",
+                    "shape": [2, 4],
+                    "dtype": "float32",
+                },
+            ]
+        )
     adapter_payload = b"synthetic-adapter-safetensors"
     optimizer_payload = b"synthetic-optimizer-safetensors"
     state = {
@@ -381,26 +430,52 @@ def _bundle(*, manifest_schema: str = MANIFEST_SCHEMA) -> _Bundle:
         "dropout": 0.0,
         "layers": 1,
         "targets": ["o_proj"],
-        "wrapped_projections": 1,
-        "projection_paths": ["model.layers.1.self_attn.o_proj"],
+        "wrapped_projections": (
+            2 if manifest_schema == CODA_INTERPRETING_MANIFEST_SCHEMA else 1
+        ),
+        "projection_paths": [
+            "model.layers.1.self_attn.o_proj",
+            *(
+                ["model.layers.2.mlp.down_proj"]
+                if manifest_schema == CODA_INTERPRETING_MANIFEST_SCHEMA
+                else []
+            ),
+        ],
         "trainable_params": sum(
             dimension
             for tensor in tensors
             for dimension in [tensor["shape"][0] * tensor["shape"][1]]
         ),
     }
-    if manifest_schema in {MANIFEST_SCHEMA, ROLE_CONDITIONED_MANIFEST_SCHEMA}:
+    if manifest_schema in {
+        MANIFEST_SCHEMA,
+        ROLE_CONDITIONED_MANIFEST_SCHEMA,
+        CODA_INTERPRETING_MANIFEST_SCHEMA,
+    }:
         lora.update(
             {
                 "conditioning_schema": "aura.depth_conditioned_lora.v1",
                 "depth_bank_size": 2,
             }
         )
-    if manifest_schema == ROLE_CONDITIONED_MANIFEST_SCHEMA:
+    if manifest_schema in {
+        ROLE_CONDITIONED_MANIFEST_SCHEMA,
+        CODA_INTERPRETING_MANIFEST_SCHEMA,
+    }:
         lora.update(
             {
                 "role_conditioning_schema": "aura.role_conditioned_lora.v1",
                 "role_bank_size": 2,
+            }
+        )
+    if manifest_schema == CODA_INTERPRETING_MANIFEST_SCHEMA:
+        lora.update(
+            {
+                "coda_conditioning_schema": "aura.coda_interpreting_lora.v1",
+                "coda_layers": 1,
+                "coda_targets": ["down_proj"],
+                "coda_wrapped_projections": 1,
+                "coda_projection_paths": ["model.layers.2.mlp.down_proj"],
             }
         )
     manifest = {
@@ -443,6 +518,22 @@ def test_exact_resident_sft_package_is_accepted() -> None:
     assert receipt["training_objective_learned"] is True
     assert receipt["reasoning_gain_proven"] is False
     assert receipt["promotion_allowed"] is False
+
+
+def test_coda_interpreting_package_binds_split_topology_to_authority() -> None:
+    receipt = _bundle(manifest_schema=CODA_INTERPRETING_MANIFEST_SCHEMA).validate()
+
+    assert receipt["training_objective_learned"] is True
+    bundle = _bundle(manifest_schema=CODA_INTERPRETING_MANIFEST_SCHEMA)
+    bundle.manifest["lora"]["coda_projection_paths"] = [
+        "model.layers.1.self_attn.o_proj"
+    ]
+    bundle.sync_package_completion()
+    with pytest.raises(
+        ResidentRecurrentSFTAdapterIdentityError,
+        match="coda_topology_invalid|tensor_pair_mismatch",
+    ):
+        bundle.validate()
 
 
 def test_legacy_shared_operator_package_remains_verifiable() -> None:

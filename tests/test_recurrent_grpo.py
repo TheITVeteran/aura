@@ -28,7 +28,12 @@ from core.brain.llm.latent_cortex.execution_spec import (  # noqa: E402
     RLCExecutionSpec,
 )
 from core.brain.llm.latent_cortex.recurrence_adapter import (  # noqa: E402
+    ScopedCodaLoRALinear,
     ScopedLoRALinear,
+    coda_adapter_disabled,
+    coda_adapter_scope,
+    recurrence_adapter_disabled,
+    recurrence_adapter_scope,
 )
 from core.learning.recurrence_curriculum import khop_reachability  # noqa: E402
 from core.learning.recurrence_native_objective_v2 import (  # noqa: E402
@@ -212,6 +217,52 @@ def test_proof_campaign_adapter_honors_bound_scale_and_dropout():
     adapter = model.model.layers[2].self_attn.o_proj
     assert isinstance(adapter, ScopedLoRALinear)
     assert adapter.scale == 7.5
+
+
+def test_coda_adapter_is_independent_and_dark_outside_rlc_decode():
+    model = _model(seed=409)
+    sites = attach_recurrent_policy_adapters(
+        model,
+        _spec(),
+        lora_rank=2,
+        lora_layers=1,
+        lora_targets=("o_proj",),
+        initialization_seed=30,
+        coda_lora_layers=1,
+        coda_lora_targets=("down_proj",),
+    )
+
+    recurrent = model.model.layers[2].self_attn.o_proj
+    coda = model.model.layers[3].mlp.down_proj
+    assert isinstance(recurrent, ScopedLoRALinear)
+    assert isinstance(coda, ScopedCodaLoRALinear)
+    assert sites == (
+        "model.layers.2.self_attn.o_proj",
+        "model.layers.3.mlp.down_proj",
+    )
+
+    coda.lora_a = mx.ones_like(coda.lora_a) * 0.25
+    coda.lora_b = mx.ones_like(coda.lora_b) * 0.25
+    x = mx.ones((1, 2, int(coda.lora_a.shape[0])))
+    base = coda.linear(x)
+    ordinary = coda(x)
+    with recurrence_adapter_scope():
+        recurrent_only = coda(x)
+    with coda_adapter_scope() as activation:
+        interpreted = coda(x)
+        with coda_adapter_disabled():
+            coda_lesioned = coda(x)
+    with recurrence_adapter_disabled(), coda_adapter_scope():
+        disabled = coda(x)
+    mx.eval(base, ordinary, recurrent_only, interpreted, coda_lesioned, disabled)
+
+    assert bool(mx.array_equal(base, ordinary))
+    assert bool(mx.array_equal(base, recurrent_only))
+    assert not bool(mx.array_equal(base, interpreted))
+    assert bool(mx.array_equal(base, coda_lesioned))
+    assert bool(mx.array_equal(base, disabled))
+    assert activation.calls == 1
+    assert activation.applied_sites == {"model.layers.3.mlp.down_proj": 1}
 
 
 def test_proof_campaign_depth_banks_are_trainable_and_reconstructable():

@@ -36,6 +36,7 @@ from core.brain.llm.latent_cortex.loop_core import (
     controlled_recurrent_update,
 )
 from core.brain.llm.latent_cortex.recurrence_adapter import (
+    coda_adapter_scope,
     current_recurrence_adapter_scope,
     recurrence_adapter_disabled,
     recurrence_adapter_scope,
@@ -1556,7 +1557,8 @@ def _persist_and_score(
         ),
     ):
         hidden = _causal_layers(model.model.layers[prelude_end:coda_start], hidden)
-    hidden = _causal_layers(model.model.layers[coda_start:], hidden)
+    with coda_adapter_scope(start=slot_start, stop=int(hidden.shape[1])):
+        hidden = _causal_layers(model.model.layers[coda_start:], hidden)
     all_logits = _logits(model, hidden)
     answer_start = prompt_length + slot_count + bridge_count
     prediction_start = answer_start - 1
@@ -1985,7 +1987,8 @@ def cached_live_path_token_logprobs(
         if position + 1 == len(targets):
             continue
         hidden = model.model.embed_tokens(mx.array([[decoder_input]]))
-        hidden = _cached_causal_layers(model, hidden, cache)
+        with coda_adapter_scope():
+            hidden = _cached_causal_layers(model, hidden, cache)
         logits = _logits(model, hidden)[0, -1]
     if len(answer_logprobs) != len(answer):
         raise RuntimeError("cached answer log-probabilities do not align")
@@ -2060,13 +2063,14 @@ def _cached_live_path_initial_logits(
                 coda_start,
                 persist=True,
             )
-            output = runner.run(
-                persisted,
-                cache,
-                coda_start,
-                len(layers),
-                persist=True,
-            )
+            with coda_adapter_scope():
+                output = runner.run(
+                    persisted,
+                    cache,
+                    coda_start,
+                    len(layers),
+                    persist=True,
+                )
         else:
             with recurrence_adapter_scope():
                 _cached_causal_layers(
@@ -2083,13 +2087,14 @@ def _cached_live_path_initial_logits(
                     start=prelude_end,
                     end=coda_start,
                 )
-                output = _cached_causal_layers(
-                    model,
-                    persisted,
-                    cache,
-                    start=coda_start,
-                    end=len(layers),
-                )
+                with coda_adapter_scope():
+                    output = _cached_causal_layers(
+                        model,
+                        persisted,
+                        cache,
+                        start=coda_start,
+                        end=len(layers),
+                    )
         logits = _logits(model, output)[0, -1]
     return layers, cache, logits
 
@@ -2140,8 +2145,9 @@ def generate_cached_live_path_rollin(
     for token in bridge:
         hidden = model.model.embed_tokens(mx.array([[token]]))
         mask = create_attention_mask(hidden, cache)
-        for index, layer in enumerate(layers):
-            hidden = layer(hidden, mask, cache[index])
+        with coda_adapter_scope():
+            for index, layer in enumerate(layers):
+                hidden = layer(hidden, mask, cache[index])
         logits = _logits(model, hidden)[0, -1]
 
     tokens: list[int] = []
@@ -2163,8 +2169,9 @@ def generate_cached_live_path_rollin(
             continue
         hidden = model.model.embed_tokens(mx.array([[token]]))
         mask = create_attention_mask(hidden, cache)
-        for index, layer in enumerate(layers):
-            hidden = layer(hidden, mask, cache[index])
+        with coda_adapter_scope():
+            for index, layer in enumerate(layers):
+                hidden = layer(hidden, mask, cache[index])
         logits = _logits(model, hidden)[0, -1]
     normalized = tuple(tokens)
     result = CachedLivePathRollin(
@@ -2547,10 +2554,13 @@ def _exact_adjoint_live_path_result(
         bridge_tokens=bridge_tokens,
     )
     layer_pattern = re.compile(r"model\.layers\.(\d+)\.")
+    layer_count = len(model.model.layers)
     for path, _value in tree_flatten(parameters):
         match = layer_pattern.match(path)
-        if match is None or not (prepared.prelude_end <= int(match.group(1)) < prepared.coda_start):
-            raise RuntimeError("exact_adjoint_requires_window_only_trainables")
+        if match is None or not (
+            prepared.prelude_end <= int(match.group(1)) < layer_count
+        ):
+            raise RuntimeError("exact_adjoint_requires_recurrent_or_coda_trainables")
     if branch_index is not None and (
         type(branch_index) is not int or not 0 <= branch_index < len(prepared.states)
     ):
