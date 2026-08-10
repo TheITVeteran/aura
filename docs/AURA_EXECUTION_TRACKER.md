@@ -43988,3 +43988,30 @@ production-causal architecture gain on declared formal tasks, but still not the
 broad frozen behavioral replication required for `WOW Signal`. The next gate is
 a source-bound 1.5B comparison across fresh seeds, multiple depths, recurrence
 lesion, equal-compute control, and ordinary decoding.
+
+## Checkpoint 2026-08-10-194: The Behavioral Gate Cannot Restart From Zero
+
+The certified-recurrence behavioral discriminator now freezes task commitments
+before model load and compares four arms on identical public prompts: ordinary
+greedy decoding, verifier-selected ordinary best-of-N, certified recurrent
+execution, and a one-transition recurrence lesion. It binds the exact source
+commit, full checkpoint identity, model-behavior identity, task/depth/seed
+coordinates, token budget, arm definitions, and claim boundary. The public
+preregistration contains prompt hashes only; answer values and private traces
+are absent.
+
+Every completed task/arm cell is appended and fsync'd independently. Resume
+reconstructs prompt identity, candidate digest, exact grade, family, depth, and
+arm before accepting a saved cell, rejects duplicates or corruption, and runs
+only missing cells. Campaign state preserves the original start and
+preregistration identity. Exact paired tests report treatment-only wins,
+control-only wins, discordant count, and a two-sided binomial p-value. The
+report is structurally unable to emit `WOW Signal`: the executable producer is
+present, so this gate can establish only bounded architecture gain.
+
+Harness contracts prove no private-label leakage, exact complete execution,
+causal T=1 lesion behavior, paired-statistic direction, and tamper-detecting
+resume. This advances the completion envelope to `890/920` (approximately
+`96.7%`). The next action is to publish this clean source checkpoint and run the
+fresh 1.5B canary; only a useful unsaturated band advances to the larger frozen
+replication.
