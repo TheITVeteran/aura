@@ -47,6 +47,8 @@ from core.learning.recurrent_sft_execution import (
 from core.learning.verified_trajectory_distillation import (
     compile_episodic_delta_inventory,
     install_verified_trajectory_inventory,
+    load_verified_trajectory_artifact,
+    publish_verified_trajectory_artifact,
 )
 from core.runtime.atomic_writer import atomic_write_bytes
 from core.runtime.mlx_memory_guard import mlx_memory_envelope
@@ -446,6 +448,18 @@ def run(
                 snapshots,
                 target="o_proj",
             )
+            artifact_publication = publish_verified_trajectory_artifact(
+                out_dir / "trajectory_artifact",
+                inventory,
+                checkpoint_fingerprint=checkpoint["fingerprint"],
+                source_evidence_sha256=episodic_delta_sha256,
+            )
+            del inventory
+            inventory, artifact_manifest = load_verified_trajectory_artifact(
+                artifact_publication["artifact_dir"],
+                expected_checkpoint_fingerprint=checkpoint["fingerprint"],
+                expected_source_evidence_sha256=episodic_delta_sha256,
+            )
             sites = attach_coda_policy_adapters_at_sites(
                 model,
                 tuple(inventory),
@@ -526,6 +540,12 @@ def run(
                 "candidate_sites": list(sites),
                 "candidate_factor_receipts": {
                     site: inventory[site].receipt for site in sites
+                },
+                "trajectory_artifact": {
+                    "artifact_dir": artifact_publication["artifact_dir"],
+                    "manifest_receipt_sha256": artifact_manifest["receipt_sha256"],
+                    "tensor_sha256": artifact_manifest["tensor_artifact"]["sha256"],
+                    "publication": artifact_publication["publication"],
                 },
                 "install_receipt": install_receipt,
                 "episodic_activation": episodic_locality,

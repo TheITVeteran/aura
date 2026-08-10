@@ -9,6 +9,7 @@ from pathlib import Path
 from core.governance_context import local_internal_governed_scope
 from core.runtime.atomic_writer import interprocess_file_lock
 from core.runtime.file_write_gateway import (
+    DirectoryFileWriteBatchEntry,
     FileWriteBatchEntry,
     FileWriteBatchReceipt,
     get_file_write_gateway,
@@ -56,6 +57,33 @@ class LatentCortexPersistence:
             ),
             source="latent_cortex_consolidation",
         )
+
+    def publish_verified_trajectory_artifact(
+        self,
+        target_dir: Path,
+        *,
+        factors_payload: bytes,
+        manifest_payload: bytes,
+    ) -> FileWriteBatchReceipt:
+        """Atomically publish one exact trajectory package generation."""
+
+        entries = (
+            DirectoryFileWriteBatchEntry("factors.npz", factors_payload),
+            DirectoryFileWriteBatchEntry("manifest.json", manifest_payload),
+        )
+        with local_internal_governed_scope("latent_cortex_trajectory_artifact"):
+            gateway = get_file_write_gateway()
+            gateway.ensure_directory(
+                target_dir,
+                source="latent_cortex_trajectory_artifact",
+            )
+            return gateway.write_bytes_batch_in_directory(
+                target_dir,
+                entries,
+                allowed_existing_names={entry.name for entry in entries},
+                commit_marker="manifest.json",
+                source="latent_cortex_trajectory_artifact",
+            )
 
     def save_schedule_library(
         self,

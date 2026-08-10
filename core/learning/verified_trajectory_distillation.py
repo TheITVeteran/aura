@@ -19,27 +19,45 @@ scale of ``ScopedLoRALinear`` so they can become persistent recurrent tissue.
 from __future__ import annotations
 
 import hashlib
+import io
 import json
 import math
+import zipfile
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any
 
 import numpy as np
 
 DISTILLATION_SCHEMA = "aura.verified_trajectory_distillation.v1"
 EPISODIC_TRANSPLANT_SCHEMA = "aura.episodic_delta_transplant.v1"
+TRAJECTORY_ARTIFACT_SCHEMA = "aura.verified_trajectory_artifact.v1"
+TRAJECTORY_FACTORS_FILE = "factors.npz"
+TRAJECTORY_MANIFEST_FILE = "manifest.json"
+_MAX_TRAJECTORY_ARTIFACT_BYTES = 256 * 1024 * 1024
 
 
-def _canonical_sha256(value: Any) -> str:
-    payload = json.dumps(
+def _canonical_json_bytes(value: Any) -> bytes:
+    return json.dumps(
         value,
         sort_keys=True,
         separators=(",", ":"),
         ensure_ascii=True,
         allow_nan=False,
     ).encode("ascii")
-    return hashlib.sha256(payload).hexdigest()
+
+
+def _canonical_sha256(value: Any) -> str:
+    return hashlib.sha256(_canonical_json_bytes(value)).hexdigest()
+
+
+def _is_sha256(value: Any) -> bool:
+    return (
+        isinstance(value, str)
+        and len(value) == 64
+        and all(character in "0123456789abcdef" for character in value)
+    )
 
 
 def _array_sha256(value: np.ndarray) -> str:
@@ -69,6 +87,368 @@ class DistilledTrajectoryFactors:
     lora_a: np.ndarray
     lora_b: np.ndarray
     receipt: Mapping[str, Any]
+
+
+def _validate_factor_receipt(factors: DistilledTrajectoryFactors) -> dict[str, Any]:
+    receipt = dict(factors.receipt)
+    receipt_sha256 = receipt.pop("receipt_sha256", None)
+    if not _is_sha256(receipt_sha256) or _canonical_sha256(receipt) != receipt_sha256:
+        raise ValueError(f"trajectory factor receipt is invalid at {factors.site}")
+    if receipt.get("schema") not in {
+        DISTILLATION_SCHEMA,
+        EPISODIC_TRANSPLANT_SCHEMA,
+    }:
+        raise ValueError(f"trajectory factor schema is invalid at {factors.site}")
+    if receipt.get("site") != factors.site:
+        raise ValueError(f"trajectory factor site binding differs at {factors.site}")
+    if receipt.get("target_phase") != factors.target_phase:
+        raise ValueError(f"trajectory factor phase binding differs at {factors.site}")
+    if receipt.get("lora_a_sha256") != _array_sha256(factors.lora_a):
+        raise ValueError(f"trajectory A factor hash differs at {factors.site}")
+    if receipt.get("lora_b_sha256") != _array_sha256(factors.lora_b):
+        raise ValueError(f"trajectory B factor hash differs at {factors.site}")
+    rank = factors.lora_a.shape[1]
+    if factors.lora_b.shape[0] != rank:
+        raise ValueError(f"trajectory factor rank differs at {factors.site}")
+    if receipt["schema"] == EPISODIC_TRANSPLANT_SCHEMA:
+        dimensions = (
+            receipt.get("rank"),
+            receipt.get("input_width"),
+            receipt.get("output_width"),
+        )
+    else:
+        dimensions = (
+            receipt.get("effective_rank"),
+            receipt.get("input_width"),
+            receipt.get("output_width"),
+        )
+    if dimensions != (rank, factors.lora_a.shape[0], factors.lora_b.shape[1]):
+        raise ValueError(f"trajectory factor dimensions differ at {factors.site}")
+    return {**receipt, "receipt_sha256": receipt_sha256}
+
+
+def _deterministic_npz_bytes(arrays: Mapping[str, np.ndarray]) -> bytes:
+    """Encode numeric arrays without ZIP timestamps or pickle payloads."""
+
+    output = io.BytesIO()
+    with zipfile.ZipFile(output, mode="w", compression=zipfile.ZIP_STORED) as archive:
+        for name in sorted(arrays):
+            if not name or "/" in name or "\\" in name or name.endswith(".npy"):
+                raise ValueError("trajectory tensor key is invalid")
+            array = np.ascontiguousarray(arrays[name])
+            if array.dtype.hasobject or not np.issubdtype(array.dtype, np.number):
+                raise ValueError(f"trajectory tensor is not numeric: {name}")
+            payload = io.BytesIO()
+            np.save(payload, array, allow_pickle=False)
+            info = zipfile.ZipInfo(f"{name}.npy", date_time=(1980, 1, 1, 0, 0, 0))
+            info.compress_type = zipfile.ZIP_STORED
+            info.create_system = 3
+            info.external_attr = 0o600 << 16
+            archive.writestr(info, payload.getvalue())
+    return output.getvalue()
+
+
+def build_verified_trajectory_artifact(
+    inventory: Mapping[str, DistilledTrajectoryFactors],
+    *,
+    checkpoint_fingerprint: str,
+    source_evidence_sha256: str,
+) -> tuple[bytes, bytes, dict[str, Any]]:
+    """Build a deterministic, checkpoint-bound exact trajectory package."""
+
+    if not _is_sha256(checkpoint_fingerprint):
+        raise ValueError("trajectory artifact checkpoint fingerprint is invalid")
+    if not _is_sha256(source_evidence_sha256):
+        raise ValueError("trajectory artifact source evidence hash is invalid")
+    sites = tuple(sorted(inventory))
+    if not sites or len(sites) != len(set(sites)):
+        raise ValueError("trajectory artifact inventory is empty or duplicated")
+
+    arrays: dict[str, np.ndarray] = {}
+    tensor_manifest: dict[str, dict[str, Any]] = {}
+    receipts: dict[str, dict[str, Any]] = {}
+    for index, site in enumerate(sites):
+        factors = inventory[site]
+        if not isinstance(factors, DistilledTrajectoryFactors) or factors.site != site:
+            raise ValueError(f"trajectory artifact inventory binding differs at {site}")
+        if factors.target_phase not in {"recurrence", "decode"}:
+            raise ValueError(f"trajectory artifact phase is invalid at {site}")
+        lora_a = _finite_matrix(factors.lora_a, name=f"{site} lora A").astype(
+            np.float32
+        )
+        lora_b = _finite_matrix(factors.lora_b, name=f"{site} lora B").astype(
+            np.float32
+        )
+        if lora_a.shape[1] != lora_b.shape[0]:
+            raise ValueError(f"trajectory artifact rank differs at {site}")
+        a_key = f"site_{index:04d}_lora_a"
+        b_key = f"site_{index:04d}_lora_b"
+        arrays[a_key] = lora_a
+        arrays[b_key] = lora_b
+        tensor_manifest[site] = {
+            "lora_a_key": a_key,
+            "lora_a_shape": list(lora_a.shape),
+            "lora_a_dtype": str(lora_a.dtype),
+            "lora_a_sha256": _array_sha256(lora_a),
+            "lora_b_key": b_key,
+            "lora_b_shape": list(lora_b.shape),
+            "lora_b_dtype": str(lora_b.dtype),
+            "lora_b_sha256": _array_sha256(lora_b),
+        }
+        receipts[site] = _validate_factor_receipt(
+            DistilledTrajectoryFactors(
+                site=site,
+                target_phase=factors.target_phase,
+                lora_a=lora_a,
+                lora_b=lora_b,
+                receipt=factors.receipt,
+            )
+        )
+
+    factors_payload = _deterministic_npz_bytes(arrays)
+    body = {
+        "schema": TRAJECTORY_ARTIFACT_SCHEMA,
+        "checkpoint_fingerprint": checkpoint_fingerprint,
+        "source_evidence_sha256": source_evidence_sha256,
+        "sites": list(sites),
+        "site_phases": {site: inventory[site].target_phase for site in sites},
+        "operation_modes": {
+            site: (
+                "episodic_exact"
+                if receipts[site]["schema"] == EPISODIC_TRANSPLANT_SCHEMA
+                else "scoped_lora"
+            )
+            for site in sites
+        },
+        "factor_receipts": receipts,
+        "tensor_manifest": tensor_manifest,
+        "tensor_artifact": {
+            "name": TRAJECTORY_FACTORS_FILE,
+            "sha256": hashlib.sha256(factors_payload).hexdigest(),
+            "size_bytes": len(factors_payload),
+            "keys": sorted(arrays),
+        },
+    }
+    manifest = {**body, "receipt_sha256": _canonical_sha256(body)}
+    manifest_payload = _canonical_json_bytes(manifest) + b"\n"
+    return factors_payload, manifest_payload, manifest
+
+
+def publish_verified_trajectory_artifact(
+    artifact_dir: Path | str,
+    inventory: Mapping[str, DistilledTrajectoryFactors],
+    *,
+    checkpoint_fingerprint: str,
+    source_evidence_sha256: str,
+) -> dict[str, Any]:
+    """Publish a complete trajectory package through the governed batch lane."""
+
+    from core.brain.llm.latent_cortex.persistence import (
+        get_latent_cortex_persistence,
+    )
+
+    target = Path(artifact_dir).expanduser()
+    if target.is_symlink():
+        raise ValueError("trajectory artifact destination cannot be a symlink")
+    if target.exists() and any(target.iterdir()):
+        raise ValueError("trajectory artifact destination is not empty")
+    factors_payload, manifest_payload, manifest = build_verified_trajectory_artifact(
+        inventory,
+        checkpoint_fingerprint=checkpoint_fingerprint,
+        source_evidence_sha256=source_evidence_sha256,
+    )
+    receipt = get_latent_cortex_persistence().publish_verified_trajectory_artifact(
+        target,
+        factors_payload=factors_payload,
+        manifest_payload=manifest_payload,
+    )
+    expected_hashes = {
+        str(target.resolve() / TRAJECTORY_FACTORS_FILE): hashlib.sha256(
+            factors_payload
+        ).hexdigest(),
+        str(target.resolve() / TRAJECTORY_MANIFEST_FILE): hashlib.sha256(
+            manifest_payload
+        ).hexdigest(),
+    }
+    if set(receipt.paths) != set(expected_hashes) or dict(receipt.sha256) != expected_hashes:
+        raise RuntimeError("trajectory artifact publication receipt differs")
+    return {
+        "artifact_dir": str(target.resolve()),
+        "manifest": manifest,
+        "publication": {
+            "transaction_id": receipt.transaction_id,
+            "paths": list(receipt.paths),
+            "sha256": dict(receipt.sha256),
+        },
+    }
+
+
+def _strict_manifest(payload: bytes) -> dict[str, Any]:
+    def reject_duplicates(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
+        result: dict[str, Any] = {}
+        for key, value in pairs:
+            if key in result:
+                raise ValueError(f"trajectory manifest contains duplicate key: {key}")
+            result[key] = value
+        return result
+
+    try:
+        value = json.loads(payload, object_pairs_hook=reject_duplicates)
+    except (UnicodeDecodeError, ValueError) as exc:
+        raise ValueError("trajectory artifact manifest is invalid JSON") from exc
+    if not isinstance(value, dict) or payload != _canonical_json_bytes(value) + b"\n":
+        raise ValueError("trajectory artifact manifest is not canonical")
+    return value
+
+
+def load_verified_trajectory_artifact(
+    artifact_dir: Path | str,
+    *,
+    expected_checkpoint_fingerprint: str,
+    expected_source_evidence_sha256: str | None = None,
+) -> tuple[dict[str, DistilledTrajectoryFactors], dict[str, Any]]:
+    """Load and verify a complete exact trajectory package without mutation."""
+
+    from core.runtime.file_read_gateway import read_stable_directory_files
+
+    if not _is_sha256(expected_checkpoint_fingerprint):
+        raise ValueError("expected trajectory checkpoint fingerprint is invalid")
+    if (
+        expected_source_evidence_sha256 is not None
+        and not _is_sha256(expected_source_evidence_sha256)
+    ):
+        raise ValueError("expected trajectory source evidence hash is invalid")
+    payloads = read_stable_directory_files(
+        artifact_dir,
+        names={TRAJECTORY_FACTORS_FILE, TRAJECTORY_MANIFEST_FILE},
+        max_bytes_per_file=_MAX_TRAJECTORY_ARTIFACT_BYTES,
+    )
+    manifest = _strict_manifest(payloads[TRAJECTORY_MANIFEST_FILE])
+    receipt_sha256 = manifest.get("receipt_sha256")
+    body = {key: value for key, value in manifest.items() if key != "receipt_sha256"}
+    if (
+        manifest.get("schema") != TRAJECTORY_ARTIFACT_SCHEMA
+        or not _is_sha256(receipt_sha256)
+        or _canonical_sha256(body) != receipt_sha256
+    ):
+        raise ValueError("trajectory artifact manifest receipt is invalid")
+    if manifest.get("checkpoint_fingerprint") != expected_checkpoint_fingerprint:
+        raise ValueError("trajectory artifact checkpoint fingerprint differs")
+    if not _is_sha256(manifest.get("source_evidence_sha256")):
+        raise ValueError("trajectory artifact source evidence hash is invalid")
+    if (
+        expected_source_evidence_sha256 is not None
+        and manifest.get("source_evidence_sha256")
+        != expected_source_evidence_sha256
+    ):
+        raise ValueError("trajectory artifact source evidence hash differs")
+    tensor_artifact = manifest.get("tensor_artifact")
+    if not isinstance(tensor_artifact, dict):
+        raise ValueError("trajectory tensor artifact binding is missing")
+    factors_payload = payloads[TRAJECTORY_FACTORS_FILE]
+    if (
+        tensor_artifact.get("name") != TRAJECTORY_FACTORS_FILE
+        or tensor_artifact.get("size_bytes") != len(factors_payload)
+        or tensor_artifact.get("sha256")
+        != hashlib.sha256(factors_payload).hexdigest()
+    ):
+        raise ValueError("trajectory tensor artifact binding differs")
+
+    sites = manifest.get("sites")
+    phases = manifest.get("site_phases")
+    modes = manifest.get("operation_modes")
+    tensor_manifest = manifest.get("tensor_manifest")
+    receipts = manifest.get("factor_receipts")
+    if (
+        not isinstance(sites, list)
+        or not sites
+        or sites != sorted(sites)
+        or len(sites) != len(set(sites))
+        or not all(isinstance(site, str) and site for site in sites)
+        or not all(isinstance(value, dict) for value in (phases, modes, tensor_manifest, receipts))
+        or set(phases) != set(sites)
+        or set(modes) != set(sites)
+        or set(tensor_manifest) != set(sites)
+        or set(receipts) != set(sites)
+    ):
+        raise ValueError("trajectory artifact site topology is invalid")
+
+    expected_keys = tensor_artifact.get("keys")
+    if (
+        not isinstance(expected_keys, list)
+        or not expected_keys
+        or expected_keys != sorted(expected_keys)
+        or len(expected_keys) != len(set(expected_keys))
+        or not all(isinstance(key, str) and key for key in expected_keys)
+    ):
+        raise ValueError("trajectory tensor key manifest is invalid")
+    try:
+        with zipfile.ZipFile(io.BytesIO(factors_payload)) as raw_archive:
+            members = raw_archive.infolist()
+            if (
+                len(members) != len(expected_keys)
+                or [member.filename for member in members]
+                != [f"{key}.npy" for key in expected_keys]
+                or any(
+                    member.compress_type != zipfile.ZIP_STORED
+                    or member.file_size <= 0
+                    or member.file_size > _MAX_TRAJECTORY_ARTIFACT_BYTES
+                    or member.compress_size != member.file_size
+                    for member in members
+                )
+                or sum(member.file_size for member in members)
+                > _MAX_TRAJECTORY_ARTIFACT_BYTES
+            ):
+                raise ValueError("trajectory tensor ZIP inventory is invalid")
+        with np.load(io.BytesIO(factors_payload), allow_pickle=False) as archive:
+            if archive.files != expected_keys:
+                raise ValueError("trajectory tensor key inventory differs")
+            arrays = {key: np.array(archive[key]) for key in archive.files}
+    except (OSError, ValueError, zipfile.BadZipFile) as exc:
+        if isinstance(exc, ValueError) and str(exc).startswith("trajectory tensor key"):
+            raise
+        raise ValueError("trajectory tensor artifact is unreadable") from exc
+
+    inventory: dict[str, DistilledTrajectoryFactors] = {}
+    for site in sites:
+        metadata = tensor_manifest[site]
+        receipt = receipts[site]
+        if not isinstance(metadata, dict) or not isinstance(receipt, dict):
+            raise ValueError(f"trajectory site metadata is invalid at {site}")
+        a_key = metadata.get("lora_a_key")
+        b_key = metadata.get("lora_b_key")
+        if a_key not in arrays or b_key not in arrays:
+            raise ValueError(f"trajectory tensor is missing at {site}")
+        lora_a = arrays[a_key]
+        lora_b = arrays[b_key]
+        for label, array in (("lora_a", lora_a), ("lora_b", lora_b)):
+            if (
+                array.ndim != 2
+                or not array.size
+                or array.dtype != np.float32
+                or not np.all(np.isfinite(array))
+                or metadata.get(f"{label}_shape") != list(array.shape)
+                or metadata.get(f"{label}_dtype") != str(array.dtype)
+                or metadata.get(f"{label}_sha256") != _array_sha256(array)
+            ):
+                raise ValueError(f"trajectory tensor metadata differs at {site}:{label}")
+        factors = DistilledTrajectoryFactors(
+            site=site,
+            target_phase=phases[site],
+            lora_a=lora_a,
+            lora_b=lora_b,
+            receipt=receipt,
+        )
+        validated_receipt = _validate_factor_receipt(factors)
+        expected_mode = (
+            "episodic_exact"
+            if validated_receipt["schema"] == EPISODIC_TRANSPLANT_SCHEMA
+            else "scoped_lora"
+        )
+        if modes[site] != expected_mode:
+            raise ValueError(f"trajectory operation mode differs at {site}")
+        inventory[site] = factors
+    return inventory, manifest
 
 
 def compile_episodic_delta_factors(
@@ -390,6 +770,9 @@ def install_verified_trajectory_inventory(
         parent = getattr(model.model.layers[layer_index], parts[3], None)
         projection = getattr(parent, parts[4], None)
         factors = inventory[site]
+        if not isinstance(factors, DistilledTrajectoryFactors):
+            raise ValueError(f"trajectory factor inventory is invalid at {site}")
+        factor_receipt = _validate_factor_receipt(factors)
         expected_type = (
             ScopedLoRALinear
             if factors.target_phase == "recurrence"
@@ -405,6 +788,17 @@ def install_verified_trajectory_inventory(
             or tuple(factors.lora_b.shape) != tuple(projection.lora_b.shape)
         ):
             raise ValueError(f"trajectory factor shape differs at {site}")
+        adapter_scale = factor_receipt.get("adapter_scale")
+        projection_scale = getattr(projection, "scale", None)
+        if (
+            isinstance(adapter_scale, bool)
+            or not isinstance(adapter_scale, (int, float))
+            or not math.isfinite(float(adapter_scale))
+            or isinstance(projection_scale, bool)
+            or not isinstance(projection_scale, (int, float))
+            or float(projection_scale) != float(adapter_scale)
+        ):
+            raise ValueError(f"trajectory adapter scale differs at {site}")
         resolved.append((site, projection, factors))
 
     snapshots = [
@@ -462,10 +856,14 @@ def install_verified_trajectory_inventory(
 __all__ = [
     "DISTILLATION_SCHEMA",
     "EPISODIC_TRANSPLANT_SCHEMA",
+    "TRAJECTORY_ARTIFACT_SCHEMA",
     "DistilledTrajectoryFactors",
+    "build_verified_trajectory_artifact",
     "compile_episodic_delta_factors",
     "compile_episodic_delta_inventory",
     "fit_verified_trajectory_factors",
     "fit_verified_trajectory_inventory",
     "install_verified_trajectory_inventory",
+    "load_verified_trajectory_artifact",
+    "publish_verified_trajectory_artifact",
 ]

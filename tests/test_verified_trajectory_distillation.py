@@ -1,16 +1,21 @@
 from __future__ import annotations
 
+from pathlib import Path
+
 import numpy as np
 import pytest
 
 from core.learning.verified_trajectory_distillation import (
     DISTILLATION_SCHEMA,
     EPISODIC_TRANSPLANT_SCHEMA,
+    build_verified_trajectory_artifact,
     compile_episodic_delta_factors,
     compile_episodic_delta_inventory,
     fit_verified_trajectory_factors,
     fit_verified_trajectory_inventory,
     install_verified_trajectory_inventory,
+    load_verified_trajectory_artifact,
+    publish_verified_trajectory_artifact,
 )
 
 
@@ -174,6 +179,96 @@ def test_episodic_delta_inventory_binds_exact_sites_and_scales() -> None:
                 },
             ],
             target="o_proj",
+        )
+
+
+def test_verified_trajectory_artifact_is_deterministic_and_round_trips(
+    tmp_path: Path,
+) -> None:
+    rng = np.random.default_rng(43)
+    inventory = compile_episodic_delta_inventory(
+        [
+            {
+                "layer": layer,
+                "scale": 0.25,
+                "U": rng.normal(size=(7, 3)),
+                "V": rng.normal(size=(3, 9)),
+            }
+            for layer in (7, 11)
+        ],
+        target="o_proj",
+    )
+    checkpoint = "a" * 64
+    evidence = "b" * 64
+
+    first = build_verified_trajectory_artifact(
+        inventory,
+        checkpoint_fingerprint=checkpoint,
+        source_evidence_sha256=evidence,
+    )
+    second = build_verified_trajectory_artifact(
+        inventory,
+        checkpoint_fingerprint=checkpoint,
+        source_evidence_sha256=evidence,
+    )
+    assert first == second
+
+    publication = publish_verified_trajectory_artifact(
+        tmp_path / "trajectory",
+        inventory,
+        checkpoint_fingerprint=checkpoint,
+        source_evidence_sha256=evidence,
+    )
+    loaded, manifest = load_verified_trajectory_artifact(
+        tmp_path / "trajectory",
+        expected_checkpoint_fingerprint=checkpoint,
+        expected_source_evidence_sha256=evidence,
+    )
+
+    assert tuple(loaded) == tuple(sorted(inventory))
+    assert publication["manifest"] == manifest
+    assert manifest["operation_modes"] == {
+        site: "episodic_exact" for site in inventory
+    }
+    for site in inventory:
+        assert np.array_equal(loaded[site].lora_a, inventory[site].lora_a)
+        assert np.array_equal(loaded[site].lora_b, inventory[site].lora_b)
+
+
+def test_verified_trajectory_artifact_rejects_wrong_checkpoint_and_tamper(
+    tmp_path: Path,
+) -> None:
+    inventory = compile_episodic_delta_inventory(
+        [
+            {
+                "layer": 7,
+                "scale": 0.25,
+                "U": np.ones((7, 3)),
+                "V": np.ones((3, 9)),
+            }
+        ],
+        target="o_proj",
+    )
+    artifact = tmp_path / "trajectory"
+    publish_verified_trajectory_artifact(
+        artifact,
+        inventory,
+        checkpoint_fingerprint="c" * 64,
+        source_evidence_sha256="d" * 64,
+    )
+
+    with pytest.raises(ValueError, match="checkpoint fingerprint differs"):
+        load_verified_trajectory_artifact(
+            artifact,
+            expected_checkpoint_fingerprint="e" * 64,
+        )
+
+    factors_path = artifact / "factors.npz"
+    factors_path.write_bytes(factors_path.read_bytes() + b"tamper")
+    with pytest.raises(ValueError, match="tensor artifact binding differs"):
+        load_verified_trajectory_artifact(
+            artifact,
+            expected_checkpoint_fingerprint="c" * 64,
         )
 def test_verified_trajectory_fit_normalizes_teacher_magnitude() -> None:
     inputs, corrections = _low_rank_problem()
@@ -361,6 +456,14 @@ def test_verified_trajectory_inventory_binds_recurrence_and_decode_phases() -> N
         install_verified_trajectory_inventory(
             model,
             crossed,
+            expected_sites=[recurrence_site, decode_site],
+        )
+
+    decode.scale = 19.0
+    with pytest.raises(ValueError, match="adapter scale differs"):
+        install_verified_trajectory_inventory(
+            model,
+            fitted,
             expected_sites=[recurrence_site, decode_site],
         )
 

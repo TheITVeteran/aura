@@ -43068,3 +43068,36 @@ the completion envelope to `861/920` (approximately `93.6%`). The next gate is
 durable serving/load hardening followed by shared-rule transfer across multiple
 verified examples; resident-32B use remains locked until strict broader 1.5B
 gain evidence exists.
+
+## Checkpoint 2026-08-10-166: Exact Coda Tissue Has a Production Artifact Boundary
+
+The previous canary proved serialization of the raw episodic candidate but
+compiled its final coda factors in memory. Aura's older durable-adapter format
+cannot safely fill that gap: it assumes an always-active wrapper and does not
+bind exact non-contiguous sites, recurrence versus decode scope, per-site
+factor receipts, or `episodic_exact` arithmetic. Treating that format as the
+same object would silently change the learned operation during serving.
+
+Verified trajectory tissue now has a distinct deterministic artifact schema.
+It packages every named `lora_a` and `lora_b` tensor into timestamp-free NPZ
+bytes and binds them to a canonical manifest containing the source evidence
+hash, checkpoint fingerprint, exact site and phase topology, operation modes,
+factor receipts, shapes, dtypes, tensor hashes, and package hash. Publication
+uses the governed owner-private directory batch lane, commits the manifest
+last, and verifies the returned transaction receipt. Loading holds the shared
+directory lock, traverses with no-follow semantics, requires the exact two-file
+inventory, bounds reads, rejects duplicate or non-canonical JSON, verifies all
+manifest and factor receipts, rejects checkpoint/source drift, opens NumPy
+with pickle disabled only after validating the uncompressed ZIP inventory, and
+validates every numeric tensor before constructing an in-memory inventory. The
+installer also refuses an attached wrapper whose causal phase, shape, or scale
+differs from its factor receipt. No model mutation occurs until all checks
+pass.
+
+The real transplant canary now publishes and reloads through this production
+boundary before attaching coda tissue. Deterministic build, secure round trip,
+wrong-checkpoint refusal, tensor-tamper refusal, existing trajectory contracts,
+Ruff, compilation, and diff hygiene pass (`19/19`). Canonical smoke passes
+`103/103`. This advances the completion envelope to `862/920` (approximately
+`93.7%`). A clean source-bound real-checkpoint rerun is next; resident-32B use
+remains locked.
