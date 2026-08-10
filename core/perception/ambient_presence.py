@@ -76,6 +76,15 @@ _SURFACE_ALIVE_S = 15.0
 #: rectangle. Roughly two idle polls.
 _HIGHLIGHT_TTL_S = 10.0
 
+#: How long a "she is working" signal stands without being renewed.
+#:
+#: The companion page renews it while a turn is in flight, so this only has to
+#: outlast the gap between renewals. Its real job is the failure case: a window
+#: that is closed, crashes, or loses its fetch mid-turn never sends the
+#: completion, and a bubble that claims she is working forever is worse than
+#: one that claims nothing.
+_COMPANION_WORKING_TTL_S = 25.0
+
 
 def _nonnegative_finite_float(value: Any) -> float:
     """Normalize untrusted receipt telemetry without endangering perception."""
@@ -203,6 +212,17 @@ class AmbientPresence:
         self._last_observed_at = 0.0
         self._pending_utterance: str = ""
         self._utterance_at = 0.0
+        # A companion turn the person cannot see. The companion page keeps
+        # running when its window is ordered out, so a message sent and then
+        # collapsed is answered into a window that is not on screen — and the
+        # bubble it collapsed into showed nothing at all, neither that she was
+        # working nor that an answer had landed. Reported live 2026-08-10:
+        # "no typing indicator, no indicator when a message has arrived or is
+        # waiting".
+        self._companion_working = False
+        self._companion_working_at = 0.0
+        self._companion_reply_waiting = False
+        self._companion_reply_at = 0.0
         self._bubble_position: tuple[float, float] = self._load_bubble_position()
         self._ticks = 0
         self._observations = 0
@@ -281,6 +301,38 @@ class AmbientPresence:
         """The person dismissed it. It does not come back."""
         with self._lock:
             self._pending_utterance = ""
+
+    def note_companion_turn(self, *, working: bool) -> None:
+        """A companion turn started or finished.
+
+        Renewed while the turn is in flight so the signal can expire on its
+        own if the window that raised it never comes back to lower it.
+        """
+        with self._lock:
+            self._companion_working = bool(working)
+            self._companion_working_at = time.time()
+            if working:
+                # A new question supersedes the answer to the last one.
+                self._companion_reply_waiting = False
+                self._companion_reply_at = 0.0
+
+    def note_companion_reply_waiting(self) -> None:
+        """A reply landed in a window the person is not looking at.
+
+        The companion keeps running while its window is ordered out, so the
+        answer arrives correctly and invisibly. This is what the bubble shows
+        instead of nothing.
+        """
+        with self._lock:
+            self._companion_working = False
+            self._companion_reply_waiting = True
+            self._companion_reply_at = time.time()
+
+    def clear_companion_reply_waiting(self) -> None:
+        """The person opened the window, so the answer is no longer waiting."""
+        with self._lock:
+            self._companion_reply_waiting = False
+            self._companion_reply_at = 0.0
 
     def move_bubble(self, x: float, y: float) -> tuple[float, float]:
         """Remember where she was parked. In memory; the disk write is async.
@@ -886,6 +938,20 @@ class AmbientPresence:
                 "mode": self._mode.value,
                 "has_utterance": bool(self._pending_utterance),
                 "utterance": self._pending_utterance,
+                # Bounded, because a turn whose completion never arrives — a
+                # crashed window, a dropped fetch — must not leave the bubble
+                # claiming she is still working forever.
+                "companion_working": bool(
+                    self._companion_working
+                    and (time.time() - self._companion_working_at)
+                    < _COMPANION_WORKING_TTL_S
+                ),
+                "companion_reply_waiting": bool(self._companion_reply_waiting),
+                "companion_reply_age_s": (
+                    round(time.time() - self._companion_reply_at, 1)
+                    if self._companion_reply_waiting
+                    else None
+                ),
                 "utterance_age_s": (
                     round(time.time() - self._utterance_at, 1)
                     if self._pending_utterance

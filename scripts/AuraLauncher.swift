@@ -3414,13 +3414,27 @@ final class AuraLauncherDelegate: NSObject, NSApplicationDelegate,
         companionPanel?.makeKeyAndOrderFront(nil)
         if let panel = companionPanel { matchBackingScale(for: panel) }
         NSApp.activate(ignoringOtherApps: true)
+        postCompanionVisibility(true)
     }
 
     private func hideCompanionChat(restoringBubble: Bool = true) {
         companionPanel?.orderOut(nil)
+        // Ordering a WKWebView out does not make the page "hidden" by any
+        // measure the page can take for itself, and it keeps running: a turn
+        // started here and then collapsed is answered into a window nobody is
+        // looking at. Only the host knows, so only the host can say.
+        postCompanionVisibility(false)
         if restoringBubble && !desktopWindowIsVisible() {
             showBubble()
         }
+    }
+
+    private func postCompanionVisibility(_ visible: Bool) {
+        let script = """
+        window.dispatchEvent(new CustomEvent('aura-companion-visibility', \
+        { detail: { visible: \(visible ? "true" : "false") } }));
+        """
+        companionWebView?.evaluateJavaScript(script, completionHandler: nil)
     }
 
     private func companionOrigin(for size: NSSize) -> NSPoint {

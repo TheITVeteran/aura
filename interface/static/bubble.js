@@ -59,10 +59,18 @@
     const withdrawn = holding && age >= WITHDRAW_AFTER_S;
     const speaking = holding && !withdrawn;
 
+    // What the companion window is doing behind her. It keeps running while
+    // ordered out, so a message sent there and then collapsed is answered
+    // invisibly — and the bubble is the only thing left on screen to say so.
+    const working = Boolean(state && state.companion_working);
+    const replyWaiting = Boolean(state && state.companion_reply_waiting);
+
     // Only touch the DOM when something changed. The bubble sits over other
     // windows; a repaint every poll is a flicker in the corner of someone's
     // eye all day.
-    const signature = speaking ? `1:${text}` : withdrawn ? "2" : "0";
+    const signature = `${speaking ? `1:${text}` : withdrawn ? "2" : "0"}|${
+      working ? "w" : ""
+    }${replyWaiting ? "r" : ""}`;
     if (signature === lastRendered) return holding;
     lastRendered = signature;
 
@@ -70,7 +78,12 @@
     pill.classList.toggle("dormant", !speaking);
     // Unread outlives the text: the dot is what remains of a sentence nobody
     // acknowledged, and it is the whole of "open me when you can".
-    pill.classList.toggle("unread", withdrawn);
+    // A reply answered into a collapsed window is the same situation by a
+    // different route, and gets the same dot.
+    pill.classList.toggle("unread", withdrawn || replyWaiting);
+    // Working is not unread: nothing is waiting yet. It is the only honest
+    // thing to show between pressing send and the answer existing.
+    pill.classList.toggle("working", working && !replyWaiting);
 
     if (speaking) {
       say.textContent = text;
@@ -80,6 +93,8 @@
       // The withdrawn message stays reachable on hover rather than being
       // lost — the dot says there is something, and this says what.
       if (withdrawn) pill.title = text;
+      else if (replyWaiting) pill.title = "She answered — open to read it";
+      else if (working) pill.title = "Working on your message";
       else pill.removeAttribute("title");
     }
     // Keep polling at the active cadence while unread, so acknowledging her

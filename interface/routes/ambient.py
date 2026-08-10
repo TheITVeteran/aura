@@ -91,6 +91,42 @@ async def ambient_clear() -> JSONResponse:
         return JSONResponse({"ok": False, "error": type(exc).__name__}, status_code=503)
 
 
+@router.post("/api/ambient/companion-turn", dependencies=[Depends(_require_internal)])
+async def ambient_companion_turn(payload: dict) -> JSONResponse:
+    """What the companion window is doing, for the bubble it collapses into.
+
+    The companion page keeps running when its window is ordered out, so a
+    message sent and then collapsed is answered into a window nobody is
+    looking at. The bubble showed neither that she was working nor that an
+    answer had landed — reported live 2026-08-10: "no typing indicator, no
+    indicator when a message has arrived or is waiting".
+    """
+    try:
+        presence = _presence()
+        state = str((payload or {}).get("state") or "").strip().lower()
+        if state == "working":
+            presence.note_companion_turn(working=True)
+        elif state == "reply_waiting":
+            presence.note_companion_reply_waiting()
+        elif state in {"idle", "read"}:
+            presence.note_companion_turn(working=False)
+            presence.clear_companion_reply_waiting()
+        else:
+            return JSONResponse(
+                {"ok": False, "error": "unknown_state", "state": state},
+                status_code=400,
+            )
+        return JSONResponse({"ok": True, "state": state})
+    except _AMBIENT_ERRORS as exc:
+        record_degradation(
+            "ambient_routes",
+            exc,
+            severity="warning",
+            action="companion turn state not reflected on the bubble",
+        )
+        return JSONResponse({"ok": False, "error": type(exc).__name__}, status_code=503)
+
+
 @router.post("/api/ambient/position", dependencies=[Depends(_require_internal)])
 async def ambient_position(payload: BubblePosition) -> JSONResponse:
     """Where she was parked, so it survives a restart.

@@ -133,6 +133,25 @@ html, body {
 #pill.unread #dot { opacity: 1; transform: scale(1); }
 #pill.unread #glyph, #pill.speaking #glyph { filter: var(--neuron-live); }
 
+/* Working: she has the message and does not have an answer yet.
+ *
+ * Deliberately NOT the unread dot. Nothing is waiting to be read, and a mark
+ * that says "there is something here" while there is not is the decoration
+ * the dot was moved off the glyph to avoid being. A slow breath on the mark
+ * itself says the same thing the composer's three dots say, in the one
+ * element a 40px bubble has.
+ *
+ * The companion window keeps running while ordered out, so this is the only
+ * surface a person who collapsed her mid-turn can learn anything from. */
+#pill.working #glyph {
+  filter: var(--neuron-live);
+  animation: bubble-working 1.9s ease-in-out infinite;
+}
+@keyframes bubble-working {
+  0%, 100% { opacity: 0.45; }
+  50%      { opacity: 1; }
+}
+
 #say {
   /* controls stay clickable; bubble.js excludes them from the drag */
   color: var(--bubble-text);
@@ -160,6 +179,9 @@ html, body {
 
 @media (prefers-reduced-motion: reduce) {
   #pill, #glyph, #dot { transition: none; }
+  /* The state still has to be legible without the breath, or reduced motion
+     would mean no working indicator at all. */
+  #pill.working #glyph { animation: none; opacity: 0.75; }
 }
 </style>
 </head>

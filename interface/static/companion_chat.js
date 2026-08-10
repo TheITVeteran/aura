@@ -188,6 +188,36 @@
     return node;
   }
 
+  /*
+   * This window keeps running when the host orders it out, so a turn started
+   * here and then collapsed is answered into a window nobody is looking at.
+   * The bubble it collapsed into is the only thing on screen, and it showed
+   * neither state — reported live 2026-08-10: "no typing indicator, no
+   * indicator when a message has arrived or is waiting".
+   *
+   * The host is the authority on whether this window is visible; a WKWebView
+   * that has merely been ordered out is not "hidden" by any measure the page
+   * can take for itself.
+   */
+  let windowVisible = true;
+  let turnHeartbeat = null;
+
+  window.addEventListener("aura-companion-visibility", (event) => {
+    windowVisible = Boolean(event.detail && event.detail.visible);
+    // Opening the window IS reading the reply.
+    if (windowVisible) reportTurn("read");
+  });
+
+  function reportTurn(state) {
+    return fetch("/api/ambient/companion-turn", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ state }),
+    }).catch(() => {
+      /* the bubble simply shows nothing; it must not break the turn */
+    });
+  }
+
   function busy(state) {
     inFlight = state;
     send.disabled = state;
@@ -195,6 +225,19 @@
     if (state) updateProgress(null, "Working on your request.");
     else lastProgressSequence = 0;
     if (state) log.scrollTop = log.scrollHeight;
+
+    window.clearInterval(turnHeartbeat);
+    if (state) {
+      reportTurn("working");
+      // Renewed, so the signal expires on its own if this window goes away
+      // mid-turn rather than leaving the bubble working forever.
+      turnHeartbeat = window.setInterval(() => reportTurn("working"), 8000);
+    } else if (!windowVisible) {
+      // The answer landed somewhere the person cannot see it.
+      reportTurn("reply_waiting");
+    } else {
+      reportTurn("idle");
+    }
   }
 
   function autoGrow() {
