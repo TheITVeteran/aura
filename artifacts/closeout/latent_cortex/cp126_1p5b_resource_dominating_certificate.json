@@ -1,0 +1,96 @@
+{
+  "schema": "aura.rlc.resource_dominating_certificate.v1",
+  "checkpoint": "CP126",
+  "experiment_source_commit": "8ef5111c7",
+  "terminal_adjudicator_commit": "52a3bbcb7",
+  "campaign_root": "/Users/bryan/.aura/campaigns/cp126-1p5b-certificate-retry1-208908131",
+  "model": "Qwen2.5-1.5B-Instruct-4bit",
+  "campaign_stage": "certificate",
+  "seed": 208908131,
+  "difficulty": 3,
+  "per_domain": 2,
+  "domains": [
+    "novel_algorithms",
+    "mathematics",
+    "long_horizon_planning"
+  ],
+  "task_commitment_sha256": "ab93b98e5bc3efd13c1ec2987c08f274421b701b2c637c6fd39ef84a9f6a52aa",
+  "implementation_sha256": "3838f126965a264e3f9a2e076715774656b119e596bebc10703faecf922d2ca4",
+  "artifact_bindings": {
+    "decode_fingerprint_sha256": "56e1b8e99bb81767ec7db4eb8138e87079acb46ccd244415d84c396671c42905",
+    "journal_sha256": "5835548719c52e2a52602c46f56b3561087f21b1b68c41e6d0a66246b7f1f6d6",
+    "status_sha256": "3bd88537c3ea41b516c6a6b53a22b0675aa841a12a42eaff3dd9c57fabd08f9b",
+    "task_commitment_file_sha256": "15807d7e26d25903fc1d30f4155f9300de561795af2ab3f94a9a2fe9382b34f8",
+    "verdict_sha256": "53c184292599a3db853aa176cd2d36cec270a7658cc09531df0f34779dced79b"
+  },
+  "scores": {
+    "vanilla": "0/6",
+    "vanilla_equal_compute_best_of_three": "0/6",
+    "complete_system_closed_book": "6/6",
+    "complete_system_adaptation_ablation": "6/6",
+    "complete_system_executable_ablation": "0/6",
+    "vanilla_resource_dominating": "0/6"
+  },
+  "resource_control": {
+    "all_six_certificates_admitted": true,
+    "resource_dominance_issues": [],
+    "minimum_estimated_flop_ratio_control_over_treatment": 1.4661486366102947,
+    "minimum_tool_call_ratio_control_over_treatment": 1.25,
+    "maximum_equal_tool_cycles": 10,
+    "total_control_samples": 135,
+    "latency_ratio_vs_vanilla": 115.2,
+    "outscored_by_treatment": true
+  },
+  "admission": {
+    "evidence_admitted": true,
+    "architecture_admitted": true,
+    "same_ladder_next_stage": "none",
+    "same_ladder_advance_authorized": false,
+    "reasons": [],
+    "treatment_lifts": 6,
+    "treatment_regressions": 0,
+    "paired_sign_test_p": 0.015625,
+    "producer_lifts": 6,
+    "producer_regressions": 0,
+    "producer_sign_test_p": 0.015625,
+    "gain_domains": 3,
+    "exact_promotions": 6,
+    "adaptive_neural_admitted": false,
+    "adaptation_lifts": 0,
+    "latent_accepted_steps": 0,
+    "fast_weight_applications": 0
+  },
+  "integrity": {
+    "planned_cells": 36,
+    "committed_cells": 36,
+    "arms_complete": true,
+    "coverage_complete": true,
+    "runtime_evidence_complete": true,
+    "runtime_evidence_issues": [],
+    "vanilla_floor_holds": true,
+    "right_to_wrong_regressions": [],
+    "unpromoted_byte_divergences": []
+  },
+  "repair_evidence": {
+    "failed_campaign_root": "/Users/bryan/.aura/campaigns/cp126-1p5b-certificate-208908131",
+    "failed_campaign_journal_sha256": "f033fb4ebe11ad43620df6ae6b153c6aad0683cac3eb5bad071028b1de69bc9b",
+    "failure": "tool-cycle planning used call count but did not cover an independently varying tool-result-byte target",
+    "repair_commit": "8ef5111c7",
+    "stress_canary_root": "/Users/bryan/.aura/campaigns/cp126-resource-control-canary-208908131",
+    "stress_canary_verdict_sha256": "d29c7b332afd2e92aeaf80bb25eb1b8c23b47cafeda06f2c76583a258ae8a141",
+    "stress_canary_scores": {
+      "complete_system_closed_book": "2/2",
+      "vanilla_resource_dominating": "0/2"
+    }
+  },
+  "conclusion": "A seed-fresh 1.5B complete architecture produced six exact, no-regression solutions that ordinary decode, best-of-three, producer-disabled execution, and a same-information resource-dominating ordinary control did not solve. The executable producer is causally necessary in this bounded task family. Adaptive neural tissue again provided no incremental lift.",
+  "not_claimed": [
+    "resident_32b_transfer",
+    "broad_general_reasoning_gain",
+    "adaptive_neural_gain",
+    "weight_level_gain",
+    "frontier_level_reasoning",
+    "fusion_or_activation_authority",
+    "wow_signal"
+  ]
+}

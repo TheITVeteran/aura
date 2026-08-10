@@ -41828,3 +41828,52 @@ ordinary control whose measured resources dominate treatment. Resident 32B
 remains locked until that gate passes. No broad, neural, weight-level,
 frontier, fusion, activation, or `WOW Signal` claim is authorized. The
 completion envelope is `822/920` (approximately `89.3%`).
+
+## Checkpoint 2026-08-09-126: Resource-Dominating Certificate Passes
+
+The seed-fresh 1.5B certificate completed all `36/36` committed cells across
+novel algorithms, mathematics, and long-horizon planning. Scores were ordinary
+decode `0/6`, best-of-three ordinary inference `0/6`, complete system `6/6`,
+adaptation-disabled `6/6`, producer-disabled `0/6`, and same-information
+resource-dominating ordinary search `0/6`. All six paired resource certificates
+were admitted; the weakest control still used `1.466x` treatment's estimated
+FLOPs and `1.25x` its tool calls. There were no runtime-evidence issues,
+regressions, or unpromoted byte divergences.
+
+The first certificate attempt exposed a real control-planning defect: the
+bounded equal-tool planner derived its cycle allowance from call count alone,
+while tool input and result bytes vary independently. One treatment emitted a
+4,899-byte sandbox trace, so a six-cycle control could make enough calls while
+remaining below the byte envelope. The planner now owns the bounded campaign
+sample budget, exits immediately when all dimensions dominate, and retains its
+two-cycle no-progress failure guard. A two-task mathematics stress canary then
+completed the exact prior failure class: treatment `2/2`, advantaged control
+`0/2`, with the difficult control spending 123 seconds and 9,769 generated
+tokens. Focused contracts pass `64/64`; canonical smoke passes `103/103`;
+Ruff, compile, and diff hygiene pass.
+
+The complete architecture produced six paired lifts with zero losses against
+ordinary inference and producer removal (`p=0.015625` for each contrast), with
+gains in all three domains and six exact public-objective promotions. The
+terminal grader's prior `admitted=false, reasons=[]` state was also corrected:
+terminal evidence admission is now separate from whether another same-ladder
+stage exists. Evidence and architecture are admitted; `next_stage=none` and
+same-ladder advance is false. Adaptive-neural attribution remains false because
+adaptation-disabled execution tied treatment, latent optimization accepted zero
+steps, and fast weights applied zero times.
+
+The hash-bound evidence index is
+`artifacts/closeout/latent_cortex/cp126_1p5b_resource_dominating_certificate.json`.
+It binds experiment source `8ef5111c7`, terminal adjudicator `52a3bbcb7`, task
+commitment
+`ab93b98e5bc3efd13c1ec2987c08f274421b701b2c637c6fd39ef84a9f6a52aa`,
+implementation digest
+`3838f126965a264e3f9a2e076715774656b119e596bebc10703faecf922d2ca4`,
+the failed pre-fix run, the exact stress canary, and the final durable campaign.
+
+This completes the cheap 1.5B proof ladder and authorizes preparation of a
+bounded resident-32B calibration under immutable source, external trust roots,
+detached supervision, durable journaling, liveness monitoring, and automatic
+stop rules. It does not establish resident transfer, broad or frontier
+reasoning, adaptive-neural or weight-level gain, fusion, activation, or the
+`WOW Signal`. The completion envelope is `823/920` (approximately `89.5%`).
