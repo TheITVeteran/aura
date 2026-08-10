@@ -152,6 +152,22 @@ def test_training_rows_cycle_across_the_balanced_battery() -> None:
         canary._cyclic_training_row(rows, one_based_step=0)
 
 
+@pytest.mark.parametrize(
+    ("loss", "expected"),
+    [
+        (0.0, True),
+        (1e-6, True),
+        (1.000001e-6, False),
+        (float("inf"), False),
+        (float("nan"), False),
+        (True, False),
+        (None, False),
+    ],
+)
+def test_warmup_target_gate_is_exact_and_fail_closed(loss: object, expected: bool) -> None:
+    assert canary._warmup_target_reached(loss) is expected
+
+
 def test_coda_causal_arms_are_admitted_report_identities() -> None:
     from core.learning.recurrent_checkpoint_admission import _ARMS
 

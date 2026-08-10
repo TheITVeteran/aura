@@ -313,6 +313,15 @@ def _branch_specialization_gates(
     }
 
 
+def _warmup_target_reached(specialization_loss: Any) -> bool:
+    return (
+        not isinstance(specialization_loss, bool)
+        and isinstance(specialization_loss, (int, float))
+        and math.isfinite(float(specialization_loss))
+        and float(specialization_loss) <= 1e-6
+    )
+
+
 def _cyclic_training_row(
     rows: list[dict[str, Any]],
     *,
@@ -634,6 +643,17 @@ def run_canary(
             validation_loss=warmup_validation["loss"],
             specialization_loss=warmup_validation["specialization_loss"],
         )
+        if not _warmup_target_reached(warmup_validation["specialization_loss"]):
+            progress.emit(
+                "warmup_gate_rejected",
+                observed_specialization_loss=warmup_validation["specialization_loss"],
+                required_max_specialization_loss=1e-6,
+                completed_steps=warmup_steps,
+            )
+            raise RuntimeError(
+                "specialization warmup did not reach its preregistered target; "
+                "later phases cannot make this canary admissible"
+            )
         # Reset momentum when the structural constraint is met. Continuing an
         # Adam trajectory after the hinge reaches zero overshoots the target.
         optimizer = optim.AdamW(
@@ -844,7 +864,8 @@ def run_canary(
             for entry in loss_trail
         ),
         "warmup_target_reached": bool(
-            warmup_trail and warmup_validation["specialization_loss"] <= 1e-6
+            warmup_trail
+            and _warmup_target_reached(warmup_validation["specialization_loss"])
         ),
         **_branch_specialization_gates(loss_trail, separation_after),
         "heldout_lexical_non_regression": after["lexical_loss"] <= before["lexical_loss"] + 1e-6,

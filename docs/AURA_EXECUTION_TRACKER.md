@@ -42280,3 +42280,29 @@ events are operational evidence only; only the final independently replayable
 gates can authorize a broader replication. No general reasoning gain,
 resident-32B gain, frontier, fusion, live activation, or `WOW Signal` claim is
 authorized. The completion envelope is `835/920` (approximately `90.8%`).
+
+## Checkpoint 2026-08-10-139: Impossible Canary Runs Stop at the First Frozen Gate
+
+The first observable coda canary was intentionally stopped after its warmup
+evidence made final admission impossible. Four configured warmup steps moved
+held-out branch separation from `0.0283` toward the target, but the frozen
+held-out specialization loss remained `1.6641` against a required maximum of
+`1e-6`. The initial adapter also scored `0/8` on free generation. These are
+diagnostics, not a treatment verdict: joint training had only completed one
+step and no trained, lesion, sham, or ordinary arm was measured. The complete
+failed ledger is preserved outside the source checkout under
+`~/.aura/failed-experiments/cp138_coda_causal_canary_seed_2026081001/`.
+
+The harness previously continued after this frozen warmup gate even though no
+later result could make the final conjunction pass. It now validates finite
+warmup loss against the exact preregistered threshold immediately after
+warmup, emits the observed and required values, and terminates with durable
+failure evidence before joint training or model-heavy causal arms. Boolean,
+non-numeric, NaN, and infinite values fail closed. The corrected rerun uses
+the tool's intended eight-step warmup; the scientific threshold is unchanged.
+
+Focused canary contracts pass `34/34`; canonical smoke passes `103/103`;
+Ruff, compilation, and diff hygiene pass. The next gate remains the bounded
+1.5B treatment/lesion/sham campaign. No reasoning gain, resident-32B gain,
+frontier, fusion, live activation, or `WOW Signal` claim is authorized. The
+completion envelope is `836/920` (approximately `90.9%`).
