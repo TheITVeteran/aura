@@ -253,6 +253,109 @@ def structured_state_loss(
     return sum(losses) / len(losses)
 
 
+def _state_feature_logits(
+    features: Any,
+    *,
+    family: str,
+    field_name: str,
+    field_index: int,
+    codebook: StateCodebookSpec,
+) -> Any:
+    import mlx.core as mx
+
+    if (
+        features.ndim != 3
+        or int(features.shape[0]) != 1
+        or not 0 <= field_index < int(features.shape[1])
+    ):
+        raise ValueError("native state feature shape is invalid")
+    classes = _field_class_count(
+        family=family,
+        field_name=field_name,
+        codebook=codebook,
+    )
+    matrix = _codebook_matrix(
+        family=family,
+        field_name=field_name,
+        classes=classes,
+        hidden_size=int(features.shape[-1]),
+        seed=codebook.seed,
+    )
+    vector = features[0, field_index, :].astype(mx.float32)
+    vector = vector / mx.maximum(mx.linalg.norm(vector), 1e-6)
+    return (matrix @ vector) / float(codebook.temperature)
+
+
+def structured_state_feature_loss(
+    features: Any,
+    trace: StructuredTransitionTrace,
+    *,
+    transition_index: int,
+    codebook: StateCodebookSpec,
+) -> Any:
+    """Score compact proposed-state features through the fixed decoder."""
+
+    import mlx.core as mx
+    import mlx.nn as nn
+
+    target = _validate_target(
+        trace,
+        transition_index=transition_index,
+        codebook=codebook,
+    )
+    losses = []
+    for field_index, (field_name, value) in enumerate(
+        zip(trace.field_names, target, strict=True)
+    ):
+        logits = _state_feature_logits(
+            features,
+            family=trace.family,
+            field_name=field_name,
+            field_index=field_index,
+            codebook=codebook,
+        )
+        losses.append(
+            nn.losses.cross_entropy(
+                logits[None, :],
+                mx.array([value], dtype=mx.int32),
+                reduction="mean",
+            )
+        )
+    return sum(losses) / len(losses)
+
+
+def decode_structured_state_features(
+    features: Any,
+    trace: StructuredTransitionTrace,
+    *,
+    transition_index: int,
+    codebook: StateCodebookSpec,
+) -> tuple[int, ...]:
+    """Decode compact proposed-state features with no trainable readout."""
+
+    import mlx.core as mx
+
+    _validate_target(
+        trace,
+        transition_index=transition_index,
+        codebook=codebook,
+    )
+    return tuple(
+        int(
+            mx.argmax(
+                _state_feature_logits(
+                    features,
+                    family=trace.family,
+                    field_name=field_name,
+                    field_index=field_index,
+                    codebook=codebook,
+                )
+            ).item()
+        )
+        for field_index, field_name in enumerate(trace.field_names)
+    )
+
+
 def encode_structured_state(
     state: Any,
     trace: StructuredTransitionTrace,
@@ -563,6 +666,7 @@ __all__ = [
     "StateTransitionEvaluation",
     "StateTransitionGradient",
     "decode_trace_state",
+    "decode_structured_state_features",
     "decode_structured_state",
     "encode_trace_state",
     "encode_trace_state_operand",
@@ -571,4 +675,5 @@ __all__ = [
     "state_supervised_transition_loss",
     "state_supervised_transition_value_and_grad",
     "structured_state_loss",
+    "structured_state_feature_loss",
 ]

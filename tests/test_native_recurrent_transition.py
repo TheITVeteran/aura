@@ -78,6 +78,7 @@ def test_native_core_attaches_as_exact_identity_and_protects_semantic_slots():
     mx.eval(attached.state, attached.write_gate, attached.delta)
 
     assert bool(mx.array_equal(attached.state, state))
+    assert attached.state_features.shape == (1, 3, 16)
     assert attached.action_features.shape == (1, 3, 16)
     assert attached.write_gate.shape == (1, 3, 1)
     assert attached.delta.shape == (1, 3, 32)

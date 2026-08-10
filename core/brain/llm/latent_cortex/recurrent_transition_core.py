@@ -49,6 +49,7 @@ class RecurrentTransitionCoreConfig:
 @dataclass(frozen=True, slots=True)
 class RecurrentTransitionCoreOutput:
     state: Any
+    state_features: Any
     action_features: Any
     write_gate: Any
     delta: Any
@@ -157,13 +158,18 @@ class RecurrentTransitionCore(nn.Module):
             + action_attended
         )
         transformed = self.ff_down(nn.gelu(self.ff_up(mixed)))
-        action_features = self.output_norm(mixed + transformed)
-        delta = self.delta_up(action_features)
-        write_gate = mx.sigmoid(self.write_gate(action_features))
+        state_features = self.output_norm(mixed + transformed)
+        # The typed action is already an admitted causal operand. Preserve its
+        # exact codebook direction rather than asking the core to reconstruct
+        # an input it has just received.
+        action_features = action_hidden
+        delta = self.delta_up(state_features)
+        write_gate = mx.sigmoid(self.write_gate(state_features))
         updated_control = control + (write_gate * delta).astype(control.dtype)
         updated = mx.concatenate([semantic, updated_control], axis=1)
         return RecurrentTransitionCoreOutput(
             state=updated,
+            state_features=state_features,
             action_features=action_features,
             write_gate=write_gate,
             delta=delta,

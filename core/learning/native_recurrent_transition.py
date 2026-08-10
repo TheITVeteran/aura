@@ -14,10 +14,10 @@ from core.brain.llm.latent_cortex.recurrent_transition_core import (
 from core.learning.recurrence_curriculum import StructuredTransitionProgram
 from core.learning.recurrent_transition_supervision import (
     StateCodebookSpec,
-    decode_trace_state,
+    decode_structured_state_features,
     encode_trace_state,
     encode_trace_state_operand,
-    structured_state_loss,
+    structured_state_feature_loss,
 )
 
 NATIVE_TRANSITION_OBJECTIVE_SCHEMA = "aura.native_recurrent_transition_objective.v1"
@@ -265,8 +265,8 @@ def native_transition_loss(
         codebook=state_codebook,
     )
     output = core(current, context, typed_state, encoded_action)
-    state_loss = structured_state_loss(
-        output.state,
+    state_loss = structured_state_feature_loss(
+        output.state_features,
         trace,
         transition_index=transition_index,
         codebook=state_codebook,
@@ -382,10 +382,10 @@ def evaluate_native_transition(
         action_codebook=action_codebook,
         action_weight=action_weight,
     )
-    predicted_state = decode_trace_state(
-        output.state,
+    predicted_state = decode_structured_state_features(
+        output.state_features,
         trace,
-        state_index=transition_index + 1,
+        transition_index=transition_index,
         codebook=state_codebook,
     )
     predicted_action = tuple(

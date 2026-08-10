@@ -43836,3 +43836,35 @@ still unclaimed until the republished real-1.5B holdout passes. If compact typed
 state plus typed action remains insufficient, the next repair will move the
 fixed state decoder onto the core's proposed-state features instead of asking a
 generic 1,536-wide residual write to rediscover the codebook geometry.
+
+## Checkpoint 2026-08-10-189: Proposed State Is Scored Before Hidden Materialization
+
+The CP188 run completed with a stronger but still negative localization.
+Development exact state reached `12/40` and holdout reached `18/80` (`0.225`).
+Holdout target accuracy rose `0.2375 -> 0.425`; Boolean depth-two and depth-three
+target accuracy reached `1.0` and `0.9167`, respectively. Every modular cell
+nevertheless remained at zero target and exact accuracy. The embedded receipt
+SHA-256 is
+`32a62cd0de0e0c1fce6ab5608e8bb03fe67f7f23075493291d07c3f76da9eddb`;
+the receipt file SHA-256 is
+`b0fbbca5aa43a90e0b78650227b388d4f982b123ab43833c72b470b39f631047`;
+the selected core SHA-256 is
+`d5ab55ee23831f215622361c76d927fefc9d44cbec29bc1f1a465eed8d566adc`.
+
+This establishes that typed ingress fixed part of the Boolean problem but did
+not make a generic residual projection learn modular arithmetic. The native
+core now exposes compact proposed-state features as a first-class output. The
+state objective and evaluator apply the immutable field codebooks directly to
+those features; they no longer require the core to emit a precise random
+1,536-dimensional displacement before receiving correctness credit. Hidden
+materialization remains an identity-initialized downstream codec and cannot
+absorb the semantic objective. The admitted typed action is preserved exactly
+instead of being needlessly reconstructed by the transition.
+
+The affected suite passes `72/72`; Ruff and compilation pass. This advances
+the completion envelope to `885/920` (approximately `96.2%`). The next run is
+the final generic-neural one-step discriminator. If modular transfer remains
+zero, this programme will stop asking an unconstrained MLP to rediscover exact
+arithmetic and introduce a certified extensible transition executor, leaving
+the neural cortex responsible for semantic compilation, control, and residual
+reasoning rather than pretending approximate arithmetic is reliable.
