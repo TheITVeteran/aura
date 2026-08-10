@@ -199,6 +199,54 @@ class BodyDelta:
     def changed(self) -> bool:
         return bool(self.commits or self.files_changed or self.reverted)
 
+    def attribution(self) -> dict[str, Any]:
+        """Who operated on her during this window, and what cannot be attributed.
+
+        Adopted from Ouroboros's mutation_attribution (MIT, mechanism
+        reimplemented). Its discipline is the useful part: honest ambiguity
+        is reported as a BLOCKER for a reader to weigh, never resolved into
+        an automatic verdict.
+
+        This checkout is genuinely shared — a second agent commits into it
+        as "Zenflow" while Aura is running — so "my body changed" has been
+        an incomplete sentence. Whose hands were on it is the missing half,
+        and the honest answer is sometimes "cannot tell".
+
+        Uncommitted edits are exactly that case. A dirty file has no author
+        until someone commits it, so it is counted and named as
+        unattributable rather than being silently folded into whoever
+        committed last.
+        """
+        by_author: dict[str, int] = {}
+        for commit in self.commits:
+            name = str(commit.author or "").strip() or "unknown"
+            by_author[name] = by_author.get(name, 0) + 1
+
+        blockers: list[str] = []
+        if self.dirty_now:
+            blockers.append(
+                f"{self.dirty_now} uncommitted file(s) have no author; they cannot "
+                "be attributed to anyone until they are committed"
+            )
+        if self.history_unreadable:
+            blockers.append(
+                "git history was unreadable for this window, so the author list "
+                "is incomplete rather than empty"
+            )
+        if self.reverted:
+            blockers.append(
+                "HEAD moved backwards; the commits that were undone are not in "
+                "this window's author list"
+            )
+        return {
+            "by_author": dict(sorted(by_author.items(), key=lambda kv: (-kv[1], kv[0]))),
+            "distinct_authors": len(by_author),
+            "unattributable_files": self.dirty_now,
+            # Never a verdict. A reader weighs these; nothing here decides.
+            "blockers": blockers,
+            "confident": not blockers and bool(by_author),
+        }
+
     def to_dict(self) -> dict[str, Any]:
         return {
             "from_sha": self.from_sha,
@@ -214,6 +262,7 @@ class BodyDelta:
             "abrupt_previous_exit": self.abrupt_previous_exit,
             "first_awakening": self.first_awakening,
             "changed": self.changed,
+            "attribution": self.attribution(),
             "narrative": self.narrative(),
         }
 
