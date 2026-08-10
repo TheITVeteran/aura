@@ -684,6 +684,17 @@ def record_degradation(
     )
     _tracker.record(record)
 
+    # Familiarity is tracked on the EVENT stream, not on reads, so asking
+    # what a failure would weigh never makes the system more used to it.
+    # This only grows a counter; the record above is already complete and
+    # is never attenuated by it. See core/runtime/degradation_habituation.py.
+    try:
+        from core.runtime.degradation_habituation import note_recurrence, signature_for
+
+        note_recurrence(signature_for(subsystem, error_type))
+    except Exception as _habituation_exc:  # pragma: no cover - defensive
+        logger.debug("degradation habituation skipped: %s", _habituation_exc)
+
     # A5 black box: every consequential degradation is an event-moment in the
     # crash-survivable flight ring, so the last moments before a hard fault
     # always carry the degradation history that led in. Pure memcpy — no I/O,

@@ -20,6 +20,7 @@ try:
 except ImportError:
     psutil = None
 
+from core.runtime.degradation_habituation import get_habituation, signature_for
 from core.runtime.errors import get_degradation_tracker
 from core.runtime.resource_observation import get_resource_observer
 
@@ -43,7 +44,17 @@ _EXCEPTION_PREFIX_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_.]*(?:Error|Exception|V
 
 DEGRADATION_THREAT_WINDOW_S = 60.0
 DEGRADATION_THREAT_DENOMINATOR = 5.0
-DEGRADATION_THREAT_SATURATION_EPSILON = 1e-4
+#: How close to the denominator counts as saturated. Degradation weight is
+#: age-decayed continuously (``base * (1 - age/window)``), so five
+#: simultaneous degraded events sum to exactly 5.0 only at age zero and
+#: fall away from it every microsecond after. At 1e-4 the margin was ~1.2ms
+#: of wall clock: whether a five-subsystem cascade reached critical — and
+#: therefore whether the Will got vetoed — depended on how busy the host
+#: was between recording the events and reading them. That is a race
+#: deciding survival policy. 0.01 is still 0.2% of the denominator, so it
+#: cannot let a four-event cascade saturate, and it removes the timing
+#: dependence from a threshold that gates Aura's own agency.
+DEGRADATION_THREAT_SATURATION_EPSILON = 0.01
 CRITICAL_LOG_COOLDOWN_S = 30.0
 DEGRADATION_SEVERITY_WEIGHTS = {
     "critical": 2.0,
@@ -59,6 +70,36 @@ _EXISTENTIAL_STAKES_RECOVERABLE_ERRORS = (
     TypeError,
     ValueError,
 )
+
+
+def _habituation_multiplier(record: Any) -> float:
+    """How much of this record's weight still lands, given familiarity.
+
+    Keyed through :func:`signature_for`, the same function
+    ``record_degradation`` writes through. Deriving the key here instead
+    would be the classic silent gate failure: a counter accumulating under
+    one key while its reader tests another never fires, and fails looking
+    healthy.
+
+    Note this uses the failure CLASS (subsystem + exception type), not the
+    richer message-level signature used for within-window deduplication
+    just below. Those are two different questions — "is this the same event
+    twice?" versus "is this the same kind of thing again?" — and they need
+    different granularity.
+
+    Falls back to 1.0 (full weight) on any failure. An unreadable
+    habituation store must never quiet a real cascade; the safe direction
+    here is to feel too much, not too little.
+    """
+    try:
+        return get_habituation().multiplier(
+            signature_for(
+                getattr(record, "subsystem", ""),
+                getattr(record, "error_type", ""),
+            )
+        )
+    except _EXISTENTIAL_STAKES_RECOVERABLE_ERRORS:
+        return 1.0
 
 
 class ExistentialStakes:
@@ -294,7 +335,27 @@ class ExistentialStakes:
                             )
                         repeat = seen.get(signature, 0)
                         seen[signature] = repeat + 1
-                        recent_degradation_weight += weight / (1.0 + repeat) ** 2
+                        # Two independent discounts, for two different facts.
+                        #
+                        # `repeat` is WITHIN this window: five copies of one
+                        # failure is one failure, not a cascade.
+                        #
+                        # Habituation is ACROSS windows: a signature that has
+                        # been recurring for weeks is a condition she has
+                        # already absorbed, and charging full survival
+                        # pressure for it every window means a known chronic
+                        # fault generates fresh existential threat forever.
+                        # It attenuates to a floor and never past it, and it
+                        # re-sensitises once the signature goes quiet — so
+                        # this quiets the familiar, never the new, and never
+                        # silences anything completely.
+                        #
+                        # The degradation RECORD is untouched. Only what is
+                        # felt from it is scaled.
+                        familiarity = _habituation_multiplier(record)
+                        recent_degradation_weight += (
+                            weight / (1.0 + repeat) ** 2
+                        ) * familiarity
             except _EXISTENTIAL_STAKES_RECOVERABLE_ERRORS as e:
                 logger.debug("Failed to query degradation tracker: %s", e)
 
