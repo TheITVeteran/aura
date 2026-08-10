@@ -43508,3 +43508,44 @@ answered by adding depth or geometric losses.
 This advances the completion envelope to `874/920` (approximately `95.0%`).
 Behavioral depth scaling, broader families, resident-32B use, fusion,
 activation, frontier reasoning, and the `WOW Signal` remain locked.
+
+## Checkpoint 2026-08-10-179: One Recurrence Has an Exact State Target
+
+The recurrent graph now exposes a sealed student-induced parent state for any
+single transition. Preparation rolls the current shared policy to the requested
+depth, stops gradient at that exact parent, binds prompt, execution spec,
+transition index, parent tensors, and transition implementation into a
+replayable receipt, then permits exactly one differentiable invocation of the
+same live transition. Re-preparing after an optimizer update therefore follows
+the learner's own latent-state distribution rather than a pristine teacher
+trajectory.
+
+Exact next-state supervision uses a fixed hash-derived neural codebook over
+three declared control slots. Program counter, Boolean value or modular
+residue, and done state each have an independently seeded codebook and a public
+immutable decoder. No learned state head exists, so an evaluator cannot absorb
+the gradient while recurrence remains unchanged. The objective contains no
+answer-token loss, coda training, branch exchange, depth bank, role bank,
+displacement reward, rotation reward, or GRPO term: every gradient is caused by
+the difference between the one-step child and the exact next machine state.
+Public evaluation receipts expose aggregate field correctness and hashes but
+not private predicted or expected state values.
+
+Contracts prove student roll-in identity, receipt replay and mutation refusal,
+fixed-codebook round trip, nonzero finite gradients in recurrent LoRA, private
+label exclusion, and execution/depth drift refusal. The complete affected
+curriculum, state-probe, live-objective, protected-memory, recurrent-SFT, and
+new supervision selection passes `124/124`; Ruff and compilation pass;
+canonical smoke passes `103/103` under the repository virtual environment.
+The host interpreter's missing NumPy dependency remains an environment
+mis-invocation and is not counted as a product failure.
+
+This advances the completion envelope to `875/920` (approximately `95.1%`).
+This checkpoint establishes a trainable definition of one recurrent step; it
+does not establish that the current Qwen-window operator can learn it. The next
+source-bound real-1.5B discriminator must freeze the codebook, use one branch
+and one shared adapter, train on complete task-disjoint Boolean and modular
+transitions with student-induced roll-ins, and compare held-out exact
+transition accuracy before and after training. A failed held-out transfer
+retires this operator class for algorithmic recurrence and unlocks the native
+recurrent transition core.

@@ -54,6 +54,7 @@ from core.learning.role_conditioned_lora import (
 
 RECURRENCE_NATIVE_SCHEMA_V2 = "aura.recurrence_native_objective.v2"
 RECURRENT_TRANSITION_STATE_SCHEMA = "aura.recurrent_transition_state.v1"
+RECURRENT_TRANSITION_INPUT_SCHEMA = "aura.recurrent_transition_input.v1"
 RECURRENT_STATE_TRAIL_SCHEMA = "aura.recurrent_state_trail.v1"
 EXACT_ADJOINT_TRAJECTORY_SCHEMA = "aura.exact_adjoint_trajectory_objective.v1"
 EXACT_ADJOINT_TRAJECTORY_RECEIPT_SCHEMA = "aura.exact_adjoint_trajectory_objective_receipt.v2"
@@ -1061,6 +1062,35 @@ class PreparedRecurrentStateTrail:
         }
 
 
+@dataclass(frozen=True, slots=True)
+class PreparedRecurrentTransitionInput:
+    """Student-induced parent state for one exact live recurrent update."""
+
+    prompts_at_window: tuple[Any, ...]
+    parent_states: tuple[Any, ...]
+    anchors: tuple[Any, ...]
+    prelude_end: int
+    coda_start: int
+    transition_index: int
+    execution_spec_sha256: str
+    prompt_tokens_sha256: str
+    parent_branch_sha256s: tuple[str, ...]
+    transition_source_sha256: str
+    receipt_sha256: str
+
+    def receipt(self) -> dict[str, Any]:
+        return {
+            "schema": RECURRENT_TRANSITION_INPUT_SCHEMA,
+            "execution_spec_sha256": self.execution_spec_sha256,
+            "prompt_tokens_sha256": self.prompt_tokens_sha256,
+            "transition_index": self.transition_index,
+            "branch_count": len(self.parent_states),
+            "parent_branch_sha256s": list(self.parent_branch_sha256s),
+            "transition_source_sha256": self.transition_source_sha256,
+            "receipt_sha256": self.receipt_sha256,
+        }
+
+
 def _boundaries(model: Any, spec: RLCExecutionSpec) -> tuple[int, int, int]:
     n_layers = len(model.model.layers)
     prelude_end = max(1, int(n_layers * spec.prelude_frac))
@@ -1883,6 +1913,177 @@ def prepare_recurrent_state_trail(
         transition_source_sha256=transition_source_sha256,
         receipt_sha256=receipt_sha256,
     )
+
+
+def prepare_recurrent_transition_input(
+    model: Any,
+    prompt_tokens: Sequence[int],
+    *,
+    spec: RLCExecutionSpec,
+    transition_index: int,
+) -> PreparedRecurrentTransitionInput:
+    """Freeze the state reached by the current policy before one transition.
+
+    Recomputing this boundary after each optimizer update yields a
+    student-induced roll-in rather than teacher forcing on stale latent states.
+    The recurrent adapters are the only trainable model surface, so the frozen
+    prelude/context tensors remain valid for the immediately following update.
+    """
+
+    import mlx.core as mx
+
+    if (
+        type(transition_index) is not int
+        or transition_index < 0
+        or transition_index >= spec.recurrent_steps
+    ):
+        raise ValueError("transition index is outside the execution spec")
+    (
+        _prompt_embeddings,
+        _seeds,
+        prompts_at_window,
+        initial_states,
+        anchors,
+        prelude_end,
+        coda_start,
+    ) = _prepare_recurrent_prefix(model, prompt_tokens, spec=spec)
+
+    def freeze(values: Sequence[Any]) -> tuple[Any, ...]:
+        frozen = tuple(mx.stop_gradient(value) for value in values)
+        mx.eval(frozen)
+        return frozen
+
+    prompts = freeze(prompts_at_window)
+    current = freeze(initial_states)
+    stable_anchors = freeze(anchors)
+    for step in range(transition_index):
+        current = freeze(
+            _checkpointed_recurrent_transition(
+                model,
+                prompts,
+                current,
+                stable_anchors,
+                spec,
+                step,
+                prelude_end,
+                coda_start,
+            )
+        )
+    parent_hashes = tuple(_tensor_sha256(state) for state in current)
+    transition_source_sha256 = hashlib.sha256(
+        inspect.getsource(_advance_recurrent_states).encode("utf-8")
+    ).hexdigest()
+    body = {
+        "schema": RECURRENT_TRANSITION_INPUT_SCHEMA,
+        "execution_spec_sha256": spec.sha256,
+        "prompt_tokens_sha256": _token_sequence_sha256(prompt_tokens),
+        "transition_index": transition_index,
+        "branch_count": len(current),
+        "parent_branch_sha256s": list(parent_hashes),
+        "transition_source_sha256": transition_source_sha256,
+    }
+    return PreparedRecurrentTransitionInput(
+        prompts_at_window=prompts,
+        parent_states=current,
+        anchors=stable_anchors,
+        prelude_end=prelude_end,
+        coda_start=coda_start,
+        transition_index=transition_index,
+        execution_spec_sha256=spec.sha256,
+        prompt_tokens_sha256=body["prompt_tokens_sha256"],
+        parent_branch_sha256s=parent_hashes,
+        transition_source_sha256=transition_source_sha256,
+        receipt_sha256=_seal_transition_receipt(body),
+    )
+
+
+def execute_prepared_recurrent_transition(
+    model: Any,
+    prepared: PreparedRecurrentTransitionInput,
+    *,
+    spec: RLCExecutionSpec,
+) -> tuple[Any, ...]:
+    """Differentiate one live transition from a sealed student roll-in."""
+
+    if not isinstance(prepared, PreparedRecurrentTransitionInput):
+        raise TypeError("prepared transition input has the wrong type")
+    if prepared.execution_spec_sha256 != spec.sha256:
+        raise ValueError("prepared transition execution spec differs")
+    if prepared.transition_index >= spec.recurrent_steps:
+        raise ValueError("prepared transition index exceeds execution depth")
+    source_sha256 = hashlib.sha256(
+        inspect.getsource(_advance_recurrent_states).encode("utf-8")
+    ).hexdigest()
+    if prepared.transition_source_sha256 != source_sha256:
+        raise ValueError("prepared transition implementation differs")
+    if not (
+        len(prepared.prompts_at_window)
+        == len(prepared.parent_states)
+        == len(prepared.anchors)
+        == len(spec.branch_roles)
+    ):
+        raise ValueError("prepared transition branches differ")
+    return tuple(
+        _checkpointed_recurrent_transition(
+            model,
+            prepared.prompts_at_window,
+            prepared.parent_states,
+            prepared.anchors,
+            spec,
+            prepared.transition_index,
+            prepared.prelude_end,
+            prepared.coda_start,
+        )
+    )
+
+
+def validate_recurrent_transition_input_receipt(
+    receipt: Mapping[str, Any],
+) -> dict[str, Any]:
+    """Replay the tensor-free commitment to a prepared transition parent."""
+
+    required = {
+        "schema",
+        "execution_spec_sha256",
+        "prompt_tokens_sha256",
+        "transition_index",
+        "branch_count",
+        "parent_branch_sha256s",
+        "transition_source_sha256",
+        "receipt_sha256",
+    }
+    if not isinstance(receipt, Mapping) or set(receipt) != required:
+        raise ValueError("prepared transition receipt fields differ")
+    normalized = json.loads(
+        json.dumps(
+            dict(receipt),
+            sort_keys=True,
+            separators=(",", ":"),
+            ensure_ascii=True,
+            allow_nan=False,
+        )
+    )
+    observed = normalized.pop("receipt_sha256")
+    if (
+        normalized.get("schema") != RECURRENT_TRANSITION_INPUT_SCHEMA
+        or not _valid_sha256(normalized.get("execution_spec_sha256"))
+        or not _valid_sha256(normalized.get("prompt_tokens_sha256"))
+        or not _valid_sha256(normalized.get("transition_source_sha256"))
+        or type(normalized.get("transition_index")) is not int
+        or normalized["transition_index"] < 0
+        or type(normalized.get("branch_count")) is not int
+        or normalized["branch_count"] < 1
+        or not isinstance(normalized.get("parent_branch_sha256s"), list)
+        or len(normalized["parent_branch_sha256s"]) != normalized["branch_count"]
+        or any(
+            not _valid_sha256(value)
+            for value in normalized["parent_branch_sha256s"]
+        )
+        or not _valid_sha256(observed)
+        or _seal_transition_receipt(normalized) != observed
+    ):
+        raise ValueError("prepared transition receipt is invalid")
+    return {**normalized, "receipt_sha256": observed}
 
 
 def validate_recurrent_state_trail_receipt(
@@ -3629,7 +3830,9 @@ __all__ = [
     "LivePathForward",
     "PreparedFinalRecurrentTransition",
     "PreparedRecurrentStateTrail",
+    "PreparedRecurrentTransitionInput",
     "RECURRENCE_NATIVE_SCHEMA_V2",
+    "RECURRENT_TRANSITION_INPUT_SCHEMA",
     "RECURRENT_TRANSITION_STATE_SCHEMA",
     "RECURRENT_STATE_TRAIL_SCHEMA",
     "branch_mean_answer_loss",
@@ -3643,13 +3846,16 @@ __all__ = [
     "exact_adjoint_trajectory_auxiliary_loss",
     "exact_adjoint_trajectory_auxiliary_value_and_grad",
     "exact_adjoint_trajectory_live_path_value_and_grad",
+    "execute_prepared_recurrent_transition",
     "generate_cached_live_path_rollin",
     "live_path_branch_answer_ce_trail",
     "live_path_forward",
     "live_path_loss",
     "prepare_final_recurrent_transition",
     "prepare_recurrent_state_trail",
+    "prepare_recurrent_transition_input",
     "validate_exact_adjoint_live_path_receipt",
     "validate_final_recurrent_transition_receipt",
     "validate_recurrent_state_trail_receipt",
+    "validate_recurrent_transition_input_receipt",
 ]
