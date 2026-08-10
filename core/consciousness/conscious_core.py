@@ -218,8 +218,11 @@ class ConsciousnessCore:
                         "causal_link": "qualia_attractor"
                     }
 
-                    # Log for prove_coupling.py to analyze
-                    self._log_causal_telemetry(telemetry_data)
+                    # Log for prove_coupling.py to analyze. Off-loop: this is a
+                    # per-impulse append with an fsync behind it, and the
+                    # volition loop is exactly the kind of hot path where that
+                    # cost lands on every other coroutine.
+                    await asyncio.to_thread(self._log_causal_telemetry, telemetry_data)
 
                     # Dispatch to Orchestrator via async loop
                     try:

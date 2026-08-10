@@ -274,8 +274,12 @@ class ChatCompressionService:
             original_tokens, (original_tokens / model_token_limit) * 100, model_token_limit
         )
 
-        # Phase 1: Truncate tool outputs to budget
-        truncated_history = truncate_history_to_budget(history, self._temp_dir)
+        # Phase 1: Truncate tool outputs to budget. Off-loop — it spills every
+        # oversized tool output to disk, so the blocking cost scales with how
+        # much there was to compress.
+        truncated_history = await asyncio.to_thread(
+            truncate_history_to_budget, history, self._temp_dir
+        )
 
         # If summarization previously failed and not forced, only use truncation
         if self._has_failed_attempt and not force:

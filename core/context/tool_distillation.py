@@ -10,6 +10,7 @@ Replaces all hard-coded [:2000] / [:5000] truncation across Aura's skills.
 """
 
 from core.runtime.errors import record_degradation
+import asyncio
 import hashlib
 import logging
 import os
@@ -192,8 +193,11 @@ class ToolOutputDistillationService:
         if len(content) <= SMALL_OUTPUT_MAX_CHARS:
             return content
 
-        # Save raw output to disk
-        saved_path = self.save_raw_output(content, tool_name, command)
+        # Save raw output to disk. Off-loop: this runs on every oversized tool
+        # result, and the write is as large as the output that triggered it.
+        saved_path = await asyncio.to_thread(
+            self.save_raw_output, content, tool_name, command
+        )
 
         # Extract key signals first
         key_signals = self._extract_key_signals(content, tool_name)

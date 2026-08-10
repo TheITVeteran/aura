@@ -9,13 +9,31 @@ or when a fixed one lingers in the allowlist.
 If this test fails on code you just wrote: use the *_async gateway methods or
 async_atomic_* writers instead of calling the sync writers from async code.
 If you just FIXED an entry, delete it from the allowlist below.
+
+**The direct scan has a blind spot.** It matches the *name at the call site*,
+so it only ever saw `atomic_write_json(...)` written inline in an async body.
+An async function that calls `self._save()`, where `_save` is an ordinary sync
+method three lines down that fsyncs, was invisible to it — and that indirection
+is the common shape, not the rare one. ``DurableWorkflowEngine.run`` was doing
+exactly this once per step while the module docstring advertised it as the
+durable path.
+
+``_scan_indirect_offenders`` closes that: it taints every sync function in a
+file that transitively performs a blocking write, then flags async functions
+that call one. Single-file resolution only — no cross-module call graph, so a
+helper imported from elsewhere is still invisible. It is a floor, not a proof.
+
+The 110 found when the check was written are frozen in
+``config/async_write_indirect_baseline.json``. That list may only SHRINK.
 """
 from __future__ import annotations
 
 import ast
+import json
 from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
+_INDIRECT_BASELINE = PROJECT_ROOT / "config" / "async_write_indirect_baseline.json"
 
 _SYNC_WRITE_CALLS = {
     "atomic_write_bytes",
@@ -103,6 +121,97 @@ def test_allowlist_contains_no_fixed_entries():
         "These allowlist entries are fixed — delete them from "
         "ALLOWED_LEGACY_OFFENDERS so the ratchet only tightens:\n"
         + "\n".join(f"  {f}:{fn}() -> {call}" for f, fn, call in sorted(stale))
+    )
+
+
+# ── indirect: the blind spot ───────────────────────────────────────────────
+
+
+def _callee_name(node: ast.Call) -> str:
+    if isinstance(node.func, ast.Name):
+        return node.func.id
+    if isinstance(node.func, ast.Attribute):
+        return node.func.attr
+    return ""
+
+
+def _scan_indirect_offenders() -> set[tuple[str, str, str]]:
+    """Async functions reaching a blocking write through a same-file helper.
+
+    Resolution is by bare name within one file, which is what makes this cheap
+    and total. It cannot follow an imported helper, so absence of a finding is
+    not proof of safety — the direct scan and this one together are a floor.
+    """
+    offenders: set[tuple[str, str, str]] = set()
+    for path in (PROJECT_ROOT / "core").rglob("*.py"):
+        if "__pycache__" in str(path):
+            continue
+        try:
+            tree = ast.parse(path.read_text())
+        except (SyntaxError, UnicodeDecodeError, OSError):
+            continue
+        rel = str(path.relative_to(PROJECT_ROOT))
+
+        functions: dict[str, tuple[bool, set[str]]] = {}
+        for node in ast.walk(tree):
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                calls = {
+                    _callee_name(c) for c in ast.walk(node) if isinstance(c, ast.Call)
+                }
+                functions[node.name] = (isinstance(node, ast.AsyncFunctionDef), calls)
+
+        # Fixpoint over sync functions: which ones end up fsyncing.
+        tainted = {
+            name for name, (is_async, calls) in functions.items()
+            if not is_async and (calls & _SYNC_WRITE_CALLS)
+        }
+        changed = True
+        while changed:
+            changed = False
+            for name, (is_async, calls) in functions.items():
+                if is_async or name in tainted:
+                    continue
+                if calls & tainted:
+                    tainted.add(name)
+                    changed = True
+
+        for name, (is_async, calls) in functions.items():
+            if not is_async:
+                continue
+            # A direct write is the other test's finding, not this one's.
+            if calls & _SYNC_WRITE_CALLS:
+                continue
+            for reached in sorted(calls & tainted):
+                offenders.add((rel, name, reached))
+    return offenders
+
+
+def _load_indirect_baseline() -> set[tuple[str, str, str]]:
+    if not _INDIRECT_BASELINE.exists():
+        return set()
+    payload = json.loads(_INDIRECT_BASELINE.read_text())
+    return {tuple(entry) for entry in payload.get("offenders", [])}
+
+
+def test_no_new_indirect_blocking_writes_in_async_functions():
+    offenders = _scan_indirect_offenders()
+    new = offenders - _load_indirect_baseline()
+    assert not new, (
+        "NEW async function(s) reaching a blocking write through a same-file "
+        "helper. The fsync still lands on the event loop; the indirection only "
+        "hides it. Move the call off the loop (await asyncio.to_thread(...)) or "
+        "convert the helper to the async write lane:\n"
+        + "\n".join(f"  {f}:{fn}() -> {via}()" for f, fn, via in sorted(new))
+    )
+
+
+def test_indirect_baseline_only_shrinks():
+    offenders = _scan_indirect_offenders()
+    stale = _load_indirect_baseline() - offenders
+    assert not stale, (
+        "These baseline entries are fixed — delete them from "
+        f"{_INDIRECT_BASELINE.name} so the ratchet only tightens:\n"
+        + "\n".join(f"  {f}:{fn}() -> {via}()" for f, fn, via in sorted(stale))
     )
 
 
