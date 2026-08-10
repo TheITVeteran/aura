@@ -8744,6 +8744,75 @@ class MLXLocalClient:
         if foreground_request:
             self.soft_cancel_active_generation("abandoned_generation_deadline")
 
+    async def _renew_durable_lane_lease(
+        self,
+        controller: Any,
+        owner_id: str,
+        fencing_token: int,
+    ) -> bool:
+        """Renew the model-lane lease, distinguishing "no" from "never asked".
+
+        LIVE DEFECT, 2026-08-10. A user turn came back "I couldn't get to an
+        answer I'd stand behind on that one." The health pulse for that second:
+
+            conversation_lane: cold (worker_not_alive)
+            inference_gate (is_inference_ready() returned False)
+            event_loop_monitor.last_lag_s 10.46 >= 5.00
+            mlx_client (critical): TimeoutError
+                → stopped MLX worker after durable lane heartbeat failed
+
+        Nothing was wrong with the worker or the lease. The event loop had
+        been blocked for ten seconds, so this renewal — awaited with a five
+        second budget measured ON that loop — could not be scheduled at all
+        before its timer fired. The resulting TimeoutError was read as
+        `model_lane_fence_lost`, which killed a healthy 32B worker, failed
+        every in-flight turn, and cost ~35s to reload.
+
+        A timeout taken on a starved loop is not evidence about the lease. It
+        is the absence of an answer being recorded as a negative one — the same
+        shape as a skipped check reported as a failed check.
+
+        So on timeout, ask exactly once more. If the loop was merely blocked,
+        the retry runs on a loop that is moving again and answers truthfully.
+        If the lease is genuinely gone, the retry says so and the caller kills
+        the worker as before. One retry, not a loop: a second timeout is
+        itself evidence that the loop is not recovering, and a foreground turn
+        cannot wait forever to find out.
+
+        Deliberately no lag threshold anywhere in here. Asking again is
+        cheaper, more direct, and does not need a number that would have to be
+        tuned per host.
+        """
+        try:
+            return bool(
+                await asyncio.wait_for(
+                    controller.heartbeat_owner(owner_id, fencing_token=fencing_token),
+                    timeout=_LEASE_RENEWAL_TIMEOUT_S,
+                )
+            )
+        except TimeoutError:
+            logger.warning(
+                "⏱️ [MLX] Lane lease renewal timed out; re-asking once before "
+                "treating the lane as lost (a blocked event loop cannot "
+                "distinguish a dead lease from an unasked question)."
+            )
+        alive = bool(
+            await asyncio.wait_for(
+                controller.heartbeat_owner(owner_id, fencing_token=fencing_token),
+                timeout=_LEASE_RENEWAL_TIMEOUT_S,
+            )
+        )
+        if alive:
+            _record_mlx_degradation(
+                TimeoutError("lane_lease_renewal_timeout_recovered"),
+                action=(
+                    "lease renewal timed out under event-loop starvation; the "
+                    "re-ask found the lease intact, so the worker was kept"
+                ),
+                severity="warning",
+            )
+        return alive
+
     def soft_cancel_active_generation(
         self, reason: str = "foreground_preemption"
     ) -> dict[str, Any]:
@@ -9678,12 +9747,10 @@ class MLXLocalClient:
                             # outlives the check — but it is BOUNDED, and a
                             # renewal that cannot finish in time is a fence
                             # loss like any other rather than a stall.
-                            lease_alive = await asyncio.wait_for(
-                                get_model_lane_controller().heartbeat_owner(
-                                    owner_id,
-                                    fencing_token=fencing_token,
-                                ),
-                                timeout=_LEASE_RENEWAL_TIMEOUT_S,
+                            lease_alive = await self._renew_durable_lane_lease(
+                                get_model_lane_controller(),
+                                owner_id,
+                                fencing_token,
                             )
                             if not lease_alive:
                                 raise RuntimeError("model_lane_fence_lost")
