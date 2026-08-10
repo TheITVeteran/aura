@@ -24,6 +24,7 @@ from core.being.welfare_transaction import WelfareTransaction
 from core.governance.will import ActionDomain
 from core.governance_context import (
     GovernanceViolation,
+    get_active_governance,
     governed_scope,
     require_governance,
 )
@@ -108,6 +109,63 @@ def get_will() -> Any:
     return resolve_will()
 
 
+def _ambient_authority_context(
+    domain: ActionDomain,
+    *,
+    source: str = "unknown",
+) -> dict[str, Any]:
+    """Authority provenance from the governed scope this call already runs in.
+
+    LIVE DEFECT, 2026-08-10. Aura's screen perception was dead and nobody
+    could see why. Every ambient perception tick emitted:
+
+        WILL REFUSED: host_automation.screenshot_directory/file_write --
+        denied_by_default: file_write requires validated scoped authority
+
+    ``take_screenshot`` routes its directory step through ``execute``, and
+    ``execute`` built the Will context out of action_id, request_digest,
+    expectation objective and a rollback flag — no authority provenance at
+    all, and no parameter through which a caller could supply any. Under
+    strict default-deny every FILE_WRITE, NETWORK_CALL and TOOL_EXECUTION
+    reaching this class was therefore refused *as a matter of structure*:
+    the gate was wired so that passing it was impossible.
+
+    The authority that was missing already existed one frame up. Callers
+    doing governed internal work run inside ``local_internal_governed_scope``,
+    which installs a receipt in a contextvar — the same token
+    ``require_governance`` (used elsewhere in this very module) already
+    treats as proof. This reads that token and lets the Will see it.
+
+    It is deliberately NOT a bypass:
+
+    * The token comes from a contextvar installed by governance code, never
+      from caller-supplied params, so it is not forgeable the way a payload
+      key is (see ``_FORGEABLE_AUTHORITY_KEYS`` in agency_orchestrator).
+    * ``get_active_governance`` returns None for an expired token, so a scope
+      cannot outlive its TTL.
+    * The scope authorizes ONLY its own declared domain. A scope opened for
+      ``state_mutation`` does not authorize a ``network_call``; ungoverned
+      code still gets nothing and is still refused.
+    """
+    token = get_active_governance()
+    if token is None:
+        return {}
+    token_domain = str(getattr(token, "domain", "") or "").strip().lower()
+    if token_domain != domain.value:
+        # An honest narrowing: say the scope was seen and why it did not
+        # apply, so a refusal never again looks like "no governance at all".
+        return {
+            "ambient_governed_scope": token_domain or "unknown",
+            "ambient_scope_domain_mismatch": domain.value,
+        }
+    return {
+        "scoped_authority": f"governed_scope:{token_domain}",
+        "authority_origin": str(getattr(token, "source", "") or source)[:240],
+        "capability_token_id": str(getattr(token, "receipt_id", "") or "")[:120],
+        "ambient_governed_scope": token_domain,
+    }
+
+
 @dataclass(frozen=True, slots=True)
 class ActionAdmission:
     """One canonical Will admission and the authority that issued it."""
@@ -150,12 +208,16 @@ class ActionExecutor:
         if not math.isfinite(resolved_priority) or not 0.0 <= resolved_priority <= 1.0:
             raise ValueError("action priority must be finite and between 0 and 1")
         authority = get_will()
+        decision_context = dict(context or {})
+        decision_context.update(
+            _ambient_authority_context(resolved_domain, source=source)
+        )
         decision = authority.decide(
             content=_safe_action_summary(resolved_name, resolved_params),
             source=str(source or "unknown")[:240],
             domain=resolved_domain,
             priority=resolved_priority,
-            context=dict(context or {}),
+            context=decision_context,
         )
         checker = getattr(decision, "is_approved", None)
         approved = bool(checker()) if callable(checker) else False

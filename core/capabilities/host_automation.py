@@ -33,6 +33,7 @@ from typing import Any
 
 from core.container import ServiceContainer
 from core.governance.will import ActionDomain
+from core.governance_context import local_internal_governed_scope
 from core.runtime.action_executor import ActionExecutor
 from core.runtime.errors import record_degradation
 from core.runtime.state_ownership import state_root
@@ -1125,12 +1126,21 @@ class HostAutomationProvider:
             over_bytes = kept_bytes + stat_result.st_size > max_bytes
             if not is_keep and (expired or over_count or over_bytes):
                 try:
-                    deletion = await ActionExecutor.execute(
-                        domain=ActionDomain.FILE_WRITE,
-                        action_name="host_automation.screenshot_retention_delete",
-                        params={"path": str(path), "op": "delete"},
-                        source="host_automation.screenshot_retention",
-                    )
+                    # Same missing-scope defect as the capture directory: with
+                    # no declared scope the Will refused every deletion, so
+                    # retention silently kept everything and the capture
+                    # directory grew without bound.
+                    with local_internal_governed_scope(
+                        "host_automation.screenshot_retention",
+                        domain=ActionDomain.FILE_WRITE.value,
+                        constraints={"path": str(path), "op": "delete"},
+                    ):
+                        deletion = await ActionExecutor.execute(
+                            domain=ActionDomain.FILE_WRITE,
+                            action_name="host_automation.screenshot_retention_delete",
+                            params={"path": str(path), "op": "delete"},
+                            source="host_automation.screenshot_retention",
+                        )
                     if cls._action_completed(deletion):
                         deleted += 1
                         bytes_deleted += stat_result.st_size
@@ -1182,12 +1192,24 @@ class HostAutomationProvider:
             unique = f"{time.time_ns() % 1_000_000_000:09d}"
             folder = "screenshots" if retain_capture else "ephemeral"
             save_dir = state_root() / "data" / folder
-            directory_result = await ActionExecutor.execute(
-                domain=ActionDomain.FILE_WRITE,
-                action_name="host_automation.ensure_screenshot_directory",
-                params={"path": str(save_dir), "op": "ensure_directory"},
-                source="host_automation.screenshot_directory",
-            )
+            # Creating Aura's OWN capture directory under her state root is
+            # internal maintenance, not a user-directed write to the host.
+            # Without a declared scope the Will refused this on every ambient
+            # perception tick and take_screenshot failed before it ever
+            # reached screencapture — screen perception was dead behind a
+            # warning card. The scope is narrow on purpose: one domain, one
+            # path, released as soon as the directory exists.
+            with local_internal_governed_scope(
+                "host_automation.screenshot_directory",
+                domain=ActionDomain.FILE_WRITE.value,
+                constraints={"path": str(save_dir), "op": "ensure_directory"},
+            ):
+                directory_result = await ActionExecutor.execute(
+                    domain=ActionDomain.FILE_WRITE,
+                    action_name="host_automation.ensure_screenshot_directory",
+                    params={"path": str(save_dir), "op": "ensure_directory"},
+                    source="host_automation.screenshot_directory",
+                )
             if not self._action_completed(directory_result):
                 return AutomationReceipt(
                     action="take_screenshot",

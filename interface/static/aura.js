@@ -1365,6 +1365,26 @@ function renderStatusFlags(flags) {
 // 2026-07-29: six demo turns, all of them still on the server and returned by
 // every bootstrap poll, and the chat pane went blank in front of Bryan.
 // Both shapes are accepted now; the pair form is what the live API sends.
+// Carry a restored turn's ORIGINAL time forward.
+//
+// LIVE DEFECT, 2026-08-10. Every message in the transcript showed the same
+// clock time, and that time advanced: turns sent at 08:15, 08:16 and 08:17 all
+// read 08:18:31, then all read 08:25:46. The transcript is cleared and
+// re-hydrated periodically, appendMsg stamped `new Date()` at render time, and
+// the restore path dropped the entry's real timestamp — so the visible record
+// of when anything was said was destroyed on every refresh, while looking
+// perfectly plausible.
+function withEntryTimestamp(metadata, entry) {
+    const merged = Object.assign({}, metadata || {});
+    if (merged.timestamp === undefined || merged.timestamp === null || merged.timestamp === '') {
+        const stamp = entry && (entry.timestamp ?? entry.created_at ?? entry.time);
+        if (stamp !== undefined && stamp !== null && stamp !== '') {
+            merged.timestamp = stamp;
+        }
+    }
+    return merged;
+}
+
 function conversationEntriesToMessages(entries) {
     const out = [];
     for (const entry of entries) {
@@ -1373,7 +1393,7 @@ function conversationEntriesToMessages(entries) {
         if (role) {
             const content = entry.content || entry.message || '';
             if (String(content).trim()) {
-                out.push({ role, text: String(content), metadata: entry.metadata || {} });
+                out.push({ role, text: String(content), metadata: withEntryTimestamp(entry.metadata, entry) });
             }
             continue;
         }
@@ -1381,10 +1401,10 @@ function conversationEntriesToMessages(entries) {
         const asked = entry.user;
         const answered = entry.aura;
         if (typeof asked === 'string' && asked.trim()) {
-            out.push({ role: 'user', text: asked, metadata: {} });
+            out.push({ role: 'user', text: asked, metadata: withEntryTimestamp({}, entry) });
         }
         if (typeof answered === 'string' && answered.trim()) {
-            out.push({ role: 'aura', text: answered, metadata: entry.metadata || {} });
+            out.push({ role: 'aura', text: answered, metadata: withEntryTimestamp(entry.metadata, entry) });
         }
     }
     return out;
@@ -4934,8 +4954,15 @@ async function appendMsg(role, text, isHtml = false, metadata = {}) {
         return `<button class="thought-toggle" type="button" aria-expanded="false" aria-controls="${tid}" onclick="toggleInlineThought(this, '${tid}')"><span class="thought-chevron">▶</span> <span class="thought-toggle-label">Show thinking</span></button><div id="${tid}" class="thought-block">${escHtml(thought.trim())}</div>`;
     })();
 
-    // Timestamp element (shows on hover)
-    const tsStr = new Date().toLocaleTimeString([], { hour12: false, hour: '2-digit', minute: '2-digit', second: '2-digit' });
+    // Timestamp element (shows on hover).
+    //
+    // A restored turn carries its own time; only a genuinely new message is
+    // stamped "now". Stamping unconditionally made every re-hydration rewrite
+    // the whole transcript's history to the moment of the refresh.
+    const tsStr = (metadata && metadata.timestamp !== undefined
+        && metadata.timestamp !== null && metadata.timestamp !== '')
+        ? formatEventTimestamp(metadata.timestamp)
+        : new Date().toLocaleTimeString([], { hour12: false, hour: '2-digit', minute: '2-digit', second: '2-digit' });
 
     const prefersReducedMotion = window.matchMedia
         && window.matchMedia('(prefers-reduced-motion: reduce)').matches;

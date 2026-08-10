@@ -7,7 +7,7 @@ import logging
 import re
 import time
 import uuid
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
@@ -37,6 +37,43 @@ class StepStatus(Enum):
     FAILED = "failed"
     SKIPPED = "skipped"
     ROLLED_BACK = "rolled_back"
+
+
+def _persistable_context(context: Any) -> dict[str, Any]:
+    """Plan context reduced to what can survive a restart.
+
+    LIVE DEFECT, 2026-08-10. Aura's autonomous action lane died on every
+    self-chosen objective with:
+
+        TypeError: Object of type RobustOrchestrator is not JSON serializable
+
+    ``overt_action_loop`` puts a live orchestrator handle into the governance
+    context so actuators can reach capabilities, then hands that same dict to
+    the task engine as the plan's context. ``to_runtime_dict`` copied it
+    verbatim into the persisted payload, so the plan file could never be
+    written. The engine is on the fail-closed list, so a durability failure
+    the code explicitly intends to survive escalated to CRITICAL SERVICE
+    FAILURE and took the objective — and overt_action_loop with it — down.
+
+    A live in-process handle is not restorable from a file: on reload it
+    would be a dangling reference to an object from a dead process. The
+    honest persisted form is a note that it was present, so a resumed plan
+    can tell "this key was dropped at persistence" apart from "this key was
+    never set". The in-memory plan keeps the real handle; only the durable
+    copy is reduced.
+    """
+    if not isinstance(context, Mapping):
+        return {}
+    persistable: dict[str, Any] = {}
+    for key, value in context.items():
+        name = str(key)
+        try:
+            json.dumps(value)
+        except (TypeError, ValueError):
+            persistable[name] = f"<dropped_at_persistence:{type(value).__name__}>"
+            continue
+        persistable[name] = value
+    return persistable
 
 
 @dataclass
@@ -169,7 +206,7 @@ class TaskPlan:
             "goal": self.goal,
             "steps": [step.to_runtime_dict() for step in self.steps],
             "trace_id": self.trace_id,
-            "context": dict(self.context or {}),
+            "context": _persistable_context(self.context),
             "token_id": self.token_id,
             "is_shadow": self.is_shadow,
             "requires_approval": self.requires_approval,
@@ -377,7 +414,21 @@ class AutonomousTaskEngine:
         except (OSError, RuntimeError, AttributeError, TypeError, ValueError) as exc:
             # OSError included: a full/read-only/permission-denied disk is a
             # normal failure the caller must survive, not a crash mid-plan.
-            record_degradation("autonomous_task_engine", exc)
+            #
+            # enforce_failure_policy=False keeps that promise. This engine is
+            # on the fail-closed list, so the plain record escalated a losable
+            # *durability* failure to CRITICAL SERVICE FAILURE, which raised
+            # out of here, killed the objective, and cascaded into
+            # overt_action_loop — the exact opposite of "the caller must
+            # survive". The degradation is still recorded and still visible;
+            # it just no longer converts a lost write into a lost mind-cycle.
+            record_degradation(
+                "autonomous_task_engine",
+                exc,
+                severity="warning",
+                action="kept the plan in memory after durable persistence failed",
+                enforce_failure_policy=False,
+            )
             logger.debug("TaskEngine: active plan persistence skipped: %s", exc)
 
     def _persist_plan_state(self, plan: TaskPlan) -> None:

@@ -1066,6 +1066,116 @@ def _live_internals_summary() -> list[str]:
             severity="warning",
             stage="operational_self_context.recall",
         )
+    lines.extend(_live_health_summary())
+    return lines
+
+
+def _live_health_summary() -> list[str]:
+    """Heartbeats, uptime, and the faults she is carrying right now.
+
+    LIVE DEFECT, 2026-08-10. Asked "anything feel off?" one minute after boot,
+    Aura answered "My substrate is stable. My drives are aligned." At that
+    moment her own neural feed was showing the user a MARGINAL fault in
+    latent_cortex, an open incident, resilience at state=strain, and a
+    governance refusal repeating on every perception tick. Pressed on it, she
+    did not retrieve anything — she adopted the challenger's framing, claimed
+    she had knowingly told "a comfortable story", and invented a causal story
+    about opening the incident herself. Asked for three specific readings, she
+    correctly refused to guess.
+
+    All three behaviours have one cause: this block described mood, agency and
+    memory but carried no health channel at all. The degradation ledger, the
+    subsystem heartbeats and the uptime clock all had writers, and the UI read
+    them — the voice did not. With nothing to read, a self-report can only be
+    generated, and a generated self-report agrees with whoever is talking.
+
+    Every line is a live reading or is absent. Nothing here is inferred, so
+    "not readable" stays available as a true answer rather than a fallback.
+    """
+    lines: list[str] = []
+    try:
+        from core.container import ServiceContainer
+
+        audit = ServiceContainer.get("subsystem_audit", default=None)
+        health = audit.check_health() if audit is not None else None
+        if isinstance(health, dict):
+            subsystems = health.get("subsystems") or {}
+            total = len(subsystems)
+            active = sum(
+                1
+                for info in subsystems.values()
+                if isinstance(info, dict) and info.get("active") and not info.get("degraded")
+            )
+            if total:
+                lines.append(f"Heartbeats: {active}/{total} subsystems active.")
+            unwell = [
+                name
+                for name, info in subsystems.items()
+                if isinstance(info, dict) and (info.get("degraded") or not info.get("active"))
+            ]
+            if unwell:
+                lines.append(
+                    "Subsystems not fully healthy right now: "
+                    + ", ".join(sorted(unwell)[:6])
+                    + "."
+                )
+    except _CHAT_PREFLIGHT_RECOVERABLE_ERRORS as exc:
+        _emit_chat_fault(
+            exc,
+            action="continued identity contract without subsystem heartbeats",
+            severity="warning",
+            stage="operational_self_context.heartbeats",
+        )
+    try:
+        import psutil
+
+        uptime_s = max(0.0, time.time() - psutil.Process().create_time())
+        lines.append(f"Uptime: {int(uptime_s)} seconds since this process started.")
+    except _CHAT_PREFLIGHT_RECOVERABLE_ERRORS as exc:
+        _emit_chat_fault(
+            exc,
+            action="continued identity contract without uptime",
+            severity="warning",
+            stage="operational_self_context.uptime",
+        )
+    try:
+        from core.runtime.errors import recent_degradations
+
+        records = recent_degradations(limit=6) or []
+        if records:
+            rendered: list[str] = []
+            for record in records:
+                subsystem = str(
+                    (record.get("subsystem") if isinstance(record, dict) else "") or "unknown"
+                )
+                severity = str(
+                    (record.get("severity") if isinstance(record, dict) else "") or "degraded"
+                )
+                detail = str(
+                    (record.get("error") or record.get("message") or "")
+                    if isinstance(record, dict)
+                    else ""
+                )[:120]
+                rendered.append(
+                    f"{subsystem} ({severity})" + (f": {detail}" if detail else "")
+                )
+            lines.append(
+                "Degradations recorded recently (oldest first, newest last): "
+                + "; ".join(rendered)
+                + "."
+            )
+            lines.append(
+                "These are mine and they are current. If asked how I am, report "
+                "them rather than a general impression, and never describe "
+                "myself as fully stable while any of them stands."
+            )
+    except _CHAT_PREFLIGHT_RECOVERABLE_ERRORS as exc:
+        _emit_chat_fault(
+            exc,
+            action="continued identity contract without recent degradations",
+            severity="warning",
+            stage="operational_self_context.degradations",
+        )
     return lines
 
 

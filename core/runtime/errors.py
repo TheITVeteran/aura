@@ -154,38 +154,6 @@ class DegradationTracker:
                 ],
             }
 
-    def recent(
-        self,
-        *,
-        limit: int = 10,
-        subsystem_prefixes: tuple[str, ...] = (),
-    ) -> list[dict[str, Any]]:
-        """The most recent records, newest last, for explaining a live failure.
-
-        ``status()["last_5"]`` exists for dashboards and is capped at five with
-        a truncated message. A surface that has to tell someone *why* their
-        request produced nothing needs to look further back than that and
-        needs the action text intact, because the action is the part written
-        for a human ("gave up after the third retry") rather than for a log.
-        """
-        prefixes = tuple(str(p) for p in subsystem_prefixes if str(p))
-        with self._lock:
-            records = list(self._records)
-        if prefixes:
-            records = [r for r in records if r.subsystem.startswith(prefixes)]
-        selected = records[-max(1, int(limit)):]
-        return [
-            {
-                "subsystem": r.subsystem,
-                "severity": r.severity,
-                "error_type": r.error_type,
-                "error": r.error_message,
-                "action": r.action,
-                "at": r.timestamp,
-            }
-            for r in selected
-        ]
-
     def recent_counts_by_subsystem(self, window_s: float) -> dict[str, dict[str, int]]:
         """Counts restricted to the trailing window.
 
@@ -238,9 +206,39 @@ def recent_degradations(
     limit: int = 10,
     subsystem_prefixes: tuple[str, ...] = (),
 ) -> list[dict[str, Any]]:
-    """Recent degradation records, for a surface that owes someone an
-    explanation of why their request produced nothing."""
-    return _tracker.recent(limit=limit, subsystem_prefixes=subsystem_prefixes)
+    """Recent degradation records, newest last, for a surface that owes
+    someone an explanation of why their request produced nothing.
+
+    ``status()["last_5"]`` exists for dashboards and is capped at five with a
+    truncated message. A surface explaining a live failure needs to look
+    further back and needs the action text intact, because the action is the
+    part written for a human ("gave up after the third retry").
+
+    DEFECT, found 2026-08-10. ``DegradationTracker`` defined ``recent`` twice;
+    the second definition silently shadowed the first, so this function called
+    it with a ``subsystem_prefixes`` argument it did not accept and raised
+    ``TypeError`` on EVERY call. The explanation channel had therefore never
+    returned a single record — and because its callers wrap it in broad
+    excepts, the failure presented as "there is nothing to report" rather than
+    as an error. The shaping and prefix filter now live here, and the tracker
+    keeps the one ``recent`` its object-callers use.
+    """
+    prefixes = tuple(str(p) for p in subsystem_prefixes if str(p))
+    records = _tracker.recent(limit=max(1, int(limit)) if not prefixes else 500)
+    if prefixes:
+        records = [r for r in records if r.subsystem.startswith(prefixes)]
+        records = records[-max(1, int(limit)):]
+    return [
+        {
+            "subsystem": r.subsystem,
+            "severity": r.severity,
+            "error_type": r.error_type,
+            "error": r.error_message,
+            "action": r.action,
+            "at": r.timestamp,
+        }
+        for r in records
+    ]
 
 
 class _EscalationGovernor:
