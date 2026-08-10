@@ -22472,6 +22472,26 @@ async def _api_chat_turn(body: ChatRequest, request: Request):
                     _grounded_recall_context = _grounded
                     body.message = f"{_grounded}{body.message}"
                     logger.info("Chat preflight: injected grounded positional recall.")
+
+                # The same grounding for HER OWN words. Everything above
+                # grounds what the USER said; asked what she herself picked
+                # earlier, she had nothing to answer from and invented a prior
+                # position, then affirmed it had not changed. Live 2026-08-10.
+                from core.conversation.grounded_recall import (
+                    build_own_statement_recall_context,
+                )
+
+                _own = (
+                    ""
+                    if conversation_only_surface
+                    else build_own_statement_recall_context(
+                        _original_user_message,
+                        history=_gr_history,
+                    )
+                )
+                if _own:
+                    body.message = f"{_own}{body.message}"
+                    logger.info("Chat preflight: injected grounded recall of her own words.")
             except _CHAT_RECOVERABLE_ERRORS as _grounded_exc:
                 record_degradation('chat', _grounded_exc)
                 logger.debug("Chat grounded-recall preflight skipped: %s", _grounded_exc)

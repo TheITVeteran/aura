@@ -94,6 +94,167 @@ _FIRST_IDIOM_RE = re.compile(
 _MAX_GROUNDED_CHARS = 400
 
 
+#: Asking her what SHE said, decided, or preferred earlier.
+#:
+#: LIVE DEFECT, 2026-08-10. Twenty-five minutes after she answered "If I had to
+#: give up one, the screen", she was asked "earlier in this conversation you
+#: told me which of your senses you'd give up ... which one did you pick, and
+#: has your answer changed?" and replied:
+#:
+#:     "I picked the ability to sense time passing — not having a sense of
+#:      duration or urgency. My answer hasn't changed."
+#:
+#: Time was never one of the three options offered. She invented her own prior
+#: position and then affirmed its consistency.
+#:
+#: Everything in this module grounds recall of what the USER said — the block
+#: it builds even instructs her that the quoted speaker "is the user, not you
+#: ... never as something you said". There was no counterpart for her own
+#: words, so a question about her own stated position had nothing to answer
+#: from. Recall of one's own claims is what makes a position a position rather
+#: than a mood, and hers was ungrounded.
+_OWN_STATEMENT_RECALL_RE = re.compile(
+    r"\b(?:"
+    r"what did you (?:say|tell|answer|pick|choose|decide|call|mean)"
+    r"|which (?:one )?did you (?:pick|choose|say|prefer|go with)"
+    r"|you (?:said|told me|picked|chose|answered|mentioned|described|called)"
+    r"|your (?:answer|reply|position|view|choice|pick|opinion|stance)"
+    r"|did you (?:change|stick with|still think|still feel)"
+    r"|(?:has|have) your (?:answer|view|position|mind|opinion)"
+    r"|changed your mind"
+    r")\b",
+    re.IGNORECASE,
+)
+
+#: Words too common to signal that a past turn is the one being asked about.
+_RECALL_STOPWORDS = frozenset(
+    """a an and are as at be been but by did do does for from had has have how
+    i if in is it its me my not of on or our so than that the their them then
+    there these they this to was we were what when which who why will with you
+    your yours about again just like more no now one only other out over said
+    same some still such take tell than too us very want way well
+    """.split()
+)
+
+
+def detect_own_statement_recall(user_message: str) -> bool:
+    """True when she is being asked what SHE said or decided earlier."""
+    text = str(user_message or "").strip()
+    if not text or len(text) > 400:
+        return False
+    return bool(_OWN_STATEMENT_RECALL_RE.search(text))
+
+
+def _content_words(text: str) -> set[str]:
+    """Content words, crudely singularised so "senses" matches "sense".
+
+    Without it the live case missed: the question said "senses" and the answer
+    said "sense", and nothing lined them up.
+    """
+    words = re.findall(r"[a-z']{3,}", str(text or "").lower())
+    normalized = set()
+    for word in words:
+        if word in _RECALL_STOPWORDS:
+            continue
+        normalized.add(word)
+        if len(word) > 3 and word.endswith("s") and not word.endswith("ss"):
+            normalized.add(word[:-1])
+    return normalized
+
+
+def _history_own_exchanges(history: Any, exclude_norm: str) -> list[tuple[str, str]]:
+    """Her turns in this conversation, each paired with what prompted it.
+
+    Paired because the TOPIC of an exchange usually lives in the question, not
+    the answer. Live 2026-08-10: asked "which of your senses would you give
+    up", her answer named the screen and telemetry and never used the word
+    "senses" — so matching her turn alone scored it below an unrelated later
+    reply, and grounded her on the wrong statement.
+
+    Returns ``(prompt, her_turn)`` oldest first.
+    """
+    exchanges: list[tuple[str, str]] = []
+    prompt = ""
+    for entry in _within_current_conversation(history):
+        role = entry.get("role")
+        content = str(entry.get("content", "") or "").strip()
+        if not content:
+            continue
+        if role == "user":
+            prompt = content
+            continue
+        if role != "assistant" or entry.get("ephemeral"):
+            continue
+        if content.lower() != exclude_norm:
+            exchanges.append((prompt, content))
+        prompt = ""
+    return exchanges
+
+
+def resolve_own_prior_turn(user_message: str, history: Any = None) -> str | None:
+    """Her own earlier turn that the question is actually about, or None.
+
+    Chosen by overlap with the question's content words rather than by
+    recency: "which of your senses would you give up" is asking about one
+    specific earlier answer, and the most recent thing she said is usually not
+    it. No overlap means NO VERDICT — returning the latest turn regardless
+    would ground her on the wrong statement, and a confident quote of the
+    wrong turn is worse than an admission because it is indistinguishable
+    from memory.
+    """
+    asked = _content_words(user_message)
+    if not asked:
+        return None
+    exchanges = _history_own_exchanges(history, str(user_message or "").strip().lower())
+    if not exchanges:
+        return None
+
+    best: tuple[int, str] | None = None
+    for prompt, turn in exchanges:
+        # Scored against the whole exchange, so the question's topic counts.
+        overlap = len(asked & (_content_words(prompt) | _content_words(turn)))
+        if overlap and (best is None or overlap >= best[0]):
+            # >= so a later turn wins a TIE: if she said it twice, the most
+            # recent statement is her current position.
+            best = (overlap, turn)
+    if best is None:
+        return None
+    return best[1]
+
+
+def build_own_statement_recall_context(
+    user_message: str, history: Any = None
+) -> str | None:
+    """Grounding block quoting HER earlier words, or None.
+
+    The mirror of :func:`build_grounded_recall_context`, with the speaker
+    boundary reversed — and stated just as explicitly, because getting it
+    backwards produces her narrating her own words as the user's.
+    """
+    if not detect_own_statement_recall(user_message):
+        return None
+    turn = resolve_own_prior_turn(user_message, history=history)
+    if not turn:
+        logger.info(
+            "🧠 [GroundedRecall] own-statement recall detected but no matching "
+            "prior turn of hers found — cannot ground, letting model answer."
+        )
+        return None
+    quoted = turn if len(turn) <= _MAX_GROUNDED_CHARS else turn[:_MAX_GROUNDED_CHARS] + "…"
+    logger.info("🧠 [GroundedRecall] resolved her own prior turn for grounding.")
+    return (
+        "[GROUNDED RECALL — this is the verbatim fact; answer from it, do not guess]\n"
+        "Earlier in this same conversation, YOU said:\n"
+        f"“{quoted}”\n"
+        "The quoted speaker is YOU, not the user. Preserve that role boundary: "
+        "refer to it as something you said, never as something they said.\n"
+        "If they are asking what you picked or decided, this is the answer — "
+        "use it rather than reconstructing one. If your view has since changed, "
+        "say so against THIS as the starting point; do not report a different "
+        "original position than the one quoted here.\n\n"
+    )
+
+
 def detect_positional_recall(user_message: str) -> RecallPosition | None:
     """Return ``"first"``/``"last"`` if the turn asks a positional-recall question."""
     text = (user_message or "").strip()
