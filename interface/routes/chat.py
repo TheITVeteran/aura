@@ -4811,6 +4811,16 @@ async def _persist_completed_conversation_exchange(
         return False
 
 
+def _durable_session_may_hold_turns(session: dict[str, Any]) -> bool:
+    """False only when a session states it holds no turns."""
+    if "turn_count" not in session:
+        return True
+    try:
+        return int(session.get("turn_count") or 0) > 0
+    except (TypeError, ValueError):
+        return True
+
+
 def _load_durable_conversation_exchanges_sync(
     *,
     limit: int,
@@ -4823,13 +4833,30 @@ def _load_durable_conversation_exchanges_sync(
         return []
 
     safe_session_id = str(session_id or "")[:64]
-    rows: list[dict[str, Any]] = []
+    fetch_limit = max(8, limit * 6)
+
+    current_rows: list[dict[str, Any]] = []
     if safe_session_id:
-        history = get_session_history(safe_session_id, limit=max(8, limit * 6))
-        rows.extend(item for item in list(history or []) if isinstance(item, dict))
-    else:
-        if not callable(get_recent_sessions):
-            return []
+        history = get_session_history(safe_session_id, limit=fetch_limit)
+        current_rows = [item for item in list(history or []) if isinstance(item, dict)]
+
+    # A restart mints a new session id, so the session a live turn belongs to is
+    # empty exactly when continuity matters most.
+    #
+    # LIVE DEFECT, 2026-08-10. This branch used to read the current session and
+    # nothing else, and the multi-session scan below ran only when no session id
+    # was supplied — which never happens on a live turn. Asked "earlier today
+    # you and i had a long conversation, tell me one specific thing from it",
+    # she answered "I can't reach that conversation" with all 34 turns of it on
+    # disk. Durable storage the recall path could not reach is not memory.
+    #
+    # Reach back only for the shortfall: a session already holding the whole
+    # window keeps exactly the behaviour it had.
+    exchanges_here = sum(
+        1 for row in current_rows if str(row.get("role") or "").strip().lower() == "user"
+    )
+    rows: list[dict[str, Any]] = []
+    if exchanges_here < max(1, int(limit)) and callable(get_recent_sessions):
         # Sessions with nothing in them are boot artifacts, and a bounded scan
         # that counts them spends its whole window on restarts instead of
         # conversations — three reboots used to hide yesterday entirely.
@@ -4842,25 +4869,32 @@ def _load_durable_conversation_exchanges_sync(
                 or []
             )
         except TypeError:
+            # An older persistence object without the filter. A session that
+            # does not report a count is unknown, not empty — dropping those
+            # would hide every conversation rather than only the boot rows.
             sessions = [
                 session
                 for session in (
                     get_recent_sessions(limit=_DURABLE_CONVERSATION_SESSION_SCAN_LIMIT)
                     or []
                 )
-                if isinstance(session, dict) and int(session.get("turn_count") or 0) > 0
+                if isinstance(session, dict)
+                and _durable_session_may_hold_turns(session)
             ]
+        # Oldest first: ordering below is positional, so earlier conversations
+        # have to be earlier in the list.
         for session in reversed(sessions):
             if not isinstance(session, dict):
                 continue
             durable_session_id = str(session.get("id") or "").strip()
-            if not durable_session_id:
+            if not durable_session_id or durable_session_id == safe_session_id:
                 continue
-            history = get_session_history(
-                durable_session_id,
-                limit=max(8, limit * 6),
-            )
+            history = get_session_history(durable_session_id, limit=fetch_limit)
             rows.extend(item for item in list(history or []) if isinstance(item, dict))
+
+    rows.extend(current_rows)
+    if not rows:
+        return []
 
     identified: dict[tuple[str, str], dict[str, Any]] = {}
     legacy_pending: dict[str, tuple[int, dict[str, Any]]] = {}

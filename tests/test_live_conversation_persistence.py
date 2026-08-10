@@ -272,3 +272,103 @@ def test_durable_reconstruction_retains_cidless_legacy_pair(monkeypatch):
             "session_id": persistence.session_id,
         }
     ]
+
+
+class _MultiSessionPersistence:
+    """Two conversations: one from before a restart, one after."""
+
+    def __init__(self):
+        self.rows: dict[str, list[dict]] = {"before": [], "after": []}
+        self.clock = 0.0
+        self.history_calls: list[str] = []
+
+    def add(self, session_id, exchange_id, user_text, aura_text):
+        for role, content in (("user", user_text), ("aura", aura_text)):
+            self.clock += 1.0
+            self.rows[session_id].append(
+                {
+                    "role": role,
+                    "content": content,
+                    "cid": f"{exchange_id}:{role}",
+                    "session_id": session_id,
+                    "created_at": self.clock,
+                }
+            )
+
+    def get_recent_sessions(self, limit=10, *, with_turns_only=False):
+        sessions = [
+            {"id": "boot-artifact", "last_active": 99.0, "turn_count": 0},
+            {"id": "after", "last_active": 50.0, "turn_count": len(self.rows["after"])},
+            {"id": "before", "last_active": 10.0, "turn_count": len(self.rows["before"])},
+        ]
+        if with_turns_only:
+            sessions = [s for s in sessions if s["turn_count"] > 0]
+        return sessions[:limit]
+
+    def get_session_history(self, session_id=None, limit=100):
+        self.history_calls.append(session_id)
+        return list(self.rows.get(session_id, []))[-limit:]
+
+
+def _install(monkeypatch, persistence):
+    monkeypatch.setattr(
+        chat_routes.ServiceContainer,
+        "get",
+        staticmethod(
+            lambda name, default=None: persistence if name == "persistence" else default
+        ),
+    )
+
+
+def test_recall_reaches_past_the_restart_that_minted_a_new_session(monkeypatch):
+    """LIVE DEFECT 2026-08-10: "I can't reach that conversation."
+
+    A restart mints a new session id, so the session a live turn belongs to is
+    empty exactly when continuity matters. The loader read only that session;
+    its multi-session scan ran solely when no session id was supplied, which
+    never happens on a live turn. 34 turns sat on disk, unreachable.
+    """
+    persistence = _MultiSessionPersistence()
+    persistence.add("before", "e1", "which sense would you give up?", "the screen")
+    _install(monkeypatch, persistence)
+
+    exchanges = chat_routes._load_durable_conversation_exchanges_sync(
+        limit=4,
+        session_id="after",
+    )
+
+    assert [e["user"] for e in exchanges] == ["which sense would you give up?"]
+    assert [e["aura"] for e in exchanges] == ["the screen"]
+    assert "boot-artifact" not in persistence.history_calls
+
+
+def test_a_full_current_session_does_not_reach_back(monkeypatch):
+    """Reaching back is for the shortfall only, not a new default."""
+    persistence = _MultiSessionPersistence()
+    persistence.add("before", "old", "ancient question", "ancient answer")
+    for index in range(4):
+        persistence.add("after", f"new{index}", f"question {index}", f"answer {index}")
+    _install(monkeypatch, persistence)
+
+    exchanges = chat_routes._load_durable_conversation_exchanges_sync(
+        limit=2,
+        session_id="after",
+    )
+
+    assert persistence.history_calls == ["after"]
+    assert all("ancient" not in e["user"] for e in exchanges)
+
+
+def test_earlier_conversations_stay_earlier(monkeypatch):
+    """Cross-session ordering is chronological, not scan order."""
+    persistence = _MultiSessionPersistence()
+    persistence.add("before", "e1", "first question", "first answer")
+    persistence.add("after", "e2", "second question", "second answer")
+    _install(monkeypatch, persistence)
+
+    exchanges = chat_routes._load_durable_conversation_exchanges_sync(
+        limit=4,
+        session_id="after",
+    )
+
+    assert [e["user"] for e in exchanges] == ["first question", "second question"]
