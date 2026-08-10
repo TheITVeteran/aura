@@ -1,0 +1,56 @@
+{
+  "schema": "aura.closeout.checkpoint.v1",
+  "checkpoint": 108,
+  "date": "2026-08-09",
+  "subject": "camera control and continuous sensory cadence are one runtime system",
+  "status": "implemented_and_bounded_verified",
+  "defects_closed": [
+    "continuous perception captured at a fixed two-second cadence regardless of foreground inference, proof activity, host pressure, or failure pressure",
+    "an unavailable or privacy-denied screen backend skipped the independent physical camera modality",
+    "the continuous camera retained its lease while foreground work needed the host",
+    "the privacy camera route classified an isolated sidecar as browser-only and disabled native capture",
+    "Aura's conversational camera action changed a transient UI record and claimed completion without committing the owner permission or changing hardware",
+    "direct transactional permissions.camera changes did not immediately reach resident camera handles",
+    "an already-held direct camera lease could continue reading after the owner setting changed"
+  ],
+  "implementation": {
+    "continuous_cadence_hz": {
+      "nominal": 0.5,
+      "memory_high": 0.2,
+      "foreground_or_critical": 0.1
+    },
+    "modality_independence": "screen and physical camera attempt independently; private screen state is cleared without suppressing permitted physical vision",
+    "lease_pressure_policy": "autonomous continuous camera lease is released during foreground or critical 0.1 Hz admission",
+    "canonical_owner_state": "privacy API, transactional settings UI, conversational camera control, CameraAuthority acquisition, and every frame read share permissions.camera",
+    "transports": [
+      "full",
+      "isolated_sidecar",
+      "browser_only",
+      "off"
+    ],
+    "revocation": "turning the durable owner permission off closes the authority's current lease immediately and every read independently rechecks the gate",
+    "completion_truth": "Aura confirms conversational camera control only after the committed operation returns ok; failures are injected as concrete failures rather than claimed as completed"
+  },
+  "verification": {
+    "focused_camera_privacy_settings_and_sight": "154 passed",
+    "canonical_smoke_repository_venv": "103 passed",
+    "canonical_smoke_unqualified_interpreter_attempt": "invalid environment: Makefile default interpreter lacked numpy; rerun explicitly with repository venv",
+    "ruff_f_and_import_integrity": "pass",
+    "python_byte_compile_touched_surface": "pass",
+    "diff_check": "pass",
+    "live_camera_device": "deferred while the resident-32B proof campaign owns the runtime budget and Aura.app is intentionally stopped"
+  },
+  "claim_boundary": {
+    "control_plane_and_lifecycle_proven": true,
+    "dynamic_cadence_proven": true,
+    "semantic_visual_accuracy_proven": false,
+    "reason": "bounded contracts prove control and scheduling behavior; labelled rebuilt-app arbitrary-detail accuracy still requires the live device"
+  },
+  "concurrent_campaign": {
+    "campaign_id": "cp103-wow-pilot-repaired-20260809",
+    "source_commit": "b62bd4fa78fd28fe62cb51f7677614774c3482fc",
+    "cells_at_checkpoint": 21,
+    "complete_system_closed_book": "7/7",
+    "capability_verdict_claimed": false
+  }
+}

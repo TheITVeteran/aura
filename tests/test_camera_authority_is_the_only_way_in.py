@@ -121,6 +121,49 @@ def test_the_switch_is_checked_before_the_device_is_touched(authority):
     assert cv2.created == []
 
 
+def test_turning_the_owner_switch_off_revokes_an_existing_lease(
+    authority, monkeypatch
+):
+    auth, cv2 = authority(allowed=True)
+    lease = auth.acquire("continuous_vision", purpose="ambient perception")
+    assert isinstance(lease, CameraLease)
+    assert cv2.created[0].released is False
+
+    import core.perception.camera_authority as camera_mod
+
+    monkeypatch.setattr(camera_mod, "camera_allowed", lambda: False)
+    result = auth.revoke_owner_permission()
+
+    assert result == {"released": True, "holder": "continuous_vision"}
+    assert cv2.created[0].released is True
+    assert lease.active is False
+    assert auth.state()["in_use"] is False
+
+
+def test_revocation_refuses_to_close_a_camera_while_owner_permission_is_on(
+    authority,
+):
+    auth, _cv2 = authority(allowed=True)
+
+    with pytest.raises(RuntimeError, match="camera_owner_permission_is_still_enabled"):
+        auth.revoke_owner_permission()
+
+
+def test_each_frame_read_enforces_a_late_owner_revocation(authority, monkeypatch):
+    auth, cv2 = authority(allowed=True)
+    lease = auth.acquire("stream", purpose="owner requested stream")
+    assert isinstance(lease, CameraLease)
+
+    import core.perception.camera_authority as camera_mod
+
+    monkeypatch.setattr(camera_mod, "camera_allowed", lambda: False)
+
+    assert auth.read(lease) is None
+    assert lease.last_error == "owner_disabled"
+    assert lease.active is False
+    assert cv2.created[0].released is True
+
+
 def test_a_denied_os_grant_stops_acquisition(authority):
     auth, cv2 = authority()
     auth.note_os_permission({"granted": False, "status": "denied", "guidance": "System Settings"})

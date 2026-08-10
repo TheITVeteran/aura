@@ -484,6 +484,10 @@ class CameraAuthority:
         makes stale-lease reclamation correct: an idle lease is one whose
         holder has stopped reading, and only this call knows that.
         """
+        if not camera_allowed():
+            lease.last_error = "owner_disabled"
+            self.release(lease)
+            return None
         if not lease.active or lease.capture is None:
             return None
         with self._lock:
@@ -586,6 +590,27 @@ class CameraAuthority:
             if self._lease is lease:
                 self._lease = None
         logger.info("Camera released by %s", lease.holder)
+
+    def revoke_owner_permission(self) -> dict[str, Any]:
+        """Close the resident handle after the durable owner gate turns off.
+
+        ``acquire`` checks the permission before opening a device, but a holder
+        may already own one when the setting changes.  Revocation therefore has
+        to close the authority's current lease rather than waiting for every
+        consumer to notice the setting independently.
+        """
+        if camera_allowed():
+            raise RuntimeError("camera_owner_permission_is_still_enabled")
+        with self._lock:
+            lease = self._lease
+            holder = lease.holder if lease is not None and lease.active else None
+            if lease is not None:
+                self._close(lease)
+                if self._lease is lease:
+                    self._lease = None
+        if holder:
+            logger.info("Camera permission revoked; released resident holder %s", holder)
+        return {"released": holder is not None, "holder": holder}
 
     def _close(self, lease: CameraLease) -> None:
         lease._released = True

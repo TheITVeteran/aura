@@ -194,7 +194,7 @@ class CheatCodeRequest(BaseModel):
     silent: bool = False
 
 
-def _apply_camera_control(turn_on: bool) -> None:
+async def _apply_camera_control(turn_on: bool) -> dict[str, Any]:
     """Work her own camera control, rather than explaining where it is.
 
     "Turn on the camera" is a request for an action, and an assistant that
@@ -204,11 +204,10 @@ def _apply_camera_control(turn_on: bool) -> None:
     together, and the user sees the control change under their hands.
     """
     try:
-        from interface.routes.privacy import set_browser_camera_privacy
+        from interface.routes.privacy import apply_camera_privacy
 
-        set_browser_camera_privacy(
-            enabled=bool(turn_on),
-            mode="browser_only" if turn_on else "off",
+        state = await apply_camera_privacy(
+            bool(turn_on),
             reason="switched by Aura at the owner's request",
         )
         # Tell the surface, so the toggle moves and the camera actually starts
@@ -222,6 +221,7 @@ def _apply_camera_control(turn_on: bool) -> None:
         publish = getattr(orchestrator, "_publish_telemetry", None)
         if publish is not None:
             publish({"type": "camera_privacy", "enabled": bool(turn_on)})
+        return state
     except _CHAT_RECOVERABLE_ERRORS as exc:
         record_degradation(
             "chat.sight",
@@ -239,6 +239,11 @@ def _apply_camera_control(turn_on: bool) -> None:
             )
         except _CHAT_RECOVERABLE_ERRORS:
             pass
+        return {
+            "ok": False,
+            "enabled": not bool(turn_on),
+            "error": f"{type(exc).__name__}: {exc}"[:240],
+        }
 
 
 def _publish_media_card(resolution: Any) -> None:
@@ -22212,14 +22217,25 @@ async def _api_chat_turn(body: ChatRequest, request: Request):
                             f"{body.message}"
                         )
                 elif _sight.kind in ("camera_on", "camera_off"):
-                    _apply_camera_control(_sight.kind == "camera_on")
-                    body.message = (
-                        f"[you have just switched the camera "
-                        f"{'on' if _sight.kind == 'camera_on' else 'off'} yourself, "
-                        "using your own controls — it is done, not pending. Say so "
-                        "briefly the way a person confirms an action.]\n\n"
-                        f"{body.message}"
+                    _camera_state = await _apply_camera_control(
+                        _sight.kind == "camera_on"
                     )
+                    if _camera_state.get("ok"):
+                        body.message = (
+                            f"[you have just switched the camera "
+                            f"{'on' if _sight.kind == 'camera_on' else 'off'} yourself, "
+                            f"using the {_camera_state.get('mode', 'camera')} path — it is "
+                            "done, not pending. Say so briefly the way a person confirms "
+                            "an action.]\n\n"
+                            f"{body.message}"
+                        )
+                    else:
+                        body.message = (
+                            "[the camera control did not complete. Do not claim it did. "
+                            f"The concrete failure was: {_camera_state.get('error', 'unknown')}. "
+                            "Explain that briefly and retain the user's requested state.]\n\n"
+                            f"{body.message}"
+                        )
             except _CHAT_RECOVERABLE_ERRORS as _sight_exc:
                 record_degradation("chat.sight", _sight_exc)
                 logger.debug("Chat sight preflight skipped: %s", _sight_exc)

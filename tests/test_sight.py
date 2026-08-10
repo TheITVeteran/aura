@@ -315,7 +315,9 @@ def test_turning_the_camera_on_moves_the_control_not_just_the_record() -> None:
     client = (root / "interface" / "static" / "aura.js").read_text(encoding="utf-8")
 
     assert "def _apply_camera_control(" in chat
-    assert "set_browser_camera_privacy(" in chat
+    assert "await apply_camera_privacy(" in chat
+    assert "if _camera_state.get(\"ok\")" in chat
+    assert "Do not claim it did" in chat
     assert '"type": "camera_privacy"' in chat
     # And the surface acts on it.
     assert "type === 'camera_privacy'" in client

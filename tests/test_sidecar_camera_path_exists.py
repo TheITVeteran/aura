@@ -655,10 +655,113 @@ def test_continuous_camera_keeps_sidecar_enabled_when_main_process_is_blocked(
 
 def test_continuous_sidecar_calls_are_offloaded_from_the_event_loop():
     source = (ROOT / "core" / "senses" / "continuous_vision.py").read_text("utf-8")
-    camera_branch = source[source.index("if self.camera_capture_enabled:") :]
+    camera_branch = source[source.index("if camera_admitted:") :]
     camera_branch = camera_branch[: camera_branch.index("def get_visual_context_parts")]
 
     assert "cv2_main_process_blocked" not in camera_branch
     assert "await asyncio.to_thread(" in camera_branch
     assert "authority.read," in camera_branch
     assert "authority.jpeg_bytes," in camera_branch
+
+
+@pytest.mark.asyncio
+async def test_camera_capture_continues_when_screen_backend_is_unavailable(
+    monkeypatch, tmp_path
+):
+    import core.perception.camera_authority as camera_mod
+    import core.senses.continuous_vision as continuous
+
+    np = pytest.importorskip("numpy")
+    lease = SimpleNamespace(active=True)
+    calls: list[str] = []
+
+    class _Authority:
+        def acquire(self, *_args, **_kwargs):
+            calls.append("acquire")
+            return lease
+
+        def read(self, _lease):
+            calls.append("read")
+            return np.zeros((4, 4, 3), dtype=np.uint8)
+
+        def jpeg_bytes(self, _lease, _frame):
+            calls.append("jpeg")
+            return b"camera-frame"
+
+        def release(self, _lease):
+            calls.append("release")
+
+    authority = _Authority()
+    monkeypatch.setattr(camera_mod, "get_camera_authority", lambda: authority)
+    buffer = continuous.ContinuousSensoryBuffer(tmp_path)
+    buffer.sct = None
+    buffer.monitor = None
+    buffer.camera_capture_enabled = True
+    buffer._camera_lease = None
+    buffer._is_active = True
+    monkeypatch.setattr(
+        buffer,
+        "_compute_budget",
+        lambda: SimpleNamespace(
+            interval_s=2.0, foreground_active=False, effective_hz=0.5
+        ),
+    )
+
+    async def _no_screen():
+        return False
+
+    async def _one_iteration(_delay):
+        buffer._is_active = False
+
+    monkeypatch.setattr(buffer, "_ensure_screen_backend", _no_screen)
+    monkeypatch.setattr(continuous.asyncio, "sleep", _one_iteration)
+    try:
+        await buffer._capture_loop()
+    finally:
+        buffer._vision_executor.shutdown(wait=False, cancel_futures=True)
+
+    assert calls == ["acquire", "read", "jpeg"]
+    assert buffer.frame_buffer[-1] == ("image/jpeg", b"camera-frame")
+
+
+@pytest.mark.asyncio
+async def test_critical_foreground_budget_releases_autonomous_camera(
+    monkeypatch, tmp_path
+):
+    import core.perception.camera_authority as camera_mod
+    import core.senses.continuous_vision as continuous
+
+    lease = SimpleNamespace(active=True)
+    released: list[object] = []
+    authority = SimpleNamespace(release=lambda item: released.append(item))
+    monkeypatch.setattr(camera_mod, "get_camera_authority", lambda: authority)
+    buffer = continuous.ContinuousSensoryBuffer(tmp_path)
+    buffer.sct = None
+    buffer.monitor = None
+    buffer.camera_capture_enabled = True
+    buffer._camera_lease = lease
+    buffer._is_active = True
+    monkeypatch.setattr(
+        buffer,
+        "_compute_budget",
+        lambda: SimpleNamespace(
+            interval_s=10.0, foreground_active=True, effective_hz=0.1
+        ),
+    )
+
+    async def _no_screen():
+        return False
+
+    async def _one_iteration(_delay):
+        buffer._is_active = False
+
+    monkeypatch.setattr(buffer, "_ensure_screen_backend", _no_screen)
+    monkeypatch.setattr(continuous.asyncio, "sleep", _one_iteration)
+    try:
+        await buffer._capture_loop()
+    finally:
+        buffer._vision_executor.shutdown(wait=False, cancel_futures=True)
+
+    assert released == [lease]
+    assert buffer._camera_lease is None
+    assert buffer._last_compute_budget.interval_s == 10.0

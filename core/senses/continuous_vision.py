@@ -102,6 +102,23 @@ class ContinuousSensoryBuffer:
             )
 
         self.monitor = None
+        self._last_compute_budget = None
+
+    @staticmethod
+    def _compute_budget():
+        """Dynamic cadence for this always-on but non-foreground sense."""
+        from core.runtime.background_policy import constitutive_compute_budget
+
+        return constitutive_compute_budget(
+            "continuous_sensory_buffer",
+            0.5,
+            min_hz=0.1,
+            foreground_hz=0.1,
+            memory_high_hz=0.2,
+            memory_critical_hz=0.1,
+            compute_pressure_hz=0.1,
+            failure_pressure_hz=0.1,
+        )
 
     def start(self):
         """Starts the background rolling capture loop."""
@@ -227,6 +244,8 @@ class ContinuousSensoryBuffer:
     async def _capture_loop(self):
         """Runs continuously in the background, updating Aura's visual working memory."""
         while self._is_active:
+            budget = self._compute_budget()
+            self._last_compute_budget = budget
             try:
                 if self.sct is None or self.monitor is None:
                     await self._ensure_screen_backend()
@@ -235,8 +254,9 @@ class ContinuousSensoryBuffer:
                         if now - getattr(self, "_last_backend_fail_log", 0) > 300.0:
                             logger.info("👁️ [VISION] Screen capture unavailable: no valid monitors found.")
                             self._last_backend_fail_log = now
-                        await asyncio.sleep(15.0)
-                        continue
+                        if not self.camera_capture_enabled:
+                            await asyncio.sleep(max(15.0, budget.interval_s))
+                            continue
 
                 if self.sct and self.monitor:
                     admission = await evaluate_screen_capture_admission_async()
@@ -245,33 +265,45 @@ class ContinuousSensoryBuffer:
                         # current private screen.  Invalidate the rolling
                         # context as soon as the foreground becomes denied.
                         self.frame_buffer.clear()
-                        await asyncio.sleep(2.0)
-                        continue
-                    async with self._capture_lock:
-                        # v27 Hardening: Strict 10s timeout for system screenshot calls
-                        try:
-                            sct_img = await asyncio.wait_for(
-                                asyncio.get_running_loop().run_in_executor(
-                                    self._vision_executor, self.sct.grab, self.monitor
-                                ),
-                                timeout=10.0
-                            )
-                        except TimeoutError:
-                            logger.error("👁️ [VISION] Screenshot capture timed out after 10s. Skipping frame.")
-                            sct_img = None
+                    else:
+                        async with self._capture_lock:
+                            # v27 Hardening: Strict 10s timeout for system screenshot calls
+                            try:
+                                sct_img = await asyncio.wait_for(
+                                    asyncio.get_running_loop().run_in_executor(
+                                        self._vision_executor, self.sct.grab, self.monitor
+                                    ),
+                                    timeout=10.0
+                                )
+                            except TimeoutError:
+                                logger.error("👁️ [VISION] Screenshot capture timed out after 10s. Skipping frame.")
+                                sct_img = None
 
-                    if sct_img:
-                        import mss.tools
-                        png_bytes = mss.tools.to_png(sct_img.rgb, sct_img.size)
-                        self.frame_buffer.append(("image/png", png_bytes))
-                        # A frame IS the evidence for "I can see your screen".
-                        # Recorded so the reliability gate can tell a real
-                        # observation from an invented one without needing a
-                        # per-turn tool dispatch — this feed is continuous and
-                        # never produces one.
-                        _note_screen_frame()
+                        if sct_img:
+                            import mss.tools
+                            png_bytes = mss.tools.to_png(sct_img.rgb, sct_img.size)
+                            self.frame_buffer.append(("image/png", png_bytes))
+                            # A frame IS the evidence for "I can see your screen".
+                            # Recorded so the reliability gate can tell a real
+                            # observation from an invented one without needing a
+                            # per-turn tool dispatch — this feed is continuous and
+                            # never produces one.
+                            _note_screen_frame()
 
-                if self.camera_capture_enabled:
+                camera_admitted = (
+                    self.camera_capture_enabled
+                    and not budget.foreground_active
+                    and budget.effective_hz > 0.100001
+                )
+                if not camera_admitted and self._camera_lease is not None:
+                    from core.perception.camera_authority import get_camera_authority
+
+                    await asyncio.to_thread(
+                        get_camera_authority().release, self._camera_lease
+                    )
+                    self._camera_lease = None
+
+                if camera_admitted:
                     # `self.camera_enabled` is the build-time feature flag.
                     # It is NOT the owner's settings toggle, so this loop
                     # used to keep filming after the camera was switched off
@@ -302,18 +334,21 @@ class ContinuousSensoryBuffer:
                                     acquired.reason,
                                     acquired.detail,
                                 )
-                            await asyncio.sleep(2.0)
-                            continue
-                        self._last_camera_denial = None
-                        self._camera_lease = acquired
+                        else:
+                            self._last_camera_denial = None
+                            self._camera_lease = acquired
 
-                    frame = await asyncio.to_thread(authority.read, self._camera_lease)
+                    if self._camera_lease is not None:
+                        frame = await asyncio.to_thread(authority.read, self._camera_lease)
+                    else:
+                        frame = None
                     if frame is None:
-                        # Either the frame failed or the lease was reclaimed.
-                        # Drop it and re-acquire next tick rather than
-                        # spinning on a handle that may already be closed.
-                        await asyncio.to_thread(authority.release, self._camera_lease)
-                        self._camera_lease = None
+                        if self._camera_lease is not None:
+                            # Either the frame failed or the lease was reclaimed.
+                            # Drop it and re-acquire next tick rather than
+                            # spinning on a handle that may already be closed.
+                            await asyncio.to_thread(authority.release, self._camera_lease)
+                            self._camera_lease = None
                     else:
                         jpeg_bytes = await asyncio.to_thread(
                             authority.jpeg_bytes,
@@ -325,7 +360,7 @@ class ContinuousSensoryBuffer:
                 record_degradation('continuous_vision', e)
                 logger.error("Sensory Buffer capture failed: %s", e)
 
-            await asyncio.sleep(2.0)
+            await asyncio.sleep(budget.interval_s)
 
     def get_visual_context_parts(self) -> list:
         """Retrieves the rolling visual buffer formatted for the Gemini API."""

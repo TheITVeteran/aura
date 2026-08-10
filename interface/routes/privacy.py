@@ -4,24 +4,23 @@ Extracted from server.py — Privacy toggles, voice endpoints,
 and source download.
 """
 from __future__ import annotations
-from core.runtime.errors import record_degradation
-
 
 import asyncio
 import inspect
 import json
 import logging
+from collections.abc import Callable
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Callable, Dict, Optional
+from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from pydantic import BaseModel
 
 from core.config import config
+from core.runtime.errors import record_degradation
 from core.runtime.service_registry import get_runtime_service
-
 from interface.auth import _require_internal
 
 logger = logging.getLogger("Aura.Server.Privacy")
@@ -33,24 +32,26 @@ _SOURCE_DOWNLOAD_ERRORS = (ImportError, OSError, RuntimeError, TypeError, ValueE
 # The voice engine factory is set by the main server lifespan.
 # This module provides a getter/setter so system.py can also access it.
 
-_voice_engine_fn: Optional[Callable] = None
-_browser_camera_privacy: Dict[str, Any] = {
+_voice_engine_fn: Callable | None = None
+_browser_camera_privacy: dict[str, Any] = {
     "enabled": False,
     "mode": "off",
     "reason": None,
 }
 
 
-def set_voice_engine_fn(fn: Optional[Callable]) -> None:
+def set_voice_engine_fn(fn: Callable | None) -> None:
     global _voice_engine_fn
     _voice_engine_fn = fn
 
 
-def get_voice_engine_fn() -> Optional[Callable]:
+def get_voice_engine_fn() -> Callable | None:
     return _voice_engine_fn
 
 
-def set_browser_camera_privacy(*, enabled: bool, mode: str = "off", reason: Optional[str] = None) -> Dict[str, Any]:
+def set_browser_camera_privacy(
+    *, enabled: bool, mode: str = "off", reason: str | None = None
+) -> dict[str, Any]:
     global _browser_camera_privacy
     _browser_camera_privacy = {
         "enabled": bool(enabled),
@@ -60,8 +61,110 @@ def set_browser_camera_privacy(*, enabled: bool, mode: str = "off", reason: Opti
     return dict(_browser_camera_privacy)
 
 
-def get_browser_camera_privacy() -> Dict[str, Any]:
+def get_browser_camera_privacy() -> dict[str, Any]:
     return dict(_browser_camera_privacy)
+
+
+async def _commit_camera_permission(enabled: bool) -> bool:
+    """Commit the owner switch through the canonical transactional store."""
+    from interface.routes.settings import get_settings
+
+    committed = await asyncio.to_thread(
+        get_settings().set,
+        "permissions.camera",
+        bool(enabled),
+    )
+    return bool(committed)
+
+
+def apply_camera_runtime_state(
+    enabled: bool,
+    *,
+    reason: str | None = None,
+) -> dict[str, Any]:
+    """Apply a committed camera decision to hardware and visible state."""
+    from core.perception.camera_authority import get_camera_authority
+    from core.runtime.boot_safety import main_process_camera_policy
+
+    enabled = bool(enabled)
+    authority = get_camera_authority()
+    revoked: dict[str, Any] = {"released": False, "holder": None}
+    if not enabled:
+        revoked = authority.revoke_owner_permission()
+
+    authority_state = authority.state()
+    main_allowed, main_reason = main_process_camera_policy(enabled)
+    backend_available = bool(authority_state.get("backend_available"))
+    transport = str(authority_state.get("transport") or "none")
+
+    smc = get_runtime_service("sensory_motor_cortex", default=None)
+    vision_buffer = get_runtime_service("continuous_vision", default=None)
+    if smc is not None:
+        smc.camera_enabled = bool(enabled and main_allowed)
+    if vision_buffer is not None:
+        # Keep this compatibility field honest about direct in-process use.
+        vision_buffer.camera_enabled = bool(enabled and main_allowed)
+        # Actual capture may be supplied by the isolated sidecar.
+        vision_buffer.camera_capture_enabled = bool(enabled and backend_available)
+        if not enabled:
+            vision_buffer._camera_lease = None
+
+    if not enabled:
+        mode = "off"
+        state_reason = reason
+    elif transport == "sidecar" and backend_available:
+        mode = "isolated_sidecar"
+        state_reason = reason or main_reason
+    elif transport == "in_process" and backend_available:
+        mode = "full"
+        state_reason = reason
+    else:
+        # Browser-supplied vision signals remain a usable, separately visible
+        # transport even when this host has no native camera backend.
+        mode = "browser_only"
+        state_reason = reason or main_reason or "native_camera_backend_unavailable"
+
+    browser_state = set_browser_camera_privacy(
+        enabled=enabled,
+        mode=mode,
+        reason=state_reason,
+    )
+    result = {
+        "ok": True,
+        "enabled": enabled,
+        "mode": browser_state["mode"],
+        "reason": browser_state["reason"],
+        "transport": transport,
+        "native_capture_enabled": bool(enabled and backend_available),
+        "main_process_capture_enabled": bool(enabled and main_allowed),
+        "revocation": revoked,
+    }
+    logger.info(
+        "\U0001f512 Privacy: Camera %s mode=%s transport=%s",
+        "enabled" if enabled else "disabled",
+        mode,
+        transport,
+    )
+    return result
+
+
+async def apply_camera_privacy(
+    enabled: bool,
+    *,
+    reason: str | None = None,
+) -> dict[str, Any]:
+    """Commit and apply one owner camera decision end to end."""
+    enabled = bool(enabled)
+    committed = await _commit_camera_permission(enabled)
+    if committed is not enabled:
+        raise RuntimeError("camera_permission_commit_mismatch")
+    # A no-op settings transaction does not notify subscribers. Reapply here
+    # so an already-selected value repairs stale hardware/UI state as well.
+    return await asyncio.to_thread(
+        apply_camera_runtime_state,
+        enabled,
+        reason=reason,
+    )
 
 
 # ── Models ────────────────────────────────────────────────────
@@ -80,54 +183,7 @@ class PrivacyPayload(BaseModel):
 @router.post("/privacy/camera")
 async def api_privacy_camera(payload: PrivacyPayload, _: None = Depends(_require_internal)):
     """Toggle the visual cortex camera processing."""
-    enabled = payload.enabled
-    smc = get_runtime_service("sensory_motor_cortex", default=None)
-    vision_buffer = get_runtime_service("continuous_vision", default=None)
-
-    if not smc and not vision_buffer:
-        return JSONResponse({"error": "Camera systems unavailable"}, status_code=503)
-
-    if enabled:
-        from core.runtime.boot_safety import main_process_camera_policy
-
-        camera_allowed, reason = main_process_camera_policy(True)
-        if not camera_allowed:
-            if smc is not None:
-                smc.camera_enabled = False
-            if vision_buffer is not None:
-                vision_buffer.camera_enabled = False
-            browser_state = set_browser_camera_privacy(
-                enabled=True,
-                mode="browser_only",
-                reason=reason,
-            )
-            logger.warning(
-                "\U0001f512 Privacy: Main-process camera denied (%s); browser-only camera remains available",
-                reason,
-            )
-            return {
-                "ok": True,
-                "enabled": True,
-                "mode": browser_state["mode"],
-                "reason": browser_state["reason"],
-            }
-
-    if smc is not None:
-        smc.camera_enabled = enabled
-    if vision_buffer is not None:
-        vision_buffer.camera_enabled = enabled
-    browser_state = set_browser_camera_privacy(
-        enabled=enabled,
-        mode="full" if enabled else "off",
-        reason=None,
-    )
-    logger.info("\U0001f512 Privacy: Camera %s", 'enabled' if enabled else 'disabled')
-    return {
-        "ok": True,
-        "enabled": enabled,
-        "mode": browser_state["mode"],
-        "reason": browser_state["reason"],
-    }
+    return await apply_camera_privacy(payload.enabled)
 
 
 @router.post("/privacy/microphone")
@@ -240,8 +296,9 @@ async def api_source_download(
     """Bundle and return the current source code as a download."""
     PROJECT_ROOT = config.paths.project_root
     try:
-        from utils.bundler import write_bundle
         import tempfile as _tf
+
+        from utils.bundler import write_bundle
         with _tf.NamedTemporaryFile(suffix=".txt", delete=False) as tmp:
             out = Path(tmp.name)
         write_bundle(PROJECT_ROOT, out, lite=True)

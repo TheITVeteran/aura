@@ -41101,3 +41101,53 @@ motion rather than a hard-coded gesture. The resident-32B proof campaign remains
 independently active. Reasoning gain, frontier performance, fusion authority,
 activation authority, and `WOW Signal` remain false pending its complete valid
 verdict. The completion envelope remains `809/920` (approximately `87.9%`).
+
+## Checkpoint 2026-08-09-108: Camera Control And Cadence Are One System
+
+The isolated camera transport was usable after CP107, but its owner controls and
+continuous scheduling still belonged to separate architectures. The privacy API
+interpreted the macOS main-process OpenCV interlock as a missing native camera,
+disabled continuous capture, and reported `browser_only` even when the isolated
+sidecar was available. Aura's conversational camera action changed only a
+transient browser flag and then instructed the model to claim the hardware action
+was done. A direct transactional `permissions.camera` change did not immediately
+reach an already-open device, and the continuous loop captured every two seconds
+regardless of foreground inference or host pressure.
+
+Privacy API requests and Aura's own conversational control now commit through the
+same revisioned `permissions.camera` store used by the settings UI. The settings
+owner has a resident application subscriber with an auditable status receipt.
+Every path distinguishes direct `full`, native `isolated_sidecar`,
+`browser_only`, and `off` modes. Turning the durable setting off closes the
+authority's current lease immediately; every frame read independently rechecks
+the owner gate so a late toggle cannot be bypassed by an existing stream. Aura
+only receives a completed-action instruction after the operation returns `ok`;
+otherwise the concrete failure is preserved and she is forbidden from claiming
+completion.
+
+Continuous perception now receives a measured constitutive compute budget:
+nominal capture is 0.5 Hz, high-memory capture is capped at 0.2 Hz, and
+foreground, critical-memory, compute-pressure, proof, or failure-pressure states
+cap it at 0.1 Hz. Foreground/critical admission releases the autonomous camera
+lease instead of leaving the indicator and device active while merely sleeping.
+Screen and physical-camera modalities proceed independently: an unavailable or
+private screen clears screen context but no longer suppresses permitted physical
+vision.
+
+Focused camera authority, sidecar, privacy, settings, signals, sight, and
+continuous-vision contracts pass `154/154`. Canonical smoke passes `103/103`
+under the repository venv. The first unqualified `make smoke` attempt is retained
+as invalid environment evidence because the Makefile default interpreter lacked
+NumPy; it was not counted as a code failure or silently omitted. Ruff undefined
+name/import integrity, touched-file byte compilation, and diff hygiene pass.
+Evidence is
+`artifacts/closeout/companion/cp108_camera_control_and_cadence_are_one_system.json`.
+
+The labelled rebuilt-app arbitrary-detail camera battery remains open while the
+resident-32B campaign owns the model budget and Aura.app is intentionally
+stopped. At checkpoint capture the detached campaign had durably committed
+`21/28` cells and completed the `complete_system_closed_book` arm `7/7`; that is
+progress, not a capability verdict. Reasoning gain, frontier performance, fusion
+authority, activation authority, and `WOW Signal` remain false until its full
+source-bound verdict validates. The completion envelope remains `809/920`
+(approximately `87.9%`).

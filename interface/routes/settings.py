@@ -88,6 +88,8 @@ _STORE: SettingsStore | None = None
 # Emergency containment reconfigures the resident orchestrator immediately.
 # Autonomy is an intrinsic runtime invariant, not an operator-selected mode.
 # Other settings are read by their owner at the next action/tick boundary.
+# Voice and camera also have resident bridges because open hardware handles
+# must change immediately rather than waiting for another action.
 _RUNTIME_MODE_KEYS = frozenset({"safety.safe_mode"})
 _VOICE_RUNTIME_KEYS = frozenset(
     {
@@ -96,6 +98,7 @@ _VOICE_RUNTIME_KEYS = frozenset(
         "voice.auto_listen",
     }
 )
+_CAMERA_RUNTIME_KEYS = frozenset({"permissions.camera"})
 
 
 def _runtime_should_restrict(store: SettingsStore) -> bool:
@@ -210,6 +213,55 @@ def _apply_voice_setting(
         }
 
 
+def _apply_camera_setting(
+    key: str,
+    _previous: Any,
+    new: Any,
+) -> dict[str, str]:
+    """Bridge the durable camera gate to every resident capture transport."""
+    if key not in _CAMERA_RUNTIME_KEYS:
+        return {
+            "owner": "camera_runtime",
+            "status": "unchanged",
+            "detail": "setting is outside the resident camera bridge",
+        }
+    try:
+        from interface.routes.privacy import apply_camera_runtime_state
+
+        state = apply_camera_runtime_state(
+            bool(new),
+            reason="applied from the transactional runtime settings control plane",
+        )
+        return {
+            "owner": "camera_runtime",
+            "status": "applied",
+            "detail": (
+                f"camera {state['mode']} via {state['transport']}; "
+                f"native_capture={state['native_capture_enabled']}"
+            ),
+        }
+    except (
+        ImportError,
+        AttributeError,
+        OSError,
+        RuntimeError,
+        TypeError,
+        ValueError,
+    ) as exc:
+        record_degradation(
+            "settings.camera_apply",
+            exc,
+            severity="warning",
+            action="kept the durable camera preference and reported owner failure",
+            enforce_failure_policy=False,
+        )
+        return {
+            "owner": "camera_runtime",
+            "status": "failed",
+            "detail": f"{type(exc).__name__}:{str(exc)[:180]}",
+        }
+
+
 def get_settings() -> SettingsStore:
     global _STORE
     if _STORE is None:
@@ -223,6 +275,11 @@ def get_settings() -> SettingsStore:
             _apply_voice_setting,
             owner="voice_runtime",
             keys=_VOICE_RUNTIME_KEYS,
+        )
+        _STORE.subscribe(
+            _apply_camera_setting,
+            owner="camera_runtime",
+            keys=_CAMERA_RUNTIME_KEYS,
         )
     return _STORE
 
