@@ -22,7 +22,6 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
-import importlib.util
 import logging
 import threading
 import time
@@ -31,8 +30,6 @@ from typing import Any
 
 import numpy as np
 
-from core.container import ServiceContainer
-from core.runtime.service_access import optional_service
 from core.media.safe_imports import cv2_main_process_blocked
 from core.perception.multimodal_sync import (
     Calibration,
@@ -46,6 +43,7 @@ from core.perception.multimodal_sync import (
 from core.perception.multimodal_sync import (
     Modality as SynchronizedModality,
 )
+from core.runtime.service_access import optional_service
 
 logger = logging.getLogger("Perception.Sensory")
 _SENSORY_IMPORT_ERRORS = (ImportError, ModuleNotFoundError)
@@ -64,7 +62,10 @@ _SENSORY_RUNTIME_ERRORS = (
 @dataclass
 class Sight:
     captured: bool
-    person_present: bool = False
+    # None means the frame was captured but no person detector ran. Treating
+    # that as False published a high-confidence "nobody is here" claim from a
+    # path that had measured only width and height.
+    person_present: bool | None = None
     descriptor: np.ndarray | None = None   # coarse appearance descriptor (pluggable → real embeddings)
     width: int = 0
     height: int = 0
@@ -90,7 +91,13 @@ class CameraProvider:
         self._cascade = None
 
     def available(self) -> bool:
-        return importlib.util.find_spec("cv2") is not None
+        try:
+            from core.perception.camera_authority import get_camera_authority
+
+            return bool(get_camera_authority().state()["backend_available"])
+        except _SENSORY_IMPORT_ERRORS + _SENSORY_RUNTIME_ERRORS as exc:
+            logger.debug("camera authority availability probe failed: %s", exc)
+            return False
 
     def _load(self) -> bool:
         if self._cv2 is not None:
@@ -113,9 +120,10 @@ class CameraProvider:
             return False
 
     def capture(self, *, camera_index: int = 0) -> Sight:
-        if not self._load():
-            return Sight(captured=False, detail={"reason": "cv2_unavailable"})
-        cv2 = self._cv2
+        # Camera acquisition is independent from whether OpenCV may be loaded
+        # in this process. On macOS the real camera lives in the sidecar.
+        analysis_available = self._load()
+        cv2 = self._cv2 if analysis_available else None
 
         # This path used to open the device directly and never consulted
         # `camera_allowed()`, so turning the camera off in Aura's settings
@@ -142,18 +150,23 @@ class CameraProvider:
             if frame is None:
                 return Sight(captured=False, detail={"reason": "no_frame"})
             h, w = frame.shape[:2]
-            gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-            person = False
+            gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY) if cv2 is not None else None
+            person: bool | None = None
             descriptor = None
-            if self._cascade is not None:
-                faces = self._cascade.detectMultiScale(gray, scaleFactor=1.1, minNeighbors=5)
-                if len(faces) > 0:
+            faces: int | None = None
+            if self._cascade is not None and gray is not None:
+                detections = self._cascade.detectMultiScale(
+                    gray, scaleFactor=1.1, minNeighbors=5
+                )
+                person = len(detections) > 0
+                if person:
                     person = True
-                    x, y, fw, fh = max(faces, key=lambda r: r[2] * r[3])
+                    x, y, fw, fh = max(detections, key=lambda r: r[2] * r[3])
                     crop = gray[y:y + fh, x:x + fw]
                     descriptor = _appearance_descriptor(cv2, crop)
+                faces = int(len(detections))
             return Sight(captured=True, person_present=person, descriptor=descriptor,
-                         width=int(w), height=int(h), detail={"faces": int(person)})
+                         width=int(w), height=int(h), detail={"faces": faces})
         except _provider_errors(cv2) as exc:
             return Sight(captured=False, detail={"reason": f"capture_error:{type(exc).__name__}"})
         finally:
@@ -419,17 +432,25 @@ class SensoryRuntime:
                 quality_flags=(reason[:120],),
             )
             return
+        claims = [
+            PerceptualClaim("camera.frame_width", sight.width, 0.95),
+            PerceptualClaim("camera.frame_height", sight.height, 0.95),
+        ]
+        quality_flags = ["single_frame_observation"]
+        if sight.person_present is not None:
+            claims.insert(
+                0,
+                PerceptualClaim("scene.person_present", sight.person_present, 0.78),
+            )
+        else:
+            quality_flags.append("person_presence_unmeasured")
         self._publish_synchronized_event(
             modality=SynchronizedModality.VISION,
             source="on_demand_camera",
             summary="redacted camera scene observation",
             confidence=0.78 if sight.descriptor is not None else 0.68,
-            claims=(
-                PerceptualClaim("scene.person_present", sight.person_present, 0.78),
-                PerceptualClaim("camera.frame_width", sight.width, 0.95),
-                PerceptualClaim("camera.frame_height", sight.height, 0.95),
-            ),
-            quality_flags=("single_frame_observation",),
+            claims=tuple(claims),
+            quality_flags=tuple(quality_flags),
         )
 
     def _route_sound_to_synchronizer(self, sound: Sound) -> None:

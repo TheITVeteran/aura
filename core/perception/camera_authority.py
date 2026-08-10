@@ -162,22 +162,10 @@ class _SidecarCapture:
         the authority's whole API is synchronous for that reason.
         """
         try:
-            import asyncio
-
             from core.senses.sensory_client import get_sensory_client
 
             client = get_sensory_client()
-            coro = client.request(command, data, timeout=timeout)
-            try:
-                asyncio.get_running_loop()
-            except RuntimeError:
-                return asyncio.run(coro)
-            # Called from inside a loop: run the request on its own loop in
-            # a worker thread rather than blocking this one.
-            import concurrent.futures
-
-            with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
-                return pool.submit(asyncio.run, coro).result(timeout=timeout + 2.0)
+            return client.request_sync(command, data, timeout=timeout)
         except (ImportError, RuntimeError, OSError, TimeoutError, AttributeError,
                 TypeError, ValueError) as exc:
             record_degradation(
@@ -504,6 +492,36 @@ class CameraAuthority:
             getattr(capture, "last_error", "") or "capture_read_failed"
         )
         return frame if ok else None
+
+    def jpeg_bytes(self, lease: CameraLease, frame: Any) -> bytes:
+        """Encode a captured BGR frame without importing OpenCV.
+
+        Sidecar frames already crossed the process boundary as JPEG, so reuse
+        those exact bytes. Direct captures are encoded with Pillow. This keeps
+        every consumer on one path when OpenCV is intentionally forbidden in
+        Aura's primary macOS process.
+        """
+        if not lease.active or lease.capture is None:
+            raise RuntimeError("camera_lease_inactive")
+        encoded = getattr(lease.capture, "last_jpeg", None)
+        if isinstance(encoded, bytes) and encoded:
+            return encoded
+        try:
+            import numpy as np
+            from PIL import Image
+
+            array = np.asarray(frame)
+            if array.ndim != 3 or array.shape[2] < 3:
+                raise ValueError(f"unsupported camera frame shape {array.shape}")
+            rgb = np.ascontiguousarray(array[:, :, :3][:, :, ::-1])
+            buffer = io.BytesIO()
+            Image.fromarray(rgb, mode="RGB").save(buffer, format="JPEG", quality=90)
+            payload = buffer.getvalue()
+        except (ImportError, OSError, RuntimeError, TypeError, ValueError) as exc:
+            raise RuntimeError("camera_frame_encode_failed") from exc
+        if not payload or len(payload) > MAX_SIDECAR_JPEG_BYTES:
+            raise RuntimeError("camera_frame_encode_bounds_invalid")
+        return payload
 
     def release(self, lease: CameraLease | None) -> None:
         if lease is None:

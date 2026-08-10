@@ -82,6 +82,29 @@ def test_look_with_no_person_does_not_route(monkeypatch):
     assert routed == []
 
 
+def test_unmeasured_person_presence_is_not_published_as_false():
+    ServiceContainer.clear()
+    synchronizer = MultimodalSynchronizer()
+    ServiceContainer.register_instance(
+        "multimodal_synchronizer", synchronizer, required=False
+    )
+    runtime = SensoryRuntime(
+        camera=_MockCamera(Sight(captured=True, person_present=None, width=640, height=480)),
+        mic=_MockMic(Sound(captured=False)),
+        voice=_MockVoice(),
+    )
+    try:
+        runtime.look()
+        frame = synchronizer.fuse("unmeasured-person")
+
+        assert frame.belief("scene.person_present") is None
+        event = frame.observations[Modality.VISION]
+        assert "person_presence_unmeasured" in event.quality_flags
+        assert frame.belief("camera.frame_width").value == 640
+    finally:
+        ServiceContainer.clear()
+
+
 # ── ears ─────────────────────────────────────────────────────────────────────
 
 def test_listen_routes_speech_to_the_sentinel(monkeypatch):

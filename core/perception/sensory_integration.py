@@ -14,7 +14,6 @@ from pathlib import Path
 from typing import Any
 
 from core.container import ServiceContainer, ServiceLifetime
-from core.media.safe_imports import cv2_main_process_blocked
 from core.perception.multimodal_sync import (
     Calibration,
     MissingReason,
@@ -30,10 +29,10 @@ from core.perception.multimodal_sync import (
 from core.runtime.atomic_writer import atomic_write_text
 from core.runtime.errors import record_degradation
 from core.runtime.permission_gates import camera_allowed
-from core.runtime.service_access import optional_service
 from core.runtime.runtime_settings import get_runtime_setting
-from core.runtime.subprocess_gateway import get_subprocess_gateway
+from core.runtime.service_access import optional_service
 from core.runtime.state_ownership import state_root
+from core.runtime.subprocess_gateway import get_subprocess_gateway
 
 logger = logging.getLogger("Aura.SensoryIntegration")
 
@@ -471,8 +470,6 @@ class VisionSystem:
             return {"error": "camera_not_available"}
         
         def _do_capture() -> dict[str, Any]:
-            if cv2_main_process_blocked():
-                return {"error": "cv2_deferred_to_sidecar_after_pyav_load"}
             from core.perception.camera_authority import (
                 CameraDenial,
                 get_camera_authority,
@@ -490,14 +487,15 @@ class VisionSystem:
                 return {"error": lease.reason, **lease.to_dict()}
 
             try:
-                import cv2
                 if duration == 0:
                     frame = authority.read(lease)
                     if frame is None:
-                        return {"error": "capture_failed"}
+                        return {"error": lease.last_error or "capture_failed"}
+                    encoded = authority.jpeg_bytes(lease, frame)
                     if save_path:
-                        cv2.imwrite(save_path, frame)
-                    _, buffer = cv2.imencode('.jpg', frame)
+                        from core.runtime.atomic_writer import atomic_write_bytes
+
+                        atomic_write_bytes(Path(save_path), encoded)
                     # Measure the conditions while the pixels are still
                     # here. `analyze` receives base64 and a path; by then
                     # the array is gone, and re-decoding to assess it would
@@ -506,25 +504,55 @@ class VisionSystem:
 
                     return {
                         "type": "image",
-                        "data": base64.b64encode(buffer).decode('utf-8'),
+                        "data": base64.b64encode(encoded).decode('utf-8'),
                         "path": save_path,
                         "timestamp": time.time(),
                         "frame_quality": assess_frame(frame).to_dict(),
                     }
                 else:
                     path = save_path or f"capture_{int(time.time())}.mp4"
-                    fourcc = cv2.VideoWriter_fourcc(*"mp4v")  # type: ignore[attr-defined]
-                    out = cv2.VideoWriter(path, fourcc, 20.0, (640, 480))
-                    start = time.time()
+                    import av
+
+                    container = None
+                    stream = None
+                    frames_written = 0
+                    start = time.monotonic()
+                    next_frame_at = start
                     try:
-                        while time.time() - start < duration:
+                        while time.monotonic() - start < duration:
                             frame = authority.read(lease)
-                            if frame is not None:
-                                out.write(frame)
+                            if frame is None:
+                                if frames_written == 0:
+                                    return {"error": lease.last_error or "capture_failed"}
+                                break
+                            if container is None:
+                                height, width = frame.shape[:2]
+                                container = av.open(path, mode="w")
+                                stream = container.add_stream("mpeg4", rate=20)
+                                stream.width = int(width)
+                                stream.height = int(height)
+                                stream.pix_fmt = "yuv420p"
+                            video_frame = av.VideoFrame.from_ndarray(frame, format="bgr24")
+                            for packet in stream.encode(video_frame):
+                                container.mux(packet)
+                            frames_written += 1
+                            next_frame_at += 0.05
+                            delay = next_frame_at - time.monotonic()
+                            if delay > 0:
+                                time.sleep(delay)
                     finally:
-                        out.release()
-                    return {"type": "video", "path": path, "duration": duration, "timestamp": time.time()}
-            except (ImportError, AttributeError, RuntimeError) as e:
+                        if container is not None and stream is not None:
+                            for packet in stream.encode():
+                                container.mux(packet)
+                            container.close()
+                    return {
+                        "type": "video",
+                        "path": path,
+                        "duration": round(time.monotonic() - start, 3),
+                        "frames": frames_written,
+                        "timestamp": time.time(),
+                    }
+            except (ImportError, AttributeError, RuntimeError, OSError, ValueError) as e:
                 record_degradation('sensory_integration', e)
                 return {"error": str(e)}
             finally:

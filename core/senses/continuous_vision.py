@@ -6,7 +6,6 @@ from collections import deque
 from pathlib import Path
 from typing import Any
 
-from core.media.safe_imports import cv2_main_process_blocked
 from core.runtime.boot_safety import main_process_camera_policy
 from core.runtime.errors import record_degradation
 from core.runtime.shutdown_coordinator import is_shutdown_requested
@@ -75,6 +74,22 @@ class ContinuousSensoryBuffer:
             requested_camera = True
 
         self.camera_enabled, camera_reason = main_process_camera_policy(requested_camera)
+        # `camera_enabled` intentionally continues to mean "safe to open in
+        # this process" for compatibility and diagnostics. Capture can still
+        # be enabled through the isolated sidecar when the macOS policy says no.
+        sidecar_available = False
+        if requested_camera and not self.camera_enabled:
+            try:
+                from core.perception.camera_authority import get_camera_authority
+
+                sidecar_available = bool(
+                    get_camera_authority().state().get("backend_available")
+                )
+            except (ImportError, RuntimeError, AttributeError, TypeError, ValueError):
+                sidecar_available = False
+        self.camera_capture_enabled = bool(
+            requested_camera and (self.camera_enabled or sidecar_available)
+        )
         if self.camera_enabled and os.environ.get("AURA_FORCE_CAMERA") == "1":
             logger.info("👁️ [VISION] Camera FORCED ON via AURA_FORCE_CAMERA=1.")
         elif requested_camera and not self.camera_enabled:
@@ -97,7 +112,7 @@ class ContinuousSensoryBuffer:
             logger.info("👁️ Continuous Sensory Buffer disabled by headless/foreground configuration.")
             return
         if not self._is_active:
-            if self._mss_module is None and not self.camera_enabled:
+            if self._mss_module is None and not self.camera_capture_enabled:
                 logger.warning("👁️ Continuous Sensory Buffer not started: no capture backends are available.")
                 return
             self._is_active = True
@@ -256,12 +271,7 @@ class ContinuousSensoryBuffer:
                         # never produces one.
                         _note_screen_frame()
 
-                if self.camera_enabled:
-                    if cv2_main_process_blocked():
-                        logger.debug("👁️ [VISION] Camera branch deferred to sidecar after PyAV load.")
-                        await asyncio.sleep(2.0)
-                        continue
-
+                if self.camera_capture_enabled:
                     # `self.camera_enabled` is the build-time feature flag.
                     # It is NOT the owner's settings toggle, so this loop
                     # used to keep filming after the camera was switched off
@@ -278,7 +288,8 @@ class ContinuousSensoryBuffer:
 
                     authority = get_camera_authority()
                     if self._camera_lease is None or not self._camera_lease.active:
-                        acquired = authority.acquire(
+                        acquired = await asyncio.to_thread(
+                            authority.acquire,
                             "continuous_vision",
                             purpose="rolling visual context buffer",
                             autonomous=True,
@@ -296,18 +307,20 @@ class ContinuousSensoryBuffer:
                         self._last_camera_denial = None
                         self._camera_lease = acquired
 
-                    frame = authority.read(self._camera_lease)
+                    frame = await asyncio.to_thread(authority.read, self._camera_lease)
                     if frame is None:
                         # Either the frame failed or the lease was reclaimed.
                         # Drop it and re-acquire next tick rather than
                         # spinning on a handle that may already be closed.
-                        authority.release(self._camera_lease)
+                        await asyncio.to_thread(authority.release, self._camera_lease)
                         self._camera_lease = None
                     else:
-                        import cv2
-
-                        _, jpeg_bytes = cv2.imencode('.jpg', frame)
-                        self.frame_buffer.append(("image/jpeg", jpeg_bytes.tobytes()))
+                        jpeg_bytes = await asyncio.to_thread(
+                            authority.jpeg_bytes,
+                            self._camera_lease,
+                            frame,
+                        )
+                        self.frame_buffer.append(("image/jpeg", jpeg_bytes))
             except (ImportError, AttributeError, RuntimeError) as e:
                 record_degradation('continuous_vision', e)
                 logger.error("Sensory Buffer capture failed: %s", e)

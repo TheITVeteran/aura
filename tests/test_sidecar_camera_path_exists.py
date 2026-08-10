@@ -25,6 +25,7 @@ import queue
 import sys
 from io import BytesIO
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -271,6 +272,7 @@ def test_the_client_has_a_payload_returning_call():
     from core.senses.sensory_client import SensoryLocalClient
 
     assert hasattr(SensoryLocalClient, "request")
+    assert hasattr(SensoryLocalClient, "request_sync")
 
 
 @pytest.mark.asyncio
@@ -284,6 +286,63 @@ async def test_the_client_returns_a_dict_when_the_worker_is_down():
 
     assert isinstance(reply, dict)
     assert reply["status"] == "error"
+
+
+@pytest.mark.asyncio
+async def test_sync_sidecar_request_refuses_to_block_an_event_loop(monkeypatch):
+    from core.senses.sensory_client import SensoryLocalClient
+
+    client = SensoryLocalClient()
+    monkeypatch.setattr(client, "is_alive", lambda: True)
+
+    reply = client.request_sync("camera_frame")
+
+    assert reply == {"status": "error", "msg": "sync_request_on_event_loop"}
+
+
+@pytest.mark.asyncio
+async def test_async_sidecar_request_runs_the_queue_round_trip_off_loop(monkeypatch):
+    import asyncio
+    import threading
+
+    from core.senses.sensory_client import SensoryLocalClient
+
+    client = SensoryLocalClient()
+    loop_thread = threading.get_ident()
+    observed_threads: list[int] = []
+    monkeypatch.setattr(client, "is_alive", lambda: True)
+
+    def _blocking(_cmd, _data, _timeout):
+        observed_threads.append(threading.get_ident())
+        return {"status": "ok", "data": b"jpeg"}
+
+    monkeypatch.setattr(client, "_request_blocking", _blocking)
+    reply = await asyncio.wait_for(client.request("camera_frame"), timeout=1.0)
+
+    assert reply["status"] == "ok"
+    assert observed_threads and observed_threads[0] != loop_thread
+
+
+def test_sidecar_capture_uses_the_cross_thread_client_surface(monkeypatch):
+    import core.senses.sensory_client as client_mod
+
+    calls: list[str] = []
+
+    class _Client:
+        def request_sync(self, command, data=None, **_kwargs):
+            del data
+            calls.append(command)
+            return {"status": "error", "msg": "bounded"}
+
+        async def request(self, *_args, **_kwargs):
+            pytest.fail("camera authority nested an async request")
+
+    monkeypatch.setattr(client_mod, "get_sensory_client", lambda: _Client())
+
+    capture = _SidecarCapture(0)
+
+    assert capture.isOpened() is False
+    assert calls == ["camera_open"]
 
 
 # ─────────────────────── the authority routes to the sidecar, not to "no"
@@ -392,3 +451,176 @@ def test_safe_imports_claim_now_has_something_behind_it():
             f"safe_imports calls the sidecar the production camera path but "
             f"the worker has no {command} command"
         )
+
+
+# ───────────── every production consumer actually reaches the sidecar
+
+
+def test_authority_reuses_sidecar_jpeg_without_importing_cv2(monkeypatch):
+    np = pytest.importorskip("numpy")
+    auth = CameraAuthority()
+    payload = b"\xff\xd8already-encoded\xff\xd9"
+    capture = SimpleNamespace(last_jpeg=payload)
+    lease = SimpleNamespace(active=True, capture=capture)
+    monkeypatch.setitem(sys.modules, "cv2", None)
+
+    assert auth.jpeg_bytes(lease, np.zeros((2, 2, 3), dtype=np.uint8)) == payload
+
+
+@pytest.mark.asyncio
+async def test_vision_system_still_capture_reaches_sidecar_when_cv2_is_forbidden(
+    monkeypatch,
+):
+    import core.perception.camera_authority as camera_mod
+    from core.perception.sensory_integration import VisionSystem
+
+    np = pytest.importorskip("numpy")
+    jpeg = BytesIO()
+    pytest.importorskip("PIL.Image").new("RGB", (8, 8), (30, 80, 120)).save(
+        jpeg, format="JPEG"
+    )
+    lease = SimpleNamespace(active=True, last_error="", capture=object())
+
+    class _Authority:
+        released = False
+
+        def acquire(self, *_args, **_kwargs):
+            return lease
+
+        def read(self, _lease):
+            return np.zeros((8, 8, 3), dtype=np.uint8)
+
+        def jpeg_bytes(self, _lease, _frame):
+            return jpeg.getvalue()
+
+        def release(self, _lease):
+            self.released = True
+
+        def sidecar_required(self):
+            return True
+
+    authority = _Authority()
+    monkeypatch.setattr(camera_mod, "get_camera_authority", lambda: authority)
+    monkeypatch.setitem(sys.modules, "cv2", None)
+    vision = VisionSystem()
+
+    async def _available():
+        return True
+
+    monkeypatch.setattr(vision, "_get_camera_available", _available)
+    result = await vision.capture()
+
+    assert result["type"] == "image"
+    assert result["data"]
+    assert result["frame_quality"]["pixels"] == 64
+    assert authority.released is True
+
+
+@pytest.mark.asyncio
+async def test_vision_system_video_capture_uses_pyav_not_main_process_cv2(
+    monkeypatch, tmp_path
+):
+    import core.perception.camera_authority as camera_mod
+    from core.perception.sensory_integration import VisionSystem
+
+    np = pytest.importorskip("numpy")
+    pytest.importorskip("av")
+    lease = SimpleNamespace(active=True, last_error="", capture=object())
+
+    class _Authority:
+        released = False
+
+        def acquire(self, *_args, **_kwargs):
+            return lease
+
+        def read(self, _lease):
+            return np.full((16, 16, 3), 96, dtype=np.uint8)
+
+        def release(self, _lease):
+            self.released = True
+
+    authority = _Authority()
+    monkeypatch.setattr(camera_mod, "get_camera_authority", lambda: authority)
+    monkeypatch.setitem(sys.modules, "cv2", None)
+    vision = VisionSystem()
+
+    async def _available():
+        return True
+
+    monkeypatch.setattr(vision, "_get_camera_available", _available)
+    target = tmp_path / "sidecar.mp4"
+    result = await vision.capture(duration=0.08, save_path=str(target))
+
+    assert result["type"] == "video", result
+    assert result["frames"] >= 1
+    assert target.stat().st_size > 0
+    assert authority.released is True
+
+
+def test_on_demand_camera_provider_captures_without_inprocess_cv2(monkeypatch):
+    import core.perception.camera_authority as camera_mod
+    from core.perception.sensory_runtime import CameraProvider
+
+    np = pytest.importorskip("numpy")
+    lease = SimpleNamespace(active=True, last_error="", capture=object())
+
+    class _Authority:
+        def acquire(self, *_args, **_kwargs):
+            return lease
+
+        def read(self, _lease):
+            return np.zeros((24, 32, 3), dtype=np.uint8)
+
+        def release(self, _lease):
+            pass
+
+    monkeypatch.setattr(camera_mod, "get_camera_authority", lambda: _Authority())
+    provider = CameraProvider()
+    monkeypatch.setattr(provider, "_load", lambda: False)
+    monkeypatch.setitem(sys.modules, "cv2", None)
+
+    sight = provider.capture()
+
+    assert sight.captured is True
+    assert (sight.width, sight.height) == (32, 24)
+    assert sight.detail["faces"] is None, "unmeasured face count became a false zero"
+
+
+def test_continuous_camera_keeps_sidecar_enabled_when_main_process_is_blocked(
+    monkeypatch, tmp_path
+):
+    import core.config as config_mod
+    import core.perception.camera_authority as camera_mod
+    import core.senses.continuous_vision as continuous
+
+    monkeypatch.setattr(
+        config_mod,
+        "get_config",
+        lambda: SimpleNamespace(features=SimpleNamespace(camera_enabled=True)),
+    )
+    monkeypatch.setattr(
+        continuous,
+        "main_process_camera_policy",
+        lambda _requested: (False, "main process blocked"),
+    )
+    monkeypatch.setattr(
+        camera_mod,
+        "get_camera_authority",
+        lambda: SimpleNamespace(state=lambda: {"backend_available": True}),
+    )
+
+    buffer = continuous.ContinuousSensoryBuffer(tmp_path)
+
+    assert buffer.camera_enabled is False
+    assert buffer.camera_capture_enabled is True
+
+
+def test_continuous_sidecar_calls_are_offloaded_from_the_event_loop():
+    source = (ROOT / "core" / "senses" / "continuous_vision.py").read_text("utf-8")
+    camera_branch = source[source.index("if self.camera_capture_enabled:") :]
+    camera_branch = camera_branch[: camera_branch.index("def get_visual_context_parts")]
+
+    assert "cv2_main_process_blocked" not in camera_branch
+    assert "await asyncio.to_thread(" in camera_branch
+    assert "authority.read," in camera_branch
+    assert "authority.jpeg_bytes," in camera_branch

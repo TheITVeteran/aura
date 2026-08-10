@@ -1,7 +1,7 @@
 {
-  "raw_lock_calls": 715,
-  "files_with_raw_locks": 445,
-  "files_using_checked_locks": 89,
+  "raw_lock_calls": 714,
+  "files_with_raw_locks": 446,
+  "files_using_checked_locks": 93,
   "raw_by_file": {
     "core/actuation/world_actuator.py": 2,
     "core/actuators/actuator_registry.py": 3,
@@ -279,6 +279,7 @@
     "core/organism/model_validation.py": 1,
     "core/organism/welfare.py": 2,
     "core/perception/ambient_developer_stream.py": 1,
+    "core/perception/camera_authority.py": 1,
     "core/perception/multimodal_sync.py": 1,
     "core/perception/perception_daemon.py": 2,
     "core/perception/perception_sentinel.py": 2,
@@ -395,7 +396,7 @@
     "core/self_modification/structural_mutator.py": 2,
     "core/senses/continuous_vision.py": 1,
     "core/senses/interaction_signals.py": 1,
-    "core/senses/sensory_client.py": 3,
+    "core/senses/sensory_client.py": 1,
     "core/senses/voice_engine.py": 4,
     "core/service_registration.py": 1,
     "core/skills/auto_refactor.py": 1,

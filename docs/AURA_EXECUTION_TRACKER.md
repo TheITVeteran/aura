@@ -41023,3 +41023,49 @@ open, including arbitrary object/count/spatial/detail questions rather than a
 hard-coded finger-count path. The resident-32B proof pilot continues from its
 independent CP103 source capsule. The completion envelope remains `809/920`
 (approximately `87.9%`).
+
+## Checkpoint 2026-08-09-106: Every Camera Consumer Reaches The Sidecar
+
+The camera authority and worker could exchange a real frame after CP105, but
+three consumers still made the old assumption that camera capture required
+OpenCV in Aura's primary process. `VisionSystem.capture()` returned
+`cv2_deferred_to_sidecar_after_pyav_load` before consulting the authority,
+`CameraProvider.capture()` returned `cv2_unavailable` before acquisition, and
+continuous vision disabled its entire camera branch when the macOS main-process
+policy correctly refused OpenCV. The production sidecar existed but ordinary
+capture, on-demand sight, and rolling visual context could not reach it.
+
+All three now acquire through the canonical authority regardless of where the
+device lives. Sidecar JPEGs are reused directly, while direct BGR frames encode
+through Pillow without importing OpenCV. Duration capture uses PyAV on the
+offloaded capture thread and produces a real MP4 from the same authority frames.
+Continuous vision preserves the existing `camera_enabled=False` diagnostic for
+unsafe main-process capture while independently enabling the isolated transport
+when its backend is available.
+
+The sidecar client now serializes request/reply pairs with one checked
+cross-thread IPC lock. Synchronous camera requests no longer create fresh event
+loops around loop-bound asyncio locks; asynchronous consumers offload the whole
+transaction. Shutdown serializes its exit and queue teardown against in-flight
+frames, preventing an exit reply from being consumed as a camera response.
+Lockdep's raw-construction count consequently improved from `715` to `714`.
+
+Camera truthfulness was also repaired. When the sidecar captured a frame but no
+face detector ran in the primary process, the runtime previously published
+`scene.person_present=False` at high confidence. Person presence is now nullable;
+unmeasured presence is omitted from fused claims and marked
+`person_presence_unmeasured`, while measured dimensions remain available.
+
+Focused camera, sidecar, frame-quality, and sensory contracts pass `89/89`; the
+lock-coverage ratchet passes `3/3`; Ruff, touched-file byte compilation, and diff
+hygiene pass. The expanded camera/sensory/vision set passed `253/253` and canonical
+smoke passed `103/103` before the final bounded availability guard; subsequent
+direct contracts cover that guard. Evidence is
+`artifacts/closeout/companion/cp106_camera_consumers_reach_the_sidecar.json`.
+
+No live-device accuracy claim is made while the resident 32B proof campaign owns
+the model budget. A rebuilt-app camera proof and labelled general visual-detail
+battery remain open. Reasoning gain, frontier performance, fusion authority,
+activation authority, and `WOW Signal` also remain false pending the complete
+four-arm verdict. The completion envelope remains `809/920` (approximately
+`87.9%`).

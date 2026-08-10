@@ -1,0 +1,39 @@
+{
+  "schema": "aura.closeout.checkpoint.v1",
+  "checkpoint": 106,
+  "date": "2026-08-09",
+  "subject": "camera consumers reach the isolated production sidecar",
+  "status": "implemented_and_bounded_verified",
+  "defects_closed": [
+    "VisionSystem returned before CameraAuthority whenever main-process OpenCV was forbidden",
+    "CameraProvider refused capture before consulting the sidecar-backed authority",
+    "ContinuousSensoryBuffer disabled the complete camera branch when only the main-process backend was forbidden",
+    "Sidecar IPC used asyncio locks across unrelated event loops",
+    "Continuous sidecar requests could block Aura's event loop",
+    "Unmeasured person presence was published as a confident false value",
+    "Video capture still required main-process OpenCV"
+  ],
+  "implementation": {
+    "ipc": "one checked cross-thread transaction lock and a synchronous sidecar surface with async offload wrappers",
+    "still_frames": "sidecar JPEG reuse or Pillow BGR encoding without main-process OpenCV",
+    "video": "PyAV MP4 encoding from authority frames in a worker thread",
+    "continuous_vision": "isolated transport stays enabled while unsafe main-process capture remains disabled",
+    "truthfulness": "person presence is nullable and omitted from fusion when no detector ran",
+    "shutdown": "exit and queue teardown serialize with in-flight request/reply transactions"
+  },
+  "verification": {
+    "focused_camera_sidecar_quality": "89 passed",
+    "lock_coverage_ratchet": "3 passed; raw lock constructions improved 715 -> 714",
+    "expanded_camera_sensory_vision_before_final_availability_guard": "253 passed",
+    "canonical_smoke_before_final_availability_guard": "103 passed",
+    "ruff_touched_surface": "pass",
+    "python_byte_compile_touched_surface": "pass",
+    "diff_check": "pass",
+    "live_camera_device": "deferred until the resident-32B proof campaign releases the runtime"
+  },
+  "scientific_boundary": {
+    "general_visual_accuracy_proven": false,
+    "live_camera_device_proven": false,
+    "reason": "transport and truthful abstention are proven; a labelled arbitrary-detail live battery remains open"
+  }
+}

@@ -30,25 +30,29 @@ class SensoryLocalClient:
         self._req_q: Any | None = None
         self._res_q: Any | None = None
         self._running = False
-        self._lock: asyncio.Lock | None = None
-        self._start_lock: asyncio.Lock | None = None
+        # A multiprocessing request/response pair is one ordered transaction.
+        # Camera calls originate in OS threads while screen/audio calls originate
+        # in asyncio loops, so an asyncio.Lock is the wrong primitive: it becomes
+        # bound to whichever loop touched it first and later sidecar camera reads
+        # can fail with "bound to a different event loop". One checked thread
+        # lock serializes both sync and async callers at the actual IPC boundary.
+        from core.runtime.lockdep import checked_lock
 
-    def _ensure_async_locks(self) -> tuple[asyncio.Lock, asyncio.Lock]:
-        if self._lock is None:
-            self._lock = asyncio.Lock()
-        if self._start_lock is None:
-            self._start_lock = asyncio.Lock()
-        return self._lock, self._start_lock
+        self._ipc_lock = checked_lock("sensory_client.ipc")
+        self._lifecycle_lock = checked_lock("sensory_client.lifecycle")
 
     async def start(self) -> bool:
         """Start the isolated sensory worker."""
+        return await asyncio.to_thread(self._start_blocking)
+
+    def _start_blocking(self) -> bool:
+        """Start and initialize the worker from any thread or event loop."""
         if is_shutdown_requested():
             logger.info("Sensory worker start refused: runtime shutdown requested")
             return False
         from .sensory_worker import sensory_worker_loop
-        _, start_lock = self._ensure_async_locks()
 
-        async with start_lock:
+        with self._lifecycle_lock:
             if is_shutdown_requested():
                 return False
             if self.is_alive():
@@ -85,21 +89,21 @@ class SensoryLocalClient:
             self._process = process
             if is_shutdown_requested():
                 logger.info("Sensory worker crossed shutdown during spawn; stopping it")
-                await self.stop()
+                self._stop_blocking(lock_held=True)
                 return False
             self._running = True
             logger.info("👀 Sensory Client: Worker started via %s (PID: %d)", ctx_name, process.pid)
 
-            if not await self._send_command("ping", timeout=2.0, auto_restart=False):
+            if self._request_blocking("ping", None, 2.0).get("status") != "ok":
                 logger.error("🛑 Sensory Client: Worker failed initial ping.")
-                await self.stop()
+                self._stop_blocking(lock_held=True)
                 return False
 
-            success = await self._send_command("init_vision", auto_restart=False)
+            success = self._request_blocking("init_vision", None, 5.0).get("status") == "ok"
             if success:
                 logger.info("   ✅ Vision isolated successfully")
 
-            success = await self._send_command("init_audio", auto_restart=False)
+            success = self._request_blocking("init_audio", None, 5.0).get("status") == "ok"
             if success:
                 logger.info("   ✅ Audio isolated successfully")
 
@@ -201,36 +205,27 @@ class SensoryLocalClient:
             if not started:
                 return False
 
-        command_lock, _ = self._ensure_async_locks()
+        reply = await asyncio.to_thread(self._request_blocking, cmd, data, timeout)
+        return reply.get("status") == "ok"
 
-        async with command_lock:
+    def _request_blocking(
+        self,
+        cmd: str,
+        data: Any,
+        timeout: float,
+    ) -> dict[str, Any]:
+        """Perform one queue round-trip under the cross-thread IPC lock."""
+        with self._ipc_lock:
             if self._req_q is None or self._res_q is None:
-                logger.warning("👀 Sensory Client: Worker queues unavailable for command %s", cmd)
-                return False
-
-            # [STRUCTURAL UNIFICATION] Report sensory tasks to registry
-            from core.supervisor.registry import TaskStatus, get_task_registry
-            registry = get_task_registry()
-            task_id = registry.register_task("sensory_gate", f"Sensory: {cmd}", {"data": str(data)})
-            
+                return {"status": "error", "msg": "worker_queues_unavailable"}
             try:
                 self._req_q.put({"command": cmd, "data": data})
-                registry.update_task(task_id, status=TaskStatus.RUNNING)
-                
-                # Wait for response in a thread to non-block
-                res = await asyncio.to_thread(self._res_q.get, timeout=timeout)
-                
-                if res.get("status") == "ok":
-                    registry.update_task(task_id, status=TaskStatus.COMPLETED)
-                    return True
-                else:
-                    registry.update_task(task_id, status=TaskStatus.FAILED, error=res.get("msg"))
-                    return False
-            except (OSError, ConnectionError, TimeoutError, queue.Empty) as e:
-                record_degradation('sensory_client', e)
-                logger.error("🛑 Sensory Client Command [%s] failed: %s", cmd, e)
-                registry.update_task(task_id, status=TaskStatus.FAILED, error=str(e))
-                return False
+                reply = self._res_q.get(timeout=timeout)
+            except (OSError, ConnectionError, TimeoutError, queue.Empty) as exc:
+                record_degradation("sensory_client", exc)
+                logger.error("🛑 Sensory Client request [%s] failed: %s", cmd, exc)
+                return {"status": "error", "msg": str(exc)}
+        return reply if isinstance(reply, dict) else {"status": "error", "msg": "bad_reply"}
 
     async def request(  # noqa: ASYNC109 - timeout bounds blocking sidecar IPC.
         self,
@@ -260,43 +255,79 @@ class SensoryLocalClient:
             if not await self.start():
                 return {"status": "error", "msg": "worker_start_failed"}
 
-        command_lock, _ = self._ensure_async_locks()
-        async with command_lock:
-            if self._req_q is None or self._res_q is None:
-                return {"status": "error", "msg": "worker_queues_unavailable"}
-            try:
-                self._req_q.put({"command": cmd, "data": data})
-                reply = await asyncio.to_thread(self._res_q.get, timeout=timeout)
-            except (OSError, ConnectionError, TimeoutError, queue.Empty) as exc:
-                record_degradation("sensory_client", exc)
-                logger.error("🛑 Sensory Client request [%s] failed: %s", cmd, exc)
-                return {"status": "error", "msg": str(exc)}
-        return reply if isinstance(reply, dict) else {"status": "error", "msg": "bad_reply"}
+        return await asyncio.to_thread(self._request_blocking, cmd, data, timeout)
+
+    def request_sync(
+        self,
+        cmd: str,
+        data: Any = None,
+        *,
+        timeout: float = 5.0,
+        auto_restart: bool = True,
+    ) -> dict[str, Any]:
+        """Thread-safe synchronous sidecar request for camera owners.
+
+        The camera authority is deliberately synchronous because several
+        holders are OS threads. Async callers must offload the authority call;
+        silently nesting a new event loop here was both an event-loop stall and
+        a cross-loop lock defect.
+        """
+        if is_shutdown_requested():
+            return {"status": "error", "msg": "runtime_shutdown"}
+        try:
+            asyncio.get_running_loop()
+        except RuntimeError:
+            pass
+        else:
+            return {"status": "error", "msg": "sync_request_on_event_loop"}
+        if not self.is_alive():
+            if not auto_restart:
+                return {"status": "error", "msg": "worker_unavailable"}
+            if not self._start_blocking():
+                return {"status": "error", "msg": "worker_start_failed"}
+        return self._request_blocking(cmd, data, timeout)
 
     def is_alive(self) -> bool:
         return self._process is not None and self._process.is_alive()
 
     async def stop(self) -> None:
-        self._running = False
-        process, self._process = self._process, None
-        if process:
-            try:
-                if self._req_q is not None:
-                    self._req_q.put({"command": "exit"})
-            except (RuntimeError, AttributeError, TypeError, ValueError) as _exc:
-                record_degradation('sensory_client', _exc)
-                logger.debug("Suppressed Exception: %s", _exc)
-            # Issue 26: Use asyncio.to_thread for blocking process join
-            await asyncio.to_thread(process.join, timeout=2.0)
-            if process.is_alive():
-                process.terminate()
-                await asyncio.to_thread(process.join, timeout=1.0)
-            if process.is_alive():
-                process.kill()
-                await asyncio.to_thread(process.join, timeout=1.0)
-            logger.info("👀 Sensory Client: Worker stopped")
-            self._drain_queues()
-        self._close_queues()
+        await asyncio.to_thread(self._stop_blocking)
+
+    def _stop_blocking(self, *, lock_held: bool = False) -> None:
+        if not lock_held:
+            self._lifecycle_lock.acquire()
+        try:
+            self._stop_blocking_locked()
+        finally:
+            if not lock_held:
+                self._lifecycle_lock.release()
+
+    def _stop_blocking_locked(self) -> None:
+        # Serialize exit and queue teardown with the same lock as requests.
+        # Otherwise an in-flight camera read can consume the exit reply, while
+        # shutdown consumes the JPEG as though it acknowledged exit.
+        with self._ipc_lock:
+            self._running = False
+            process, self._process = self._process, None
+            if process:
+                try:
+                    if self._req_q is not None:
+                        self._req_q.put({"command": "exit"})
+                except (RuntimeError, AttributeError, TypeError, ValueError) as _exc:
+                    record_degradation('sensory_client', _exc)
+                    logger.debug("Suppressed Exception: %s", _exc)
+                # The async public wrapper runs this whole shutdown in a worker
+                # thread, so process joins never block Aura's event loop.
+                process.join(timeout=2.0)
+                if process.is_alive():
+                    process.terminate()
+                    process.join(timeout=1.0)
+                if process.is_alive():
+                    process.kill()
+                    process.join(timeout=1.0)
+                logger.info("👀 Sensory Client: Worker stopped")
+                self._drain_queues()
+            self._close_queues()
 
     close = stop
     cleanup = stop
