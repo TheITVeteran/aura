@@ -960,9 +960,13 @@ class EpisodicFastWeights:
                 1e-8,
             )
             identity = mx.eye(int(keys.shape[0]), dtype=mx.float32)
+            # MLX does not implement linalg.solve on the GPU.  This system is
+            # at most rank-by-rank (normally 2-16), so the CPU stream is both
+            # the supported path and negligible beside the model forwards.
             dual = mx.linalg.solve(
                 gram + float(regularization) * ridge_scale * identity,
                 targets,
+                stream=mx.cpu,
             )
             active = int(keys.shape[0])
             scale = max(abs(float(wrapper.scale)), 1e-12)

@@ -42664,3 +42664,21 @@ strict treatment win, by a fresh multi-task producer-disabled replication. No
 broad neural gain, resident-32B use, frontier result, fusion, activation, or
 `WOW Signal` is authorized. The completion envelope is `849/920`
 (approximately `92.3%`).
+
+## Checkpoint 2026-08-10-152: The Neural Map Uses a Supported Resident Solve
+
+The first CP151 real-checkpoint discriminator stopped on its first treatment
+episode before producing a scientific result. MLX does not implement
+`linalg.solve` on the GPU stream, so the new rank-by-rank ridge system raised
+instead of installing its map. The engine failed honestly and did not replace
+the episode with vanilla output; the remaining duplicate work was cancelled.
+
+The solve now runs explicitly on MLX's CPU stream. Only the tiny teaching-pair
+system moves there; model forwards, factors, and generation remain on their
+normal device. A GPU-stream regression contract executes the public install
+API, measures the fitted multi-key error, proves model-function change after
+activation, and proves exact detach restoration. The focused suite passes
+`26/26`; Ruff and diff hygiene pass. This retires an infrastructure blocker,
+not a reasoning result, so the completion envelope remains `849/920`
+(approximately `92.3%`). The same source-bound 1.5B discriminator is next;
+resident-32B use remains locked.
