@@ -457,6 +457,80 @@ def _promotion_assessment(
     return final_text, receipt
 
 
+def _select_complete_system_promotion_candidate(
+    *,
+    verifier: Any,
+    rlc_text: str,
+    amplifier_text: str,
+    amplifier_consensus_programs: int,
+    amplifier_consensus_strategies: int,
+) -> tuple[str, dict[str, Any]]:
+    """Select the strongest public candidate without discarding an RLC proof.
+
+    The RLC answer-replacement gate can produce an exact objective-program
+    solution before the reasoning amplifier runs.  The amplifier is allowed to
+    explore from that seed, but it is not allowed to erase the already-proven
+    answer by returning a weaker source candidate.  Exact public verification
+    dominates; absent an exact candidate, the amplifier remains the exploratory
+    candidate and cannot displace the incumbent at the outer promotion gate.
+    """
+
+    candidates: list[dict[str, Any]] = []
+    for source, text in (
+        ("rlc_final", str(rlc_text or "").strip()),
+        ("reasoning_amplifier", str(amplifier_text or "").strip()),
+    ):
+        evaluation = verifier.evaluate(text, _record=False) if text else {}
+        quality = _candidate_quality_assessment(evaluation) if evaluation else {
+            "schema": "aura.rlc.candidate_quality_assessment.v1",
+            "proxy_admitted": False,
+            "exact_public_objective_proof": False,
+            "ground_truth_verified": False,
+            "answer_key_used": False,
+            "issues": ["candidate_absent"],
+            "score": 0.0,
+        }
+        candidates.append(
+            {
+                "source": source,
+                "text": text,
+                "text_sha256": hashlib.sha256(text.encode()).hexdigest() if text else "",
+                "evaluation": evaluation,
+                "quality_assessment": quality,
+            }
+        )
+
+    exact = [
+        row
+        for row in candidates
+        if row["quality_assessment"]["exact_public_objective_proof"]
+        and row["quality_assessment"]["proxy_admitted"]
+    ]
+    if exact:
+        # Stable ordering intentionally prefers the directly bound RLC output.
+        # The amplifier may return a lower-quality seed after seeing that output;
+        # such a return cannot revoke an already established proof.
+        selected = exact[0]
+        authority = "public_objective_deterministic_execution"
+    else:
+        selected = candidates[1]
+        if amplifier_consensus_programs >= 2 and amplifier_consensus_strategies >= 2:
+            authority = "independent_executable_consensus"
+        else:
+            authority = "candidate_quality_proxy_not_ground_truth"
+
+    receipt = {
+        "schema": "aura.rlc.complete_system_candidate_selection.v1",
+        "answer_key_used": False,
+        "policy": "exact_public_proof_then_amplifier_exploration",
+        "selected_source": selected["source"],
+        "selected_text_sha256": selected["text_sha256"],
+        "authority": authority,
+        "candidates": candidates,
+    }
+    return str(selected["text"]), receipt
+
+
 def _aggregate_complete_system_resources(
     *,
     incumbent_resource: dict[str, Any],
@@ -880,20 +954,32 @@ def _run_complete_system_closed_book(
         and operation.get("candidate_sha256") == candidate_sha256
         and operation.get("strategy")
     }
-    if amplifier_candidate_quality["exact_public_objective_proof"]:
-        promotion_authority = "public_objective_deterministic_execution"
-    elif len(consensus_programs) >= 2 and len(consensus_strategies) >= 2:
-        promotion_authority = "independent_executable_consensus"
-    else:
-        promotion_authority = "candidate_quality_proxy_not_ground_truth"
+    promotion_candidate, candidate_selection = _select_complete_system_promotion_candidate(
+        verifier=EpisodeTaskVerifier(
+            objective,
+            response_contract=task.public.response_contract,
+        ),
+        rlc_text=final_rlc_text,
+        amplifier_text=amplifier_candidate,
+        amplifier_consensus_programs=len(consensus_programs),
+        amplifier_consensus_strategies=len(consensus_strategies),
+    )
+    selected_candidate = next(
+        row
+        for row in candidate_selection["candidates"]
+        if row["source"] == candidate_selection["selected_source"]
+    )
+    promotion_authority = str(candidate_selection["authority"])
     final_text, promotion = _promotion_assessment(
         verifier=EpisodeTaskVerifier(
             objective,
             response_contract=task.public.response_contract,
         ),
         incumbent_text=incumbent_text,
-        candidate_text=amplifier_candidate,
-        candidate_verified=bool(amplifier_candidate_quality["proxy_admitted"]),
+        candidate_text=promotion_candidate,
+        candidate_verified=bool(
+            selected_candidate["quality_assessment"]["proxy_admitted"]
+        ),
         authority=promotion_authority,
     )
     from core.brain.llm.latent_cortex.resource_accounting import (
@@ -918,7 +1004,7 @@ def _run_complete_system_closed_book(
         verifier_registry.input_bytes
         + len(amplifier_candidate.encode("utf-8"))
         + len(incumbent_text.encode("utf-8"))
-        + (len(amplifier_candidate.encode("utf-8")) if amplifier_candidate else 0)
+        + (len(promotion_candidate.encode("utf-8")) if promotion_candidate else 0)
     )
     verifier_calls = verifier_registry.calls + 2 + int(bool(amplifier_candidate))
     complete_ledger.charge(
@@ -983,6 +1069,7 @@ def _run_complete_system_closed_book(
             "evaluation": amplifier_candidate_evaluation,
             "quality_assessment": amplifier_candidate_quality,
         },
+        "promotion_candidate_selection": candidate_selection,
         "amplifier_verifier_calls": verifier_registry.calls,
         "in_process_generation_calls": generation_calls,
         "seed_candidate_count": len(seeds),
@@ -1254,6 +1341,71 @@ def _complete_system_evidence(
         system.get("amplifier_verified") is candidate_quality.get("proxy_admitted"),
         "amplifier_proxy_verdict_mismatch",
     )
+    selection = system.get("promotion_candidate_selection") or {}
+    selection_rows = selection.get("candidates") or []
+    reconstructed_selection_rows: list[dict[str, Any]] = []
+    for row in selection_rows if isinstance(selection_rows, list) else []:
+        source = str(row.get("source") or "") if isinstance(row, dict) else ""
+        text = str(row.get("text") or "") if isinstance(row, dict) else ""
+        evaluation = (
+            EpisodeTaskVerifier(
+                objective,
+                response_contract=response_contract,
+            ).evaluate(text, _record=False)
+            if text
+            else {}
+        )
+        quality = _candidate_quality_assessment(evaluation) if evaluation else {
+            "schema": "aura.rlc.candidate_quality_assessment.v1",
+            "proxy_admitted": False,
+            "exact_public_objective_proof": False,
+            "ground_truth_verified": False,
+            "answer_key_used": False,
+            "issues": ["candidate_absent"],
+            "score": 0.0,
+        }
+        reconstructed_selection_rows.append(
+            {
+                "source": source,
+                "text": text,
+                "text_sha256": hashlib.sha256(text.encode()).hexdigest() if text else "",
+                "evaluation": evaluation,
+                "quality_assessment": quality,
+            }
+        )
+    require(
+        selection.get("schema") == "aura.rlc.complete_system_candidate_selection.v1",
+        "system_candidate_selection_absent",
+    )
+    require(selection.get("answer_key_used") is False, "answer_key_contaminated")
+    require(
+        selection.get("policy") == "exact_public_proof_then_amplifier_exploration",
+        "system_candidate_selection_policy_invalid",
+    )
+    require(
+        [row.get("source") for row in reconstructed_selection_rows]
+        == ["rlc_final", "reasoning_amplifier"],
+        "system_candidate_selection_sources_invalid",
+    )
+    require(
+        selection_rows == reconstructed_selection_rows,
+        "system_candidate_selection_reconstruction_mismatch",
+    )
+    selected_rows = [
+        row
+        for row in reconstructed_selection_rows
+        if row["source"] == selection.get("selected_source")
+    ]
+    selected = selected_rows[0] if len(selected_rows) == 1 else {}
+    require(len(selected_rows) == 1, "system_candidate_selection_not_unique")
+    require(
+        selection.get("selected_text_sha256") == selected.get("text_sha256"),
+        "system_candidate_selection_digest_mismatch",
+    )
+    require(
+        selection.get("authority") == promotion.get("authority"),
+        "system_candidate_selection_authority_mismatch",
+    )
     require(
         promotion.get("schema") == "aura.rlc.closed_book_promotion.v1",
         "system_promotion_not_measured",
@@ -1269,7 +1421,7 @@ def _complete_system_evidence(
         "system_promotion_authority_invalid",
     )
     require(
-        promotion.get("candidate_text_sha256") == candidate.get("text_sha256"),
+        promotion.get("candidate_text_sha256") == selected.get("text_sha256"),
         "system_promotion_candidate_mismatch",
     )
     require(

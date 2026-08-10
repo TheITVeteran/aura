@@ -41661,3 +41661,35 @@ This is experiment-identity closure, not model evidence. The 1.5B component
 canary remains next, and resident 32B remains locked. No reasoning-gain,
 frontier, fusion, activation, or `WOW Signal` claim is authorized. The
 completion envelope is `817/920` (approximately `88.8%`).
+
+## Checkpoint 2026-08-09-121: Exact RLC Results Survive Composition
+
+The first cheap 1.5B component canary exposed a final answer-ownership defect
+without consuming a long campaign. Ordinary decode was wrong on all three
+fresh tasks. In the first two treatment cells, the inner RLC selected the
+public objective program, proved an exact replacement, and bound its output
+tokens. The later complete-system wrapper nevertheless considered only the
+reasoning amplifier's weaker source candidate and restored the stale ordinary
+incumbent. The producer worked; a downstream gate discarded its answer.
+
+Complete-system promotion now inventories both the final RLC answer and the
+amplifier answer. An exact public proof has precedence over an unverified
+exploratory candidate, while anything short of exact proof remains unable to
+replace vanilla. The receipt binds both candidate texts, evaluations, quality
+assessments, selected source, authority, and final digest, and the evidence
+reader reconstructs the inventory independently. The producer-disabled arm
+retains the same boundary but cannot obtain the objective-program candidate,
+so the causal ablation remains intact.
+
+Candidate-selection, promotion, receipt, engine, replay, objective-program,
+floor, and reconciliation contracts pass `194/194`; canonical smoke passes
+`103/103`; Ruff and diff hygiene pass. A regression proves that a verified RLC
+answer survives when the later amplifier returns a weaker candidate.
+
+This closes the observed composition defect, not the empirical gate. The
+aborted canary is negative engineering evidence and carries no capability
+verdict. A fresh clean-source 1.5B canary must now show exact promotions in the
+treatment and their absence in the producer-disabled arm before the bounded
+component campaign may proceed. Resident 32B remains locked, and no frontier,
+fusion, activation, or `WOW Signal` claim is authorized. The completion
+envelope is `818/920` (approximately `88.9%`).

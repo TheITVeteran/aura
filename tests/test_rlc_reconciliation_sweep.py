@@ -1317,6 +1317,63 @@ def test_complete_system_promotion_preserves_incumbent_until_verified_improvemen
     assert consensus_receipt["no_regression_guaranteed"] is False
 
 
+def test_complete_system_selection_preserves_exact_rlc_output_over_weaker_amplifier():
+    from tools.rlc_complete_system_closed_book import (
+        _select_complete_system_promotion_candidate,
+    )
+
+    class _Verifier:
+        @staticmethod
+        def evaluate(text, _record=False):  # noqa: ARG004
+            exact = text == "exact-rlc"
+            return {
+                "score": 1.0 if exact else 0.25,
+                "applicable_checks": ["response_contract", "deterministic_router"],
+                "checks": {
+                    "response_contract": {"valid": True},
+                    "atomic_decomposition": {"valid": True},
+                    "deterministic_router": {
+                        "valid": True,
+                        "receipt": {
+                            "routes": (
+                                [
+                                    {
+                                        "verifier": "exact_objective_program",
+                                        "outcome": "verified",
+                                    }
+                                ]
+                                if exact
+                                else []
+                            )
+                        },
+                    },
+                    "arithmetic": {"failures": []},
+                    "code": {"failures": []},
+                },
+            }
+
+    selected, receipt = _select_complete_system_promotion_candidate(
+        verifier=_Verifier(),
+        rlc_text="exact-rlc",
+        amplifier_text="weaker-amplifier",
+        amplifier_consensus_programs=0,
+        amplifier_consensus_strategies=0,
+    )
+
+    assert selected == "exact-rlc"
+    assert receipt["selected_source"] == "rlc_final"
+    assert receipt["authority"] == "public_objective_deterministic_execution"
+    promoted, promotion = sweep._promotion_assessment(
+        verifier=_Verifier(),
+        incumbent_text="incumbent",
+        candidate_text=selected,
+        candidate_verified=True,
+        authority=receipt["authority"],
+    )
+    assert promoted == "exact-rlc"
+    assert promotion["decision"] == "replace"
+
+
 def _run_with_dead_engine(model, config, reason: str, termination: str):
     class _DeadResult:
         ok = False
@@ -2242,9 +2299,22 @@ def test_complete_system_receipt_requires_acquisition_amplifier_and_promotion(
         objective,
         response_contract=response_contract,
     ).evaluate(candidate_text, _record=False)
-    from tools.rlc_complete_system_closed_book import _candidate_quality_assessment
+    from tools.rlc_complete_system_closed_book import (
+        _candidate_quality_assessment,
+        _select_complete_system_promotion_candidate,
+    )
 
     candidate_quality = _candidate_quality_assessment(candidate_evaluation)
+    _, candidate_selection = _select_complete_system_promotion_candidate(
+        verifier=EpisodeTaskVerifier(
+            objective,
+            response_contract=response_contract,
+        ),
+        rlc_text=candidate_text,
+        amplifier_text=candidate_text,
+        amplifier_consensus_programs=0,
+        amplifier_consensus_strategies=0,
+    )
     from core.brain.llm.latent_cortex.resource_accounting import (
         ModelComputeProfile,
         ResourceLedger,
@@ -2314,6 +2384,7 @@ def test_complete_system_receipt_requires_acquisition_amplifier_and_promotion(
                 "evaluation": candidate_evaluation,
                 "quality_assessment": candidate_quality,
             },
+            "promotion_candidate_selection": candidate_selection,
             "amplifier_verifier_calls": 4,
             "in_process_generation_calls": 1,
             "seed_candidate_count": 2,
