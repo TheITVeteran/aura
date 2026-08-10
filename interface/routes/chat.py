@@ -4059,6 +4059,54 @@ _TOPIC_STOPWORDS = frozenset(
         "you",
         "your",
     }
+    # Stance and degree adverbs. These modify how a clause is asserted; they
+    # are never what a question is ABOUT.
+    #
+    # LIVE DEFECT, 2026-08-10. Asked "(1) how many heartbeats are active,
+    # (2) your uptime in seconds, (3) the exact action name that keeps getting
+    # refused… I will check all three", the degraded composer answered:
+    #
+    #     I understood you to be asking about heartbeats and actually.
+    #
+    # "actually" came from "not accept it. don't agree with me. answer only
+    # from what you can actually read". _select_anchor_topic_tokens ranks
+    # non-priority candidates by -len(token) — longest word first — so an
+    # eight-letter adverb outranked every real noun in the question.
+    #
+    # The category was already recognised here: "really" was in this set. It
+    # was simply never filled in.
+    | {
+        "actually",
+        "already",
+        "always",
+        "basically",
+        "certainly",
+        "clearly",
+        "definitely",
+        "especially",
+        "essentially",
+        "exactly",
+        "generally",
+        "honestly",
+        "instead",
+        "literally",
+        "maybe",
+        "merely",
+        "mostly",
+        "obviously",
+        "particularly",
+        "perhaps",
+        "possibly",
+        "probably",
+        "quite",
+        "rather",
+        "seriously",
+        "simply",
+        "specifically",
+        "truly",
+        "usually",
+        "very",
+    }
 )
 _CONTEXTUAL_RELEVANCE_CHALLENGE_MARKERS = (
     "what does that have to do",
@@ -4524,11 +4572,47 @@ _SHORT_FOLLOWUP_CONTEXT_NEEDED_RE = re.compile(
 )
 
 
+#: Asking what was SAID — by either of us — in this conversation.
+#
+# LIVE DEFECT, 2026-08-10. "quote me the exact first sentence I said to you
+# today" was not classified as needing recent context, so the turn ran on the
+# default four-exchange window, the sentence was long out of it, and she could
+# not answer a question whose whole answer was sitting in the transcript.
+#
+# The existing classifier caught "what did we just talk about" and "what did
+# you TELL me earlier", but not the most direct forms of the same request:
+#
+#     what did you say a minute ago            -> missed
+#     remind me what you told me earlier       -> missed
+#     repeat what you just said                -> missed
+#     what were your exact words               -> missed
+#     you said something earlier, what was it  -> missed
+#     quote me the first sentence I said       -> missed
+#
+# Every one of those is a question about the transcript, which is the one
+# piece of evidence the transcript window exists to supply.
+_UTTERANCE_RECALL_RE = re.compile(
+    r"\b(?:"
+    r"(?:what|which)\s+(?:exact\s+)?(?:word|words|sentence|line|phrase)\b"
+    r"|(?:quote|repeat|restate|recite)\b[^.?!]{0,40}\b(?:said|say|told|wrote|asked)\b"
+    r"|(?:quote|repeat|restate|recite)\s+(?:me\s+)?(?:the|my|your|that|it)\b"
+    r"|\b(?:you|i|we)\s+(?:just\s+|already\s+)?(?:said|told\s+me|mentioned|wrote)\b"
+    r"|\bwhat\s+did\s+(?:you|i|we)\s+(?:just\s+)?(?:say|said|tell|write)\b"
+    r"|\bremind\s+me\s+what\b"
+    r"|\bin\s+your\s+own\s+words\b"
+    r"|\byour\s+exact\s+words\b"
+    r")",
+    re.IGNORECASE,
+)
+
+
 def _desktop_turn_needs_recent_context(user_message: str) -> bool:
     text = str(user_message or "").strip()
     if not text:
         return False
     if _classify_conversation_recall_request(text):
+        return True
+    if _UTTERANCE_RECALL_RE.search(text):
         return True
     if _is_contextual_relevance_challenge(text):
         return True
