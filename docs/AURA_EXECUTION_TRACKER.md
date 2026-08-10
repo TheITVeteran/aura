@@ -41151,3 +41151,47 @@ progress, not a capability verdict. Reasoning gain, frontier performance, fusion
 authority, activation authority, and `WOW Signal` remain false until its full
 source-bound verdict validates. The completion envelope remains `809/920`
 (approximately `87.9%`).
+
+## Checkpoint 2026-08-09-109: Ambient Observation Has A Chain Of Custody
+
+The companion observation loop claimed to reject private applications before
+capture, but its production context reader called `get_window_title()` and
+parsed the result as `application|title`. The provider returns only the title.
+Consequently `ScreenContext.app` was always empty on the live path, so an
+ordinary-looking window title in a password manager could bypass the app-based
+privacy predicate even though mocked tests supplied the app correctly.
+
+Host automation now obtains frontmost application and window title atomically
+in one read-only AppleScript receipt. This is both a privacy and consistency
+boundary: a focus change can no longer pair one application's identity with
+another application's title. Password-manager admission is exercised through
+the production context method and proves that capture is never called.
+
+The observation now retains a chain of custody instead of flattening host
+automation to text. Context and capture adapter, immutable receipt ID, and
+duration flow through `ScreenContext`, `TickResult`, the retained `Observation`
+detail, and privacy-safe state telemetry. A failed capture receipt records no
+evidence, and malformed timing telemetry normalizes to zero rather than taking
+down perception.
+
+Ambient scheduling now uses the same constitutive compute budget as other
+continuous senses. Nominal polling remains bounded at 0.5 Hz; foreground,
+memory, compute, proof, or failure pressure reduces it to 0.1 Hz, and any
+slower owner-configured interval remains authoritative. If the background
+policy itself is unavailable, the loop records the degradation and continues
+at bounded configured backoff rather than terminating. The adjacent shell
+gateway routing test was also made independent of persisted approval settings;
+authority behavior remains covered by its dedicated contracts.
+
+Focused ambient and host contracts pass `83/83`; canonical smoke passes
+`103/103` under the repository venv. Ruff, touched-file byte compilation, and
+diff hygiene pass. Evidence is
+`artifacts/closeout/companion/cp109_ambient_observation_has_provenance_and_pressure_control.json`.
+
+The rebuilt-app companion-only scenario, changing-page revision proof, and
+native bubble observation latency remain open while the resident-32B campaign
+owns the model budget and Aura.app is stopped. At the last campaign check,
+`22/28` cells were durable and `vanilla_resource_dominating` was `1/7`; no
+reasoning gain, frontier performance, fusion authority, activation authority,
+or `WOW Signal` is claimed before the complete source-bound verdict validates.
+The completion envelope remains `809/920` (approximately `87.9%`).

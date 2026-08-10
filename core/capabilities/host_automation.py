@@ -597,6 +597,31 @@ class HostAutomationProvider:
         receipt.target = app_name
         return receipt
 
+    async def get_frontmost_window_context(self) -> AutomationReceipt:
+        """Read frontmost app and window title in one atomic OS observation.
+
+        Reading them in separate AppleScript calls allows focus to change
+        between the two results. That is particularly unsafe for privacy
+        admission: a public app name paired with a newly private title can make
+        the capture decision describe no window that ever existed.
+        """
+        script = '''
+            tell application "System Events"
+                set frontApp to name of first application process whose frontmost is true
+                set winTitle to name of front window of process frontApp
+            end tell
+            return frontApp & "|" & winTitle
+        '''
+        receipt = await AppleScriptRunner.run(
+            script,
+            timeout=3.0,
+            read_only=True,
+            source="host_automation.frontmost_window_context",
+        )
+        receipt.action = "get_frontmost_window_context"
+        receipt.target = "frontmost_window"
+        return receipt
+
     @staticmethod
     def _main_screen_visible_frame() -> tuple[int, int, int, int]:
         """Return the primary usable display in System Events coordinates."""

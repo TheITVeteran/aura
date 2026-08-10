@@ -8,6 +8,7 @@ import pytest
 
 from core.capabilities.host_automation import (
     AppleScriptRunner,
+    AutomationReceipt,
     HostAutomationProvider,
     ScriptASTGuard,
 )
@@ -98,6 +99,39 @@ async def test_host_applescript_inspection_is_read_only_and_not_action_logged(mo
     assert gateway.run_calls[0]["read_only"] is True
     assert gateway.run_calls[0]["source"] == "unit.host_automation.inspection"
     assert provider.get_recent_receipts() == []
+
+
+@pytest.mark.asyncio
+async def test_frontmost_window_context_is_one_atomic_read_only_receipt(monkeypatch) -> None:
+    from core.capabilities import host_automation
+
+    call: dict[str, object] = {}
+
+    async def _run(script: str, **kwargs):
+        call.update(script=script, **kwargs)
+        return AutomationReceipt(
+            action="applescript",
+            target="",
+            adapter="applescript",
+            success=True,
+            result="Google Chrome|Aura - GitHub",
+            duration_ms=4.25,
+        )
+
+    monkeypatch.setattr(host_automation.AppleScriptRunner, "run", _run)
+    provider = HostAutomationProvider()
+
+    receipt = await provider.get_frontmost_window_context()
+
+    assert receipt.success is True
+    assert receipt.result == "Google Chrome|Aura - GitHub"
+    assert receipt.action == "get_frontmost_window_context"
+    assert receipt.target == "frontmost_window"
+    assert call["read_only"] is True
+    assert call["source"] == "host_automation.frontmost_window_context"
+    script = str(call["script"])
+    assert "frontApp" in script and "winTitle" in script
+    assert script.count("tell application \"System Events\"") == 1
 
 
 @pytest.mark.asyncio
@@ -210,9 +244,21 @@ async def test_post_action_verifier_clipboard_uses_read_only_gateway(monkeypatch
 @pytest.mark.asyncio
 async def test_post_action_verifier_command_uses_governed_shell_gateway(monkeypatch) -> None:
     from core.capabilities import post_action_verifier
+    from core.security.execution_authority import ExecutionVerdict
 
     gateway = _FakeSubprocessGateway(_FakeProcess(stdout=b"ok", returncode=0))
     monkeypatch.setattr(post_action_verifier, "get_subprocess_gateway", lambda: gateway)
+
+    async def _authorized(*_args, **_kwargs):
+        return ExecutionVerdict(
+            approved=True,
+            reason="unit fixture",
+            kind="shell",
+            descriptor="printf ok",
+            outcome="approved",
+        )
+
+    monkeypatch.setattr(post_action_verifier, "authorize_execution", _authorized)
 
     result = await PostActionVerifier().verify(
         "command_succeeded",

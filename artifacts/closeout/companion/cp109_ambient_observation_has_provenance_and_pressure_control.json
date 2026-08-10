@@ -1,0 +1,50 @@
+{
+  "schema": "aura.closeout.checkpoint.v1",
+  "checkpoint": 109,
+  "date": "2026-08-09",
+  "subject": "ambient observation has atomic privacy admission, end-to-end provenance, and pressure-aware cadence",
+  "status": "implemented_and_bounded_verified",
+  "defects_closed": [
+    "ambient privacy admission expected an app and title from get_window_title even though that provider returned only the title, leaving app-only private surfaces such as password managers unidentifiable on the production path",
+    "frontmost app and title had no atomic host observation contract, so separate reads could describe different windows across a focus change",
+    "ambient observations discarded host-automation receipt identity, adapter, and duration at both context and capture boundaries",
+    "the ambient loop polled at a fixed cadence without consulting foreground inference, proof, memory, compute, or failure pressure",
+    "a malformed receipt duration or unavailable background policy could terminate the continuous perception organ",
+    "the shell-gateway routing unit test depended on persisted live approval state instead of isolating the gateway behavior it names"
+  ],
+  "implementation": {
+    "privacy_admission": "one read-only AppleScript receipt atomically returns the frontmost application and its current window title before any screen capture is attempted",
+    "provenance": "context and capture adapter, receipt ID, and bounded duration flow through ScreenContext, TickResult, Observation detail, and privacy-safe state telemetry",
+    "cadence": {
+      "nominal_max_hz": 0.5,
+      "foreground_or_pressure_hz": 0.1,
+      "configured_slower_interval_preserved": true,
+      "failure_backoff_max_s": 300
+    },
+    "failure_behavior": "malformed telemetry normalizes to zero and a policy lookup failure records a degradation then sleeps at bounded configured backoff rather than killing the loop",
+    "test_isolation": "the post-action shell gateway test supplies its execution authorization fixture; execution-authority semantics remain owned by their dedicated contracts"
+  },
+  "verification": {
+    "focused_ambient_and_host_contracts": "83 passed",
+    "canonical_smoke_repository_venv": "103 passed",
+    "ruff_touched_surface": "pass",
+    "python_byte_compile_touched_surface": "pass",
+    "diff_check": "pass",
+    "live_rebuilt_app": "deferred while the resident-32B proof campaign owns the model budget and Aura.app is intentionally stopped"
+  },
+  "claim_boundary": {
+    "atomic_private_admission_proven": true,
+    "receipt_provenance_proven": true,
+    "adaptive_cadence_proven": true,
+    "live_companion_scenario_proven": false,
+    "reason": "bounded contracts prove the production code paths; rebuilt native-bubble and changing-page behavior still require a live app after the model campaign releases the host"
+  },
+  "concurrent_campaign": {
+    "campaign_id": "cp103-wow-pilot-repaired-20260809",
+    "source_commit": "b62bd4fa78fd28fe62cb51f7677614774c3482fc",
+    "cells_at_last_check": 22,
+    "active_arm": "vanilla_resource_dominating",
+    "active_arm_progress": "1/7",
+    "capability_verdict_claimed": false
+  }
+}

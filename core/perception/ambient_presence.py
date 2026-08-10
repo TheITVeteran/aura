@@ -77,6 +77,15 @@ _SURFACE_ALIVE_S = 15.0
 _HIGHLIGHT_TTL_S = 10.0
 
 
+def _nonnegative_finite_float(value: Any) -> float:
+    """Normalize untrusted receipt telemetry without endangering perception."""
+    try:
+        number = float(value or 0.0)
+    except (TypeError, ValueError, OverflowError):
+        return 0.0
+    return number if math.isfinite(number) and number >= 0.0 else 0.0
+
+
 class PresenceMode(StrEnum):
     """What surface she is present on right now."""
 
@@ -107,6 +116,9 @@ class ScreenContext:
     app: str = ""
     title: str = ""
     at: float = field(default_factory=time.time)
+    adapter: str = ""
+    receipt_id: str = ""
+    duration_ms: float = 0.0
 
     @property
     def key(self) -> str:
@@ -132,6 +144,9 @@ class TickResult:
     context: ScreenContext | None = None
     characters: int = 0
     detail: str = ""
+    capture_adapter: str = ""
+    capture_receipt_id: str = ""
+    capture_duration_ms: float = 0.0
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -149,6 +164,14 @@ class TickResult:
             ),
             "characters": self.characters,
             "detail": self.detail[:200],
+            "context_adapter": self.context.adapter if self.context else "",
+            "context_receipt_id": self.context.receipt_id if self.context else "",
+            "context_duration_ms": (
+                round(self.context.duration_ms, 3) if self.context else 0.0
+            ),
+            "capture_adapter": self.capture_adapter,
+            "capture_receipt_id": self.capture_receipt_id,
+            "capture_duration_ms": round(self.capture_duration_ms, 3),
         }
 
 
@@ -175,6 +198,8 @@ class AmbientPresence:
         self._private_skips = 0
         self._running = False
         self._last_spoke_at = 0.0
+        self._last_observation_provenance: dict[str, Any] = {}
+        self._last_compute_budget = None
         #: A rectangle waiting for the bubble to collect and draw, and when
         #: that surface was last known to be alive. Both live here rather
         #: than in the route because "can anything actually draw right now"
@@ -547,7 +572,7 @@ class AmbientPresence:
             with local_internal_governed_scope(
                 "ambient_presence.observe", domain="environment_action"
             ):
-                text = await self._read_screen_text()
+                reading = await self._read_screen_text()
         except (RuntimeError, OSError, TypeError, ValueError) as exc:
             record_degradation(
                 "ambient_presence",
@@ -557,8 +582,42 @@ class AmbientPresence:
             )
             return self._skip(SkipReason.CAPTURE_FAILED, context=context, detail=str(exc))
 
-        if not str(text or "").strip():
+        if hasattr(reading, "success"):
+            if not bool(getattr(reading, "success", False)):
+                return self._skip(
+                    SkipReason.CAPTURE_FAILED,
+                    context=context,
+                    detail=str(getattr(reading, "error", "") or "screen read failed"),
+                )
+            text = str(getattr(reading, "result", "") or "")
+            capture_adapter = str(getattr(reading, "adapter", "") or "")
+            capture_receipt_id = str(getattr(reading, "receipt_id", "") or "")
+            capture_duration_ms = _nonnegative_finite_float(
+                getattr(reading, "duration_ms", 0.0)
+            )
+        else:
+            # Compatibility for injected faculties and older tests. Production
+            # host automation always returns an immutable receipt.
+            text = str(reading or "")
+            capture_adapter = "injected"
+            capture_receipt_id = ""
+            capture_duration_ms = 0.0
+
+        if not text.strip():
             return self._skip(SkipReason.CAPTURE_FAILED, context=context)
+
+        provenance = {
+            "context": {
+                "adapter": context.adapter,
+                "receipt_id": context.receipt_id,
+                "duration_ms": round(context.duration_ms, 3),
+            },
+            "capture": {
+                "adapter": capture_adapter,
+                "receipt_id": capture_receipt_id,
+                "duration_ms": round(capture_duration_ms, 3),
+            },
+        }
 
         remember_observation(
             Observation(
@@ -569,21 +628,28 @@ class AmbientPresence:
                 # supply its own shape via recall_for().
                 request="",
                 source=context.app or "screen",
+                detail=provenance,
             )
         )
         with self._lock:
             self._last_context = context
             self._last_observed_at = time.time()
             self._observations += 1
+            self._last_observation_provenance = provenance
         return TickResult(
-            observed=True, context=context, characters=len(str(text))
+            observed=True,
+            context=context,
+            characters=len(text),
+            capture_adapter=capture_adapter,
+            capture_receipt_id=capture_receipt_id,
+            capture_duration_ms=capture_duration_ms,
         )
 
     async def _current_context(self) -> ScreenContext | None:
         try:
             from core.capabilities.host_automation import get_host_automation
 
-            receipt = await get_host_automation().get_window_title()
+            receipt = await get_host_automation().get_frontmost_window_context()
         except (ImportError, AttributeError, RuntimeError, OSError, TypeError) as exc:
             record_degradation(
                 "ambient_presence", exc, severity="debug",
@@ -594,15 +660,42 @@ class AmbientPresence:
             return None
         raw = str(getattr(receipt, "result", "") or "")
         app, _, title = raw.partition("|")
-        return ScreenContext(app=app.strip(), title=title.strip())
+        if not title:
+            # A legacy injected provider may still return only the title. It is
+            # usable for freshness, but app-based privacy must remain unknown.
+            title = app
+            app = ""
+        return ScreenContext(
+            app=app.strip(),
+            title=title.strip(),
+            adapter=str(getattr(receipt, "adapter", "") or ""),
+            receipt_id=str(getattr(receipt, "receipt_id", "") or ""),
+            duration_ms=_nonnegative_finite_float(
+                getattr(receipt, "duration_ms", 0.0)
+            ),
+        )
 
-    async def _read_screen_text(self) -> str:
+    async def _read_screen_text(self) -> Any:
         from core.capabilities.host_automation import get_host_automation
 
-        receipt = await get_host_automation().get_screen_text(retain_screenshot=False)
-        if not getattr(receipt, "success", False):
-            return ""
-        return str(getattr(receipt, "result", "") or "")
+        return await get_host_automation().get_screen_text(retain_screenshot=False)
+
+    @staticmethod
+    def _compute_budget(interval_s: float):
+        from core.runtime.background_policy import constitutive_compute_budget
+
+        requested = max(2.0, float(interval_s))
+        base_hz = max(0.1, min(0.5, 1.0 / requested))
+        return constitutive_compute_budget(
+            "ambient_presence",
+            base_hz,
+            min_hz=0.1,
+            foreground_hz=0.1,
+            memory_high_hz=0.1,
+            memory_critical_hz=0.1,
+            compute_pressure_hz=0.1,
+            failure_pressure_hz=0.1,
+        )
 
     def _skip(
         self,
@@ -632,7 +725,10 @@ class AmbientPresence:
         self._running = True
         consecutive_failures = 0
         while self._running:
+            budget = None
             try:
+                budget = self._compute_budget(interval_s)
+                self._last_compute_budget = budget
                 result = await asyncio.wait_for(self.tick(), timeout=20.0)
                 consecutive_failures = 0
                 if result.observed:
@@ -656,7 +752,10 @@ class AmbientPresence:
             delay = min(
                 interval_s * (2 ** min(consecutive_failures, 4)), 300.0
             )
-            await asyncio.sleep(max(1.0, delay))
+            budget_interval = _nonnegative_finite_float(
+                getattr(budget, "interval_s", interval_s)
+            )
+            await asyncio.sleep(max(1.0, delay, budget_interval))
 
     def stop(self) -> None:
         self._running = False
@@ -741,6 +840,17 @@ class AmbientPresence:
                 "seconds_since_observation": (
                     round(time.time() - self._last_observed_at, 1)
                     if self._last_observed_at
+                    else None
+                ),
+                "observation_provenance": dict(self._last_observation_provenance),
+                "cadence": (
+                    {
+                        "effective_hz": self._last_compute_budget.effective_hz,
+                        "interval_s": self._last_compute_budget.interval_s,
+                        "reason": self._last_compute_budget.reason,
+                        "foreground_active": self._last_compute_budget.foreground_active,
+                    }
+                    if self._last_compute_budget is not None
                     else None
                 ),
             }

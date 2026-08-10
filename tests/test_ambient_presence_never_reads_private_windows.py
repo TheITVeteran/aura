@@ -19,6 +19,7 @@ The rules that make it acceptable are structural, and these tests drive them:
 from __future__ import annotations
 
 import asyncio
+from types import SimpleNamespace
 
 import pytest
 
@@ -122,6 +123,226 @@ def test_an_ordinary_window_is_read(presence):
     assert result.observed is True
     assert reader.called is True
     assert result.characters > 0
+
+
+def test_production_context_read_preserves_atomic_app_title_and_receipt(
+    presence, monkeypatch
+):
+    from core.capabilities import host_automation
+    from core.capabilities.host_automation import AutomationReceipt
+
+    class _Host:
+        async def get_frontmost_window_context(self):
+            return AutomationReceipt(
+                action="get_frontmost_window_context",
+                target="frontmost_window",
+                adapter="applescript",
+                success=True,
+                result="Google Chrome|GitHub - aura",
+                duration_ms=3.5,
+                receipt_id="context-receipt",
+            )
+
+    monkeypatch.setattr(host_automation, "get_host_automation", lambda: _Host())
+
+    context = asyncio.run(presence._current_context())
+
+    assert context is not None
+    assert context.app == "Google Chrome"
+    assert context.title == "GitHub - aura"
+    assert context.adapter == "applescript"
+    assert context.receipt_id == "context-receipt"
+    assert context.duration_ms == 3.5
+
+
+def test_app_only_private_surface_is_blocked_on_the_production_context_path(
+    presence, monkeypatch
+):
+    from core.capabilities import host_automation
+    from core.capabilities.host_automation import AutomationReceipt
+
+    class _Host:
+        async def get_frontmost_window_context(self):
+            return AutomationReceipt(
+                action="get_frontmost_window_context",
+                target="frontmost_window",
+                adapter="applescript",
+                success=True,
+                result="1Password|Personal",
+                receipt_id="private-context",
+            )
+
+    async def _read():
+        _read.called = True
+        return "must never be captured"
+
+    _read.called = False
+    monkeypatch.setattr(host_automation, "get_host_automation", lambda: _Host())
+    presence._read_screen_text = _read
+
+    result = asyncio.run(presence.tick())
+
+    assert result.skip_reason is SkipReason.PRIVATE_WINDOW
+    assert _read.called is False
+    assert result.context is not None
+    assert result.context.receipt_id == "private-context"
+
+
+def test_successful_observation_retains_end_to_end_capture_provenance(presence):
+    from core.capabilities.host_automation import AutomationReceipt
+    from core.perception.observation_evidence import get_observation_memory
+
+    memory = get_observation_memory()
+    memory.clear()
+
+    async def _context():
+        return ScreenContext(
+            app="Terminal",
+            title="pytest",
+            adapter="applescript",
+            receipt_id="context-123",
+            duration_ms=2.5,
+        )
+
+    async def _read():
+        return AutomationReceipt(
+            action="get_screen_text",
+            target="screen",
+            adapter="accessibility",
+            success=True,
+            result="pytest: 12 passed",
+            duration_ms=8.75,
+            receipt_id="capture-456",
+        )
+
+    presence._current_context = _context
+    presence._read_screen_text = _read
+
+    result = asyncio.run(presence.tick())
+
+    assert result.observed is True
+    assert result.capture_adapter == "accessibility"
+    assert result.capture_receipt_id == "capture-456"
+    payload = result.to_dict()
+    assert payload["context_receipt_id"] == "context-123"
+    assert payload["capture_receipt_id"] == "capture-456"
+    assert presence.state()["observation_provenance"] == {
+        "context": {
+            "adapter": "applescript",
+            "receipt_id": "context-123",
+            "duration_ms": 2.5,
+        },
+        "capture": {
+            "adapter": "accessibility",
+            "receipt_id": "capture-456",
+            "duration_ms": 8.75,
+        },
+    }
+    latest = memory.latest()
+    assert latest is not None
+    assert latest.detail == presence.state()["observation_provenance"]
+
+
+def test_failed_capture_receipt_records_no_observation(presence):
+    from core.capabilities.host_automation import AutomationReceipt
+    from core.perception.observation_evidence import get_observation_memory
+
+    memory = get_observation_memory()
+    memory.clear()
+    _with_context(presence, "Terminal", "pytest")
+
+    async def _failed():
+        return AutomationReceipt(
+            action="get_screen_text",
+            target="screen",
+            adapter="accessibility",
+            success=False,
+            error="AX permission unavailable",
+        )
+
+    presence._read_screen_text = _failed
+
+    result = asyncio.run(presence.tick())
+
+    assert result.skip_reason is SkipReason.CAPTURE_FAILED
+    assert "AX permission" in result.detail
+    assert memory.latest() is None
+
+
+def test_malformed_receipt_duration_cannot_crash_perception(presence):
+    from core.capabilities.host_automation import AutomationReceipt
+
+    _with_context(presence, "Terminal", "pytest")
+
+    async def _read():
+        receipt = AutomationReceipt(
+            action="get_screen_text",
+            target="screen",
+            adapter="accessibility",
+            success=True,
+            result="still valid evidence",
+        )
+        receipt.duration_ms = "not-a-number"
+        return receipt
+
+    presence._read_screen_text = _read
+
+    result = asyncio.run(presence.tick())
+
+    assert result.observed is True
+    assert result.capture_duration_ms == 0.0
+
+
+def test_run_uses_runtime_pressure_cadence(presence, monkeypatch):
+    delays: list[float] = []
+
+    async def _tick():
+        return SimpleNamespace(observed=False)
+
+    async def _sleep(delay):
+        delays.append(delay)
+        raise asyncio.CancelledError
+
+    presence.tick = _tick
+    monkeypatch.setattr(
+        presence,
+        "_compute_budget",
+        lambda _interval: SimpleNamespace(
+            effective_hz=0.1,
+            interval_s=10.0,
+            reason="foreground_active",
+            foreground_active=True,
+        ),
+    )
+    monkeypatch.setattr(asyncio, "sleep", _sleep)
+
+    with pytest.raises(asyncio.CancelledError):
+        asyncio.run(presence.run(interval_s=6.0))
+
+    assert delays == [10.0]
+    assert presence.state()["cadence"]["reason"] == "foreground_active"
+
+
+def test_run_survives_background_policy_failure_at_bounded_backoff(
+    presence, monkeypatch
+):
+    delays: list[float] = []
+
+    async def _sleep(delay):
+        delays.append(delay)
+        raise asyncio.CancelledError
+
+    monkeypatch.setattr(
+        presence,
+        "_compute_budget",
+        lambda _interval: (_ for _ in ()).throw(RuntimeError("policy unavailable")),
+    )
+    monkeypatch.setattr(asyncio, "sleep", _sleep)
+
+    with pytest.raises(asyncio.CancelledError):
+        asyncio.run(presence.run(interval_s=6.0))
+
+    assert delays == [12.0]
 
 
 def test_the_public_predicate_matches_the_loop():
