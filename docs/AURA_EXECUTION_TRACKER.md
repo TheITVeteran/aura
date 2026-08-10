@@ -43745,3 +43745,23 @@ completion envelope to `881/920` (approximately `95.8%`). No transfer or
 reasoning claim is awarded by this checkpoint. Next is the published-source
 real-1.5B execution; its untouched holdout verdict decides whether to proceed
 to multi-step student roll-in or repair the native transition itself.
+
+## Checkpoint 2026-08-10-186: Split Capacity Is Proven Before Model Admission
+
+The first full CP185 invocation failed before model load because its default
+split requested 28 globally unique depth-one Boolean programs from a generator
+with exactly 14: two initial values times one unary or six binary actions. No
+optimizer update occurred and no neural verdict exists. The execution canary
+had already completed the entire model, cache, optimizer, checkpoint, holdout,
+and receipt path successfully.
+
+The full split now consumes the finite support exactly as `8` training, `2`
+development, and `4` holdout programs per cell. A pre-generation capacity gate
+rejects any depth-one configuration above 14 rather than spending 1,024 search
+attempts and reporting an opaque generator failure. A contract mints the full
+depth-one-through-four split, proves its `64/16/32` task counts and global
+disjointness, and rejects overflow.
+
+This advances the completion envelope to `882/920` (approximately `95.9%`).
+It is an experiment-validity repair, not transfer evidence. The next action is
+the republished-source full 1.5B native transition discriminator.

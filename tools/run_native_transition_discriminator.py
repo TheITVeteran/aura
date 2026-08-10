@@ -138,6 +138,12 @@ def _mint_splits(
     seed: int,
 ) -> tuple[list[RecurrenceTrainingTask], ...]:
     families = ("boolean", "modular")
+    # At depth one the Boolean generator has exactly 2 initial values times
+    # (one unary action plus three binary actions with two operands).
+    if 1 in depths and (
+        train_per_cell + development_per_cell + holdout_per_cell > 14
+    ):
+        raise ValueError("depth-one Boolean split exceeds its 14-program support")
     train = task_battery(families, depths, train_per_cell, seed=seed)
     development = task_battery(
         families,
@@ -638,9 +644,9 @@ def main() -> int:
     parser.add_argument("--seed", type=int, default=20260810185)
     parser.add_argument("--memory-fraction", type=float, default=0.34)
     parser.add_argument("--depths", default="1,2,3,4")
-    parser.add_argument("--train-per-cell", type=_positive_int, default=16)
-    parser.add_argument("--development-per-cell", type=_positive_int, default=4)
-    parser.add_argument("--holdout-per-cell", type=_positive_int, default=8)
+    parser.add_argument("--train-per-cell", type=_positive_int, default=8)
+    parser.add_argument("--development-per-cell", type=_positive_int, default=2)
+    parser.add_argument("--holdout-per-cell", type=_positive_int, default=4)
     parser.add_argument("--max-steps", type=_positive_int, default=512)
     parser.add_argument("--evaluate-every", type=_positive_int, default=32)
     parser.add_argument("--learning-rate", type=float, default=1e-3)

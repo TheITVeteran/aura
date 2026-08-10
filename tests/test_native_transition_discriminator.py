@@ -68,6 +68,26 @@ def test_native_discriminator_splits_are_globally_disjoint():
             )
 
 
+def test_full_split_fits_finite_depth_one_support_and_refuses_overflow():
+    splits = _mint_splits(
+        depths=(1, 2, 3, 4),
+        train_per_cell=8,
+        development_per_cell=2,
+        holdout_per_cell=4,
+        seed=20260810185,
+    )
+    assert [len(split) for split in splits] == [64, 16, 32]
+
+    with pytest.raises(ValueError, match="14-program support"):
+        _mint_splits(
+            depths=(1, 2),
+            train_per_cell=9,
+            development_per_cell=2,
+            holdout_per_cell=4,
+            seed=20260810185,
+        )
+
+
 def test_public_manifest_commits_program_without_private_states_or_actions():
     task = nested_boolean(2, 41)
     program = task.transition_program
