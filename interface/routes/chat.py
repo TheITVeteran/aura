@@ -4811,6 +4811,90 @@ async def _persist_completed_conversation_exchange(
         return False
 
 
+async def _reanswer_when_the_runtime_contradicts_her(
+    reply_text: str,
+    *,
+    user_message: str,
+    session_id: str = "",
+    lane: dict[str, Any] | None = None,
+    source: str = "chat_api",
+    require_engine: bool = False,
+    principal_id: str = "",
+) -> str:
+    """Re-answer a reply that denies something the runtime says she has.
+
+    LIVE, 2026-08-10: "I don't have a camera and there's no part that stops me
+    from doing something I can't do" — produced by the same request handler
+    that contains ``_apply_camera_control``. Also "I cannot execute code" with
+    code_repl ready, and "I have no memory of it" with the turns on disk.
+
+    The check runs on HER OUTPUT rather than on the question. Every earlier
+    attempt at this class of defect gated self-evidence behind a regex that
+    tried to predict, from the user's wording, whether the answer would need
+    it — and questions are unbounded, so there was always a next phrasing that
+    got nothing and fell back to the model's priors about what an AI is.
+    Claims are bounded: they appear in text, and each one names a subject that
+    :mod:`core.self.capability_ledger` can measure by running the very check
+    the corresponding executor runs.
+
+    She is asked again with the measurements, not edited. A revision is only
+    accepted if it stops contradicting them; if the second pass cannot be had,
+    the measurement is appended as a correction rather than quietly serving a
+    false statement or silently rewriting her voice.
+    """
+    text = str(reply_text or "").strip()
+    if not text:
+        return reply_text
+    try:
+        from core.self.capability_ledger import (
+            correction_context,
+            get_capability_ledger,
+        )
+
+        ledger = get_capability_ledger()
+        claims = ledger.contradicted_claims(text)
+    except _CHAT_RECOVERABLE_ERRORS as exc:
+        record_degradation("chat.capability_ledger", exc)
+        return reply_text
+    if not claims:
+        return reply_text
+
+    contradicted = ", ".join(sorted({claim.availability.name for claim in claims}))
+    logger.warning(
+        "🧭 Reply denied capabilities the runtime measured as present (%s); "
+        "re-answering with the measurements.",
+        contradicted,
+    )
+    context = correction_context(claims)
+    try:
+        revised = await _run_cognitive_engine_chat_turn(
+            f"{context}\n\n{user_message}",
+            visible_user_message=user_message,
+            session_id=session_id,
+            lane=lane,
+            source=source,
+            require_engine=require_engine,
+            principal_id=principal_id,
+        )
+    except _CHAT_RECOVERABLE_ERRORS as exc:
+        record_degradation(
+            "chat.capability_ledger",
+            exc,
+            action="served the original reply with the measurement appended",
+        )
+        revised = None
+
+    revised_text = str(revised or "").strip()
+    # A second pass that still contradicts the instruments is not an
+    # improvement, and looping on it would spend the turn.
+    if revised_text and not ledger.contradicted_claims(revised_text):
+        logger.info("🧭 Re-answer no longer contradicts the runtime (%s).", contradicted)
+        return revised_text
+
+    corrections = " ".join(claim.correction() for claim in claims)
+    return f"{text}\n\n[Correcting myself from my own instruments: {corrections}]"
+
+
 def _durable_session_may_hold_turns(session: dict[str, Any]) -> bool:
     """False only when a session states it holds no turns."""
     if "turn_count" not in session:
@@ -25642,6 +25726,14 @@ async def _api_chat_turn(body: ChatRequest, request: Request):
                 logger.info(
                     "Grounded recall repaired first-person user-quote attribution."
                 )
+        reply_text = await _reanswer_when_the_runtime_contradicts_her(
+            reply_text,
+            user_message=_semantic_user_message,
+            session_id=_chat_session_id,
+            lane=lane,
+            source="chat_api",
+            require_engine=bool(desktop_requires_cognitive_engine),
+        )
         if (
             allow_chat_fastpaths
             and _is_explicit_capability_inventory_request(_semantic_user_message)
