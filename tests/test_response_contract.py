@@ -1,3 +1,4 @@
+import inspect
 import pytest
 
 from core.brain.llm.runtime_wiring import prepare_runtime_payload
@@ -451,9 +452,11 @@ async def test_dialogue_policy_owns_grounding_that_lacks_first_person_stance():
         contract,
     )
 
-    assert validation.ok is True
-    assert "missing_first_person_stance" not in validation.violations
-    assert repaired.startswith("From my conversation memory,")
+    # No clause is glued on to manufacture a stance. A draft that still fails
+    # the contract fails it visibly, so the caller's retry path runs instead of
+    # being short-circuited by a cosmetic prefix.
+    assert not repaired.startswith("From my conversation memory,")
+    assert not repaired.startswith("As best I can recall,")
     assert retried is False
 
 
@@ -743,3 +746,22 @@ def test_dialogue_policy_never_flags_honest_uncertainty(honest_sentence):
     validation = validate_dialogue_response(honest_sentence, contract)
 
     assert validation.ok is True, validation.violations
+
+
+def test_grounding_clause_never_claims_a_retrieval_that_did_not_happen():
+    """LIVE DEFECT 2026-08-10: provenance asserted where evidence was thinnest.
+
+    requires_memory_grounding is raised by entity_memory_bridge when evidence
+    is THIN — "Aura is about to talk about something she does not actually
+    know" — and by cognitive_engine when memory merely matters to the turn.
+    Neither means a memory was found. The surface clause said "From my
+    conversation memory," anyway, in her voice, where the reader cannot check
+    it; on an imagination turn it prefixed an invented room.
+    """
+    from core.phases import dialogue_policy
+
+    # The function that synthesised the clause is gone, not reworded.
+    assert not hasattr(dialogue_policy, "_ground_live_voice_surface")
+    source = inspect.getsource(dialogue_policy.enforce_dialogue_contract)
+    assert "_ground_live_voice_surface" not in source
+    assert "retry_generate" in source

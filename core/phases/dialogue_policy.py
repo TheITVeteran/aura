@@ -610,46 +610,36 @@ def repair_dialogue_surface(text: str, contract: object | None) -> str:
     return body
 
 
-def _ground_live_voice_surface(text: str, contract: object | None) -> str:
-    body = str(text or "").strip()
-    if not body or not _requires_explicit_live_grounding(contract):
-        return body
-    # A grounding noun alone is not an owned stance.  "Memory indicates..."
-    # used to bypass deterministic repair even when the contract required Aura
-    # to speak from her own live perspective.  Require both properties before
-    # accepting an already-grounded surface.
-    if _contains_live_aura_grounding(body) and (
-        not _requires_explicit_first_person_stance(contract)
-        or _contains_first_person_stance(body)
-    ):
-        return body
-
-    grounding = "From my live runtime state, "
-    if getattr(contract, "requires_memory_grounding", False):
-        grounding = "From my conversation memory, "
-    elif getattr(contract, "requires_state_reflection", False):
-        grounding = "From my current live state, "
-    elif getattr(contract, "requires_reasoned_defense", False):
-        grounding = "My reasoning is grounded in this conversation and current runtime context: "
-    elif getattr(contract, "requires_identity_defense", False):
-        grounding = "From my runtime continuity and memory, "
-    elif getattr(contract, "requires_self_preservation", False):
-        grounding = "From my governance and self-preservation state, "
-    elif getattr(contract, "requires_recent_specific_grounding", False):
-        grounding = "From the recent conversation context, "
-
-    # The body becomes a CONTINUATION of a clause ending in ", " — so its first
-    # letter must not be capitalised. This did the opposite: it uppercased the
-    # body first, producing "From my conversation memory, Forgetting is a
-    # mercy." on the live surface (and, in the July recall defect,
-    # "From my conversation memory, The code you gave me earlier was...").
-    # Grammar the user can see is not a detail.
-    if grounding.rstrip().endswith((",", ":")):
-        body = _lowercase_continuation_start(body)
-    elif body[:1].islower():
-        body = body[:1].upper() + body[1:]
-    grounded = f"{grounding}{body}"
-    return grounded.strip()
+# REMOVED: _ground_live_voice_surface.
+#
+# It synthesised a grounding clause and glued it to the front of her reply —
+# "From my conversation memory, ", "From my live runtime state, " — to satisfy
+# a contract that actually requires a first-person STANCE.
+#
+# Three things were wrong with it, and they compound.
+#
+# 1. It asserted provenance the runtime had not established. The flag it keyed
+#    on, requires_memory_grounding, is raised by entity_memory_bridge when
+#    evidence is THIN ("Aura is about to talk about something she does not
+#    actually know") and by cognitive_engine when memory merely MATTERS to the
+#    turn. Neither means a memory was retrieved. The surface claimed retrieval
+#    exactly where retrieval was weakest. Live 2026-08-10 it prefixed an
+#    invented room during an imagination turn: "From my conversation memory, a
+#    room with walls made of memory."
+#
+# 2. It put the claim in HER voice, where a reader has no way to check it.
+#    Provenance belongs to the receipt and confidence surfaces, which can be
+#    audited, not to a sentence.
+#
+# 3. Worst, structurally: it ran BEFORE the retry below and could flip
+#    validation to ok, so a draft that failed the contract was cosmetically
+#    patched and returned instead of being regenerated. The repair path that
+#    already exists — build_dialogue_repair_block plus retry_generate — was
+#    skipped by the thing meant to prepare for it.
+#
+# A missing stance is now left failing, so control flow reaches that retry.
+# When no retry is wired, the caller receives the unpatched draft together with
+# the violation rather than a prefixed one that hides it.
 
 
 # Words that are safe to down-case when a grounding clause is prepended: they
@@ -807,7 +797,6 @@ async def enforce_dialogue_contract(
         return text, validation, False
 
     repaired = repair_dialogue_surface(text, contract)
-    repaired = _ground_live_voice_surface(repaired, contract)
     repaired_validation = validate_dialogue_response(repaired, contract, state)
     if repaired_validation.ok:
         return repaired, repaired_validation, False
@@ -836,13 +825,11 @@ async def enforce_dialogue_contract(
     )
     retry_block = build_dialogue_repair_block(contract, validation, text)
     retried = str(await retry_generate(retry_block) or "").strip()
-    retried = _ground_live_voice_surface(retried, contract)
     retried_validation = validate_dialogue_response(retried, contract, state)
     if retried_validation.ok:
         return retried, retried_validation, True
 
     retried_repaired = repair_dialogue_surface(retried, contract)
-    retried_repaired = _ground_live_voice_surface(retried_repaired, contract)
     retried_repaired_validation = validate_dialogue_response(retried_repaired, contract, state)
     if retried_repaired_validation.ok:
         return retried_repaired, retried_repaired_validation, True
