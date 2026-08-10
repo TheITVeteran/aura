@@ -232,6 +232,63 @@
     hideHer();
   });
 
+  /*
+   * Dragging her somewhere else.
+   *
+   * The stylesheet asked for this with `-webkit-app-region: drag`, which is an
+   * ELECTRON property. WKWebView does not implement it, so the declaration was
+   * inert and the bubble could not be moved at all — reported live 2026-08-10,
+   * "i cant drag the bubble across the screen". The comment beside it said
+   * "macOS moves the panel from here", describing a mechanism that was never
+   * present.
+   *
+   * The host already understood the move: AuraLauncher has handled
+   * {action:"move", x, y} the whole time, and it clamps to the screen and
+   * reports the resting origin back so the position survives a restart. It
+   * had no caller. This is the caller.
+   *
+   * Screen coordinates come from the pointer rather than from the panel,
+   * because the page cannot read where its own window sits. The grab offset is
+   * captured once on mousedown so the bubble does not jump to centre itself
+   * under the cursor.
+   */
+  let drag = null;
+
+  pill.addEventListener("mousedown", (event) => {
+    // Left button only, and never from a control: the glyph opens the chat,
+    // × clears the message, and both must stay clickable.
+    if (event.button !== 0) return;
+    if (event.target.closest("#close, #glyph, #say")) return;
+    drag = {
+      startX: event.screenX,
+      startY: event.screenY,
+      moved: false,
+    };
+  });
+
+  window.addEventListener("mousemove", (event) => {
+    if (!drag) return;
+    const dx = event.screenX - drag.startX;
+    const dy = event.screenY - drag.startY;
+    // A few pixels of slop, so a click with a shaky hand stays a click.
+    if (!drag.moved && Math.abs(dx) < 3 && Math.abs(dy) < 3) return;
+    drag.moved = true;
+    // Cocoa's origin is bottom-left and the browser's is top-left, so vertical
+    // motion inverts. Getting this wrong sends the bubble the wrong way, which
+    // is worse than not moving at all.
+    postToHost({ action: "move", dx: dx, dy: -dy, relative: true });
+    drag.startX = event.screenX;
+    drag.startY = event.screenY;
+  });
+
+  window.addEventListener("mouseup", () => {
+    drag = null;
+  });
+
+  function postToHost(payload) {
+    window.webkit?.messageHandlers?.auraBubble?.postMessage(payload);
+  }
+
   // Report where the person parked her, so the position survives a restart.
   let moveTimer = null;
   window.addEventListener("aura-bubble-moved", (event) => {

@@ -1392,6 +1392,24 @@ private final class CircleCloseButton: NSButton {
     }
 }
 
+/// A borderless panel that is still allowed to hold keyboard focus.
+///
+/// AppKit decides `canBecomeKey` from the style mask, and a `.borderless`
+/// window answers false no matter what else it is given. So the companion
+/// chat — deliberately borderless, deliberately NOT `.nonactivatingPanel`
+/// because it exists to be typed into — was ordered front by
+/// `makeKeyAndOrderFront` and never became key. The composer rendered, took
+/// clicks, and could not receive a single keystroke.
+///
+/// Reported live 2026-08-10: "i cant type in the mini chat".
+///
+/// Only the bubble stays non-keyable: it is a glyph you click, and taking
+/// focus from whatever someone is working in is the one thing it must not do.
+final class KeyablePanel: NSPanel {
+    override var canBecomeKey: Bool { true }
+    override var canBecomeMain: Bool { false }
+}
+
 final class AuraLauncherDelegate: NSObject, NSApplicationDelegate,
     WKScriptMessageHandler, NSWindowDelegate {
     private enum BadgeStyle {
@@ -2880,6 +2898,7 @@ final class AuraLauncherDelegate: NSObject, NSApplicationDelegate,
             }
             // orderFront, never makeKey: showing her must not take focus.
             panel.orderFront(nil)
+            self.matchBackingScale(for: panel)
             // Showing the bubble is also how a person un-hides her, so this
             // has to clear HIDDEN rather than only re-draw the panel.
             self.postAmbientMode("bubble")
@@ -2965,6 +2984,33 @@ final class AuraLauncherDelegate: NSObject, NSApplicationDelegate,
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.httpBody = Data("{\"mode\":\"\(mode)\"}".utf8)
         session.dataTask(with: request).resume()
+    }
+
+    /// Re-rasterise a panel's layers at the scale of the screen it is on.
+    ///
+    /// Both floating panels are built at origin .zero with `defer: false`,
+    /// which means their layers are created before the window has been placed
+    /// on a screen. A layer that came up with contentsScale 1.0 keeps it, so
+    /// on a Retina display the whole surface — the neuron, the text, the
+    /// pill's edge — is drawn at half resolution and then scaled up.
+    ///
+    /// Reported live 2026-08-10: "the bubble is a little blurry. would like
+    /// the image sharpened a bit". The glyph is an SVG and the text is system
+    /// text; neither can be blurry on its own. It was the layer underneath
+    /// them.
+    private func matchBackingScale(for window: NSWindow) {
+        let scale = window.screen?.backingScaleFactor
+            ?? NSScreen.main?.backingScaleFactor
+            ?? 2.0
+        guard let root = window.contentView else { return }
+        root.wantsLayer = true
+
+        func apply(_ view: NSView) {
+            view.layer?.contentsScale = scale
+            view.layer?.rasterizationScale = scale
+            for child in view.subviews { apply(child) }
+        }
+        apply(root)
     }
 
     private func defaultBubbleOrigin(for size: NSSize) -> NSPoint {
@@ -3083,10 +3129,23 @@ final class AuraLauncherDelegate: NSObject, NSApplicationDelegate,
         case "move":
             guard let panel = bubblePanel else { return }
             let sequence = (body["sequence"] as? Int) ?? 0
-            let requested = NSPoint(
-                x: (body["x"] as? Double) ?? panel.frame.origin.x,
-                y: (body["y"] as? Double) ?? panel.frame.origin.y
-            )
+            // Two callers with different knowledge. Cognition asks her to move
+            // to an absolute point it chose. A person dragging her sends a
+            // DELTA, because the page cannot read where its own panel sits and
+            // guessing an absolute origin from pointer coordinates would fight
+            // the clamp on every multi-screen setup.
+            let requested: NSPoint
+            if (body["relative"] as? Bool) == true {
+                requested = NSPoint(
+                    x: panel.frame.origin.x + ((body["dx"] as? Double) ?? 0),
+                    y: panel.frame.origin.y + ((body["dy"] as? Double) ?? 0)
+                )
+            } else {
+                requested = NSPoint(
+                    x: (body["x"] as? Double) ?? panel.frame.origin.x,
+                    y: (body["y"] as? Double) ?? panel.frame.origin.y
+                )
+            }
             pendingBubbleMoveSequence = sequence > 0 ? sequence : nil
             panel.setFrameOrigin(clampToScreen(requested, size: panel.frame.size))
             // AppKit does not emit didMove when the requested origin already
@@ -3213,12 +3272,20 @@ final class AuraLauncherDelegate: NSObject, NSApplicationDelegate,
             )
             webView.setValue(false, forKey: "drawsBackground")
 
-            let panel = NSPanel(
+            let panel = KeyablePanel(
                 contentRect: NSRect(origin: .zero, size: size),
                 // Titled would give it a chrome bar this window does not
                 // want, and .nonactivatingPanel is wrong HERE: unlike the
                 // bubble, this window exists to be typed into, and a text
                 // field you cannot focus is not a chat window.
+                //
+                // Omitting .nonactivatingPanel was necessary and not
+                // sufficient. AppKit returns canBecomeKey == false for a
+                // .borderless window regardless of style mask, so
+                // makeKeyAndOrderFront below never actually made it key and
+                // the composer could not take a keystroke — reported live,
+                // 2026-08-10: "i cant type in the mini chat". KeyablePanel
+                // overrides exactly that one property.
                 styleMask: [.borderless, .fullSizeContentView, .resizable],
                 backing: .buffered,
                 defer: false
@@ -3249,8 +3316,10 @@ final class AuraLauncherDelegate: NSObject, NSApplicationDelegate,
         }
         orderBubbleOut()
         postAmbientMode("window")
-        // makeKey, because this one is for typing into.
+        // makeKey, because this one is for typing into. KeyablePanel is what
+        // lets that actually take effect on a borderless window.
         companionPanel?.makeKeyAndOrderFront(nil)
+        if let panel = companionPanel { matchBackingScale(for: panel) }
         NSApp.activate(ignoringOtherApps: true)
     }
 

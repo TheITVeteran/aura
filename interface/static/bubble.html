@@ -61,8 +61,11 @@ html, body {
      independent of the current viewport lets a 40px dormant panel grow again
      when a message arrives. */
   max-width: 504px;
-  /* The drag handle IS the pill. macOS moves the panel from here. */
-  -webkit-app-region: drag;
+  /* Dragging is implemented in bubble.js, which posts a delta to the native
+     host. This used to say `-webkit-app-region: drag` with a comment that
+     "macOS moves the panel from here" — that property is Electron's, WKWebView
+     does not implement it, and the bubble could not be moved at all. */
+  cursor: grab;
   transition: padding 140ms ease, background 200ms ease;
 }
 
@@ -98,7 +101,7 @@ html, body {
      bubble is 40px across. */
   width: 28px; height: 28px;
   flex: 0 0 28px;
-  -webkit-app-region: no-drag;
+  /* controls stay clickable; bubble.js excludes them from the drag */
   cursor: pointer;
   transition: filter 320ms ease, transform 160ms ease;
   filter: var(--neuron-idle);
@@ -115,7 +118,7 @@ html, body {
  * collapses back to the glyph, and the dot is what is left. That is the whole
  * "open me when you can" idea — a sentence someone did not read must not sit
  * over their work forever, and it must not vanish without a trace either. */
-#glyph-wrap { position: relative; -webkit-app-region: no-drag; display: flex; }
+#glyph-wrap { position: relative; display: flex; }
 #dot {
   /* On the disc's RIM, not inside it. Tucked against the glyph it landed
      within the neuron's own glow and read as a smudge on the artwork rather
@@ -131,7 +134,7 @@ html, body {
 #pill.unread #glyph, #pill.speaking #glyph { filter: var(--neuron-live); }
 
 #say {
-  -webkit-app-region: no-drag;
+  /* controls stay clickable; bubble.js excludes them from the drag */
   color: var(--bubble-text);
   font-size: 13px;
   line-height: 1.35;
@@ -144,7 +147,7 @@ html, body {
 #pill.dormant #say, #pill.dormant #close { display: none; }
 
 #close {
-  -webkit-app-region: no-drag;
+  /* controls stay clickable; bubble.js excludes them from the drag */
   flex: 0 0 auto;
   width: 20px; height: 20px;
   border: 0; border-radius: 50%;

@@ -50,7 +50,16 @@ html, body {
   border-bottom: 1px solid rgba(255,255,255,0.06);
   flex: 0 0 auto;
 }
-#bar img { width: 20px; height: 20px; }
+#bar img { width: 20px; height: 20px; display: block; }
+/* The glyph is the way back, so it has to look like it can be pressed —
+   without becoming a button-shaped thing in a bar that is meant to be quiet. */
+#collapse {
+  padding: 0; border: 0; background: transparent; cursor: pointer;
+  border-radius: 50%; line-height: 0;
+  transition: opacity 140ms ease, transform 140ms ease;
+}
+#collapse:hover { opacity: 0.75; }
+#collapse:active { transform: scale(0.92); }
 #bar .spacer { flex: 1; }
 #expand {
   -webkit-app-region: no-drag;
@@ -119,7 +128,14 @@ html, body {
 <body>
 <div id="shell">
   <div id="bar">
-    <img src="/static/neuron_glyph.svg" alt=""/>
+    <!-- The way back. It was decorative — alt="" and no handler — so the only
+         exits were Escape and FULL, and clicking the mark you clicked to get
+         here did nothing. Reported live 2026-08-10: "it also doesnt go back
+         into a small bubble if i click on the icon after clicking to open the
+         chat". -->
+    <button id="collapse" title="Back to the bubble" aria-label="Back to the bubble">
+      <img src="/static/neuron_glyph.svg" alt=""/>
+    </button>
     <span class="spacer"></span>
     <button id="expand" title="Open the full desktop">FULL</button>
   </div>
