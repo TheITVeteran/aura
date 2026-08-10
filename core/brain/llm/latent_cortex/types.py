@@ -145,6 +145,9 @@ class FastWeightsConfig:
     # It cannot authorize a served answer until matched controls establish
     # that verified supervision, rather than any supervision, is selective.
     output_memory_diagnostic_enabled: bool = False
+    # Claim-grade phase lesion over one frozen learned delta. Disabled in
+    # ordinary serving because it requires four matched answer decodes.
+    locality_diagnostic_enabled: bool = False
     # Export mechanically-clean episode synapses (accepted descent + proven
     # erase) to the governed consolidation queue for the compounding loop.
     export_candidates: bool = False
@@ -896,6 +899,8 @@ class CortexConfig:
             )
         if type(self.fast_weights.output_memory_diagnostic_enabled) is not bool:
             problems.append("fast_weights.output_memory_diagnostic_enabled must be boolean")
+        if type(self.fast_weights.locality_diagnostic_enabled) is not bool:
+            problems.append("fast_weights.locality_diagnostic_enabled must be boolean")
         if type(self.fast_weights.canary_enabled) is not bool:
             problems.append("fast_weights.canary_enabled must be boolean")
         if type(self.fast_weights.canary_generated_enabled) is not bool:
@@ -1508,6 +1513,8 @@ class EpisodeReceipt:
     # the adaptation on regression — the verifier, not the proxy, has the
     # last word over fast weights too. Empty when arbitration did not run.
     fast_weight_verifier: dict[str, Any] = field(default_factory=dict)
+    # Same learned U,V evaluated under none/recurrent/decode/both scopes.
+    fast_weight_locality: dict[str, Any] = field(default_factory=dict)
     # Complete SPARK-055 contract: exact evidence admission, exclusive model
     # lease, measured identity-at-attach, matched causal probe, answer binding,
     # and exact cleanup. Public commitments only; no latent values or evidence
@@ -1891,6 +1898,7 @@ class EpisodeReceipt:
             "fast_weight_line_search_backtracks": (self.fast_weight_line_search_backtracks),
             "fast_weight_canaries": dict(self.fast_weight_canaries),
             "fast_weight_verifier": dict(self.fast_weight_verifier),
+            "fast_weight_locality": dict(self.fast_weight_locality),
             "fast_weight_learning": dict(self.fast_weight_learning),
             "verified_workspace_evidence": dict(
                 self.verified_workspace_evidence

@@ -42,6 +42,10 @@ from core.runtime.lockdep import LockRank, checked_lock
 
 logger = logging.getLogger("Aura.LatentCortex.FastWeights")
 FAST_WEIGHT_OPTIMIZER = "rms_normalized_sgd_backtracking_v1"
+FAST_WEIGHT_ACTIVATION_POLICIES = frozenset(
+    {"none", "recurrence_only", "decode_only", "both"}
+)
+FAST_WEIGHT_EXECUTION_PHASES = ("recurrence", "decode", "unscoped")
 
 _MODEL_LEASE_LOCK = checked_lock(
     "latent_cortex.fast_weights.model_lease",
@@ -129,6 +133,14 @@ class EpisodicDeltaLinear:
         # base-function pass-through until the engine has measured identity
         # and explicitly activates the adaptation path.
         self.identity_bypass = True
+        # ``both`` preserves the historical execution graph.  A frozen delta
+        # can later be lesioned by causal phase without changing U, V, scale,
+        # the base projection, or any model/cache state.
+        self.activation_policy = "both"
+        self.phase_calls = {phase: 0 for phase in FAST_WEIGHT_EXECUTION_PHASES}
+        self.phase_delta_calls = {
+            phase: 0 for phase in FAST_WEIGHT_EXECUTION_PHASES
+        }
         self.capture_input = False
         self.last_input_summary = None
         self.input_summary_history = []
@@ -274,6 +286,27 @@ class EpisodicDeltaLinear:
             )
         if self.identity_bypass:
             return base
+        from core.brain.llm.latent_cortex.recurrence_adapter import (
+            current_coda_adapter_scope,
+            current_recurrence_adapter_scope,
+        )
+
+        if current_recurrence_adapter_scope() is not None:
+            phase = "recurrence"
+        elif current_coda_adapter_scope() is not None:
+            phase = "decode"
+        else:
+            phase = "unscoped"
+        self.phase_calls[phase] += 1
+        policy = self.activation_policy
+        active = (
+            policy == "both"
+            or (policy == "recurrence_only" and phase == "recurrence")
+            or (policy == "decode_only" and phase == "decode")
+        )
+        if not active:
+            return base
+        self.phase_delta_calls[phase] += 1
         delta = (x @ self.V.T) @ self.U.T
         return base + self.scale * delta
 
@@ -577,6 +610,71 @@ class EpisodicFastWeights:
                 changed = True
         if changed:
             self._notify_function_change("fast_weights_adaptation_activated")
+
+    def set_activation_policy(self, policy: str) -> None:
+        """Select where one frozen episodic delta may affect computation."""
+
+        if policy not in FAST_WEIGHT_ACTIVATION_POLICIES:
+            raise ValueError("fast-weight activation policy is unsupported")
+        if not self.handles:
+            raise RuntimeError("fast-weight activation policy requires wrappers")
+        changed = False
+        for handle in self.handles:
+            if handle.wrapper.activation_policy != policy:
+                handle.wrapper.activation_policy = policy
+                changed = True
+        if changed:
+            self._notify_function_change(
+                f"fast_weights_activation_policy:{policy}"
+            )
+
+    def activation_locality_receipt(self) -> dict[str, Any]:
+        """Publish phase applications without exposing temporary tensors."""
+
+        if not self.handles:
+            raise RuntimeError("fast-weight locality receipt requires wrappers")
+        policies = {handle.wrapper.activation_policy for handle in self.handles}
+        if len(policies) != 1:
+            raise RuntimeError("fast-weight activation policies disagree")
+        observed = {phase: 0 for phase in FAST_WEIGHT_EXECUTION_PHASES}
+        applied = {phase: 0 for phase in FAST_WEIGHT_EXECUTION_PHASES}
+        for handle in self.handles:
+            for phase in FAST_WEIGHT_EXECUTION_PHASES:
+                observed[phase] += int(handle.wrapper.phase_calls[phase])
+                applied[phase] += int(handle.wrapper.phase_delta_calls[phase])
+        return {
+            "schema": "aura.rlc.fast_weight_activation_locality.v1",
+            "policy": next(iter(policies)),
+            "wrapped_layers": len(self.handles),
+            "observed_calls": observed,
+            "delta_calls": applied,
+        }
+
+    def delta_commitment(self) -> str:
+        """Commit the exact frozen U,V inventory used by locality arms."""
+
+        from core.brain.llm.latent_cortex.verified_best import tensor_sha256
+
+        if not self.handles:
+            raise RuntimeError("fast-weight delta commitment requires wrappers")
+        rows = [
+            {
+                "layer": int(handle.layer_index),
+                "scale": float(handle.wrapper.scale),
+                "u_sha256": tensor_sha256(handle.wrapper.U),
+                "v_sha256": tensor_sha256(handle.wrapper.V),
+            }
+            for handle in self.handles
+        ]
+        return hashlib.sha256(
+            json.dumps(
+                rows,
+                sort_keys=True,
+                separators=(",", ":"),
+                ensure_ascii=True,
+                allow_nan=False,
+            ).encode("ascii")
+        ).hexdigest()
 
     def capture_input_summaries(self, forward_fn: Callable[[], Any]) -> Any:
         """Capture one query activation per wrapped projection under identity."""

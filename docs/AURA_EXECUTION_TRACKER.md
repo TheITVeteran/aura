@@ -42745,3 +42745,42 @@ accepted result. Focused execution, Ruff, and compilation gates pass. The
 source-bound 1.5B discriminator must be rerun from this checkpoint before any
 capability conclusion; the completion envelope remains `850/920`
 (approximately `92.4%`). Resident-32B use remains locked.
+
+## Checkpoint 2026-08-10-155: One Frozen Neural Edit Is Lesioned by Causal Phase
+
+The corrected, recurrence-adapter-bound CP154 discriminator is a valid
+negative result. On the frozen modular failure, ordinary decode and both
+full-engine depths remained wrong (`0/2 -> 0/2`). Recurrence adapters were
+actually active (`240` and `280` scoped calls). Verified workspace evidence
+executed at both depths, but depth one scored `0.25/0.25/0.25` for
+baseline/treatment/sham; depth two moved from `0.248264` to `0.25` but tied
+the sham at `0.25`. Neither arm was retained, and both answers remained the
+unreduced residue `1053`. The source-bound receipt is preserved outside source
+control at
+`~/.aura/experiments/cp154-workspace-evidence-adapted-r2-029ca8286/receipt.json`
+with SHA-256
+`355f13134ae0241018179bdc3fd744871273ad461da0caa788027b8a0f5c2643`.
+
+This rejects the four-row mean-pooled evidence path on that task and does not
+authorize a broader claim. It also leaves a more important historical
+ambiguity: episodic fast weights have fired across recurrent processing and
+answer decode, while persistent adapters are recurrence-scoped. A temporary
+gain therefore did not identify the neural phase that carried it.
+
+Fast-weight projections now support four causal activation policies over the
+same frozen `U,V` tensors: `none`, `recurrence_only`, `decode_only`, and
+`both`. The default remains `both`, preserving serving behavior. Each wrapper
+distinguishes recurrence, coda/decode, and unscoped calls from the runtime's
+existing context-local scopes, reports both observed and delta-applied call
+counts, and commits the exact unchanged tensor inventory. The full-engine
+proof configuration reserves four matched exact decodes, scores every policy
+with the same task verifier, restores `both`, and rejects the diagnostic if
+either the winner state or delta changes. Ordinary serving leaves this
+expensive diagnostic disabled. The offline proof lane has a separate bounded
+`600s` wall-clock envelope so four matched decodes cannot be misclassified by
+the interactive-serving `120s` limit. Projection-level locality contracts,
+the engine-level one-delta/four-arm/restoration contract, `85` related
+fast-weight and behavioral-probe tests, Ruff, compilation, and the canonical
+smoke suite (`103 passed`) are green. This advances the completion envelope
+to `851/920` (approximately `92.5%`). The source-bound 1.5B locality run is
+next; resident-32B use remains locked.

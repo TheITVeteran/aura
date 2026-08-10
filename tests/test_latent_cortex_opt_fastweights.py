@@ -34,6 +34,10 @@ from core.brain.llm.latent_cortex.latent_opt import (  # noqa: E402
     build_proxy_loss,
     prompt_token_distribution,
 )
+from core.brain.llm.latent_cortex.recurrence_adapter import (  # noqa: E402
+    coda_adapter_scope,
+    recurrence_adapter_scope,
+)
 from core.brain.llm.latent_cortex.task_verifiers import EpisodeTaskVerifier  # noqa: E402
 from core.brain.llm.latent_cortex.types import (  # noqa: E402
     ComputeBudget,
@@ -1381,6 +1385,79 @@ def test_fast_weight_manager_activates_only_after_identity_measurement(tiny_mode
         assert all(handle.wrapper.identity_bypass for handle in fw.handles)
         fw.activate_adaptation_path()
         assert all(not handle.wrapper.identity_bypass for handle in fw.handles)
+    finally:
+        fw.detach()
+
+
+def test_fast_weight_activation_policy_localizes_one_frozen_delta(tiny_model):
+    layer = tiny_model.model.layers[1].self_attn.o_proj
+    wrapper = EpisodicDeltaLinear(
+        layer,
+        rank=2,
+        scale=1.0,
+        seed_stat=1.0,
+        tag="fast-weight-locality",
+    )
+    wrapper.identity_bypass = False
+    wrapper.U = mx.ones_like(wrapper.U)
+    wrapper.V = mx.ones_like(wrapper.V)
+    x = mx.ones((1, 1, 64))
+    base = layer(x)
+
+    wrapper.activation_policy = "none"
+    with recurrence_adapter_scope():
+        assert bool(mx.array_equal(wrapper(x), base))
+    with coda_adapter_scope():
+        assert bool(mx.array_equal(wrapper(x), base))
+
+    wrapper.activation_policy = "recurrence_only"
+    with recurrence_adapter_scope():
+        assert not bool(mx.array_equal(wrapper(x), base))
+    with coda_adapter_scope():
+        assert bool(mx.array_equal(wrapper(x), base))
+
+    wrapper.activation_policy = "decode_only"
+    with recurrence_adapter_scope():
+        assert bool(mx.array_equal(wrapper(x), base))
+    with coda_adapter_scope():
+        assert not bool(mx.array_equal(wrapper(x), base))
+
+    wrapper.activation_policy = "both"
+    assert not bool(mx.array_equal(wrapper(x), base))
+    assert wrapper.phase_delta_calls == {
+        "recurrence": 1,
+        "decode": 1,
+        "unscoped": 1,
+    }
+
+
+def test_fast_weight_manager_publishes_phase_locality(tiny_model):
+    fw = EpisodicFastWeights(
+        FastWeightsConfig(
+            enabled=True,
+            rank=2,
+            target="o_proj",
+            opt_steps=1,
+            max_wrapped_layers=1,
+        )
+    )
+    fw.attach(
+        tiny_model.model,
+        (P_END, C_START),
+        seed_stat=1.0,
+        episode_id="ep-locality-policy",
+    )
+    try:
+        fw.activate_adaptation_path()
+        fw.handles[0].wrapper.V = mx.ones_like(fw.handles[0].wrapper.V)
+        fw.set_activation_policy("recurrence_only")
+        _probe(tiny_model)
+        receipt = fw.activation_locality_receipt()
+        assert receipt["policy"] == "recurrence_only"
+        assert receipt["observed_calls"]["unscoped"] > 0
+        assert receipt["delta_calls"]["unscoped"] == 0
+        with pytest.raises(ValueError, match="unsupported"):
+            fw.set_activation_policy("sometimes")
     finally:
         fw.detach()
 

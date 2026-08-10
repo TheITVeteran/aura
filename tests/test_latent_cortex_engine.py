@@ -1975,3 +1975,107 @@ def test_verified_workspace_evidence_runs_real_recurrence_and_retains_only_treat
     assert probe_calls[0] != probe_calls[1]
     assert tensor_sha256(branch.z) == receipt["treatment_state_sha256"]
     assert tensor_sha256(branch.z) != source_sha256
+
+
+def test_fast_weight_locality_reuses_one_delta_and_restores_default_policy(
+    tiny_model,
+    monkeypatch,
+):
+    class PhaseTokenizer(_ExactEvidenceTokenizer):
+        @staticmethod
+        def decode(ids):
+            return f"phase-score:{int(list(ids)[0])}"
+
+    class FrozenFastWeights:
+        def __init__(self):
+            self.handles = [object()]
+            self.policy = "both"
+            self.calls = []
+            self.observed = {"recurrence": 0, "decode": 0, "unscoped": 0}
+            self.applied = {"recurrence": 0, "decode": 0, "unscoped": 0}
+
+        def set_activation_policy(self, policy):
+            self.policy = policy
+            self.calls.append(policy)
+
+        @staticmethod
+        def delta_commitment():
+            return hashlib.sha256(b"one-frozen-delta").hexdigest()
+
+        def activation_locality_receipt(self):
+            return {
+                "policy": self.policy,
+                "observed_calls": dict(self.observed),
+                "delta_calls": dict(self.applied),
+            }
+
+        def record_decode(self):
+            self.observed["decode"] += 1
+            if self.policy in {"decode_only", "both"}:
+                self.applied["decode"] += 1
+
+    tokenizer = PhaseTokenizer()
+    engine = LatentCortexEngine(tiny_model, tokenizer, config=_config())
+    budget = ComputeBudget(max_layer_apps=500_000, wall_clock_s=30.0)
+    budget.bind_model(tiny_model)
+    cache = engine._fresh_cache()
+    embeddings, _ = engine._prefill(PROMPT_TOKENS, cache, budget)
+    runner = WindowRunner(tiny_model.model, budget)
+    ensemble = BranchEnsemble.seed(
+        embeddings,
+        engine.config.workspace,
+        engine.config.branches,
+        engine.config.recurrence,
+        runner,
+        cache,
+        engine.prelude_end,
+    )
+    winner = ensemble.branches[0]
+    source_sha256 = tensor_sha256(winner.z)
+    fast_weights = FrozenFastWeights()
+    scores = {
+        "none": 0,
+        "recurrence_only": 1,
+        "decode_only": 2,
+        "both": 3,
+    }
+
+    def probe(*_args, **_kwargs):
+        assert tensor_sha256(winner.z) == source_sha256
+        fast_weights.record_decode()
+        budget.charge(1, 1, operation="test_fast_weight_locality_decode")
+        return [scores[fast_weights.policy]]
+
+    monkeypatch.setattr(engine, "_decode_probe", probe)
+    receipt = engine._measure_fast_weight_locality(
+        verifier=lambda text: float(text.removeprefix("phase-score:")),
+        fast_weights=fast_weights,
+        winner=winner,
+        cache=cache,
+        runner=runner,
+        budget=budget,
+        bridge_tokens=None,
+    )
+
+    assert [arm["policy"] for arm in receipt["arms"]] == [
+        "none",
+        "recurrence_only",
+        "decode_only",
+        "both",
+    ]
+    assert [arm["score"] for arm in receipt["arms"]] == [0.0, 1.0, 2.0, 3.0]
+    assert [arm["layer_apps"] for arm in receipt["arms"]] == [1, 1, 1, 1]
+    assert receipt["best_policies"] == ["both"]
+    assert receipt["recurrence_carries_gain"] is True
+    assert receipt["decode_carries_gain"] is True
+    assert receipt["joint_gain"] is True
+    assert receipt["delta_unchanged"] is True
+    assert receipt["winner_state_unchanged"] is True
+    assert fast_weights.policy == "both"
+    assert fast_weights.calls == [
+        "none",
+        "recurrence_only",
+        "decode_only",
+        "both",
+        "both",
+    ]

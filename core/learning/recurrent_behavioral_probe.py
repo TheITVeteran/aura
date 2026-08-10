@@ -15,6 +15,7 @@ from pathlib import Path
 from typing import Any
 
 from core.brain.llm.latent_cortex.execution_spec import RLCExecutionSpec
+from core.brain.llm.latent_cortex.types import ComputeBudget
 from core.learning.recurrent_checkpoint_admission import build_free_generation_report
 from core.learning.recurrent_grpo import (
     RecurrentSamplingConfig,
@@ -139,6 +140,7 @@ def _full_engine_config(
     )
     config.latent_opt = LatentOptConfig(enabled=True, steps=4, lr=0.05)
     config.fast_weights = FastWeightsConfig(enabled=True, rank=2, opt_steps=4)
+    config.fast_weights.locality_diagnostic_enabled = True
     config.verifier_accept_non_regression = True
     config.decode_bridge_policy = "assistant_answer_v4"
     config.decode_incumbent_policy = "vanilla_incumbent"
@@ -600,6 +602,10 @@ def build_paired_full_engine_probe_reports(
             result = engine.reason(
                 messages=[{"role": "user", "content": task.prompt}],
                 verifier=verifier,
+                # Locality diagnostics add four exact matched decodes. Keep
+                # this offline proof lane bounded, but do not inherit the
+                # shorter interactive-serving wall-clock contract.
+                budget=ComputeBudget(wall_clock_s=600.0),
                 domain=task.domain,
                 decode_max_tokens=max_tokens,
                 decode_sentence_grace_tokens=0,

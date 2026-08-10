@@ -2988,6 +2988,11 @@ class LatentCortexEngine:
             + output_memory_diagnostic_cost
             + workspace_evidence_trial_cost
             + (
+                4 * fast_weight_verifier_probe_cost
+                if self.config.fast_weights.locality_diagnostic_enabled
+                else 0
+            )
+            + (
                 2 * len(VERIFIER_GAIN_GRID) * fast_weight_verifier_probe_cost
                 if self.config.fast_weights.associative_bootstrap_enabled
                 else 0
@@ -6766,6 +6771,23 @@ class LatentCortexEngine:
                     reason="fast_weights_matched_treatment_restore",
                 )
                 fast_weights.restore_optimization_trace(fw_treatment_trace)
+                if (
+                    self.config.fast_weights.locality_diagnostic_enabled
+                    and fast_weight_candidate_verifier is not None
+                    and self.tokenizer is not None
+                ):
+                    receipt.fast_weight_locality = (
+                        self._measure_fast_weight_locality(
+                            verifier=fast_weight_candidate_verifier,
+                            fast_weights=fast_weights,
+                            winner=winner,
+                            cache=cache,
+                            runner=runner,
+                            budget=budget,
+                            bridge_tokens=bridge_tokens,
+                        )
+                    )
+                    receipt.flag("fast_weight_locality_measured")
                 lifecycle = fast_weights.lifecycle
                 fast_weight_learning_state["optimization"] = {
                     "optimizer": lifecycle.optimizer,
@@ -8131,6 +8153,94 @@ class LatentCortexEngine:
                 "items": [],
                 "failed": [],
             }
+
+    def _measure_fast_weight_locality(
+        self,
+        *,
+        verifier: Callable[[str], float],
+        fast_weights: EpisodicFastWeights,
+        winner: BranchState,
+        cache,
+        runner: WindowRunner,
+        budget: ComputeBudget,
+        bridge_tokens: list[int] | None,
+    ) -> dict[str, Any]:
+        """Lesion one frozen delta by causal phase under matched decoding."""
+
+        if self.tokenizer is None:
+            raise RuntimeError("fast-weight locality requires a tokenizer")
+        delta_before = fast_weights.delta_commitment()
+        state_before = tensor_sha256(winner.z)
+        arms: list[dict[str, Any]] = []
+        try:
+            for policy in ("none", "recurrence_only", "decode_only", "both"):
+                fast_weights.set_activation_policy(policy)
+                locality_before = fast_weights.activation_locality_receipt()
+                spent_before = budget.spent_layer_apps
+                tokens = self._decode_probe(
+                    winner,
+                    cache,
+                    runner,
+                    budget,
+                    bridge_tokens=bridge_tokens,
+                    use_cache=False,
+                    force_exact_tokens=True,
+                )
+                text = self.tokenizer.decode(tokens)
+                score = float(verifier(text))
+                if not math.isfinite(score):
+                    raise RuntimeError("fast-weight locality verifier score is non-finite")
+                locality_after = fast_weights.activation_locality_receipt()
+                arms.append(
+                    {
+                        "policy": policy,
+                        "score": round(score, 6),
+                        "token_count": len(tokens),
+                        "tokens_sha256": token_sequence_sha256(tokens),
+                        "layer_apps": budget.spent_layer_apps - spent_before,
+                        "observed_calls": {
+                            phase: (
+                                int(locality_after["observed_calls"][phase])
+                                - int(locality_before["observed_calls"][phase])
+                            )
+                            for phase in locality_after["observed_calls"]
+                        },
+                        "delta_calls": {
+                            phase: (
+                                int(locality_after["delta_calls"][phase])
+                                - int(locality_before["delta_calls"][phase])
+                            )
+                            for phase in locality_after["delta_calls"]
+                        },
+                    }
+                )
+        finally:
+            if fast_weights.handles:
+                fast_weights.set_activation_policy("both")
+        delta_after = fast_weights.delta_commitment()
+        state_after = tensor_sha256(winner.z)
+        if delta_after != delta_before:
+            raise RuntimeError("fast-weight locality arms mutated the frozen delta")
+        if state_after != state_before:
+            raise RuntimeError("fast-weight locality arms mutated the winner state")
+        scores = {str(row["policy"]): float(row["score"]) for row in arms}
+        best_score = max(scores.values())
+        return {
+            "schema": "aura.rlc.fast_weight_phase_locality.v1",
+            "delta_sha256": delta_before,
+            "winner_state_sha256": state_before,
+            "arms": arms,
+            "best_policies": sorted(
+                policy for policy, score in scores.items() if score == best_score
+            ),
+            "recurrence_carries_gain": (
+                scores["recurrence_only"] > scores["none"]
+            ),
+            "decode_carries_gain": scores["decode_only"] > scores["none"],
+            "joint_gain": scores["both"] > scores["none"],
+            "delta_unchanged": True,
+            "winner_state_unchanged": True,
+        }
 
     def _enforce_fast_weight_canaries(
         self,
