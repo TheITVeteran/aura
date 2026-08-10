@@ -146,3 +146,27 @@ def test_live_probes_all_report_without_raising():
         assert isinstance(availability.present, bool)
         assert isinstance(availability.known, bool)
         assert availability.summary
+
+
+def test_bare_noun_phrase_negation_is_a_denial():
+    """LIVE: asked "do you have a camera? and can you run code?" she replied
+    "No camera. No code execution." — no pronoun, no verb, and invisible to
+    every first-person frame."""
+    ledger = _ledger(_fixed("camera"), _fixed("code"))
+    flagged = ledger.contradicted_claims("No camera. No code execution.")
+    assert {claim.availability.name for claim in flagged} == {"camera", "code"}
+    assert all(claim.denied == "possession" for claim in flagged)
+
+
+@pytest.mark.parametrize(
+    "reply",
+    [
+        "No, the camera is on right now.",
+        "No problem, I can run that code.",
+        "No worries about the code.",
+    ],
+)
+def test_a_sentence_merely_starting_with_no_is_not_a_denial(reply):
+    """The negation has to bind to the capability's own noun."""
+    ledger = _ledger(_fixed("camera"), _fixed("code"))
+    assert ledger.contradicted_claims(reply) == []

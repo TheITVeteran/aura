@@ -196,6 +196,15 @@ _POSSESSION_FRAME = re.compile(
 _SENTENCE_SPLIT = re.compile(r"(?<=[.!?])\s+|\n+")
 
 
+def _negates_directly(sentence: str, subjects: tuple[str, ...]) -> bool:
+    """True when the sentence opens by negating one of ``subjects`` itself."""
+    for subject in subjects:
+        pattern = rf"^\s*no\s+(?:\w+\s+){{0,2}}{re.escape(subject)}\b"
+        if re.search(pattern, sentence, re.IGNORECASE):
+            return True
+    return False
+
+
 class CapabilityLedger:
     """Every capability that can answer for itself, in one place."""
 
@@ -241,10 +250,22 @@ class CapabilityLedger:
         contradictions: list[ContradictedClaim] = []
         for sentence in _SENTENCE_SPLIT.split(str(reply or "")):
             sentence = sentence.strip()
-            if not sentence or not _DENIAL_FRAME.search(sentence):
+            if not sentence:
                 continue
-            denies_possession = bool(_POSSESSION_FRAME.search(sentence))
+            framed = bool(_DENIAL_FRAME.search(sentence))
             for capability in self.capabilities_named_in(sentence):
+                # Bare noun-phrase negation, with no pronoun and no verb.
+                # Asked "do you have a camera? and can you run code?" the whole
+                # reply was "No camera. No code execution." — as complete a
+                # denial as any sentence and invisible to every frame above.
+                #
+                # It has to bind to THIS capability's own noun, not merely
+                # share a sentence with it: "No problem, I can run that code"
+                # opens the same way and denies nothing.
+                bare = _negates_directly(sentence, capability.subjects)
+                if not framed and not bare:
+                    continue
+                denies_possession = bare or bool(_POSSESSION_FRAME.search(sentence))
                 availability = capability.measure()
                 if not availability.known:
                     # Not measured is not measured. Saying nothing here is the
