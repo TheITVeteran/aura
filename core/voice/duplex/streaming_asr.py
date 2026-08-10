@@ -16,6 +16,8 @@ Measured on this host: partial decode (small.en) ~72 ms, final decode
 from __future__ import annotations
 
 import asyncio
+import gc
+import importlib
 import logging
 import re
 import threading
@@ -29,6 +31,12 @@ from core.runtime.errors import record_degradation
 from core.voice.duplex.config import CAPTURE_RATE, AsrConfig
 
 logger = logging.getLogger("Aura.Voice.Asr")
+
+# mlx-whisper exposes one process-global ModelHolder. Without fencing and
+# restoring it, alternating a small partial model and a large final model
+# reloads weights on every transition. The lock also prevents independent
+# voice sessions from swapping the holder while another decode is in flight.
+_MLX_HOLDER_LOCK = threading.Lock()
 
 # Whisper's canonical outputs for "the mic was on but nobody spoke". It
 # produces these confidently on silence, so they must never become a turn.
@@ -112,39 +120,72 @@ class _WhisperBackend:
         self._config = config
         self._impl = ""
         self._mlx: Any = None
+        self._mlx_holder: Any = None
+        self._mlx_models: dict[str, Any] = {}
         self._cache: dict[str, Any] = {}
         self._cache_lock = threading.Lock()
         self._usage_lock = threading.Lock()
+        self._warm_lock = threading.Lock()
+        self._warmed_repos: set[str] = set()
         self._lane_lock = threading.Lock()
         self._lane_lease: Any = None
         self._model_lane_controller = model_lane_controller
         try:
-            import mlx_whisper
-
-            self._mlx = mlx_whisper
+            mlx_spec = importlib.util.find_spec("mlx_whisper")
+        except (ImportError, AttributeError, RuntimeError, ValueError):
+            mlx_spec = None
+        if mlx_spec is not None:
             self._impl = "mlx"
-        except (ImportError, OSError, RuntimeError) as exc:
-            record_degradation(
-                "voice_duplex.asr",
-                exc,
-                action="mlx-whisper unavailable; trying faster-whisper",
-                severity="warning",
-            )
-            self._impl = ""
 
     @property
     def available(self) -> bool:
         return bool(self._impl) or self._faster_whisper_available()
 
+    def status(self) -> dict[str, Any]:
+        """Non-loading lifecycle receipt for health and operator surfaces."""
+        return {
+            "schema": "aura.voice.asr_model_runtime.v1",
+            "backend": self._impl or "unavailable",
+            "native_module_loaded": self._mlx is not None or self._impl == "faster",
+            "model_lane_owned": self._lane_lease is not None,
+            "retained_models": sorted(self._mlx_models),
+            "warmed_models": sorted(self._warmed_repos),
+        }
+
     @staticmethod
     def _faster_whisper_available() -> bool:
         try:
-            import faster_whisper  # noqa: F401
-
-            return True
-        except (ImportError, OSError) as _exc:
+            return importlib.util.find_spec("faster_whisper") is not None
+        except (ImportError, OSError, RuntimeError, ValueError) as _exc:
             logger.debug("faster-whisper unavailable: %s", _exc)
             return False
+
+    def _ensure_impl_loaded(self) -> None:
+        """Import native ASR code only on the off-event-loop decode thread."""
+        if self._impl == "mlx" and self._mlx is not None:
+            return
+        if self._impl == "mlx":
+            try:
+                self._mlx = importlib.import_module("mlx_whisper")
+                transcribe_module = importlib.import_module("mlx_whisper.transcribe")
+                self._mlx_holder = getattr(transcribe_module, "ModelHolder", None)
+                if self._mlx_holder is None:
+                    logger.warning(
+                        "mlx-whisper model holder unavailable; model alternation may reload"
+                    )
+                return
+            except (ImportError, OSError, RuntimeError, AttributeError) as exc:
+                record_degradation(
+                    "voice_duplex.asr",
+                    exc,
+                    action="mlx-whisper unavailable; trying faster-whisper",
+                    severity="warning",
+                )
+                self._mlx = None
+                self._mlx_holder = None
+                self._impl = ""
+        if not self._impl and self._faster_whisper_available():
+            self._impl = "faster"
 
     def _faster_model(self, repo: str) -> Any:
         with self._cache_lock:
@@ -204,6 +245,27 @@ class _WhisperBackend:
             return lease, True
 
     def _release_model_lane_locked(self, *, reason: str) -> bool:
+        with _MLX_HOLDER_LOCK:
+            holder = self._mlx_holder
+            retained = tuple(self._mlx_models.values())
+            if (
+                holder is not None
+                and getattr(holder, "model", None) is not None
+                and any(getattr(holder, "model", None) is model for model in retained)
+            ):
+                holder.model = None
+                holder.model_path = None
+            self._mlx_models.clear()
+            self._warmed_repos.clear()
+        if retained:
+            gc.collect()
+            try:
+                mlx_core = importlib.import_module("mlx.core")
+                clear_cache = getattr(mlx_core, "clear_cache", None)
+                if callable(clear_cache):
+                    clear_cache()
+            except (ImportError, OSError, RuntimeError, AttributeError) as exc:
+                logger.debug("MLX cache release after ASR eviction was unavailable: %s", exc)
         with self._cache_lock:
             self._cache.clear()
         with self._lane_lock:
@@ -238,16 +300,13 @@ class _WhisperBackend:
     def transcribe(self, audio: np.ndarray, repo: str) -> str:
         """Blocking decode. Always called on a worker thread."""
         with self._usage_lock:
+            self._ensure_impl_loaded()
+            if not self._impl:
+                raise RuntimeError("no voice ASR backend is installed")
             lease, acquired = self._acquire_model_lane()
             try:
                 if self._impl == "mlx":
-                    result = self._mlx.transcribe(
-                        audio,
-                        path_or_hf_repo=repo,
-                        language=self._config.language,
-                        fp16=True,
-                        condition_on_previous_text=False,
-                    )
+                    result = self._transcribe_mlx(audio, repo)
                     text = str(result.get("text", "") or "")
                 else:
                     model = self._faster_model(repo)
@@ -271,18 +330,60 @@ class _WhisperBackend:
                     self._release_model_lane_locked(reason="voice_asr_model_load_failed")
                 raise
 
-    def warm(self, repo: str) -> None:
-        """Force weight load + kernel compile outside the latency path."""
-        silence = np.zeros(CAPTURE_RATE, dtype=np.float32)
-        try:
-            self.transcribe(silence, repo)
-        except (RuntimeError, ValueError, OSError, AttributeError) as exc:
-            record_degradation(
-                "voice_duplex.asr",
-                exc,
-                action=f"warmup decode failed for {repo}; first live decode will pay the cost",
-                severity="warning",
+    def _transcribe_mlx(self, audio: np.ndarray, repo: str) -> dict[str, Any]:
+        holder = self._mlx_holder
+        if holder is None:
+            return self._mlx.transcribe(
+                audio,
+                path_or_hf_repo=repo,
+                language=self._config.language,
+                fp16=True,
+                condition_on_previous_text=False,
             )
+
+        with _MLX_HOLDER_LOCK:
+            cached = self._mlx_models.get(repo)
+            if cached is not None:
+                holder.model = cached
+                holder.model_path = repo
+            result = self._mlx.transcribe(
+                audio,
+                path_or_hf_repo=repo,
+                language=self._config.language,
+                fp16=True,
+                condition_on_previous_text=False,
+            )
+            loaded = getattr(holder, "model", None)
+            if loaded is not None:
+                self._mlx_models[repo] = loaded
+            return result
+
+    def warm(self, repo: str) -> bool:
+        """Force weight load + kernel compile outside the latency path."""
+        with self._warm_lock:
+            if repo in self._warmed_repos:
+                return True
+            silence = np.zeros(CAPTURE_RATE, dtype=np.float32)
+            try:
+                self.transcribe(silence, repo)
+            except (
+                AttributeError,
+                ImportError,
+                MemoryError,
+                OSError,
+                RuntimeError,
+                TypeError,
+                ValueError,
+            ) as exc:
+                record_degradation(
+                    "voice_duplex.asr",
+                    exc,
+                    action=f"warmup decode failed for {repo}; first live decode will pay the cost",
+                    severity="warning",
+                )
+                return False
+            self._warmed_repos.add(repo)
+            return True
 
     def shutdown(self) -> None:
         with self._usage_lock:
@@ -303,12 +404,14 @@ class StreamingAsr:
         config: AsrConfig | None = None,
         *,
         model_lane_controller: Any = None,
+        backend: _WhisperBackend | None = None,
+        owns_backend: bool = True,
     ) -> None:
         self._config = config or AsrConfig()
-        self._backend = _WhisperBackend(
-            self._config,
-            model_lane_controller=model_lane_controller,
+        self._backend = backend or _WhisperBackend(
+            self._config, model_lane_controller=model_lane_controller
         )
+        self._owns_backend = bool(owns_backend or backend is None)
         self._prev_words: list[str] = []
         self._stable_words: list[str] = []
         self._tentative_words: list[str] = []
@@ -320,15 +423,24 @@ class StreamingAsr:
     def available(self) -> bool:
         return self._backend.available
 
-    async def warm_up(self) -> None:
+    async def warm_up(self) -> bool:
         """Pay the cold-start cost before the user says anything."""
         if self._warmed:
-            return
-        self._warmed = True
+            return True
         loop = asyncio.get_running_loop()
+        results: list[bool] = []
         for repo in (self._config.partial_model, self._config.final_model):
-            await loop.run_in_executor(None, self._backend.warm, repo)
-        logger.info("ASR warm: partial=%s final=%s", self._config.partial_model, self._config.final_model)
+            results.append(
+                bool(await loop.run_in_executor(None, self._backend.warm, repo))
+            )
+        self._warmed = all(results)
+        if self._warmed:
+            logger.info(
+                "ASR warm: partial=%s final=%s",
+                self._config.partial_model,
+                self._config.final_model,
+            )
+        return self._warmed
 
     def reset(self) -> None:
         self._prev_words = []
@@ -337,7 +449,8 @@ class StreamingAsr:
         self._last_partial_at = 0.0
 
     def shutdown(self) -> None:
-        self._backend.shutdown()
+        if self._owns_backend:
+            self._backend.shutdown()
 
     def due_for_partial(self, now: float, audio_s: float) -> bool:
         """Rate-limit partials; decoding faster than this buys nothing."""

@@ -37,11 +37,13 @@ from core.voice.duplex.config import (
     VAD_FRAME_SAMPLES,
     AsrConfig,
     BackchannelConfig,
+    DuplexConfig,
 )
 from core.voice.duplex.echo_guard import EchoGuard
 from core.voice.duplex.endpointing import Completeness, Endpointer, classify
 from core.voice.duplex.fillers import FillerReflex, ThinkingCause
 from core.voice.duplex.mind_bridge import MindBridge, SpokenRecord
+from core.voice.duplex.model_runtime import VoiceModelRuntime
 from core.voice.duplex.prosody import ProsodySpec
 from core.voice.duplex.protocol import AudioOpcode, decode_audio, encode_audio
 from core.voice.duplex.session import (
@@ -1114,6 +1116,230 @@ def test_duplex_asr_model_load_holds_fenced_owner(monkeypatch):
     assert events[0][0] == "acquire"
     assert events[1] == ("preemptible", True)
     assert events[-1] == ("release", "voice_asr_shutdown")
+
+
+def test_mlx_partial_and_final_models_remain_resident_without_alternating_reload(
+    monkeypatch,
+):
+    from core.runtime import model_lane_control
+    from core.voice.duplex.streaming_asr import _WhisperBackend
+
+    loads: list[str] = []
+
+    class Lease:
+        @staticmethod
+        def set_preemptible(_value):
+            return True
+
+        @staticmethod
+        def release(*, reason):
+            assert reason == "voice_asr_shutdown"
+            return True
+
+    class Holder:
+        model = None
+        model_path = None
+
+    class FakeMlx:
+        @staticmethod
+        def transcribe(_audio, *, path_or_hf_repo, **_kwargs):
+            if Holder.model is None or Holder.model_path != path_or_hf_repo:
+                loads.append(path_or_hf_repo)
+                Holder.model = object()
+                Holder.model_path = path_or_hf_repo
+            return {"text": path_or_hf_repo}
+
+    monkeypatch.setattr(
+        model_lane_control,
+        "acquire_synchronous_in_process_model_lane",
+        lambda **_kwargs: Lease(),
+    )
+    backend = _WhisperBackend(
+        AsrConfig(partial_model="small", final_model="large"),
+    )
+    backend._impl = "mlx"
+    backend._mlx = FakeMlx()
+    backend._mlx_holder = Holder
+
+    audio = np.zeros(16, dtype=np.float32)
+    assert backend.transcribe(audio, "small") == "small"
+    assert backend.transcribe(audio, "large") == "large"
+    assert backend.transcribe(audio, "small") == "small"
+    assert loads == ["small", "large"]
+
+    backend.shutdown()
+    assert Holder.model is None
+    assert Holder.model_path is None
+
+
+def test_asr_runtime_construction_does_not_import_native_models(monkeypatch):
+    from core.voice.duplex import streaming_asr
+
+    imported: list[str] = []
+
+    def fail_import(name):
+        imported.append(name)
+        raise AssertionError(f"native import occurred during construction: {name}")
+
+    monkeypatch.setattr(
+        streaming_asr.importlib.util,
+        "find_spec",
+        lambda name: object() if name == "mlx_whisper" else None,
+    )
+    monkeypatch.setattr(streaming_asr.importlib, "import_module", fail_import)
+    backend = streaming_asr._WhisperBackend(AsrConfig())
+
+    assert backend.status()["backend"] == "mlx"
+    assert backend.status()["native_module_loaded"] is False
+    assert imported == []
+
+
+def test_process_voice_runtime_shares_models_but_not_transcript_state():
+    runtime = VoiceModelRuntime(
+        DuplexConfig(asr=AsrConfig(partial_model="small", final_model="large"))
+    )
+    first = runtime.new_asr()
+    second = runtime.new_asr()
+
+    assert first._backend is second._backend
+    first._prev_words = ["one"]
+    first._stable_words = ["one"]
+    assert second._prev_words == []
+    assert second._stable_words == []
+    assert runtime.tts is runtime.tts
+    status = runtime.status()
+    assert status["closed"] is False
+    assert status["asr"]["retained_models"] == []
+    assert status["tts"]["warmed"] is False
+
+    runtime.shutdown()
+    assert runtime.status()["closed"] is True
+
+
+def test_session_does_not_shutdown_injected_process_models():
+    async def exercise() -> None:
+        calls: list[str] = []
+
+        class SharedAsr:
+            available = True
+
+            async def warm_up(self):
+                return None
+
+            def shutdown(self):
+                calls.append("asr_shutdown")
+
+        class SharedTts:
+            engine_name = "shared"
+
+            async def warm_up(self, _spec):
+                return None
+
+            def shutdown(self):
+                calls.append("tts_shutdown")
+
+        class FakeMind:
+            async def stop_activity_watch(self):
+                return None
+
+            async def publish(self, _event, _payload):
+                return None
+
+        async def send_json(_payload):
+            return None
+
+        async def send_binary(_payload):
+            return None
+
+        session = DuplexVoiceSession(
+            session_id="shared-models",
+            send_json=send_json,
+            send_binary=send_binary,
+            mind=FakeMind(),
+            asr=SharedAsr(),
+            tts=SharedTts(),
+        )
+        await session.close()
+        assert calls == []
+
+    asyncio.run(exercise())
+
+
+def test_voice_ready_is_withheld_until_both_process_models_are_warm():
+    async def exercise() -> None:
+        events: list[dict[str, object]] = []
+
+        class ColdAsr:
+            available = True
+
+            async def warm_up(self):
+                return False
+
+        class ReadyTts:
+            engine_name = "kokoro"
+
+            async def warm_up(self, _spec):
+                return True
+
+        class FakeMind:
+            async def start_activity_watch(self, _callback):
+                raise AssertionError("mind activity must not start before model readiness")
+
+            async def stop_activity_watch(self):
+                return None
+
+            async def publish(self, _event, _payload):
+                return None
+
+        async def send_json(payload):
+            events.append(dict(payload))
+
+        async def send_binary(_payload):
+            return None
+
+        session = DuplexVoiceSession(
+            session_id="cold-models",
+            send_json=send_json,
+            send_binary=send_binary,
+            mind=FakeMind(),
+            asr=ColdAsr(),
+            tts=ReadyTts(),
+        )
+        with pytest.raises(RuntimeError, match="voice_models_not_ready"):
+            await session.start()
+        assert any(
+            event.get("status") == "voice_models_not_ready" for event in events
+        )
+        assert not any(event.get("type") == "voice.ready" for event in events)
+        assert not any(event.get("state") == "listening" for event in events)
+        await session.close()
+
+    asyncio.run(exercise())
+
+
+def test_tts_warmup_is_singleflight_across_sessions(monkeypatch):
+    async def exercise() -> None:
+        tts = StreamingTts()
+        tts._state.kokoro = object()
+        calls = 0
+
+        async def loaded():
+            return True
+
+        async def synthesize(_text, _spec, _token):
+            nonlocal calls
+            calls += 1
+            await asyncio.sleep(0)
+            return object()
+
+        monkeypatch.setattr(tts, "ensure_loaded", loaded)
+        monkeypatch.setattr(tts, "synthesize", synthesize)
+        spec = ProsodySpec(voice="af_heart")
+        await asyncio.gather(tts.warm_up(spec), tts.warm_up(spec))
+        assert calls == 1
+        tts.shutdown()
+
+    asyncio.run(exercise())
 
 
 def test_cancelled_native_tts_retains_model_owner_until_worker_returns():

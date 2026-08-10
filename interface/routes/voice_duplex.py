@@ -29,6 +29,10 @@ from core.runtime.errors import record_degradation
 from core.utils.task_tracker import get_task_tracker
 from core.voice.duplex.config import DuplexConfig
 from core.voice.duplex.mind_bridge import MindBridge
+from core.voice.duplex.model_runtime import (
+    get_voice_model_runtime,
+    voice_model_runtime_status,
+)
 from core.voice.duplex.session import DuplexVoiceSession
 
 logger = logging.getLogger("Aura.Routes.VoiceDuplex")
@@ -151,6 +155,11 @@ def conversation_key_for(device_id: str | None, client_host: str) -> str:
 def active_sessions() -> dict[str, dict[str, Any]]:
     """Status of every live voice session, for health surfaces."""
     return {sid: session.status() for sid, session in _SESSIONS.items()}
+
+
+def model_runtime_status() -> dict[str, Any]:
+    """Voice model residency without opening a device or loading weights."""
+    return voice_model_runtime_status()
 
 
 def _voice_output_permitted() -> bool:
@@ -388,12 +397,16 @@ async def voice_duplex_endpoint(ws: WebSocket) -> None:
                 reply_stream=reply_stream,
             )
 
+        session_config = DuplexConfig.load()
+        model_runtime = get_voice_model_runtime(session_config)
         session = DuplexVoiceSession(
             session_id=session_id,
             send_json=send_json,
             send_binary=send_binary,
-            config=DuplexConfig.load(),
+            config=session_config,
             mind=MindBridge(session_id=session_id, responder=governed_responder),
+            asr=model_runtime.new_asr(),
+            tts=model_runtime.tts,
         )
         _SESSIONS[session_id] = session
 

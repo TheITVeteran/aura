@@ -1,0 +1,62 @@
+{
+  "schema": "aura.closeout.checkpoint.v1",
+  "checkpoint": 112,
+  "date": "2026-08-09",
+  "subject": "voice model residency outlives a transport socket without losing lifecycle truth",
+  "status": "implemented_and_bounded_verified",
+  "defects_closed": [
+    "every voice WebSocket constructed and destroyed independent ASR and TTS model owners, turning reconnect into repeated weight load and kernel compilation",
+    "mlx-whisper's single process-global ModelHolder evicted the partial model when final transcription ran and evicted the final model on the next partial decode",
+    "multiple sockets could repeat the same cold warmup concurrently",
+    "native MLX import occurred synchronously on the WebSocket event loop before authorization monitoring could run",
+    "a runtime-hygiene close could leave the process singleton pointing at a dead voice model owner",
+    "voice.ready could be emitted from dependency availability even when ASR or TTS warmup had failed",
+    "model residency, warm state, lane ownership, and closure were not observable without loading models"
+  ],
+  "implementation": {
+    "process_owner": "VoiceModelRuntime owns one shared Whisper backend and one thread-safe StreamingTts until model-lane eviction or process shutdown",
+    "session_isolation": "each socket receives fresh LocalAgreement transcript buffers over the shared ASR backend",
+    "mlx_residency": "a process fence restores cached model objects into mlx-whisper's holder, retaining partial and final checkpoints without alternating reload",
+    "warmup": "ASR model warmup is per-repository single-flight and TTS warmup is process single-flight",
+    "event_loop": "native ASR imports happen only on the offloaded warm/decode thread; construction and authorization remain non-loading",
+    "readiness": "preparing is a real session state and voice.ready is withheld unless both ASR and TTS return usable warm state",
+    "recovery": "a closed singleton is replaced on the next admitted socket while runtime shutdown still releases model references, MLX cache, TTS workers, and leases",
+    "status_receipt": "aura.voice.process_model_runtime.v1 distinguishes presence, closure, backend, native import, retained and warmed models, lane ownership, active synthesis, and engine state"
+  },
+  "verification": {
+    "duplex_ambient_and_streaming_suite": "134 passed",
+    "focused_residency_readiness_and_authorization": "9 passed, 106 deselected",
+    "cold_first_socket_revocation_pair": "2 passed",
+    "canonical_smoke_repository_venv": "103 passed",
+    "ruff_touched_surface": "pass",
+    "python_byte_compile_touched_surface": "pass",
+    "diff_check": "pass",
+    "discovery_run": "133 passed and one order-dependent paired-revocation timeout; traced to synchronous native import before authorization monitor scheduling and fixed before the green rerun"
+  },
+  "claim_boundary": {
+    "socket_reconnect_requires_model_reload": false,
+    "partial_final_alternation_requires_model_reload": false,
+    "false_ready_closed": true,
+    "real_model_warm_latency_measured": false,
+    "real_microphone_conversation_proven": false,
+    "reason": "bounded lifecycle tests do not replace rebuilt-app measurement on the physical microphone, resident checkpoints, and speaker"
+  },
+  "next_voice_priority": {
+    "subject": "canonical microphone authority and audio ingress broker",
+    "reason": "the runtime still has multiple native and browser microphone owners; voice.input_enabled is not yet a global hardware revocation switch"
+  },
+  "concurrent_campaign_terminal_result": {
+    "campaign_id": "cp103-wow-pilot-repaired-20260809",
+    "decision": "inconclusive_resource_dominance_unproven",
+    "scores": {
+      "vanilla": "1/7",
+      "vanilla_equal_compute": "2/7",
+      "complete_system_closed_book": "3/7",
+      "vanilla_resource_dominating": "4/7"
+    },
+    "reasoning_gain_proven": false,
+    "frontier_level_proven": false,
+    "fusion_authorized": false,
+    "resource_receipt_defect": "six cells reported resource_control_equal_tool_receipt_invalid"
+  }
+}

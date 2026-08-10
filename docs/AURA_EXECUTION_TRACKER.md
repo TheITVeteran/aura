@@ -41284,3 +41284,50 @@ remain open. At the last campaign check, the independent WOW pilot was `25/28`
 with the resource-dominating control at `4/7`; no reasoning-gain or frontier
 claim is made before terminal reconciliation. The completion envelope remains
 `809/920` (approximately `87.9%`).
+
+## Checkpoint 2026-08-09-112: Voice Models Outlive The Socket
+
+A voice socket still owned its heavy models. Opening a session constructed a
+fresh Whisper backend and TTS executor, warmed both Whisper checkpoints and the
+speech engine, then destroyed all of them when the transport closed. Reconnect
+therefore reintroduced the 13-35 second ASR cold path. Worse, `mlx-whisper`
+holds only one global model: alternating small partial and large final decoding
+silently evicted one checkpoint on every transition.
+
+`VoiceModelRuntime` now owns process-scoped ASR/TTS resources. Each socket gets
+isolated LocalAgreement transcript state over one shared backend, while Kokoro,
+its worker pool, model-lane leases, and both Whisper model objects survive a
+transport reconnect. The MLX holder is process-fenced and restored from a
+per-repository cache, so partial, final, then partial decoding loads two models,
+not three. ASR and TTS warmups are independently single-flight. Explicit model
+lane eviction and process shutdown clear retained objects, MLX cache, workers,
+and leases.
+
+The first broad rerun caught an additional real latency defect: constructing
+the shared backend synchronously imported native MLX before the authorization
+monitor could run. Under cold test order, paired-device revocation timed out.
+Native backend imports now happen only inside the already-offloaded warm/decode
+thread. The cold-first-socket revocation pair passes without pre-importing MLX.
+
+Readiness is now lifecycle truth rather than dependency presence. A session is
+`preparing` while warmup runs, and `voice.ready` is withheld if either ASR or
+TTS is unusable. A non-loading `aura.voice.process_model_runtime.v1` receipt
+reports backend import, retained and warmed models, model-lane ownership,
+active synthesis, engine state, and closure. A hygiene-closed singleton is
+never handed to the next socket.
+
+The full duplex, ambient, and streaming set passes `134/134`; the focused
+residency, readiness, and authorization set passes `9/9`; the cold-first-socket
+revocation pair passes `2/2`; canonical smoke passes `103/103`. Ruff,
+touched-file byte compilation, and diff hygiene pass. Evidence is
+`artifacts/closeout/voice/cp112_voice_models_outlive_the_socket.json`.
+
+The completed WOW pilot is not positive: ordinary decode scored `1/7`,
+best-of-three `2/7`, the complete system `3/7`, and resource-heavy vanilla
+`4/7`. Six equal-tool control receipts are invalid, so the terminal decision is
+`inconclusive_resource_dominance_unproven`; reasoning gain, frontier status,
+fusion, activation, and `WOW Signal` remain unauthorized. The next voice P0 is
+also explicit: one canonical microphone authority must replace the multiple
+native/browser hardware owners and make `voice.input_enabled` a real global
+revocation switch. The completion envelope remains `809/920` (approximately
+`87.9%`).

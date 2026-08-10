@@ -122,6 +122,7 @@ BinarySender = Callable[[bytes], Awaitable[None]]
 
 class SessionState(Enum):
     IDLE = "idle"
+    PREPARING = "preparing"
     LISTENING = "listening"
     USER_SPEAKING = "user_speaking"
     THINKING = "thinking"
@@ -208,6 +209,8 @@ class DuplexVoiceSession:
         send_binary: BinarySender,
         config: DuplexConfig | None = None,
         mind: MindBridge | None = None,
+        asr: StreamingAsr | None = None,
+        tts: StreamingTts | None = None,
     ) -> None:
         self._id = session_id
 
@@ -244,7 +247,8 @@ class DuplexVoiceSession:
         self._config = config or DuplexConfig()
 
         self._vad = VadGate(self._config.vad)
-        self._asr = StreamingAsr(self._config.asr)
+        self._owns_asr = asr is None
+        self._asr = asr or StreamingAsr(self._config.asr)
         self._endpointer = Endpointer(self._config.endpoint)
         self._backchannel = BackchannelReflex(self._config.backchannel)
         self._filler = FillerReflex()
@@ -254,7 +258,8 @@ class DuplexVoiceSession:
         self._overlap_audio: list[np.ndarray] = []
         self._overlap_epoch = 0
         self._voice_override = ""
-        self._tts = StreamingTts(self._config.tts)
+        self._owns_tts = tts is None
+        self._tts = tts or StreamingTts(self._config.tts)
         self._prosody = ProsodyCompiler(
             base_voice=self._config.tts.voice,
             base_speed=self._config.tts.speed,
@@ -327,7 +332,7 @@ class DuplexVoiceSession:
         Whisper 13–35 s for weight load plus Metal kernel compilation. Paying
         that inside a live turn would be indistinguishable from a hang.
         """
-        await self._set_state(SessionState.LISTENING)
+        await self._set_state(SessionState.PREPARING)
         spec = self._prosody_spec()
 
         results = await asyncio.gather(
@@ -344,6 +349,31 @@ class DuplexVoiceSession:
                     severity="warning",
                 )
 
+        tts_ready = (
+            not isinstance(results[0], BaseException)
+            and results[0] is not False
+            and self._tts.engine_name != "none"
+        )
+        asr_ready = (
+            not isinstance(results[1], BaseException)
+            and results[1] is not False
+            and self._asr.available
+        )
+        if not tts_ready or not asr_ready:
+            await self._send_json(
+                {
+                    "type": protocol.EVT_ERROR,
+                    "status": "voice_models_not_ready",
+                    "message": "Voice models are not ready yet. Reconnecting will retry warmup.",
+                    "asr_ready": asr_ready,
+                    "tts_ready": tts_ready,
+                }
+            )
+            raise RuntimeError(
+                "voice_models_not_ready:"
+                f"asr={str(asr_ready).lower()}:tts={str(tts_ready).lower()}"
+            )
+
         await self._mind.start_activity_watch(self._filler.observe_activity)
         await self._mind.publish("session_started", {"engine": self._tts.engine_name})
         await self._send_json(
@@ -356,6 +386,7 @@ class DuplexVoiceSession:
                 "sample_rate_out": OUTPUT_RATE,
             }
         )
+        await self._set_state(SessionState.LISTENING)
 
     async def close(self) -> None:
         if self._closed:
@@ -379,12 +410,14 @@ class DuplexVoiceSession:
         )
         with contextlib.suppress(asyncio.CancelledError, RuntimeError):
             await self._mind.stop_activity_watch()
-        with contextlib.suppress(TimeoutError):
-            await asyncio.wait_for(
-                asyncio.to_thread(self._asr.shutdown),
-                timeout=TASK_QUIESCENCE_TIMEOUT_S,
-            )
-        self._tts.shutdown()
+        if self._owns_asr:
+            with contextlib.suppress(TimeoutError):
+                await asyncio.wait_for(
+                    asyncio.to_thread(self._asr.shutdown),
+                    timeout=TASK_QUIESCENCE_TIMEOUT_S,
+                )
+        if self._owns_tts:
+            self._tts.shutdown()
         self._state = SessionState.CLOSED
         await self._mind.publish("session_ended", {})
 

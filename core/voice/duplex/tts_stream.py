@@ -327,6 +327,8 @@ class StreamingTts:
         self._accepting_synthesis = False
         self._closing = False
         self._load_retry_after = 0.0
+        self._warm_lock = asyncio.Lock()
+        self._warmed = False
         self._pool = ThreadPoolExecutor(
             max_workers=max(1, self._config.workers),
             thread_name_prefix="aura-tts",
@@ -373,6 +375,7 @@ class StreamingTts:
         self._state.kokoro = None
         self._state.piper = None
         self._state.loaded = False
+        self._warmed = False
         lease, self._lane_lease = self._lane_lease, None
         if lease is not None:
             lease.release(reason=reason)
@@ -498,23 +501,42 @@ class StreamingTts:
             return "piper"
         return "none"
 
-    async def warm_up(self, spec: ProsodySpec) -> None:
+    def status(self) -> dict[str, Any]:
+        with self._lifecycle_lock:
+            return {
+                "schema": "aura.voice.tts_model_runtime.v1",
+                "engine": self.engine_name,
+                "loaded": self._state.loaded,
+                "warmed": self._warmed,
+                "model_lane_owned": self._lane_lease is not None,
+                "accepting_synthesis": self._accepting_synthesis,
+                "active_syntheses": self._active_syntheses,
+                "closing": self._closing,
+            }
+
+    async def warm_up(self, spec: ProsodySpec) -> bool:
         """Run one throwaway synthesis so the first real one is not the cold one.
 
         Measured cold-start on this host is ~635 ms versus ~190 ms warm —
         the difference between a natural opening and an awkward one.
         """
-        if not await self.ensure_loaded():
-            return
-        try:
-            await self.synthesize("Okay.", spec, CancellationToken())
-        except (RuntimeError, ValueError, OSError) as exc:
-            record_degradation(
-                "voice_duplex.tts",
-                exc,
-                action="warmup synthesis failed; first utterance pays cold-start cost",
-                severity="warning",
-            )
+        async with self._warm_lock:
+            if self._warmed and self.available:
+                return True
+            if not await self.ensure_loaded():
+                return False
+            try:
+                result = await self.synthesize("Okay.", spec, CancellationToken())
+            except (RuntimeError, ValueError, OSError) as exc:
+                record_degradation(
+                    "voice_duplex.tts",
+                    exc,
+                    action="warmup synthesis failed; first utterance pays cold-start cost",
+                    severity="warning",
+                )
+                return False
+            self._warmed = result is not None
+            return self._warmed
 
     async def synthesize(
         self,
