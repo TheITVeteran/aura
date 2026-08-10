@@ -43806,3 +43806,33 @@ it cannot claim action parsing, composition, behavioral gain, or reasoning
 gain. Those are separate gates. A positive execution result advances to a
 semantic action compiler and student-roll-in composition; a negative result
 means the native state transition itself still needs repair.
+
+## Checkpoint 2026-08-10-188: Current State Enters the Same Typed Coordinate System
+
+The CP187 typed-action run completed and isolated the remaining failure. Exact
+action retention rose from `4/80` to `74/80` (`0.925`) and action-field accuracy
+reached `0.975`, proving that the explicit action operand is learned and
+causally available. Holdout state exactness improved only to `17/80` (`0.2125`)
+and target-value accuracy to `0.325`, so the one-step gate remains negative.
+The embedded receipt SHA-256 is
+`5636b950ac7a3531c81d95a3e101e5cc000dfcd514a6ffbe2c1475fc0b4c9de8`;
+the receipt file SHA-256 is
+`7afae91ce97db4af1688de80cbeb9bb2b099a650136650f74c28f737c5f8d9c9`;
+the core SHA-256 is
+`5c60f1b4e8859b3009d274e4f89fcb49f66c5d55a7a188007026de2e89d6706b`.
+
+The state and action inputs were asymmetric. Actions entered as stable compact
+typed codewords, but current state entered only through random 1,536-wide Qwen
+codewords compressed by a learned projection. The operator therefore had to
+learn a private state decoder before it could learn the transition. Current
+state now receives its own immutable compact operand over program counter,
+value or residue, and done. A dedicated normalized attention path combines it
+with the typed action and read-only semantic context before the protected write.
+No next-state value is present in either operand.
+
+The affected suite passes `72/72`; Ruff and compilation pass. This advances
+the completion envelope to `884/920` (approximately `96.1%`). The result is
+still unclaimed until the republished real-1.5B holdout passes. If compact typed
+state plus typed action remains insufficient, the next repair will move the
+fixed state decoder onto the core's proposed-state features instead of asking a
+generic 1,536-wide residual write to rediscover the codebook geometry.

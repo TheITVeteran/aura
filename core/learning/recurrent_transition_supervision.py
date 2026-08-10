@@ -323,6 +323,53 @@ def encode_trace_state(
     return mx.concatenate(rows, axis=1)
 
 
+def encode_trace_state_operand(
+    trace: StructuredTransitionTrace,
+    *,
+    state_index: int,
+    width: int,
+    codebook: StateCodebookSpec,
+) -> Any:
+    """Encode exact current state in the native core's typed coordinates."""
+
+    import mlx.core as mx
+
+    if (
+        not isinstance(trace, StructuredTransitionTrace)
+        or type(state_index) is not int
+        or not 0 <= state_index <= trace.depth
+        or trace.depth > codebook.max_program_depth
+        or len(trace.field_names) != len(codebook.field_slot_indices)
+        or type(width) is not int
+        or width < 8
+    ):
+        raise ValueError("typed trace state is outside the codebook contract")
+    rows = []
+    for field_name, value in zip(
+        trace.field_names,
+        trace.states[state_index],
+        strict=True,
+    ):
+        classes = _field_class_count(
+            family=trace.family,
+            field_name=field_name,
+            codebook=codebook,
+        )
+        if not 0 <= value < classes:
+            raise ValueError("typed trace state value exceeds its codebook")
+        matrix = _codebook_matrix(
+            family=trace.family,
+            field_name=field_name,
+            classes=classes,
+            hidden_size=width,
+            seed=codebook.seed,
+        )
+        rows.append(matrix[value])
+    encoded = mx.stack(rows, axis=0)[None, :, :]
+    mx.eval(encoded)
+    return encoded
+
+
 def decode_structured_state(
     state: Any,
     trace: StructuredTransitionTrace,
@@ -518,6 +565,7 @@ __all__ = [
     "decode_trace_state",
     "decode_structured_state",
     "encode_trace_state",
+    "encode_trace_state_operand",
     "encode_structured_state",
     "evaluate_state_supervised_transition",
     "state_supervised_transition_loss",

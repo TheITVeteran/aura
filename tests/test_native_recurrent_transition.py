@@ -26,6 +26,7 @@ from core.learning.recurrent_transition_supervision import (  # noqa: E402
     StateCodebookSpec,
     decode_trace_state,
     encode_trace_state,
+    encode_trace_state_operand,
 )
 
 
@@ -57,13 +58,23 @@ def _action(program, transition_index: int = 0):
     )
 
 
+def _typed_state(program, transition_index: int = 0):
+    return encode_trace_state_operand(
+        program.state_trace,
+        state_index=transition_index,
+        width=16,
+        codebook=StateCodebookSpec(max_program_depth=program.state_trace.depth),
+    )
+
+
 def test_native_core_attaches_as_exact_identity_and_protects_semantic_slots():
     core = _core()
     state, context = _inputs()
     program = nested_boolean(2, 17).transition_program
     assert program is not None
     action = _action(program)
-    attached = core(state, context, action)
+    typed_state = _typed_state(program)
+    attached = core(state, context, typed_state, action)
     mx.eval(attached.state, attached.write_gate, attached.delta)
 
     assert bool(mx.array_equal(attached.state, state))
@@ -72,7 +83,7 @@ def test_native_core_attaches_as_exact_identity_and_protects_semantic_slots():
     assert attached.delta.shape == (1, 3, 32)
 
     core.delta_up.weight = mx.ones_like(core.delta_up.weight) * 0.01
-    moved = core(state, context, action).state
+    moved = core(state, context, typed_state, action).state
     mx.eval(moved)
     assert bool(mx.array_equal(moved[:, :-3, :], state[:, :-3, :]))
     assert not bool(mx.array_equal(moved[:, -3:, :], state[:, -3:, :]))
@@ -84,13 +95,16 @@ def test_native_core_refuses_malformed_workspace_shapes():
     program = nested_boolean(2, 17).transition_program
     assert program is not None
     action = _action(program)
+    typed_state = _typed_state(program)
 
     with pytest.raises(ValueError, match="tensor shape"):
-        core(state[:, -3:, :], context, action)
+        core(state[:, -3:, :], context, typed_state, action)
     with pytest.raises(ValueError, match="tensor shape"):
-        core(state, context[:, :, :-1], action)
+        core(state, context[:, :, :-1], typed_state, action)
     with pytest.raises(ValueError, match="tensor shape"):
-        core(state, context, action[:, :, :-1])
+        core(state, context, typed_state[:, :, :-1], action)
+    with pytest.raises(ValueError, match="tensor shape"):
+        core(state, context, typed_state, action[:, :, :-1])
     with pytest.raises(ValueError, match="configuration"):
         RecurrentTransitionCoreConfig(
             hidden_size=32,
@@ -107,6 +121,7 @@ def test_typed_action_is_a_causal_operand_of_the_state_update():
     assert first is not None and second is not None
     first_action = _action(first)
     second_action = _action(second)
+    typed_state = _typed_state(first)
     if bool(mx.array_equal(first_action, second_action)):
         second = nested_boolean(2, 19).transition_program
         assert second is not None
@@ -114,8 +129,8 @@ def test_typed_action_is_a_causal_operand_of_the_state_update():
     assert not bool(mx.array_equal(first_action, second_action))
 
     core.delta_up.weight = mx.ones_like(core.delta_up.weight) * 0.01
-    first_state = core(state, context, first_action).state
-    second_state = core(state, context, second_action).state
+    first_state = core(state, context, typed_state, first_action).state
+    second_state = core(state, context, typed_state, second_action).state
     mx.eval(first_state, second_state)
     assert not bool(mx.array_equal(first_state[:, -3:, :], second_state[:, -3:, :]))
 

@@ -16,6 +16,7 @@ from core.learning.recurrent_transition_supervision import (
     StateCodebookSpec,
     decode_trace_state,
     encode_trace_state,
+    encode_trace_state_operand,
     structured_state_loss,
 )
 
@@ -257,7 +258,13 @@ def native_transition_loss(
         width=core.config.bottleneck_size,
         codebook=action_codebook,
     )
-    output = core(current, context, encoded_action)
+    typed_state = encode_trace_state_operand(
+        trace,
+        state_index=transition_index,
+        width=core.config.bottleneck_size,
+        codebook=state_codebook,
+    )
+    output = core(current, context, typed_state, encoded_action)
     state_loss = structured_state_loss(
         output.state,
         trace,
@@ -358,7 +365,13 @@ def evaluate_native_transition(
         width=core.config.bottleneck_size,
         codebook=action_codebook,
     )
-    output = core(current, context, encoded_action)
+    typed_state = encode_trace_state_operand(
+        trace,
+        state_index=transition_index,
+        width=core.config.bottleneck_size,
+        codebook=state_codebook,
+    )
+    output = core(current, context, typed_state, encoded_action)
     loss = native_transition_loss(
         core,
         base_state,
