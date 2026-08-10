@@ -63,6 +63,24 @@ _DOWNSTREAM_REPAIRABLE_RESPONSE_REASONS = {
 _LOCAL_REPAIRABLE_RESPONSE_REASONS = _DOWNSTREAM_REPAIRABLE_RESPONSE_REASONS | {
     "generic_assistant_language",
 }
+#: Words shared by almost any two English sentences, so their overlap proves
+#: no relationship between a search query and the question that produced it.
+_QUERY_PROVENANCE_STOPWORDS = frozenset(
+    {
+        "about", "actually", "and", "any", "anything", "are", "ask", "because",
+        "been", "but", "can", "could", "did", "does", "doing", "for", "from",
+        "get", "give", "had", "has", "have", "her", "him", "his", "how", "its",
+        "just", "know", "like", "look", "make", "many", "may", "more", "most",
+        "much", "need", "not", "now", "one", "only", "other", "out", "over",
+        "please", "really", "say", "see", "should", "some", "something",
+        "still", "such", "take", "tell", "than", "that", "the", "their",
+        "them", "then", "there", "these", "they", "thing", "think", "this",
+        "those", "through", "too", "use", "very", "want", "was", "way", "well",
+        "were", "what", "when", "where", "which", "who", "why", "will", "with",
+        "would", "you", "your",
+    }
+)
+
 _TOOL_FALSE_INABILITY_RE = re.compile(
     r"\b(?:"
     r"i\s+(?:can't|cannot|can\s+not|am\s+unable\s+to|don't\s+have\s+access\s+to|"
@@ -358,6 +376,42 @@ class ResponseGenerationPhase(BasePhase):
         if not query:
             return False
 
+        # The query must come from what the PERSON asked.
+        #
+        # LIVE DEFECT, 2026-08-10. current_objective is not always the user's
+        # message — on an ambient or internally-driven turn it can hold
+        # whatever perception last put there — and it is the fallback when the
+        # contract carries no search_query. So this lane ran, against a real
+        # search engine, with:
+        #
+        #     query=The Sick Mind of EDP445 | …Documentary - YouTube 🔊
+        #     query=License Plate Lookup & VIN Search | VehicleHistory.us
+        #     query=Monthly Expenses
+        #     query=t get a clear enough answer together, and I
+        #
+        # The first three are the titles of Bryan's own windows and the fourth
+        # is a mid-word fragment of her own previous reply. Every one was
+        # logged origin=user. Two costs, and the second is the serious one:
+        # the evidence is irrelevant to the turn, and the titles of a person's
+        # private windows — what they are watching, a VIN lookup, a document
+        # called "Monthly Expenses" — were sent to an external search engine
+        # by a system nobody asked to search anything.
+        #
+        # Egress is not reversible, so this fails closed: no demonstrable
+        # relation to the user's own words means no search.
+        if not self._query_comes_from_the_user(query, runtime_context, objective):
+            logger.warning(
+                "🔎 ResponseGeneration: refused required search evidence — the "
+                "query is not derived from the user's message (likely a window "
+                "title or internal objective). Nothing was sent."
+            )
+            _record_response_generation_degradation(
+                RuntimeError("required search query not user-derived"),
+                action="skipped required search evidence rather than egress an internal objective",
+                severity="warning",
+            )
+            return False
+
         cap = self.container.get("capability_engine", default=None)
         if cap is None:
             try:
@@ -477,6 +531,46 @@ class ResponseGenerationPhase(BasePhase):
             query[:120],
         )
         return True
+
+    @staticmethod
+    def _query_comes_from_the_user(
+        query: str, runtime_context: dict[str, Any], objective: str
+    ) -> bool:
+        """Whether this search query traces back to what the person typed.
+
+        Guards an EGRESS, so it fails closed: an unreadable user message means
+        no search rather than a search on whatever the objective happened to
+        hold. See the call site for the window titles this let out.
+
+        Content-word overlap rather than equality, because the contract
+        legitimately rewrites a question into a query ("who won the 2026 Nobel
+        Prize in Physics" -> "2026 Nobel Prize Physics winner"). What it never
+        does is produce a query with nothing of the question left in it.
+        """
+        user_text = str(
+            runtime_context.get("visible_user_message")
+            or runtime_context.get("user_message")
+            or ""
+        ).strip()
+        if not user_text:
+            # Unknown provenance. On an egress path that is a refusal, not a
+            # default-allow — the ambient turns are exactly the ones with no
+            # visible user message.
+            return False
+
+        def _tokens(text: str) -> set[str]:
+            return {
+                word
+                for word in re.findall(r"[a-z0-9][a-z0-9'-]{2,}", text.lower())
+                if word not in _QUERY_PROVENANCE_STOPWORDS
+            }
+
+        asked = _tokens(user_text)
+        if not asked:
+            # The person said something with no content words at all ("why?").
+            # Nothing to match against, so only an unchanged objective passes.
+            return str(objective or "").strip() == user_text
+        return bool(_tokens(query) & asked)
 
     @staticmethod
     def _clean_required_search_query(query: str) -> str:
