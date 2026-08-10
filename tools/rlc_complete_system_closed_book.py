@@ -725,6 +725,9 @@ def _run_complete_system_closed_book(
 
     objective = task.public.prompt
     domain = task.domain
+    adaptive_neural_enabled = bool(
+        config.latent_opt.enabled and config.fast_weights.enabled
+    )
     incumbent_value = incumbent_artifact_to_value(incumbent_artifact)
     incumbent_text = str(incumbent_value.get("text") or "")
     if not incumbent_text:
@@ -1053,8 +1056,12 @@ def _run_complete_system_closed_book(
         "objective_sha256": hashlib.sha256(objective.encode()).hexdigest(),
         "response_contract": task.public.response_contract,
         "single_model_owner": True,
+        "adaptive_neural_enabled": adaptive_neural_enabled,
         "executable_reasoning_enabled": executable_reasoning_enabled,
-        "first_rlc_runtime": full_stack_evidence(first_receipt),
+        "first_rlc_runtime": full_stack_evidence(
+            first_receipt,
+            adaptive_neural_expected=adaptive_neural_enabled,
+        ),
         "first_rlc_receipt": (
             first_receipt if acquisition_evidence["continuation_executed"] else None
         ),
@@ -1116,6 +1123,10 @@ def _complete_system_evidence(
     )
     require(system.get("single_model_owner") is True, "single_model_owner_not_proven")
     require(
+        type(system.get("adaptive_neural_enabled")) is bool,
+        "adaptive_neural_policy_unbound",
+    )
+    require(
         type(system.get("executable_reasoning_enabled")) is bool,
         "executable_reasoning_policy_unbound",
     )
@@ -1146,7 +1157,11 @@ def _complete_system_evidence(
             from tools.rlc_reconciliation_evidence import full_stack_evidence
 
             require(
-                full_stack_evidence(first_receipt) == first_runtime,
+                full_stack_evidence(
+                    first_receipt,
+                    adaptive_neural_expected=bool(system.get("adaptive_neural_enabled")),
+                )
+                == first_runtime,
                 "first_rlc_runtime_summary_mismatch",
             )
         acquired_context = acquisition.get("acquired_context")

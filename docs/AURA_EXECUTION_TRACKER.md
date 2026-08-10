@@ -41693,3 +41693,35 @@ treatment and their absence in the producer-disabled arm before the bounded
 component campaign may proceed. Resident 32B remains locked, and no frontier,
 fusion, activation, or `WOW Signal` claim is authorized. The completion
 envelope is `818/920` (approximately `88.9%`).
+
+## Checkpoint 2026-08-09-122: Ablations Prove Absence, Not Failure
+
+The clean CP121 one-domain 1.5B canary produced the intended causal ordering:
+ordinary decode `0/1`, complete system `1/1`, adaptation-disabled `1/1`, and
+producer-disabled `0/1`, with no regression. The treatment selected the final
+RLC candidate under exact public-objective authority and preserved it through
+outer promotion. Disabling the producer removed that lift while leaving the
+rest of the stack active.
+
+The grader nevertheless marked the campaign incomplete because the generic
+full-stack evidence rule required latent optimization attempts and fast-weight
+policy from the arm whose declared purpose was to remove those mechanisms.
+That is a control-validity defect: intentional absence was being classified as
+missing instrumentation.
+
+Runtime evidence is now profile-aware. Treatment and producer-disabled cells
+must prove adaptive neural mechanisms executed. Adaptation-disabled cells must
+instead prove zero latent-optimization attempts, no latent application, no
+fast-weight policy or optimization attempts, and no fast-weight application.
+Any adaptive activity in that control is reported as ablation contamination.
+The complete-system receipt binds the adaptive-neural policy, and both compact
+and durable evidence readers reconstruct it.
+
+Profile-aware evidence, candidate selection, promotion, receipt, engine,
+objective-program, floor, and reconciliation contracts pass `194/194`;
+canonical smoke passes `103/103`; Ruff and diff hygiene pass. The first canary
+establishes the expected causal shape but is not itself stage admission because
+one task is underpowered. A clean-source replication and then at least six
+fresh tasks across three domains remain required. Resident 32B remains locked,
+and no frontier, fusion, activation, or `WOW Signal` claim is authorized. The
+completion envelope is `819/920` (approximately `89.0%`).

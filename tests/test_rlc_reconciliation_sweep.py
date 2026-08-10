@@ -2280,6 +2280,39 @@ def test_full_stack_receipt_must_measure_every_claimed_mechanism(tmp_path: Path)
         "local_repair_policy_not_measured",
     ]
 
+    ablated = json.loads(json.dumps(valid_receipt))
+    ablated.update(
+        {
+            "latent_opt_mode": "",
+            "latent_opt_applied": False,
+            "latent_opt_attempts": 0,
+            "latent_opt_steps": 0,
+            "fast_weight_learning": {},
+            "fast_weights_applied": False,
+            "fast_weight_optimization_attempts": 0,
+        }
+    )
+    ablated["causal_receipt"] = build_causal_receipt(ablated)
+    ablation_evidence = sweep._full_stack_evidence(
+        ablated,
+        adaptive_neural_expected=False,
+    )
+    assert ablation_evidence["valid"] is True
+    assert ablation_evidence["issues"] == []
+    assert ablation_evidence["adaptive_neural_expected"] is False
+
+    contaminated = json.loads(json.dumps(ablated))
+    contaminated["latent_opt_attempts"] = 1
+    contaminated["causal_receipt"] = build_causal_receipt(contaminated)
+    contaminated_evidence = sweep._full_stack_evidence(
+        contaminated,
+        adaptive_neural_expected=False,
+    )
+    assert contaminated_evidence["valid"] is False
+    assert contaminated_evidence["issues"] == [
+        "latent_optimization_ablation_contaminated"
+    ]
+
 
 def test_complete_system_receipt_requires_acquisition_amplifier_and_promotion(
     monkeypatch,
@@ -2288,7 +2321,7 @@ def test_complete_system_receipt_requires_acquisition_amplifier_and_promotion(
     monkeypatch.setattr(
         sweep,
         "_full_stack_evidence",
-        lambda receipt: {"valid": True, "issues": []},
+        lambda receipt, **_kwargs: {"valid": True, "issues": []},
     )
     objective = "Return a JSON object with value 1."
     response_contract = '{"value":int}'
@@ -2362,6 +2395,7 @@ def test_complete_system_receipt_requires_acquisition_amplifier_and_promotion(
             "objective_sha256": hashlib.sha256(objective.encode()).hexdigest(),
             "response_contract": response_contract,
             "single_model_owner": True,
+            "adaptive_neural_enabled": True,
             "executable_reasoning_enabled": True,
             "first_rlc_runtime": {"valid": True, "issues": []},
             "first_rlc_receipt": None,
@@ -2420,7 +2454,7 @@ def test_complete_system_receipt_requires_acquisition_amplifier_and_promotion(
     monkeypatch.setattr(
         rlc_reconciliation_evidence,
         "full_stack_evidence",
-        lambda candidate: {"valid": True, "issues": []},
+        lambda candidate, **_kwargs: {"valid": True, "issues": []},
     )
     from core.brain.llm.latent_cortex.cognitive_acquisition import (
         build_acquisition_receipt,

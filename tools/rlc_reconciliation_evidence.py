@@ -5,7 +5,11 @@ from __future__ import annotations
 from typing import Any
 
 
-def full_stack_evidence(receipt: dict[str, Any]) -> dict[str, Any]:
+def full_stack_evidence(
+    receipt: dict[str, Any],
+    *,
+    adaptive_neural_expected: bool = True,
+) -> dict[str, Any]:
     """Compact, public proof that the named treatment actually ran its stack.
 
     A configuration test proves only that switches were set. This summary binds
@@ -76,16 +80,33 @@ def full_stack_evidence(receipt: dict[str, Any]) -> dict[str, Any]:
         verifier_preflight.get("verifier_admitted") is True,
         "task_verifier_not_admitted",
     )
-    require(
-        str(receipt.get("latent_opt_mode") or "") in {"gradient", "control"},
-        "latent_optimization_not_executed",
-    )
-    require(int(receipt.get("latent_opt_attempts") or 0) > 0, "latent_optimization_no_attempt")
-    require(bool(fast_weight_learning), "fast_weight_policy_not_measured")
-    require(
-        fast_weight_learning.get("disposition") != "rejected_verifier_unavailable",
-        "fast_weight_verifier_unavailable",
-    )
+    if adaptive_neural_expected:
+        require(
+            str(receipt.get("latent_opt_mode") or "") in {"gradient", "control"},
+            "latent_optimization_not_executed",
+        )
+        require(
+            int(receipt.get("latent_opt_attempts") or 0) > 0,
+            "latent_optimization_no_attempt",
+        )
+        require(bool(fast_weight_learning), "fast_weight_policy_not_measured")
+        require(
+            fast_weight_learning.get("disposition") != "rejected_verifier_unavailable",
+            "fast_weight_verifier_unavailable",
+        )
+    else:
+        require(
+            str(receipt.get("latent_opt_mode") or "") == ""
+            and int(receipt.get("latent_opt_attempts") or 0) == 0
+            and receipt.get("latent_opt_applied") is False,
+            "latent_optimization_ablation_contaminated",
+        )
+        require(
+            not fast_weight_learning
+            and receipt.get("fast_weights_applied") is False
+            and int(receipt.get("fast_weight_optimization_attempts") or 0) == 0,
+            "fast_weight_ablation_contaminated",
+        )
     require(bool(receipt.get("value_of_computation")), "adaptive_controller_not_measured")
     require(bool(receipt.get("cognitive_action_trace")), "cognitive_actions_not_measured")
     require(bool(receipt.get("diagnostic_action_selection")), "diagnostics_not_measured")
@@ -117,6 +138,7 @@ def full_stack_evidence(receipt: dict[str, Any]) -> dict[str, Any]:
     return {
         "valid": not issues,
         "issues": sorted(set(issues)),
+        "adaptive_neural_expected": adaptive_neural_expected,
         "n_slots": int(receipt.get("n_slots") or 0),
         "cognitive_slot_count": len(receipt.get("cognitive_slots") or []),
         "steps_taken": int(receipt.get("steps_taken") or 0),

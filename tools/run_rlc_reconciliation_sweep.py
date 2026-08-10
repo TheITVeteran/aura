@@ -1423,10 +1423,17 @@ def _route_counts(receipt: dict[str, Any]) -> dict[str, int]:
     return totals
 
 
-def _full_stack_evidence(receipt: dict[str, Any]) -> dict[str, Any]:
+def _full_stack_evidence(
+    receipt: dict[str, Any],
+    *,
+    adaptive_neural_expected: bool = True,
+) -> dict[str, Any]:
     from tools.rlc_reconciliation_evidence import full_stack_evidence
 
-    return full_stack_evidence(receipt)
+    return full_stack_evidence(
+        receipt,
+        adaptive_neural_expected=adaptive_neural_expected,
+    )
 
 
 def _complete_system_evidence(receipt: dict[str, Any]) -> dict[str, Any]:
@@ -1434,7 +1441,14 @@ def _complete_system_evidence(receipt: dict[str, Any]) -> dict[str, Any]:
         _complete_system_evidence as summarize,
     )
 
-    return summarize(receipt, engine_evidence=_full_stack_evidence(receipt))
+    system = receipt.get("complete_system_closed_book") or {}
+    return summarize(
+        receipt,
+        engine_evidence=_full_stack_evidence(
+            receipt,
+            adaptive_neural_expected=bool(system.get("adaptive_neural_enabled")),
+        ),
+    )
 
 
 def _runtime_receipt_issues(
@@ -1468,7 +1482,13 @@ def _runtime_receipt_issues(
     issues: list[str] = []
     if observed_sha != expected_sha:
         issues.append("runtime_receipt_digest_mismatch")
-    if cell.get("full_stack_evidence") != _full_stack_evidence(receipt):
+    adaptive_neural_expected = (
+        cell.get("arm_profile") != "complete_closed_book_adaptation_ablation"
+    )
+    if cell.get("full_stack_evidence") != _full_stack_evidence(
+        receipt,
+        adaptive_neural_expected=adaptive_neural_expected,
+    ):
         issues.append("runtime_receipt_summary_mismatch")
     expected_complete = cell.get("complete_system_evidence")
     if expected_complete is not None and expected_complete != _complete_system_evidence(receipt):
@@ -2858,7 +2878,13 @@ def main() -> int:
                             else (receipt.get("answer_replacement") or {}).get("reason")
                         ),
                         "full_stack_evidence": (
-                            _full_stack_evidence(receipt)
+                            _full_stack_evidence(
+                                receipt,
+                                adaptive_neural_expected=(
+                                    spec.profile
+                                    != "complete_closed_book_adaptation_ablation"
+                                ),
+                            )
                             if spec.profile in COMPLETE_SYSTEM_PROFILES | {"full", "full_oracle"}
                             else None
                         ),
