@@ -7,6 +7,7 @@ import logging
 import threading
 from typing import Any
 
+from core.exceptions import ContainerError
 from core.runtime.errors import record_degradation
 
 from .config import config
@@ -346,7 +347,20 @@ def _register_all_services_body(container, is_proxy: bool):
     )
     try:
         container.get("defensive_runtime")
-    except (ImportError, AttributeError, RuntimeError, TypeError, ValueError) as exc:
+    except (
+        ImportError,
+        AttributeError,
+        RuntimeError,
+        TypeError,
+        ValueError,
+        # ContainerError (and its ServiceNotFoundError subclass) descend from
+        # AuraError, not RuntimeError, so the tuple above could never catch
+        # them. This registration declares required=False and
+        # failure_policy="degrade_with_receipt" — it says out loud that it
+        # intends to degrade — yet an absent descriptor raised straight
+        # through and killed the lifespan with "Application startup failed".
+        ContainerError,
+    ) as exc:
         record_degradation("service_registration.defensive_runtime", exc)
 
     def _create_immune_system():

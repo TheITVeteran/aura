@@ -328,6 +328,26 @@ async def lifespan(app: FastAPI):
     get_event_bus().set_loop(main_loop)
 
     # 0. Global Registration
+    #
+    # LIVE DEFECT, 2026-08-09. A SIGTERM that arrives DURING boot does not stop
+    # the API server's lifespan: the runtime logged "Shutdown requested" and
+    # then started registering the entire service graph anyway. Every
+    # registration was suppressed by the shutdown latch, the first
+    # register-then-get pair raised, and the launch ended in a traceback and
+    # "Application startup failed. Exiting." — for what was simply a quit.
+    #
+    # There is nothing to boot into. Yield so the ASGI app starts and the
+    # teardown that is already in flight can finish cleanly.
+    from core.runtime.shutdown_coordinator import is_shutdown_requested
+
+    if is_shutdown_requested():
+        logger.warning(
+            "Lifespan entered while runtime shutdown is already requested; "
+            "skipping subsystem boot."
+        )
+        yield
+        return
+
     is_gui_proxy = os.environ.get("AURA_GUI_PROXY") == "1"
     from core.service_registration import register_all_services
     register_all_services(is_proxy=is_gui_proxy)

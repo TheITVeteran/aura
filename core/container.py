@@ -313,6 +313,44 @@ class ServiceContainer:
             return False
 
     @classmethod
+    def _absent_service_error(cls, name: str) -> ContainerError:
+        """The right exception for a name that has no descriptor.
+
+        LIVE DEFECT, 2026-08-09 (found in desktop-launch.log 2026-08-10).
+        ``register`` suppresses SOFTLY under the shutdown latch — it returns
+        without registering — while ``get`` raised HARD. A name can therefore
+        be absent for two very different reasons: nobody ever registered it (a
+        wiring bug), or the latch refused the registration microseconds ago
+        (ordinary teardown). Reporting both as "not found in static registry"
+        turned a mid-boot SIGTERM into what looked like a wiring bug:
+
+            ServiceNotFoundError: Service 'defensive_runtime' not found in
+            static registry.
+            ERROR:    Application startup failed. Exiting.
+
+        The runtime had been told to quit while it was still booting; the API
+        server's lifespan went on to register the whole service graph anyway,
+        every registration was suppressed, and the first register-then-get
+        pair detonated. Any such pair is a landmine during shutdown, and the
+        traceback names the wrong cause.
+        """
+        if cls._shutdown_latch_active():
+            return ContainerError(
+                f"runtime shutdown is active: service '{name}' was not registered "
+                "because the shutdown latch suppressed its registration"
+            )
+        return ServiceNotFoundError(f"Service '{name}' not found in static registry.")
+
+    @classmethod
+    def _shutdown_latch_active(cls) -> bool:
+        try:
+            from core.runtime.shutdown_coordinator import is_shutdown_requested
+
+            return bool(is_shutdown_requested())
+        except (ImportError, RuntimeError):
+            return False
+
+    @classmethod
     def _assert_runtime_initialization_allowed(cls, name: str) -> None:
         try:
             from core.runtime.shutdown_coordinator import (
@@ -865,7 +903,7 @@ class ServiceContainer:
                 if default != "_SENTINEL":
                     cls._emit_absent_event_once(resolved_name)
                     return default
-                raise ServiceNotFoundError(f"Service '{resolved_name}' not found in static registry.")
+                raise cls._absent_service_error(resolved_name)
 
         try:
             cls._assert_runtime_initialization_allowed(resolved_name)
@@ -889,7 +927,7 @@ class ServiceContainer:
                 if default != "_SENTINEL":
                     cls._emit_absent_event_once(resolved_name)
                     return default
-                raise ServiceNotFoundError(f"Service '{resolved_name}' not found in static registry.")
+                raise cls._absent_service_error(resolved_name)
 
             if desc.lifetime == ServiceLifetime.SINGLETON and desc.instance is not None and desc.initialized:
                 return desc.instance
