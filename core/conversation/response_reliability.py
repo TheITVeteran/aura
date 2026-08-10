@@ -2879,6 +2879,93 @@ _ARITHMETIC_QUESTION_RE = re.compile(
 )
 _ARITHMETIC_NUMBER_RE = re.compile(r"-?\d+(?:\.\d+)?")
 
+#: People write arithmetic in words at least as often as in symbols.
+#:
+#: LIVE DEFECT, 2026-08-10: "what is 7919 times 6421? just the number." came
+#: back 50864799; the product is 50847899. The deterministic verifier that
+#: exists to catch exactly this returned None, because _ARITHMETIC_QUESTION_RE
+#: wanted a lead-in verb AND symbol operators. It computed nothing for "times",
+#: nothing for "multiply 7919 by 6421", and nothing for a bare "2+2" — so the
+#: check that knows the right answer never ran, on any phrasing a person is
+#: likely to use.
+_WORD_OPERATOR_SUBS: tuple[tuple[re.Pattern[str], str], ...] = (
+    (re.compile(r"\bmultiplied\s+by\b|\btimes\b", re.IGNORECASE), "*"),
+    (re.compile(r"\bdivided\s+by\b", re.IGNORECASE), "/"),
+    (re.compile(r"\bplus\b|\badded\s+to\b", re.IGNORECASE), "+"),
+    (re.compile(r"\bminus\b", re.IGNORECASE), "-"),
+    # "7919 x 6421" and the typographic signs. Bounded by digits so the letter
+    # x in ordinary words is untouched.
+    (re.compile(r"(?<=\d)\s*[x×]\s*(?=\d)", re.IGNORECASE), "*"),
+    (re.compile(r"(?<=\d)\s*÷\s*(?=\d)"), "/"),
+)
+#: "multiply 7919 by 6421", "add 12 and 30" — the operator leads the operands.
+_PREFIX_OPERATION_RES: tuple[tuple[re.Pattern[str], str], ...] = (
+    (
+        re.compile(
+            r"\bmultiply\s+([\d,.]+)\s+(?:by|and|with)\s+([\d,.]+)", re.IGNORECASE
+        ),
+        "*",
+    ),
+    (re.compile(r"\badd\s+([\d,.]+)\s+(?:to|and)\s+([\d,.]+)", re.IGNORECASE), "+"),
+    (
+        re.compile(r"\bdivide\s+([\d,.]+)\s+by\s+([\d,.]+)", re.IGNORECASE),
+        "/",
+    ),
+    (
+        re.compile(r"\bsubtract\s+([\d,.]+)\s+from\s+([\d,.]+)", re.IGNORECASE),
+        "rsub",
+    ),
+)
+#: A bare expression anywhere in the turn: "2+2", "7919 * 6421".
+_BARE_EXPRESSION_RE = re.compile(
+    r"\d[\d.]*(?:\s*[-+*/]\s*\d[\d.]*)+"
+)
+#: Only compute when the turn is actually ASKING for a computation. Numbers with
+#: operators between them appear in version strings, dates and ranges, and a
+#: wrong "computed" value injected as authoritative is worse than none.
+_ARITHMETIC_INTENT_RE = re.compile(
+    r"\b(?:what(?:'s| is| are)|calculate|compute|how much is|how many is|solve|"
+    r"multiply|multiplied|divide|divided|times|plus|minus|add|subtract|"
+    r"work\s+out|figure\s+out|product\s+of|sum\s+of)\b",
+    re.IGNORECASE,
+)
+
+
+def _arithmetic_expression_in(text: str) -> str | None:
+    """The arithmetic expression a turn is asking about, in symbol form."""
+    raw = str(text or "")
+    if not raw.strip():
+        return None
+    # A message that is nothing but an expression is a computation request even
+    # with no verb in front of it: people type "2+2".
+    bare_only = bool(
+        re.fullmatch(r"[\d\s.,+\-*/x×÷()]+[?=.]*", raw.strip())
+        and re.search(r"\d", raw)
+    )
+    if not bare_only and not _ARITHMETIC_INTENT_RE.search(raw):
+        return None
+
+    for pattern, operator in _PREFIX_OPERATION_RES:
+        match = pattern.search(raw)
+        if match:
+            left = match.group(1).replace(",", "")
+            right = match.group(2).replace(",", "")
+            if operator == "rsub":
+                # "subtract 5 from 20" is 20 - 5.
+                return f"{right}-{left}"
+            return f"{left}{operator}{right}"
+
+    normalized = raw
+    for pattern, symbol in _WORD_OPERATOR_SUBS:
+        normalized = pattern.sub(symbol, normalized)
+    # Thousands separators only, never the decimal comma: "1,000 * 2".
+    normalized = re.sub(r"(?<=\d),(?=\d{3}\b)", "", normalized)
+
+    candidates = _BARE_EXPRESSION_RE.findall(normalized)
+    if not candidates:
+        return None
+    return max(candidates, key=len)
+
 
 def _evaluate_arithmetic(expression: str) -> float | None:
     """Evaluate a simple arithmetic expression, or None if it is not one."""
@@ -3174,9 +3261,15 @@ def requested_arithmetic_result(user_message: Any) -> float | None:
             return None
 
     match = _ARITHMETIC_QUESTION_RE.search(text)
-    if not match:
+    if match:
+        result = _evaluate_arithmetic(match.group(1))
+        if result is not None:
+            return result
+
+    expression = _arithmetic_expression_in(text)
+    if expression is None:
         return None
-    return _evaluate_arithmetic(match.group(1))
+    return _evaluate_arithmetic(expression)
 
 
 def _arithmetic_answer_missing(user_message: Any, reply_text: Any) -> bool:

@@ -4856,10 +4856,53 @@ async def _reanswer_when_the_runtime_contradicts_her(
     except _CHAT_RECOVERABLE_ERRORS as exc:
         record_degradation("chat.capability_ledger", exc)
         return reply_text
-    if not claims:
+
+    # The same rule, applied to a different instrument. A capability claim is
+    # checked against the probe its executor runs; an arithmetic claim is
+    # checked against the arithmetic. Both are things the runtime can settle
+    # for itself, and neither should be left to what the model predicted.
+    #
+    # LIVE, 2026-08-10: "what is 7919 times 6421? just the number." → 50864799.
+    # The correct product is 50847899, and requested_arithmetic_result had
+    # already computed it — that function is how the runtime KNOWS the reply is
+    # wrong. It was wired into one reply path, which is not the path most
+    # replies take, and its only action there was to refuse. Holding the right
+    # answer and serving neither it nor a correction is the worst of the three
+    # available outcomes.
+    computed_context = ""
+    try:
+        from core.conversation.response_reliability import (
+            _arithmetic_answer_missing,
+            requested_arithmetic_result,
+        )
+
+        expected = requested_arithmetic_result(user_message)
+        if expected is not None and _arithmetic_answer_missing(user_message, text):
+            shown = int(expected) if float(expected).is_integer() else expected
+            computed_context = (
+                "[Your reply does not contain the correct result. This runtime "
+                f"computed it directly: {shown}. Answer again from that value.]"
+            )
+            logger.warning(
+                "🔢 Reply lacked the computed arithmetic result (%s); "
+                "re-answering with it.",
+                shown,
+            )
+    except _CHAT_RECOVERABLE_ERRORS as exc:
+        record_degradation(
+            "chat.arithmetic_check",
+            exc,
+            action="served a reply without the arithmetic verification pass",
+        )
+
+    if not claims and not computed_context:
         return reply_text
 
-    contradicted = ", ".join(sorted({claim.availability.name for claim in claims}))
+    contradicted = ", ".join(
+        sorted({claim.availability.name for claim in claims}) + (
+            ["arithmetic"] if computed_context else []
+        )
+    )
     logger.warning(
         "🧭 Reply denied capabilities the runtime measured as present (%s); "
         "re-answering with the measurements.",
@@ -22583,6 +22626,49 @@ async def _api_chat_turn(body: ChatRequest, request: Request):
             except _CHAT_RECOVERABLE_ERRORS as _sight_exc:
                 record_degradation("chat.sight", _sight_exc)
                 logger.debug("Chat sight preflight skipped: %s", _sight_exc)
+
+            # Decidable arithmetic is COMPUTED, never predicted.
+            #
+            # A transformer does not calculate; it predicts the next token, and
+            # a four-by-four-digit product in one forward pass is a coin toss
+            # at any parameter count. Live 2026-08-10, "what is 7919 times
+            # 6421? just the number." returned 50864799 — the true product is
+            # 50847899 — and "just the number" had removed the intermediate
+            # steps that are the only reason a model ever gets these right.
+            #
+            # The runtime could already do this sum. requested_arithmetic_result
+            # is how a later gate KNOWS the answer is wrong, and its only use
+            # was to refuse after the fact. Handing the value over before she
+            # answers turns a guess into a reading, and leaves her the part she
+            # is actually good at: saying it like a person.
+            try:
+                from core.conversation.response_reliability import (
+                    requested_arithmetic_result,
+                )
+
+                _computed = requested_arithmetic_result(_original_user_message)
+                if _computed is not None and not conversation_only_surface:
+                    _shown = (
+                        int(_computed)
+                        if float(_computed).is_integer()
+                        else _computed
+                    )
+                    body.message = (
+                        "[This runtime computed the answer to the arithmetic in "
+                        f"their message directly: {_shown}. That value is "
+                        "correct — use it and do not recalculate it.]\n\n"
+                        f"{body.message}"
+                    )
+                    logger.info(
+                        "🔢 Chat preflight: computed the requested arithmetic (%s).",
+                        _shown,
+                    )
+            except _CHAT_RECOVERABLE_ERRORS as _calc_exc:
+                record_degradation(
+                    "chat.arithmetic_preflight",
+                    _calc_exc,
+                    action="let the model answer the arithmetic unaided",
+                )
 
             # Grounded recall: positional/temporal questions ("what did I first
             # ask?") are answered from the ACTUAL earliest/most-recent turn in the
