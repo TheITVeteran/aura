@@ -281,7 +281,6 @@ class RobustOrchestrator(
     _intent_router: Any | None = None
     _state_machine: Any | None = None
     _autonomic_core: Any | None = None
-    _pending_correction: str = ""  # v40: Identity Drift correction injection
     _ears: Any | None = None
     _liquid_state: Any | None = None
     _personality_engine: Any | None = None

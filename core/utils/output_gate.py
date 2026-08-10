@@ -347,21 +347,16 @@ class AutonomousOutputGate:
                 record_degradation('output_gate', e)
                 logger.warning("IdentityGuard evaluation failed: %s", e)
 
-        # v40: Identity Drift Monitor
+        # Identity drift: measured here, acted on nowhere in this path.
+        # The monitor accumulates density across responses; the trend is
+        # read by the tension engine and the growth ladder. It deliberately
+        # no longer returns a correction string to splice into the next
+        # objective — prompting a drifting process to stop drifting is not
+        # a causal fix, and the gate is not the place to attempt one.
         from core.container import ServiceContainer
         drift_monitor = ServiceContainer.get("drift_monitor", default=None)
         if drift_monitor:
-            score, signals = drift_monitor.analyze_response(content)
-            if signals:
-                correction = drift_monitor.get_correction_injection(signals)
-                # Store correction for next generation context if needed
-                # For now, we record it in the orchestrator if available
-                if self.orchestrator and hasattr(self.orchestrator, "_pending_correction"):
-                    self.orchestrator._pending_correction = correction
-            
-            # Check context window health
-            # This logic will be handled in the ContextAssembler or CognitiveEngine think loop
-            pass  # no-op: intentional
+            drift_monitor.analyze_response(content)
 
 
         is_autonomous = metadata.get("autonomous", False)

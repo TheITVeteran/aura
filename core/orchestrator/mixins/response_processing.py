@@ -186,23 +186,31 @@ class ResponseProcessingMixin:
             # User feedback: "Anyway" feels clunky. Removing prefix to let response flow naturally.
             self._reflex_sent_for_current = False  # Reset for next cycle
 
-        # v40: Identity Drift Monitor
+        # Identity drift: a measured trend, not a per-response trigger.
+        # `density` is the current window's hits-per-response, so what the
+        # ladder records is already a moving average rather than a spot
+        # score that a single warranted apology could spike.
         drift_monitor = ServiceContainer.get("drift_monitor", default=None)
         if drift_monitor and response and response != "...":
-            score, signals = drift_monitor.analyze_response(response)
+            density, _signals = drift_monitor.analyze_response(response)
 
-            # v40: Link drift score to GrowthLadder for maturity tracking
             ladder = ServiceContainer.get("growth_ladder", default=None)
             if ladder:
-                ladder.record_drift_score(score)
+                ladder.record_drift_score(density)
 
-            if score > 0.4:  # Significant drift detected
-                correction = drift_monitor.get_correction_injection(signals)
-                if correction:
-                    logger.warning(
-                        "📉 [Drift] Drift detected (score %.2f). Storing correction.", score
-                    )
-                    self._pending_correction = correction
+            trend = drift_monitor.trend()
+            # Only a rising trend across two populated windows is drift.
+            # One response cannot establish a direction, and treating it as
+            # though it could is what made the old threshold fire on Aura
+            # agreeing with someone who was right.
+            if trend.comparable and trend.rising and trend.delta >= 0.2:
+                logger.warning(
+                    "[Drift] density rising: %.2f → %.2f (delta %+.2f, dominant %s)",
+                    trend.prior.density,
+                    trend.current.density,
+                    trend.delta,
+                    trend.dominant or "none",
+                )
 
         # Security Filter
         response = await self._apply_constitutional_guard(response)

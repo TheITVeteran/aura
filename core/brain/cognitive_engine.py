@@ -2046,48 +2046,40 @@ class CognitiveEngine:
                     reason="spine_injection_bound",
                 )
 
-        # v40: Identity Drift - Context Refresh check
-        # If history is too long and burying identity, we "refresh" by reminding Aura who she is.
+        # Identity drift: measured, never spliced into the objective.
+        #
+        # Two injections used to live here and neither could work. The first
+        # prepended a correction string ("[SPINE CHECK] Am I agreeing under
+        # social pressure?") produced by the drift monitor — asking a
+        # drifting process to talk itself out of drifting, and a direct
+        # violation of the rule that fixes are causal, not verbal.
+        #
+        # The second prepended "[IDENTITY REFRESH: REMEMBER WHO YOU ARE]"
+        # when the identity anchor looked like a small fraction of the
+        # window. It was measuring a RATIO, not an absence:
+        # build_system_prompt injects AURA_IDENTITY in full on every turn
+        # regardless of depth, so the anchor was never actually missing and
+        # the shout added nothing except an instruction to perform identity.
+        #
+        # Context health is still worth knowing, so it is still computed and
+        # logged. It just no longer edits what Aura was asked to do.
         drift = get_container().get("drift_monitor", default=None)
-        orchestrator = get_container().get("orchestrator", default=None)
-
-        if drift:
-            # Check for a specific pending correction from the last turn
-            pending = getattr(orchestrator, "_pending_correction", "")
-            if pending:
-                # v40: Cast to str to satisfy weird type checker slice error
-                pending_str = str(pending)
-                logger.warning(
-                    "🩹 [Drift] Applying pending identity correction: %s...", pending_str[:50]
-                )
-                objective = f"{pending_str}\n\n{objective}"
-                state.cognition.current_objective = objective
-                _record_objective_binding(
-                    state,
-                    objective,
-                    source=f"cognitive_engine:{origin}",
-                    mode=mode,
-                    reason="drift_correction_bound",
-                )
-            else:
-                # Estimate general context health if no specific correction
+        if drift and background_policy.is_user_facing_origin(origin):
+            try:
                 hist_len = len(str(state.cognition.working_memory))
                 sys_len = len(ContextAssembler.build_system_prompt(state))
-                if background_policy.is_user_facing_origin(origin) and drift.needs_context_refresh(
-                    hist_len, sys_len
-                ):
-                    logger.warning(
-                        "🔄 [Drift] Identity anchor buried. Triggering cognitive refresh."
+                if drift.needs_context_refresh(hist_len, sys_len):
+                    logger.info(
+                        "[Drift] identity anchor is %.1f%% of the window at depth; "
+                        "anchor is still injected in full",
+                        (sys_len / hist_len * 100) if hist_len else 100.0,
                     )
-                    objective = "[IDENTITY REFRESH: REMEMBER WHO YOU ARE]\n" + objective
-                    state.cognition.current_objective = objective
-                    _record_objective_binding(
-                        state,
-                        objective,
-                        source=f"cognitive_engine:{origin}",
-                        mode=mode,
-                        reason="identity_refresh_bound",
-                    )
+            except (AttributeError, TypeError, ValueError, ZeroDivisionError) as _drift_exc:
+                record_degradation(
+                    "cognitive_engine.drift_context_health",
+                    _drift_exc,
+                    action="skipped context-health measurement for this turn",
+                )
 
         # v5.2: Augmentor Context Injection
         # Pull signals from registered augmentors before the phase loop
@@ -2122,11 +2114,6 @@ class CognitiveEngine:
             context,
             **loop_kwargs,
         )
-
-        # v40: Clear drift correction after use
-        orchestrator = get_container().get("orchestrator", default=None)
-        if orchestrator and hasattr(orchestrator, "_pending_correction"):
-            orchestrator._pending_correction = ""
 
         return thought
 
