@@ -1,6 +1,16 @@
 """core/tools/tool_registry.py — Tool Registry.
 
 Stores, catalogs, and invokes all verified and forged tool classes.
+
+Execution passes two checks the registry did not used to have:
+
+* **Sequencing.** An optional ``ToolRuleSolver`` decides whether the tool may
+  run *here* — after what has already run this step, given what the last call
+  returned. Without a rule set the registry behaves exactly as before, so this
+  is opt-in per caller rather than a new global constraint.
+* **Tracing.** Every execution opens a ``execute_tool {name}`` span in the
+  GenAI semantic convention, so tool work shows up in the same trace as the
+  model call that asked for it.
 """
 from __future__ import annotations
 
@@ -8,7 +18,9 @@ import logging
 import ast
 from typing import Any, Dict, Optional
 
+from core.observability.genai_semconv import tool_span
 from core.sandbox.runner import run_untrusted
+from core.tools.tool_rules import ToolCall, ToolRuleSolver
 
 logger = logging.getLogger("Aura.ToolRegistry")
 
@@ -16,8 +28,12 @@ logger = logging.getLogger("Aura.ToolRegistry")
 class ToolRegistry:
     """Central directory containing all operational tools."""
 
-    def __init__(self) -> None:
+    def __init__(self, *, rules: ToolRuleSolver | None = None) -> None:
         self._tools: Dict[str, Any] = {}
+        self._rules: ToolRuleSolver | None = None
+        self._step: list[ToolCall] = []
+        if rules is not None:
+            self.set_rules(rules)
 
     def register_tool(self, name: str, manifest: Any) -> None:
         self._tools[name] = manifest
@@ -26,6 +42,40 @@ class ToolRegistry:
     def get_tool(self, name: str) -> Optional[Any]:
         return self._tools.get(name)
 
+    # ── sequencing ────────────────────────────────────────────────────────
+
+    def set_rules(self, rules: ToolRuleSolver | None) -> None:
+        """Install (or clear) the sequencing constraints.
+
+        Validated against what is actually registered, so a rule naming a tool
+        that does not exist is refused here rather than never firing.
+        """
+        if rules is not None and self._tools:
+            rules.validate(self._tools.keys())
+        self._rules = rules
+
+    def begin_step(self) -> None:
+        """Start a new step. Per-step budgets and child rules reset here."""
+        self._step = []
+
+    @property
+    def step_history(self) -> tuple[ToolCall, ...]:
+        return tuple(self._step)
+
+    def may_finish(self) -> bool:
+        """Whether the step is allowed to end — nothing required is outstanding."""
+        if self._rules is None:
+            return True
+        return self._rules.may_exit(self._step)
+
+    def outstanding(self) -> frozenset[str]:
+        """Required-before-exit tools that have not run this step."""
+        if self._rules is None:
+            return frozenset()
+        return self._rules.uncalled_required(self._step)
+
+    # ── execution ─────────────────────────────────────────────────────────
+
     async def execute_tool(self, name: str, *args, **kwargs) -> Dict[str, Any]:
         """Invoke a registered tool in the isolated tool sandbox."""
         manifest = self.get_tool(name)
@@ -33,24 +83,48 @@ class ToolRegistry:
             logger.error("🚫 ToolRegistry: tool '%s' not found", name)
             return {"ok": False, "error": f"tool_not_found:{name}"}
 
-        try:
-            driver = _build_sandbox_driver(str(manifest.code), name, args, kwargs)
-            sandbox_result = run_untrusted(driver)
-            if sandbox_result.get("status") != "ok":
+        if self._rules is not None:
+            verdict = self._rules.allowed(self._step, available=self._tools.keys())
+            if name not in verdict.allowed:
+                # The reason travels with the refusal. A tool blocked for an
+                # unexplained reason is indistinguishable from one that is
+                # broken, and the model will retry it either way.
+                reason = verdict.why_not(name) or "no rule permits it at this point"
+                logger.info("⛔ ToolRegistry: '%s' not permitted here — %s", name, reason)
                 return {
                     "ok": False,
-                    "error": sandbox_result.get("repr")
-                    or sandbox_result.get("stderr")
-                    or sandbox_result.get("status"),
+                    "error": f"tool_not_permitted_here:{name}",
+                    "reason": reason,
                 }
-            stdout = str(sandbox_result.get("stdout") or "").strip()
-            if not stdout:
-                return {"ok": False, "error": "tool_returned_no_result"}
-            parsed = ast.literal_eval(stdout.splitlines()[-1])
-            return {"ok": True, "result": parsed}
-        except (AttributeError, SyntaxError, TypeError, ValueError) as e:
-            logger.error("Error executing tool %s: %s", name, e)
-            return {"ok": False, "error": str(e)}
+
+        with tool_span(name) as span:
+            try:
+                driver = _build_sandbox_driver(str(manifest.code), name, args, kwargs)
+                sandbox_result = run_untrusted(driver)
+                if sandbox_result.get("status") != "ok":
+                    outcome = {
+                        "ok": False,
+                        "error": sandbox_result.get("repr")
+                        or sandbox_result.get("stderr")
+                        or sandbox_result.get("status"),
+                    }
+                elif not (stdout := str(sandbox_result.get("stdout") or "").strip()):
+                    outcome = {"ok": False, "error": "tool_returned_no_result"}
+                else:
+                    outcome = {
+                        "ok": True,
+                        "result": ast.literal_eval(stdout.splitlines()[-1]),
+                    }
+            except (AttributeError, SyntaxError, TypeError, ValueError) as e:
+                logger.error("Error executing tool %s: %s", name, e)
+                outcome = {"ok": False, "error": str(e)}
+            span.set_attribute("aura.tool.ok", outcome.get("ok", False))
+
+        # Recorded whether it succeeded or not: a failed call still consumed
+        # its budget and still moved the sequencing state. Counting only
+        # successes would let a tool retry past its own per-step cap.
+        self._step.append(ToolCall(name=name, output=outcome.get("result")))
+        return outcome
 
 
 def _build_sandbox_driver(code: str, name: str, args: tuple[Any, ...], kwargs: dict[str, Any]) -> str:

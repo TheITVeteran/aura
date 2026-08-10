@@ -416,6 +416,14 @@ class ToolRuleSolver:
         if self.universe is not None:
             self._validate(self.universe)
 
+    def validate(self, available_tools: Iterable[str]) -> None:
+        """Re-check the rule set against a tool universe.
+
+        For callers that build the solver before they know the registry, and
+        would otherwise carry a typo'd rule that simply never fires.
+        """
+        self._validate(frozenset(available_tools))
+
     # -- introspection -----------------------------------------------------
 
     def _named(self, rule_type: ToolRuleType) -> frozenset[str]:
