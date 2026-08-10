@@ -83,6 +83,11 @@ class ResilienceEngine:
 
     FRUSTRATION_HALF_LIFE = 1800  # 30 minutes
     DEPLETION_HALF_LIFE = 14400  # 4 hours
+    # How hard one failure pushes each axis. Named because the ratio between
+    # them IS the exchange rate this engine uses, and recovery must use the
+    # same one rather than a second, invented number.
+    FRUSTRATION_GAIN = 0.4
+    DEPLETION_GAIN = 0.15
     DEPLETION_THRESHOLD = 0.75
     STRAIN_THRESHOLD = 0.45
     FRICTION_THRESHOLD = 0.20
@@ -148,10 +153,10 @@ class ResilienceEngine:
         if len(history) > 100:
             self.profile.failure_history = history[-100:]
 
-        frustration_delta = severity * stakes * 0.4
+        frustration_delta = severity * stakes * self.FRUSTRATION_GAIN
         self.profile.frustration = min(1.0, self.profile.frustration + frustration_delta)
 
-        depletion_delta = severity * stakes * 0.15
+        depletion_delta = severity * stakes * self.DEPLETION_GAIN
         self.profile.depletion = min(1.0, self.profile.depletion + depletion_delta)
 
         self._update_state()
@@ -172,7 +177,34 @@ class ResilienceEngine:
         return self.profile.state
 
     def record_success(self, domain: str, stakes: float = 0.5) -> None:
-        """Success reduces frustration more than it reduces depletion."""
+        """Success reduces frustration more than it reduces depletion.
+
+        LIVE DEFECT, 2026-08-10. That sentence was the docstring, and the
+        method reduced depletion by exactly zero. Depletion had no working way
+        down at all:
+
+          * every degradation added severity*stakes*0.15 — a routine warning
+            (0.55 x 0.60) is +0.0495;
+          * passive decay is a 4-hour half-life, which removes 0.29% of the
+            current value per minute — about 0.0014 at d=0.5, some 35x slower
+            than a single routine failure adds;
+          * record_rest, the only strong reducer, has no caller anywhere in
+            production;
+          * and this method, the one channel that fires on real work going
+            right, touched frustration only.
+
+        So depletion was a one-way ratchet. Observed live over one working
+        session: 0.42 to 0.97 in about forty minutes of ordinary use, at which
+        point the engine logged "Execution suppressed due to
+        depletion/exhaustion" and her replies fell to the degraded composer.
+        Nothing was wrong with her; she had simply been running.
+
+        The relief rate is not a new constant. This engine already states its
+        exchange rate between the two axes in how a failure loads them —
+        depletion moves at DEPLETION_GAIN/FRUSTRATION_GAIN of frustration's
+        rate — and recovery uses that same ratio, which is exactly what
+        "reduces frustration more than it reduces depletion" means.
+        """
         stakes = self._clamp01(stakes)
         history = self.profile.failure_history
         recent = history[-20:]
@@ -189,6 +221,11 @@ class ResilienceEngine:
 
         self.profile.frustration = max(0.0, self.profile.frustration - frustration_release)
 
+        depletion_release = frustration_release * (
+            self.DEPLETION_GAIN / self.FRUSTRATION_GAIN
+        )
+        self.profile.depletion = max(0.0, self.profile.depletion - depletion_release)
+
         if self.profile.state in (ResilienceState.STRAIN, ResilienceState.FRICTION):
             self.profile.persistence_drive = min(1.0, self.profile.persistence_drive + 0.1)
 
@@ -196,9 +233,10 @@ class ResilienceEngine:
         self._invalidate_snapshot_cache()
 
         logger.info(
-            "✅ [Resilience] Success [%s] → frustration=%.2f state=%s",
+            "✅ [Resilience] Success [%s] → frustration=%.2f depletion=%.2f state=%s",
             domain,
             self.profile.frustration,
+            self.profile.depletion,
             self.profile.state.value,
         )
 
@@ -354,10 +392,37 @@ class ResilienceEngine:
         try:
             while not is_shutdown_requested():
                 await asyncio.sleep(60)
+                self._credit_quiet_interval_as_rest()
                 self._apply_decay()
                 self._check_subsystem_auto_recovery()
         except asyncio.CancelledError as _e:
             logger.debug("Ignored asyncio.CancelledError in resilience_engine.py: %s", _e)
+
+    def _credit_quiet_interval_as_rest(self) -> None:
+        """An interval with no failure in it was rest, and should count as it.
+
+        ``record_rest`` is the only strong depletion reducer this engine has,
+        and nothing in production ever called it — grep found its definition
+        and one test. So the recovery half of the model existed on paper only.
+
+        This claims no new policy: the decay loop already wakes on a fixed
+        interval, and the only judgement being made is that a stretch of
+        runtime containing zero recorded failures is, in fact, quiet.
+        """
+        now = time.time()
+        history = self.profile.failure_history
+        last_failure_at = history[-1].timestamp if history else 0.0
+        # Quiet runs from whichever came later: the last failure, or the last
+        # time rest was already credited. Anything before that is either not
+        # quiet or already paid for.
+        since = max(self.profile.last_rest, last_failure_at)
+        if since <= 0.0:
+            self.profile.last_rest = now
+            return
+        quiet_seconds = now - since
+        if quiet_seconds <= 0.0:
+            return
+        self.record_rest(quiet_seconds)
 
     def _check_subsystem_auto_recovery(self) -> None:
         """Restores degraded subsystems to healthy if no failures occurred in 300s."""
