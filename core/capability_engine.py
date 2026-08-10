@@ -183,6 +183,35 @@ _LIGHTWEIGHT_BACKGROUND_IO_SKILLS = frozenset(
     }
 )
 
+#: Registered skill names that are the SAME capability, mapped to the one name
+#: that should represent them, so a chooser sees a capability once.
+#:
+#: ``search_web`` and ``free_search`` are subclasses of the class that
+#: registers as ``web_search`` and add nothing — ``free_search`` says so in its
+#: own docstring, "Compatibility wrapper for legacy 'free_search' skill". The
+#: code was already deduplicated by inheritance; the CATALOG was not, so all
+#: three were offered as separate options and a chooser had to pick between
+#: three identical tools.
+#:
+#: Measured live 2026-08-10: asked for the weather, she answered "I don't have
+#: a window, camera, thermometer or weather feed" while five search skills sat
+#: READY. Three of the five were this one skill wearing three names.
+#:
+#: Only true aliases belong here. grounded_search (Google API with citation
+#: grounding), local_reference_search (offline corpus, survives no network),
+#: sovereign_browser (interactive browsing) and web_interlocutor (conversing
+#: with another web agent) are genuinely different capabilities and are NOT
+#: aliases, however similar their names look.
+#:
+#: The names stay registered and callable — stored plans, beliefs and learned
+#: policies reference them, and breaking those to tidy a list would trade a
+#: cosmetic problem for a real one. They are hidden from the catalog, not
+#: removed from the registry.
+_SKILL_ALIASES: dict[str, str] = {
+    "search_web": "web_search",
+    "free_search": "web_search",
+}
+
 #: Origins that mean "a person is asking, right now, at the surface".
 _DIRECT_USER_REQUEST_ORIGINS = frozenset(
     {
@@ -4105,20 +4134,37 @@ class CapabilityEngine(AuraBaseModule):
             "validation_state": "quarantined",
         }
 
+    def _suppressed_aliases(self) -> set[str]:
+        """Alias names to hide because their canonical skill is registered.
+
+        Computed per call rather than stored: whether an alias may be hidden
+        depends on the canonical skill being present RIGHT NOW, and a registry
+        that lost the canonical must fall back to showing the alias rather
+        than losing the capability entirely.
+        """
+        return {
+            alias
+            for alias, canonical in _SKILL_ALIASES.items()
+            if alias != canonical and canonical in self.skills and alias in self.skills
+        }
+
     def iter_tool_catalog(self, *, include_inactive: bool = True) -> Iterable[dict[str, Any]]:
         """Stream catalog items without materializing the full registry."""
         yielded: set[str] = set()
+        aliases = self._suppressed_aliases()
         for skill_name in sorted(self.active_skills):
             meta = self.skills.get(skill_name)
             if meta is None:
                 continue
             if not meta.enabled and not include_inactive:
                 continue
+            if skill_name in aliases:
+                continue
             yielded.add(skill_name)
             yield self._catalog_item_for_skill(skill_name, meta)
 
         for skill_name, meta in self.skills.items():
-            if skill_name in yielded:
+            if skill_name in yielded or skill_name in aliases:
                 continue
             if not meta.enabled and not include_inactive:
                 continue

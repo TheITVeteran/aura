@@ -196,6 +196,33 @@ def _degradation_line() -> str:
         return ""
 
 
+#: The families a capability question actually comes in, and the tokens that
+#: identify each in a registered skill name.
+#:
+#: This used to be a single hard-coded tuple for code execution, because code
+#: execution was the one family that had been caught being denied. That fixed
+#: the instance and left the class: asked "what's the weather where I am? and
+#: if you can't actually get it, tell me that instead of guessing", she
+#: answered "I don't have a window, camera, thermometer or weather feed" while
+#: free_search, grounded_search, search_web, sovereign_browser and web_search
+#: were all READY and available. She enumerated SENSORS she lacks and never
+#: consulted the catalogue she has — the identical confabulation, one family
+#: over, from a fix that only ever named one family.
+#:
+#: Exemplars are capped per family so this stays a few lines rather than a
+#: catalogue dump: the purpose is to stop her denying a whole capability
+#: class, not to inline 76 tool descriptions.
+_CAPABILITY_FAMILIES: tuple[tuple[str, tuple[str, ...]], ...] = (
+    ("code execution", ("code", "sandbox", "repl", "shell", "exec", "python")),
+    ("web and search", ("search", "web", "browse", "browser", "http", "url")),
+    ("screen perception", ("screen", "vision", "ocr", "perceive", "observe", "camera")),
+    ("desktop control", ("desktop", "click", "keyboard", "mouse", "window", "automation")),
+    ("files", ("file", "directory", "document", "download")),
+    ("memory and belief", ("memory", "recall", "belief", "knowledge", "remember")),
+    ("communication", ("email", "message", "notify", "speak", "voice", "send")),
+)
+
+
 def _capability_line() -> str:
     """What she can actually do, read from the live skill registry.
 
@@ -209,6 +236,11 @@ def _capability_line() -> str:
     Deliberately states only what the registry says, and names the gap between
     "registered" and "reachable from this conversation" rather than papering over
     it — a ready skill is not a promise that this turn can invoke it.
+
+    Reports every family in _CAPABILITY_FAMILIES rather than code execution
+    alone. The first version of this line named only the family that had
+    already been observed failing, which left the same denial available in
+    every other one — see that constant for the live recurrence.
     """
 
     try:
@@ -232,21 +264,21 @@ def _capability_line() -> str:
     if not total:
         return ""
 
-    execution = sorted(
-        name
-        for name in ready
-        if any(
-            token in name.lower()
-            for token in ("code", "sandbox", "repl", "shell", "exec")
+    families: list[str] = []
+    for label, tokens in _CAPABILITY_FAMILIES:
+        members = sorted(
+            name for name in ready if any(token in name.lower() for token in tokens)
         )
-    )
+        if members:
+            families.append(f"{label} ({', '.join(members[:4])})")
+
     line = (
         f"- Skills registered and available right now: {len(ready)} of {total}."
     )
-    if execution:
+    if families:
         line += (
-            " Code-execution skills present in the registry: "
-            + ", ".join(execution[:6])
+            " Families present in the registry: "
+            + "; ".join(families)
             + ". They are REGISTERED; that is not the same as reachable from this"
             " chat turn, so do not claim you ran anything unless you have a"
             " result in hand — and do not deny having them either."
