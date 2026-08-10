@@ -59,6 +59,7 @@ def test_verified_objective_teacher_emits_private_query_scoped_target() -> None:
     assert event["allowed_plasticity_scopes"] == [
         "activation_state",
         "episodic_fast_weights",
+        "recurrent_workspace_evidence",
     ]
     assert bytes(target).decode("utf-8").startswith("FINAL_ANSWER: {")
     validate_teaching_event(

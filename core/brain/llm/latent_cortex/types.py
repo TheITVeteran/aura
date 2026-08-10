@@ -1513,6 +1513,10 @@ class EpisodeReceipt:
     # and exact cleanup. Public commitments only; no latent values or evidence
     # text are copied into the receipt.
     fast_weight_learning: dict[str, Any] = field(default_factory=dict)
+    # Independently verified private derivation encoded into the actual
+    # recurrent workspace, compared with a norm-matched semantic sham, and
+    # retained only when the neural decode strictly improves.
+    verified_workspace_evidence: dict[str, Any] = field(default_factory=dict)
     # Cleanup is a separate transaction proof so optimizer/attach failures do
     # not discard the measured erase evidence needed to decide whether the
     # resident worker may safely continue or run a vanilla fallback.
@@ -1888,6 +1892,9 @@ class EpisodeReceipt:
             "fast_weight_canaries": dict(self.fast_weight_canaries),
             "fast_weight_verifier": dict(self.fast_weight_verifier),
             "fast_weight_learning": dict(self.fast_weight_learning),
+            "verified_workspace_evidence": dict(
+                self.verified_workspace_evidence
+            ),
             "fast_weight_cleanup": dict(self.fast_weight_cleanup),
             "decode_requested_tokens": self.decode_requested_tokens,
             "decode_generated_tokens": self.decode_generated_tokens,

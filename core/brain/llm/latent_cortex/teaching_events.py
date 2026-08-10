@@ -30,6 +30,7 @@ TEACHING_EVENT_SCHEMA = "aura.rlc.teaching_event.v1"
 _ALLOWED_PLASTICITY_SCOPES = (
     "activation_state",
     "episodic_fast_weights",
+    "recurrent_workspace_evidence",
 )
 
 
@@ -57,14 +58,14 @@ def _is_sha256(value: Any) -> bool:
     )
 
 
-def build_exact_objective_teaching_event(
+def build_exact_objective_teaching_package(
     *,
     objective: str,
     incumbent_candidate: str,
     source_state_sha256: str,
     tokenizer: Any,
     structural_diversity: Mapping[str, Any],
-) -> tuple[dict[str, Any], dict[str, Any], list[int]]:
+) -> tuple[dict[str, Any], dict[str, Any], list[int], str]:
     """Create one private target from a public-objective exact solution.
 
     The returned target tokens remain worker-private.  The event and admission
@@ -158,7 +159,9 @@ def build_exact_objective_teaching_event(
         "correction_type": "verified_exact_objective_replacement",
         "allowed_plasticity_scopes": list(_ALLOWED_PLASTICITY_SCOPES),
         "lifetime": "single_query_erase_required",
-        "teacher_context_policy": "private_target_only_never_model_context",
+        "teacher_context_policy": (
+            "private_neural_evidence_only_never_public_answer_lane"
+        ),
         "teacher_removed_before_causal_probe_required": True,
         "capability_claim_authority": False,
         "claim_boundary": "mechanism_diagnostic_not_teacher_free_capability_evidence",
@@ -170,7 +173,29 @@ def build_exact_objective_teaching_event(
         expected_objective_sha256=_text_sha256(objective),
         expected_source_state_sha256=source_state_sha256,
     )
-    return receipt, admission, target_tokens
+    return receipt, admission, target_tokens, full_solution
+
+
+def build_exact_objective_teaching_event(
+    *,
+    objective: str,
+    incumbent_candidate: str,
+    source_state_sha256: str,
+    tokenizer: Any,
+    structural_diversity: Mapping[str, Any],
+) -> tuple[dict[str, Any], dict[str, Any], list[int]]:
+    """Compatibility surface that keeps the verified witness worker-private."""
+
+    event, admission, target_tokens, _private_witness = (
+        build_exact_objective_teaching_package(
+            objective=objective,
+            incumbent_candidate=incumbent_candidate,
+            source_state_sha256=source_state_sha256,
+            tokenizer=tokenizer,
+            structural_diversity=structural_diversity,
+        )
+    )
+    return event, admission, target_tokens
 
 
 def validate_teaching_event(
@@ -240,7 +265,7 @@ def validate_teaching_event(
         or value["allowed_plasticity_scopes"] != list(_ALLOWED_PLASTICITY_SCOPES)
         or value["lifetime"] != "single_query_erase_required"
         or value["teacher_context_policy"]
-        != "private_target_only_never_model_context"
+        != "private_neural_evidence_only_never_public_answer_lane"
         or value["teacher_removed_before_causal_probe_required"] is not True
         or value["capability_claim_authority"] is not False
         or value["claim_boundary"]
@@ -281,5 +306,6 @@ def validate_teaching_event(
 __all__ = [
     "TEACHING_EVENT_SCHEMA",
     "build_exact_objective_teaching_event",
+    "build_exact_objective_teaching_package",
     "validate_teaching_event",
 ]

@@ -56,7 +56,7 @@ from core.brain.llm.latent_cortex.governance import CheckpointInvariant
 from core.brain.llm.latent_cortex.latent_opt import LatentOptimizer, build_proxy_loss
 from core.brain.llm.latent_cortex.plasticity_sites import PLASTICITY_SITE_REGISTRY
 from core.brain.llm.latent_cortex.probe_cache import DecodeProbeCache
-from core.brain.llm.latent_cortex.recurrence import WindowRunner
+from core.brain.llm.latent_cortex.recurrence import WindowRunner, recurrence_step
 from core.brain.llm.latent_cortex.resource_accounting import (
     build_information_receipt,
     policy_sha256,
@@ -68,7 +68,7 @@ from core.brain.llm.latent_cortex.semantic_plasticity import (
     build_layerwise_trajectory_directions,
 )
 from core.brain.llm.latent_cortex.teaching_events import (
-    build_exact_objective_teaching_event,
+    build_exact_objective_teaching_package,
 )
 from core.brain.llm.latent_cortex.telemetry import LatentTelemetry
 from core.brain.llm.latent_cortex.test_time_training import (
@@ -93,6 +93,11 @@ from core.brain.llm.latent_cortex.value_of_computation import (
     validate_evidence_snapshot,
 )
 from core.brain.llm.latent_cortex.verified_best import tensor_sha256
+from core.brain.llm.latent_cortex.verified_workspace_evidence import (
+    build_workspace_evidence_receipt,
+    deterministic_semantic_sham,
+    replace_workspace_slots,
+)
 from core.brain.llm.latent_cortex.verifier_gain_search import (
     VERIFIER_GAIN_GRID,
     build_verifier_gain_search_receipt,
@@ -2946,6 +2951,18 @@ class LatentCortexEngine:
             and self.config.fast_weights.associative_bootstrap_enabled
             else 0
         )
+        workspace_evidence_trial_cost = (
+            (
+                self.config.workspace.n_slots * self.prelude_end
+                + 4
+                * self.config.workspace.n_slots
+                * (self.coda_start - self.prelude_end)
+                + 2 * fast_weight_verifier_probe_cost
+            )
+            if self.config.fast_weights.enabled
+            and self.config.verified_objective_teacher_enabled
+            else 0
+        )
         output_memory_diagnostic_cost = (
             (
                 2
@@ -2969,6 +2986,7 @@ class LatentCortexEngine:
             + fast_weight_verifier_probe_cost
             + fast_weight_associative_capture_cost
             + output_memory_diagnostic_cost
+            + workspace_evidence_trial_cost
             + (
                 2 * len(VERIFIER_GAIN_GRID) * fast_weight_verifier_probe_cost
                 if self.config.fast_weights.associative_bootstrap_enabled
@@ -6121,6 +6139,7 @@ class LatentCortexEngine:
         fw_baseline = None
         fast_weight_learning_state: dict[str, Any] | None = None
         fast_weight_teaching_event: dict[str, Any] = {}
+        fast_weight_private_witness = ""
         fast_weight_target_tokens: list[int] = []
         fw_verifier_pre_tokens: list[int] = []
         fw_verifier_pre_text = ""
@@ -6235,7 +6254,8 @@ class LatentCortexEngine:
                         fast_weight_teaching_event,
                         admission,
                         fast_weight_target_tokens,
-                    ) = build_exact_objective_teaching_event(
+                        fast_weight_private_witness,
+                    ) = build_exact_objective_teaching_package(
                         objective=verification_objective,
                         incumbent_candidate=fw_verifier_pre_text,
                         source_state_sha256=winner_state_sha256,
@@ -6873,6 +6893,28 @@ class LatentCortexEngine:
                     and fast_weights.lifecycle.lease_acquired
                     and not fast_weights.lifecycle.lease_released
                 )
+                if (
+                    not fast_weight_decode_active
+                    and fast_weight_teaching_event
+                    and fast_weight_private_witness
+                    and fast_weight_candidate_verifier is not None
+                ):
+                    receipt.verified_workspace_evidence = (
+                        self._assimilate_verified_workspace_evidence(
+                            winner=winner,
+                            cache=cache,
+                            runner=runner,
+                            budget=budget,
+                            verifier=fast_weight_candidate_verifier,
+                            bridge_tokens=bridge_tokens,
+                            private_witness=fast_weight_private_witness,
+                            teaching_event=fast_weight_teaching_event,
+                            baseline_score=float(fw_verifier_pre),
+                            baseline_state_sha256=winner_state_sha256,
+                        )
+                    )
+                    if receipt.verified_workspace_evidence["accepted"]:
+                        receipt.flag("verified_workspace_evidence_assimilated")
 
             # Experiment-3 instrumentation: destroy one refined thought slot
             # just before persistence, so its causal contribution and
@@ -8585,6 +8627,203 @@ class LatentCortexEngine:
             for i in range(self.prelude_end, self.coda_start):
                 h = inner.layers[i](h, None, None)
         return h
+
+    def _assimilate_verified_workspace_evidence(
+        self,
+        *,
+        winner: BranchState,
+        cache,
+        runner: WindowRunner,
+        budget: ComputeBudget,
+        verifier: Callable[[str], float],
+        bridge_tokens: Sequence[int],
+        private_witness: str,
+        teaching_event: Mapping[str, Any],
+        baseline_score: float,
+        baseline_state_sha256: str,
+    ) -> dict[str, Any]:
+        """Test verified evidence in the real recurrent state, then retain a win.
+
+        The producer's text never becomes an answer candidate. It is transformed
+        through the checkpoint prelude into hidden evidence rows, assimilated by
+        the same recurrent window as ordinary thought, and decoded by the model.
+        A signed hidden-dimension permutation receives the same slots, steps,
+        decode budget, and verifier. Only a treatment that beats both the
+        pre-intervention decode and that semantic sham survives.
+        """
+
+        import mlx.core as mx
+
+        if self.tokenizer is None:
+            raise RuntimeError("workspace evidence assimilation requires a tokenizer")
+        if not isinstance(private_witness, str) or not private_witness:
+            raise ValueError("workspace evidence witness is empty")
+        if not isinstance(teaching_event, Mapping):
+            raise TypeError("workspace evidence teaching event is invalid")
+        hypothesis_slots = winner.workspace.hypothesis_slot_indices(
+            comm_slot=int(self.config.branches.comm_slot)
+        )
+        # One writable hypothesis row must remain downstream of the evidence.
+        if len(hypothesis_slots) < 2:
+            raise RuntimeError("workspace evidence requires two hypothesis slots")
+        try:
+            witness_tokens = self.tokenizer.encode(
+                private_witness,
+                add_special_tokens=False,
+            )
+        except TypeError:
+            witness_tokens = self.tokenizer.encode(private_witness)
+        witness_tokens = [int(token) for token in witness_tokens]
+        if not witness_tokens or len(witness_tokens) > 512:
+            raise RuntimeError("workspace evidence witness exceeds the neural ingress budget")
+
+        # Preserve order at a useful granularity. The first available hypothesis
+        # rows are a causal prefix, so every later writable row can attend to the
+        # evidence during each decoder-only recurrent pass.
+        desired_slots = max(1, math.ceil(len(witness_tokens) / 24))
+        target_count = min(8, len(hypothesis_slots) - 1, desired_slots)
+        target_slots = tuple(hypothesis_slots[:target_count])
+        inner = self.model.model
+        token_embeddings = inner.embed_tokens(mx.array([witness_tokens]))
+        edges = [round(index * len(witness_tokens) / target_count) for index in range(target_count + 1)]
+        pooled_rows = []
+        for index in range(target_count):
+            lo = edges[index]
+            hi = max(edges[index + 1], lo + 1)
+            pooled_rows.append(
+                mx.mean(token_embeddings[:, lo:hi, :], axis=1, keepdims=True)
+            )
+        evidence_seed = mx.concatenate(pooled_rows, axis=1)
+        context_tokens = self._cache_context_tokens(cache)
+        budget.charge(
+            tokens=target_count,
+            layers=self.prelude_end,
+            operation="verified_workspace_evidence_prelude",
+            attention_pairs=(
+                target_count * (context_tokens + target_count) * self.prelude_end
+            ),
+        )
+        evidence_seed = runner.run(
+            evidence_seed,
+            cache,
+            0,
+            self.prelude_end,
+            persist=False,
+        )
+        source_rows = winner.workspace.select_slots(winner.z, target_slots)
+        evidence_seed = evidence_seed * (
+            per_position_rms(source_rows)
+            / mx.maximum(per_position_rms(evidence_seed), 1e-6)
+        )
+        mx.eval(evidence_seed)
+        sham_seed = deterministic_semantic_sham(
+            evidence_seed,
+            salt=str(teaching_event["receipt_sha256"]),
+        )
+        source_z = winner.z
+        source_anchor = winner.anchor
+        source_workspace_z = winner.workspace.z
+        assimilation_steps = min(2, max(1, int(self.config.recurrence.max_steps)))
+
+        def run_arm(seed, *, operation: str):
+            installed = replace_workspace_slots(
+                source_z,
+                seed,
+                slot_indices=target_slots,
+            )
+            installed_anchor = replace_workspace_slots(
+                source_anchor,
+                seed,
+                slot_indices=target_slots,
+            )
+            state = installed
+            try:
+                for offset in range(assimilation_steps):
+                    budget.charge(
+                        tokens=int(state.shape[1]),
+                        layers=self.coda_start - self.prelude_end,
+                        operation=f"verified_workspace_evidence_{operation}_recurrence",
+                        attention_pairs=(
+                            int(state.shape[1])
+                            * (
+                                self._cache_context_tokens(cache)
+                                + int(state.shape[1])
+                            )
+                            * (self.coda_start - self.prelude_end)
+                        ),
+                    )
+                    state = recurrence_step(
+                        state,
+                        runner,
+                        cache,
+                        self.prelude_end,
+                        self.coda_start,
+                        self.config.recurrence,
+                        winner.steps + offset,
+                        anchor=installed_anchor,
+                        branch_index=winner.index,
+                    )
+                    state = replace_workspace_slots(
+                        state,
+                        seed,
+                        slot_indices=target_slots,
+                    )
+                    state = winner.workspace.restore_context_evidence(state)
+                winner.z = state
+                winner.workspace.update(state)
+                tokens = self._decode_probe(
+                    winner,
+                    cache,
+                    runner,
+                    budget,
+                    bridge_tokens=list(bridge_tokens),
+                    use_cache=False,
+                    force_exact_tokens=True,
+                )
+                text = self.tokenizer.decode(tokens)
+                return state, tokens, float(verifier(text))
+            finally:
+                winner.z = source_z
+                winner.anchor = source_anchor
+                winner.workspace.update(source_workspace_z)
+
+        treatment_state, treatment_tokens, treatment_score = run_arm(
+            evidence_seed,
+            operation="treatment",
+        )
+        sham_state, sham_tokens, sham_score = run_arm(
+            sham_seed,
+            operation="sham",
+        )
+        receipt = build_workspace_evidence_receipt(
+            objective_sha256=str(teaching_event["objective_sha256"]),
+            teaching_event_sha256=str(teaching_event["receipt_sha256"]),
+            private_witness_sha256=hashlib.sha256(
+                private_witness.encode("utf-8")
+            ).hexdigest(),
+            private_witness_token_count=len(witness_tokens),
+            target_slots=target_slots,
+            assimilation_steps=assimilation_steps,
+            source_state_sha256=baseline_state_sha256,
+            treatment_seed_sha256=tensor_sha256(evidence_seed),
+            sham_seed_sha256=tensor_sha256(sham_seed),
+            treatment_state_sha256=tensor_sha256(treatment_state),
+            sham_state_sha256=tensor_sha256(sham_state),
+            baseline_score=baseline_score,
+            treatment_score=treatment_score,
+            sham_score=sham_score,
+            treatment_tokens_sha256=token_sequence_sha256(treatment_tokens),
+            sham_tokens_sha256=token_sequence_sha256(sham_tokens),
+        )
+        if receipt["accepted"]:
+            winner.z = treatment_state
+            winner.anchor = replace_workspace_slots(
+                source_anchor,
+                evidence_seed,
+                slot_indices=target_slots,
+            )
+            winner.workspace.update(treatment_state)
+        return receipt
 
     def _capture_teacher_forced_trajectory(
         self,

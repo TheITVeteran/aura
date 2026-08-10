@@ -44,6 +44,7 @@ from core.brain.llm.latent_cortex.types import (  # noqa: E402
     RecurrenceConfig,
     WorkspaceConfig,
 )
+from core.brain.llm.latent_cortex.verified_best import tensor_sha256  # noqa: E402
 
 N_LAYERS = 8
 PROMPT_TOKENS = [5, 9, 17, 3, 42, 7, 11, 23, 2, 88]
@@ -1916,3 +1917,57 @@ def test_candidate_bridge_never_conditions_the_vanilla_incumbent(tiny_model):
     assert receipt["decode_prefix_token_count"] == 0
     assert receipt["decode_bridge_applied"] is False
     assert receipt["decode_bridge_token_count"] == 0
+
+
+def test_verified_workspace_evidence_runs_real_recurrence_and_retains_only_treatment(
+    tiny_model,
+    monkeypatch,
+):
+    tokenizer = _ExactEvidenceTokenizer()
+    engine = LatentCortexEngine(tiny_model, tokenizer, config=_config())
+    budget = ComputeBudget(max_layer_apps=500_000, wall_clock_s=30.0)
+    budget.bind_model(tiny_model)
+    cache = engine._fresh_cache()
+    embeddings, _ = engine._prefill(PROMPT_TOKENS, cache, budget)
+    runner = WindowRunner(tiny_model.model, budget)
+    ensemble = BranchEnsemble.seed(
+        embeddings,
+        engine.config.workspace,
+        engine.config.branches,
+        engine.config.recurrence,
+        runner,
+        cache,
+        engine.prelude_end,
+    )
+    branch = ensemble.branches[0]
+    source_sha256 = tensor_sha256(branch.z)
+    probe_calls = []
+
+    def probe(*_args, **_kwargs):
+        probe_calls.append(tensor_sha256(branch.z))
+        return [7] if len(probe_calls) == 1 else [8]
+
+    monkeypatch.setattr(engine, "_decode_probe", probe)
+    receipt = engine._assimilate_verified_workspace_evidence(
+        winner=branch,
+        cache=cache,
+        runner=runner,
+        budget=budget,
+        verifier=lambda text: 1.0 if text.endswith("7.") else 0.0,
+        bridge_tokens=(),
+        private_witness="Start with 11 modulo 17. Apply -2, then *13, then *9.",
+        teaching_event={
+            "objective_sha256": hashlib.sha256(b"objective").hexdigest(),
+            "receipt_sha256": hashlib.sha256(b"teaching-event").hexdigest(),
+        },
+        baseline_score=0.0,
+        baseline_state_sha256=source_sha256,
+    )
+
+    assert receipt["accepted"] is True
+    assert receipt["treatment_score"] == 1.0
+    assert receipt["sham_score"] == 0.0
+    assert len(probe_calls) == 2
+    assert probe_calls[0] != probe_calls[1]
+    assert tensor_sha256(branch.z) == receipt["treatment_state_sha256"]
+    assert tensor_sha256(branch.z) != source_sha256

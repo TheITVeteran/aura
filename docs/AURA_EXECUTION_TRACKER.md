@@ -42682,3 +42682,41 @@ activation, and proves exact detach restoration. The focused suite passes
 not a reasoning result, so the completion envelope remains `849/920`
 (approximately `92.3%`). The same source-bound 1.5B discriminator is next;
 resident-32B use remains locked.
+
+## Checkpoint 2026-08-10-153: Verified Evidence Reaches the Recurrent Workspace
+
+The completed CP152 source-bound 1.5B discriminator produced a valid negative
+result. Ordinary decode, untreated RLC, and both query-scoped treatment depths
+scored `0/2` on the same failed modular task. The supervised maps fit their
+teacher-forced key/correction pairs with approximately `0.001-0.004` relative
+error and reduced the internal optimization loss, but the final neural answers
+remained the incumbent residue `1053` instead of applying modulo `17`. One arm
+was rejected for no task improvement and the other by its capability canary;
+both erased exactly. The receipt is preserved outside source control at
+`~/.aura/experiments/cp152-supervised-trajectory-map-9bd3d119b/receipt.json`
+with SHA-256 `10c527d3c51143e13d0dca0d75c568688d464e172c2fd7ef2cb0fe2597d425b8`.
+
+That result localized the defect: the fitted keys came from a separate
+teacher-forced answer-text pass, while the intervention executes over Aura's
+post-prelude recurrent slots. The new path therefore moves the independently
+verified derivation into that actual state space. It tokenizes the private
+witness, preserves order by span-pooling it into the first available causal
+hypothesis prefix, transforms those rows through the checkpoint prelude, and
+RMS-matches them to the selected branch. The evidence then receives bounded
+middle-layer recurrence while at least one later hypothesis slot remains
+writable. The executable producer's text is never promoted as an answer; only
+a fresh neural decode can receive answer authority.
+
+The matched sham receives the identical hidden rows after a deterministic
+signed dimension permutation, preserving every row norm, slot count,
+recurrence step, decode budget, and verifier call while destroying semantic
+alignment. Treatment survives only if it strictly beats both the original
+decode and that sham. Rejected arms restore the exact branch state; receipts
+commit the private witness, treatment/sham seeds and states, decoded tokens,
+scores, and disposition without serializing the witness. Focused engine,
+plasticity, and teaching contracts pass `126/126`; canonical smoke passes
+`103/103`; Ruff, compilation, and diff hygiene pass. This closes the
+state-space mismatch implementation and advances the completion envelope to
+`850/920` (approximately `92.4%`). Its real 1.5B discriminator is next. No
+broad neural gain, resident-32B use, frontier result, fusion, activation, or
+`WOW Signal` is authorized.
