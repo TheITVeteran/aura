@@ -18,6 +18,7 @@ import logging
 import re
 import os
 import time
+from pathlib import Path
 from dataclasses import dataclass, field
 from enum import IntEnum
 from typing import Any, Dict, List, Optional, Set, Tuple
@@ -71,6 +72,74 @@ class PermissionDecision:
 #: happen to be off — they are decisions, and a temporary grant is the wrong
 #: instrument for revisiting one.
 _UNGRANTABLE_MODALITIES = frozenset({"file_delete"})
+
+#: Directories holding screen captures Aura produced herself, relative to her
+#: own state root. Deleting one of these is not the act ``file_delete`` exists
+#: to prevent.
+_OWN_CAPTURE_DIRECTORIES = ("data/ephemeral", "data/screenshots")
+
+#: Only an image is a capture artifact. A rule keyed on a directory alone
+#: would let anything that ended up in that directory be deletable.
+_CAPTURE_ARTIFACT_SUFFIXES = frozenset({".png", ".jpg", ".jpeg"})
+
+_TARGET_PATH_RE = re.compile(r'"path"\s*:\s*"([^"]+)"')
+
+
+def _is_own_capture_artifact(target: str) -> bool:
+    """True when the target is a screen capture Aura wrote under her own root.
+
+    LIVE DEFECT, 2026-08-10. ``file_delete`` is off by default and
+    ungrantable, and that rule is right: Aura may not delete a person's files.
+    But the rule is keyed on the word "delete" appearing anywhere in an action
+    summary, so it also refused her removing the ephemeral screenshot she had
+    taken herself two seconds earlier for OCR. With capture working,
+    ``~/.aura/data/ephemeral`` grew by a full-screen capture roughly every
+    seven seconds — 51MB in twenty minutes — and nothing could ever remove
+    one.
+
+    That is the harm the rule exists to prevent, produced by obeying it: an
+    ephemeral capture that is never deleted is a permanent, growing record of
+    everything on the person's screen. Retention could not prune it either,
+    for the same reason.
+
+    Deliberately narrow, and keyed on facts rather than on a caller's claim
+    about itself. ALL of these must hold:
+
+      * the resolved path lies strictly inside one of Aura's own capture
+        directories under her state root — containment after resolution, so
+        a symlink or ``..`` cannot walk out of it;
+      * the file is an image, so the rule cannot be widened by dropping some
+        other kind of file into that directory;
+      * the path is a real path, not a fragment of prose that happens to
+        mention one.
+
+    A caller-supplied "this is internal" flag deliberately plays no part:
+    ``local_internal_decision`` states outright that it "is not a substitute
+    for consequential action authorization", and a permission gate that can be
+    talked out of its decision is not a gate.
+    """
+    match = _TARGET_PATH_RE.search(str(target or ""))
+    if not match:
+        return False
+    try:
+        from core.runtime.state_ownership import state_root
+
+        candidate = Path(match.group(1)).expanduser().resolve()
+        root = Path(state_root()).expanduser().resolve()
+    except (OSError, RuntimeError, ValueError, ImportError):
+        # Cannot prove it is hers, so it is not treated as hers.
+        return False
+
+    if candidate.suffix.lower() not in _CAPTURE_ARTIFACT_SUFFIXES:
+        return False
+    for relative in _OWN_CAPTURE_DIRECTORIES:
+        try:
+            owned = (root / relative).resolve()
+        except (OSError, RuntimeError, ValueError):
+            continue
+        if candidate.is_relative_to(owned):
+            return True
+    return False
 
 #: The longest a grant may last. A grant that outlives the session it was for
 #: is a configuration change wearing a timer.
@@ -406,6 +475,12 @@ class PermissionRiskModel:
         combined = f"{action} {target}".lower()
         for modality, patterns in _MODALITY_PATTERNS.items():
             if any(re.search(pattern, combined, re.IGNORECASE) for pattern in patterns):
+                if modality == "file_delete" and _is_own_capture_artifact(target):
+                    # Removing a screen capture Aura took herself is not the
+                    # act file_delete exists to prevent. See
+                    # _is_own_capture_artifact for why this is safe and why
+                    # refusing it was the more harmful option.
+                    return "file_write"
                 return modality
         return "app_control"  # default
 

@@ -93,13 +93,42 @@ def test_a_versioned_schema_identifier_is_not_credential_material(literal):
     [
         "sk-live-abcdefghijklmnopqrstuvwxyz0123",
         "AIzaSyA0123456789abcdefghijklmnop",
-        "aura.thing",          # no version
+        "ghp_16C7e42F292c6912E7710c838347Ae178B4a",
+        "xoxb-123456789012-abcdefghijkl",
+        "AKIAIOSFODNN7EXAMPLE",
+        "aura.thing",          # two segments is not a namespace
         "Aura.Thing.v1",       # not lowercase
-        "aura.thing.v",        # no version number
+        "aura.thing-name.v1",  # hyphen is not an identifier segment
     ],
 )
 def test_things_that_are_not_schema_identifiers_are_not_excused(literal):
+    """The property that matters: real credential material is never excused.
+
+    "aura.thing.v" used to be here, on the grounds that ".v" is a malformed
+    version. The rule no longer requires a version at all — OpenTelemetry
+    metric names like "gen_ai.client.token.usage.input" are the same
+    lowercase dotted namespace and simply have none, and they were the gate's
+    entire standing output. A malformed version is therefore no longer a
+    category; three lowercase dotted segments is the test, and "aura.thing.v"
+    passes it as the namespace it looks like.
+
+    The negative cases that matter are unchanged and extended: nothing with
+    entropy, mixed case, or non-identifier characters gets excused.
+    """
     assert not _is_schema_identifier_literal(["SOME_SCHEMA"], literal)
+
+
+@pytest.mark.parametrize(
+    "literal",
+    [
+        "gen_ai.client.token.usage.input",
+        "gen_ai.client.token.usage.output",
+        "gen_ai.client.operation.duration",
+    ],
+)
+def test_an_unversioned_metric_namespace_is_not_credential_material(literal):
+    """The gate's entire standing output before this rule was widened."""
+    assert _is_schema_identifier_literal(["TOKEN_USAGE_INPUT_METRIC"], literal)
 
 
 def test_a_snake_case_mode_constant_is_not_a_key():

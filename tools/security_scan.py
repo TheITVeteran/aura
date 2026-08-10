@@ -237,9 +237,21 @@ def _is_schema_identifier_literal(names: list[str], literal: str) -> bool:
     flagged, which is the same kind of identifier under a different
     suffix — and a rule that depends on naming convention fails again at
     the next convention.
+
+    It then failed at the next SHAPE, which is the same mistake one level
+    down. Requiring a trailing `.vN` left the gate's entire standing output
+    as `TOKEN_USAGE_INPUT_METRIC = "gen_ai.client.token.usage.input"` and its
+    output twin — OpenTelemetry metric names, which are the identical kind of
+    lowercase dotted namespace and simply carry no version. So the version
+    suffix is now optional and three segments are required instead.
+
+    Still narrow for the reason the original was: the shape is a namespace,
+    not entropy. A credential is not lowercase-dotted-with-underscores, and
+    one that were would have to have been chosen to look exactly like a
+    metric id.
     """
     del names  # the literal's shape is what decides
-    return bool(re.fullmatch(r"[a-z][a-z0-9_]*(?:\.[a-z0-9_]+)+\.v\d+", literal))
+    return bool(re.fullmatch(r"[a-z][a-z0-9_]*(?:\.[a-z0-9_]+){2,}", literal))
 
 
 def _is_symbolic_word_literal(literal: str) -> bool:
