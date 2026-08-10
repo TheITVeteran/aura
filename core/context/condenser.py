@@ -212,7 +212,13 @@ class _RollingCondenser(Condenser):
     anything pinned, wherever it sits.
     """
 
-    def __init__(self, max_size: int = 120, keep_first: int = 4) -> None:
+    def __init__(
+        self,
+        max_size: int = 120,
+        keep_first: int = 4,
+        voice_anchors: int = 6,
+        voice_kind: str = "assistant",
+    ) -> None:
         if max_size < 2:
             raise ValueError("max_size must be at least 2")
         if keep_first < 0:
@@ -223,8 +229,33 @@ class _RollingCondenser(Condenser):
                 "otherwise the head alone overflows the window and nothing can "
                 "ever be forgotten"
             )
+        if voice_anchors < 0:
+            raise ValueError("voice_anchors must be non-negative")
         self.max_size = max_size
         self.keep_first = keep_first
+        self.voice_anchors = voice_anchors
+        self.voice_kind = voice_kind
+
+    def _voice_anchor_ids(self, view: View) -> frozenset[int]:
+        """Her most recent turns, kept verbatim wherever they sit.
+
+        Summarising is a register-destroying operation. A summary is written in
+        summary voice — flat, third-person, informational — so replacing a span
+        of her replies with a description of them removes the live examples of
+        how she talks and leaves the model imitating its own meeting minutes.
+        That is the mechanism behind "she stopped sounding like herself after a
+        long conversation", and it is not hypothetical: the existing compressor
+        flattens the oldest 70% of the thread into a <state_snapshot> once the
+        window is half full.
+
+        Commitments are pinned because losing them breaks a promise. These are
+        anchored because losing them costs her the voice, which is the thing the
+        conversation was for.
+        """
+        if self.voice_anchors <= 0:
+            return frozenset()
+        own = [e.event_id for e in view.events if e.kind == self.voice_kind]
+        return frozenset(own[-self.voice_anchors:])
 
     @property
     def target_size(self) -> int:
@@ -244,16 +275,24 @@ class _RollingCondenser(Condenser):
         middle = events[len(head) : len(events) - len(tail)]
         return head, middle, tail
 
-    @staticmethod
-    def _forgettable(middle: Sequence[ContextEvent]) -> list[ContextEvent]:
+    def _forgettable(
+        self, middle: Sequence[ContextEvent], view: View | None = None
+    ) -> list[ContextEvent]:
         """Middle events that may actually be dropped.
 
-        Pinned events and prior summaries survive: a summary carries the only
-        remaining trace of what it replaced, and forgetting it would erase that
-        span for good rather than compress it.
+        Three things survive. Pinned events, because losing one breaks a
+        promise. Prior summaries, because a summary carries the only remaining
+        trace of what it replaced and forgetting it erases that span for good
+        rather than compressing it. And voice anchors — her own recent turns —
+        because a context with no verbatim examples of how she talks produces a
+        reply that sounds like a summary of her.
         """
+        anchors = self._voice_anchor_ids(view) if view is not None else frozenset()
         return [
-            e for e in middle if not e.pinned and e.kind != "condensation"
+            e for e in middle
+            if not e.pinned
+            and e.kind != "condensation"
+            and e.event_id not in anchors
         ]
 
     def _condensation(
@@ -281,7 +320,7 @@ class AmortizedForgettingCondenser(_RollingCondenser):
             return view
 
         _, middle, _ = self._partition(view)
-        forgotten = self._forgettable(middle)
+        forgotten = self._forgettable(middle, view)
         if not forgotten:
             # Everything in the middle was load-bearing. Refusing to forget is
             # the correct outcome; the caller's budget problem is real but the
@@ -315,8 +354,15 @@ class LLMSummarizingCondenser(_RollingCondenser):
         summarize: Callable[[Sequence[ContextEvent]], str],
         max_size: int = 120,
         keep_first: int = 4,
+        voice_anchors: int = 6,
+        voice_kind: str = "assistant",
     ) -> None:
-        super().__init__(max_size=max_size, keep_first=keep_first)
+        super().__init__(
+            max_size=max_size,
+            keep_first=keep_first,
+            voice_anchors=voice_anchors,
+            voice_kind=voice_kind,
+        )
         self._summarize = summarize
 
     def condense(self, view: View) -> View | Condensation:
@@ -324,7 +370,7 @@ class LLMSummarizingCondenser(_RollingCondenser):
             return view
 
         _, middle, _ = self._partition(view)
-        forgotten = self._forgettable(middle)
+        forgotten = self._forgettable(middle, view)
         if not forgotten:
             return view
 

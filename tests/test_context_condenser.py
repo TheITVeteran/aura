@@ -171,6 +171,108 @@ def test_a_prior_summary_is_not_itself_forgotten():
     assert any(e.kind == "condensation" for e in condensed)
 
 
+# ── voice: she must still sound like herself ───────────────────────────────
+#
+# The failure this guards is not hypothetical. The existing compressor fires at
+# 50% of the window and flattens the oldest 70% of the thread into a
+# <state_snapshot> — a structured, third-person artifact. Her own turns are
+# inside that span, so the live examples of how she talks get replaced by a
+# description of what she said, and the model starts imitating its own meeting
+# minutes.
+
+
+def _mixed(count: int):
+    """Alternating user/assistant turns, as a real conversation looks."""
+    return [
+        ContextEvent(
+            event_id=i,
+            kind="assistant" if i % 2 else "user",
+            content=f"turn {i}",
+        )
+        for i in range(count)
+    ]
+
+
+def test_her_recent_turns_survive_condensation():
+    condenser = AmortizedForgettingCondenser(max_size=10, keep_first=2, voice_anchors=4)
+    events = _mixed(60)
+    view = View.from_events(events)
+
+    condensed = view.apply(condenser.condense(view))
+
+    kept_own = [e for e in condensed if e.kind == "assistant"]
+    assert len(kept_own) >= 4
+
+
+def test_the_anchors_are_her_most_recent_turns_not_her_oldest():
+    """Stale examples of her voice are worth less than current ones."""
+    condenser = AmortizedForgettingCondenser(max_size=10, keep_first=2, voice_anchors=3)
+    events = _mixed(60)
+    view = View.from_events(events)
+
+    result = condenser.condense(view)
+
+    own_ids = [e.event_id for e in events if e.kind == "assistant"]
+    for anchor in own_ids[-3:]:
+        assert anchor not in result.forgotten_ids
+
+
+def test_a_summarizer_never_sees_her_anchored_turns():
+    """It cannot flatten what it is not given."""
+    seen = {}
+
+    def capture(events):
+        seen["kinds"] = [e.event_id for e in events]
+        return "summary"
+
+    condenser = LLMSummarizingCondenser(
+        summarize=capture, max_size=10, keep_first=2, voice_anchors=4
+    )
+    events = _mixed(60)
+    condenser.condense(View.from_events(events))
+
+    own_ids = [e.event_id for e in events if e.kind == "assistant"]
+    assert not set(own_ids[-4:]) & set(seen["kinds"])
+
+
+def test_voice_anchors_can_be_switched_off_deliberately():
+    condenser = AmortizedForgettingCondenser(max_size=10, keep_first=2, voice_anchors=0)
+    events = _mixed(60)
+
+    result = condenser.condense(View.from_events(events))
+
+    own_ids = [e.event_id for e in events if e.kind == "assistant"]
+    assert set(own_ids) & set(result.forgotten_ids)
+
+
+def test_anchoring_still_reclaims_room():
+    """Preserving her voice must not defeat the purpose of condensing."""
+    condenser = AmortizedForgettingCondenser(max_size=10, keep_first=2, voice_anchors=4)
+    view = View.from_events(_mixed(60))
+
+    condensed = view.apply(condenser.condense(view))
+
+    assert len(condensed) < len(view)
+
+
+def test_a_negative_anchor_count_is_refused():
+    with pytest.raises(ValueError, match="voice_anchors"):
+        AmortizedForgettingCondenser(max_size=10, keep_first=2, voice_anchors=-1)
+
+
+def test_the_anchored_kind_is_configurable():
+    condenser = AmortizedForgettingCondenser(
+        max_size=10, keep_first=2, voice_anchors=3, voice_kind="user"
+    )
+    events = _mixed(60)
+
+    result = condenser.condense(View.from_events(events))
+
+    user_ids = [e.event_id for e in events if e.kind == "user"]
+    for anchor in user_ids[-3:]:
+        assert anchor not in result.forgotten_ids
+
+
 # ── LLM summarization ──────────────────────────────────────────────────────
 
 

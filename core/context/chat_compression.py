@@ -51,6 +51,27 @@ DEFAULT_COMPRESSION_THRESHOLD = 0.50
 # Keep the most recent 30% of history after compression (the rest gets summarized)
 COMPRESSION_PRESERVE_FRACTION = 0.30
 
+#: How many of Aura's own recent turns are kept verbatim, never summarised.
+#:
+#: Compression fires at half the window and flattens the oldest 70% of the
+#: thread into a <state_snapshot> — structured, third-person, informational.
+#: Her replies live inside that span, so the live examples of how she talks got
+#: replaced by a description of what she said, and the model then imitated its
+#: own meeting minutes. That is the mechanism behind "she stopped sounding like
+#: herself after a long conversation".
+#:
+#: Four rather than one because a single sample is an anecdote a model can read
+#: as an aberration; enough turns to establish a register is the point. It is
+#: not a magic number in the sense that matters — VOICE_ANCHOR_FLOOR bounds what
+#: it can cost, so raising it trades compression for fidelity visibly.
+VOICE_ANCHOR_TURNS = 4
+
+#: Never let voice preservation push the split so far back that compression
+#: stops happening. At most this fraction of the history may be protected by
+#: anchoring; beyond it we accept fewer anchors rather than an ineffective
+#: compression, because a context that does not fit is not a context.
+VOICE_ANCHOR_FLOOR = 0.5
+
 # Token budget for function responses in the preserved history
 FUNCTION_RESPONSE_TOKEN_BUDGET = 50_000
 
@@ -161,6 +182,49 @@ def truncate_history_to_budget(
 
 
 # ── Split Point Calculation ──────────────────────────────────────────────────
+
+def preserve_voice_split(
+    history: List[Dict[str, str]],
+    split_point: int,
+    *,
+    anchors: int = VOICE_ANCHOR_TURNS,
+    role: str = "assistant",
+    floor_fraction: float = VOICE_ANCHOR_FLOOR,
+) -> int:
+    """Move the split earlier so ``anchors`` of her own turns survive verbatim.
+
+    Moving the boundary rather than extracting her messages is deliberate. If
+    you lift her replies out of the summarised span and re-insert them after
+    the snapshot, they arrive detached from the user turns they were answering
+    — a transcript of her talking to nobody, which reads worse than the summary
+    it was meant to fix. Moving the split keeps every surviving turn in its
+    original place next to what prompted it.
+
+    Bounded by ``floor_fraction``: if honouring the anchors would leave almost
+    nothing to compress, fewer anchors are kept. A context that does not fit is
+    not a context, so fidelity yields to the window rather than the reverse.
+    """
+    if anchors <= 0 or not history:
+        return split_point
+
+    kept = sum(1 for message in history[split_point:] if message.get("role") == role)
+    if kept >= anchors:
+        return split_point
+
+    floor = int(len(history) * (1.0 - floor_fraction))
+    index = split_point
+    while index > floor and kept < anchors:
+        index -= 1
+        if history[index].get("role") == role:
+            kept += 1
+
+    if index < split_point:
+        logger.info(
+            "Compression split moved %d->%d to keep %d of Aura's own turns verbatim",
+            split_point, index, kept,
+        )
+    return index
+
 
 def find_compress_split_point(history: List[Dict[str, str]], fraction: float) -> int:
     """Find the index of the oldest message to KEEP after compression.
@@ -296,6 +360,7 @@ class ChatCompressionService:
         split_point = find_compress_split_point(
             truncated_history, 1 - COMPRESSION_PRESERVE_FRACTION
         )
+        split_point = preserve_voice_split(truncated_history, split_point)
 
         history_to_compress = truncated_history[:split_point]
         history_to_keep = truncated_history[split_point:]
