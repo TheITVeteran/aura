@@ -207,9 +207,17 @@ _LIGHTWEIGHT_BACKGROUND_IO_SKILLS = frozenset(
 #: policies reference them, and breaking those to tidy a list would trade a
 #: cosmetic problem for a real one. They are hidden from the catalog, not
 #: removed from the registry.
+#: ``sovereign_imagination`` is the same shape: a "facade over the canonical
+#: diffusers backend" (its own docstring) that subclasses ImageGenSkill,
+#: validates params and calls super().execute. Same effect_scope, same risk
+#: class — and a strictly SMALLER surface, since image_gen also does
+#: image-to-image and the facade's input model has no field for it. Offering
+#: both did not merely duplicate a choice, it offered a choice that silently
+#: loses capability.
 _SKILL_ALIASES: dict[str, str] = {
     "search_web": "web_search",
     "free_search": "web_search",
+    "sovereign_imagination": "image_gen",
 }
 
 #: Origins that mean "a person is asking, right now, at the surface".

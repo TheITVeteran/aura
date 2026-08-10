@@ -107,30 +107,91 @@ def test_aliases_only_ever_point_at_a_real_canonical():
         assert alias != canonical, alias
 
 
-def test_the_alias_map_matches_the_class_hierarchy():
+def _skill_classes() -> dict[str, type]:
+    """Every discoverable skill class, keyed by its registered name."""
+    import importlib
+    import inspect
+    import pkgutil
+
+    import core.skills as pkg
+
+    found: dict[str, type] = {}
+    for module in pkgutil.iter_modules(pkg.__path__):
+        try:
+            loaded = importlib.import_module(f"core.skills.{module.name}")
+        except Exception:  # noqa: BLE001 — an unimportable skill is not this test's subject
+            continue
+        for _, cls in inspect.getmembers(loaded, inspect.isclass):
+            if cls.__module__ != loaded.__name__:
+                continue
+            name = getattr(cls, "name", None)
+            if isinstance(name, str) and name and name not in found:
+                found[name] = cls
+    return found
+
+
+@pytest.mark.parametrize(("alias", "canonical"), sorted(_SKILL_ALIASES.items()))
+def test_every_alias_really_delegates_to_its_canonical(alias, canonical):
     """The claim "these are the same skill" must be true of the code.
 
-    If someone later gives search_web its own behaviour, this fails rather
-    than silently hiding a skill that has become distinct.
+    Checked across the whole map rather than a hand-picked pair, because
+    hand-picking is the exact bug this file is about: _capability_line named
+    only the family already known to fail, so every other family kept failing
+    the same way. A ratchet covering only the examples its author thought of
+    carries the defect of the code it guards.
+
+    An alias may rename itself and normalise its inputs — search_web wraps
+    params in a pydantic model, sovereign_imagination converts to
+    ImageGenInput — but it must DELEGATE. If one grows its own implementation
+    it is a distinct capability, and hiding it would be deleting a skill
+    rather than tidying a list.
     """
+    import inspect
+
+    classes = _skill_classes()
+    alias_cls = classes.get(alias)
+    canonical_cls = classes.get(canonical)
+    assert alias_cls is not None, f"{alias} is not a discoverable skill"
+    assert canonical_cls is not None, f"{canonical} is not a discoverable skill"
+    assert issubclass(alias_cls, canonical_cls), (
+        f"{alias} does not derive from {canonical}; it is not an alias"
+    )
+
+    own_execute = vars(alias_cls).get("execute")
+    if own_execute is None:
+        return
+    body = inspect.getsource(own_execute)
+    assert "super().execute" in body, (
+        f"{alias_cls.__name__}.execute does not delegate; it is no longer an "
+        f"alias and must be removed from _SKILL_ALIASES"
+    )
+
+
+def test_an_alias_never_offers_less_than_its_canonical():
+    """sovereign_imagination's input model is a strict subset of image_gen's.
+
+    That is the reason it must be the hidden one: image_gen also does
+    image-to-image, the facade has no field for it, and a chooser picking the
+    facade silently loses capability. Direction matters — hiding the RICHER
+    skill would be the damaging version of this change.
+    """
+    from core.skills.image_gen import ImageGenInput
+    from core.skills.sovereign_imagination import ImageInput
+
+    facade_fields = set(ImageInput.model_fields)
+    canonical_fields = set(ImageGenInput.model_fields)
+
+    assert facade_fields <= canonical_fields, (
+        "the facade accepts inputs the canonical does not; it is not a subset"
+    )
+    assert _SKILL_ALIASES["sovereign_imagination"] == "image_gen"
+
+
+def test_the_search_aliases_are_still_subclasses():
+    """The original hierarchy claim, kept explicit."""
     from core.skills.free_search import FreeSearchSkill
     from core.skills.web_search import EnhancedWebSearchSkill
     from core.skills.web_search_skill import WebSearchSkill
 
-    import inspect
-
-    for cls in (WebSearchSkill, FreeSearchSkill):
-        assert issubclass(cls, EnhancedWebSearchSkill)
-        # Same behaviour, not merely a shared ancestor. An alias is allowed to
-        # rename itself and to normalise its inputs — search_web wraps params
-        # in a pydantic model — but it must DELEGATE the actual search. If it
-        # ever grows its own implementation it is a distinct capability and
-        # hiding it from the catalog would be deleting a skill.
-        own_execute = vars(cls).get("execute")
-        if own_execute is None:
-            continue
-        body = inspect.getsource(own_execute)
-        assert "super().execute" in body, (
-            f"{cls.__name__}.execute does not delegate; it is no longer an alias "
-            f"and must be removed from _SKILL_ALIASES"
-        )
+    assert issubclass(WebSearchSkill, EnhancedWebSearchSkill)
+    assert issubclass(FreeSearchSkill, EnhancedWebSearchSkill)
