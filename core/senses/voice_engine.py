@@ -2233,9 +2233,22 @@ class SovereignVoiceEngine:
                 record_degradation('voice_engine', e)
                 logger.error("EventBus dispatch failed: %s", e)
         else:
-            logger.debug(
-                "VoiceEngine: raw STT transcript retained for wake-word/session; "
-                "direct EventBus dispatch disabled."
+            # Heard, transcribed, and deliberately not answered. Without a wake
+            # word or an open voice conversation this is ambient speech, and
+            # ambient speech must not be able to drive chat — that boundary is
+            # correct and stays.
+            #
+            # Dropping it in SILENCE is not. "when i talk to my computer
+            # nothing happens. no response or anything" — reported live
+            # 2026-08-10, while the log showed her transcribing "Hey, or can
+            # you hear me right now?" perfectly. An invisible boundary is
+            # indistinguishable from a dead microphone, so the one person who
+            # could act on it had no way to learn what to do.
+            logger.info(
+                "🎙️ Heard %r but did not answer: no wake word and no open voice "
+                "conversation. Say 'Hey Aura' first, or press Voice to talk "
+                "without one.",
+                text[:120],
             )
 
         # Pulse the mycelial connection.  Unauthorized STT is perception, not a

@@ -43,8 +43,13 @@ html, body {
   overflow: hidden;
 }
 
+/* The drag handle. The strip is real, the CSS that claimed it was not:
+   this said `-webkit-app-region: drag`, an ELECTRON property that WKWebView
+   does not implement, so the declaration was inert and the window could not
+   be moved at all. The same dead property in bubble.html had already cost one
+   round of "i cant drag the bubble across the screen".
+   AuraLauncher installs a pan recognizer over the matching 37pt strip. */
 #bar {
-  -webkit-app-region: drag;
   display: flex; align-items: center; gap: 8px;
   padding: 8px 10px;
   border-bottom: 1px solid rgba(255,255,255,0.06);
@@ -62,7 +67,6 @@ html, body {
 #collapse:active { transform: scale(0.92); }
 #bar .spacer { flex: 1; }
 #expand {
-  -webkit-app-region: no-drag;
   border: 0; background: transparent; color: var(--dim);
   font-size: 11px; letter-spacing: 0.03em; cursor: pointer;
   padding: 3px 7px; border-radius: 6px;

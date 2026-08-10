@@ -12492,9 +12492,29 @@ def _build_protected_foreground_system_prompt(
     heard_text = ""
     if voice_perception.get("heard"):
         recency = "recent" if voice_perception.get("recent") else "stale"
+        # `authorized_command=False` was the whole story and it was told as a
+        # bare boolean, leaving the consequence to be inferred. Told "when i
+        # talk to my computer, i get no response from you even though the mic
+        # is on and you should hear me", she answered "I can see the screen and
+        # hear you when you talk to me" — reading heard=True and stopping
+        # there. Measured live 2026-08-10.
+        #
+        # Hearing and answering are different capabilities here, and the
+        # difference is exactly what he was asking about, so it is stated.
+        if voice_perception.get("authorized_command"):
+            routing = "authorized — this speech reaches you and you answer it"
+        else:
+            routing = (
+                "NOT authorized — you heard this but it was dropped without a "
+                "reply, because there was no wake word and no open voice "
+                "conversation. Speech only reaches you after 'Hey Aura' or the "
+                "Voice button. Saying you can hear him would be true and "
+                "misleading: what he is reporting is that you do not ANSWER, "
+                "and that is correct and is this setting, not a fault"
+            )
         heard_text = (
             f"{recency}, age={voice_perception.get('age_s')}s, "
-            f"authorized_command={voice_perception.get('authorized_command')}, "
+            f"routing={routing}, "
             f"transcript={voice_perception.get('transcript')}"
         )
     elif voice_perception.get("voice_activity_detected"):

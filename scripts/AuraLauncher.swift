@@ -2905,7 +2905,11 @@ final class AuraLauncherDelegate: NSObject, NSApplicationDelegate,
             panel.contentView = webView
             panel.isReleasedWhenClosed = false
             panel.setFrameOrigin(defaultBubbleOrigin(for: size))
-            installWindowDrag(on: webView)
+            // No native drag gesture here on purpose. bubble.js drives the
+            // bubble's move through {action:"move", relative:true}, and it has
+            // to: only the page knows whether the pointer went down on the ×
+            // or the reply control, which must stay clickable. Installing a
+            // second mechanism would move the panel twice per pointer motion.
 
             bubblePanel = panel
             bubbleWebView = webView

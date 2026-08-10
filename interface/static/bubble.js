@@ -179,6 +179,10 @@
 
   glyph.addEventListener("click", (event) => {
     event.preventDefault();
+    // A drag that ends on the glyph must not also open the chat. Without this
+    // every successful drag would be followed by the window she was dragged
+    // out of the way of.
+    if (dragJustEnded()) return;
     openChat();
   });
   say.addEventListener("click", openChat);
@@ -253,12 +257,32 @@
    * under the cursor.
    */
   let drag = null;
+  //: When the last drag finished, so the click it ends with can be swallowed.
+  let draggedAt = 0;
+
+  function dragJustEnded() {
+    return performance.now() - draggedAt < 250;
+  }
 
   pill.addEventListener("mousedown", (event) => {
-    // Left button only, and never from a control: the glyph opens the chat,
-    // × clears the message, and both must stay clickable.
+    // Left button only.
     if (event.button !== 0) return;
-    if (event.target.closest("#close, #glyph, #say")) return;
+    // × and the reply control are targets, not handles: they do one thing and
+    // must keep doing it.
+    if (event.target.closest("#close, #say")) return;
+    // The glyph is NOT excluded, and excluding it is why "i still cant drag
+    // across the screen" survived the fix that added dragging — reported live
+    // 2026-08-10, one sitting after "i cant drag the bubble across the
+    // screen".
+    //
+    // At rest the bubble IS the glyph: #pill.dormant is a 6px scrim around a
+    // 28px mark and nothing else. So the one element excluded from the drag
+    // was the entire surface a person can actually grab, and `drag` was never
+    // once assigned in the state she spends all her time in.
+    //
+    // A click and a drag are told apart by whether the pointer moved, which
+    // the threshold below already decides. That is the only thing that can
+    // tell them apart, because both begin identically.
     drag = {
       startX: event.screenX,
       startY: event.screenY,
@@ -282,6 +306,7 @@
   });
 
   window.addEventListener("mouseup", () => {
+    if (drag && drag.moved) draggedAt = performance.now();
     drag = null;
   });
 
