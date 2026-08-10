@@ -1940,6 +1940,10 @@ def test_verified_workspace_evidence_runs_real_recurrence_and_retains_only_treat
         engine.prelude_end,
     )
     branch = ensemble.branches[0]
+    # Evidence assimilation begins after ordinary recurrence has completed.
+    # Its matched treatment/sham trials are independent bounded micro-episodes,
+    # so they must not reuse an already exhausted primary-horizon coordinate.
+    branch.steps = engine.config.recurrence.max_steps
     source_sha256 = tensor_sha256(branch.z)
     probe_calls = []
 

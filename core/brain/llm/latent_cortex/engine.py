@@ -8759,7 +8759,7 @@ class LatentCortexEngine:
                         self.prelude_end,
                         self.coda_start,
                         self.config.recurrence,
-                        winner.steps + offset,
+                        offset,
                         anchor=installed_anchor,
                         branch_index=winner.index,
                     )

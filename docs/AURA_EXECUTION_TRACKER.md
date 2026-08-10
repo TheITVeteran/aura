@@ -42720,3 +42720,28 @@ state-space mismatch implementation and advances the completion envelope to
 `850/920` (approximately `92.4%`). Its real 1.5B discriminator is next. No
 broad neural gain, resident-32B use, frontier result, fusion, activation, or
 `WOW Signal` is authorized.
+
+## Checkpoint 2026-08-10-154: Evidence Assimilation Owns a Bounded Recurrent Horizon
+
+The first CP153 real-checkpoint discriminator was infrastructure-invalid, not
+a negative capability result. Ordinary 1.5B decode failed the frozen modular
+task as expected, but both treatment depths stopped before answer generation
+with `ValueError: step must be inside the recurrent horizon`. The evidence
+trial had added the already-completed primary branch step count to its own
+recurrence offset. At the point where verified evidence becomes available,
+that primary horizon is necessarily exhausted, so every real treatment and
+sham arm used an inadmissible depth coordinate. The incomplete artifact has no
+scientific authority and is not promoted as evidence.
+
+Evidence assimilation is a separate matched neural micro-episode over the
+post-primary branch state. Its treatment and sham now each use local depth
+coordinates beginning at zero while preserving the completed branch state,
+anchor, branch role, recurrence operator, slot count, compute budget, and
+decode conditions. The engine contract now explicitly starts assimilation
+from a branch whose primary horizon is exhausted and proves that real
+recurrence completes, treatment and sham are distinct, only the verified
+treatment is retained, and the source state is not silently restored over an
+accepted result. Focused execution, Ruff, and compilation gates pass. The
+source-bound 1.5B discriminator must be rerun from this checkpoint before any
+capability conclusion; the completion envelope remains `850/920`
+(approximately `92.4%`). Resident-32B use remains locked.
