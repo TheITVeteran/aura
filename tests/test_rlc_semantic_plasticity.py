@@ -293,6 +293,51 @@ def test_decode_activation_capture_assigns_distinct_rank_keys():
         fast_weights.detach()
 
 
+def test_position_capture_preserves_distinct_slot_activations():
+    model = _model()
+    fast_weights = EpisodicFastWeights(
+        FastWeightsConfig(enabled=True, rank=2, max_wrapped_layers=1)
+    )
+    fast_weights.attach(
+        model.model,
+        (1, 2),
+        seed_stat=0.5,
+        episode_id="position-feature-test",
+    )
+    try:
+        _output, features = fast_weights.capture_input_position_features(
+            lambda: model(mx.array([[1, 2, 3, 4]])),
+            max_features=4,
+        )
+        assert set(features) == {1}
+        assert features[1].shape == (4, 32)
+        assert not bool(mx.array_equal(features[1][0], features[1][1]))
+    finally:
+        fast_weights.detach()
+
+
+def test_position_capture_rejects_incomplete_inventory_and_resets_flag():
+    model = _model()
+    fast_weights = EpisodicFastWeights(
+        FastWeightsConfig(enabled=True, rank=2, max_wrapped_layers=1)
+    )
+    fast_weights.attach(
+        model.model,
+        (1, 2),
+        seed_stat=0.5,
+        episode_id="position-feature-short-test",
+    )
+    try:
+        with pytest.raises(RuntimeError, match="declared inventory"):
+            fast_weights.capture_input_position_features(
+                lambda: model(mx.array([[1, 2]])),
+                max_features=3,
+            )
+        assert fast_weights.handles[0].wrapper.capture_input_positions is False
+    finally:
+        fast_weights.detach()
+
+
 def test_interpolated_delta_is_exact_and_zero_restores_identity():
     model = _model()
     tokens = mx.array([[1, 2, 3]])

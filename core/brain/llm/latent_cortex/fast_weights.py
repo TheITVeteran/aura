@@ -133,6 +133,9 @@ class EpisodicDeltaLinear:
         self.last_input_summary = None
         self.input_summary_history = []
         self.last_input_features = None
+        self.capture_input_positions = False
+        self.input_position_limit = 0
+        self.input_position_history = []
         self.capture_output = False
         self.capture_output_start = 0
         self.last_output_features = None
@@ -207,6 +210,18 @@ class EpisodicDeltaLinear:
             self.last_input_summary = mx.stop_gradient(summary.astype(mx.float32))
             if len(self.input_summary_history) < int(self.U.shape[1]):
                 self.input_summary_history.append(self.last_input_summary)
+        if self.capture_input_positions:
+            import mlx.core as mx
+
+            positions = x.reshape((-1, int(x.shape[-1])))
+            remaining = max(
+                0,
+                int(self.input_position_limit) - len(self.input_position_history),
+            )
+            for index in range(min(remaining, int(positions.shape[0]))):
+                self.input_position_history.append(
+                    mx.stop_gradient(positions[index].astype(mx.float32))
+                )
         base = self.base(x)
         if self.capture_output:
             import mlx.core as mx
@@ -581,6 +596,51 @@ class EpisodicFastWeights:
                 raise RuntimeError("fast-weight query-key capture is absent")
             commitments[int(handle.layer_index)] = tensor_sha256(features)
         return commitments
+
+    def capture_input_position_features(
+        self,
+        forward_fn: Callable[[], Any],
+        *,
+        max_features: int,
+    ) -> tuple[Any, dict[int, Any]]:
+        """Capture distinct recurrent positions without averaging slot roles.
+
+        The original summary capture remains the query-scoped minimum-norm
+        key used by CP144. Persistent transfer needs a richer training object:
+        averaging objective, constraint, hypothesis, and counterexample slots
+        destroys the distinctions a shared operator must learn to act on.
+        """
+
+        import mlx.core as mx
+
+        if type(max_features) is not int or not 1 <= max_features <= 256:
+            raise ValueError("position feature limit must be inside [1, 256]")
+        if not self.handles:
+            raise RuntimeError("position feature capture requires wrappers")
+        if any(bool(mx.any(handle.wrapper.V != 0)) for handle in self.handles):
+            raise RuntimeError("position feature capture requires zero V")
+        for handle in self.handles:
+            wrapper = handle.wrapper
+            wrapper.input_position_history = []
+            wrapper.input_position_limit = max_features
+            wrapper.capture_input_positions = True
+        try:
+            output = forward_fn()
+            features: dict[int, Any] = {}
+            for handle in self.handles:
+                history = handle.wrapper.input_position_history
+                if len(history) != max_features:
+                    raise RuntimeError(
+                        "position feature capture did not reach its declared inventory"
+                    )
+                features[int(handle.layer_index)] = mx.stack(history, axis=0)
+            mx.eval(output, *features.values())
+            return output, features
+        finally:
+            for handle in self.handles:
+                wrapper = handle.wrapper
+                wrapper.capture_input_positions = False
+                wrapper.input_position_limit = 0
 
     def capture_output_features(
         self,

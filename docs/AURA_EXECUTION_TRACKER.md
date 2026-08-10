@@ -42571,3 +42571,36 @@ real-checkpoint discriminator implementation, not its empirical verdict. The
 next action is its bounded 1.5B run. No persistent reasoning gain, resident-32B
 use, frontier result, fusion, activation, or `WOW Signal` is authorized. The
 completion envelope is `846/920` (approximately `92.0%`).
+
+## Checkpoint 2026-08-10-149: Persistent Transfer Keeps Distinct Recurrent Positions
+
+The first source-bound CP148 1.5B run completed in minutes and rejected its
+candidate without spending time on ineligible controls. The held-out band was
+usable: ordinary and untreated RLC each scored `6/8`, with one modular task
+failing at both shallow and full depth. The installed trajectory adapter
+preserved all six successes but repaired neither failure, remaining `6/8`.
+The base checkpoint was unchanged and ordinary decoding remained stable, so
+this is a clean no-gain result rather than a regression or infrastructure
+failure.
+
+The factor receipts exposed the bottleneck. Rank eight retained more than
+`99.8%` of the fitted operators' spectral energy, yet per-site training
+relative error remained approximately `0.65–0.73`. The capture path had reduced
+every recurrent call's objective, constraint, hypothesis, and counterexample
+slots to one mean vector. That summary is sufficient for CP144's one-query
+associative key but erases the distinctions a persistent shared operator needs
+to address different verified corrections.
+
+Position-level activation capture now records a bounded ordered inventory of
+real recurrent slots across recurrent steps without changing the proven
+summary-key path. Distillation aligns those distinct inputs with the
+layer-local verified correction basis rather than training contradictory
+outputs against one averaged key. The encrypted-at-rest boundary is outside
+this canary, but its private activation artifact is owner-only (`0600`),
+content-hashed, and excluded from checked-in evidence. Capture rejects partial
+inventories instead of padding them. Focused fast-weight, compiler, and canary
+contracts pass `22/22`; Ruff, compilation, and diff hygiene pass. The next
+bounded 1.5B run determines whether the richer state makes the correction
+learnable and transferable. No persistent reasoning gain, resident-32B use,
+frontier result, fusion, activation, or `WOW Signal` is authorized. The
+completion envelope is `847/920` (approximately `92.1%`).

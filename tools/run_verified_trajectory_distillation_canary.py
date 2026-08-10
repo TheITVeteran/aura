@@ -251,11 +251,12 @@ def _capture_training_inventory(
                         temperature=0.0,
                     )
 
-                fast_weights.capture_input_summaries(capture_query)
-                query_by_layer = {
-                    int(handle.layer_index): np.asarray(handle.wrapper.last_input_summary)
-                    for handle in fast_weights.handles
-                }
+                _query_rollin, query_by_layer = (
+                    fast_weights.capture_input_position_features(
+                        capture_query,
+                        max_features=spec.n_slots * spec.recurrent_steps,
+                    )
+                )
                 incumbent = generate_cached_live_path_rollin(
                     model,
                     prompt_tokens,
@@ -284,10 +285,17 @@ def _capture_training_inventory(
                 )
                 for layer_index in sorted(directions):
                     site = f"model.layers.{layer_index}.self_attn.o_proj"
-                    direction = mx.sum(directions[layer_index], axis=0) / np.sqrt(rank)
-                    mx.eval(direction)
-                    inputs[site].append(query_by_layer[layer_index].astype(np.float64))
-                    corrections[site].append(np.asarray(direction).astype(np.float64))
+                    query_positions = query_by_layer[layer_index]
+                    layer_directions = directions[layer_index]
+                    mx.eval(query_positions, layer_directions)
+                    for position in range(int(query_positions.shape[0])):
+                        direction = layer_directions[position % rank]
+                        inputs[site].append(
+                            np.asarray(query_positions[position]).astype(np.float64)
+                        )
+                        corrections[site].append(
+                            np.asarray(direction).astype(np.float64)
+                        )
                 manifest.append(
                     {
                         "task_id": task.task_id,
@@ -478,6 +486,22 @@ def run_canary(
             gain=gain,
             adapter_scale=1.0,
         )
+        teaching_pairs_path = out_dir / "private_teaching_pairs.npz"
+        np.savez_compressed(
+            teaching_pairs_path,
+            **{
+                f"{site.replace('.', '__')}__{kind}": matrix
+                for site, pair in teaching_pairs.items()
+                for kind, matrix in (("inputs", pair[0]), ("corrections", pair[1]))
+            },
+        )
+        teaching_pairs_path.chmod(0o600)
+        teaching_pairs_payload = teaching_pairs_path.read_bytes()
+        teaching_pairs_artifact = {
+            "sha256": _sha256_bytes(teaching_pairs_payload),
+            "size_bytes": len(teaching_pairs_payload),
+            "mode": "0600",
+        }
         installation = install_verified_trajectory_inventory(
             model,
             fitted,
@@ -587,6 +611,7 @@ def run_canary(
             "gain": gain,
         },
         "private_teaching_manifest": teaching_manifest,
+        "private_teaching_pairs_artifact": teaching_pairs_artifact,
         "factor_receipts": {site: dict(value.receipt) for site, value in fitted.items()},
         "installation": installation,
         "proxy_manifest": proxy_manifest,
