@@ -242,7 +242,7 @@ def _admission_gates(
 def _atomic_save_adapter(path: Path, tensors: Mapping[str, Any]) -> dict[str, Any]:
     import mlx.core as mx
 
-    scratch = path.with_name(f".{path.name}.{os.getpid()}.tmp")
+    scratch = path.with_name(f".{path.stem}.{os.getpid()}.tmp.safetensors")
     mx.save_safetensors(str(scratch), dict(tensors))
     os.chmod(scratch, 0o600)
     os.replace(scratch, path)
@@ -367,6 +367,15 @@ def run_discriminator(
 
         development_baseline = evaluate(development, label="development-baseline")
         baseline = evaluate(holdout, label="holdout-baseline")
+        print(
+            "[transition-discriminator] baselines "
+            f"development_exact={development_baseline['aggregate']['exact_accuracy']:.4f} "
+            f"development_target="
+            f"{development_baseline['aggregate']['target_field_accuracy']:.4f} "
+            f"holdout_exact={baseline['aggregate']['exact_accuracy']:.4f} "
+            f"holdout_target={baseline['aggregate']['target_field_accuracy']:.4f}",
+            flush=True,
+        )
         optimizer = optim.AdamW(learning_rate=learning_rate, weight_decay=0.0)
         optimizer.init(model.trainable_parameters())
         coordinates = _training_coordinates(train, seed=seed)

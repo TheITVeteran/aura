@@ -5,10 +5,15 @@ from __future__ import annotations
 import json
 from types import SimpleNamespace
 
-from core.learning.recurrence_curriculum import nested_boolean
-from tools.run_recurrent_transition_discriminator import (
+import pytest
+
+mx = pytest.importorskip("mlx.core")
+
+from core.learning.recurrence_curriculum import nested_boolean  # noqa: E402
+from tools.run_recurrent_transition_discriminator import (  # noqa: E402
     _admission_gates,
     _aggregate_evaluations,
+    _atomic_save_adapter,
     _mint_splits,
     _task_commitment,
 )
@@ -119,3 +124,14 @@ def test_admission_requires_large_heldout_gain_and_every_cell_nonregression():
     )
     assert rejected["every_cell_exact_nonregression"] is False
     assert not all(rejected.values())
+
+
+def test_adapter_checkpoint_is_atomic_owner_only_and_loadable(tmp_path):
+    path = tmp_path / "best_adapter.safetensors"
+    artifact = _atomic_save_adapter(path, {"adapter.weight": mx.array([[1.0, 2.0]])})
+
+    loaded = mx.load(str(path))
+    assert bool(mx.array_equal(loaded["adapter.weight"], mx.array([[1.0, 2.0]])))
+    assert artifact["mode"] == "0600"
+    assert path.stat().st_mode & 0o777 == 0o600
+    assert not list(tmp_path.glob("*.tmp.safetensors"))

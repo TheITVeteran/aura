@@ -43583,3 +43583,27 @@ No transfer result is claimed yet. The next action is the published-source
 real-1.5B run. A positive result advances to multi-step composition; a negative
 result retires the Qwen-window operator for algorithmic recurrence and moves
 immediately to the identity-initialized native transition core.
+
+## Checkpoint 2026-08-10-181: Best-Adapter Publication Uses a Real SafeTensor Suffix
+
+The first CP180 invocation completed both untrained split evaluations and 32
+optimizer updates, then stopped before publishing its first development
+checkpoint. MLX chooses serialization format from the destination suffix. The
+atomic scratch path ended in `.tmp`, so MLX wrote an inferred sibling ending
+in `.tmp.safetensors` while the transaction attempted to chmod and rename the
+requested `.tmp` path. No adapter was selected, no final holdout ran, no
+receipt was emitted, and the partial development observation is not a
+scientific verdict.
+
+The scratch path now ends in `.tmp.safetensors` while remaining hidden and
+process-unique. A real MLX regression writes the tensor map, applies owner-only
+permissions, atomically renames it, reloads it through the SafeTensor parser,
+checks tensor equality, and proves no scratch file remains. The runner also
+prints both untrained development and holdout aggregates before training so an
+early stop has an interpretable baseline. Runner and supervision contracts
+pass `9/9`; Ruff, compilation, and diff hygiene pass.
+
+This advances the completion envelope to `877/920` (approximately `95.3%`).
+The failed invocation consumed only 32 of 256 bounded updates and established
+no model result. The same source-bound discriminator must rerun from clean
+adapter initialization before the Qwen-window operator is retained or retired.
