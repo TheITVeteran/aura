@@ -16,27 +16,32 @@ import json
 import math
 import os
 import subprocess
+import sys
 import time
 from pathlib import Path
 from typing import Any, Final
 
-from core.brain.llm.latent_cortex.objective_program_verifier import (
+REPO_ROOT = Path(__file__).resolve().parent.parent
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
+
+from core.brain.llm.latent_cortex.objective_program_verifier import (  # noqa: E402
     solve_objective_program,
     verify_objective_program,
 )
-from core.brain.llm.latent_cortex.recurrence_adapter_identity_v2 import (
+from core.brain.llm.latent_cortex.recurrence_adapter_identity_v2 import (  # noqa: E402
     full_weight_checkpoint_identity,
     model_behavior_bundle_identity,
 )
-from core.brain.llm.latent_cortex.typed_action_compiler import (
+from core.brain.llm.latent_cortex.typed_action_compiler import (  # noqa: E402
     TypedActionProgram,
     compile_public_transition_program,
 )
-from core.brain.llm.latent_cortex.typed_transition_executor import (
+from core.brain.llm.latent_cortex.typed_transition_executor import (  # noqa: E402
     CertifiedTransitionExecutor,
     TypedTransitionInput,
 )
-from core.learning.recurrence_curriculum import modular_chain, nested_boolean
+from core.learning.recurrence_curriculum import modular_chain, nested_boolean  # noqa: E402
 
 SCHEMA: Final = "aura.certified_recurrence_behavioral_gate.v1"
 PREREG_SCHEMA: Final = "aura.certified_recurrence_behavioral_preregistration.v1"
@@ -576,7 +581,7 @@ def _parse_csv_ints(value: str) -> tuple[int, ...]:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--repo", default=str(Path(__file__).resolve().parent.parent))
+    parser.add_argument("--repo", default=str(REPO_ROOT))
     parser.add_argument("--model", default=DEFAULT_MODEL)
     parser.add_argument("--out", required=True)
     parser.add_argument("--depth", type=_parse_csv_ints, default=(1, 2, 4, 8, 16, 32))

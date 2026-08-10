@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import json
+import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -98,3 +100,21 @@ def test_journal_resume_reconstructs_rows_and_rejects_tampering(tmp_path: Path) 
             tasks=(task,),
             allowed_arms=("certified_recurrence",),
         )
+
+
+def test_cli_imports_from_an_unrelated_working_directory(tmp_path: Path) -> None:
+    script = (
+        Path(__file__).resolve().parent.parent
+        / "tools"
+        / "run_certified_recurrence_behavioral_gate.py"
+    )
+    completed = subprocess.run(
+        [sys.executable, str(script), "--help"],
+        cwd=tmp_path,
+        check=False,
+        capture_output=True,
+        text=True,
+        timeout=15,
+    )
+    assert completed.returncode == 0, completed.stderr
+    assert "Frozen 1.5B behavioral gate" in completed.stdout
