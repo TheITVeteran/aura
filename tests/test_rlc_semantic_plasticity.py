@@ -250,6 +250,78 @@ def test_layerwise_teacher_trajectory_is_distinct_and_query_scoped():
         fast_weights.detach()
 
 
+def test_io_trajectory_capture_keeps_aligned_position_features():
+    model = _model()
+    fast_weights = EpisodicFastWeights(
+        FastWeightsConfig(enabled=True, rank=3, max_wrapped_layers=1)
+    )
+    fast_weights.attach(
+        model.model,
+        (1, 2),
+        seed_stat=0.5,
+        episode_id="io-trajectory-capture-test",
+    )
+    try:
+        inputs, outputs = fast_weights.capture_io_features(
+            lambda: model(mx.array([[1, 2, 3, 4, 5]])),
+            token_start=2,
+        )
+        assert set(inputs) == set(outputs) == {1}
+        assert inputs[1].shape == outputs[1].shape == (3, 32)
+        assert not bool(mx.array_equal(inputs[1][0], inputs[1][1]))
+        assert not bool(mx.array_equal(outputs[1][0], outputs[1][1]))
+    finally:
+        fast_weights.detach()
+
+
+def test_supervised_trajectory_map_fits_distinct_keys_and_erases():
+    model = _model()
+    tokens = mx.array([[1, 2, 3, 4]])
+    baseline = model(tokens)
+    mx.eval(baseline)
+    fast_weights = EpisodicFastWeights(
+        FastWeightsConfig(enabled=True, rank=3, max_wrapped_layers=1)
+    )
+    fast_weights.attach(
+        model.model,
+        (1, 2),
+        seed_stat=0.5,
+        episode_id="supervised-trajectory-map-test",
+    )
+    wrapper = fast_weights.handles[0].wrapper
+    try:
+        inputs, outputs = fast_weights.capture_io_features(
+            lambda: model(tokens),
+            token_start=1,
+        )
+        corrections = {1: mx.roll(outputs[1], shift=1, axis=0) - outputs[1]}
+        receipt = fast_weights.install_supervised_trajectory_map(
+            inputs,
+            corrections,
+            gain=0.5,
+            regularization=1e-4,
+        )
+        fast_weights.activate_adaptation_path()
+
+        targets = corrections[1] / mx.linalg.norm(
+            corrections[1], axis=1, keepdims=True
+        )
+        predicted = wrapper.scale * (inputs[1] @ wrapper.V.T) @ wrapper.U.T
+        assert bool(mx.allclose(predicted, 0.5 * targets, atol=2e-3, rtol=2e-3))
+        assert receipt["schema"] == "aura.fast_weight_supervised_trajectory_map.v1"
+        assert receipt["layers"][0]["teaching_pairs"] == 3
+        assert receipt["layers"][0]["training_relative_error"] < 0.01
+        changed = model(tokens)
+        mx.eval(changed)
+        assert not bool(mx.array_equal(changed, baseline))
+    finally:
+        fast_weights.detach()
+
+    restored = model(tokens)
+    mx.eval(restored)
+    assert bool(mx.array_equal(restored, baseline))
+
+
 def test_layerwise_trajectory_rejects_missing_layer():
     with pytest.raises(ValueError, match="inventories differ"):
         build_layerwise_trajectory_directions(

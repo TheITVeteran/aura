@@ -55,6 +55,7 @@ _LEARNING_POLICY = {
     "cleanup": "exact_detach_erase_and_lease_release",
     "gain_search": "equal_compute_public_verifier_grid_teacher_removed",
     "learning_transform": "layerwise_teacher_minus_incumbent_activation_trajectory",
+    "associative_write": "position_preserving_dual_ridge_neural_map",
 }
 
 _ADMISSION_FIELDS = {
@@ -482,6 +483,7 @@ def empty_learning_state(
             "decision": "not_run",
             "capability_canaries": {},
             "trajectory_transplant": {},
+            "supervised_trajectory_map": {},
             "output_associative_memory": {},
             "verifier_gain_search": {},
             "test_time_training": (
@@ -615,6 +617,7 @@ def validate_fast_weight_learning_receipt(
     }
     optional_control_fields = {
         "trajectory_transplant",
+        "supervised_trajectory_map",
         "output_associative_memory",
     }
     if (
@@ -672,6 +675,7 @@ def validate_fast_weight_learning_receipt(
         raise ValueError("fast-weight optimizer or control receipt is invalid")
     test_time_training = controls["test_time_training"]
     trajectory_transplant = controls.get("trajectory_transplant", {})
+    supervised_trajectory_map = controls.get("supervised_trajectory_map", {})
     output_associative_memory = controls.get("output_associative_memory", {})
     gain_search = controls["verifier_gain_search"]
     if not isinstance(trajectory_transplant, Mapping):
@@ -725,6 +729,79 @@ def validate_fast_weight_learning_receipt(
             raise ValueError("fast-weight trajectory transplant lacks a teaching event")
     if not isinstance(output_associative_memory, Mapping):
         raise ValueError("fast-weight output-memory receipt is invalid")
+    if not isinstance(supervised_trajectory_map, Mapping):
+        raise ValueError("fast-weight supervised trajectory receipt is invalid")
+    if supervised_trajectory_map:
+        if (
+            set(supervised_trajectory_map)
+            != {
+                "schema",
+                "gain",
+                "regularization",
+                "corrections_normalized",
+                "layers",
+            }
+            or supervised_trajectory_map["schema"]
+            != "aura.fast_weight_supervised_trajectory_map.v1"
+            or not _is_finite_number(supervised_trajectory_map["gain"])
+            or not 0.0 < float(supervised_trajectory_map["gain"]) <= 16.0
+            or not _is_finite_number(supervised_trajectory_map["regularization"])
+            or not 0.0 < float(supervised_trajectory_map["regularization"]) <= 1.0
+            or type(supervised_trajectory_map["corrections_normalized"]) is not bool
+            or not isinstance(supervised_trajectory_map["layers"], list)
+            or not supervised_trajectory_map["layers"]
+        ):
+            raise ValueError("fast-weight supervised trajectory receipt is malformed")
+        expected_row_fields = {
+            "layer",
+            "teaching_pairs",
+            "input_width",
+            "output_width",
+            "inputs_sha256",
+            "corrections_sha256",
+            "u_sha256",
+            "v_sha256",
+            "training_relative_error",
+            "ridge_scale",
+            "input_norm_min",
+            "input_norm_max",
+            "correction_norm_min",
+            "correction_norm_max",
+        }
+        for row in supervised_trajectory_map["layers"]:
+            if (
+                not isinstance(row, Mapping)
+                or set(row) != expected_row_fields
+                or type(row["layer"]) is not int
+                or row["layer"] < 0
+                or any(
+                    type(row[field]) is not int or row[field] <= 0
+                    for field in ("teaching_pairs", "input_width", "output_width")
+                )
+                or any(
+                    not _is_sha256(row[field])
+                    for field in (
+                        "inputs_sha256",
+                        "corrections_sha256",
+                        "u_sha256",
+                        "v_sha256",
+                    )
+                )
+                or any(
+                    not _is_finite_number(row[field]) or float(row[field]) < 0.0
+                    for field in (
+                        "training_relative_error",
+                        "ridge_scale",
+                        "input_norm_min",
+                        "input_norm_max",
+                        "correction_norm_min",
+                        "correction_norm_max",
+                    )
+                )
+            ):
+                raise ValueError("fast-weight supervised trajectory row is invalid")
+        if not teaching_event:
+            raise ValueError("fast-weight supervised trajectory lacks a teaching event")
     if output_associative_memory:
         from core.brain.llm.latent_cortex.episodic_output_memory_contract import (
             validate_output_memory_experiment_receipt,

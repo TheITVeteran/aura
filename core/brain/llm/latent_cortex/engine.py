@@ -6136,6 +6136,9 @@ class LatentCortexEngine:
         fw_sham_target_tokens: list[int] = []
         fw_sham_semantic_seed_vectors = None
         fw_sham_trajectory_directions = None
+        fw_incumbent_input_features = None
+        fw_treatment_output_corrections = None
+        fw_sham_output_corrections = None
         fw_sham_probe_tokens: list[int] = []
         fw_sham_score: float | None = None
         if self.config.fast_weights.enabled and not heterogeneous_finalized:
@@ -6396,7 +6399,11 @@ class LatentCortexEngine:
                         )
                         receipt.flag("output_associative_memory_diagnostic_completed")
                     if fast_weight_teaching_event:
-                        target_features, target_context_tokens = (
+                        (
+                            _target_input_features,
+                            target_features,
+                            target_context_tokens,
+                        ) = (
                             self._capture_teacher_forced_trajectory(
                                 fast_weights,
                                 budget,
@@ -6405,7 +6412,11 @@ class LatentCortexEngine:
                                 operation="fast_weight_target_trajectory",
                             )
                         )
-                        incumbent_features, incumbent_context_tokens = (
+                        (
+                            fw_incumbent_input_features,
+                            incumbent_features,
+                            incumbent_context_tokens,
+                        ) = (
                             self._capture_teacher_forced_trajectory(
                                 fast_weights,
                                 budget,
@@ -6414,7 +6425,11 @@ class LatentCortexEngine:
                                 operation="fast_weight_incumbent_trajectory",
                             )
                         )
-                        sham_features, sham_context_tokens = (
+                        (
+                            _sham_input_features,
+                            sham_features,
+                            sham_context_tokens,
+                        ) = (
                             self._capture_teacher_forced_trajectory(
                                 fast_weights,
                                 budget,
@@ -6435,6 +6450,14 @@ class LatentCortexEngine:
                                 rank=self.config.fast_weights.rank,
                             )
                         )
+                        fw_treatment_output_corrections = {
+                            layer: target_features[layer] - incumbent_features[layer]
+                            for layer in target_features
+                        }
+                        fw_sham_output_corrections = {
+                            layer: sham_features[layer] - incumbent_features[layer]
+                            for layer in sham_features
+                        }
                         fast_weights.reseed_output_subspace_by_layer(
                             treatment_directions,
                             seed_source="verified_semantic_contrast",
@@ -6530,17 +6553,37 @@ class LatentCortexEngine:
                     fast_weight_teaching_event
                     and self.config.fast_weights.associative_bootstrap_enabled
                 ):
-                    write_receipt = fast_weights.install_minimum_norm_keys(
-                        gain=self.config.fast_weights.associative_bootstrap_gain,
-                        regularization=(
-                            self.config.fast_weights.associative_bootstrap_regularization
-                        ),
-                    )
-                    receipt.flag(
-                        "fast_weight_minimum_norm_write:"
-                        f"{len(write_receipt['layers'])}"
-                    )
-                    receipt.flag("fast_weight_answer_decode_keys_compiled")
+                    if (
+                        fw_incumbent_input_features is not None
+                        and fw_treatment_output_corrections is not None
+                    ):
+                        write_receipt = fast_weights.install_supervised_trajectory_map(
+                            fw_incumbent_input_features,
+                            fw_treatment_output_corrections,
+                            gain=self.config.fast_weights.associative_bootstrap_gain,
+                            regularization=(
+                                self.config.fast_weights.associative_bootstrap_regularization
+                            ),
+                        )
+                        fast_weight_learning_state["controls"][
+                            "supervised_trajectory_map"
+                        ] = write_receipt
+                        receipt.flag(
+                            "fast_weight_supervised_trajectory_write:"
+                            f"{len(write_receipt['layers'])}"
+                        )
+                    else:
+                        write_receipt = fast_weights.install_minimum_norm_keys(
+                            gain=self.config.fast_weights.associative_bootstrap_gain,
+                            regularization=(
+                                self.config.fast_weights.associative_bootstrap_regularization
+                            ),
+                        )
+                        receipt.flag(
+                            "fast_weight_minimum_norm_write:"
+                            f"{len(write_receipt['layers'])}"
+                        )
+                        receipt.flag("fast_weight_answer_decode_keys_compiled")
                 # The temporary synapses optimize only toward the exact
                 # evidence atoms admitted above. Prompt reconstruction remains
                 # the latent-state optimizer's objective; using it here would
@@ -6584,12 +6627,25 @@ class LatentCortexEngine:
                     )
                     receipt.flag("fast_weight_matched_trajectory_subspace")
                     fw_sham_initial_snapshot = fast_weights.snapshot_delta()
-                    fast_weights.install_minimum_norm_keys(
-                        gain=self.config.fast_weights.associative_bootstrap_gain,
-                        regularization=(
-                            self.config.fast_weights.associative_bootstrap_regularization
-                        ),
-                    )
+                    if (
+                        fw_incumbent_input_features is not None
+                        and fw_sham_output_corrections is not None
+                    ):
+                        fast_weights.install_supervised_trajectory_map(
+                            fw_incumbent_input_features,
+                            fw_sham_output_corrections,
+                            gain=self.config.fast_weights.associative_bootstrap_gain,
+                            regularization=(
+                                self.config.fast_weights.associative_bootstrap_regularization
+                            ),
+                        )
+                    else:
+                        fast_weights.install_minimum_norm_keys(
+                            gain=self.config.fast_weights.associative_bootstrap_gain,
+                            regularization=(
+                                self.config.fast_weights.associative_bootstrap_regularization
+                            ),
+                        )
                 elif fw_sham_semantic_seed_vectors is not None:
                     fast_weights.reseed_output_subspace(
                         fw_sham_semantic_seed_vectors,
@@ -6739,6 +6795,9 @@ class LatentCortexEngine:
                         "trajectory_transplant": fast_weight_learning_state["controls"][
                             "trajectory_transplant"
                         ],
+                        "supervised_trajectory_map": fast_weight_learning_state[
+                            "controls"
+                        ]["supervised_trajectory_map"],
                         "output_associative_memory": fast_weight_learning_state["controls"][
                             "output_associative_memory"
                         ],
@@ -6756,6 +6815,9 @@ class LatentCortexEngine:
                         "trajectory_transplant": fast_weight_learning_state["controls"][
                             "trajectory_transplant"
                         ],
+                        "supervised_trajectory_map": fast_weight_learning_state[
+                            "controls"
+                        ]["supervised_trajectory_map"],
                         "output_associative_memory": fast_weight_learning_state["controls"][
                             "output_associative_memory"
                         ],
@@ -8532,8 +8594,8 @@ class LatentCortexEngine:
         objective: str,
         answer_tokens: Sequence[int],
         operation: str,
-    ) -> tuple[dict[int, Any], list[int]]:
-        """Capture private layer activations for one objective/answer pair."""
+    ) -> tuple[dict[int, Any], dict[int, Any], list[int]]:
+        """Capture aligned private layer inputs/outputs for one answer."""
 
         import mlx.core as mx
 
@@ -8575,13 +8637,13 @@ class LatentCortexEngine:
             mx.eval(h)
             return h
 
-        features = fast_weights.capture_output_features(
+        inputs, outputs = fast_weights.capture_io_features(
             forward,
             token_start=len(prefix),
         )
         if layer_apps <= 0:
             raise RuntimeError("teacher trajectory accounting is invalid")
-        return features, context_tokens
+        return inputs, outputs, context_tokens
 
     def _capture_forced_output_keys(
         self,

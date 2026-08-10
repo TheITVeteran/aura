@@ -138,6 +138,7 @@ class EpisodicDeltaLinear:
         self.input_position_history = []
         self.capture_output = False
         self.capture_output_start = 0
+        self.last_input_trajectory_features = None
         self.last_output_features = None
         out_features, in_features = _linear_dims(base)
         seed = int.from_bytes(hashlib.sha256(tag.encode()).digest()[:4], "big")
@@ -234,6 +235,24 @@ class EpisodicDeltaLinear:
                 self.input_position_history.append(
                     mx.stop_gradient(positions[index].astype(mx.float32))
                 )
+        if self.capture_output:
+            import mlx.core as mx
+
+            sequence = x.reshape((-1, int(x.shape[-1])))
+            start = min(max(0, int(self.capture_output_start)), int(sequence.shape[0]) - 1)
+            suffix = sequence[start:]
+            candidates = [mx.mean(suffix, axis=0), suffix[-1]]
+            if int(self.U.shape[1]) > 2:
+                count = int(suffix.shape[0])
+                for index in range(int(self.U.shape[1]) - 2):
+                    position = min(
+                        count - 1,
+                        ((index + 1) * count) // (int(self.U.shape[1]) - 1),
+                    )
+                    candidates.append(suffix[position])
+            self.last_input_trajectory_features = mx.stop_gradient(
+                mx.stack(candidates[: int(self.U.shape[1])], axis=0).astype(mx.float32)
+            )
         base = self.base(x)
         if self.capture_output:
             import mlx.core as mx
@@ -694,6 +713,49 @@ class EpisodicFastWeights:
             for handle in self.handles:
                 handle.wrapper.capture_output = False
 
+    def capture_io_features(
+        self,
+        forward_fn: Callable[[], Any],
+        *,
+        token_start: int,
+    ) -> tuple[dict[int, Any], dict[int, Any]]:
+        """Capture aligned input and output features from an answer suffix."""
+
+        import mlx.core as mx
+
+        if type(token_start) is not int or token_start < 0:
+            raise ValueError("fast-weight I/O capture token start is invalid")
+        if not self.handles:
+            raise RuntimeError("fast-weight I/O capture requires wrappers")
+        if any(bool(mx.any(handle.wrapper.V != 0)) for handle in self.handles):
+            raise RuntimeError("fast-weight I/O capture requires zero V")
+        for handle in self.handles:
+            wrapper = handle.wrapper
+            wrapper.last_input_trajectory_features = None
+            wrapper.last_output_features = None
+            wrapper.capture_output_start = token_start
+            wrapper.capture_output = True
+        try:
+            output = forward_fn()
+            inputs = {
+                int(handle.layer_index): handle.wrapper.last_input_trajectory_features
+                for handle in self.handles
+            }
+            outputs = {
+                int(handle.layer_index): handle.wrapper.last_output_features
+                for handle in self.handles
+            }
+            if any(value is None for value in (*inputs.values(), *outputs.values())):
+                raise RuntimeError("fast-weight I/O capture missed a projection")
+            for layer in inputs:
+                if int(inputs[layer].shape[0]) != int(outputs[layer].shape[0]):
+                    raise RuntimeError("fast-weight I/O feature counts differ")
+            mx.eval(output, *inputs.values(), *outputs.values())
+            return inputs, outputs
+        finally:
+            for handle in self.handles:
+                handle.wrapper.capture_output = False
+
     def reseed_output_subspace_by_layer(
         self,
         seed_vectors_by_layer: Mapping[int, Any],
@@ -808,6 +870,149 @@ class EpisodicFastWeights:
             "schema": "aura.fast_weight_minimum_norm_write.v1",
             "gain": float(gain),
             "regularization": float(regularization),
+            "layers": rows,
+        }
+
+    def install_supervised_trajectory_map(
+        self,
+        input_features_by_layer: Mapping[int, Any],
+        output_corrections_by_layer: Mapping[int, Any],
+        *,
+        gain: float,
+        regularization: float,
+        normalize_corrections: bool = True,
+    ) -> dict[str, Any]:
+        """Install the minimum-norm map from decode states to corrections.
+
+        For rows ``X`` and verified corrections ``Y``, the rank-bounded dual
+        ridge map is ``X.T @ solve(X @ X.T + lambda I, Y)``.  The wrapper's
+        orientation is ``x @ V.T @ U.T``; setting ``V=X`` and ``U=dual.T``
+        therefore realizes the same map without constructing a width-square
+        matrix.  Each row remains a distinct autoregressive position instead
+        of being averaged into one query key.
+        """
+
+        import mlx.core as mx
+
+        from core.brain.llm.latent_cortex.verified_best import tensor_sha256
+
+        if (
+            isinstance(gain, bool)
+            or not isinstance(gain, (int, float))
+            or not math.isfinite(float(gain))
+            or not 0.0 < float(gain) <= 16.0
+        ):
+            raise ValueError("supervised trajectory gain must be inside (0, 16]")
+        if (
+            isinstance(regularization, bool)
+            or not isinstance(regularization, (int, float))
+            or not math.isfinite(float(regularization))
+            or not 0.0 < float(regularization) <= 1.0
+        ):
+            raise ValueError(
+                "supervised trajectory regularization must be inside (0, 1]"
+            )
+        if type(normalize_corrections) is not bool:
+            raise TypeError("normalize_corrections must be boolean")
+        expected = {int(handle.layer_index) for handle in self.handles}
+        if (
+            not expected
+            or {int(index) for index in input_features_by_layer} != expected
+            or {int(index) for index in output_corrections_by_layer} != expected
+        ):
+            raise ValueError("supervised trajectory layer inventory differs")
+
+        rows = []
+        for handle in self.handles:
+            layer = int(handle.layer_index)
+            wrapper = handle.wrapper
+            inputs = input_features_by_layer[layer].astype(mx.float32)
+            corrections = output_corrections_by_layer[layer].astype(mx.float32)
+            if (
+                getattr(inputs, "ndim", 0) != 2
+                or getattr(corrections, "ndim", 0) != 2
+                or int(inputs.shape[0]) != int(corrections.shape[0])
+                or int(inputs.shape[1]) != int(wrapper.V.shape[1])
+                or int(corrections.shape[1]) != int(wrapper.U.shape[0])
+                or not 1 <= int(inputs.shape[0]) <= int(wrapper.U.shape[1])
+            ):
+                raise ValueError("supervised trajectory feature shape differs")
+            if not bool(mx.all(mx.isfinite(inputs))) or not bool(
+                mx.all(mx.isfinite(corrections))
+            ):
+                raise ValueError("supervised trajectory features are non-finite")
+
+            input_norms = mx.linalg.norm(inputs, axis=1, keepdims=True)
+            if bool(mx.any(input_norms <= 1e-8)):
+                raise ValueError("supervised trajectory contains a zero input")
+            keys = inputs
+            correction_norms = mx.linalg.norm(corrections, axis=1, keepdims=True)
+            if bool(mx.any(correction_norms <= 1e-8)):
+                raise ValueError("supervised trajectory contains a zero correction")
+            targets = (
+                corrections / correction_norms
+                if normalize_corrections
+                else corrections
+            )
+            gram = keys @ keys.T
+            ridge_scale = mx.maximum(
+                mx.mean(mx.diag(gram)),
+                1e-8,
+            )
+            identity = mx.eye(int(keys.shape[0]), dtype=mx.float32)
+            dual = mx.linalg.solve(
+                gram + float(regularization) * ridge_scale * identity,
+                targets,
+            )
+            active = int(keys.shape[0])
+            scale = max(abs(float(wrapper.scale)), 1e-12)
+            new_u = (float(gain) / scale * dual.T).astype(wrapper.U.dtype)
+            new_v = keys.astype(wrapper.V.dtype)
+            wrapper.U = mx.concatenate(
+                [new_u, mx.zeros_like(wrapper.U[:, active:])],
+                axis=1,
+            )
+            wrapper.V = mx.concatenate(
+                [new_v, mx.zeros_like(wrapper.V[active:])],
+                axis=0,
+            )
+            predicted = float(wrapper.scale) * (keys @ wrapper.V.T) @ wrapper.U.T
+            target = float(gain) * targets
+            relative_error = mx.linalg.norm(predicted - target) / mx.maximum(
+                mx.linalg.norm(target), 1e-8
+            )
+            mx.eval(
+                wrapper.U,
+                wrapper.V,
+                relative_error,
+                ridge_scale,
+                input_norms,
+                correction_norms,
+            )
+            rows.append(
+                {
+                    "layer": layer,
+                    "teaching_pairs": active,
+                    "input_width": int(inputs.shape[1]),
+                    "output_width": int(corrections.shape[1]),
+                    "inputs_sha256": tensor_sha256(inputs),
+                    "corrections_sha256": tensor_sha256(corrections),
+                    "u_sha256": tensor_sha256(wrapper.U),
+                    "v_sha256": tensor_sha256(wrapper.V),
+                    "training_relative_error": round(float(relative_error), 8),
+                    "ridge_scale": round(float(ridge_scale), 8),
+                    "input_norm_min": round(float(mx.min(input_norms)), 8),
+                    "input_norm_max": round(float(mx.max(input_norms)), 8),
+                    "correction_norm_min": round(float(mx.min(correction_norms)), 8),
+                    "correction_norm_max": round(float(mx.max(correction_norms)), 8),
+                }
+            )
+        self._notify_function_change("fast_weights_supervised_trajectory_map_installed")
+        return {
+            "schema": "aura.fast_weight_supervised_trajectory_map.v1",
+            "gain": float(gain),
+            "regularization": float(regularization),
+            "corrections_normalized": normalize_corrections,
             "layers": rows,
         }
 

@@ -42633,3 +42633,34 @@ checking private activations into source control. Focused contracts pass
 against the intended task-conditioned recurrent states. No persistent reasoning
 gain, resident-32B use, frontier result, fusion, activation, or `WOW Signal` is
 authorized. The completion envelope is `848/920` (approximately `92.2%`).
+
+## Checkpoint 2026-08-10-151: Verified Corrections Keep Their Decode-State Keys
+
+CP150 proved that persistent transfer now sees the intended recurrent slots,
+but its frozen rerun remained `6/8 -> 6/8`. The fitted operator was effectively
+rank sixteen and increasing gain changed answers without correcting the failed
+task. A separate query-scoped replay of that held-out modular task also remained
+`0/2` under the existing temporary write. The failure is therefore not missing
+rank or insufficient force: the temporary learner retained teacher-minus-
+incumbent output directions but discarded the per-position inputs that made
+those directions applicable, replacing them with averaged query activity.
+
+The episodic tissue now captures aligned input and output features from each
+teacher-forced answer position. For each wrapped layer it compiles the exact
+dual-ridge map `X.T @ solve(X @ X.T + lambda I, Y)` into the existing low-rank
+`U,V` orientation without constructing a model-width square matrix. Distinct
+incumbent decode states remain distinct keys; `Y` is the independently verified
+teacher-minus-incumbent correction. The matched wrong-teacher arm receives the
+same map, rank, regularization, gain search, compute, and erase treatment.
+Private inputs, corrections, and factors are committed by hash in the learning
+receipt but never serialized as public text or granted direct answer authority.
+
+Tiny real-MLX contracts prove aligned suffix capture, low-error interpolation
+of multiple distinct keys, actual model-function change only after activation,
+and byte-identical restoration after detach. The focused learning/wiring suite,
+canonical smoke (`103/103`), Ruff, compilation, and diff hygiene pass. The next
+gate is the source-bound 1.5B failed-task discriminator followed, only on a
+strict treatment win, by a fresh multi-task producer-disabled replication. No
+broad neural gain, resident-32B use, frontier result, fusion, activation, or
+`WOW Signal` is authorized. The completion envelope is `849/920`
+(approximately `92.3%`).
