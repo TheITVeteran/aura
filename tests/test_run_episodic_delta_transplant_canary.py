@@ -7,6 +7,7 @@ import numpy as np
 import pytest
 
 from tools.run_episodic_delta_transplant_canary import (
+    EPISODE_ID,
     _load_candidate,
     _producer_export_diagnostic,
 )
@@ -80,6 +81,8 @@ def test_producer_export_diagnostic_distinguishes_ineligible_delta() -> None:
             "fast_weight_optimized_steps": 0,
             "fast_weight_rejected_steps": 2,
             "fast_weight_loss_trail": [1.0],
+            "fast_weight_verifier": {"decision": "erased_non_improvement"},
+            "fast_weight_learning": {"disposition": "rejected_non_improvement"},
             "honest_flags": ["fast_weight_no_accepted_step"],
         }
     )
@@ -87,6 +90,7 @@ def test_producer_export_diagnostic_distinguishes_ineligible_delta() -> None:
     assert diagnostic["exported"] is False
     assert diagnostic["eligible_by_receipt"] is False
     assert diagnostic["reason"] == "producer_not_export_eligible"
+    assert diagnostic["prerequisites"]["adaptation_retained"] is False
     assert diagnostic["prerequisites"]["accepted_step"] is False
     assert diagnostic["prerequisites"]["loss_improved"] is False
 
@@ -99,6 +103,10 @@ def test_producer_export_diagnostic_exposes_export_boundary_failure() -> None:
             "fast_weight_optimized_steps": 1,
             "fast_weight_rejected_steps": 0,
             "fast_weight_loss_trail": [1.0, 0.5],
+            "fast_weight_verifier": {"decision": "accepted_causal_improvement"},
+            "fast_weight_learning": {
+                "disposition": "accepted_probe_not_output_under_incumbent_policy"
+            },
             "honest_flags": [],
         }
     )
@@ -106,3 +114,27 @@ def test_producer_export_diagnostic_exposes_export_boundary_failure() -> None:
     assert diagnostic["exported"] is False
     assert diagnostic["eligible_by_receipt"] is True
     assert diagnostic["reason"] == "export_boundary_failed_or_refused"
+
+
+def test_matched_control_rejection_is_not_misreported_as_export_failure() -> None:
+    diagnostic = _producer_export_diagnostic(
+        {
+            "checkpoint_fingerprint": "sha256:checkpoint",
+            "fast_weights_erased": True,
+            "fast_weight_optimized_steps": 4,
+            "fast_weight_rejected_steps": 0,
+            "fast_weight_loss_trail": [2.0, 1.0],
+            "fast_weight_verifier": {"decision": "erased_matched_control"},
+            "fast_weight_learning": {"disposition": "rejected_matched_control"},
+            "honest_flags": ["fast_weight_matched_control_rejected"],
+        }
+    )
+
+    assert diagnostic["eligible_by_receipt"] is False
+    assert diagnostic["prerequisites"]["adaptation_retained"] is False
+    assert diagnostic["reason"] == "producer_not_export_eligible"
+
+
+def test_scientific_episode_identity_is_source_revision_independent() -> None:
+    assert EPISODE_ID == "episodic-transplant-modular-d3-v1"
+    assert "commit" not in EPISODE_ID

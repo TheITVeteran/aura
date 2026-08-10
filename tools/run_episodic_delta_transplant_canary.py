@@ -55,6 +55,7 @@ from core.runtime.model_lane_control import standalone_model_lane
 SCHEMA = "aura.rlc.episodic_delta_transplant_canary.v1"
 CAMPAIGN_SEED = 20_260_810_156
 TASK_SEED = 2_394_370_837_916_956_658
+EPISODE_ID = "episodic-transplant-modular-d3-v1"
 
 
 def _sha256_bytes(payload: bytes) -> str:
@@ -91,10 +92,24 @@ def _producer_export_diagnostic(receipt: dict[str, Any]) -> dict[str, Any]:
     loss_trail = tuple(float(value) for value in receipt.get("fast_weight_loss_trail", ()))
     accepted_steps = int(receipt.get("fast_weight_optimized_steps", 0))
     loss_improved = len(loss_trail) >= 2 and loss_trail[-1] < loss_trail[0]
+    verifier_decision = str(
+        (receipt.get("fast_weight_verifier") or {}).get("decision", "")
+    )
+    learning_disposition = str(
+        (receipt.get("fast_weight_learning") or {}).get("disposition", "")
+    )
+    adaptation_retained = (
+        verifier_decision == "accepted_causal_improvement"
+        and learning_disposition
+        in {
+            "accepted_causal_improvement",
+            "accepted_probe_not_output_under_incumbent_policy",
+        }
+    )
     prerequisites = {
         "checkpoint_bound": bool(receipt.get("checkpoint_fingerprint")),
         "erase_proven": receipt.get("fast_weights_erased") is True,
-        "canary_survived": "fast_weight_canary_erased" not in flags,
+        "adaptation_retained": adaptation_retained,
         "accepted_step": accepted_steps > 0,
         "loss_improved": loss_improved,
     }
@@ -106,6 +121,8 @@ def _producer_export_diagnostic(receipt: dict[str, Any]) -> dict[str, Any]:
         "prerequisites": prerequisites,
         "accepted_steps": accepted_steps,
         "rejected_steps": int(receipt.get("fast_weight_rejected_steps", 0)),
+        "verifier_decision": verifier_decision,
+        "learning_disposition": learning_disposition,
         "loss_trail": list(loss_trail),
         "honest_flags": list(flags),
         "reason": (
@@ -292,7 +309,11 @@ def run(
             problems = config.validate()
             if problems:
                 raise RuntimeError(f"transplant producer config rejected: {problems}")
-            episode_id = f"episodic-transplant-{source[:12]}"
+            # Source is independently committed in the campaign receipt. It
+            # must not seed the scientific arm: doing so changed adapter
+            # initialization and the deterministic sham after every code-only
+            # checkpoint, making consecutive reruns incomparable.
+            episode_id = EPISODE_ID
             engine = LatentCortexEngine(
                 model,
                 tokenizer=tokenizer,

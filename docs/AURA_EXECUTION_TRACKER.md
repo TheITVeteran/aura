@@ -42961,3 +42961,28 @@ and engine execution passes `25/25`; Ruff, compilation, and diff hygiene pass.
 Canonical smoke passes `103/103`. This advances the completion envelope to
 `857/920` (approximately `93.2%`). The source-bound transplant rerun is next;
 resident-32B use remains locked.
+
+## Checkpoint 2026-08-10-162: Source Revisions Cannot Reseed the Frozen Experiment
+
+Three consecutive diagnostic runs produced different matched-control verdicts
+despite claiming the same frozen campaign. The task, model, campaign seed, and
+winner state were stable, but treatment delta hashes, sham targets, and probe
+tokens changed. The canary embedded `source_commit[:12]` in `episode_id`; that
+ID seeds fast-weight initialization and the deterministic sham-token offset.
+Every code-only checkpoint therefore changed both experimental arms. These
+runs remain useful infrastructure traces but are not repeated measurements of
+one scientific object.
+
+The transplant discriminator now has a versioned episode identity derived
+from the frozen experiment, independent of source revision. Source commit
+remains an explicit campaign and final-receipt binding, but no longer enters
+adapter or sham construction. Export diagnosis also reads the authoritative
+fast-weight verifier decision and finalized learning disposition. A
+matched-control rejection can no longer be misreported as a persistence
+failure merely because a canary-erasure flag was absent. Contracts cover an
+unproductive optimizer, a retained-but-unexported candidate, a matched-control
+rejection, and the revision-independent episode ID. Focused execution passes
+`5/5`; canonical smoke passes `103/103`, and Ruff, compilation, and diff
+hygiene pass. This advances the completion envelope to `858/920`
+(approximately `93.3%`). The next run begins the first genuinely repeatable
+source-bound transplant campaign; resident-32B use remains locked.
