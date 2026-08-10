@@ -1410,6 +1410,31 @@ final class KeyablePanel: NSPanel {
     override var canBecomeMain: Bool { false }
 }
 
+/// A pan recognizer that only claims drags beginning in a strip along the top
+/// edge of its view.
+///
+/// The companion transcript has to stay selectable, so the whole surface
+/// cannot be a drag handle. The page marked its title bar with
+/// `-webkit-app-region: drag`, which is an Electron property that WKWebView
+/// does not implement — the intended handle was never live on any surface.
+final class TopStripPanGestureRecognizer: NSPanGestureRecognizer {
+    /// Height in points of the draggable strip from the top edge. Zero drags
+    /// from anywhere, which is what the bubble wants: it is all glyph.
+    var topStrip: CGFloat = 0
+
+    override func mouseDown(with event: NSEvent) {
+        if topStrip > 0, let view {
+            let point = view.convert(event.locationInWindow, from: nil)
+            let distanceFromTop = view.isFlipped ? point.y : view.bounds.height - point.y
+            if distanceFromTop > topStrip {
+                state = .failed
+                return
+            }
+        }
+        super.mouseDown(with: event)
+    }
+}
+
 final class AuraLauncherDelegate: NSObject, NSApplicationDelegate,
     WKScriptMessageHandler, NSWindowDelegate {
     private enum BadgeStyle {
@@ -1472,6 +1497,11 @@ final class AuraLauncherDelegate: NSObject, NSApplicationDelegate,
     private var companionWebView: WKWebView?
     private var overlayWindow: NSWindow?
     private var overlayDismissWork: DispatchWorkItem?
+    // Screen-space anchors for a window drag in progress. Screen space, not
+    // window space: the window moves WITH the cursor, so a translation measured
+    // against the window nets to zero after the first step and the drag stalls.
+    private var dragMouseAnchor: NSPoint?
+    private var dragWindowAnchor: NSPoint?
 
     private var auraRoot: URL!
     private var launchScript: URL!
@@ -2875,6 +2905,7 @@ final class AuraLauncherDelegate: NSObject, NSApplicationDelegate,
             panel.contentView = webView
             panel.isReleasedWhenClosed = false
             panel.setFrameOrigin(defaultBubbleOrigin(for: size))
+            installWindowDrag(on: webView)
 
             bubblePanel = panel
             bubbleWebView = webView
@@ -3019,6 +3050,55 @@ final class AuraLauncherDelegate: NSObject, NSApplicationDelegate,
         // Bottom-left, inset. Out of the way of window controls, menu bar
         // extras, and the notification stack on the right.
         return NSPoint(x: visible.minX + 24, y: visible.minY + 24)
+    }
+
+    /// Let a panel whose contentView is a WKWebView be dragged by its content.
+    ///
+    /// `isMovableByWindowBackground` was set on both panels and neither could
+    /// be moved. That flag only fires when the WINDOW receives the background
+    /// mouseDown, and a WKWebView consumes every mouse event inside its own
+    /// subview tree, so the window never saw one. Reported live 2026-08-10:
+    /// "i still cant drag across the screen".
+    ///
+    /// A pan recognizer sits above the web content and does not delay the
+    /// primary mouse button, so a plain click still reaches the page — the
+    /// bubble's one job, opening the chat, keeps working — while a drag moves
+    /// the host panel.
+    /// - Parameter topStrip: points of draggable strip from the top edge, or 0
+    ///   for the whole surface. The companion needs a strip so that dragging
+    ///   across the transcript still selects text.
+    private func installWindowDrag(on view: NSView, topStrip: CGFloat = 0) {
+        let pan = TopStripPanGestureRecognizer(
+            target: self, action: #selector(handleWindowDrag(_:))
+        )
+        pan.topStrip = topStrip
+        pan.delaysPrimaryMouseButtonEvents = false
+        view.addGestureRecognizer(pan)
+    }
+
+    @objc private func handleWindowDrag(_ recognizer: NSPanGestureRecognizer) {
+        guard let window = recognizer.view?.window else { return }
+        switch recognizer.state {
+        case .began:
+            dragMouseAnchor = NSEvent.mouseLocation
+            dragWindowAnchor = window.frame.origin
+        case .changed:
+            guard let mouseAnchor = dragMouseAnchor,
+                  let windowAnchor = dragWindowAnchor else { return }
+            let now = NSEvent.mouseLocation
+            let moved = NSPoint(
+                x: windowAnchor.x + (now.x - mouseAnchor.x),
+                y: windowAnchor.y + (now.y - mouseAnchor.y)
+            )
+            // Clamped so she cannot be dragged off the edge and stranded
+            // somewhere with no way to click her back.
+            window.setFrameOrigin(clampToScreen(moved, size: window.frame.size))
+        case .ended, .cancelled, .failed:
+            dragMouseAnchor = nil
+            dragWindowAnchor = nil
+        default:
+            break
+        }
     }
 
     private func observeBubbleMoves(_ panel: NSPanel) {
@@ -3296,11 +3376,20 @@ final class AuraLauncherDelegate: NSObject, NSApplicationDelegate,
             panel.isOpaque = false
             panel.hasShadow = true
             panel.isMovableByWindowBackground = true
+            // NSPanel defaults hidesOnDeactivate to TRUE — unlike NSWindow.
+            // Unset, every click into another app ordered the companion out,
+            // which reads as the window closing itself. Reported live
+            // 2026-08-10: "when i click on another window, the companion goes
+            // away". The bubble sets this explicitly; this window never did.
+            panel.hidesOnDeactivate = false
             panel.minSize = NSSize(width: 340, height: 260)
             panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
             panel.contentView = webView
             panel.isReleasedWhenClosed = false
             panel.setFrameOrigin(companionOrigin(for: size))
+            // 37pt: the title bar's 8pt padding, 20pt glyph, 8pt padding and
+            // its 1pt rule — the strip the page styles as its drag handle.
+            installWindowDrag(on: webView, topStrip: 37)
 
             companionPanel = panel
             companionWebView = webView

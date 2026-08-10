@@ -5319,20 +5319,66 @@ class DesktopTaskSkill(BaseSkill):
             return None
         if observation is None:
             return None
+        # Observation stamps its capture time as `at`. This read `timestamp`,
+        # which no Observation has ever carried, so the getattr default of 0.0
+        # made every ambient answer report an age of ~56 years (now - epoch).
+        # The one number whose whole job is to keep a moment-old reading from
+        # passing as this instant was nonsense on every turn it appeared.
+        observed_at = float(
+            getattr(observation, "at", None)
+            or getattr(observation, "timestamp", 0.0)
+            or 0.0
+        )
+        age_s = (
+            round(max(0.0, time.time() - observed_at), 1) if observed_at > 0.0 else None
+        )
+        # Observing IS the step. Reporting zero steps was not a smaller claim,
+        # it was an unverifiable one: the task contract checks
+        # steps_requested/steps_completed/receipts by TRUTHINESS, so 0/0/[]
+        # read as "no evidence" and the contract layer downgraded a correct
+        # screen reading into "I am not claiming the desktop action finished."
+        # Measured live 2026-08-10 on "what's on my screen right now?".
+        #
+        # A request to observe is satisfied by an observation, not by an
+        # effect. This receipt says exactly that — the action is a read, and
+        # the evidence is the reading, carrying its source and its age.
+        source = str(getattr(observation, "source", "") or "the frontmost window")
+        when = f"{age_s}s ago" if age_s is not None else "at an unrecorded time"
+        if getattr(observation, "is_empty", False):
+            evidence = (
+                f"observed {source} {when}; nothing legible was captured. "
+                "This is a failed READING, not an empty screen."
+            )
+        else:
+            evidence = f"observed {source} {when}; legible content captured"
+        receipt = {
+            "index": 1,
+            "action": "observe_screen",
+            "reason": "answer a question about the screen from what was seen",
+            "expect": "an observation of the frontmost window",
+            "ok": True,
+            # The read is verified by the observation existing with a source
+            # and an age. No desktop state was changed and none is claimed.
+            "effect_verified": True,
+            "effect_evidence": evidence,
+            "result": {
+                "source": source,
+                "age_s": age_s,
+                "empty": bool(getattr(observation, "is_empty", False)),
+            },
+        }
         return {
             "ok": True,
             "status": "answered_from_ambient_observation",
             "objective": objective,
-            "steps_requested": 0,
-            "steps_completed": 0,
-            "receipts": [],
+            "steps_requested": 1,
+            "steps_completed": 1,
+            "receipts": [receipt],
             "observation": observation.for_reasoning(),
             "observation_meta": observation.to_dict(),
             # Named, so an answer sourced from a moment ago is never mistaken
             # for a reading of this instant. The age travels with it.
-            "observation_age_s": round(
-                max(0.0, time.time() - float(getattr(observation, "timestamp", 0.0))), 1
-            ),
+            "observation_age_s": age_s,
             "captured_now": False,
         }
 

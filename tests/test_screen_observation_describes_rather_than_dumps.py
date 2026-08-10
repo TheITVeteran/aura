@@ -280,10 +280,28 @@ def test_the_frame_does_not_write_her_sentence():
 
 
 def test_an_empty_capture_says_so_rather_than_inviting_invention():
+    """It must name the failure AND rule out the empty-screen reading.
+
+    This asserted the older, milder wording — "Nothing legible was captured
+    ... do not describe a screen that was not read" — which named the failure
+    but left "so the screen must be empty" available as an inference. On
+    2026-08-10 the live reply took it: "There are no windows or applications
+    open on it at this time. It is a blank slate.", with three windows open.
+
+    So the assertions are on the distinction now, not on a phrasing.
+    """
     empty = Observation(ObservationKind.SCREEN_TEXT, "", "what do you see?", "Finder")
     rendered = empty.for_reasoning()
-    assert "Nothing legible was captured" in rendered
-    assert "do not describe a screen that was not read" in rendered
+    lowered = rendered.lower()
+
+    # The reading failed, and it says which reading.
+    assert "failed" in lowered
+    assert "Finder" in rendered
+
+    # A failed capture and an empty screen are indistinguishable here, and the
+    # frame has to say so rather than leave it to be worked out.
+    assert "blank" in lowered and "empty" in lowered
+    assert "must not" in lowered or "do not say" in lowered
 
 
 def test_the_evidence_is_bounded():

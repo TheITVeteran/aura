@@ -566,10 +566,26 @@ class Observation:
         reasoning does the reasoning, and the sentence is hers.
         """
         if self.is_empty:
+            # "Nothing was read" and "nothing is there" are different facts,
+            # and the second one is a claim about the world that this evidence
+            # does not support. Told only to "say that plainly", the reply came
+            # back as "There are no windows or applications open on it at this
+            # time. It is a blank slate." — measured live 2026-08-10, with
+            # Gmail, the desktop window and the companion all on screen.
+            #
+            # So the distinction is stated instead of assumed.
             return (
-                f"[OBSERVATION — {self.kind.value}] Nothing legible was captured"
-                + (f" from {self.source}" if self.source else "")
-                + ". Say that plainly; do not describe a screen that was not read."
+                f"[OBSERVATION — {self.kind.value}] The capture FAILED"
+                + (f" for {self.source}" if self.source else "")
+                + ". Nothing legible came back.\n"
+                "This tells you that the READING did not succeed. It tells you "
+                "NOTHING about what is on the screen — a failed capture and an "
+                "empty screen produce the identical result here, so you cannot "
+                "distinguish them and must not try.\n"
+                "Say that you could not read it. Do NOT say the screen is "
+                "empty, blank, clear, or that no windows or applications are "
+                "open: you did not observe that, and asserting it would be "
+                "inventing a perception."
             )
 
         capture = self.capture.strip()
