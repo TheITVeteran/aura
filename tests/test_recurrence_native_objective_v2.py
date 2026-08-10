@@ -62,8 +62,10 @@ from core.learning.recurrence_native_objective_v2 import (  # noqa: E402
     live_path_forward,
     live_path_loss,
     prepare_final_recurrent_transition,
+    prepare_recurrent_state_trail,
     validate_exact_adjoint_live_path_receipt,
     validate_final_recurrent_transition_receipt,
+    validate_recurrent_state_trail_receipt,
 )
 from core.learning.recurrent_grpo import (  # noqa: E402
     attach_recurrent_policy_adapters,
@@ -499,6 +501,48 @@ def test_transition_receipt_rejects_resealed_noncausal_state_substitution() -> N
 
     with pytest.raises(ValueError, match="identity|digest"):
         validate_final_recurrent_transition_receipt(attacked)
+
+
+def test_state_trail_captures_every_exact_live_transition() -> None:
+    model = _model()
+    spec = _spec(
+        recurrent_steps=3,
+        branch_roles=("constructive_solution", "critical_audit"),
+    )
+
+    trail = prepare_recurrent_state_trail(model, PROMPT, spec=spec)
+
+    assert len(trail.states_by_depth) == 4
+    assert all(len(states) == 2 for states in trail.states_by_depth)
+    for depth in range(1, 4):
+        expected = live_path_forward(
+            model,
+            PROMPT,
+            ANSWER,
+            spec=spec.with_depth(depth),
+        )
+        for observed, state in zip(
+            trail.states_by_depth[depth],
+            expected.branch_states,
+            strict=True,
+        ):
+            assert bool(mx.array_equal(observed, state))
+    assert validate_recurrent_state_trail_receipt(trail.receipt()) == trail.receipt()
+
+
+def test_state_trail_receipt_rejects_depth_hash_substitution() -> None:
+    trail = prepare_recurrent_state_trail(
+        _model(),
+        PROMPT,
+        spec=_spec(recurrent_steps=2),
+    )
+    attacked = trail.receipt()
+    attacked["depth_branch_sha256s"][1] = list(
+        attacked["depth_branch_sha256s"][0]
+    )
+
+    with pytest.raises(ValueError, match="receipt"):
+        validate_recurrent_state_trail_receipt(attacked)
 
 
 @pytest.mark.parametrize(

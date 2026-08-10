@@ -54,6 +54,7 @@ from core.learning.role_conditioned_lora import (
 
 RECURRENCE_NATIVE_SCHEMA_V2 = "aura.recurrence_native_objective.v2"
 RECURRENT_TRANSITION_STATE_SCHEMA = "aura.recurrent_transition_state.v1"
+RECURRENT_STATE_TRAIL_SCHEMA = "aura.recurrent_state_trail.v1"
 EXACT_ADJOINT_TRAJECTORY_SCHEMA = "aura.exact_adjoint_trajectory_objective.v1"
 EXACT_ADJOINT_TRAJECTORY_RECEIPT_SCHEMA = "aura.exact_adjoint_trajectory_objective_receipt.v2"
 EXACT_ADJOINT_INTERVENTION_SCHEMA = "aura.exact_adjoint_intervention_objective.v1"
@@ -1034,6 +1035,32 @@ class PreparedFinalRecurrentTransition:
         }
 
 
+@dataclass(frozen=True, slots=True)
+class PreparedRecurrentStateTrail:
+    """Frozen live-path states at depth zero and every recurrent boundary."""
+
+    states_by_depth: tuple[tuple[Any, ...], ...]
+    execution_spec_sha256: str
+    prompt_tokens_sha256: str
+    depth_branch_sha256s: tuple[tuple[str, ...], ...]
+    transition_source_sha256: str
+    receipt_sha256: str
+
+    def receipt(self) -> dict[str, Any]:
+        return {
+            "schema": RECURRENT_STATE_TRAIL_SCHEMA,
+            "execution_spec_sha256": self.execution_spec_sha256,
+            "prompt_tokens_sha256": self.prompt_tokens_sha256,
+            "recurrent_steps": len(self.states_by_depth) - 1,
+            "branch_count": len(self.states_by_depth[0]),
+            "depth_branch_sha256s": [
+                list(branches) for branches in self.depth_branch_sha256s
+            ],
+            "transition_source_sha256": self.transition_source_sha256,
+            "receipt_sha256": self.receipt_sha256,
+        }
+
+
 def _boundaries(model: Any, spec: RLCExecutionSpec) -> tuple[int, int, int]:
     n_layers = len(model.model.layers)
     prelude_end = max(1, int(n_layers * spec.prelude_frac))
@@ -1789,6 +1816,127 @@ def prepare_final_recurrent_transition(
         transition_source_sha256=transition_source_sha256,
         receipt_sha256=receipt_sha256,
     )
+
+
+def prepare_recurrent_state_trail(
+    model: Any,
+    prompt_tokens: Sequence[int],
+    *,
+    spec: RLCExecutionSpec,
+) -> PreparedRecurrentStateTrail:
+    """Capture the exact shared live transition trajectory without decoding."""
+
+    import mlx.core as mx
+
+    (
+        _prompt_embeddings,
+        _seeds,
+        prompts_at_window,
+        initial_states,
+        anchors,
+        prelude_end,
+        coda_start,
+    ) = _prepare_recurrent_prefix(model, prompt_tokens, spec=spec)
+
+    def freeze(states: Sequence[Any]) -> tuple[Any, ...]:
+        frozen = tuple(mx.stop_gradient(state) for state in states)
+        mx.eval(frozen)
+        return frozen
+
+    current = freeze(initial_states)
+    history: list[tuple[Any, ...]] = [current]
+    for step in range(spec.recurrent_steps):
+        current = freeze(
+            _checkpointed_recurrent_transition(
+                model,
+                prompts_at_window,
+                current,
+                anchors,
+                spec,
+                step,
+                prelude_end,
+                coda_start,
+            )
+        )
+        history.append(current)
+    depth_hashes = tuple(
+        tuple(_tensor_sha256(state) for state in states) for states in history
+    )
+    transition_source_sha256 = hashlib.sha256(
+        inspect.getsource(_advance_recurrent_states).encode("utf-8")
+    ).hexdigest()
+    body = {
+        "schema": RECURRENT_STATE_TRAIL_SCHEMA,
+        "execution_spec_sha256": spec.sha256,
+        "prompt_tokens_sha256": _token_sequence_sha256(prompt_tokens),
+        "recurrent_steps": spec.recurrent_steps,
+        "branch_count": len(current),
+        "depth_branch_sha256s": [list(branches) for branches in depth_hashes],
+        "transition_source_sha256": transition_source_sha256,
+    }
+    receipt_sha256 = _seal_transition_receipt(body)
+    return PreparedRecurrentStateTrail(
+        states_by_depth=tuple(history),
+        execution_spec_sha256=spec.sha256,
+        prompt_tokens_sha256=body["prompt_tokens_sha256"],
+        depth_branch_sha256s=depth_hashes,
+        transition_source_sha256=transition_source_sha256,
+        receipt_sha256=receipt_sha256,
+    )
+
+
+def validate_recurrent_state_trail_receipt(
+    receipt: Mapping[str, Any],
+) -> dict[str, Any]:
+    """Replay structural and digest integrity for a tensor-free state trail."""
+
+    required = {
+        "schema",
+        "execution_spec_sha256",
+        "prompt_tokens_sha256",
+        "recurrent_steps",
+        "branch_count",
+        "depth_branch_sha256s",
+        "transition_source_sha256",
+        "receipt_sha256",
+    }
+    if not isinstance(receipt, Mapping) or set(receipt) != required:
+        raise ValueError("recurrent state trail receipt fields differ")
+    normalized = json.loads(
+        json.dumps(
+            dict(receipt),
+            sort_keys=True,
+            separators=(",", ":"),
+            ensure_ascii=True,
+            allow_nan=False,
+        )
+    )
+    observed = normalized.pop("receipt_sha256")
+    steps = normalized.get("recurrent_steps")
+    branch_count = normalized.get("branch_count")
+    depth_hashes = normalized.get("depth_branch_sha256s")
+    if (
+        normalized.get("schema") != RECURRENT_STATE_TRAIL_SCHEMA
+        or not _valid_sha256(normalized.get("execution_spec_sha256"))
+        or not _valid_sha256(normalized.get("prompt_tokens_sha256"))
+        or not _valid_sha256(normalized.get("transition_source_sha256"))
+        or type(steps) is not int
+        or steps < 1
+        or type(branch_count) is not int
+        or branch_count < 1
+        or not isinstance(depth_hashes, list)
+        or len(depth_hashes) != steps + 1
+        or any(
+            not isinstance(branches, list)
+            or len(branches) != branch_count
+            or any(not _valid_sha256(value) for value in branches)
+            for branches in depth_hashes
+        )
+        or not _valid_sha256(observed)
+        or _seal_transition_receipt(normalized) != observed
+    ):
+        raise ValueError("recurrent state trail receipt is invalid")
+    return {**normalized, "receipt_sha256": observed}
 
 
 def validate_final_recurrent_transition_receipt(
@@ -3480,8 +3628,10 @@ __all__ = [
     "INTERVENTION_MEASUREMENT_TRUST_BOUNDARY",
     "LivePathForward",
     "PreparedFinalRecurrentTransition",
+    "PreparedRecurrentStateTrail",
     "RECURRENCE_NATIVE_SCHEMA_V2",
     "RECURRENT_TRANSITION_STATE_SCHEMA",
+    "RECURRENT_STATE_TRAIL_SCHEMA",
     "branch_mean_answer_loss",
     "cached_live_path_token_logprobs",
     "cached_supervised_live_path_loss",
@@ -3498,6 +3648,8 @@ __all__ = [
     "live_path_forward",
     "live_path_loss",
     "prepare_final_recurrent_transition",
+    "prepare_recurrent_state_trail",
     "validate_exact_adjoint_live_path_receipt",
     "validate_final_recurrent_transition_receipt",
+    "validate_recurrent_state_trail_receipt",
 ]

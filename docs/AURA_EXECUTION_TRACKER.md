@@ -43433,3 +43433,33 @@ Next, the exact live Qwen recurrent trajectory will be captured at every depth
 and task-disjoint linear probes will test whether these structured states are
 absent, erased, preserved, or increasingly recoverable before any replacement
 core is selected.
+
+## Checkpoint 2026-08-10-177: Recurrent State Localization Is Executable
+
+The live-path objective now exposes a frozen state trail at depth zero and
+after every invocation of the exact shared recurrent transition. Every tensor
+comes from the same checkpointed transition function used by the differentiable
+training graph; the trail is bound to prompt tokens, execution spec, branch,
+depth, source implementation, and per-state tensor hashes. Miniature real-model
+contracts prove every captured depth equals an independently executed live-path
+forward at that depth and reject a resealed state substitution.
+
+A task-disjoint state-information probe now fits one controlled linear decoder
+per exact state field across mixed recurrence depths. Validation is reported at
+initialization, each recurrent step, and each task's terminal step against both
+a training-majority baseline and a deterministic shuffled-label null. The
+result classifies target-state information as not linearly recoverable,
+improving, eroding, or preserved; it does not infer progress from tensor motion.
+Synthetic causal controls recover both known improvement and known erosion.
+
+The source-bound CLI loads one real checkpoint, captures Boolean and modular
+states without answer generation, keeps raw tensors and private labels in a
+mode-`0600` artifact, and publishes only commitments, aggregate metrics, source
+bindings, model identity, immutable-checkpoint evidence, and replayed trail
+receipts. Focused contracts pass `95/95`; Ruff and compilation pass.
+
+This advances the completion envelope to `873/920` (approximately `94.9%`).
+No neural or behavioral result is claimed yet. The next action is the real-1.5B
+run over depths one through four; its evidence decides whether current
+recurrence creates, destroys, merely preserves, or never represents the exact
+computational state.
