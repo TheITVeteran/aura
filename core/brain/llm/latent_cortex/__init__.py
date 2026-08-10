@@ -93,6 +93,11 @@ from core.brain.llm.latent_cortex.research_oracle_arbitration import (
     validate_research_oracle_arbitration,
     validate_research_oracle_assessment,
 )
+from core.brain.llm.latent_cortex.teaching_events import (
+    TEACHING_EVENT_SCHEMA,
+    build_exact_objective_teaching_event,
+    validate_teaching_event,
+)
 from core.brain.llm.latent_cortex.test_time_training import (
     CRITIC_RECALIBRATION_SCHEMA,
     MATCHED_COMPUTE_SCHEMA,
@@ -161,6 +166,7 @@ __all__ = [
     "CandidateSource",
     "TransitionKind",
     "TEST_TIME_TRAINING_SCHEMA",
+    "TEACHING_EVENT_SCHEMA",
     "VirtualQuantaConfig",
     "WorkspaceConfig",
     "atom_ids",
@@ -181,6 +187,7 @@ __all__ = [
     "build_critic_recalibration_receipt",
     "build_matched_compute_receipt",
     "build_pseudo_label_admission",
+    "build_exact_objective_teaching_event",
     "context_sources_for_action",
     "decomposition_check",
     "decompose_branch_candidates",
@@ -206,6 +213,7 @@ __all__ = [
     "validate_critic_recalibration_receipt",
     "validate_matched_compute_receipt",
     "validate_pseudo_label_admission",
+    "validate_teaching_event",
     "run_virtual_quanta",
     "validate_virtual_quanta_receipt",
 ]

@@ -56,6 +56,9 @@ from core.brain.llm.latent_cortex.resource_accounting import (
     triangular_attention_pairs,
 )
 from core.brain.llm.latent_cortex.schedules import LayerSchedule, ScheduleLibrary
+from core.brain.llm.latent_cortex.teaching_events import (
+    build_exact_objective_teaching_event,
+)
 from core.brain.llm.latent_cortex.telemetry import LatentTelemetry
 from core.brain.llm.latent_cortex.test_time_training import (
     MATCHED_LINE_SEARCH_EVALUATIONS,
@@ -6027,6 +6030,7 @@ class LatentCortexEngine:
         fast_weights: EpisodicFastWeights | None = None
         fw_baseline = None
         fast_weight_learning_state: dict[str, Any] | None = None
+        fast_weight_teaching_event: dict[str, Any] = {}
         fast_weight_target_tokens: list[int] = []
         fw_verifier_pre_tokens: list[int] = []
         fw_verifier_pre_text = ""
@@ -6123,12 +6127,38 @@ class LatentCortexEngine:
                         objective_sha256=objective_sha256,
                         reason="verifier_provider_untrusted",
                     )
+            if (
+                admission["admitted"] is not True
+                and self.config.objective_program_enabled
+                and callable(evidence_provider)
+                and self.tokenizer is not None
+                and fw_verifier_pre_text
+            ):
+                try:
+                    (
+                        fast_weight_teaching_event,
+                        admission,
+                        fast_weight_target_tokens,
+                    ) = build_exact_objective_teaching_event(
+                        objective=verification_objective,
+                        incumbent_candidate=fw_verifier_pre_text,
+                        source_state_sha256=winner_state_sha256,
+                        tokenizer=self.tokenizer,
+                        structural_diversity=receipt.structural_diversity,
+                    )
+                    receipt.flag("fast_weight_exact_objective_teacher_admitted")
+                except _LATENT_PHASE_ERRORS as exc:
+                    receipt.flag(
+                        "fast_weight_exact_objective_teacher_unavailable:"
+                        f"{type(exc).__name__}"
+                    )
             fast_weight_learning_state = empty_learning_state(
                 episode_id=receipt.episode_id,
                 input_tokens_sha256=receipt.input_tokens_sha256,
                 selected_branch=winner.index,
                 winner_state_sha256=winner_state_sha256,
                 admission=admission,
+                teaching_event=fast_weight_teaching_event,
             )
             stage_started = self._stage_checkpoint(
                 receipt=receipt,

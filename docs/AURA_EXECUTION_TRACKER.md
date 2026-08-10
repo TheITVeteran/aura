@@ -41992,3 +41992,37 @@ campaign remains unlaunched and is superseded because its immutable source
 predates this change. No resident, neural, frontier, fusion, activation, or
 `WOW Signal` claim is authorized. The completion envelope is `827/920`
 (approximately `89.9%`).
+
+## Checkpoint 2026-08-10-131: Verified Success Becomes a Teaching Event
+
+The executable producer and neural plasticity were previously competitors in
+the answer-selection graph. A correct public-objective solution could replace
+an incumbent, but it could not teach the same query-scoped neural tissue that
+had produced the failure. The engine now has a first-class, content-addressed
+`TeachingEvent` bridge.
+
+When an incumbent is not admitted and the exact objective producer is enabled,
+the producer derives a solution from the public prompt, the calibrated
+objective verifier proves its terminal answer, and the event binds the
+incumbent state, incumbent output, teacher output, producer/verifier receipts,
+critic calibration, pseudo-label admission, and private target-token
+commitment. Answer text never enters the public receipt or the model context.
+The permitted scopes are activation state and episodic fast weights only; the
+event requires single-query erasure and explicitly carries no capability-claim
+authority.
+
+The real fast-weight path consumes the event before attachment, optimizes the
+treatment and equal-compute sham from the unchanged winner state, then performs
+a fresh verifier-scored decode without teacher context. Producer-disabled and
+adaptation-disabled arms retain their prior isolation. Receipt validation now
+distinguishes self-generated pseudo-labels from teacher corrections so the
+causal baseline remains the incumbent rather than the private target.
+
+Teaching, engine, fast-weight, and test-time contracts pass `128/128`; focused
+runtime-integrity and wiring contracts pass `36/36`; Ruff, compile, and diff
+hygiene pass. This is production wiring plus a causal-test contract, not a
+positive neural-transfer result. The next gate is a cheap 1.5B teacher-removal
+campaign; direct synaptic writes and verifier-scored latent search remain
+pending if gradient fast weights do not transfer. No resident, neural,
+frontier, fusion, activation, or `WOW Signal` claim is authorized. The
+completion envelope is `828/920` (approximately `90.0%`).

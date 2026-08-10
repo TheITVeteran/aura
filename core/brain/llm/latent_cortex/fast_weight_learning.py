@@ -83,6 +83,7 @@ _LEARNING_FIELDS = {
     "selected_branch",
     "winner_state_sha256",
     "admission",
+    "teaching_event",
     "lease",
     "attach_identity",
     "optimization",
@@ -424,8 +425,21 @@ def empty_learning_state(
     selected_branch: int,
     winner_state_sha256: str,
     admission: Mapping[str, Any],
+    teaching_event: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     validate_fast_weight_admission(admission)
+    event = dict(teaching_event or {})
+    if event:
+        from core.brain.llm.latent_cortex.teaching_events import (
+            validate_teaching_event,
+        )
+
+        validate_teaching_event(
+            event,
+            admission=admission,
+            expected_objective_sha256=str(admission["objective_sha256"]),
+            expected_source_state_sha256=winner_state_sha256,
+        )
     return {
         "schema": LEARNING_SCHEMA,
         "policy_sha256": _canonical_sha256(_LEARNING_POLICY),
@@ -434,6 +448,7 @@ def empty_learning_state(
         "selected_branch": selected_branch,
         "winner_state_sha256": winner_state_sha256,
         "admission": dict(admission),
+        "teaching_event": event,
         "lease": {
             "schema": LEASE_SCHEMA,
             "owner_sha256": "",
@@ -552,6 +567,20 @@ def validate_fast_weight_learning_receipt(
     ):
         raise ValueError("fast-weight learning identity fields are invalid")
     admission = validate_fast_weight_admission(value["admission"])
+    teaching_event = value["teaching_event"]
+    if not isinstance(teaching_event, Mapping):
+        raise ValueError("fast-weight teaching event is invalid")
+    if teaching_event:
+        from core.brain.llm.latent_cortex.teaching_events import (
+            validate_teaching_event,
+        )
+
+        validate_teaching_event(
+            teaching_event,
+            admission=admission,
+            expected_objective_sha256=str(admission["objective_sha256"]),
+            expected_source_state_sha256=str(value["winner_state_sha256"]),
+        )
     lease = value["lease"]
     attach = value["attach_identity"]
     optimization = value["optimization"]
@@ -727,6 +756,7 @@ def validate_fast_weight_learning_receipt(
     if not_admitted:
         if (
             admission["admitted"]
+            or teaching_event
             or attached
             or lease["owner_sha256"]
             or lease["model_sha256"]
@@ -775,6 +805,11 @@ def validate_fast_weight_learning_receipt(
         if optimization["optimizer"] != "rms_normalized_sgd_backtracking_v1":
             raise ValueError("admitted fast-weight optimizer identity is invalid")
     if accepted:
+        expected_pre_text_sha256 = (
+            teaching_event["incumbent_candidate_sha256"]
+            if teaching_event
+            else admission["source_sha256"]
+        )
         if (
             optimization["accepted_steps"] <= 0
             or optimization["budget_exhausted"] is not False
@@ -785,13 +820,18 @@ def validate_fast_weight_learning_receipt(
             or not isinstance(causal["pre_score"], (int, float))
             or not isinstance(causal["post_score"], (int, float))
             or float(causal["post_score"]) <= float(causal["pre_score"]) + 1e-6
-            or causal["pre_text_sha256"] != admission["source_sha256"]
+            or causal["pre_text_sha256"] != expected_pre_text_sha256
             or final["decoded_under_adaptation"] is not True
             or test_time_training["decision"]
             != "accepted_bounded_refinement"
         ):
             raise ValueError("accepted fast-weight adaptation lacks causal improvement")
     elif accepted_probe_only:
+        expected_pre_text_sha256 = (
+            teaching_event["incumbent_candidate_sha256"]
+            if teaching_event
+            else admission["source_sha256"]
+        )
         if (
             optimization["accepted_steps"] <= 0
             or optimization["budget_exhausted"] is not False
@@ -802,7 +842,7 @@ def validate_fast_weight_learning_receipt(
             or not isinstance(causal["pre_score"], (int, float))
             or not isinstance(causal["post_score"], (int, float))
             or float(causal["post_score"]) <= float(causal["pre_score"]) + 1e-6
-            or causal["pre_text_sha256"] != admission["source_sha256"]
+            or causal["pre_text_sha256"] != expected_pre_text_sha256
             or final["decoded_under_adaptation"] is not False
             or test_time_training["decision"]
             != "accepted_bounded_refinement"
