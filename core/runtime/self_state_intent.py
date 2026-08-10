@@ -136,6 +136,73 @@ _ABILITY_QUESTION_PATTERNS: tuple[re.Pattern[str], ...] = tuple(
 _SECOND_PERSON_RE = re.compile(r"\b(?:you|you're|your|yours|yourself)\b", re.IGNORECASE)
 
 
+#: Domains she has skills for, and can therefore wrongly deny having.
+#:
+#: Mirrors the families in ``core/brain/self_state_report._CAPABILITY_FAMILIES``.
+#: Kept as its own table rather than imported: ``core/runtime`` may not import
+#: cognition (see DEPS), and ``make layering`` is the gate. A test holds the
+#: two in sync so the copy cannot drift.
+_CAPABILITY_DOMAIN_RE = re.compile(
+    r"\b(?:"
+    r"code|coding|python|script|sandbox|repl|shell|exec|execute|run|compute|calculate"
+    r"|search|web|browse|browser|url|look\s+up|google"
+    r"|screen|vision|ocr|screenshot|camera|see|look\s+at"
+    r"|desktop|click|type|keyboard|mouse|window|app|automation"
+    r"|file|files|directory|folder|document|download|save"
+    r"|remember|recall|memory|belief|forget"
+    r"|email|message|notify|speak|say|send|voice"
+    r")\b",
+    re.IGNORECASE,
+)
+
+
+#: Someone OTHER than her doing the thing.
+#:
+#: "can a language model run code" is a question about language models, and
+#: attaching her instrument reading to it makes her answer about herself.
+#: A capability turn is about her unless another agent is named as the subject.
+_THIRD_PARTY_SUBJECT_RE = re.compile(
+    r"\b(?:a|an|another|any|some|the|most|all)\s+"
+    r"(?:\w+\s+){0,2}"
+    r"(?:language\s+model|llm|model|models|ai|assistant|assistants|bot|bots|agent"
+    r"|agents|system|systems|human|humans|person|people|carpenter|developer"
+    r"|programmer|engineer|computer|machine)\b"
+    r"|\b(?:people|someone|anyone|everyone|somebody|anybody|nobody|others)\b",
+    re.IGNORECASE,
+)
+
+
+def asked_to_act_in_a_capability_domain(text: str) -> bool:
+    """True when the turn is ABOUT something she has skills for.
+
+    A capability denial is exactly as wrong when she is asked to DO a thing as
+    when she is asked whether she can. Live 2026-08-10: "run a tiny bit of code
+    and tell me the actual number it printed" — an imperative, so no ability
+    QUESTION pattern matched, no instrument reading was attached, and she
+    answered from the base model's guess:
+
+        "I cannot execute code or generate numbers."
+
+    ``code_repl`` ("Execute Python code in a real-time, sandboxed REPL"),
+    ``internal_sandbox`` and ``install_package`` were all READY, in a catalogue
+    of 73 skills with none degraded.
+
+    The instrument block was built precisely to stop this and had been gated to
+    question-shaped turns, which is the shape denials do NOT usually take.
+    Widening it is safe by construction: this predicate is read only by paths
+    that ADD her reading, never by the one that suppresses search.
+    """
+    candidate = str(text or "")
+    if not candidate.strip():
+        return False
+    # Someone else doing it is not her doing it.
+    if _THIRD_PARTY_SUBJECT_RE.search(candidate) and not _SECOND_PERSON_RE.search(
+        candidate
+    ):
+        return False
+    return bool(_CAPABILITY_DOMAIN_RE.search(candidate))
+
+
 def asks_about_own_runtime(text: str) -> bool:
     """True when the honest answer is a local reading, not a web page.
 
@@ -169,9 +236,18 @@ def asks_about_own_capabilities(text: str) -> bool:
         return False
     if asks_about_own_runtime(candidate):
         return True
+    # A request to DO something in a domain she has skills for. Denials happen
+    # here, not only in question-shaped turns — see the predicate's docstring
+    # for the live case that reached the person.
+    if asked_to_act_in_a_capability_domain(candidate):
+        return True
     if not _SECOND_PERSON_RE.search(candidate):
         return False
     return any(pattern.search(candidate) for pattern in _ABILITY_QUESTION_PATTERNS)
 
 
-__all__ = ["asks_about_own_capabilities", "asks_about_own_runtime"]
+__all__ = [
+    "asked_to_act_in_a_capability_domain",
+    "asks_about_own_capabilities",
+    "asks_about_own_runtime",
+]
