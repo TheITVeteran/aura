@@ -182,6 +182,20 @@ def test_model_manifest_rejects_weight_drift(tmp_path: Path):
         controller.verify_model_manifest(config["model_manifest"])
 
 
+def test_model_checkpoint_identity_matches_the_sweep_full_sha_contract(tmp_path: Path):
+    _source_root, _out, _config_path, config = _prepared(tmp_path)
+    digest = hashlib.sha256(b"weights").hexdigest()
+    expected = hashlib.sha256(
+        f"model.safetensors:{digest};".encode()
+    ).hexdigest()
+
+    assert config["model_checkpoint"] == {
+        "fingerprint": expected,
+        "method": "sha256",
+        "files": 1,
+    }
+
+
 def test_config_digest_rejects_a_changed_scientific_parameter(tmp_path: Path):
     _source_root, _out, config_path, _config = _prepared(tmp_path)
     document = json.loads(config_path.read_text(encoding="utf-8"))
@@ -372,6 +386,7 @@ def test_prepare_preserves_the_venv_entrypoint_while_hashing_its_binary(tmp_path
     model = tmp_path / "model"
     model.mkdir()
     (model / "config.json").write_text("{}\n", encoding="utf-8")
+    (model / "model.safetensors").write_bytes(b"weights")
     binary = tmp_path / "python-real"
     binary.write_bytes(b"runtime")
     venv_python = tmp_path / "venv/bin/python"
@@ -499,6 +514,82 @@ def test_sweep_command_preserves_complete_engine_parameters(tmp_path: Path):
     assert command[command.index("--episode-wall-s") + 1] == "20.0"
     assert command[command.index("--max-wall-s") + 1] == "60.0"
     assert command[command.index("--model") + 1] == config["model"]
+
+
+def test_frozen_adapter_is_bound_and_forwarded_to_the_sweep(
+    tmp_path: Path,
+    monkeypatch,
+):
+    source = _source(tmp_path)
+    model = tmp_path / "model"
+    model.mkdir()
+    (model / "config.json").write_text("{}\n", encoding="utf-8")
+    (model / "model.safetensors").write_bytes(b"weights")
+    python = tmp_path / "python"
+    python.write_text("runtime", encoding="utf-8")
+    adapter_root = tmp_path / "frozen-adapter"
+    adapter_root.mkdir()
+    (adapter_root / "adapter.safetensors").write_bytes(b"adapter")
+    (adapter_root / "recurrence_adapter_manifest.json").write_text(
+        "{}\n", encoding="utf-8"
+    )
+    model_manifest = controller.build_model_manifest(model)
+    checkpoint = controller._model_checkpoint_identity(model_manifest)
+    freeze = {
+        "schema": "aura.latent_cortex.adapter_freeze.v1",
+        "identity_receipt": {
+            "base_checkpoint_fingerprint": checkpoint["fingerprint"],
+            "training_objective_learned": True,
+        },
+        "certificate_sha256": "a" * 64,
+    }
+    monkeypatch.setattr(
+        "core.brain.llm.latent_cortex.campaign_launch_bundle.verify_adapter_freeze",
+        lambda _root: freeze,
+    )
+
+    config, _manifest, _key = controller.build_config(
+        source_root=source,
+        source_commit=_source_commit(source),
+        model=model,
+        adapter_root=adapter_root,
+        out_dir=tmp_path / "campaign",
+        python=python,
+        arms="full_stack",
+        seed=7,
+        per_domain=1,
+        difficulty=2,
+        n_slots=4,
+        max_tokens=64,
+        memory_fraction=0.2,
+        episode_wall_s=20.0,
+        attempt_wall_s=60.0,
+        max_attempts=3,
+        poll_s=1.0,
+        stale_after_s=40.0,
+        retry_backoff_s=1.0,
+    )
+    command = controller._sweep_command(config)
+
+    assert config["adapter_freeze"] == freeze
+    assert command[command.index("--adapter") + 1] == str(adapter_root.resolve())
+    assert command[command.index("--adapter-manifest") + 1] == str(
+        (adapter_root / "recurrence_adapter_manifest.json").resolve()
+    )
+
+
+def test_config_rejects_a_partial_adapter_identity(tmp_path: Path):
+    _source_root, _out, config_path, _config = _prepared(tmp_path)
+    document = json.loads(config_path.read_text(encoding="utf-8"))
+    document["adapter_root"] = "/tmp/partial"
+    document["config_sha256"] = controller._sha(controller._config_body(document))
+    config_path.write_text(json.dumps(document), encoding="utf-8")
+
+    with pytest.raises(
+        controller.ControllerError,
+        match="controller_adapter_identity_incomplete",
+    ):
+        controller.load_config(config_path)
 
 
 def test_fresh_retry_does_not_inherit_stale_progress_from_prior_attempt():

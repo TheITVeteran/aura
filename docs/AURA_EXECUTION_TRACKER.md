@@ -41877,3 +41877,41 @@ detached supervision, durable journaling, liveness monitoring, and automatic
 stop rules. It does not establish resident transfer, broad or frontier
 reasoning, adaptive-neural or weight-level gain, fusion, activation, or the
 `WOW Signal`. The completion envelope is `823/920` (approximately `89.5%`).
+
+## Checkpoint 2026-08-10-127: Bind Trained Tissue to the Resident Campaign
+
+The reconciliation sweep already knew how to attach a recurrence adapter while
+preserving `ScopedLoRALinear` activation, but its durable launchd controller did
+not carry an adapter path or identity. A supervised resident run would therefore
+have loaded the base checkpoint and silently measured the untrained engine
+again. The controller now treats the immutable adapter freeze as a signed
+scientific input rather than an operator convention.
+
+Preparation verifies the complete read-only freeze certificate, recomputes its
+artifact inventory and resident-SFT identity, requires a learned training
+objective, and binds its exact adapter, manifest, certificate, and content root
+into the controller config digest. It independently rebuilds the full-SHA
+checkpoint identity from the model manifest and rejects an adapter trained
+against another checkpoint. Every controller retry revalidates source, model,
+and adapter bytes before loading the model. Recovery preserves the same adapter
+identity, and the exact verified paths are forwarded to the sweep as
+`--adapter` and `--adapter-manifest`; ordinary decode remains outside the scoped
+adapter activation rather than being contaminated by fused deltas.
+
+The canonical frozen CP796 adapter verifies against the resident 32B with
+adapter SHA-256
+`924ac98e7e0d4c4f74c92c2d66aedb9488521f5807612b4780dec5585854f0ab`,
+freeze certificate
+`7036998b81d49fea92aaad34302be1750206cdd5535a0042a6884504d578f2e7`,
+and base-checkpoint fingerprint
+`8eae71e73a14d1228a942d4faf84690d70b62148f25b0f924435535f7c550fad`.
+Its historical receipt proves that its training objective was learned; it
+explicitly does not claim reasoning gain or authorize promotion.
+
+Controller, immutable-adapter, and sweep contracts pass `111/111`; canonical
+smoke passes `103/103`; Ruff, compile, and diff hygiene pass. The next bounded
+step is to cut a clean detached capsule from this checkpoint, prepare the
+source-bound resident calibration, independently inspect the generated launch
+packet and liveness contract, and only then load the 32B. No resident transfer,
+broad or frontier gain, fusion, activation, or `WOW Signal` claim is authorized.
+The completion envelope is `824/920` (approximately `89.6%`).

@@ -341,6 +341,73 @@ def verify_model_manifest(manifest: Mapping[str, Any]) -> None:
             raise ControllerError(f"model_file_drift:{item['path']}")
 
 
+def _model_checkpoint_identity(manifest: Mapping[str, Any]) -> dict[str, Any]:
+    """Rebuild the full-SHA checkpoint identity used by the scientific sweep."""
+
+    files = manifest.get("files")
+    if not isinstance(files, list):
+        raise ControllerError("model_manifest_invalid")
+    weights = sorted(
+        (
+            item
+            for item in files
+            if isinstance(item, Mapping)
+            and Path(str(item.get("path") or "")).parent == Path(".")
+            and Path(str(item.get("path") or "")).suffix
+            in {".safetensors", ".npz", ".gguf"}
+        ),
+        key=lambda item: str(item["path"]),
+    )
+    if not weights:
+        raise ControllerError("model_checkpoint_weights_missing")
+    combined = hashlib.sha256()
+    for item in weights:
+        digest = str(item.get("sha256") or "")
+        if len(digest) != 64:
+            raise ControllerError("model_checkpoint_weight_identity_invalid")
+        combined.update(f"{Path(str(item['path'])).name}:{digest};".encode())
+    return {
+        "fingerprint": combined.hexdigest(),
+        "method": "sha256",
+        "files": len(weights),
+    }
+
+
+def _verified_adapter_input(
+    adapter_root: Path,
+    *,
+    model_checkpoint: Mapping[str, Any],
+) -> dict[str, Any]:
+    from core.brain.llm.latent_cortex.campaign_launch_bundle import (
+        verify_adapter_freeze,
+    )
+
+    supplied = adapter_root.expanduser()
+    if supplied.is_symlink():
+        raise ControllerError("adapter_root_symlink_rejected")
+    root = supplied.resolve(strict=True)
+    certificate = verify_adapter_freeze(root)
+    receipt = certificate.get("identity_receipt")
+    if not isinstance(receipt, Mapping):
+        raise ControllerError("adapter_identity_receipt_invalid")
+    if receipt.get("base_checkpoint_fingerprint") != model_checkpoint.get(
+        "fingerprint"
+    ):
+        raise ControllerError("adapter_base_checkpoint_mismatch")
+    if receipt.get("training_objective_learned") is not True:
+        raise ControllerError("adapter_training_objective_not_learned")
+    adapter = (root / "adapter.safetensors").resolve(strict=True)
+    manifest = (root / "recurrence_adapter_manifest.json").resolve(strict=True)
+    if adapter.parent != root or manifest.parent != root:
+        raise ControllerError("adapter_launch_path_invalid")
+    return {
+        "adapter_root": str(root),
+        "adapter": str(adapter),
+        "adapter_manifest": str(manifest),
+        "adapter_freeze": certificate,
+    }
+
+
 def _config_body(config: Mapping[str, Any]) -> dict[str, Any]:
     return {key: value for key, value in config.items() if key != "config_sha256"}
 
@@ -400,6 +467,15 @@ def load_config(path: Path) -> dict[str, Any]:
         raise ControllerError("source_git_commit_binding_invalid")
     if "controller_program" in config and "controller_program_sha256" not in config:
         raise ControllerError("controller_program_identity_incomplete")
+    adapter_fields = {
+        "adapter_root",
+        "adapter",
+        "adapter_manifest",
+        "adapter_freeze",
+    }
+    present_adapter_fields = adapter_fields.intersection(config)
+    if present_adapter_fields and present_adapter_fields != adapter_fields:
+        raise ControllerError("controller_adapter_identity_incomplete")
     return config
 
 
@@ -423,6 +499,7 @@ def build_config(
     poll_s: float,
     stale_after_s: float,
     retry_backoff_s: float,
+    adapter_root: Path | None = None,
     task_registry_version: str = CLAIM_TASK_REGISTRY_VERSION,
     controller_program: Path | None = None,
 ) -> tuple[dict[str, Any], dict[str, Any], bytes]:
@@ -455,6 +532,13 @@ def build_config(
     manifest_path = out_dir / "source_manifest.json"
     key_path = out_dir / ".heartbeat.key"
     key = secrets.token_bytes(32)
+    model_manifest = build_model_manifest(model)
+    model_checkpoint = _model_checkpoint_identity(model_manifest)
+    adapter_input = (
+        _verified_adapter_input(adapter_root, model_checkpoint=model_checkpoint)
+        if adapter_root is not None
+        else {}
+    )
     body = {
         "schema": SCHEMA,
         "campaign_id": campaign_id,
@@ -467,7 +551,8 @@ def build_config(
         "python": str(python),
         "python_sha256": _sha_file(resolved_python),
         "model": str(model),
-        "model_manifest": build_model_manifest(model),
+        "model_manifest": model_manifest,
+        "model_checkpoint": model_checkpoint,
         "out_dir": str(out_dir / "sweep"),
         "arms": arms,
         "seed": int(seed),
@@ -485,6 +570,7 @@ def build_config(
         "retry_backoff_s": float(retry_backoff_s),
         "heartbeat_key_path": str(key_path),
         "launch_label": f"com.aura.rlc-reconciliation.{campaign_id}",
+        **adapter_input,
     }
     config = {**body, "config_sha256": _sha(body)}
     return config, manifest, key
@@ -621,6 +707,11 @@ def recover_campaign(
             poll_s=float(previous_config["poll_s"]),
             stale_after_s=float(previous_config["stale_after_s"]),
             retry_backoff_s=float(previous_config["retry_backoff_s"]),
+            adapter_root=(
+                Path(str(previous_config["adapter_root"]))
+                if previous_config.get("adapter_root")
+                else None
+            ),
             controller_program=controller_program,
         )
         write_prepared_campaign(output, config, manifest, key)
@@ -807,7 +898,7 @@ def _progress_is_stale(
 
 
 def _sweep_command(config: Mapping[str, Any]) -> list[str]:
-    return [
+    command = [
         str(config["python"]),
         str(Path(str(config["source_root"])) / "tools/run_rlc_reconciliation_sweep.py"),
         "--model",
@@ -835,6 +926,16 @@ def _sweep_command(config: Mapping[str, Any]) -> list[str]:
         "--arms",
         str(config["arms"]),
     ]
+    if config.get("adapter_root"):
+        command.extend(
+            [
+                "--adapter",
+                str(config["adapter_root"]),
+                "--adapter-manifest",
+                str(config["adapter_manifest"]),
+            ]
+        )
+    return command
 
 
 def _terminate_exact_group(process: subprocess.Popen[Any]) -> None:
@@ -889,6 +990,25 @@ def _source_is_current(config: Mapping[str, Any]) -> None:
     ).resolve(strict=True):
         raise ControllerError("controller_program_identity_incomplete")
     verify_model_manifest(config["model_manifest"])
+    observed_checkpoint = _model_checkpoint_identity(config["model_manifest"])
+    if config.get("model_checkpoint") != observed_checkpoint:
+        raise ControllerError("model_checkpoint_identity_drift")
+    if config.get("adapter_root"):
+        observed_adapter = _verified_adapter_input(
+            Path(str(config["adapter_root"])),
+            model_checkpoint=observed_checkpoint,
+        )
+        expected_adapter = {
+            key: config[key]
+            for key in (
+                "adapter_root",
+                "adapter",
+                "adapter_manifest",
+                "adapter_freeze",
+            )
+        }
+        if observed_adapter != expected_adapter:
+            raise ControllerError("adapter_identity_drift")
 
 
 def _process_record(pid: int) -> tuple[int, str]:
@@ -1195,6 +1315,7 @@ def _parser() -> argparse.ArgumentParser:
     prepare.add_argument("--source-root", type=Path, required=True)
     prepare.add_argument("--source-commit", required=True)
     prepare.add_argument("--model", type=Path, required=True)
+    prepare.add_argument("--adapter-root", type=Path)
     prepare.add_argument("--out-dir", type=Path, required=True)
     prepare.add_argument("--python", type=Path, required=True)
     prepare.add_argument("--controller-program", type=Path)
@@ -1239,6 +1360,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 source_root=args.source_root,
                 source_commit=args.source_commit,
                 model=args.model,
+                adapter_root=args.adapter_root,
                 out_dir=args.out_dir,
                 python=args.python,
                 arms=args.arms,
