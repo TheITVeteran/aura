@@ -484,3 +484,72 @@ def test_one_vision_worker_is_shared_across_call_sites() -> None:
         assert get_vision_client() is get_vision_client()
     finally:
         reset_vision_client_for_test()
+
+
+def test_worker_init_error_is_not_a_ready_acknowledgement() -> None:
+    from core.brain.llm.mlx_vision_client import MLXVisionClient
+
+    client = MLXVisionClient()
+    consumed = client._handle_worker_message(
+        {
+            "status": "error",
+            "action": "init",
+            "message": "model files are incomplete",
+        }
+    )
+
+    status = client.readiness_status()
+    assert consumed is True
+    assert status["ready"] is False
+    assert status["worker_ready"] is False
+    assert status["init_done"] is False
+    assert status["init_error"] == "model files are incomplete"
+    assert status["reason"] == "init_failed:model files are incomplete"
+
+
+def test_worker_init_success_is_distinct_from_serving_readiness() -> None:
+    from core.brain.llm.mlx_vision_client import MLXVisionClient
+
+    client = MLXVisionClient()
+    client._handle_worker_message({"status": "ok", "action": "init"})
+
+    status = client.readiness_status()
+    assert status["init_done"] is True
+    assert status["ready"] is False
+    assert status["reason"] == "not_started"
+    assert status["lane_committed"] is False
+
+
+def test_vision_heartbeat_is_measured_but_does_not_claim_model_readiness() -> None:
+    from core.brain.llm.mlx_vision_client import MLXVisionClient
+
+    client = MLXVisionClient()
+    client._handle_worker_message(
+        {"status": "heartbeat", "type": "mlx_vision_worker"}
+    )
+
+    status = client.readiness_status()
+    assert status["heartbeat_count"] == 1
+    assert status["heartbeat_age_s"] is not None
+    assert status["ready"] is False
+    assert status["init_done"] is False
+
+
+@pytest.mark.asyncio
+async def test_inference_refuses_a_false_ready_worker(monkeypatch) -> None:
+    from core.brain.llm.mlx_vision_client import MLXVisionClient
+
+    client = MLXVisionClient()
+
+    async def _claimed_start():
+        return True
+
+    monkeypatch.setattr(client, "start_async", _claimed_start)
+    monkeypatch.setattr(
+        client,
+        "readiness_status",
+        lambda: {"ready": False, "reason": "init_failed:bad checkpoint"},
+    )
+
+    with pytest.raises(RuntimeError, match="init_failed:bad checkpoint"):
+        await client.see_async("what is here", "ZmFrZQ==")

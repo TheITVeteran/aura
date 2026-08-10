@@ -64,6 +64,10 @@ class MLXVisionClient:
         self._listener_thread: threading.Thread | None = None
         self._stop_event = threading.Event()
         self._init_done = False
+        self._init_error = ""
+        self._last_heartbeat_at = 0.0
+        self._heartbeat_count = 0
+        self._last_stop_reason = "not_started"
         self._lane_controller: Any | None = None
         self._lane_controller_override = lane_controller
         self._lane_decision: Any | None = None
@@ -139,7 +143,14 @@ class MLXVisionClient:
             if is_shutdown_requested():
                 return False
             if self._process is not None and self._process.is_alive():
-                return True
+                with self._pending_lock:
+                    existing_ready = self._init_done and not self._init_error
+                if existing_ready:
+                    return True
+                # A live process without a valid init acknowledgement is not
+                # reusable. The start guard excludes a concurrent legitimate
+                # initialization, so this is residue from a failed lifecycle.
+                self.stop(reason="vision_worker_stale_uninitialized")
 
             logger.info("Starting MLX Vision Worker for %s", self.model_path)
             # Ensure spawn method for MLX Metal compatibility
@@ -147,7 +158,11 @@ class MLXVisionClient:
             self._stop_event.clear()
             with self._pending_lock:
                 self._pending_requests.clear()
-            self._init_done = False
+                self._init_done = False
+                self._init_error = ""
+                self._last_heartbeat_at = 0.0
+                self._heartbeat_count = 0
+                self._last_stop_reason = ""
             self._replace_queues(ctx)
 
             try:
@@ -184,16 +199,40 @@ class MLXVisionClient:
 
             # Wait for init
             start_time = time.time()
+            exit_seen_at = 0.0
             while time.time() - start_time < 30.0:
                 if is_shutdown_requested():
                     self.stop()
                     return False
-                if self._init_done:
+                with self._pending_lock:
+                    init_done = self._init_done
+                    init_error = self._init_error
+                if init_error:
+                    logger.error("Vision worker initialization failed: %s", init_error)
+                    self.stop(reason="vision_worker_init_failed")
+                    return False
+                if self._process is None or not self._process.is_alive():
+                    # Give the listener a bounded chance to consume the
+                    # worker's specific init-error receipt after process exit.
+                    # Without this grace, the generic exit observation races
+                    # and overwrites the actionable model-load cause.
+                    if not exit_seen_at:
+                        exit_seen_at = time.monotonic()
+                    if time.monotonic() - exit_seen_at < 0.5:
+                        time.sleep(0.05)
+                        continue
+                    with self._pending_lock:
+                        self._init_error = self._init_error or "worker_exited_before_init"
+                    self.stop(reason="vision_worker_exited_before_init")
+                    return False
+                if init_done:
                     return True
                 time.sleep(0.1)
 
             logger.error("Vision worker failed to initialize within 30s")
-            self.stop()
+            with self._pending_lock:
+                self._init_error = "initialization_timeout_30s"
+            self.stop(reason="vision_worker_init_timeout")
             return False
 
     async def _evict_for_lane(
@@ -230,7 +269,7 @@ class MLXVisionClient:
         lane_decision = None
         async with self._start_context():
             try:
-                if self._process is not None and self._process.is_alive() and self._init_done:
+                if self.readiness_status()["ready"]:
                     return True
                 claim = LaneClaim(
                     owner_id=self._lane_owner_id,
@@ -353,38 +392,123 @@ class MLXVisionClient:
             return asyncio.run(self.start_async())
         raise RuntimeError("MLXVisionClient.start cannot block an event loop; use start_async")
 
+    def _handle_worker_message(self, msg: dict[str, Any]) -> bool:
+        """Consume worker lifecycle messages before request routing.
+
+        The worker deliberately reports initialization failure as
+        ``action=init,status=error``. Treating action alone as success made a
+        missing or broken model look ready for a short race window.
+        """
+        status = str(msg.get("status") or "").strip().lower()
+        action = str(msg.get("action") or "").strip().lower()
+
+        if status == "heartbeat":
+            with self._pending_lock:
+                self._last_heartbeat_at = time.time()
+                self._heartbeat_count += 1
+            controller = self._lane_controller
+            decision = self._lane_decision
+            if controller is not None and decision is not None:
+                alive = controller.heartbeat_owner_sync(
+                    decision.owner_id,
+                    fencing_token=decision.fencing_token,
+                )
+                if not alive:
+                    logger.error(
+                        "Vision worker lost model-lane fence owner=%s token=%s",
+                        decision.owner_id,
+                        decision.fencing_token,
+                    )
+                    with self._pending_lock:
+                        self._init_error = "model_lane_fence_lost"
+                    self._stop_event.set()
+                    process = self._process
+                    if process is not None and process.is_alive():
+                        process.terminate()
+            return True
+
+        if action == "init":
+            with self._pending_lock:
+                if status in {"ok", "success"}:
+                    self._init_done = True
+                    self._init_error = ""
+                else:
+                    self._init_done = False
+                    self._init_error = str(
+                        msg.get("message")
+                        or f"invalid_init_status:{status or 'missing'}"
+                    )[:500]
+            return True
+        return False
+
+    def readiness_status(self) -> dict[str, Any]:
+        """Return a bounded, non-starting view of the vision worker contract."""
+        process = self._process
+        try:
+            process_alive = bool(process is not None and process.is_alive())
+        except (AssertionError, OSError, RuntimeError, ValueError):
+            process_alive = False
+        listener = self._listener_thread
+        listener_alive = bool(listener is not None and listener.is_alive())
+        with self._pending_lock:
+            init_done = bool(self._init_done)
+            init_error = str(self._init_error or "")
+            heartbeat_at = float(self._last_heartbeat_at or 0.0)
+            heartbeat_count = int(self._heartbeat_count)
+            pending = len(self._pending_requests)
+            stop_reason = str(self._last_stop_reason or "")
+        queues_ready = self._req_q is not None and self._res_q is not None
+        worker_ready = bool(
+            process_alive and listener_alive and queues_ready and init_done and not init_error
+        )
+        lane_committed = self._lane_decision is not None
+        ready = bool(worker_ready and lane_committed)
+        if ready:
+            reason = "ready"
+        elif init_error:
+            reason = f"init_failed:{init_error}"
+        elif not process_alive:
+            reason = stop_reason or "not_started"
+        elif not init_done:
+            reason = "initializing"
+        elif not listener_alive:
+            reason = "listener_not_alive"
+        elif not queues_ready:
+            reason = "ipc_unavailable"
+        else:
+            reason = "model_lane_not_committed"
+        return {
+            "schema": "aura.mlx_vision.readiness.v1",
+            "ready": ready,
+            "worker_ready": worker_ready,
+            "reason": reason,
+            "model": self.model_path,
+            "pid": int(getattr(process, "pid", 0) or 0) if process_alive else 0,
+            "process_alive": process_alive,
+            "listener_alive": listener_alive,
+            "ipc_ready": queues_ready,
+            "init_done": init_done,
+            "init_error": init_error,
+            "lane_committed": lane_committed,
+            "heartbeat_count": heartbeat_count,
+            "heartbeat_age_s": (
+                round(max(0.0, time.time() - heartbeat_at), 3)
+                if heartbeat_at > 0.0
+                else None
+            ),
+            "pending_requests": pending,
+        }
+
     def _listener_loop(self) -> None:
         while not self._stop_event.is_set() and not is_shutdown_requested():
             try:
                 if self._res_q is None:
                     break
                 msg: dict[str, Any] = self._res_q.get(timeout=1.0)
-                status = msg.get("status")
-                action = msg.get("action")
-
-                if status == "heartbeat":
-                    controller = self._lane_controller
-                    decision = self._lane_decision
-                    if controller is not None and decision is not None:
-                        alive = controller.heartbeat_owner_sync(
-                            decision.owner_id,
-                            fencing_token=decision.fencing_token,
-                        )
-                        if not alive:
-                            logger.error(
-                                "Vision worker lost model-lane fence owner=%s token=%s",
-                                decision.owner_id,
-                                decision.fencing_token,
-                            )
-                            self._stop_event.set()
-                            process = self._process
-                            if process is not None and process.is_alive():
-                                process.terminate()
-                            return
+                if not isinstance(msg, dict):
+                    logger.error("Vision worker returned non-mapping lifecycle message")
                     continue
-
-                if action == "init":
-                    self._init_done = True
+                if self._handle_worker_message(msg):
                     continue
 
                 req_id = msg.get("id")
@@ -393,6 +517,12 @@ class MLXVisionClient:
                         if req_id in self._pending_requests:
                             self._pending_requests[req_id] = msg
             except queue.Empty:
+                process = self._process
+                if process is not None and not process.is_alive():
+                    with self._pending_lock:
+                        if not self._init_done and not self._init_error:
+                            self._init_error = "worker_exited_before_init"
+                    return
                 continue
             except (OSError, ConnectionError, TimeoutError) as e:
                 logger.error("Vision listener error: %s", e)
@@ -494,6 +624,9 @@ class MLXVisionClient:
     ) -> str:
         if not await self.start_async():
             raise RuntimeError("Vision worker unavailable")
+        readiness = self.readiness_status()
+        if not readiness["ready"]:
+            raise RuntimeError(f"Vision worker not ready: {readiness['reason']}")
         return await asyncio.to_thread(
             self._see_started_blocking,
             prompt,
@@ -601,7 +734,8 @@ class MLXVisionClient:
         self._listener_thread = None
         with self._pending_lock:
             self._pending_requests.clear()
-        self._init_done = False
+            self._init_done = False
+            self._last_stop_reason = str(reason or "vision_worker_stopped")
         self._close_queues()
         if lane_controller is not None and lane_decision is not None:
             try:

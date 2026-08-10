@@ -37,6 +37,11 @@ _browser_camera_privacy: dict[str, Any] = {
     "enabled": False,
     "mode": "off",
     "reason": None,
+    "vision_worker": {
+        "schema": "aura.mlx_vision.readiness.v1",
+        "ready": False,
+        "reason": "not_observed",
+    },
 }
 
 
@@ -50,19 +55,43 @@ def get_voice_engine_fn() -> Callable | None:
 
 
 def set_browser_camera_privacy(
-    *, enabled: bool, mode: str = "off", reason: str | None = None
+    *,
+    enabled: bool,
+    mode: str = "off",
+    reason: str | None = None,
+    vision_worker: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     global _browser_camera_privacy
+    prior_worker = dict(_browser_camera_privacy.get("vision_worker") or {})
     _browser_camera_privacy = {
         "enabled": bool(enabled),
         "mode": str(mode or ("browser_only" if enabled else "off")),
         "reason": reason,
+        "vision_worker": dict(
+            prior_worker if vision_worker is None else vision_worker
+        ),
     }
-    return dict(_browser_camera_privacy)
+    return get_browser_camera_privacy()
 
 
 def get_browser_camera_privacy() -> dict[str, Any]:
-    return dict(_browser_camera_privacy)
+    state = dict(_browser_camera_privacy)
+    state["vision_worker"] = dict(state.get("vision_worker") or {})
+    return state
+
+
+def _vision_worker_readiness() -> dict[str, Any]:
+    """Inspect sight readiness without loading the model or opening a camera."""
+    try:
+        from core.brain.llm.mlx_vision_client import get_vision_client
+
+        return dict(get_vision_client().readiness_status())
+    except (ImportError, AttributeError, OSError, RuntimeError, TypeError, ValueError) as exc:
+        return {
+            "schema": "aura.mlx_vision.readiness.v1",
+            "ready": False,
+            "reason": f"readiness_unavailable:{type(exc).__name__}",
+        }
 
 
 async def _commit_camera_permission(enabled: bool) -> bool:
@@ -124,10 +153,12 @@ def apply_camera_runtime_state(
         mode = "browser_only"
         state_reason = reason or main_reason or "native_camera_backend_unavailable"
 
+    vision_worker = _vision_worker_readiness()
     browser_state = set_browser_camera_privacy(
         enabled=enabled,
         mode=mode,
         reason=state_reason,
+        vision_worker=vision_worker,
     )
     result = {
         "ok": True,
@@ -137,6 +168,7 @@ def apply_camera_runtime_state(
         "transport": transport,
         "native_capture_enabled": bool(enabled and backend_available),
         "main_process_capture_enabled": bool(enabled and main_allowed),
+        "vision_worker": vision_worker,
         "revocation": revoked,
     }
     logger.info(
@@ -267,11 +299,11 @@ async def api_voice_chunk(request: Request):
     """Receive raw PCM audio chunk from browser AudioWorklet.
     M-01 FIX: Size limit enforced before reading body."""
     content_length = int(request.headers.get("content-length", 0))
-    MAX_VOICE_CHUNK = 512 * 1024  # 512KB max
-    if content_length > MAX_VOICE_CHUNK:
+    max_voice_chunk = 512 * 1024  # 512KB max
+    if content_length > max_voice_chunk:
         raise HTTPException(status_code=413, detail="Voice chunk too large")
     chunk = await request.body()
-    if len(chunk) > MAX_VOICE_CHUNK:
+    if len(chunk) > max_voice_chunk:
         raise HTTPException(status_code=413, detail="Voice chunk too large")
     voice = _voice_engine_fn() if _voice_engine_fn else None
     if voice and hasattr(voice, "feed_chunk"):
@@ -294,14 +326,14 @@ async def api_source_download(
     _: None = Depends(_require_internal),
 ):
     """Bundle and return the current source code as a download."""
-    PROJECT_ROOT = config.paths.project_root
+    project_root = config.paths.project_root
     try:
         import tempfile as _tf
 
         from utils.bundler import write_bundle
         with _tf.NamedTemporaryFile(suffix=".txt", delete=False) as tmp:
             out = Path(tmp.name)
-        write_bundle(PROJECT_ROOT, out, lite=True)
+        write_bundle(project_root, out, lite=True)
         return FileResponse(
             str(out),
             media_type="text/plain",
@@ -329,7 +361,7 @@ async def voice_sse_stream(request: Request):
                 try:
                     event = await asyncio.wait_for(sse_q.get(), timeout=15)
                     yield f"data: {json.dumps(event)}\n\n"
-                except asyncio.TimeoutError:
+                except TimeoutError:
                     yield "data: {\"type\":\"ping\"}\n\n"
         finally:
             if voice and hasattr(voice, "unsubscribe"):

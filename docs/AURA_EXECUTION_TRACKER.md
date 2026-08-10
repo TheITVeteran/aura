@@ -41195,3 +41195,49 @@ owns the model budget and Aura.app is stopped. At the last campaign check,
 reasoning gain, frontier performance, fusion authority, activation authority,
 or `WOW Signal` is claimed before the complete source-bound verdict validates.
 The completion envelope remains `809/920` (approximately `87.9%`).
+
+## Checkpoint 2026-08-09-110: Vision Readiness Is Not An Assumption
+
+The camera could now acquire a supported frame, but the model worker that turns
+that frame into visual evidence had a false-ready race. Its child correctly
+reported model-load failure as `action=init,status=error`; the parent listener
+set `_init_done=True` for every `action=init` message without reading status.
+For a short but consequential interval, a failed checkpoint could therefore be
+admitted as initialized and reach serving logic.
+
+Vision serving now distinguishes process existence, listener liveness, IPC
+availability, model initialization, worker heartbeat, and committed model-lane
+authority. Only `status=ok|success` satisfies initialization. Error, missing,
+or unknown init statuses retain a bounded concrete cause. A worker exit gets a
+500ms receipt-drain grace so its specific model-load failure wins over a generic
+exit reason, while an actually silent initialization remains capped at 30
+seconds.
+
+The non-starting `aura.mlx_vision.readiness.v1` receipt reports every required
+term, PID, heartbeat age/count, pending requests, and one stable reason.
+Heartbeat alone never means the model loaded. `see_async` rechecks the complete
+serving receipt after startup and before queue dispatch. Camera privacy/control
+state now exposes the same receipt, so a working camera transport is no longer
+misrepresented as a working interpretation cortex.
+
+Focused sight, model-lane, interaction-signal, and client-resilience contracts
+pass `144/144`; canonical smoke passes `103/103`. Ruff, touched-file byte
+compilation, and diff hygiene pass. Three pre-existing Ruff defects in the
+touched privacy route were also retired, including the voice-chunk size
+boundary. Evidence is
+`artifacts/closeout/companion/cp110_vision_worker_readiness_is_not_an_assumption.json`.
+
+The live worker-load and general visual-detail battery remain open until the
+resident-32B campaign releases the model lane and the rebuilt app can be tested.
+At the last check the campaign was `23/28`, with
+`vanilla_resource_dominating` at `2/7`; no reasoning gain, frontier performance,
+fusion authority, activation authority, or `WOW Signal` is claimed before the
+source-bound terminal verdict validates.
+
+Voice mode is now an explicit user-facing closeout stream. It must prove one
+causal path from owner microphone control through device acquisition, listening
+and conversation state, transcription, semantic turn delivery, Aura-authored
+response, TTS playback, barge-in, durable follow-up context, recovery, and
+visible phase evidence. The review must remove startup failures and avoidable
+latency causes rather than imposing deadlines or substituting canned dialogue.
+The completion envelope remains `809/920` (approximately `87.9%`).

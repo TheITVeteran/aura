@@ -208,6 +208,15 @@ async def test_isolated_camera_privacy_keeps_native_and_browser_vision_available
         revoke_owner_permission=lambda: {"released": False, "holder": None},
     )
     monkeypatch.setattr(camera_authority, "get_camera_authority", lambda: authority)
+    monkeypatch.setattr(
+        privacy_routes,
+        "_vision_worker_readiness",
+        lambda: {
+            "schema": "aura.mlx_vision.readiness.v1",
+            "ready": False,
+            "reason": "not_started",
+        },
+    )
 
     try:
         response = await privacy_routes.api_privacy_camera(
@@ -218,6 +227,8 @@ async def test_isolated_camera_privacy_keeps_native_and_browser_vision_available
         assert response["enabled"] is True
         assert response["mode"] == "isolated_sidecar"
         assert response["native_capture_enabled"] is True
+        assert response["vision_worker"]["ready"] is False
+        assert response["vision_worker"]["reason"] == "not_started"
         assert smc.camera_enabled is False
         assert vision_buffer.camera_enabled is False
         assert vision_buffer.camera_capture_enabled is True

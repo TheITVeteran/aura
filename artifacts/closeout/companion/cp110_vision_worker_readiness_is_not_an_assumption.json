@@ -1,0 +1,53 @@
+{
+  "schema": "aura.closeout.checkpoint.v1",
+  "checkpoint": 110,
+  "date": "2026-08-09",
+  "subject": "vision worker readiness is a measured lifecycle contract",
+  "status": "implemented_and_bounded_verified",
+  "defects_closed": [
+    "the vision listener marked every action=init message successful, including the worker's explicit status=error model-load reply",
+    "worker heartbeat, process existence, model initialization, IPC availability, listener liveness, and committed model-lane authority were collapsed into one implicit readiness assumption",
+    "a worker that exited during initialization could consume the full 30-second timeout and replace a specific load failure with an opaque timeout",
+    "inference trusted start_async's boolean without rechecking the serving contract immediately before queueing a request",
+    "camera control responses exposed capture transport but not whether the model that interprets a frame was actually ready",
+    "the touched privacy route carried three pre-existing Ruff violations, including its voice-chunk limit"
+  ],
+  "implementation": {
+    "init_protocol": "only status ok or success may satisfy an init acknowledgement; error, missing, and unknown statuses become named init failures",
+    "readiness_schema": "aura.mlx_vision.readiness.v1",
+    "required_ready_terms": [
+      "process_alive",
+      "listener_alive",
+      "ipc_ready",
+      "init_done",
+      "init_error_absent",
+      "model_lane_committed"
+    ],
+    "liveness": "local heartbeat receipt time and count are measured independently and never promoted to model initialization",
+    "failure_specificity": "process exit receives a bounded 500ms listener grace so the worker's concrete init error wins over a generic exit reason",
+    "serving_guard": "see_async rechecks the complete readiness receipt after startup and before dispatch",
+    "control_plane": "camera privacy state and application receipts expose the bounded worker status without loading a model or opening a camera"
+  },
+  "verification": {
+    "focused_sight_lane_interaction_and_resilience": "144 passed",
+    "canonical_smoke_repository_venv": "103 passed",
+    "ruff_touched_surface": "pass",
+    "python_byte_compile_touched_surface": "pass",
+    "diff_check": "pass",
+    "live_model_load": "deferred while the resident-32B proof campaign owns the model lane"
+  },
+  "claim_boundary": {
+    "false_ready_defect_closed": true,
+    "readiness_observable": true,
+    "live_vision_worker_ready_proven": false,
+    "reason": "the lifecycle and negative cases are bounded-proven; a rebuilt app must still load the real vision checkpoint and return a valid frame interpretation after the 32B campaign releases the host"
+  },
+  "concurrent_campaign": {
+    "campaign_id": "cp103-wow-pilot-repaired-20260809",
+    "source_commit": "b62bd4fa78fd28fe62cb51f7677614774c3482fc",
+    "cells_at_last_check": 23,
+    "active_arm": "vanilla_resource_dominating",
+    "active_arm_progress": "2/7",
+    "capability_verdict_claimed": false
+  }
+}
