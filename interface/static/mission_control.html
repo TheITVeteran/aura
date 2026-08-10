@@ -235,7 +235,7 @@
         <div class="logo-glow"></div>
         <h1>Aura Leviathan // Cockpit</h1>
     </div>
-    <div class="system-status" id="kernel-status">Sovereign Kernel Active</div>
+    <div class="system-status" id="kernel-status">Kernel status unread</div>
 </header>
 
 <main>
@@ -313,13 +313,43 @@
             document.getElementById('val-cloud').innerText = `$${(data.cloud_compute_cost || 0).toFixed(2)}`;
             document.getElementById('val-patches').innerText = `${data.factory_patches || 0} Compiled`;
 
-            if (data.kernel_online) {
-                document.getElementById('kernel-status').innerText = 'Sovereign Kernel Online';
-                document.getElementById('kernel-status').style.borderColor = 'var(--success)';
-            }
+            // The badge ships reading "Sovereign Kernel Active" in green and
+            // this branch only ever had an if. An OFFLINE kernel therefore kept
+            // displaying the healthy state forever — observed live 2026-08-10
+            // with kernel_online=false and initialized=false behind a green
+            // badge. A dead kernel must look dead.
+            setKernelBadge(data.kernel_online, data.kernel_health);
         } catch (e) {
             console.error("Dashboard pull failed", e);
+            // A failed pull is not evidence of health either.
+            setKernelBadge(null, null);
         }
+    }
+
+    function setKernelBadge(online, health) {
+        const badge = document.getElementById('kernel-status');
+        if (!badge) return;
+        if (online === null) {
+            badge.innerText = 'Kernel status unreadable';
+            badge.style.borderColor = 'var(--warning, #d9a441)';
+            badge.style.color = 'var(--warning, #d9a441)';
+            return;
+        }
+        if (online) {
+            badge.innerText = 'Sovereign Kernel Online';
+            badge.style.borderColor = 'var(--success)';
+            badge.style.color = 'var(--success)';
+            return;
+        }
+        // Name what is actually wrong when the kernel can say.
+        const missing = (health && health.missing_critical) || [];
+        badge.innerText = missing.length
+            ? `Kernel offline — missing ${missing.join(', ')}`
+            : (health && health.initialized === false
+                ? 'Kernel not initialized'
+                : 'Kernel offline');
+        badge.style.borderColor = 'var(--danger, #c2454a)';
+        badge.style.color = 'var(--danger, #c2454a)';
     }
 
     async function launchCampaign() {

@@ -7671,6 +7671,22 @@ if (memMapBtn) memMapBtn.addEventListener('click', (e) => {
     }
 });
 
+// Long-horizon campaigns had no way in. Mission Control existed, worked, and
+// was reachable only by typing /static/mission_control.html into the address
+// bar — which is to say, only by someone who had read the source. It opens in
+// the same overlay the other maps use.
+const campaignBtn = $('btn-campaign');
+if (campaignBtn) campaignBtn.addEventListener('click', (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    const overlay = $('soul-overlay');
+    const frame = $('soul-frame');
+    if (overlay && frame) {
+        overlay.classList.add('visible');
+        frame.src = '/static/mission_control.html';
+    }
+});
+
 const termBtn = $('btn-term');
 if (termBtn) termBtn.addEventListener('click', async (e) => {
     e.preventDefault();
