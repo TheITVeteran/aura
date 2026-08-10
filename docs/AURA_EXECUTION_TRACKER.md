@@ -42131,3 +42131,44 @@ memory that maps actual decode hidden states to verified next-token evidence,
 followed by teacher removal and the same wrong-teacher control. No neural,
 resident, frontier, fusion, activation, or `WOW Signal` claim is authorized.
 The completion envelope is `831/920` (approximately `90.3%`).
+
+## Checkpoint 2026-08-10-135: Verified Corrections Survive Teacher Removal at the Output Boundary
+
+CP134 proved that temporary synapses could move answer semantics, but its
+wrong-teacher sham moved them further. CP135 adds an ordered, query-scoped
+associative memory at the frozen checkpoint's normalized output boundary.
+Each entry maps the actual hidden state preceding one teacher token to that
+token. The state must match at a `0.995` cosine floor and in sequence before a
+bounded logit margin is applied. No text or tensor enters the public receipt,
+the checkpoint parameters never change, and erase drops every private key and
+target. The mechanism is default-off and cannot authorize a served answer.
+
+The experiment runs independently verified and deterministic-wrong teachers
+through identical capture, gain, token, verifier, and erase conditions. Its
+first 1.5B probe replayed all `22` treatment tokens but then allowed the model
+to continue to `256` tokens; the extra continuation invalidated the terminal
+answer and treatment remained at the `0.25` baseline. This exposed a real
+experimental defect rather than a neural failure. Binding the probe horizon
+to the committed target length produced the intended teacher-removal test.
+
+In the corrected source-bound probe, full-gain treatment emitted the exact
+committed `22`-token target and raised the public-objective score from `0.25`
+to `0.814236`. The equal-length wrong-teacher sham reached only `0.296296`.
+The treatment therefore beats both its zero-write baseline and matched sham;
+checkpoint identity and query-scoped erase are proven. This is positive
+evidence that Aura's temporary neural output tissue can carry a verified
+semantic correction after the teacher leaves context. It is an oracle
+controllability and teacher-copy result, not autonomous transfer: the answer
+trajectory itself still supplied the private keys and targets.
+
+The worker wire contract now also admits the already-parsed
+`fast_weights_layer_placement` and `fast_weights_canary_generated` settings;
+previously either valid setting was rejected as an unknown key. Focused
+output-memory, learning, fast-weight, worker, and campaign contracts pass
+`127/127`; canonical smoke passes `103/103`; Ruff, compile, and diff hygiene
+pass. Evidence is hash-bound in
+`artifacts/closeout/latent_cortex/cp135_episodic_output_memory.json`. The next
+gate must learn a query-to-correction write that succeeds without replaying
+the teacher trajectory. No general neural gain, resident-32B gain, frontier,
+fusion, activation, or `WOW Signal` claim is authorized. The completion
+envelope is `832/920` (approximately `90.4%`).

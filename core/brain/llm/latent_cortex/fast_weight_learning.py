@@ -482,6 +482,7 @@ def empty_learning_state(
             "decision": "not_run",
             "capability_canaries": {},
             "trajectory_transplant": {},
+            "output_associative_memory": {},
             "verifier_gain_search": {},
             "test_time_training": (
                 build_test_time_training_receipt(
@@ -606,16 +607,20 @@ def validate_fast_weight_learning_receipt(
         "loss_trail", "gradient_norm_trail", "accepted_step_sizes", "line_search_backtracks",
     }:
         raise ValueError("fast-weight optimization receipt is invalid")
-    legacy_control_fields = {
+    required_control_fields = {
         "decision",
         "capability_canaries",
         "verifier_gain_search",
         "test_time_training",
     }
-    current_control_fields = legacy_control_fields | {"trajectory_transplant"}
+    optional_control_fields = {
+        "trajectory_transplant",
+        "output_associative_memory",
+    }
     if (
         not isinstance(controls, Mapping)
-        or set(controls) not in {frozenset(legacy_control_fields), frozenset(current_control_fields)}
+        or not required_control_fields <= set(controls)
+        or not set(controls) <= required_control_fields | optional_control_fields
     ):
         raise ValueError("fast-weight control receipt is invalid")
     if not isinstance(causal, Mapping) or set(causal) != {
@@ -667,6 +672,7 @@ def validate_fast_weight_learning_receipt(
         raise ValueError("fast-weight optimizer or control receipt is invalid")
     test_time_training = controls["test_time_training"]
     trajectory_transplant = controls.get("trajectory_transplant", {})
+    output_associative_memory = controls.get("output_associative_memory", {})
     gain_search = controls["verifier_gain_search"]
     if not isinstance(trajectory_transplant, Mapping):
         raise ValueError("fast-weight trajectory transplant receipt is invalid")
@@ -717,6 +723,16 @@ def validate_fast_weight_learning_receipt(
                 raise ValueError("fast-weight trajectory direction commitments are invalid")
         if not teaching_event:
             raise ValueError("fast-weight trajectory transplant lacks a teaching event")
+    if not isinstance(output_associative_memory, Mapping):
+        raise ValueError("fast-weight output-memory receipt is invalid")
+    if output_associative_memory:
+        from core.brain.llm.latent_cortex.episodic_output_memory import (
+            validate_output_memory_experiment_receipt,
+        )
+
+        validate_output_memory_experiment_receipt(output_associative_memory)
+        if not teaching_event:
+            raise ValueError("fast-weight output memory lacks a teaching event")
     if not isinstance(gain_search, Mapping):
         raise ValueError("fast-weight verifier gain-search receipt is invalid")
     if gain_search:

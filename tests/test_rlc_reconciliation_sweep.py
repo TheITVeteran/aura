@@ -133,6 +133,33 @@ def test_the_full_stack_arm_enables_every_pillar_that_was_built():
     assert cfg.recurrence.fixed_depth is False
 
 
+def test_output_memory_diagnostic_is_explicit_and_source_bound():
+    ordinary = sweep._build_config(8, 16, "applied", 512, profile="full")
+    diagnostic = sweep._build_config(
+        8,
+        16,
+        "applied",
+        512,
+        profile="full",
+        output_memory_diagnostic=True,
+    )
+    assert ordinary.fast_weights.output_memory_diagnostic_enabled is False
+    assert diagnostic.fast_weights.output_memory_diagnostic_enabled is True
+
+    common = {
+        "model": "checkpoint",
+        "n_slots": 16,
+        "max_tokens": 512,
+        "episode_wall_s": 720.0,
+        "seed": 7,
+        "per_domain": 1,
+    }
+    assert sweep.decode_fingerprint(**common) != sweep.decode_fingerprint(
+        **common,
+        output_memory_diagnostic=True,
+    )
+
+
 def test_the_mechanism_arm_stays_an_ablation():
     """The stripped configuration is retained, but only underneath the full
     arm, and it must not silently acquire the pillars."""

@@ -457,6 +457,7 @@ def decode_fingerprint(
     campaign_stage: str = "certificate",
     fast_weight_target: str = "o_proj",
     fast_weight_layer_placement: str = "early",
+    output_memory_diagnostic: bool = False,
 ) -> str:
     """Identity of the decode configuration every cell in a run must share.
 
@@ -480,6 +481,7 @@ def decode_fingerprint(
             "episode_wall_s": float(episode_wall_s),
             "fast_weight_layer_placement": str(fast_weight_layer_placement),
             "fast_weight_target": str(fast_weight_target),
+            "output_memory_diagnostic": bool(output_memory_diagnostic),
             "implementation_sha256": (implementation_sha256 or _implementation_sha256()),
             "max_tokens": int(max_tokens),
             "model": str(model),
@@ -596,6 +598,7 @@ def _build_config(
     profile: str = "mechanism",
     fast_weight_target: str = "o_proj",
     fast_weight_layer_placement: str = "early",
+    output_memory_diagnostic: bool = False,
     # NOTE: the product arm overrides decode_contract to "none" below, which
     # is what the deployed system runs. Contract enforcement inside the engine
     # does not merely stop generation the way the ordinary control does -- it
@@ -663,6 +666,7 @@ def _build_config(
             opt_steps=4,
             target=fast_weight_target,
             layer_placement=fast_weight_layer_placement,
+            output_memory_diagnostic_enabled=output_memory_diagnostic,
         ),
         prelude_frac=0.25,
         coda_frac=0.25,
@@ -2319,6 +2323,14 @@ def main() -> int:
         default="early",
     )
     parser.add_argument(
+        "--output-memory-diagnostic",
+        action="store_true",
+        help=(
+            "Run the default-off verified-vs-sham associative output-memory "
+            "mechanism diagnostic; it has no served-answer authority."
+        ),
+    )
+    parser.add_argument(
         "--campaign-stage",
         choices=CAMPAIGN_STAGES,
         default="certificate",
@@ -2434,6 +2446,7 @@ def main() -> int:
                         "target": args.fast_weight_target,
                         "layer_placement": args.fast_weight_layer_placement,
                     },
+                    "output_memory_diagnostic": args.output_memory_diagnostic,
                 },
                 indent=2,
             )
@@ -2465,6 +2478,7 @@ def main() -> int:
             campaign_stage=args.campaign_stage,
             fast_weight_target=args.fast_weight_target,
             fast_weight_layer_placement=args.fast_weight_layer_placement,
+            output_memory_diagnostic=args.output_memory_diagnostic,
         )
         for name, tokens in arm_tokens.items()
     }
@@ -2484,6 +2498,7 @@ def main() -> int:
                     "target": args.fast_weight_target,
                     "layer_placement": args.fast_weight_layer_placement,
                 },
+                "output_memory_diagnostic": args.output_memory_diagnostic,
                 "task_registry_version": args.task_registry_version,
                 "implementation_files": implementation_files,
                 "implementation_sha256": implementation_sha256,
@@ -2683,6 +2698,7 @@ def main() -> int:
                         fast_weight_layer_placement=(
                             args.fast_weight_layer_placement
                         ),
+                        output_memory_diagnostic=args.output_memory_diagnostic,
                     )
                 )
                 key = (arm, task.task_id)

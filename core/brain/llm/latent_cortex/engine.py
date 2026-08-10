@@ -36,6 +36,11 @@ from core.brain.llm.latent_cortex.capability_canaries import (
     canary_verdict,
     compare_canaries,
 )
+from core.brain.llm.latent_cortex.episodic_output_memory import (
+    OUTPUT_MEMORY_GAIN_GRID,
+    EpisodicOutputMemory,
+    build_output_memory_experiment_receipt,
+)
 from core.brain.llm.latent_cortex.epistemic_state import OperationKind
 from core.brain.llm.latent_cortex.escape import EscapeConfig
 from core.brain.llm.latent_cortex.fast_weight_learning import (
@@ -1245,9 +1250,15 @@ class LatentCortexEngine:
                 output_head_tokens=int(h.shape[1]),
             )
         h = inner.norm(h)
+        self._last_output_hidden = h[:, -1:, :]
         if hasattr(self.model, "lm_head"):
-            return self.model.lm_head(h)
-        return inner.embed_tokens.as_linear(h)
+            logits = self.model.lm_head(h)
+        else:
+            logits = inner.embed_tokens.as_linear(h)
+        output_memory = getattr(self, "_active_output_memory", None)
+        if output_memory is not None:
+            logits = output_memory.apply(h, logits)
+        return logits
 
     def _prefill(self, tokens: list[int], cache, budget: ComputeBudget):
         """Standard full-stack prefill. Returns (embeddings, last-position logits)."""
@@ -2906,6 +2917,21 @@ class LatentCortexEngine:
             and self.config.fast_weights.associative_bootstrap_enabled
             else 0
         )
+        output_memory_diagnostic_cost = (
+            (
+                2
+                * (
+                    self.config.workspace.n_slots
+                    + len(bridge_tokens)
+                    + 255
+                )
+                * self.n_layers
+            )
+            + (2 * len(OUTPUT_MEMORY_GAIN_GRID) * fast_weight_verifier_probe_cost)
+            if self.config.fast_weights.enabled
+            and self.config.fast_weights.output_memory_diagnostic_enabled
+            else 0
+        )
         fast_weight_matched_trial_cost = (
             2
             * self.config.fast_weights.opt_steps
@@ -2913,6 +2939,7 @@ class LatentCortexEngine:
             * fast_weight_window_forward_cost
             + fast_weight_verifier_probe_cost
             + fast_weight_associative_capture_cost
+            + output_memory_diagnostic_cost
             + (
                 2 * len(VERIFIER_GAIN_GRID) * fast_weight_verifier_probe_cost
                 if self.config.fast_weights.associative_bootstrap_enabled
@@ -6299,6 +6326,46 @@ class LatentCortexEngine:
                         or state_after_attach_sha256 != winner_state_sha256
                     ):
                         raise RuntimeError("fast-weight attachment failed measured identity")
+                    if (
+                        fast_weight_teaching_event
+                        and self.config.fast_weights.output_memory_diagnostic_enabled
+                        and fast_weight_candidate_verifier is not None
+                        and fw_verifier_pre is not None
+                    ):
+                        treatment_keys = self._capture_forced_output_keys(
+                            winner,
+                            cache,
+                            runner,
+                            budget,
+                            bridge_tokens=bridge_tokens,
+                            target_tokens=fast_weight_target_tokens,
+                            operation="output_memory_treatment_capture",
+                        )
+                        sham_keys = self._capture_forced_output_keys(
+                            winner,
+                            cache,
+                            runner,
+                            budget,
+                            bridge_tokens=bridge_tokens,
+                            target_tokens=fw_sham_target_tokens,
+                            operation="output_memory_sham_capture",
+                        )
+                        fast_weight_learning_state["controls"][
+                            "output_associative_memory"
+                        ] = self._evaluate_output_memory_controls(
+                            winner,
+                            cache,
+                            runner,
+                            budget,
+                            bridge_tokens=bridge_tokens,
+                            verifier=fast_weight_candidate_verifier,
+                            baseline_score=float(fw_verifier_pre),
+                            treatment_keys=treatment_keys,
+                            treatment_tokens=fast_weight_target_tokens,
+                            sham_keys=sham_keys,
+                            sham_tokens=fw_sham_target_tokens,
+                        )
+                        receipt.flag("output_associative_memory_diagnostic_completed")
                     if fast_weight_teaching_event:
                         target_features, target_context_tokens = (
                             self._capture_teacher_forced_trajectory(
@@ -6643,6 +6710,9 @@ class LatentCortexEngine:
                         "trajectory_transplant": fast_weight_learning_state["controls"][
                             "trajectory_transplant"
                         ],
+                        "output_associative_memory": fast_weight_learning_state["controls"][
+                            "output_associative_memory"
+                        ],
                         "verifier_gain_search": fast_weight_learning_state["controls"][
                             "verifier_gain_search"
                         ],
@@ -6656,6 +6726,9 @@ class LatentCortexEngine:
                         "capability_canaries": {},
                         "trajectory_transplant": fast_weight_learning_state["controls"][
                             "trajectory_transplant"
+                        ],
+                        "output_associative_memory": fast_weight_learning_state["controls"][
+                            "output_associative_memory"
                         ],
                         "verifier_gain_search": fast_weight_learning_state["controls"][
                             "verifier_gain_search"
@@ -8479,6 +8552,146 @@ class LatentCortexEngine:
         if layer_apps <= 0:
             raise RuntimeError("teacher trajectory accounting is invalid")
         return features, context_tokens
+
+    def _capture_forced_output_keys(
+        self,
+        branch: BranchState,
+        cache,
+        runner: WindowRunner,
+        budget: ComputeBudget,
+        *,
+        bridge_tokens: Sequence[int],
+        target_tokens: Sequence[int],
+        operation: str,
+    ):
+        """Capture the exact normalized output states preceding target tokens."""
+
+        import mlx.core as mx
+        from mlx_lm.models.base import create_attention_mask
+
+        from core.brain.llm.recurrent_depth import (
+            _restore_recurrent_caches,
+            _snapshot_recurrent_caches,
+        )
+
+        targets = [int(token) for token in target_tokens]
+        if not targets:
+            raise ValueError("output-memory target token sequence is empty")
+        snaps = _snapshot_recurrent_caches(cache, 0, self.n_layers)
+        prior_memory = getattr(self, "_active_output_memory", None)
+        prior_hidden = getattr(self, "_last_output_hidden", None)
+        try:
+            self._active_output_memory = None
+            self._persist_branch(branch, cache, runner, budget)
+            if bridge_tokens:
+                self._apply_decode_bridge(cache, budget, list(bridge_tokens))
+            keys = [mx.stop_gradient(self._last_output_hidden[0, -1].astype(mx.float32))]
+            inner = self.model.model
+            for token in targets[:-1]:
+                if not budget.can_afford(1, self.n_layers):
+                    raise RuntimeError("compute budget cannot admit output-memory capture")
+                context_tokens = self._cache_context_tokens(cache)
+                budget.charge(
+                    tokens=1,
+                    layers=self.n_layers,
+                    operation=operation,
+                    attention_pairs=max(1, context_tokens + 1) * self.n_layers,
+                    output_head_tokens=1,
+                )
+                h = inner.embed_tokens(mx.array([[token]]))
+                mask = create_attention_mask(h, cache)
+                for index, layer in enumerate(inner.layers):
+                    h = layer(h, mask, cache[index])
+                self._logits(h)
+                keys.append(
+                    mx.stop_gradient(self._last_output_hidden[0, -1].astype(mx.float32))
+                )
+            stacked = mx.stack(keys)
+            mx.eval(stacked)
+            return stacked
+        finally:
+            self._active_output_memory = prior_memory
+            if prior_hidden is None:
+                if hasattr(self, "_last_output_hidden"):
+                    delattr(self, "_last_output_hidden")
+            else:
+                self._last_output_hidden = prior_hidden
+            _restore_recurrent_caches(cache, 0, self.n_layers, snaps)
+
+    def _evaluate_output_memory_controls(
+        self,
+        branch: BranchState,
+        cache,
+        runner: WindowRunner,
+        budget: ComputeBudget,
+        *,
+        bridge_tokens: Sequence[int],
+        verifier: Callable[[str], float],
+        baseline_score: float,
+        treatment_keys,
+        treatment_tokens: Sequence[int],
+        sham_keys,
+        sham_tokens: Sequence[int],
+    ) -> dict[str, Any]:
+        """Run verified and sham output memories under identical teacher-free probes."""
+
+        treatment = EpisodicOutputMemory(treatment_keys, treatment_tokens)
+        sham = EpisodicOutputMemory(sham_keys, sham_tokens)
+        treatment_identity = treatment.receipt()
+        sham_identity = sham.receipt()
+
+        def run_arm(label: str, memory: EpisodicOutputMemory) -> list[dict[str, Any]]:
+            rows: list[dict[str, Any]] = []
+            for gain in OUTPUT_MEMORY_GAIN_GRID:
+                memory.reset(gain=gain)
+                self._active_output_memory = memory
+                try:
+                    probe = self._decode_probe(
+                        branch,
+                        cache,
+                        runner,
+                        budget,
+                        max_tokens=len(memory.target_tokens),
+                        bridge_tokens=list(bridge_tokens),
+                        use_cache=False,
+                        force_exact_tokens=True,
+                    )
+                finally:
+                    self._active_output_memory = None
+                text = self.tokenizer.decode(probe)
+                rows.append(
+                    {
+                        "arm": label,
+                        "gain": gain,
+                        "score": float(verifier(text)),
+                        "probe_tokens_sha256": token_sequence_sha256(probe),
+                        "probe_token_count": len(probe),
+                        "matches": memory.matches,
+                        "misses": memory.misses,
+                        "minimum_similarity": memory.minimum_similarity,
+                    }
+                )
+            return rows
+
+        try:
+            treatment_rows = run_arm("treatment", treatment)
+            sham_rows = run_arm("sham", sham)
+        finally:
+            self._active_output_memory = None
+            treatment.erase()
+            sham.erase()
+        return build_output_memory_experiment_receipt(
+            baseline_score=baseline_score,
+            treatment_identity=treatment_identity,
+            sham_identity=sham_identity,
+            treatment_rows=treatment_rows,
+            sham_rows=sham_rows,
+            erase_proven=(
+                treatment.erased
+                and sham.erased
+                and getattr(self, "_active_output_memory", None) is None
+            ),
+        )
 
     def _fw_probe(self, budget: ComputeBudget, *, cleanup: bool = False):
         """Deterministic full-stack probe for erase proofs (cache-free).

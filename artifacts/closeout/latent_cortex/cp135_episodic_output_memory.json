@@ -1,0 +1,56 @@
+{
+  "schema": "aura.rlc_episodic_output_memory_probe.v1",
+  "checkpoint": "CP135",
+  "model": "/Users/bryan/.aura/live-source/models/Qwen2.5-1.5B-Instruct-4bit",
+  "task": {
+    "domain": "misleading_premise",
+    "difficulty": 2,
+    "seed": 2026081018
+  },
+  "site": "normalized_output_boundary",
+  "probes": [
+    {
+      "mechanism": "verified_output_memory_with_unbounded_continuation",
+      "campaign": "/Users/bryan/.aura/campaigns/cp135-output-memory-20260810-062517",
+      "runtime_receipt_file_sha256": "f2b069617e70165044520508acd3f211443bf5c58fa43426fbfb9905b6bcb41f",
+      "baseline_score": 0.25,
+      "selected_treatment_gain": 0.0,
+      "selected_treatment_score": 0.25,
+      "selected_sham_gain": 0.0,
+      "selected_sham_score": 0.25,
+      "treatment_target_tokens_replayed": 22,
+      "probe_token_count": 256,
+      "accepted": false,
+      "diagnosis": "post_target_continuation_destroyed_the_verified_terminal_contract"
+    },
+    {
+      "mechanism": "verified_output_memory_with_committed_target_horizon",
+      "campaign": "/Users/bryan/.aura/campaigns/cp135-output-memory-complete-target-20260810-063008",
+      "runtime_receipt_file_sha256": "691266e4e8acb9b4e704312ff6022faf94eb9de97f079dcb9d1c4a50fb173e9e",
+      "experiment_receipt_sha256": "b03d3ab38d5ae21343c7204cc8a27e569d1df291edfb72472911c1cd4c996311",
+      "baseline_score": 0.25,
+      "selected_treatment_gain": 1.0,
+      "selected_treatment_score": 0.814236,
+      "selected_sham_gain": 1.0,
+      "selected_sham_score": 0.296296,
+      "treatment_target_tokens_replayed": 22,
+      "probe_token_count": 22,
+      "treatment_probe_equals_target_commitment": true,
+      "erase_proven": true,
+      "accepted": true
+    }
+  ],
+  "conclusion": {
+    "verified_teacher_reaches_output_semantics": true,
+    "verified_teacher_beats_matched_wrong_teacher": true,
+    "teacher_removed_before_probe": true,
+    "checkpoint_parameters_unchanged": true,
+    "query_scoped_memory_erased": true,
+    "teacher_copy_mechanism_proven": true,
+    "autonomous_neural_transfer_proven": false,
+    "general_reasoning_gain_proven": false,
+    "frontier_level_proven": false,
+    "fusion_authorized": false,
+    "next_gate": "learn_query_to_verified_correction_without_teacher_trajectory_replay"
+  }
+}
