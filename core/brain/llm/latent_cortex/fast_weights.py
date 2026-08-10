@@ -213,7 +213,19 @@ class EpisodicDeltaLinear:
         if self.capture_input_positions:
             import mlx.core as mx
 
-            positions = x.reshape((-1, int(x.shape[-1])))
+            from core.brain.llm.latent_cortex.recurrence_adapter import (
+                current_recurrence_adapter_scope,
+            )
+
+            scoped = x
+            activation = current_recurrence_adapter_scope()
+            if activation is not None and activation.start is not None:
+                start = int(activation.start)
+                stop = int(activation.stop)
+                if not 0 <= start < stop <= int(x.shape[-2]):
+                    raise ValueError("position capture recurrence scope is invalid")
+                scoped = x[..., start:stop, :]
+            positions = scoped.reshape((-1, int(scoped.shape[-1])))
             remaining = max(
                 0,
                 int(self.input_position_limit) - len(self.input_position_history),

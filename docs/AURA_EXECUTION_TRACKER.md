@@ -42604,3 +42604,32 @@ bounded 1.5B run determines whether the richer state makes the correction
 learnable and transferable. No persistent reasoning gain, resident-32B use,
 frontier result, fusion, activation, or `WOW Signal` is authorized. The
 completion envelope is `847/920` (approximately `92.1%`).
+
+## Checkpoint 2026-08-10-150: Trajectory Capture Now Measures Latent Slots, Not Prompt Prefixes
+
+The CP149 controlled rerun again scored `6/8` untreated and `6/8` after
+installation, preserving every success while repairing no failure. Its saved
+private matrices made the failure diagnosable without another model run: all
+eight sites contained 128 rows but had input rank exactly eight, target-kernel
+agreement near zero, and a minimum attainable linear residual of approximately
+`0.80–0.88`. This was not evidence that the latent correction is inherently
+unlearnable.
+
+The outer capture wrapper had recorded the first eight positions passed to the
+projection. In the cached production path those positions are prompt-prefix
+states; the recurrence-scoped latent slots occur at the trailing span declared
+by `recurrence_adapter_scope`. Across tasks the tool therefore repeatedly fit
+the same positional prefix basis to unrelated verified corrections. Increasing
+rank, steps, or gain could not repair that object.
+
+Position capture now reads and validates the active recurrence span before
+flattening positions. Calls without an explicit span retain full-sequence
+behavior, while malformed spans fail closed. A regression contract proves that
+the captured rows equal the declared trailing slot positions and differ from
+the leading prompt positions. The compact CP150 diagnostic binds both completed
+negative receipts, progress ledgers, and the private matrix artifact without
+checking private activations into source control. Focused contracts pass
+`23/23`; Ruff and diff hygiene pass. The same frozen battery can now be rerun
+against the intended task-conditioned recurrent states. No persistent reasoning
+gain, resident-32B use, frontier result, fusion, activation, or `WOW Signal` is
+authorized. The completion envelope is `848/920` (approximately `92.2%`).

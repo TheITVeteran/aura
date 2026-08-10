@@ -338,6 +338,38 @@ def test_position_capture_rejects_incomplete_inventory_and_resets_flag():
         fast_weights.detach()
 
 
+def test_position_capture_honors_recurrence_slot_span() -> None:
+    from core.brain.llm.latent_cortex.recurrence_adapter import (
+        recurrence_adapter_scope,
+    )
+
+    model = _model()
+    fast_weights = EpisodicFastWeights(
+        FastWeightsConfig(enabled=True, rank=2, max_wrapped_layers=1)
+    )
+    fast_weights.attach(
+        model.model,
+        (1, 2),
+        seed_stat=0.5,
+        episode_id="position-feature-scope-test",
+    )
+    tokens = mx.array([[1, 2, 3, 4, 5]])
+    try:
+        _output, all_features = fast_weights.capture_input_position_features(
+            lambda: model(tokens),
+            max_features=5,
+        )
+        with recurrence_adapter_scope(start=3, stop=5):
+            _output, features = fast_weights.capture_input_position_features(
+                lambda: model(tokens),
+                max_features=2,
+            )
+        assert bool(mx.allclose(features[1], all_features[1][3:5]))
+        assert not bool(mx.allclose(features[1], all_features[1][:2]))
+    finally:
+        fast_weights.detach()
+
+
 def test_interpolated_delta_is_exact_and_zero_restores_identity():
     model = _model()
     tokens = mx.array([[1, 2, 3]])

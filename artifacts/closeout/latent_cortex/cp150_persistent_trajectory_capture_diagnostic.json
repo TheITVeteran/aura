@@ -1,0 +1,40 @@
+{
+  "claim_boundary": {
+    "frontier_gain_proven": false,
+    "persistent_gain_proven": false,
+    "reasoning_gain_proven": false,
+    "resident_32b_authorized": false,
+    "wow_signal": false
+  },
+  "cp148_average_capture": {
+    "artifact_path": "/Users/bryan/.aura/experiments/cp148-verified-trajectory-4a7a4db92-seed2026081003",
+    "ordinary_correct": 6,
+    "progress_events": 70,
+    "progress_sha256": "0d9ce57a60aa0e5f0fe11a8d51cfefd0dd2115e785954d4f03e17684bd55c537",
+    "receipt_sha256": "5e3a7317e0bf6704dc0d0c4d69aa01069e6b76bbfbf175dba554eb184a2da47d",
+    "training_relative_error_range": [
+      0.6464756100332112,
+      0.7276241199570701
+    ],
+    "treatment_correct": 6,
+    "untreated_correct": 6
+  },
+  "cp149_unscoped_position_capture": {
+    "artifact_path": "/Users/bryan/.aura/experiments/cp149-position-trajectory-6747e49ae-seed2026081003",
+    "diagnosis": "The outer capture wrapper recorded the first prompt positions instead of the recurrence-scoped latent slots. Every 128-row site matrix had rank exactly eight, matching the repeated prompt-prefix coordinates rather than task-conditioned latent variation.",
+    "input_rank_all_sites": 8,
+    "ordinary_correct": 6,
+    "private_pairs_sha256": "52b9b8336b54ccdd3d143b8ebd0bc6e345b59ef4c7a9fef5c46c84da517aa937",
+    "progress_events": 70,
+    "progress_sha256": "03c87c27ad7d985ea62f78f8fef7cb0860f741827c20ec00885c4c346a885c40",
+    "receipt_sha256": "18b527f28522d66e4a49a413c82b93412d5d1f7fd7007ba79fa70076ce5763c1",
+    "training_relative_error_range": [
+      0.7997,
+      0.8828
+    ],
+    "treatment_correct": 6,
+    "untreated_correct": 6
+  },
+  "finding": "Neither run demonstrated persistent gain. CP148 rejected the averaged-key representation. CP149 did not test the intended slot representation because capture ignored the active recurrence span; CP150 fixes that measurement at the source without changing the held-out task, seed, topology, or gain.",
+  "schema": "aura.rlc.persistent_trajectory_capture_diagnostic.v1"
+}
