@@ -510,6 +510,11 @@ class CortexConfig:
     # its deterministic correctness lower bound clears the original upper
     # bound by this preregistered margin.
     answer_replacement_enabled: bool = True
+    # Permit the replacement gate to compile a recognized, finite public
+    # objective into an independently reconstructable exact solution. This is
+    # separate from answer replacement itself so causal experiments can remove
+    # the producer while preserving every selection and safety boundary.
+    objective_program_enabled: bool = True
     answer_replacement_margin: float = 0.05
     # Strict experiments accept only a higher task-verifier score. The live
     # product profile may additionally accept an exactly non-regressing score
@@ -1019,6 +1024,8 @@ class CortexConfig:
             problems.append("local_repair_max_tokens outside [32, 512]")
         if type(self.answer_replacement_enabled) is not bool:
             problems.append("answer_replacement_enabled must be boolean")
+        if type(self.objective_program_enabled) is not bool:
+            problems.append("objective_program_enabled must be boolean")
         if (
             isinstance(self.answer_replacement_margin, bool)
             or not isinstance(self.answer_replacement_margin, (int, float))

@@ -41592,3 +41592,51 @@ real failing path; it does not claim that a held-out model gains correct
 answers. The next admissible evidence is the cheap component/ablation stage,
 not a resident-32B certificate. The completion envelope is `815/920`
 (approximately `88.6%`).
+
+## Checkpoint 2026-08-09-119: Public Producer Proves Before Model Spend
+
+The proof ladder still had a structural attribution error. The adaptation
+ablation retained the executable producer, so a treatment that won because of
+bounded public computation could be required to beat an otherwise identical
+arm carrying the same answer source. At the same time, the exact public
+objective compiler covered only modular arithmetic, Boolean expressions, and
+stable-nearest traversal. Five of the seven contamination-safe frontier
+families had no exact producer authority, making another model campaign capable
+of measuring missing verifier coverage instead of reasoning.
+
+The complete-system experiment now has a second matched ablation. It preserves
+recurrence, latent optimization, temporary fast weights, repair, verification,
+incumbent retention, and acquisition while removing both executable reasoning
+and objective-program solution generation. Architecture admission compares the
+complete system against this producer-disabled arm and vanilla. Adaptive neural
+attribution remains a separate verdict against the adaptation-disabled arm; an
+outer-system win can no longer be mislabeled as neural improvement, and inert
+neural tissue no longer blocks a real architecture result.
+
+The public-objective compiler now covers every active held-out family:
+stable traversal, separated-subset counting, stateful Python tracing,
+interventional causal chains, dependency/deadline planning, exact Bayesian
+updating, and premise auditing. Parsers are bounded, reject malformed or
+internally inconsistent programs, use exact rational arithmetic where needed,
+and emit text-free execution commitments. A standalone fresh-seed gate gives
+the producer only the public prompt, then grades through the separately
+implemented hidden scorer and public verifier.
+
+The committed gate proves `42/42` fresh tasks across all seven domains and all
+three difficulty levels: every produced answer is hidden-scorer correct, every
+public proof verifies, and every malformed-answer control is refuted. The
+receipt is
+`artifacts/closeout/latent_cortex/cp119_objective_program_producer_gate.json`
+with digest
+`b8aea2b630e0a81f0e4f48e6baf6d444fe18beff8c6912fad270dd81cc44cbcf`.
+Expanded engine, service, replay, incumbent, ablation, and campaign contracts
+pass `292/292`; canonical smoke passes `103/103`; Ruff, Python compilation,
+and diff hygiene pass.
+
+This proves the deterministic producer for the bounded battery and makes its
+causal contribution independently removable. It does not yet prove that the
+adaptive neural tissue improves answers or that the result transfers to the
+resident 32B. The next gate is the cheap 1.5B component experiment; resident
+32B remains locked until that causal ablation is positive and regression-free.
+No frontier, fusion, activation, or `WOW Signal` claim is authorized. The
+completion envelope is `816/920` (approximately `88.7%`).

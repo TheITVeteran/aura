@@ -97,6 +97,7 @@ def test_every_arm_declares_which_side_of_the_floor_it_is_on():
     bounded = {
         "complete_closed_book",
         "complete_closed_book_adaptation_ablation",
+        "complete_closed_book_executable_ablation",
         "full",
         "full_oracle",
     }

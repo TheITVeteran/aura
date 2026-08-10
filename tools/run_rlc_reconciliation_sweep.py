@@ -40,7 +40,7 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO_ROOT))
 
 SWEEP_SCHEMA = "aura.rlc_reconciliation_sweep.v1"
-EVIDENCE_MANIFEST_SCHEMA = "aura.rlc.reconciliation_evidence_manifest.v2"
+EVIDENCE_MANIFEST_SCHEMA = "aura.rlc.reconciliation_evidence_manifest.v3"
 CLAIM_TASK_REGISTRY_VERSION = "2026.08.06.1"
 COMPLETION_BUDGET_POLICY = "semantic_completion_floor.v1"
 CAMPAIGN_STAGES: Final[tuple[str, ...]] = ("component", "pilot", "certificate")
@@ -118,6 +118,18 @@ ARMS: tuple[Arm, ...] = (
         None,
         "complete_closed_book_adaptation_ablation",
     ),
+    # Same complete neural path as the treatment, including latent optimization
+    # and fast weights, but without the executable-reasoning producer.  This
+    # isolates the source of exact new candidates from adaptive-neural effects;
+    # the adaptation ablation above cannot do that because it deliberately
+    # retains the producer.
+    Arm(
+        "complete_system_executable_ablation",
+        8,
+        "suppressed",
+        None,
+        "complete_closed_book_executable_ablation",
+    ),
     # Claim-grade conservative control. It runs only after the complete
     # treatment has produced a digest-bound resource target, then grants
     # ordinary sampled decoding at least every measured resource dimension
@@ -159,8 +171,7 @@ def _task_decode_max_tokens(task: Any, requested_max_tokens: int) -> int:
     ):
         floor = 768
     elif domain == "long_horizon_planning" or any(
-        phrase in prompt
-        for phrase in ("complete plan", "schedule", "prerequisite", "deadline")
+        phrase in prompt for phrase in ("complete plan", "schedule", "prerequisite", "deadline")
     ):
         floor = 640
     return max(requested_max_tokens, floor)
@@ -175,6 +186,8 @@ def _next_stage_admission(
     treatment_regressions: int,
     adaptation_lifts: int,
     adaptation_regressions: int,
+    producer_lifts: int,
+    producer_regressions: int,
     gain_domains: int,
     exact_promotions: int,
     latent_accepted_steps: int,
@@ -187,10 +200,7 @@ def _next_stage_admission(
 
     discordant = treatment_lifts + treatment_regressions
     paired_sign_test_p = (
-        sum(
-            math.comb(discordant, index)
-            for index in range(treatment_lifts, discordant + 1)
-        )
+        sum(math.comb(discordant, index) for index in range(treatment_lifts, discordant + 1))
         / (2**discordant)
         if discordant
         else 1.0
@@ -203,6 +213,16 @@ def _next_stage_admission(
         )
         / (2**adaptation_discordant)
         if adaptation_discordant
+        else 1.0
+    )
+    producer_discordant = producer_lifts + producer_regressions
+    producer_sign_test_p = (
+        sum(
+            math.comb(producer_discordant, index)
+            for index in range(producer_lifts, producer_discordant + 1)
+        )
+        / (2**producer_discordant)
+        if producer_discordant
         else 1.0
     )
     reasons: list[str] = []
@@ -220,18 +240,25 @@ def _next_stage_admission(
         reasons.append("right_answer_regression_observed")
     if paired_sign_test_p > NEXT_STAGE_ALPHA:
         reasons.append("paired_gain_margin_underpowered")
-    if adaptation_lifts <= 0:
-        reasons.append("no_adaptive_neural_lift_observed")
-    if adaptation_regressions > 0:
-        reasons.append("adaptive_neural_regression_observed")
-    if adaptation_sign_test_p > NEXT_STAGE_ALPHA:
-        reasons.append("adaptive_neural_margin_underpowered")
+    if producer_lifts <= 0:
+        reasons.append("no_executable_producer_lift_observed")
+    if producer_regressions > 0:
+        reasons.append("executable_producer_regression_observed")
+    if producer_sign_test_p > NEXT_STAGE_ALPHA:
+        reasons.append("executable_producer_margin_underpowered")
     if gain_domains < 3:
         reasons.append("gain_domain_coverage_underpowered")
     if exact_promotions <= 0:
         reasons.append("no_exact_public_promotion_observed")
+    adaptive_neural_reasons: list[str] = []
+    if adaptation_lifts <= 0:
+        adaptive_neural_reasons.append("no_adaptive_neural_lift_observed")
+    if adaptation_regressions > 0:
+        adaptive_neural_reasons.append("adaptive_neural_regression_observed")
+    if adaptation_sign_test_p > NEXT_STAGE_ALPHA:
+        adaptive_neural_reasons.append("adaptive_neural_margin_underpowered")
     if latent_accepted_steps <= 0 and fast_weight_applications <= 0:
-        reasons.append("neural_tissue_zero_yield")
+        adaptive_neural_reasons.append("neural_tissue_zero_yield")
     if (
         campaign_stage == "pilot"
         and preliminary_control_correct is not None
@@ -244,7 +271,7 @@ def _next_stage_admission(
         "certificate": "none",
     }.get(campaign_stage, "none")
     return {
-        "schema": "aura.rlc.next_stage_admission.v1",
+        "schema": "aura.rlc.next_stage_admission.v2",
         "campaign_stage": campaign_stage,
         "next_stage": next_stage,
         "admitted": not reasons and next_stage != "none",
@@ -252,9 +279,15 @@ def _next_stage_admission(
         "treatment_lifts": int(treatment_lifts),
         "treatment_regressions": int(treatment_regressions),
         "paired_sign_test_p": round(paired_sign_test_p, 12),
+        "architecture_admitted": not reasons and next_stage != "none",
+        "producer_lifts": int(producer_lifts),
+        "producer_regressions": int(producer_regressions),
+        "producer_sign_test_p": round(producer_sign_test_p, 12),
         "adaptation_lifts": int(adaptation_lifts),
         "adaptation_regressions": int(adaptation_regressions),
         "adaptation_sign_test_p": round(adaptation_sign_test_p, 12),
+        "adaptive_neural_admitted": (not adaptive_neural_reasons and next_stage != "none"),
+        "adaptive_neural_reasons": adaptive_neural_reasons,
         "gain_domains": int(gain_domains),
         "admission_alpha": NEXT_STAGE_ALPHA,
         "exact_promotions": int(exact_promotions),
@@ -263,20 +296,29 @@ def _next_stage_admission(
         "completion_limited_cells": int(completion_limited_cells),
     }
 
+
 CONTROL_ARM_NAMES: Final[tuple[str, ...]] = ("vanilla", "vanilla_equal_compute")
 RESOURCE_DOMINATING_CONTROL_ARM: Final[str] = "vanilla_resource_dominating"
 CLAIM_ARM_NAMES: Final[frozenset[str]] = frozenset({"complete_system_closed_book", "full_stack"})
 DIAGNOSTIC_ARM_NAMES: Final[frozenset[str]] = frozenset(
     {
         "complete_system_adaptation_ablation",
+        "complete_system_executable_ablation",
         "full_stack_disposition",
         "full_stack_oracle",
         "rlc_mechanism",
         "vanilla_long",
     }
 )
+COMPLETE_SYSTEM_PROFILES: Final[frozenset[str]] = frozenset(
+    {
+        "complete_closed_book",
+        "complete_closed_book_adaptation_ablation",
+        "complete_closed_book_executable_ablation",
+    }
+)
 RUNTIME_STACK_ARM_NAMES: Final[frozenset[str]] = frozenset(
-    arm.name for arm in ARMS if arm.profile in {"complete_closed_book", "full", "full_oracle"}
+    arm.name for arm in ARMS if arm.profile in COMPLETE_SYSTEM_PROFILES | {"full", "full_oracle"}
 )
 
 
@@ -309,6 +351,7 @@ def _expand_requested_arms(
         expanded.add(RESOURCE_DOMINATING_CONTROL_ARM)
     if "complete_system_closed_book" in expanded:
         expanded.add("complete_system_adaptation_ablation")
+        expanded.add("complete_system_executable_ablation")
     if RESOURCE_DOMINATING_CONTROL_ARM in expanded:
         expanded.add("complete_system_closed_book")
     return [arm for arm in ARMS if arm.name in expanded]
@@ -565,6 +608,7 @@ def _build_config(
     full_profiles = {
         "complete_closed_book",
         "complete_closed_book_adaptation_ablation",
+        "complete_closed_book_executable_ablation",
         "full",
         "full_oracle",
     }
@@ -658,6 +702,7 @@ def _build_config(
         # research arm was how "confidently wrong" got measured and reported
         # as a property of recurrence.
         answer_replacement_enabled=full,
+        objective_program_enabled=(full and profile != "complete_closed_book_executable_ablation"),
         local_repair_enabled=full,
         # Both private branches must have a chance to become gradeable. A
         # one-attempt ceiling made an invalid first branch consume the entire
@@ -897,8 +942,7 @@ def _resource_target_reached(
         int(control_resource.get("estimated_flops") or 0)
         >= int(target_resource.get("estimated_flops") or 0)
         and all(
-            int(control_resource["totals"][name])
-            >= int(target_resource["totals"][name])
+            int(control_resource["totals"][name]) >= int(target_resource["totals"][name])
             for name in NON_NEURAL_PARITY_COUNTERS
         )
     )
@@ -909,8 +953,7 @@ def _tool_target_reached(
     target_resource: dict[str, Any],
 ) -> bool:
     return all(
-        int(control_resource["totals"][name])
-        >= int(target_resource["totals"][name])
+        int(control_resource["totals"][name]) >= int(target_resource["totals"][name])
         for name in ("tool_calls", "tool_input_bytes", "tool_result_bytes")
     )
 
@@ -1010,9 +1053,7 @@ def _run_vanilla_resource_dominating(
         raise RuntimeError("resource-dominating target accounting is incomplete")
     if control_information["accounting_complete"] is not True:
         raise RuntimeError("resource-dominating information envelope is incomplete")
-    expected_sources = {
-        source["source_id"]: source for source in control_information["sources"]
-    }
+    expected_sources = {source["source_id"]: source for source in control_information["sources"]}
     if set(expected_sources) != {"rendered_model_input", "value_controller_evidence"}:
         raise RuntimeError("resource-dominating information envelope is not closed-book")
     encoded_tokens = json.dumps(
@@ -1022,8 +1063,7 @@ def _run_vanilla_resource_dominating(
     ).encode("ascii")
     prompt_source = expected_sources["rendered_model_input"]
     if (
-        prompt_source["content_sha256"]
-        != hashlib.sha256(encoded_tokens).hexdigest()
+        prompt_source["content_sha256"] != hashlib.sha256(encoded_tokens).hexdigest()
         or prompt_source["byte_count"] != len(encoded_tokens)
         or prompt_source["token_count"] != len(prompt_tokens)
     ):
@@ -1038,11 +1078,9 @@ def _run_vanilla_resource_dominating(
         separators=(",", ":"),
     ).encode("utf-8")
     evidence_source = expected_sources["value_controller_evidence"]
-    if (
-        evidence_source["content_sha256"]
-        != hashlib.sha256(policy_payload).hexdigest()
-        or evidence_source["byte_count"] != len(policy_payload)
-    ):
+    if evidence_source["content_sha256"] != hashlib.sha256(
+        policy_payload
+    ).hexdigest() or evidence_source["byte_count"] != len(policy_payload):
         raise RuntimeError("resource-dominating policy evidence differs from treatment")
     if control_information["policies"].get("tools") != policy_sha256(
         {"policy": "no_external_tools_inside_rlc_v1"}
@@ -1071,9 +1109,7 @@ def _run_vanilla_resource_dominating(
     verifier_source_path = inspect.getsourcefile(verifier_identity)
     verifier_source_sha256 = "none"
     if verifier_source_path:
-        verifier_source_sha256 = hashlib.sha256(
-            Path(verifier_source_path).read_bytes()
-        ).hexdigest()
+        verifier_source_sha256 = hashlib.sha256(Path(verifier_source_path).read_bytes()).hexdigest()
     expected_verifier_policy = policy_sha256(
         {
             "module": verifier_identity.__module__,
@@ -1221,8 +1257,7 @@ def _run_vanilla_resource_dominating(
                 )
         else:
             raise RuntimeError(
-                "equal-tool ordinary control could not reach the treatment's "
-                "measured tool envelope"
+                "equal-tool ordinary control could not reach the treatment's measured tool envelope"
             )
 
     for _ in range(max_samples - len(outputs)):
@@ -1516,25 +1551,22 @@ def _resource_dominating_control_receipt_issues(
     )
 
     try:
-        setup_resource = validate_resource_receipt(
-            receipt.get("setup_resource_accounting")
-        )
+        setup_resource = validate_resource_receipt(receipt.get("setup_resource_accounting"))
     except (TypeError, ValueError):
         issues.append("resource_control_setup_resource_invalid")
         setup_resource = None
     control_acquisition = receipt.get("control_acquisition")
-    if not isinstance(control_acquisition, dict) or control_acquisition.get(
-        "schema"
-    ) != "aura.rlc.resource_control_acquisition.v1":
+    if (
+        not isinstance(control_acquisition, dict)
+        or control_acquisition.get("schema") != "aura.rlc.resource_control_acquisition.v1"
+    ):
         issues.append("resource_control_acquisition_invalid")
     elif control_acquisition.get("status") != "not_required":
         issues.append("resource_control_acquisition_status_invalid")
 
     outputs: list[str] = []
     scores: list[float] = []
-    resources: list[dict[str, Any]] = (
-        [setup_resource] if setup_resource is not None else []
-    )
+    resources: list[dict[str, Any]] = [setup_resource] if setup_resource is not None else []
     generated_tokens = 0
     equal_tool_candidates = 0
     for index, candidate in enumerate(candidates):
@@ -1545,8 +1577,7 @@ def _resource_dominating_control_receipt_issues(
         score = candidate.get("verifier_score")
         if (
             not isinstance(text, str)
-            or candidate.get("text_sha256")
-            != hashlib.sha256(text.encode("utf-8")).hexdigest()
+            or candidate.get("text_sha256") != hashlib.sha256(text.encode("utf-8")).hexdigest()
             or not isinstance(score, (int, float))
             or isinstance(score, bool)
             or not math.isfinite(float(score))
@@ -1599,16 +1630,12 @@ def _resource_dominating_control_receipt_issues(
 
                 operation_rows_valid = operation_rows_valid and operation_rows == (
                     _summarize_executable_operations(
-                        equal_tool_receipt["amplifier_receipt"].get(
-                            "cognitive_operations"
-                        )
-                        or []
+                        equal_tool_receipt["amplifier_receipt"].get("cognitive_operations") or []
                     )
                 )
             if (
                 not isinstance(equal_tool_receipt, dict)
-                or equal_tool_receipt.get("schema")
-                != "aura.rlc.equal_tool_ordinary_control.v1"
+                or equal_tool_receipt.get("schema") != "aura.rlc.equal_tool_ordinary_control.v1"
                 or equal_tool_receipt.get("task_id")
                 != (task.task_id if task is not None else receipt.get("task_id"))
                 or equal_tool_receipt.get("cycle_index") != equal_tool_candidates - 1
@@ -1616,8 +1643,7 @@ def _resource_dominating_control_receipt_issues(
                 or equal_tool_receipt.get("latent_recurrence_used") is not False
                 or equal_tool_receipt.get("final_text_sha256")
                 != hashlib.sha256(text.encode("utf-8")).hexdigest()
-                or equal_tool_receipt.get("generated_tokens")
-                != candidate.get("generated_tokens")
+                or equal_tool_receipt.get("generated_tokens") != candidate.get("generated_tokens")
                 or not operation_rows_valid
             ):
                 issues.append("resource_control_equal_tool_receipt_invalid")
@@ -1637,9 +1663,8 @@ def _resource_dominating_control_receipt_issues(
         if task is not None:
             verifier = _episode_verifier(task)
             reconstructed_score = float(verifier(text))
-            if (
-                reconstructed_score != float(score)
-                or verifier.to_receipt() != candidate.get("verifier_receipt")
+            if reconstructed_score != float(score) or verifier.to_receipt() != candidate.get(
+                "verifier_receipt"
             ):
                 issues.append("resource_control_verifier_evidence_mismatch")
         outputs.append(text)
@@ -1670,9 +1695,7 @@ def _resource_dominating_control_receipt_issues(
     try:
         aggregate = ResourceLedger.aggregate(resources).to_receipt()
         recorded_resource = validate_resource_receipt(receipt.get("resource_accounting"))
-        recorded_information = validate_information_receipt(
-            receipt.get("information_accounting")
-        )
+        recorded_information = validate_information_receipt(receipt.get("information_accounting"))
         recorded_certificate = validate_control_resource_dominance_certificate(
             receipt.get("resource_dominance_certificate")
         )
@@ -1687,9 +1710,7 @@ def _resource_dominating_control_receipt_issues(
             issues.append("resource_control_cell_information_mismatch")
         if cell.get("resource_dominance_certificate") != recorded_certificate:
             issues.append("resource_control_cell_certificate_mismatch")
-        tool_target = recorded_certificate["resource_dimensions"]["tool_calls"][
-            "treatment"
-        ]
+        tool_target = recorded_certificate["resource_dimensions"]["tool_calls"]["treatment"]
         if tool_target > 0 and equal_tool_candidates == 0:
             issues.append("resource_control_equal_tool_path_absent")
         expected_cycle_limit = min(
@@ -1697,9 +1718,7 @@ def _resource_dominating_control_receipt_issues(
             max(
                 0,
                 int(tool_target)
-                - int((setup_resource or {"totals": {"tool_calls": 0}})["totals"][
-                    "tool_calls"
-                ])
+                - int((setup_resource or {"totals": {"tool_calls": 0}})["totals"]["tool_calls"])
                 + 2,
             ),
         )
@@ -1954,18 +1973,13 @@ def _manifest_integrity_issues(
     arm_tokens_valid = bool(
         isinstance(arm_tokens, dict)
         and set(arm_tokens) == required_set
-        and all(
-            type(value) is int and value > 0 for value in arm_tokens.values()
-        )
+        and all(type(value) is int and value > 0 for value in arm_tokens.values())
     )
     if not arm_tokens_valid:
         issues.append("arm_token_budget_set_mismatch")
     else:
         expected_task_tokens = {
-            arm: {
-                task.task_id: _task_decode_max_tokens(task, arm_tokens[arm])
-                for task in tasks
-            }
+            arm: {task.task_id: _task_decode_max_tokens(task, arm_tokens[arm]) for task in tasks}
             for arm in required_set
         }
         if (
@@ -2285,9 +2299,9 @@ def main() -> int:
             file=sys.stderr,
         )
         return 2
-    domains = tuple(
-        value.strip() for value in args.domains.split(",") if value.strip()
-    ) or tuple(ft.FRONTIER_DOMAINS)
+    domains = tuple(value.strip() for value in args.domains.split(",") if value.strip()) or tuple(
+        ft.FRONTIER_DOMAINS
+    )
     if len(set(domains)) != len(domains) or any(
         domain not in ft.FRONTIER_DOMAINS for domain in domains
     ):
@@ -2341,10 +2355,7 @@ def main() -> int:
         a.name: (args.max_tokens if a.max_tokens is None else a.max_tokens) for a in selected
     }
     task_tokens = {
-        arm: {
-            task.task_id: _task_decode_max_tokens(task, base_tokens)
-            for task in tasks
-        }
+        arm: {task.task_id: _task_decode_max_tokens(task, base_tokens) for task in tasks}
         for arm, base_tokens in arm_tokens.items()
     }
     implementation_files = _implementation_manifest()
@@ -2490,9 +2501,7 @@ def main() -> int:
                 )
                 acquisition = dict(system.get("cognitive_acquisition") or {})
                 complete_acquisition_by_task[task.task_id] = acquisition
-                continuation_objective = str(
-                    acquisition.get("continuation_objective") or ""
-                )
+                continuation_objective = str(acquisition.get("continuation_objective") or "")
                 complete_prompt_by_task[task.task_id] = (
                     _render_objective(tokenizer, continuation_objective)
                     if acquisition.get("status") == "completed_new_context"
@@ -2645,15 +2654,10 @@ def main() -> int:
                             task=task,
                             target_resource=target_resource,
                             target_information=target_information,
-                            treatment_acquisition=complete_acquisition_by_task.get(
-                                task.task_id
-                            ),
+                            treatment_acquisition=complete_acquisition_by_task.get(task.task_id),
                             campaign_seed=args.seed,
                             incumbent_text=str(
-                                incumbent_artifact_to_value(paired_incumbent).get(
-                                    "text"
-                                )
-                                or ""
+                                incumbent_artifact_to_value(paired_incumbent).get("text") or ""
                             ),
                         )
                     elif config is None:
@@ -2690,42 +2694,23 @@ def main() -> int:
                         # arm name carries so no downstream reader can lose
                         # track of which one produced a number.
                         verifier = None
-                        if spec.profile in {
-                            "complete_closed_book",
-                            "complete_closed_book_adaptation_ablation",
-                            "full",
-                        }:
+                        if spec.profile in COMPLETE_SYSTEM_PROFILES | {"full"}:
                             verifier = _episode_verifier(task)
                         elif spec.profile == "full_oracle":
                             verifier = _oracle_verifier(task)
                         incumbent = (
                             incumbent_by_task.get(task.task_id)
-                            if spec.profile
-                            in {
-                                "complete_closed_book",
-                                "complete_closed_book_adaptation_ablation",
-                                "full",
-                                "full_oracle",
-                            }
+                            if spec.profile in COMPLETE_SYSTEM_PROFILES | {"full", "full_oracle"}
                             else None
                         )
                         if (
-                            spec.profile
-                            in {
-                                "complete_closed_book",
-                                "complete_closed_book_adaptation_ablation",
-                                "full",
-                                "full_oracle",
-                            }
+                            spec.profile in COMPLETE_SYSTEM_PROFILES | {"full", "full_oracle"}
                             and incumbent is None
                         ):
                             raise EpisodeFault(
                                 "paired canonical ordinary-decode incumbent is absent"
                             )
-                        if spec.profile in {
-                            "complete_closed_book",
-                            "complete_closed_book_adaptation_ablation",
-                        }:
+                        if spec.profile in COMPLETE_SYSTEM_PROFILES:
                             text, receipt = _run_complete_system_closed_book(
                                 model,
                                 config,
@@ -2742,6 +2727,9 @@ def main() -> int:
                                 worker_identity=worker_identity,
                                 runtime_identity=runtime_identity,
                                 campaign_seed=args.seed,
+                                executable_reasoning_enabled=(
+                                    spec.profile != "complete_closed_book_executable_ablation"
+                                ),
                             )
                             system_receipt = receipt.get("complete_system_closed_book") or {}
                             from core.brain.llm.latent_cortex.resource_accounting import (
@@ -2756,15 +2744,11 @@ def main() -> int:
                                 system_receipt.get("information_accounting")
                             )
                             if spec.profile == "complete_closed_book":
-                                complete_resource_by_task[task.task_id] = (
-                                    cell_resource_accounting
-                                )
+                                complete_resource_by_task[task.task_id] = cell_resource_accounting
                                 complete_information_by_task[task.task_id] = (
                                     cell_information_accounting
                                 )
-                            acquisition = dict(
-                                system_receipt.get("cognitive_acquisition") or {}
-                            )
+                            acquisition = dict(system_receipt.get("cognitive_acquisition") or {})
                             if spec.profile == "complete_closed_book":
                                 complete_acquisition_by_task[task.task_id] = acquisition
                             continuation_objective = str(
@@ -2773,8 +2757,7 @@ def main() -> int:
                             if spec.profile == "complete_closed_book":
                                 complete_prompt_by_task[task.task_id] = (
                                     _render_objective(tokenizer, continuation_objective)
-                                    if acquisition.get("status")
-                                    == "completed_new_context"
+                                    if acquisition.get("status") == "completed_new_context"
                                     and continuation_objective
                                     else _render_prompt(tokenizer, task)
                                 )
@@ -2862,11 +2845,7 @@ def main() -> int:
                                 .get("promotion", {})
                                 .get("decision")
                             )
-                            if spec.profile
-                            in {
-                                "complete_closed_book",
-                                "complete_closed_book_adaptation_ablation",
-                            }
+                            if spec.profile in COMPLETE_SYSTEM_PROFILES
                             else (receipt.get("answer_replacement") or {}).get("decision")
                         ),
                         "answer_replacement_reason": (
@@ -2875,31 +2854,17 @@ def main() -> int:
                                 .get("promotion", {})
                                 .get("reason")
                             )
-                            if spec.profile
-                            in {
-                                "complete_closed_book",
-                                "complete_closed_book_adaptation_ablation",
-                            }
+                            if spec.profile in COMPLETE_SYSTEM_PROFILES
                             else (receipt.get("answer_replacement") or {}).get("reason")
                         ),
                         "full_stack_evidence": (
                             _full_stack_evidence(receipt)
-                            if spec.profile
-                            in {
-                                "complete_closed_book",
-                                "complete_closed_book_adaptation_ablation",
-                                "full",
-                                "full_oracle",
-                            }
+                            if spec.profile in COMPLETE_SYSTEM_PROFILES | {"full", "full_oracle"}
                             else None
                         ),
                         "complete_system_evidence": (
                             _complete_system_evidence(receipt)
-                            if spec.profile
-                            in {
-                                "complete_closed_book",
-                                "complete_closed_book_adaptation_ablation",
-                            }
+                            if spec.profile in COMPLETE_SYSTEM_PROFILES
                             else None
                         ),
                         "incumbent_artifact": (
@@ -2909,9 +2874,7 @@ def main() -> int:
                         ),
                         "resource_accounting": cell_resource_accounting,
                         "information_accounting": cell_information_accounting,
-                        "resource_dominance_certificate": (
-                            cell_resource_dominance_certificate
-                        ),
+                        "resource_dominance_certificate": (cell_resource_dominance_certificate),
                         "control_samples": cell_control_samples,
                         "text": text,
                         "error": error,
@@ -3134,7 +3097,7 @@ def grade(out_dir: Path, tasks) -> dict[str, Any]:
                 continue
             evidence = (
                 cell.get("complete_system_evidence")
-                if arm == "complete_system_closed_book"
+                if cell.get("arm_profile") in COMPLETE_SYSTEM_PROFILES
                 else cell.get("full_stack_evidence")
             )
             issues = (
@@ -3142,7 +3105,7 @@ def grade(out_dir: Path, tasks) -> dict[str, Any]:
                 if isinstance(evidence, dict)
                 else [
                     "complete_system_runtime_evidence_absent"
-                    if arm == "complete_system_closed_book"
+                    if cell.get("arm_profile") in COMPLETE_SYSTEM_PROFILES
                     else "full_stack_runtime_evidence_absent"
                 ]
             )
@@ -3221,9 +3184,7 @@ def grade(out_dir: Path, tasks) -> dict[str, Any]:
     mechanism_complete = not mechanism_issues
     complete = not faulted and coverage_complete and mechanism_complete
     resource_advantaged_control_proven = bool(
-        resource_dominating_control_measured
-        and complete
-        and not resource_dominance_issues
+        resource_dominating_control_measured and complete and not resource_dominance_issues
     )
     # A battery the ordinary decode cannot score on has not measured the
     # recurrent path either: 0 >= 0 satisfies every inequality below, so mutual
@@ -3253,9 +3214,7 @@ def grade(out_dir: Path, tasks) -> dict[str, Any]:
     beats_equal_compute = bool(
         resource_matched_control_proven and outscored_preliminary_best_of_three
     )
-    resource_dominating_correct = arms.get(RESOURCE_DOMINATING_CONTROL_ARM, {}).get(
-        "correct"
-    )
+    resource_dominating_correct = arms.get(RESOURCE_DOMINATING_CONTROL_ARM, {}).get("correct")
     outscored_resource_advantaged_control = bool(
         reaches_parity
         and resource_advantaged_control_proven
@@ -3292,27 +3251,33 @@ def grade(out_dir: Path, tasks) -> dict[str, Any]:
     adaptation_lift_task_ids = {
         task_id
         for task_id, candidate in treatment_rows.items()
-        if candidate["correct"]
-        and not adaptation_rows.get(task_id, {}).get("correct", False)
+        if candidate["correct"] and not adaptation_rows.get(task_id, {}).get("correct", False)
     }
     adaptation_lifts = len(adaptation_lift_task_ids)
     adaptation_regressions = sum(
         1
         for task_id, candidate in treatment_rows.items()
-        if not candidate["correct"]
-        and adaptation_rows.get(task_id, {}).get("correct", False)
+        if not candidate["correct"] and adaptation_rows.get(task_id, {}).get("correct", False)
     )
-    causal_gain_task_ids = {
+    producer_rows = scored.get("complete_system_executable_ablation", {})
+    producer_lift_task_ids = {
         task_id
-        for task_id in adaptation_lift_task_ids
+        for task_id, candidate in treatment_rows.items()
+        if candidate["correct"] and not producer_rows.get(task_id, {}).get("correct", False)
+    }
+    producer_lifts = len(producer_lift_task_ids)
+    producer_regressions = sum(
+        1
+        for task_id, candidate in treatment_rows.items()
+        if not candidate["correct"] and producer_rows.get(task_id, {}).get("correct", False)
+    )
+    architecture_gain_task_ids = {
+        task_id
+        for task_id in producer_lift_task_ids
         if not vanilla_rows.get(task_id, {}).get("correct", False)
     }
     gain_domains = len(
-        {
-            by_id[task_id].domain
-            for task_id in causal_gain_task_ids
-            if task_id in by_id
-        }
+        {by_id[task_id].domain for task_id in architecture_gain_task_ids if task_id in by_id}
     )
     complete_cells = [
         cell
@@ -3326,19 +3291,19 @@ def grade(out_dir: Path, tasks) -> dict[str, Any]:
         in {
             "complete_system_closed_book",
             "complete_system_adaptation_ablation",
+            "complete_system_executable_ablation",
         }
     ]
     exact_promotions = sum(
         cell.get("answer_replacement_decision") == "replace"
-        and cell.get("answer_replacement_reason")
-        == "exact_candidate_replaces_unproven_incumbent"
+        and cell.get("answer_replacement_reason") == "exact_candidate_replaces_unproven_incumbent"
         for cell in complete_cells
     )
     latent_accepted_steps = sum(
         int(
-            (
-                ((cell.get("complete_system_evidence") or {}).get("engine") or {})
-            ).get("latent_opt_accepted_steps")
+            ((cell.get("complete_system_evidence") or {}).get("engine") or {}).get(
+                "latent_opt_accepted_steps"
+            )
             or 0
         )
         for cell in complete_cells
@@ -3365,17 +3330,15 @@ def grade(out_dir: Path, tasks) -> dict[str, Any]:
         treatment_regressions=treatment_regressions,
         adaptation_lifts=adaptation_lifts,
         adaptation_regressions=adaptation_regressions,
+        producer_lifts=producer_lifts,
+        producer_regressions=producer_regressions,
         gain_domains=gain_domains,
         exact_promotions=exact_promotions,
         latent_accepted_steps=latent_accepted_steps,
         fast_weight_applications=fast_weight_applications,
         completion_limited_cells=completion_limited_cells,
-        treatment_correct=int(
-            arms.get("complete_system_closed_book", {}).get("correct", 0)
-        ),
-        preliminary_control_correct=(
-            int(equal_compute) if equal_compute is not None else None
-        ),
+        treatment_correct=int(arms.get("complete_system_closed_book", {}).get("correct", 0)),
+        preliminary_control_correct=(int(equal_compute) if equal_compute is not None else None),
     )
     if not complete:
         if manifest_issues:
@@ -3462,9 +3425,7 @@ def grade(out_dir: Path, tasks) -> dict[str, Any]:
         "resource_matched_control_proven": resource_matched_control_proven,
         "resource_advantaged_control_proven": resource_advantaged_control_proven,
         "resource_dominance_issues": resource_dominance_issues,
-        "outscored_resource_advantaged_control": (
-            outscored_resource_advantaged_control
-        ),
+        "outscored_resource_advantaged_control": (outscored_resource_advantaged_control),
         "paired_vanilla_floor": {
             "holds": floor_holds,
             "right_to_wrong_regressions": sorted(floor_violations),

@@ -2677,6 +2677,9 @@ class LatentCortexService:
                     # -- so a validator still expecting it would reject every
                     # receipt the engine now produces as unproven.
                     expected_enabled=executed_config.answer_replacement_enabled,
+                    expected_objective_program_enabled=(
+                        executed_config.objective_program_enabled
+                    ),
                     expected_margin=executed_config.answer_replacement_margin,
                     expected_max_output_tokens=replacement_output_limit,
                     expected_output_text=(

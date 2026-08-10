@@ -7015,6 +7015,7 @@ class LatentCortexEngine:
                     # public answer until an independent gain gate promotes
                     # them". This is that gate.
                     enabled=self.config.answer_replacement_enabled,
+                    objective_program_enabled=self.config.objective_program_enabled,
                     margin=self.config.answer_replacement_margin,
                     max_output_tokens=replacement_output_limit,
                 )

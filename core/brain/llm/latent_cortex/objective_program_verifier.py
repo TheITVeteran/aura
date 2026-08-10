@@ -8,14 +8,18 @@ compared with the candidate's strict terminal JSON object.
 
 from __future__ import annotations
 
+import ast
 import hashlib
+import itertools
 import json
+import math
 import re
 from dataclasses import dataclass
+from fractions import Fraction
 from typing import Any
 
-OBJECTIVE_PROGRAM_VERIFIER_SCHEMA = "aura.rlc.objective_program_verifier.v3"
-OBJECTIVE_PROGRAM_SOLUTION_SCHEMA = "aura.rlc.objective_program_solution.v3"
+OBJECTIVE_PROGRAM_VERIFIER_SCHEMA = "aura.rlc.objective_program_verifier.v4"
+OBJECTIVE_PROGRAM_SOLUTION_SCHEMA = "aura.rlc.objective_program_solution.v4"
 
 _MODULAR_OBJECTIVE_RE = re.compile(
     r"\AStart at the given value and apply each operation modulo "
@@ -35,6 +39,71 @@ _STABLE_NEAREST_TRAVERSAL_RE = re.compile(
     r"the most recently selected value; numeric value; original zero-based "
     r"position\. Return the complete selected-value sequence\. Its checksum is the "
     r"sum of one-based output position multiplied by value\.",
+)
+_SEPARATED_SUBSET_RE = re.compile(
+    r"\AFresh combinatorics task\. From the set (?P<values>\[-?\d+(?:,\s*-?\d+){1,31}\]), "
+    r"choose exactly (?P<count>\d+) distinct values\. Adjacent values in sorted chosen "
+    r"order must differ by at least (?P<separation>\d+), and the chosen sum must be "
+    r"from (?P<low>-?\d+) through (?P<high>-?\d+), inclusive\. Count all valid subsets "
+    r"and give the lexicographically smallest valid subset in ascending order\.",
+)
+_STATEFUL_TRACE_RE = re.compile(
+    r"\AFresh code-semantics task\. Evaluate this exact Python function without executing it:\n\n"
+    r"def audit\(events\):\n"
+    r"    balances = \{\}\n"
+    r"    pressure = \[\]\n"
+    r"    for name, delta in events:\n"
+    r"        balances\[name\] = balances\.get\(name, 0\) \+ delta\n"
+    r"        if balances\[name\] == 0:\n"
+    r"            del balances\[name\]\n"
+    r"        pressure\.append\(sum\(abs\(v\) for v in balances\.values\(\)\)\)\n"
+    r"    return sorted\(balances\.items\(\)\), pressure\n\n"
+    r"The two inputs, in order, are (?P<inputs>\[\[.*?\]\])\. Return each result as an "
+    r"object whose state is a JSON list of \[name, value\] pairs and whose pressure is a "
+    r"list\. Also report the tight worst-case time complexity in n events, assuming "
+    r"dictionary operations are O\(1\)\.",
+    re.DOTALL,
+)
+_CAUSAL_CHAIN_RE = re.compile(
+    r"\AFresh causal-inference task\. Three measured variables have baseline values "
+    r"(?P<root>[a-z][a-z0-9_]*)=(?P<root_base>-?\d+), "
+    r"(?P<mediator>[a-z][a-z0-9_]*)=(?P<mediator_base>-?\d+), "
+    r"(?P<downstream>[a-z][a-z0-9_]*)=(?P<downstream_base>-?\d+)\. "
+    r"Independent interventions produced these changes relative to baseline: setting "
+    r"(?P=root) up by (?P<root_delta>\d+) changed (?P=mediator) by "
+    r"(?P<mediator_change>[+-]\d+) and (?P=downstream) by "
+    r"(?P<downstream_change>[+-]\d+); setting (?P=mediator) up by "
+    r"(?P<mediator_delta>\d+) left (?P=root) unchanged and changed (?P=downstream) "
+    r"by (?P<mediator_downstream_change>[+-]\d+); setting (?P=downstream) up by "
+    r"(?P<downstream_delta>\d+) left both other variables unchanged\. Assume "
+    r"deterministic linear effects and no hidden common cause\. Identify root, mediator, "
+    r"and downstream variables, then predict the absolute value of (?P=downstream) when "
+    r"(?P=root) is set (?P<predict_delta>\d+) above baseline\.",
+)
+_PLANNING_RE = re.compile(
+    r"\AFresh planning task\. One crew executes at most one task at a time, starts at "
+    r"time 0, and may skip tasks\. A selected task may start only after every required "
+    r"task has completed\. It earns its reward only if completion is no later than its "
+    r"own deadline and the overall horizon (?P<horizon>\d+)\. Tasks are "
+    r"(?P<tasks>\[\{.*?\}\])\. Maximize total reward; then minimize makespan\. Break "
+    r"any remaining tie by selecting the alphabetically earliest sequence of task "
+    r"labels\. Return the selected order, reward, and makespan\.",
+    re.DOTALL,
+)
+_BAYES_RE = re.compile(
+    r"\AFresh calibration task\. Before evidence E, hypothesis H has probability "
+    r"(?P<prior>\d+/\d+)\. The likelihood of E is (?P<like_h>\d+/\d+) if H is true "
+    r"and (?P<like_not_h>\d+/\d+) if H is false\. Using exact Bayes updating, return "
+    r"the more probable choice \(H wins ties\), the reduced posterior probability of H, "
+    r"and its band: below_50, 50_to_69, 70_to_89, or 90_to_100\.",
+)
+_PREMISE_AUDIT_RE = re.compile(
+    r"\AFresh premise-audit task\. For each project, score = impact multiplied by "
+    r"reliability minus cost\. The data are (?P<projects>\[\{.*?\}\])\. The claim says "
+    r"project (?P<claim>[A-Z][A-Z0-9_]*) has the highest score\. Check the premise "
+    r"instead of accepting it\. Ties are won by the lexicographically smaller name\. "
+    r"Return whether the claim is valid, the actual winner, and its score\.",
+    re.DOTALL,
 )
 _BOOLEAN_TOKEN_RE = re.compile(r"\s*(?:(?P<bit>[01])|(?P<op>not|and|or|xor)|(?P<paren>[()]))")
 _JSON_FENCE_RE = re.compile(
@@ -216,11 +285,7 @@ def _stable_nearest_expected(
     ):
         raise ValueError("stable_nearest_values_invalid")
     indexed = list(enumerate(values))
-    median_rank = (
-        (len(values) - 1) // 2
-        if match.group("median") == "lower"
-        else len(values) // 2
-    )
+    median_rank = (len(values) - 1) // 2 if match.group("median") == "lower" else len(values) // 2
     first = sorted(indexed, key=lambda item: (item[1], item[0]))[median_rank]
     order = [first]
     remaining = [item for item in indexed if item != first]
@@ -237,15 +302,307 @@ def _stable_nearest_expected(
         order.append(chosen)
         remaining.remove(chosen)
     sequence = [value for _original_index, value in order]
-    checksum = sum(
-        output_index * value for output_index, value in enumerate(sequence, start=1)
-    )
+    checksum = sum(output_index * value for output_index, value in enumerate(sequence, start=1))
     return {"sequence": sequence, "checksum": checksum}, {
         "input_count": len(values),
         "median_kind": match.group("median"),
         "median_rank_zero_based": median_rank,
         "original_indices_sha256": _sha([index for index, _value in order]),
         "selection_trace_sha256": _sha(sequence),
+    }
+
+
+def _literal_list(raw: str, *, role: str) -> list[Any]:
+    try:
+        value = ast.literal_eval(raw)
+    except (SyntaxError, ValueError) as exc:
+        raise ValueError(f"{role}_literal_invalid") from exc
+    if not isinstance(value, list):
+        raise ValueError(f"{role}_not_list")
+    return value
+
+
+def _separated_subset_expected(
+    match: re.Match[str],
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    values = json.loads(match.group("values"))
+    choose = int(match.group("count"))
+    separation = int(match.group("separation"))
+    low, high = int(match.group("low")), int(match.group("high"))
+    if (
+        not isinstance(values, list)
+        or not 2 <= len(values) <= 32
+        or len(set(values)) != len(values)
+        or any(type(value) is not int or not -(1 << 31) <= value < (1 << 31) for value in values)
+        or not 1 <= choose <= min(10, len(values))
+        or not 0 <= separation <= 1_000_000
+        or low > high
+    ):
+        raise ValueError("separated_subset_bounds_invalid")
+    valid: list[tuple[int, ...]] = []
+    for candidate in itertools.combinations(sorted(values), choose):
+        if all(b - a >= separation for a, b in zip(candidate, candidate[1:], strict=False)):
+            total = sum(candidate)
+            if low <= total <= high:
+                valid.append(candidate)
+    witness = list(min(valid)) if valid else []
+    return {"count": len(valid), "witness": witness}, {
+        "input_count": len(values),
+        "choose": choose,
+        "candidate_count": sum(1 for _ in itertools.combinations(values, choose)),
+        "valid_subsets_sha256": _sha(valid),
+    }
+
+
+def _stateful_trace_expected(
+    match: re.Match[str],
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    inputs = _literal_list(match.group("inputs"), role="stateful_inputs")
+    if len(inputs) != 2 or any(not isinstance(events, list) for events in inputs):
+        raise ValueError("stateful_inputs_shape_invalid")
+    returns: list[dict[str, Any]] = []
+    event_count = 0
+    for events in inputs:
+        if not 1 <= len(events) <= 128:
+            raise ValueError("stateful_event_count_invalid")
+        balances: dict[str, int] = {}
+        pressure: list[int] = []
+        for event in events:
+            if (
+                not isinstance(event, (list, tuple))
+                or len(event) != 2
+                or not isinstance(event[0], str)
+                or re.fullmatch(r"[a-z][a-z0-9_]{0,31}", event[0]) is None
+                or type(event[1]) is not int
+                or not -1_000_000 <= event[1] <= 1_000_000
+            ):
+                raise ValueError("stateful_event_invalid")
+            name, delta = event
+            balances[name] = balances.get(name, 0) + delta
+            if balances[name] == 0:
+                del balances[name]
+            pressure.append(sum(abs(value) for value in balances.values()))
+        event_count += len(events)
+        returns.append(
+            {
+                "state": [[name, value] for name, value in sorted(balances.items())],
+                "pressure": pressure,
+            }
+        )
+    return {"returns": returns, "time_complexity": "O(n^2)"}, {
+        "input_count": len(inputs),
+        "event_count": event_count,
+        "returns_sha256": _sha(returns),
+    }
+
+
+def _causal_chain_expected(
+    match: re.Match[str],
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    labels = (
+        match.group("root"),
+        match.group("mediator"),
+        match.group("downstream"),
+    )
+    root_delta = int(match.group("root_delta"))
+    mediator_change = int(match.group("mediator_change"))
+    mediator_delta = int(match.group("mediator_delta"))
+    mediator_downstream_change = int(match.group("mediator_downstream_change"))
+    downstream_delta = int(match.group("downstream_delta"))
+    predict_delta = int(match.group("predict_delta"))
+    downstream_base = int(match.group("downstream_base"))
+    downstream_change = int(match.group("downstream_change"))
+    numeric_values = tuple(
+        int(match.group(field))
+        for field in (
+            "root_base",
+            "mediator_base",
+            "downstream_base",
+            "root_delta",
+            "mediator_change",
+            "downstream_change",
+            "mediator_delta",
+            "mediator_downstream_change",
+            "downstream_delta",
+            "predict_delta",
+        )
+    )
+    if len(set(labels)) != 3 or any(abs(value) > 1_000_000_000 for value in numeric_values):
+        raise ValueError("causal_program_bounds_invalid")
+    if min(root_delta, mediator_delta, downstream_delta) <= 0 or predict_delta < 0:
+        raise ValueError("causal_delta_invalid")
+    root_to_mediator = Fraction(mediator_change, root_delta)
+    mediator_to_downstream = Fraction(
+        mediator_downstream_change,
+        mediator_delta,
+    )
+    root_total_effect = Fraction(downstream_change, root_delta)
+    if root_to_mediator * mediator_to_downstream != root_total_effect:
+        raise ValueError("causal_interventions_inconsistent")
+    predicted = root_total_effect * predict_delta
+    if predicted.denominator != 1:
+        raise ValueError("causal_prediction_not_integral")
+    payload = {
+        "root": match.group("root"),
+        "mediator": match.group("mediator"),
+        "downstream": match.group("downstream"),
+        "predicted_downstream": downstream_base + predicted.numerator,
+    }
+    return payload, {
+        "root_intervention_delta": root_delta,
+        "root_total_downstream_effect": downstream_change,
+        "root_to_mediator_effect": str(root_to_mediator),
+        "mediator_to_downstream_effect": str(mediator_to_downstream),
+        "prediction_delta": predict_delta,
+        "total_effect_scaled_once": True,
+    }
+
+
+def _planning_expected(match: re.Match[str]) -> tuple[dict[str, Any], dict[str, Any]]:
+    horizon = int(match.group("horizon"))
+    tasks = _literal_list(match.group("tasks"), role="planning_tasks")
+    if not 1 <= horizon <= 1_000 or not 1 <= len(tasks) <= 9:
+        raise ValueError("planning_bounds_invalid")
+    by_name: dict[str, dict[str, Any]] = {}
+    for task in tasks:
+        if not isinstance(task, dict) or set(task) != {
+            "name",
+            "duration",
+            "deadline",
+            "reward",
+            "requires",
+        }:
+            raise ValueError("planning_task_shape_invalid")
+        name = task["name"]
+        if (
+            not isinstance(name, str)
+            or re.fullmatch(r"[A-Z][A-Z0-9_]{0,15}", name) is None
+            or name in by_name
+            or type(task["duration"]) is not int
+            or type(task["deadline"]) is not int
+            or type(task["reward"]) is not int
+            or not 1 <= task["duration"] <= horizon
+            or not 1 <= task["deadline"] <= horizon
+            or not 0 <= task["reward"] <= 1_000_000
+            or not isinstance(task["requires"], list)
+            or any(not isinstance(item, str) for item in task["requires"])
+            or len(set(task["requires"])) != len(task["requires"])
+            or name in task["requires"]
+        ):
+            raise ValueError("planning_task_invalid")
+        by_name[name] = task
+    if any(requirement not in by_name for task in tasks for requirement in task["requires"]):
+        raise ValueError("planning_requirement_unknown")
+    best: tuple[int, int, tuple[str, ...]] | None = None
+    feasible_count = 0
+    names = sorted(by_name)
+    for size in range(len(names) + 1):
+        for order in itertools.permutations(names, size):
+            selected = set(order)
+            if any(not set(by_name[name]["requires"]).issubset(selected) for name in order):
+                continue
+            completed: set[str] = set()
+            elapsed = 0
+            reward = 0
+            valid = True
+            for name in order:
+                task = by_name[name]
+                if not set(task["requires"]).issubset(completed):
+                    valid = False
+                    break
+                elapsed += task["duration"]
+                if elapsed > task["deadline"] or elapsed > horizon:
+                    valid = False
+                    break
+                reward += task["reward"]
+                completed.add(name)
+            if not valid:
+                continue
+            feasible_count += 1
+            score = (-reward, elapsed, order)
+            if best is None or score < best:
+                best = score
+    if best is None:  # the empty sequence is always feasible
+        raise ValueError("planning_no_feasible_schedule")
+    return {"order": list(best[2]), "reward": -best[0], "makespan": best[1]}, {
+        "task_count": len(tasks),
+        "feasible_schedule_count": feasible_count,
+        "search_space_upper_bound": sum(
+            math.factorial(len(tasks)) // math.factorial(len(tasks) - size)
+            for size in range(len(tasks) + 1)
+        ),
+    }
+
+
+def _bayes_expected(match: re.Match[str]) -> tuple[dict[str, Any], dict[str, Any]]:
+    try:
+        prior = Fraction(match.group("prior"))
+        like_h = Fraction(match.group("like_h"))
+        like_not_h = Fraction(match.group("like_not_h"))
+    except (ValueError, ZeroDivisionError) as exc:
+        raise ValueError("bayes_probability_invalid") from exc
+    if any(not 0 <= value <= 1 for value in (prior, like_h, like_not_h)):
+        raise ValueError("bayes_probability_bounds_invalid")
+    evidence = prior * like_h + (1 - prior) * like_not_h
+    if evidence == 0:
+        raise ValueError("bayes_zero_evidence")
+    posterior = prior * like_h / evidence
+    if posterior < Fraction(1, 2):
+        band = "below_50"
+    elif posterior < Fraction(7, 10):
+        band = "50_to_69"
+    elif posterior < Fraction(9, 10):
+        band = "70_to_89"
+    else:
+        band = "90_to_100"
+    return {
+        "choice": "H" if posterior >= Fraction(1, 2) else "not_H",
+        "posterior": f"{posterior.numerator}/{posterior.denominator}",
+        "confidence_band": band,
+    }, {
+        "prior": str(prior),
+        "evidence_probability": str(evidence),
+        "posterior_sha256": _text_sha(str(posterior)),
+    }
+
+
+def _premise_audit_expected(
+    match: re.Match[str],
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    projects = _literal_list(match.group("projects"), role="premise_projects")
+    if not 1 <= len(projects) <= 64:
+        raise ValueError("premise_project_count_invalid")
+    scored: list[tuple[int, str]] = []
+    names: set[str] = set()
+    for project in projects:
+        if not isinstance(project, dict) or set(project) != {
+            "name",
+            "impact",
+            "reliability",
+            "cost",
+        }:
+            raise ValueError("premise_project_shape_invalid")
+        name = project["name"]
+        values = (project["impact"], project["reliability"], project["cost"])
+        if (
+            not isinstance(name, str)
+            or re.fullmatch(r"[A-Z][A-Z0-9_]{0,15}", name) is None
+            or name in names
+            or any(
+                type(value) is not int or not -1_000_000 <= value <= 1_000_000 for value in values
+            )
+        ):
+            raise ValueError("premise_project_invalid")
+        names.add(name)
+        scored.append((project["impact"] * project["reliability"] - project["cost"], name))
+    winner_score, winner = min(scored, key=lambda row: (-row[0], row[1]))
+    return {
+        "premise_valid": winner == match.group("claim"),
+        "actual_winner": winner,
+        "actual_score": winner_score,
+    }, {
+        "project_count": len(projects),
+        "score_table_sha256": _sha(sorted((name, score) for score, name in scored)),
     }
 
 
@@ -258,6 +615,12 @@ def _execute_objective(objective: str) -> tuple[str, dict[str, Any], dict[str, A
     modular = _MODULAR_OBJECTIVE_RE.match(objective)
     boolean = _BOOLEAN_OBJECTIVE_RE.match(objective)
     stable_nearest = _STABLE_NEAREST_TRAVERSAL_RE.match(objective)
+    separated_subset = _SEPARATED_SUBSET_RE.match(objective)
+    stateful_trace = _STATEFUL_TRACE_RE.match(objective)
+    causal_chain = _CAUSAL_CHAIN_RE.match(objective)
+    planning = _PLANNING_RE.match(objective)
+    bayes = _BAYES_RE.match(objective)
+    premise_audit = _PREMISE_AUDIT_RE.match(objective)
     if modular is not None:
         family = "modular_chain"
         expected, execution = _modular_expected(modular)
@@ -267,6 +630,24 @@ def _execute_objective(objective: str) -> tuple[str, dict[str, Any], dict[str, A
     elif stable_nearest is not None:
         family = "stable_nearest_traversal"
         expected, execution = _stable_nearest_expected(stable_nearest)
+    elif separated_subset is not None:
+        family = "separated_subset_count"
+        expected, execution = _separated_subset_expected(separated_subset)
+    elif stateful_trace is not None:
+        family = "stateful_python_trace"
+        expected, execution = _stateful_trace_expected(stateful_trace)
+    elif causal_chain is not None:
+        family = "interventional_chain_inference"
+        expected, execution = _causal_chain_expected(causal_chain)
+    elif planning is not None:
+        family = "dependency_deadline_portfolio"
+        expected, execution = _planning_expected(planning)
+    elif bayes is not None:
+        family = "bayesian_frequency_update"
+        expected, execution = _bayes_expected(bayes)
+    elif premise_audit is not None:
+        family = "premise_audit_table"
+        expected, execution = _premise_audit_expected(premise_audit)
     else:
         return None
     return family, expected, execution
@@ -321,15 +702,37 @@ def _render_solution_witness(
             raise ValueError("stable_nearest_solution_witness_parse_failed")
         values = json.loads(match.group("values"))
         median_rank = (
-            (len(values) - 1) // 2
-            if match.group("median") == "lower"
-            else len(values) // 2
+            (len(values) - 1) // 2 if match.group("median") == "lower" else len(values) // 2
         )
         lines.append(
             f"Sort value/index pairs and choose the {match.group('median')} median at zero-based rank {median_rank}."
         )
         lines.append(
             "Then choose each remaining pair by (absolute distance, value, original index) and compute the weighted checksum."
+        )
+    elif family == "separated_subset_count":
+        lines.append(
+            "Enumerate every fixed-size subset, retain only subsets satisfying the adjacent-separation and inclusive-sum constraints, then choose the lexicographically first witness."
+        )
+    elif family == "stateful_python_trace":
+        lines.append(
+            "Simulate each event in order with an explicit balance map, delete zero balances, and recompute the pressure after every event."
+        )
+    elif family == "interventional_chain_inference":
+        lines.append(
+            "Use the asymmetric interventions to identify the root-to-mediator-to-downstream order and scale the observed root total effect exactly once."
+        )
+    elif family == "dependency_deadline_portfolio":
+        lines.append(
+            "Enumerate bounded task orders, enforce prerequisites and completion deadlines, then rank feasible schedules by reward, makespan, and lexical order."
+        )
+    elif family == "bayesian_frequency_update":
+        lines.append(
+            "Compute the exact evidence mass and normalize the H branch with rational arithmetic before assigning the declared confidence band."
+        )
+    elif family == "premise_audit_table":
+        lines.append(
+            "Recompute every project score and rank by descending score with the declared lexical tie-break before checking the premise."
         )
     else:  # pragma: no cover - family is closed by _execute_objective
         raise ValueError("objective_solution_witness_family_unknown")

@@ -41,8 +41,7 @@ def _write_evidence_manifest(
     arm_tokens = {name: 512 for name in required_arms}
     task_tokens = {
         name: {
-            task.task_id: sweep._task_decode_max_tokens(task, arm_tokens[name])
-            for task in tasks
+            task.task_id: sweep._task_decode_max_tokens(task, arm_tokens[name]) for task in tasks
         }
         for name in required_arms
     }
@@ -140,9 +139,7 @@ def test_completion_budget_is_task_aware_and_identical_across_arms():
     from core.brain.llm.latent_cortex import frontier_tasks as ft
 
     tasks = ft.generate_task_battery([20260809], difficulty=1)
-    budgets = {
-        task.domain: sweep._task_decode_max_tokens(task, 320) for task in tasks
-    }
+    budgets = {task.domain: sweep._task_decode_max_tokens(task, 320) for task in tasks}
 
     assert budgets["coding"] == 768
     assert budgets["long_horizon_planning"] == 640
@@ -189,6 +186,7 @@ def test_complete_system_request_expands_to_controls_without_narrower_treatments
         "vanilla_equal_compute",
         "complete_system_closed_book",
         "complete_system_adaptation_ablation",
+        "complete_system_executable_ablation",
         "vanilla_resource_dominating",
     ]
 
@@ -217,23 +215,26 @@ def test_staged_campaigns_do_not_pay_for_the_full_certificate_early():
         "vanilla",
         "complete_system_closed_book",
         "complete_system_adaptation_ablation",
+        "complete_system_executable_ablation",
     }
     assert pilot == {
         "vanilla",
         "vanilla_equal_compute",
         "complete_system_closed_book",
         "complete_system_adaptation_ablation",
+        "complete_system_executable_ablation",
     }
     assert certificate == {
         "vanilla",
         "vanilla_equal_compute",
         "complete_system_closed_book",
         "complete_system_adaptation_ablation",
+        "complete_system_executable_ablation",
         "vanilla_resource_dominating",
     }
 
 
-def test_stage_admission_blocks_expensive_runs_until_mechanisms_move():
+def test_stage_admission_separates_architecture_gain_from_neural_attribution():
     common = {
         "campaign_stage": "component",
         "complete": True,
@@ -242,6 +243,8 @@ def test_stage_admission_blocks_expensive_runs_until_mechanisms_move():
         "treatment_regressions": 0,
         "adaptation_lifts": 5,
         "adaptation_regressions": 0,
+        "producer_lifts": 5,
+        "producer_regressions": 0,
         "gain_domains": 3,
         "exact_promotions": 5,
         "completion_limited_cells": 0,
@@ -259,9 +262,13 @@ def test_stage_admission_blocks_expensive_runs_until_mechanisms_move():
         fast_weight_applications=0,
     )
 
-    assert inert["admitted"] is False
-    assert inert["reasons"] == ["neural_tissue_zero_yield"]
+    assert inert["admitted"] is True
+    assert inert["reasons"] == []
+    assert inert["architecture_admitted"] is True
+    assert inert["adaptive_neural_admitted"] is False
+    assert inert["adaptive_neural_reasons"] == ["neural_tissue_zero_yield"]
     assert moving["admitted"] is True
+    assert moving["adaptive_neural_admitted"] is True
     assert moving["next_stage"] == "pilot"
     assert moving["paired_sign_test_p"] == 0.03125
 
@@ -275,6 +282,8 @@ def test_pilot_must_beat_preliminary_control_before_certificate():
         treatment_regressions=0,
         adaptation_lifts=5,
         adaptation_regressions=0,
+        producer_lifts=5,
+        producer_regressions=0,
         gain_domains=3,
         exact_promotions=5,
         latent_accepted_steps=1,
@@ -296,6 +305,7 @@ def test_complete_system_config_runs_the_same_neural_pillars_as_full_stack():
         512,
         profile="complete_closed_book",
     )
+    assert config.objective_program_enabled is True
     assert config.latent_opt.enabled is True
     assert config.fast_weights.enabled is True
     assert config.local_repair_enabled is True
@@ -315,9 +325,28 @@ def test_adaptation_ablation_preserves_the_outer_system_but_removes_neural_updat
     assert config.recurrence.fixed_depth is False
     assert config.local_repair_enabled is True
     assert config.answer_replacement_enabled is True
+    assert config.objective_program_enabled is True
     assert config.latent_opt.enabled is False
     assert config.fast_weights.enabled is False
     assert config.verifier_accept_non_regression is False
+
+
+def test_executable_ablation_preserves_adaptive_neural_tissue():
+    config = sweep._build_config(
+        8,
+        16,
+        "suppressed",
+        512,
+        profile="complete_closed_book_executable_ablation",
+    )
+
+    assert config.recurrence.fixed_depth is False
+    assert config.local_repair_enabled is True
+    assert config.answer_replacement_enabled is True
+    assert config.objective_program_enabled is False
+    assert config.latent_opt.enabled is True
+    assert config.fast_weights.enabled is True
+    assert config.verifier_accept_non_regression is True
 
 
 def test_requesting_a_treatment_always_expands_to_both_controls():
@@ -442,7 +471,12 @@ def test_resource_dominating_control_spends_until_every_target_dimension_is_met(
             tensor_element_writes=10,
         )
         value = calls
-        return f'FINAL_ANSWER: {{"value":{value}}}', [value], "contract_complete", ledger.to_receipt()
+        return (
+            f'FINAL_ANSWER: {{"value":{value}}}',
+            [value],
+            "contract_complete",
+            ledger.to_receipt(),
+        )
 
     class FakeVerifier:
         def __init__(self):
@@ -549,9 +583,7 @@ def test_resource_dominating_control_spends_until_every_target_dimension_is_met(
     assert receipt["equal_tool_cycle_limit"] == 4
     mismatched_sources = [dict(source) for source in information["sources"]]
     prompt_source = next(
-        source
-        for source in mismatched_sources
-        if source["source_id"] == "rendered_model_input"
+        source for source in mismatched_sources if source["source_id"] == "rendered_model_input"
     )
     prompt_source["content_sha256"] = hashlib.sha256(b"[2]").hexdigest()
     mismatched_information = build_information_receipt(
@@ -585,11 +617,14 @@ def test_resource_dominating_control_spends_until_every_target_dimension_is_met(
         "resource_dominance_certificate": certificate,
         "text": text,
     }
-    assert sweep._resource_dominating_control_receipt_issues(
-        tmp_path,
-        cell,
-        task=task,
-    ) == []
+    assert (
+        sweep._resource_dominating_control_receipt_issues(
+            tmp_path,
+            cell,
+            task=task,
+        )
+        == []
+    )
     persisted = tmp_path / path
     tampered = json.loads(persisted.read_text())
     tampered["candidates"][0]["verifier_score"] = 0.5
@@ -646,16 +681,12 @@ def test_equal_tool_cycle_plan_is_target_derived_and_rejects_impossible_bytes():
     assert sweep._equal_tool_cycle_limit(setup, target, max_samples=12) == 5
     assert sweep._equal_tool_cycle_limit(setup, target, max_samples=4) == 4
 
-    impossible = {
-        "totals": {"tool_calls": 0, "tool_input_bytes": 1, "tool_result_bytes": 0}
-    }
+    impossible = {"totals": {"tool_calls": 0, "tool_input_bytes": 1, "tool_result_bytes": 0}}
     with pytest.raises(RuntimeError, match="without a measured tool call"):
         sweep._equal_tool_cycle_limit(setup, impossible, max_samples=4)
 
 
-def test_resource_control_refuses_treatment_derived_symbolic_context(
-    monkeypatch, tmp_path: Path
-):
+def test_resource_control_refuses_treatment_derived_symbolic_context(monkeypatch, tmp_path: Path):
     from core.brain import cortex_compute_acquisition
     from core.brain.llm.latent_cortex.resource_accounting import (
         ModelComputeProfile,
@@ -744,9 +775,7 @@ def test_resource_control_refuses_treatment_derived_symbolic_context(
                 {
                     "module": FakeVerifier.__module__,
                     "qualname": FakeVerifier.__qualname__,
-                    "source_sha256": hashlib.sha256(
-                        Path(verifier_path).read_bytes()
-                    ).hexdigest(),
+                    "source_sha256": hashlib.sha256(Path(verifier_path).read_bytes()).hexdigest(),
                 }
             ),
             "tools": policy_sha256({"policy": "no_external_tools_inside_rlc_v1"}),
@@ -1185,10 +1214,12 @@ def test_complete_system_promotion_preserves_incumbent_until_verified_improvemen
                         "valid": True,
                         "receipt": {
                             "routes": (
-                                [{
-                                    "verifier": "exact_objective_program",
-                                    "outcome": "verified",
-                                }]
+                                [
+                                    {
+                                        "verifier": "exact_objective_program",
+                                        "outcome": "verified",
+                                    }
+                                ]
                                 if text == "candidate"
                                 else []
                             )
@@ -1239,9 +1270,7 @@ def test_complete_system_promotion_preserves_incumbent_until_verified_improvemen
     )
     assert consensus == "incumbent"
     assert consensus_receipt["decision"] == "retain"
-    assert consensus_receipt["reason"] == (
-        "probabilistic_consensus_not_promotion_authority"
-    )
+    assert consensus_receipt["reason"] == ("probabilistic_consensus_not_promotion_authority")
     assert consensus_receipt["promotion_is_probabilistic"] is True
     assert consensus_receipt["ground_truth_verified"] is False
     assert consensus_receipt["no_regression_guaranteed"] is False
@@ -1794,9 +1823,7 @@ def test_complete_system_can_earn_a_conservative_resource_advantaged_win(
         policies={"verifier": policy_sha256({"kind": "candidate_local"})},
     )
     control_setup = ResourceLedger(profile).to_receipt()
-    control_aggregate = ResourceLedger.aggregate(
-        [control_setup, control.to_receipt()]
-    ).to_receipt()
+    control_aggregate = ResourceLedger.aggregate([control_setup, control.to_receipt()]).to_receipt()
     certificate = certify_control_resource_dominance(
         treatment_resource=treatment.to_receipt(),
         control_resource=control_aggregate,
@@ -1837,29 +1864,29 @@ def test_complete_system_can_earn_a_conservative_resource_advantaged_win(
                     "schema": "aura.rlc.resource_dominating_control.v1",
                     "task_id": task.task_id,
                     "campaign_seed": 7,
-                        "sample_limit": 1,
-                        "sample_count": 1,
-                        "equal_tool_cycle_count": 0,
-                        "equal_tool_cycle_limit": 0,
-                        "generated_tokens": 1,
+                    "sample_limit": 1,
+                    "sample_count": 1,
+                    "equal_tool_cycle_count": 0,
+                    "equal_tool_cycle_limit": 0,
+                    "generated_tokens": 1,
                     "setup_resource_accounting": control_setup,
                     "control_acquisition": {
                         "schema": "aura.rlc.resource_control_acquisition.v1",
                         "status": "not_required",
                     },
                     "candidates": [
-                            {
-                                "sample_index": 0,
-                                "control_path": "ordinary_sample",
-                                "text": wrong,
+                        {
+                            "sample_index": 0,
+                            "control_path": "ordinary_sample",
+                            "text": wrong,
                             "text_sha256": hashlib.sha256(wrong.encode()).hexdigest(),
                             "verifier_score": verifier_score,
                             "verifier_receipt": verifier.to_receipt(),
-                                "resource_accounting": control.to_receipt(),
-                                "equal_tool_resource_accounting": None,
-                                "generated_tokens": 1,
-                                "equal_tool_receipt": None,
-                            }
+                            "resource_accounting": control.to_receipt(),
+                            "equal_tool_resource_accounting": None,
+                            "generated_tokens": 1,
+                            "equal_tool_receipt": None,
+                        }
                     ],
                     "selected_index": 0,
                     "selected_text_sha256": hashlib.sha256(wrong.encode()).hexdigest(),
@@ -1899,9 +1926,7 @@ def test_complete_system_can_earn_a_conservative_resource_advantaged_win(
                     ),
                     "information_accounting": information,
                     "resource_dominance_certificate": (
-                        certificate
-                        if arm == sweep.RESOURCE_DOMINATING_CONTROL_ARM
-                        else None
+                        certificate if arm == sweep.RESOURCE_DOMINATING_CONTROL_ARM else None
                     ),
                     **runtime_fields,
                 }
@@ -2003,6 +2028,7 @@ def test_component_manifest_does_not_require_expensive_stage_controls(tmp_path: 
         "vanilla",
         "complete_system_closed_book",
         "complete_system_adaptation_ablation",
+        "complete_system_executable_ablation",
     ]
     _write_evidence_manifest(
         tmp_path,
@@ -2225,6 +2251,7 @@ def test_complete_system_receipt_requires_acquisition_amplifier_and_promotion(
             "objective_sha256": hashlib.sha256(objective.encode()).hexdigest(),
             "response_contract": response_contract,
             "single_model_owner": True,
+            "executable_reasoning_enabled": True,
             "first_rlc_runtime": {"valid": True, "issues": []},
             "first_rlc_receipt": None,
             "rlc_rounds": 1,
@@ -2392,11 +2419,10 @@ def test_complete_system_receipt_requires_acquisition_amplifier_and_promotion(
     contextual_evidence = sweep._complete_system_evidence(contextual_receipt)
     assert contextual_evidence["valid"] is True
     assert contextual_evidence["issues"] == []
-    contextual_system["cognitive_acquisition"][
-        "continuation_objective_sha256"
-    ] = "0" * 64
-    assert "cognitive_continuation_objective_digest_mismatch" in (
-        sweep._complete_system_evidence(contextual_receipt)["issues"]
+    contextual_system["cognitive_acquisition"]["continuation_objective_sha256"] = "0" * 64
+    assert (
+        "cognitive_continuation_objective_digest_mismatch"
+        in (sweep._complete_system_evidence(contextual_receipt)["issues"])
     )
 
     path, digest = sweep._persist_runtime_receipt(

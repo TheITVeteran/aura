@@ -511,6 +511,7 @@ def build_answer_replacement_receipt(
     encode: Callable[[str], Sequence[int]],
     decode: Callable[[Sequence[int]], str],
     enabled: bool = True,
+    objective_program_enabled: bool = True,
     margin: float = DEFAULT_REPLACEMENT_MARGIN,
     max_output_tokens: int,
 ) -> tuple[dict[str, Any], list[int], dict[str, Any]]:
@@ -518,6 +519,8 @@ def build_answer_replacement_receipt(
 
     if type(enabled) is not bool:
         raise ValueError("answer replacement enabled flag must be boolean")
+    if type(objective_program_enabled) is not bool:
+        raise ValueError("objective program enabled flag must be boolean")
     if type(selected_branch) is not int or selected_branch < 0:
         raise ValueError("answer replacement selected branch is invalid")
     if not isinstance(disagreement_graph, Mapping) or not isinstance(
@@ -558,7 +561,9 @@ def build_answer_replacement_receipt(
         for transaction in local_repair["transactions"]
         if transaction["status"] == "repaired_candidate_admitted"
     }
-    objective_program_solution = solve_objective_program(objective)
+    objective_program_solution = (
+        solve_objective_program(objective) if objective_program_enabled else None
+    )
     objective_solution_text = (
         objective_program_solution[0] if objective_program_solution is not None else ""
     )
@@ -687,6 +692,7 @@ def build_answer_replacement_receipt(
     }
     policy = {
         "enabled": enabled,
+        "objective_program_enabled": objective_program_enabled,
         "margin": normalized_margin,
         "max_output_tokens": output_limit,
         "interval_object": "conjunctive_full_span_exact_claim_validity",
@@ -735,6 +741,7 @@ def build_answer_replacement_receipt(
         expected_objective=objective,
         expected_selected_branch=selected_branch,
         expected_enabled=enabled,
+        expected_objective_program_enabled=objective_program_enabled,
         expected_margin=normalized_margin,
         expected_max_output_tokens=output_limit,
         expected_output_text=accepted_text,
@@ -753,6 +760,7 @@ def validate_answer_replacement_receipt(
     expected_objective: str,
     expected_selected_branch: int,
     expected_enabled: bool,
+    expected_objective_program_enabled: bool = True,
     expected_margin: float,
     expected_max_output_tokens: int,
     expected_output_text: str | None = None,
@@ -805,7 +813,13 @@ def validate_answer_replacement_receipt(
         diagnostic_selection=diagnostic_selection,
     )
     candidate_decompositions = disagreement_graph.get("candidate_decompositions")
-    expected_objective_solution = solve_objective_program(expected_objective)
+    if type(expected_objective_program_enabled) is not bool:
+        raise ValueError("answer replacement expected objective-program policy is invalid")
+    expected_objective_solution = (
+        solve_objective_program(expected_objective)
+        if expected_objective_program_enabled
+        else None
+    )
     private_required = (
         bool(candidate_decompositions)
         or bool(local_repair["requests"])
@@ -869,6 +883,7 @@ def validate_answer_replacement_receipt(
     )
     policy = {
         "enabled": expected_enabled,
+        "objective_program_enabled": expected_objective_program_enabled,
         "margin": margin,
         "max_output_tokens": output_limit,
         "interval_object": "conjunctive_full_span_exact_claim_validity",

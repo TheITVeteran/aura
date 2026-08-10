@@ -258,6 +258,9 @@ def extract_verified_replay_payload(
         expected_objective=objective,
         expected_selected_branch=int(receipt.get("selected_branch")),
         expected_enabled=policy.get("enabled") is True,
+        expected_objective_program_enabled=(
+            policy.get("objective_program_enabled") is True
+        ),
         expected_margin=policy.get("margin"),
         expected_max_output_tokens=policy.get("max_output_tokens"),
         expected_output_text=output_text,

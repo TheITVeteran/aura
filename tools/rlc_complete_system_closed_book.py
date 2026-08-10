@@ -622,6 +622,7 @@ def _run_complete_system_closed_book(
     worker_identity: dict[str, Any],
     runtime_identity: dict[str, Any],
     campaign_seed: int,
+    executable_reasoning_enabled: bool = True,
 ) -> tuple[str, dict[str, Any]]:
     """Measure the same-information RLC, acquisition, and amplifier composition."""
 
@@ -845,7 +846,7 @@ def _run_complete_system_closed_book(
                     # Public task shape feeds the cognitive compiler; no
                     # verifier-only value or answer key crosses this boundary.
                     "response_contract": task.public.response_contract,
-                    "enable_executable_reasoning": True,
+                    "enable_executable_reasoning": executable_reasoning_enabled,
                 },
             )
         )
@@ -966,6 +967,7 @@ def _run_complete_system_closed_book(
         "objective_sha256": hashlib.sha256(objective.encode()).hexdigest(),
         "response_contract": task.public.response_contract,
         "single_model_owner": True,
+        "executable_reasoning_enabled": executable_reasoning_enabled,
         "first_rlc_runtime": full_stack_evidence(first_receipt),
         "first_rlc_receipt": (
             first_receipt if acquisition_evidence["continuation_executed"] else None
@@ -1026,6 +1028,10 @@ def _complete_system_evidence(
         "complete_system_objective_digest_mismatch",
     )
     require(system.get("single_model_owner") is True, "single_model_owner_not_proven")
+    require(
+        type(system.get("executable_reasoning_enabled")) is bool,
+        "executable_reasoning_policy_unbound",
+    )
     first_runtime = system.get("first_rlc_runtime") or {}
     require(first_runtime.get("valid") is True, "first_rlc_round_not_measured")
     status = str(acquisition.get("status") or "")
@@ -1307,6 +1313,7 @@ def _complete_system_evidence(
         "engine": engine,
         "closed_book_contract": str(system.get("contract") or ""),
         "single_model_owner": system.get("single_model_owner") is True,
+        "executable_reasoning_enabled": system.get("executable_reasoning_enabled") is True,
         "rlc_rounds": int(system.get("rlc_rounds") or 0),
         "acquisition_status": status,
         "continuation_executed": acquisition.get("continuation_executed") is True,

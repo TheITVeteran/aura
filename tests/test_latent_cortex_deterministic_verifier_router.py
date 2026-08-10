@@ -15,6 +15,7 @@ from core.brain.llm.latent_cortex.deterministic_verifier_router import (
 from core.brain.llm.latent_cortex.objective_program_verifier import (
     solve_objective_program,
     validate_objective_program_solution,
+    verify_objective_program,
 )
 from core.brain.llm.latent_cortex.task_verifiers import EpisodeTaskVerifier
 
@@ -118,9 +119,7 @@ def test_router_executes_public_modular_objective_without_hidden_answer() -> Non
     assert good["routes"][0]["verifier"] == "exact_objective_program"
     assert good["routes"][0]["outcome"] == "verified"
     assert bad["routes"][0]["outcome"] == "refuted"
-    assert bad["routes"][0]["detail"]["failure_codes"] == [
-        "objective_result_mismatch"
-    ]
+    assert bad["routes"][0]["detail"]["failure_codes"] == ["objective_result_mismatch"]
     assert "expected_payload" not in good["routes"][0]["detail"]
     assert len(good["routes"][0]["detail"]["expected_payload_sha256"]) == 64
 
@@ -217,11 +216,92 @@ def test_public_objective_solver_emits_canonical_candidate_and_text_free_receipt
         "Step 2: 7 * 12 = 8 (mod 19).\n"
         'FINAL_ANSWER: {"residue":8}'
     )
-    assert validate_objective_program_solution(
-        receipt,
-        objective=objective,
-        candidate=candidate,
-    ) == receipt
+    assert (
+        validate_objective_program_solution(
+            receipt,
+            objective=objective,
+            candidate=candidate,
+        )
+        == receipt
+    )
     wire = json.dumps(receipt, sort_keys=True)
     assert candidate not in wire
     assert '"residue":8' not in wire
+
+
+def test_public_objective_solver_covers_every_fresh_frontier_family_exactly() -> None:
+    from core.brain.llm.latent_cortex import frontier_tasks as ft
+
+    tasks = tuple(
+        task
+        for difficulty in (1, 2, 3)
+        for task in ft.generate_task_battery(
+            (920_083, 920_111),
+            difficulty=difficulty,
+            registry_version=ft.CONTAMINATION_SAFE_REGISTRY_VERSION,
+        )
+    )
+    assert len(tasks) == 42
+    assert {task.domain for task in tasks} == set(ft.FRONTIER_DOMAINS)
+
+    families: set[str] = set()
+    for task in tasks:
+        solved = solve_objective_program(task.public.prompt)
+        assert solved is not None, task.domain
+        candidate, solution_receipt = solved
+        families.add(solution_receipt["family"])
+
+        hidden_score = ft.score_task(task, candidate)
+        public_verdict = verify_objective_program(
+            candidate,
+            objective=task.public.prompt,
+        )
+        malformed_verdict = verify_objective_program(
+            "FINAL_ANSWER: {}",
+            objective=task.public.prompt,
+        )
+
+        assert hidden_score.correct is True, task.domain
+        assert public_verdict is not None
+        assert public_verdict["outcome"] == "verified", task.domain
+        assert malformed_verdict is not None
+        assert malformed_verdict["outcome"] == "refuted", task.domain
+
+    assert families == {
+        "stable_nearest_traversal",
+        "separated_subset_count",
+        "stateful_python_trace",
+        "interventional_chain_inference",
+        "dependency_deadline_portfolio",
+        "bayesian_frequency_update",
+        "premise_audit_table",
+    }
+
+
+def test_public_causal_solver_refuses_internally_inconsistent_interventions() -> None:
+    from core.brain.llm.latent_cortex import frontier_tasks as ft
+
+    task = ft.generate_task(
+        "scientific_inference",
+        seed=920_129,
+        difficulty=2,
+        registry_version=ft.CONTAMINATION_SAFE_REGISTRY_VERSION,
+    )
+    inconsistent = task.public.prompt.replace(
+        "and cressa by +24",
+        "and cressa by +25",
+    )
+    if inconsistent == task.public.prompt:
+        # The labels and values are seeded, so alter the first declared total
+        # downstream effect without depending on one particular generated name.
+        import re
+
+        inconsistent = re.sub(
+            r"(and [a-z][a-z0-9_]* by \+)(\d+)(; setting)",
+            lambda match: f"{match.group(1)}{int(match.group(2)) + 1}{match.group(3)}",
+            task.public.prompt,
+            count=1,
+        )
+
+    with pytest.raises(ValueError, match="causal_interventions_inconsistent"):
+        solve_objective_program(inconsistent)
