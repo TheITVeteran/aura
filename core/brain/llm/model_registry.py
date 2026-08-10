@@ -16,6 +16,13 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Any
 
+from core.brain.llm.context_window_evidence import (
+    ContextWindowEvidence,
+    assumed,
+    derived,
+    measured,
+    note_assumption,
+)
 from core.runtime.runtime_settings import get_runtime_setting
 from core.runtime.flags import FlagKind as _FlagKind, declare as _declare_flag
 
@@ -287,6 +294,12 @@ ADAPTER_PATH = BASE_DIR / "data" / "adapters"
 _MIN_CONTEXT_WINDOW = 2048
 _MAX_CONTEXT_WINDOW = 262144
 
+#: Used only when nothing about the artifact is readable. It is a GUESS and
+#: is always labelled WindowSource.ASSUMED so no caller can mistake it for a
+#: measurement — the previous bare ``return 32768`` was indistinguishable
+#: from a 32,768 read off config.json.
+_DEFAULT_CONTEXT_WINDOW = 32768
+
 
 def _bounded_context_window(value: int) -> int:
     return max(_MIN_CONTEXT_WINDOW, min(int(value), _MAX_CONTEXT_WINDOW))
@@ -484,15 +497,29 @@ def get_model_context_window(model_name: str | None = None) -> int:
     ``tokenizer_config.json`` that require explicit rope/scaling settings to
     be enabled; those should not silently become Aura's live runtime budget.
     """
+    return int(get_context_window_evidence(model_name).tokens)
+
+
+def get_context_window_evidence(model_name: str | None = None) -> ContextWindowEvidence:
+    """The window, with the provenance of the number attached.
+
+    Three dead ends in this resolution return the same default, and the
+    caller could not tell any of them from a 32,768 that was actually read
+    off the artifact. Sizing the whole prompt budget from a number nobody
+    measured is the shape of the indefinite-coherence defect; this makes
+    the difference legible.
+    """
     name = normalize_runtime_model_name(model_name or ACTIVE_MODEL)
     model_path = MODEL_PATHS.get(name, BASE_DIR / "models" / str(name))
     if not isinstance(model_path, Path):
-        return 32768
-    return _context_window_for_artifact(name, _artifact_signature(model_path))
+        return note_assumption(
+            assumed(_DEFAULT_CONTEXT_WINDOW, model=name, detail="model path is not a filesystem path")
+        )
+    return _context_window_evidence_for_artifact(name, _artifact_signature(model_path))
 
 
 @lru_cache(maxsize=32)
-def _context_window_for_artifact_cached(name: str, signature: tuple) -> int:
+def _context_window_for_artifact_cached(name: str, signature: tuple) -> ContextWindowEvidence:
     model_path = Path(signature[0])
 
     config_path = model_path / "config.json"
@@ -558,21 +585,45 @@ def _context_window_for_artifact_cached(name: str, signature: tuple) -> int:
     if max_position_embeddings > 0:
         # Respect the on-disk config unless sliding/YaRN is explicitly enabled.
         if use_sliding_window and sliding_window > max_position_embeddings:
-            return _bounded_context_window(max(sliding_window, max_position_embeddings))
-        return _bounded_context_window(max_position_embeddings)
+            return derived(
+                _bounded_context_window(max(sliding_window, max_position_embeddings)),
+                model=name,
+                detail="sliding_window explicitly enabled and larger than max_position_embeddings",
+            )
+        return measured(
+            _bounded_context_window(max_position_embeddings), model=name
+        )
 
     if sliding_window > 0 and use_sliding_window:
-        return _bounded_context_window(sliding_window)
+        return derived(
+            _bounded_context_window(sliding_window),
+            model=name,
+            detail="sliding_window only; config.json carried no max_position_embeddings",
+        )
 
     if tokenizer_model_max > 0:
-        return _bounded_context_window(tokenizer_model_max)
+        return derived(
+            _bounded_context_window(tokenizer_model_max),
+            model=name,
+            detail="tokenizer_config.json model_max_length; may require rope scaling",
+        )
 
-    return 32768
+    return note_assumption(
+        assumed(
+            _DEFAULT_CONTEXT_WINDOW,
+            model=name,
+            detail="no readable max_position_embeddings, sliding_window or tokenizer maximum",
+        )
+    )
+
+
+def _context_window_evidence_for_artifact(name: str, signature: tuple) -> ContextWindowEvidence:
+    """Artifact-keyed context resolution (thin wrapper over the LRU)."""
+    return _context_window_for_artifact_cached(name, signature)
 
 
 def _context_window_for_artifact(name: str, signature: tuple) -> int:
-    """Artifact-keyed context resolution (thin wrapper over the LRU)."""
-    return _context_window_for_artifact_cached(name, signature)
+    return int(_context_window_for_artifact_cached(name, signature).tokens)
 
 
 # get_model_context_window is a public entry point that callers (and this

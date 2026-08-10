@@ -1620,7 +1620,14 @@ class ContextAssembler:
             try:
                 from core.brain.llm.model_registry import PRIMARY_ENDPOINT, get_lane_context_window
 
-                context_window = max(8192, int(get_lane_context_window(PRIMARY_ENDPOINT) or 32768))
+                # `or 32768` used to sit here, a second guess layered on the
+                # registry's own — and unreachable, since the registry never
+                # returns 0. The number it was defending against was already
+                # the registry's default; both were invisible. The window now
+                # arrives labelled, and an assumed one is reported once by
+                # core/brain/llm/context_window_evidence.py rather than
+                # silently sizing every prompt for the life of the process.
+                context_window = max(8192, int(get_lane_context_window(PRIMARY_ENDPOINT)))
                 max_tokens = max(8192, context_window - 4096)  # leave headroom for generation
             except (ImportError, AttributeError, RuntimeError):
                 max_tokens = 16384
