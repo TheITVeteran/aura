@@ -42885,3 +42885,28 @@ contract remains green. Focused engine and answer-replacement execution passes
 hygiene pass. This advances the completion envelope to `854/920`
 (approximately `92.8%`). The source-bound 1.5B transplant must be rerun from
 this checkpoint; resident-32B use remains locked.
+
+## Checkpoint 2026-08-10-159: A Completed Neural Producer Cannot Fail Without Evidence
+
+The CP158 rerun passed the repaired answer-replacement boundary but again
+stopped before transplant because the teaching episode did not export an
+episodic candidate. The canary discarded the complete producer receipt on
+that failure path: it retained only `campaign_started`, then raised a generic
+exception. This made a bounded real-checkpoint run unable to distinguish an
+unproductive optimizer from failed cleanup, canary erasure, or a persistence
+boundary defect.
+
+Every completed producer now atomically writes its full private receipt and a
+small export diagnostic before checking candidate availability. The diagnostic
+binds checkpoint provenance, erase proof, canary survival, accepted optimizer
+steps, initial-to-final loss improvement, rejection count, honest flags, and
+the observed export flag. It classifies the result as exported,
+producer-ineligible, or export-boundary-failed/refused without promoting any
+of those states into a capability claim. The progress journal records the
+same disposition and accepted-step count, and the raised error includes the
+structured diagnosis. Unit contracts cover both an ineligible delta and a
+mechanically eligible delta that failed to cross persistence. The focused
+canary suite passes `4/4`; Ruff, compilation, and diff hygiene pass. Canonical
+smoke passes `103/103`. This advances the completion envelope to `855/920`
+(approximately `92.9%`). The next source-bound rerun will produce actionable
+evidence even if transplant is still refused; resident-32B use remains locked.

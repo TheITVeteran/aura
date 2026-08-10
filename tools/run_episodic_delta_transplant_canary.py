@@ -48,6 +48,7 @@ from core.learning.verified_trajectory_distillation import (
     compile_episodic_delta_inventory,
     install_verified_trajectory_inventory,
 )
+from core.runtime.atomic_writer import atomic_write_bytes
 from core.runtime.mlx_memory_guard import mlx_memory_envelope
 from core.runtime.model_lane_control import standalone_model_lane
 
@@ -75,6 +76,46 @@ def _emit(path: Path, event: str, **details: Any) -> None:
     with path.open("a", encoding="utf-8") as handle:
         handle.write(canonical_json_bytes(row).decode("ascii") + "\n")
     print(json.dumps(row, sort_keys=True), flush=True)
+
+
+def _write_private_json(path: Path, value: Any) -> None:
+    atomic_write_bytes(
+        path,
+        json.dumps(value, indent=2, sort_keys=True).encode("ascii") + b"\n",
+        mode=0o600,
+    )
+
+
+def _producer_export_diagnostic(receipt: dict[str, Any]) -> dict[str, Any]:
+    flags = tuple(str(flag) for flag in receipt.get("honest_flags", ()))
+    loss_trail = tuple(float(value) for value in receipt.get("fast_weight_loss_trail", ()))
+    accepted_steps = int(receipt.get("fast_weight_optimized_steps", 0))
+    loss_improved = len(loss_trail) >= 2 and loss_trail[-1] < loss_trail[0]
+    prerequisites = {
+        "checkpoint_bound": bool(receipt.get("checkpoint_fingerprint")),
+        "erase_proven": receipt.get("fast_weights_erased") is True,
+        "canary_survived": "fast_weight_canary_erased" not in flags,
+        "accepted_step": accepted_steps > 0,
+        "loss_improved": loss_improved,
+    }
+    exported = "fast_weight_candidate_exported" in flags
+    return {
+        "schema": "aura.rlc.episodic_delta_export_diagnostic.v1",
+        "exported": exported,
+        "eligible_by_receipt": all(prerequisites.values()),
+        "prerequisites": prerequisites,
+        "accepted_steps": accepted_steps,
+        "rejected_steps": int(receipt.get("fast_weight_rejected_steps", 0)),
+        "loss_trail": list(loss_trail),
+        "honest_flags": list(flags),
+        "reason": (
+            "exported"
+            if exported
+            else "export_boundary_failed_or_refused"
+            if all(prerequisites.values())
+            else "producer_not_export_eligible"
+        ),
+    }
 
 
 def _load_candidate(
@@ -276,13 +317,33 @@ def run(
                 episode_id=episode_id,
             )
             producer_receipt = result.receipt.to_dict()
+            _write_private_json(
+                out_dir / "producer_receipt.private.json",
+                producer_receipt,
+            )
+            export_diagnostic = _producer_export_diagnostic(producer_receipt)
+            _write_private_json(
+                out_dir / "producer_export_diagnostic.json",
+                export_diagnostic,
+            )
+            _emit(
+                progress_path,
+                "producer_completed",
+                episode_ok=result.ok,
+                exported=export_diagnostic["exported"],
+                export_reason=export_diagnostic["reason"],
+                accepted_steps=export_diagnostic["accepted_steps"],
+            )
             locality = producer_receipt.get("fast_weight_locality") or {}
             if locality.get("schema") != "aura.rlc.fast_weight_phase_locality.v1":
                 raise RuntimeError("episodic producer did not measure phase locality")
             if "fast_weight_candidate_exported" not in producer_receipt.get(
                 "honest_flags", []
             ):
-                raise RuntimeError("episodic producer did not export its candidate")
+                raise RuntimeError(
+                    "episodic producer did not export its candidate: "
+                    + json.dumps(export_diagnostic, sort_keys=True)
+                )
             candidate_dir = (
                 private_data
                 / "latent_cortex"

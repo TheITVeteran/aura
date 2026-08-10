@@ -6,7 +6,10 @@ import json
 import numpy as np
 import pytest
 
-from tools.run_episodic_delta_transplant_canary import _load_candidate
+from tools.run_episodic_delta_transplant_canary import (
+    _load_candidate,
+    _producer_export_diagnostic,
+)
 
 
 def _candidate(tmp_path, *, extra_tensor: bool = False):
@@ -67,3 +70,39 @@ def test_load_candidate_rejects_unbound_extra_tensor(tmp_path) -> None:
             expected_rank=2,
             scale=0.25,
         )
+
+
+def test_producer_export_diagnostic_distinguishes_ineligible_delta() -> None:
+    diagnostic = _producer_export_diagnostic(
+        {
+            "checkpoint_fingerprint": "sha256:checkpoint",
+            "fast_weights_erased": True,
+            "fast_weight_optimized_steps": 0,
+            "fast_weight_rejected_steps": 2,
+            "fast_weight_loss_trail": [1.0],
+            "honest_flags": ["fast_weight_no_accepted_step"],
+        }
+    )
+
+    assert diagnostic["exported"] is False
+    assert diagnostic["eligible_by_receipt"] is False
+    assert diagnostic["reason"] == "producer_not_export_eligible"
+    assert diagnostic["prerequisites"]["accepted_step"] is False
+    assert diagnostic["prerequisites"]["loss_improved"] is False
+
+
+def test_producer_export_diagnostic_exposes_export_boundary_failure() -> None:
+    diagnostic = _producer_export_diagnostic(
+        {
+            "checkpoint_fingerprint": "sha256:checkpoint",
+            "fast_weights_erased": True,
+            "fast_weight_optimized_steps": 1,
+            "fast_weight_rejected_steps": 0,
+            "fast_weight_loss_trail": [1.0, 0.5],
+            "honest_flags": [],
+        }
+    )
+
+    assert diagnostic["exported"] is False
+    assert diagnostic["eligible_by_receipt"] is True
+    assert diagnostic["reason"] == "export_boundary_failed_or_refused"
