@@ -43258,3 +43258,44 @@ This advances the completion envelope to `867/920` (approximately `94.2%`).
 The identical bounded 1.5B campaign must now pass this complete nested replay
 path before a positive capability result is recorded. Scaling, broader unseen
 domains, and resident-32B use remain locked.
+
+## Checkpoint 2026-08-10-172: Persistent Coda Tissue Produces a Bounded Causal Gain
+
+The clean CP171 real-1.5B campaign completed in `627.444s` from published
+source commit `32b39dd3e2419f817f39ee97f85cde37f3b545c3`. It reproduced
+the held-out operator gate (`0.932019` relative error against the zero
+operator, `0.367252` direction cosine) and then produced ordinary decode
+`4/8`, untreated RLC `6/8`, persistent coda treatment `8/8`, zeroed lesion
+`6/8`, and norm-preserving permutation sham `7/8`. Ordinary decoding was
+unchanged before and after attachment. Both control scopes restored the exact
+adapter fingerprint, the base checkpoint remained immutable, and all ten
+preregistered gates passed.
+
+Independent post-process replay validated the canonical top-level receipt,
+all six nested reports, fresh task regeneration and regrading, all 127 chained
+progress events, committed source blobs, the full model identity, stdout/file
+identity, coda activation and eight-site attribution on every treatment row,
+and both private artifacts. The embedded canonical receipt SHA-256 is
+`5ea241d78b159dbc907d7cba0c26d0d6e59c4ba80b1738b8c87d6357d1815174`;
+the serialized receipt file SHA-256 is
+`f41ee62b4568ac9d4c964b06a885c605fac4ccc2f90f920a0938f07a12dcd5aa`;
+the owner-private adapter SHA-256 is
+`f3cfc9da5efa8ec25f7429892e86472784a88a5bed46aacff0d13c96ce8f37cc`.
+The evidence is preserved at
+`~/.aura/experiments/cp171-rank32-behavioral-32b39dd3e-20260810135913/`.
+
+This is the first valid persistent shared-rule transfer result for this tissue
+path: a fixed learned internal decode operator repaired two held-out failures
+without access to the private teacher at inference and lost efficacy under
+lesion and structure-destroying sham. Its committed claim boundary remains
+`bounded_teacher_free_persistent_gain_only_not_general_or_frontier_gain`.
+The treatment is decode-coda tissue; recurrence activation is intentionally
+zero in those rows. It therefore does not prove that recurrent workspace
+dynamics learned or created the reasoning algorithm, does not establish broad
+domain transfer, and is not the WOW signal.
+
+This advances the completion envelope to `868/920` (approximately `94.3%`).
+The next gates are fresh-seed sample-complexity scaling, readout-versus-
+workspace causal localization, and broader unseen-domain replication on the
+1.5B checkpoint. Resident-32B use remains locked until those shorter gates
+support a claim-eligible architecture.
