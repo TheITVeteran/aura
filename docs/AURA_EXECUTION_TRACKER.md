@@ -43034,3 +43034,37 @@ Focused execution passes `17/17`; canonical smoke passes `103/103`, and Ruff,
 compilation, and diff hygiene pass. This advances the completion envelope to
 `860/920` (approximately `93.5%`). A clean source-bound campaign must still
 prove the entire mechanism receipt; resident-32B use remains locked.
+
+## Checkpoint 2026-08-10-165: Real Episodic Tissue Survives Durable Coda Transplant
+
+The clean source-bound CP164 campaign completed end to end on the frozen real
+Qwen2.5-1.5B checkpoint in `79.883s`. The producer again exported exactly the
+same eight-site episodic operator, SHA-256
+`d4ff575dc0f78ea09103556e602bcbc0c2e3023bc98be86d9846c2ce6137d1fc`,
+proving that the fixed experiment identity survives source-only revisions. Its
+durable NPZ inventory was reloaded through the public learning boundary and
+installed at layers 7 through 14 in explicit `episodic_exact` mode.
+
+The independent replay satisfies the complete mechanism discriminator. All
+eight coda sites fired exactly once; no site fired during ordinary decode;
+episodic and persistent logits are byte-identical with shared SHA-256
+`74c490902d5f4a7dc27798766ca8a464e8f120cffb8a19997b78d0c3e1a50f12`;
+their generated tokens are also identical; and lesion restores the exact base
+logits with SHA-256
+`51bf93d6840b79ea3cf027e57d4bd603700e9ddec90431888253a679bae17426`.
+The installation receipt binds every factor receipt, causal phase, and
+operation mode. The campaign receipt is preserved at
+`~/.aura/experiments/cp164-episodic-transplant-4a6a6fb94-20260810122527/receipt.json`;
+its embedded canonical receipt SHA-256 is
+`2a0e8b18fc2088427c78958068207fb242922b2e2de647f382a83d5e8041cd03`
+and the serialized file SHA-256 is
+`ca816c82b78164d79c6d6634737cb9d35fc50d1788a0db10ce9ba6c6b84a1cc9`.
+
+The producer's answer remained incorrect. This is therefore proof of exact
+real-checkpoint neural transport, causal application, and reversible lesion,
+not a reasoning-gain result. That boundary is committed in the receipt as
+`exact_real_checkpoint_mechanism_transplant_not_reasoning_gain`. This advances
+the completion envelope to `861/920` (approximately `93.6%`). The next gate is
+durable serving/load hardening followed by shared-rule transfer across multiple
+verified examples; resident-32B use remains locked until strict broader 1.5B
+gain evidence exists.
