@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
@@ -160,6 +161,7 @@ def build_behavioral_probe_report(
     adapter_sha256: str,
     task_manifest_sha256: str,
     seed: int,
+    progress_callback: Callable[[dict[str, Any]], None] | None = None,
 ) -> dict[str, Any]:
     """Run exact held-out generations at shallow and full recurrent depth."""
 
@@ -176,6 +178,16 @@ def build_behavioral_probe_report(
             task.answer,
         )
         for depth in depths:
+            if progress_callback is not None:
+                progress_callback(
+                    {
+                        "event": "sample_started",
+                        "arm": arm,
+                        "task_id": task.task_id,
+                        "task_ordinal": task_ordinal,
+                        "depth": depth,
+                    }
+                )
             depth_spec = spec.with_depth(depth)
             config = cortex_config_from_execution_spec(
                 depth_spec,
@@ -235,6 +247,18 @@ def build_behavioral_probe_report(
                     "episode_receipt": receipt_payload,
                 }
             )
+            if progress_callback is not None:
+                progress_callback(
+                    {
+                        "event": "sample_completed",
+                        "arm": arm,
+                        "task_id": task.task_id,
+                        "task_ordinal": task_ordinal,
+                        "depth": depth,
+                        "correct": bool(result.ok and grade["correct"]),
+                        "token_count": len(result.tokens),
+                    }
+                )
             del engine, result
             mx.synchronize()
             mx.clear_cache()
@@ -258,6 +282,7 @@ def build_ordinary_decode_probe_report(
     adapter_sha256: str,
     task_manifest_sha256: str,
     seed: int,
+    progress_callback: Callable[[dict[str, Any]], None] | None = None,
 ) -> dict[str, Any]:
     """The vanilla control: the same weights answering without the RLC path.
 
@@ -275,6 +300,16 @@ def build_ordinary_decode_probe_report(
     depths = tuple(sorted({1, spec.recurrent_steps}))
     records: list[dict[str, Any]] = []
     for task_ordinal, task in enumerate(tasks):
+        if progress_callback is not None:
+            progress_callback(
+                {
+                    "event": "sample_started",
+                    "arm": "ordinary_decode",
+                    "task_id": task.task_id,
+                    "task_ordinal": task_ordinal,
+                    "depths": list(depths),
+                }
+            )
         prompt_tokens, _answer_tokens = tokenize_task(
             tokenizer,
             task.prompt,
@@ -330,6 +365,18 @@ def build_ordinary_decode_probe_report(
                         canonical_json_bytes(receipt_payload)
                     ).hexdigest(),
                     "episode_receipt": receipt_payload,
+                }
+            )
+        if progress_callback is not None:
+            progress_callback(
+                {
+                    "event": "sample_completed",
+                    "arm": "ordinary_decode",
+                    "task_id": task.task_id,
+                    "task_ordinal": task_ordinal,
+                    "depths": list(depths),
+                    "correct": bool(grade["correct"]),
+                    "token_count": len(tokens),
                 }
             )
         mx.synchronize()

@@ -15,6 +15,7 @@ import argparse
 import hashlib
 import json
 import math
+import os
 import subprocess
 import sys
 import time
@@ -71,11 +72,12 @@ from core.learning.recurrent_sft_execution import (  # noqa: E402
     adapter_tensor_dict,
     adapter_tensor_fingerprint,
 )
-from core.runtime.atomic_writer import atomic_write_bytes  # noqa: E402
+from core.runtime.atomic_writer import atomic_append_text, atomic_write_bytes  # noqa: E402
 from core.runtime.mlx_memory_guard import mlx_memory_envelope  # noqa: E402
 from core.runtime.model_lane_control import standalone_model_lane  # noqa: E402
 
 CANARY_SCHEMA: Final = "aura.generated_rollin_objective_canary.v4"
+PROGRESS_SCHEMA: Final = "aura.generated_rollin_objective_canary.progress.v1"
 SOURCE_PATHS: Final = (
     "core/learning/recurrence_native_objective_v2.py",
     "core/learning/recurrence_native_objective_v5.py",
@@ -99,6 +101,88 @@ def _canonical_json_bytes(value: Any) -> bytes:
         ensure_ascii=True,
         allow_nan=False,
     ).encode("ascii")
+
+
+class _ProgressLedger:
+    """Durable, externally observable phase evidence for a bounded canary."""
+
+    def __init__(self, out_dir: Path, *, started: float, source_commit: str) -> None:
+        out_dir.mkdir(parents=True, exist_ok=False)
+        self._out_dir = out_dir
+        self._started = started
+        self._source_commit = source_commit
+        self._sequence = 0
+
+    @classmethod
+    def resume(cls, out_dir: Path, latest: dict[str, Any]) -> _ProgressLedger:
+        ledger = cls.__new__(cls)
+        ledger._out_dir = out_dir
+        ledger._started = time.time() - float(latest["elapsed_s"])
+        ledger._source_commit = str(latest["source_commit"])
+        ledger._sequence = int(latest["sequence"])
+        return ledger
+
+    def emit(
+        self,
+        phase: str,
+        *,
+        status: str = "running",
+        **details: Any,
+    ) -> dict[str, Any]:
+        if not phase or status not in {"running", "completed", "failed"}:
+            raise ValueError("progress phase/status is invalid")
+        self._sequence += 1
+        body = {
+            "schema": PROGRESS_SCHEMA,
+            "sequence": self._sequence,
+            "phase": phase,
+            "status": status,
+            "pid": os.getpid(),
+            "source_commit": self._source_commit,
+            "wall_time_epoch_s": time.time(),
+            "elapsed_s": time.time() - self._started,
+            "details": details,
+        }
+        event = {
+            **body,
+            "event_sha256": hashlib.sha256(_canonical_json_bytes(body)).hexdigest(),
+        }
+        payload = _canonical_json_bytes(event)
+        atomic_append_text(
+            self._out_dir / "progress.jsonl",
+            payload.decode("ascii") + "\n",
+        )
+        atomic_write_bytes(self._out_dir / "progress.json", payload, mode=0o600)
+        detail = " ".join(f"{key}={value}" for key, value in sorted(details.items()))
+        print(
+            f"[canary] seq={self._sequence} phase={phase} status={status} {detail}".rstrip(),
+            file=sys.stderr,
+            flush=True,
+        )
+        return event
+
+
+def _append_terminal_failure(out_dir: Path, exc: BaseException) -> None:
+    """Append failure evidence only when this invocation created its ledger."""
+
+    latest_path = out_dir / "progress.json"
+    if not latest_path.is_file():
+        return
+    try:
+        latest = json.loads(latest_path.read_text(encoding="ascii"))
+        ledger = _ProgressLedger.resume(out_dir, latest)
+        ledger.emit(
+            str(latest.get("phase") or "canary"),
+            status="failed",
+            exception_type=type(exc).__name__,
+            exception_message=str(exc),
+        )
+    except Exception as ledger_exc:  # noqa: BLE001 - preserve original failure
+        print(
+            f"[canary] failed to persist terminal failure: {ledger_exc}",
+            file=sys.stderr,
+            flush=True,
+        )
 
 
 def _git(*args: str) -> str:
@@ -330,7 +414,22 @@ def run_canary(
         ):
             raise ValueError(f"{name} must be inside [1e-6, 1e-2]")
     started = time.time()
+    if out_dir.exists():
+        raise FileExistsError(f"canary output directory already exists: {out_dir}")
     source_commit, source_bindings = _source_state()
+    progress = _ProgressLedger(
+        out_dir,
+        started=started,
+        source_commit=source_commit,
+    )
+    progress.emit(
+        "source_bound",
+        source_paths=len(source_bindings),
+        model_path=str(model_path),
+        seed=seed,
+        warmup_steps=warmup_steps,
+        joint_steps=steps,
+    )
     base_before = full_weight_checkpoint_identity(model_path)
     spec = RLCExecutionSpec(
         n_slots=4,
@@ -368,6 +467,7 @@ def run_canary(
             restore_limits_on_exit=True,
         ),
     ):
+        progress.emit("model_load", model_path=str(model_path))
         model, tokenizer = load(str(model_path))
         attach_recurrent_policy_adapters(
             model,
@@ -381,6 +481,12 @@ def run_canary(
             role_conditioned_branches=len(spec.branch_roles),
             coda_lora_layers=2,
             coda_lora_targets=("o_proj", "down_proj"),
+        )
+        progress.emit(
+            "model_ready",
+            recurrent_adapter_sites=2,
+            coda_adapter_layers=2,
+            coda_adapter_targets=["o_proj", "down_proj"],
         )
         adapter_before = adapter_tensor_fingerprint(adapter_tensor_dict(model))
         training_tasks = task_battery(
@@ -425,6 +531,10 @@ def run_canary(
             "answer_tokens": validation_answer_tokens,
         }
         proxy_manifest, proxy_manifest_sha256 = build_recurrence_task_manifest(proxy_tasks)
+
+        def probe_progress(payload: dict[str, Any]) -> None:
+            progress.emit("free_generation", **payload)
+
         free_generation_before = _free_generation_report(
             model,
             tokenizer,
@@ -434,7 +544,14 @@ def run_canary(
             adapter_sha256=adapter_before,
             task_manifest_sha256=proxy_manifest_sha256,
             seed=seed,
+            progress_callback=probe_progress,
         )
+        progress.emit(
+            "initial_free_generation_complete",
+            total_correct=free_generation_before["total_correct"],
+            total_observations=free_generation_before["total_observations"],
+        )
+        progress.emit("heldout_objective_before")
         before = _evaluate(
             model,
             validation_row,
@@ -448,6 +565,13 @@ def run_canary(
             model,
             validation_row,
             spec=spec,
+        )
+        progress.emit(
+            "heldout_objective_before_complete",
+            loss=before["loss"],
+            lexical_loss=before["lexical_loss"],
+            trajectory_loss=before["trajectory_loss"],
+            branch_separations=separation_before,
         )
         warmup_optimizer = optim.AdamW(
             learning_rate=warmup_learning_rate,
@@ -488,6 +612,14 @@ def run_canary(
                     "adapter_after_sha256": adapter_tensor_fingerprint(adapter_tensor_dict(model)),
                 }
             )
+            progress.emit(
+                "specialization_warmup",
+                step=warmup_step,
+                total_steps=warmup_steps,
+                task_id=training_row["task_id"],
+                loss_before=result.value,
+                separations_after=list(post_update.separations),
+            )
         warmup_validation = _evaluate(
             model,
             validation_row,
@@ -496,6 +628,11 @@ def run_canary(
             specialization_config=specialization_config,
             trajectory_config=trajectory_config,
             campaign_seed=seed,
+        )
+        progress.emit(
+            "specialization_warmup_complete",
+            validation_loss=warmup_validation["loss"],
+            specialization_loss=warmup_validation["specialization_loss"],
         )
         # Reset momentum when the structural constraint is met. Continuing an
         # Adam trajectory after the hinge reaches zero overshoots the target.
@@ -547,6 +684,17 @@ def run_canary(
                     "adapter_sha256": adapter_tensor_fingerprint(adapter_tensor_dict(model)),
                 }
             )
+            progress.emit(
+                "joint_training",
+                step=step,
+                total_steps=steps,
+                task_id=training_row["task_id"],
+                loss=result.value,
+                lexical_loss=result.evaluation.generated.value,
+                specialization_loss=result.evaluation.specialization.value,
+                trajectory_loss=result.evaluation.trajectory.value,
+            )
+        progress.emit("heldout_objective_after")
         after = _evaluate(
             model,
             validation_row,
@@ -563,6 +711,14 @@ def run_canary(
         )
         adapter = adapter_tensor_dict(model)
         adapter_after = adapter_tensor_fingerprint(adapter)
+        progress.emit(
+            "heldout_objective_after_complete",
+            loss=after["loss"],
+            lexical_loss=after["lexical_loss"],
+            trajectory_loss=after["trajectory_loss"],
+            branch_separations=separation_after,
+            adapter_sha256=adapter_after,
+        )
         free_generation_after = _free_generation_report(
             model,
             tokenizer,
@@ -572,6 +728,12 @@ def run_canary(
             adapter_sha256=adapter_after,
             task_manifest_sha256=proxy_manifest_sha256,
             seed=seed,
+            progress_callback=probe_progress,
+        )
+        progress.emit(
+            "trained_free_generation_complete",
+            total_correct=free_generation_after["total_correct"],
+            total_observations=free_generation_after["total_observations"],
         )
         from core.brain.llm.latent_cortex.recurrence_adapter import (
             coda_adapter_disabled,
@@ -587,7 +749,13 @@ def run_canary(
                 adapter_sha256=adapter_after,
                 task_manifest_sha256=proxy_manifest_sha256,
                 seed=seed,
+                progress_callback=probe_progress,
             )
+        progress.emit(
+            "coda_lesion_complete",
+            total_correct=free_generation_coda_lesion["total_correct"],
+            total_observations=free_generation_coda_lesion["total_observations"],
+        )
         with _permuted_coda_sham(model) as coda_sham:
             sham_sha256 = adapter_tensor_fingerprint(adapter_tensor_dict(model))
             free_generation_coda_sham = _free_generation_report(
@@ -599,9 +767,16 @@ def run_canary(
                 adapter_sha256=sham_sha256,
                 task_manifest_sha256=proxy_manifest_sha256,
                 seed=seed,
+                progress_callback=probe_progress,
             )
         coda_restore_exact = (
             adapter_tensor_fingerprint(adapter_tensor_dict(model)) == adapter_after
+        )
+        progress.emit(
+            "coda_sham_complete",
+            total_correct=free_generation_coda_sham["total_correct"],
+            total_observations=free_generation_coda_sham["total_observations"],
+            restored_exactly=coda_restore_exact,
         )
         # The vanilla floor. Measured on the same weights and the same tasks,
         # after training, because the base weights never move -- only the
@@ -614,6 +789,12 @@ def run_canary(
             adapter_sha256=adapter_after,
             task_manifest_sha256=proxy_manifest_sha256,
             seed=seed,
+            progress_callback=probe_progress,
+        )
+        progress.emit(
+            "ordinary_decode_complete",
+            total_correct=ordinary_decode_report["total_correct"],
+            total_observations=ordinary_decode_report["total_observations"],
         )
         behavioral_admission = build_checkpoint_behavioral_admission(
             initial_report=free_generation_before,
@@ -628,8 +809,8 @@ def run_canary(
             task_manifest=proxy_manifest,
             ordinary_decode_report=ordinary_decode_report,
         )
-        out_dir.mkdir(parents=True, exist_ok=False)
         mx.save_safetensors(str(out_dir / "adapter.safetensors"), adapter)
+        progress.emit("adapter_saved", adapter_sha256=adapter_after)
 
     base_after = full_weight_checkpoint_identity(model_path)
     finite_losses = [
@@ -743,6 +924,13 @@ def run_canary(
         _canonical_json_bytes(receipt),
         mode=0o600,
     )
+    progress.emit(
+        "canary_complete",
+        status="completed",
+        passed=receipt["passed"],
+        receipt_sha256=receipt["receipt_sha256"],
+        failed_gates=sorted(name for name, passed in gates.items() if not passed),
+    )
     return receipt
 
 
@@ -760,19 +948,24 @@ def main() -> int:
     parser.add_argument("--warmup-learning-rate", type=float, default=1e-3)
     parser.add_argument("--joint-learning-rate", type=float, default=1e-4)
     args = parser.parse_args()
-    receipt = run_canary(
-        model_path=args.model.expanduser().resolve(strict=True),
-        out_dir=args.out_dir.expanduser().resolve(strict=False),
-        steps=args.steps,
-        seed=args.seed,
-        memory_fraction=args.memory_fraction,
-        student_forcing_probability=args.student_forcing_probability,
-        sampling_temperature=args.sampling_temperature,
-        specialization_weight=args.specialization_weight,
-        warmup_steps=args.warmup_steps,
-        warmup_learning_rate=args.warmup_learning_rate,
-        joint_learning_rate=args.joint_learning_rate,
-    )
+    out_dir = args.out_dir.expanduser().resolve(strict=False)
+    try:
+        receipt = run_canary(
+            model_path=args.model.expanduser().resolve(strict=True),
+            out_dir=out_dir,
+            steps=args.steps,
+            seed=args.seed,
+            memory_fraction=args.memory_fraction,
+            student_forcing_probability=args.student_forcing_probability,
+            sampling_temperature=args.sampling_temperature,
+            specialization_weight=args.specialization_weight,
+            warmup_steps=args.warmup_steps,
+            warmup_learning_rate=args.warmup_learning_rate,
+            joint_learning_rate=args.joint_learning_rate,
+        )
+    except BaseException as exc:
+        _append_terminal_failure(out_dir, exc)
+        raise
     print(json.dumps(receipt, indent=2, sort_keys=True))
     return 0 if receipt["passed"] else 2
 

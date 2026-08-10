@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import inspect
+import json
 import subprocess
+import time
 from pathlib import Path
 
 import pytest
@@ -154,3 +156,45 @@ def test_coda_causal_arms_are_admitted_report_identities() -> None:
     from core.learning.recurrent_checkpoint_admission import _ARMS
 
     assert {"trained_coda_lesion", "trained_coda_sham"}.issubset(_ARMS)
+
+
+def test_progress_ledger_is_durable_monotonic_and_failure_aware(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    out_dir = tmp_path / "canary"
+    ledger = canary._ProgressLedger(
+        out_dir,
+        started=time.time() - 2.0,
+        source_commit="a" * 40,
+    )
+
+    first = ledger.emit("model_load", model_path="/model")
+    second = ledger.emit("free_generation", event="sample_started", depth=2)
+    canary._append_terminal_failure(out_dir, RuntimeError("bounded failure"))
+
+    rows = [
+        json.loads(line)
+        for line in (out_dir / "progress.jsonl").read_text(encoding="ascii").splitlines()
+    ]
+    latest = json.loads((out_dir / "progress.json").read_text(encoding="ascii"))
+    assert [row["sequence"] for row in rows] == [1, 2, 3]
+    assert first["phase"] == "model_load"
+    assert second["details"] == {"event": "sample_started", "depth": 2}
+    assert latest["status"] == "failed"
+    assert latest["details"]["exception_type"] == "RuntimeError"
+    assert latest["details"]["exception_message"] == "bounded failure"
+    assert latest["event_sha256"] == canary.hashlib.sha256(
+        canary._canonical_json_bytes(
+            {key: value for key, value in latest.items() if key != "event_sha256"}
+        )
+    ).hexdigest()
+    assert "seq=3" in capsys.readouterr().err
+
+
+def test_terminal_failure_does_not_create_an_unowned_output_directory(tmp_path: Path) -> None:
+    out_dir = tmp_path / "not-started"
+
+    canary._append_terminal_failure(out_dir, RuntimeError("before ledger"))
+
+    assert not out_dir.exists()

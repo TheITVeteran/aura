@@ -42251,3 +42251,32 @@ scoring, and canary contracts pass. The next bounded gate is the source-bound
 1.5B free-generation treatment/lesion/sham run. No general reasoning gain,
 resident-32B gain, frontier, fusion, live activation, or `WOW Signal` claim is
 authorized. The completion envelope is `834/920` (approximately `90.7%`).
+
+## Checkpoint 2026-08-10-138: The Causal Canary Is Observable While It Runs
+
+CP137's bounded 1.5B discriminator previously emitted no durable evidence
+until every training and free-generation phase had finished. That made a slow
+sample, blocked model lane, process death, and healthy forward progress look
+identical from outside the process. CP138 adds an append-only `progress.jsonl`
+ledger and an atomically replaced `progress.json` heartbeat. Every event binds
+the source commit, process ID, monotonic sequence, wall time, elapsed time,
+phase details, and its own content hash.
+
+The shared recurrent behavioral probe accepts an optional observation-only
+callback. It reports each task/depth generation before and after execution,
+including correctness, termination size, and matched arm identity; it cannot
+change model inputs, random seeds, generations, graders, or report admission.
+The canary additionally records source custody, model load, objective
+measurements, every specialization and joint-training step, trained treatment,
+coda lesion, norm-preserving coda sham, ordinary-decode control, adapter save,
+and terminal verdict. An exception after ledger creation appends a durable
+failed event instead of leaving a stale "running" state. A failure before this
+invocation owns the output directory does not create or contaminate one.
+
+Focused canary and behavioral-probe contracts pass `27/27`; canonical smoke
+passes `103/103`; Ruff, compilation, and diff hygiene pass. The next action is
+the published-source 1.5B treatment/lesion/sham campaign itself. Its interim
+events are operational evidence only; only the final independently replayable
+gates can authorize a broader replication. No general reasoning gain,
+resident-32B gain, frontier, fusion, live activation, or `WOW Signal` claim is
+authorized. The completion envelope is `835/920` (approximately `90.8%`).
