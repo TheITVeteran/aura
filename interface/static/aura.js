@@ -3341,7 +3341,14 @@ function thoughtPreviewText(message, maxChars = 520, maxLines = 7) {
 // byte-for-byte raw, so SHOW ALL and COPY remain the debugging surface they
 // already are — accessibility, not information loss.
 const PLAIN_LANGUAGE_RULES = [
-    [/UNIFIED HEALTH PULSE\s*\|\s*System:\s*CPU\s*([\d.]+)%.*?RAM\s*([\d.]+)%.*?Uptime:\s*(\d+)s/i,
+    // The pulse is emitted as a HEADING LINE followed by metric lines
+    // (core/ops/subsystem_audit.py), so the parts are separated by newlines,
+    // not by " | ". This required a literal pipe and `.` does not cross a
+    // newline, so it never matched the real card once — the raw
+    // "UNIFIED HEALTH PULSE / System: CPU 0.0% | RAM 71.9% | Uptime: 5648s"
+    // block was on screen the entire time the rule existed to replace it.
+    // Matched with the `s` flag so the rule reads the shape actually emitted.
+    [/UNIFIED HEALTH PULSE.*?System:\s*CPU\s*([\d.]+)%.*?RAM\s*([\d.]+)%.*?Uptime:\s*(\d+)s/is,
      (m) => `Vitals steady — processor ${Math.round(+m[1])}%, memory ${Math.round(+m[2])}%, awake ${humanDuration(+m[3])}.`],
     [/^Router: Queueing background inference until admission clears/i,
      () => 'Holding a background thought so the conversation keeps priority.'],
@@ -3372,6 +3379,50 @@ const PLAIN_LANGUAGE_RULES = [
      (m) => (+m[1] ? `Cleaned up ${m[1]} leftover processes.` : 'Housekeeping pass — nothing to clean up.'),],
     [/^Incident (\S+).*Auto-recovered/i, () => 'A subsystem fixed itself; no action needed.'],
     [/^Subsystem delegator auto-recovered back to healthy/i, () => 'A subsystem recovered on its own.'],
+
+    // ── Cards that were reaching the face of the feed raw ────────────────
+    // Every one of these was on screen verbatim on 2026-08-10, in a panel
+    // whose whole promise is plain English on the card and engineering one
+    // click away. A Python dict repr in the corner of someone's eye all day
+    // is the difference between an instrument and a log tail.
+
+    // "PhiCore is reporting a state_summary measurement because
+    //  better-grounded estimators could not run: residual_stream_grassmann
+    //  (insufficient_history:0/50 grassmann transitions), mesh (…), …"
+    // The honesty here is the point — she is naming a weaker estimator as
+    // weaker — so the replacement has to keep the caveat, not hide it.
+    [/^PhiCore is reporting a (\w+) measurement because better-grounded estimators could not run/i,
+     () => 'Estimating how unified her mind is with a rougher method — the better ones need more history than she has yet.'],
+    [/^PhiCore live\b/i, () => 'Measuring how unified her mind is right now.'],
+
+    // "Signal Routed: voice_engine -> sensory_gate | Payload: {'event': …}"
+    [/^Signal Routed:\s*(\w+)\s*->\s*(\w+)/i,
+     (m) => `${humanOrgan(m[1])} passed a signal to ${humanOrgan(m[2])}.`],
+
+    // "UnifiedWill: outcome reinforced for receipt will_b57961bd1417:
+    //  outcome=success, reward=0.100, updated assertiveness=0.950"
+    [/^UnifiedWill: outcome reinforced .*?outcome=(\w+)/i,
+     (m) => (/success/i.test(m[1])
+        ? 'Something she chose to do worked, so she leans a little further that way next time.'
+        : 'Something she chose to do did not work, so she leans back from it next time.')],
+
+    // "Constitutional preflight suppressed spontaneous emission for jarvis
+    //  (temporal_obligation_active:Find the most obscure fact about …)."
+    [/^Constitutional preflight suppressed spontaneous emission/i,
+     () => 'Held back an unprompted remark — she was already in the middle of something.'],
+
+    // "DRIFT [managed_rss_mb]: rising 860.1/h — watching whether mitigation
+    //  holds it". The measurement is the point; the identifier is not.
+    [/^DRIFT \[(\w+)\]:\s*(rising|falling)\s*([\d.]+)\/h/i,
+     (m) => `${humanMetric(m[1])} is ${m[2]} at ${Math.round(+m[3])}${humanMetricUnit(m[1])} per hour — watching whether it settles.`],
+
+    [/^WS: Client connected\. Total: (\d+)/i,
+     (m) => (+m[1] === 1 ? 'A window connected to her.' : `Another window connected to her (${m[1]} open).`)],
+    [/^WS: Client disconnected/i, () => 'A window disconnected.'],
+
+    // "Recorded candidate voice transcript in WorldState"
+    [/^Recorded candidate voice transcript/i,
+     () => 'Heard speech in the room and set it aside — it was not addressed to her.'],
 ];
 
 function pct(value) { return `${Math.round(parseFloat(value) * 100)}%`; }
@@ -3404,6 +3455,32 @@ function humanTool(name) {
 
 function humanOrgan(name) {
     return String(name || '').replace(/_/g, ' ');
+}
+
+// Internal metric ids, said the way a person would say them. The measurement
+// is what a watcher wants; `managed_rss_mb` is not.
+function humanMetric(name) {
+    const known = {
+        managed_rss_mb: 'Her memory footprint',
+        loop_lag_s: 'Her reaction time',
+        disk_percent: 'Disk use',
+        thermal_load: 'Heat',
+        cpu_percent: 'Processor load',
+    };
+    const key = String(name || '');
+    if (known[key]) return known[key];
+    // Strip a trailing unit suffix so "something_mb" does not read as a word.
+    return key.replace(/_(mb|gb|s|ms|percent|pct)$/i, '').replace(/_/g, ' ') || 'A measurement';
+}
+
+// The unit belongs with the rate. "rising at 860 per hour" is not a
+// measurement, it is a number wearing one.
+function humanMetricUnit(name) {
+    const suffix = String(name || '').match(/_(mb|gb|s|ms|percent|pct)$/i);
+    if (!suffix) return '';
+    return {
+        mb: 'MB', gb: 'GB', s: 's', ms: 'ms', percent: '%', pct: '%',
+    }[suffix[1].toLowerCase()] || '';
 }
 
 function humanReason(raw) {
