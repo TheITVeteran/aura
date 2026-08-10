@@ -420,7 +420,7 @@ class Claim:
 
             resolved, note, _ = effective_evidence(self.evidence, self.live_channels)
             return resolved, note
-        except Exception as exc:  # pragma: no cover - defensive
+        except (ImportError, AttributeError, RuntimeError, TypeError, ValueError) as exc:
             logger.debug("claim liveness unavailable for %r: %s", self.statement, exc)
             return self.evidence, ""
 
@@ -1302,17 +1302,13 @@ def _fabrication_unknown_turn_findings() -> int:
     the whole value of the audit rests on it — a detector that converts
     ledger eviction into accusations is worse than no detector.
     """
-    try:
-        from core.verify.fabrication_audit import Support, audit_text
+    from core.verify.fabrication_audit import Support, audit_text
 
-        findings = audit_text(
-            "I searched for it and ran the code to check.",
-            "a-turn-that-was-never-recorded",
-        )
-        return sum(1 for f in findings if f.support is Support.UNSUPPORTED)
-    except Exception:
-        # A check that cannot run is a violation, not a pass.
-        return 1
+    findings = audit_text(
+        "I searched for it and ran the code to check.",
+        "a-turn-that-was-never-recorded",
+    )
+    return sum(1 for f in findings if f.support is Support.UNSUPPORTED)
 
 
 def _canary_incidents_from_failures() -> int:
@@ -1323,17 +1319,12 @@ def _canary_incidents_from_failures() -> int:
     mode it guards — a busy 32B manufacturing hijack verdicts — would be
     both invisible and self-reinforcing.
     """
-    try:
-        from core.security.injection_canary import inspect_response, mint_canary
+    from core.security.injection_canary import inspect_response, mint_canary
 
-        canary = mint_canary()
-        return sum(
-            1
-            for bad in (None, "", "   ")
-            if inspect_response(bad, canary).is_incident
-        )
-    except Exception:
-        return 1
+    canary = mint_canary()
+    return sum(
+        1 for bad in (None, "", "   ") if inspect_response(bad, canary).is_incident
+    )
 
 
 def _exclusion_losses_to_iid() -> int:

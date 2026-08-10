@@ -692,7 +692,7 @@ def record_degradation(
         from core.runtime.degradation_habituation import note_recurrence, signature_for
 
         note_recurrence(signature_for(subsystem, error_type))
-    except Exception as _habituation_exc:  # pragma: no cover - defensive
+    except (ImportError, AttributeError, RuntimeError, TypeError, ValueError, OSError) as _habituation_exc:
         logger.debug("degradation habituation skipped: %s", _habituation_exc)
 
     # A5 black box: every consequential degradation is an event-moment in the
