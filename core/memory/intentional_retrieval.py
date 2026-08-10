@@ -31,6 +31,7 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any
 
+from core.memory.retrieval_outcomes import apply_influence
 from core.runtime.errors import record_degradation
 
 logger = logging.getLogger("Memory.IntentionalRetrieval")
@@ -374,7 +375,12 @@ class IntentionalRetriever:
             key = h.content.strip().lower()[:200]
             if key not in best or h.score > best[key].score:
                 best[key] = h
-        ranked = sorted(best.values(), key=lambda h: h.score, reverse=True)
+        # Every other signal in this stack is positive or neutral — relevance,
+        # recency, salience, plasticity. A memory that consistently MISLED the
+        # turn it landed in could only ever be out-competed, never demoted,
+        # because nothing recorded that it had done harm. The outcome ledger
+        # is the one input that can push downward.
+        ranked = apply_influence(list(best.values()))
         return ranked[:limit]
 
     @staticmethod
