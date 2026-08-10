@@ -4830,9 +4830,26 @@ def _load_durable_conversation_exchanges_sync(
     else:
         if not callable(get_recent_sessions):
             return []
-        sessions = list(
-            get_recent_sessions(limit=_DURABLE_CONVERSATION_SESSION_SCAN_LIMIT) or []
-        )
+        # Sessions with nothing in them are boot artifacts, and a bounded scan
+        # that counts them spends its whole window on restarts instead of
+        # conversations — three reboots used to hide yesterday entirely.
+        try:
+            sessions = list(
+                get_recent_sessions(
+                    limit=_DURABLE_CONVERSATION_SESSION_SCAN_LIMIT,
+                    with_turns_only=True,
+                )
+                or []
+            )
+        except TypeError:
+            sessions = [
+                session
+                for session in (
+                    get_recent_sessions(limit=_DURABLE_CONVERSATION_SESSION_SCAN_LIMIT)
+                    or []
+                )
+                if isinstance(session, dict) and int(session.get("turn_count") or 0) > 0
+            ]
         for session in reversed(sessions):
             if not isinstance(session, dict):
                 continue
@@ -23452,12 +23469,14 @@ async def _api_chat_turn(body: ChatRequest, request: Request):
                 )
             if _grounded_recall_context:
                 from core.conversation.grounded_recall import (
+                    grounded_quote_from_context,
                     repair_grounded_recall_speaker_attribution,
                 )
 
                 final_text, _ = repair_grounded_recall_speaker_attribution(
                     _semantic_user_message,
                     final_text,
+                    grounded_quote_from_context(_grounded_recall_context),
                 )
             response_confidence = "high"
             hard_fastpath_quality_failed = False
@@ -25576,12 +25595,14 @@ async def _api_chat_turn(body: ChatRequest, request: Request):
         )
         if _grounded_recall_context:
             from core.conversation.grounded_recall import (
+                grounded_quote_from_context,
                 repair_grounded_recall_speaker_attribution,
             )
 
             reply_text, attribution_repaired = repair_grounded_recall_speaker_attribution(
                 _semantic_user_message,
                 reply_text,
+                grounded_quote_from_context(_grounded_recall_context),
             )
             if attribution_repaired:
                 logger.info(

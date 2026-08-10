@@ -151,6 +151,30 @@ class VerifyReport:
         )
 
 
+def _definition_site(check: CheckFn) -> tuple[str, str]:
+    """What identifies *one definition* of an invariant.
+
+    Not the function object. Reloading a module re-executes its body and
+    produces a fresh object for the same source definition, so an identity
+    test reads a reload as a name collision.
+
+    LIVE DEFECT, 2026-08-10: a hot-reload from the desktop UI reported "377
+    reloaded, 1 failed" — ``core.conversation.disposition_invariants`` could
+    not be reloaded because re-importing it re-registered
+    ``surface.advisory_never_destroys``. Every module that declares an
+    invariant at import time was un-reloadable for the same reason, and the
+    guide tells authors to put invariants next to what they protect, so the
+    set could only grow.
+
+    The duplicate check exists to stop two *different* definitions claiming
+    one name. Re-running the same definition is not that.
+    """
+    return (
+        getattr(check, "__module__", "") or "",
+        getattr(check, "__qualname__", None) or getattr(check, "__name__", "") or "",
+    )
+
+
 class InvariantRegistry:
     def __init__(self) -> None:
         self._lock = threading.Lock()
@@ -159,11 +183,16 @@ class InvariantRegistry:
     def register(self, spec: InvariantSpec) -> InvariantSpec:
         with self._lock:
             existing = self._specs.get(spec.name)
-            if existing is not None and existing.check is not spec.check:
-                raise ValueError(
-                    f"invariant {spec.name!r} already registered by {existing.owner}; "
-                    "an invariant has one definition"
-                )
+            if existing is not None:
+                previous = _definition_site(existing.check)
+                current = _definition_site(spec.check)
+                if previous != current:
+                    raise ValueError(
+                        f"invariant {spec.name!r} already registered by "
+                        f"{existing.owner} ({previous[0]}.{previous[1]}); "
+                        f"{spec.owner} ({current[0]}.{current[1]}) cannot claim "
+                        "the same name — an invariant has one definition"
+                    )
             self._specs[spec.name] = spec
             return spec
 

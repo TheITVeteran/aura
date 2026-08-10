@@ -130,6 +130,44 @@ def test_duplicate_invariant_name_is_refused(monkeypatch):
             return ()
 
 
+def test_reimporting_a_module_re_registers_its_own_invariant(monkeypatch):
+    """LIVE DEFECT 2026-08-10: hot-reload reported "377 reloaded, 1 failed".
+
+    Re-executing a module body builds a new function object for the same
+    source definition, which the old identity test read as a name collision.
+    Every module declaring an invariant at import time was un-reloadable.
+    """
+    _isolated_registry(monkeypatch)
+
+    def _define():
+        @invariant("reload.same", scope="r", owner="core/thing.py")
+        def _check():
+            return ()
+
+        return _check
+
+    first = _define()
+    second = _define()  # what a module reload does
+    assert first is not second
+    specs = {s.name: s for s in get_registry().specs()}
+    assert specs["reload.same"].check is second
+
+
+def test_a_second_definition_site_still_cannot_claim_the_name(monkeypatch):
+    """Reload tolerance must not weaken the collision guard it sits inside."""
+    _isolated_registry(monkeypatch)
+
+    @invariant("collide.name", scope="c", owner="core/a.py")
+    def _from_a():
+        return ()
+
+    with pytest.raises(ValueError, match="an invariant has one definition"):
+
+        @invariant("collide.name", scope="c", owner="core/b.py")
+        def _from_b():
+            return ()
+
+
 def test_runtime_invariants_are_registered_and_run_clean():
     from core.verify import runtime_invariants  # noqa: F401 — import registers
 

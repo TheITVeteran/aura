@@ -464,22 +464,48 @@ class ConversationPersistence:
             ).fetchall()
         return [dict(r) for r in rows]
 
-    def get_recent_sessions(self, limit: int = 10) -> list[dict[str, Any]]:
+    def get_recent_sessions(
+        self, limit: int = 10, *, with_turns_only: bool = False
+    ) -> list[dict[str, Any]]:
+        """Most recently active sessions, newest first.
+
+        ``with_turns_only`` drops sessions that hold no turns. Every boot opens
+        a session row before anything is said in it, so the unfiltered list is
+        mostly boot artifacts — see :meth:`recover_last_session` for what that
+        cost in practice.
+        """
         limit = _safe_limit(limit, 10)
+        having = "HAVING COUNT(t.id) > 0 " if with_turns_only else ""
         with connecting(self._connect()) as con:
             rows = con.execute(
                 "SELECT s.*, COUNT(t.id) as turn_count "
                 "FROM sessions s LEFT JOIN turns t ON t.session_id = s.id "
-                "GROUP BY s.id ORDER BY s.last_active DESC LIMIT ?",
+                f"GROUP BY s.id {having}ORDER BY s.last_active DESC LIMIT ?",
                 (limit,),
             ).fetchall()
         return [dict(r) for r in rows]
 
     def recover_last_session(self) -> str | None:
-        """Return the most recent session ID for crash recovery."""
+        """Return the most recent session that actually holds turns.
+
+        LIVE DEFECT, 2026-08-10. Asked "we talked earlier today and then I
+        restarted you — do you remember what we were talking about?", she
+        answered "my state was reset and I have no memory of it" while all 34
+        turns of that conversation sat in this table.
+
+        Every boot calls :meth:`start_session`, which writes a session row
+        before a word is spoken in it. Ordering by ``last_active`` alone made
+        the newest empty boot row the "last session", so recovery resumed a
+        conversation with nothing in it, and the bounded scan that feeds
+        durable recall spent its slots on empty rows — five were created on the
+        day this was found. A session with no turns is a boot artifact, not a
+        conversation to resume.
+        """
         with connecting(self._connect()) as con:
             row = con.execute(
-                "SELECT id FROM sessions ORDER BY last_active DESC LIMIT 1"
+                "SELECT s.id FROM sessions s "
+                "JOIN turns t ON t.session_id = s.id "
+                "GROUP BY s.id ORDER BY s.last_active DESC LIMIT 1"
             ).fetchone()
         if row:
             self._current_session_id = row["id"]

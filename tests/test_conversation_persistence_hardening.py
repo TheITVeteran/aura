@@ -298,3 +298,49 @@ def test_conversation_persistence_scheduler_failure_records_receipt(monkeypatch,
     assert recorded[0][1] == "RuntimeError"
     assert recorded[0][2]["receipt_required"] is True
     assert "scheduled conversation pruning" in str(recorded[0][2]["action"])
+
+
+def test_empty_boot_sessions_do_not_displace_real_conversations(tmp_path):
+    """LIVE DEFECT 2026-08-10: a whole day's conversation went unrecallable.
+
+    Every boot opens a session row before anything is said in it. Durable
+    recall scans a bounded number of recent sessions, so each restart spent one
+    of those slots on an empty row. Five empty sessions were created on the day
+    this was found; three would have been enough to hide the conversation
+    entirely, and she reported "my state was reset and I have no memory of it"
+    with all 34 turns of it on disk.
+    """
+    store = ConversationPersistence(tmp_path / "conversations.db")
+
+    real = store.start_session({"kind": "morning"})
+    store.record_turn("user", "we were talking about senses", origin="text")
+    store.record_turn("aura", "you said you'd give up the screen", origin="text")
+
+    # Three restarts, none of them said anything.
+    for _ in range(3):
+        store.start_session({"kind": "boot"})
+
+    unfiltered = store.get_recent_sessions(limit=3)
+    assert all(int(s["turn_count"]) == 0 for s in unfiltered), (
+        "boot rows should be the newest — this is the condition that hid history"
+    )
+
+    with_content = store.get_recent_sessions(limit=3, with_turns_only=True)
+    assert [s["id"] for s in with_content] == [real]
+    assert int(with_content[0]["turn_count"]) == 2
+
+
+def test_recover_last_session_skips_empty_boot_rows(tmp_path):
+    store = ConversationPersistence(tmp_path / "conversations.db")
+
+    real = store.start_session({"kind": "real"})
+    store.record_turn("user", "remember this one", origin="text")
+    store.start_session({"kind": "boot"})
+
+    assert store.recover_last_session() == real
+
+
+def test_recover_last_session_returns_none_when_nothing_was_ever_said(tmp_path):
+    store = ConversationPersistence(tmp_path / "conversations.db")
+    store.start_session({"kind": "boot"})
+    assert store.recover_last_session() is None

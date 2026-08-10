@@ -473,20 +473,93 @@ _AURAS_OWN_ACT_RE = re.compile(
 )
 
 
+#: The quoted turn inside a grounding block, for callers that hold the block
+#: but not the turn it was built from.
+_QUOTED_TURN_RE = re.compile(r"“(.+?)”", re.DOTALL)
+
+
+def grounded_quote_from_context(context: str | None) -> str | None:
+    """The verbatim turn a grounding block was built around, or None."""
+    match = _QUOTED_TURN_RE.search(str(context or ""))
+    if not match:
+        return None
+    return match.group(1).strip().strip("…").strip() or None
+
+
+_WORD_RE = re.compile(r"[a-z0-9']+")
+
+#: Words that carry no evidence of who spoke a sentence. Pronouns are the point:
+#: the repair's whole job is to flip them, so their presence on both sides says
+#: nothing about whether the sentence came from the user's utterance.
+_PROVENANCE_FREE = frozenset(
+    """
+    a an and are as at be been being but by did do does for from had has have
+    he her him his i if in into is it its me more most my not of on or our
+    she should so than that the their them then there these they this those to
+    up us was we were what when which who will with would you your yours
+    """.split()
+)
+
+#: Frames that attribute a speech act to a speaker. They are the sentence's
+#: grammar rather than the quoted content, so they are stripped before the
+#: content is checked against the quote — "I said X" is a claim about X.
+_SPEECH_ACT_FRAME_RE = re.compile(
+    r"^\s*(?:"
+    r"i\s+(?:just\s+|already\s+|first\s+|originally\s+)?"
+    r"(?:said|asked|told\s+you|mentioned|brought\s+up|wanted\s+to\s+know)"
+    r"|my\s+(?:point|question|message|words|ask|request|first\s+\w+)\s+(?:was|were)"
+    r")\s*(?:that\s+|about\s+)?",
+    re.IGNORECASE,
+)
+
+
+def _content_words(text: str) -> frozenset[str]:
+    """Words in ``text`` that could evidence where the sentence came from."""
+    return frozenset(
+        word
+        for word in _WORD_RE.findall(str(text or "").lower())
+        if word not in _PROVENANCE_FREE
+    )
+
+
 def repair_grounded_recall_speaker_attribution(
     user_message: str,
     response_text: str,
+    grounded_quote: str | None = None,
 ) -> tuple[str, bool]:
     """Correct first-person adoption of a retrieved user utterance.
 
     This only applies to positional recall questions where the user explicitly
     asks about what they said. It does not ban first-person language elsewhere.
+
+    The rewrite turns her sentence into a statement about what the *user* said,
+    which is a factual assertion — so it is made only about words that
+    demonstrably came from ``grounded_quote``, the turn actually retrieved.
+    Without that quote there is nothing to have been misattributed, and the
+    reply is left alone.
+
+    LIVE DEFECT, 2026-08-10, first turn after a restart::
+
+        Q: "we talked earlier today and then i restarted you. do you remember
+            what we were talking about, or is that gone?"
+        A: "You said you remember the conversation. It's not gone."
+
+    Her real sentence was *"I remember the conversation."* — a true report of
+    her own state, and a correct answer. "we talked earlier" satisfied the
+    positional detector, the sentence opened with "I", and the repair inverted
+    it into a claim that *he* had said it. The function had no access to the
+    quote it was nominally restoring, so it could not tell her words from his
+    and rewrote on the strength of a leading pronoun alone. A repair built to
+    stop one speaker's words being credited to the other did exactly that.
     """
 
     response = str(response_text or "").strip()
     if not response or detect_positional_recall(user_message) is None:
         return response, False
     if not re.search(r"\b(?:i|my|me)\b", str(user_message or ""), re.IGNORECASE):
+        return response, False
+    quote_words = _content_words(grounded_quote)
+    if not quote_words:
         return response, False
 
     sentence_end = re.search(r"(?<=[.!?])(?:\s|$)", response)
@@ -504,6 +577,18 @@ def repair_grounded_recall_speaker_attribution(
         # evidence" hands the user an act they did not perform and strips her
         # of one she did — a false statement in both directions, produced by a
         # repair meant to prevent exactly that.
+        return response, False
+
+    # Provenance. Everything about to be re-attributed has to be traceable to
+    # the utterance being recalled; a sentence introducing content the user
+    # never said is her own, however it opens.
+    claim_words = _content_words(_SPEECH_ACT_FRAME_RE.sub("", body))
+    if not claim_words or not claim_words <= quote_words:
+        logger.debug(
+            "🧠 [GroundedRecall] leaving first-person sentence alone — its "
+            "content is not the quoted turn's (%s absent from the quote).",
+            sorted(claim_words - quote_words)[:6] or "nothing quotable",
+        )
         return response, False
 
     shifted = re.sub(r"\bI am\b", "you are", body, flags=re.IGNORECASE)
