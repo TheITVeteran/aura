@@ -13,8 +13,10 @@ import pytest
 from core.learning.recurrence_curriculum import (
     MAX_TRAINING_DEPTH,
     RECURRENCE_TRAINING_FAMILIES,
+    STRUCTURED_TRANSITION_TRACE_SCHEMA,
     TASK_GENERATORS,
     RecurrenceTrainingTask,
+    StructuredTransitionTrace,
     disjoint_task_split,
     task_battery,
 )
@@ -294,6 +296,14 @@ def test_boolean_answer_is_recomputable_from_prompt():
     task = TASK_GENERATORS["boolean"](12, 12)
     expression = task.prompt.split(": ", 1)[1].rsplit(". Return", 1)[0]
     assert _payload(task) == {"value": 1 if _evaluate_boolean(expression) else 0}
+    assert task.transition_trace is not None
+    assert task.transition_trace.field_names == ("pc", "value", "done")
+    assert len(task.transition_trace.states) == task.depth + 1
+    assert task.transition_trace.states[-1] == (
+        task.depth,
+        _payload(task)["value"],
+        1,
+    )
 
 
 def test_modular_answer_uses_the_published_initial_value():
@@ -304,7 +314,8 @@ def test_modular_answer_uses_the_published_initial_value():
     )
     assert match
     modulus, value = map(int, match.groups()[:2])
-    for operation in match.group(3).split(", "):
+    expected_states = [(0, value, 0)]
+    for step, operation in enumerate(match.group(3).split(", "), start=1):
         operand = int(operation[1:])
         if operation[0] == "+":
             value += operand
@@ -314,7 +325,55 @@ def test_modular_answer_uses_the_published_initial_value():
             assert operation[0] == "*"
             value *= operand
         value %= modulus
+        expected_states.append((step, value, int(step == task.depth)))
     assert _payload(task) == {"residue": value}
+    assert task.transition_trace is not None
+    assert task.transition_trace.field_names == ("pc", "residue", "done")
+    assert task.transition_trace.states == tuple(expected_states)
+
+
+def test_structured_transition_commitment_hides_private_states() -> None:
+    trace = TASK_GENERATORS["modular"](4, 31).transition_trace
+    assert trace is not None
+
+    commitment = trace.public_commitment()
+
+    assert commitment == {
+        "schema": STRUCTURED_TRANSITION_TRACE_SCHEMA,
+        "family": "modular",
+        "depth": 4,
+        "field_names": ["pc", "residue", "done"],
+        "state_count": 5,
+        "trace_sha256": trace.trace_sha256,
+    }
+    assert "states" not in commitment
+    assert trace.trace_sha256 == StructuredTransitionTrace(
+        family=trace.family,
+        depth=trace.depth,
+        field_names=trace.field_names,
+        states=trace.states,
+    ).trace_sha256
+
+
+@pytest.mark.parametrize(
+    "states",
+    [
+        ((0, 3, 0),),
+        ((0, 3, 0), (2, 5, 1)),
+        ((0, 3, 1), (1, 5, 1)),
+        ((0, 3, 0), (1, True, 1)),
+    ],
+)
+def test_structured_transition_trace_rejects_invalid_state_sequences(
+    states: tuple[tuple[object, ...], ...],
+) -> None:
+    with pytest.raises(ValueError, match="transition"):
+        StructuredTransitionTrace(
+            family="modular",
+            depth=1,
+            field_names=("pc", "residue", "done"),
+            states=states,  # type: ignore[arg-type]
+        )
 
 
 def test_register_trace_answer_is_recomputable_from_prompt():

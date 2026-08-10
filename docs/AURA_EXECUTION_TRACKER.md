@@ -43406,3 +43406,30 @@ The next bounded gate directly localizes structured computational state across
 the current recurrent trajectory and readout, then decides from evidence
 whether to preserve the existing Qwen recurrent operator or replace it with a
 state-supervised shared transition core.
+
+## Checkpoint 2026-08-10-176: Exact Programs Expose Private Transition States
+
+The recurrence curriculum previously exposed exact final answers and textual
+derivations but no machine-readable definition of what one recurrent step
+should compute. Terminal loss could therefore reward formatting, coda readout,
+or any endpoint shortcut without teaching the recurrent operator an algorithmic
+transition.
+
+Boolean and modular curriculum tasks now carry immutable private state traces.
+Each operation boundary records an exact program counter, current Boolean value
+or modular residue, and done bit, including the initial state and final state.
+Trace construction rejects skipped program counters, premature terminal bits,
+non-integer fields, inconsistent family/depth metadata, and incomplete state
+coverage. A public commitment exposes schema, field names, depth, state count,
+and a canonical SHA-256 without exposing the private state values.
+
+The existing text target remains unchanged for compatibility. Focused
+curriculum contracts pass `54/54`; Ruff and compilation pass. This is teacher
+signal infrastructure, not a measured neural result: no recurrent weights have
+yet learned these transitions and no behavior claim is authorized.
+
+This advances the completion envelope to `872/920` (approximately `94.8%`).
+Next, the exact live Qwen recurrent trajectory will be captured at every depth
+and task-disjoint linear probes will test whether these structured states are
+absent, erased, preserved, or increasingly recoverable before any replacement
+core is selected.

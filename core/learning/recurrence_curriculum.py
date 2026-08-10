@@ -21,6 +21,7 @@ from typing import Any, Never
 CURRICULUM_SCHEMA = "aura.recurrence_training_curriculum.v1"
 CURRICULUM_VERSION = "2026.07.18.1"
 PROCESS_SUPERVISION_SCHEMA = "aura.recurrence_process_supervision.v1"
+STRUCTURED_TRANSITION_TRACE_SCHEMA = "aura.recurrence_structured_transition_trace.v1"
 MAX_TRAINING_DEPTH = 32
 MAX_PROCESS_TARGET_BYTES = 1_024
 _TERMINAL_FINAL_CUE = re.compile(
@@ -91,6 +92,72 @@ def _parse_semantic_terminal_answer(response: str) -> dict[str, Any]:
 
 
 @dataclass(frozen=True, slots=True)
+class StructuredTransitionTrace:
+    """Private exact machine states for one deterministic reasoning program."""
+
+    family: str
+    depth: int
+    field_names: tuple[str, ...]
+    states: tuple[tuple[int, ...], ...]
+
+    def __post_init__(self) -> None:
+        if (
+            not self.family
+            or not self.family.replace("_", "").isalnum()
+            or type(self.depth) is not int
+            or self.depth < 1
+            or len(self.field_names) < 3
+            or self.field_names[0] != "pc"
+            or self.field_names[-1] != "done"
+            or len(set(self.field_names)) != len(self.field_names)
+            or any(not name or not name.replace("_", "").isalnum() for name in self.field_names)
+            or len(self.states) != self.depth + 1
+        ):
+            raise ValueError("structured transition trace metadata is invalid")
+        width = len(self.field_names)
+        for index, state in enumerate(self.states):
+            if (
+                not isinstance(state, tuple)
+                or len(state) != width
+                or any(type(value) is not int for value in state)
+                or state[0] != index
+                or state[-1] != int(index == self.depth)
+            ):
+                raise ValueError("structured transition state is invalid")
+
+    @property
+    def trace_sha256(self) -> str:
+        return hashlib.sha256(
+            json.dumps(
+                self.private_payload(),
+                sort_keys=True,
+                separators=(",", ":"),
+                ensure_ascii=True,
+                allow_nan=False,
+            ).encode("ascii")
+        ).hexdigest()
+
+    def private_payload(self) -> dict[str, Any]:
+        return {
+            "schema": STRUCTURED_TRANSITION_TRACE_SCHEMA,
+            "family": self.family,
+            "depth": self.depth,
+            "field_names": list(self.field_names),
+            "states": [list(state) for state in self.states],
+        }
+
+    def public_commitment(self) -> dict[str, Any]:
+        return {
+            "schema": STRUCTURED_TRANSITION_TRACE_SCHEMA,
+            "family": self.family,
+            "depth": self.depth,
+            "field_names": list(self.field_names),
+            "state_count": len(self.states),
+            "trace_sha256": self.trace_sha256,
+        }
+
+
+@dataclass(frozen=True, slots=True)
 class RecurrenceTrainingTask:
     prompt: str
     answer: str
@@ -98,6 +165,7 @@ class RecurrenceTrainingTask:
     family: str
     seed: int
     solution: str = ""
+    transition_trace: StructuredTransitionTrace | None = None
 
     def __post_init__(self) -> None:
         if not self.prompt or self.prompt != self.prompt.strip() or "\x00" in self.prompt:
@@ -110,6 +178,12 @@ class RecurrenceTrainingTask:
             raise ValueError("training task seed is invalid")
         if not self.family or not self.family.replace("_", "").isalnum():
             raise ValueError("training task family is invalid")
+        if self.transition_trace is not None and (
+            not isinstance(self.transition_trace, StructuredTransitionTrace)
+            or self.transition_trace.family != self.family
+            or self.transition_trace.depth != self.depth
+        ):
+            raise ValueError("training task transition trace is invalid")
         if self.solution:
             if (
                 self.solution != self.solution.strip()
@@ -305,13 +379,15 @@ def nested_boolean(depth: int, seed: int) -> RecurrenceTrainingTask:
     value = rng.random() < 0.5
     expression = "1" if value else "0"
     trace: list[str] = []
-    for _step in range(1, depth + 1):
+    transition_states = [(0, int(value), 0)]
+    for step in range(1, depth + 1):
         operation = rng.choice(("and", "or", "not", "xor"))
         prior_value = value
         if operation == "not":
             expression = f"(not {expression})"
             value = not value
             trace.append(f"not {int(prior_value)}={int(value)}")
+            transition_states.append((step, int(value), int(step == depth)))
             continue
         right_value = rng.random() < 0.5
         right = "1" if right_value else "0"
@@ -323,6 +399,9 @@ def nested_boolean(depth: int, seed: int) -> RecurrenceTrainingTask:
         else:
             value = value != right_value
         trace.append(f"{int(prior_value)} {operation} {int(right_value)}={int(value)}")
+        transition_states.append((step, int(value), int(step == depth)))
+    if len(transition_states) != depth + 1:
+        raise RuntimeError("boolean transition trace coverage differs")
     answer = _json_answer({"value": 1 if value else 0})
     return RecurrenceTrainingTask(
         prompt=(
@@ -335,6 +414,12 @@ def nested_boolean(depth: int, seed: int) -> RecurrenceTrainingTask:
         family="boolean",
         seed=seed,
         solution=_solution(answer, "boolean transitions: " + _checkpoint_trace(trace, limit=16)),
+        transition_trace=StructuredTransitionTrace(
+            family="boolean",
+            depth=depth,
+            field_names=("pc", "value", "done"),
+            states=tuple(transition_states),
+        ),
     )
 
 
@@ -346,7 +431,8 @@ def modular_chain(depth: int, seed: int) -> RecurrenceTrainingTask:
     value = initial
     operations: list[str] = []
     trace: list[str] = []
-    for _step in range(1, depth + 1):
+    transition_states = [(0, value, 0)]
+    for step in range(1, depth + 1):
         operation = rng.choice(("+", "*", "-"))
         operand = rng.randrange(1, modulus)
         previous = value
@@ -358,6 +444,7 @@ def modular_chain(depth: int, seed: int) -> RecurrenceTrainingTask:
             value = (value * operand) % modulus
         operations.append(f"{operation}{operand}")
         trace.append(f"({previous}{operation}{operand})%{modulus}={value}")
+        transition_states.append((step, value, int(step == depth)))
     answer = _json_answer({"residue": value})
     return RecurrenceTrainingTask(
         prompt=(
@@ -370,6 +457,12 @@ def modular_chain(depth: int, seed: int) -> RecurrenceTrainingTask:
         family="modular",
         seed=seed,
         solution=_solution(answer, "modular transitions: " + _checkpoint_trace(trace, limit=16)),
+        transition_trace=StructuredTransitionTrace(
+            family="modular",
+            depth=depth,
+            field_names=("pc", "residue", "done"),
+            states=tuple(transition_states),
+        ),
     )
 
 
@@ -860,8 +953,10 @@ __all__ = [
     "MAX_TRAINING_DEPTH",
     "MAX_PROCESS_TARGET_BYTES",
     "PROCESS_SUPERVISION_SCHEMA",
+    "STRUCTURED_TRANSITION_TRACE_SCHEMA",
     "RECURRENCE_TRAINING_FAMILIES",
     "RecurrenceTrainingTask",
+    "StructuredTransitionTrace",
     "TASK_GENERATORS",
     "disjoint_task_split",
     "task_battery",
