@@ -42910,3 +42910,27 @@ canary suite passes `4/4`; Ruff, compilation, and diff hygiene pass. Canonical
 smoke passes `103/103`. This advances the completion envelope to `855/920`
 (approximately `92.9%`). The next source-bound rerun will produce actionable
 evidence even if transplant is still refused; resident-32B use remains locked.
+
+## Checkpoint 2026-08-10-160: Candidate Export Failures Name the Broken Invariant
+
+The CP159 real producer is mechanically export-eligible: it accepted four
+neural update steps, reduced its frozen objective from `15.745819` to
+`10.466413`, preserved checkpoint provenance, survived its canary policy, and
+proved exact erase. Candidate persistence nevertheless returned no artifact.
+The earlier `fast_weight_evidence_rejected:ValueError` flag belongs to the
+pre-teacher evidence probe and is not the export failure; the exact objective
+teacher was subsequently admitted. A direct persistence probe also proves the
+campaign's isolated target root and governed batch writer are operational.
+
+`EpisodicFastWeights` previously collapsed every serialization, filesystem,
+and batch-receipt exception into `None`. It now retains a whitespace-bounded,
+length-bounded error class and detail for its caller, including explicit
+precondition reasons for missing erase proof or snapshot. The engine commits
+that reason into the episode's honest flags whenever an otherwise attempted
+candidate export returns no artifact. Tampered batch-receipt coverage proves
+the exact validation failure remains refused and observable. The focused
+fast-weight and engine suite passes `25/25`; Ruff, compilation, and diff
+hygiene pass. Canonical smoke passes `103/103`. This advances the completion
+envelope to `856/920` (approximately `93.0%`). The next source-bound rerun is
+diagnostic and will identify the precise export invariant before any further
+neural experiment; resident-32B use remains locked.

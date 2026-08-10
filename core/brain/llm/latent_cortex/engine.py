@@ -7913,6 +7913,11 @@ class LatentCortexEngine:
                 )
                 if exported is not None:
                     receipt.flag("fast_weight_candidate_exported")
+                elif fast_weights.last_export_error:
+                    receipt.flag(
+                        "fast_weight_candidate_export_failed:"
+                        f"{fast_weights.last_export_error}"
+                    )
             except _LATENT_PHASE_ERRORS as exc:
                 record_degradation(
                     "latent_cortex",

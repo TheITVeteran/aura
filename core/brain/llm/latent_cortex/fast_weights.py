@@ -409,6 +409,7 @@ class EpisodicFastWeights:
         self.handles: list[FastWeightHandle] = []
         self.lifecycle = FastWeightsLifecycle()
         self.last_export_receipt: dict[str, Any] | None = None
+        self.last_export_error = ""
         self._lease_model: Any | None = None
         self._lease_owner = ""
         # Anything caching model OUTPUTS (probe memoization) registers here:
@@ -1687,15 +1688,18 @@ class EpisodicFastWeights:
         import numpy as np
 
         if self.lifecycle.erase_proven is not True:
+            self.last_export_error = "erase_not_proven"
             logger.info("Consolidation export refused: erase not proven for %s", episode_id)
             return None
         if not getattr(self, "_exported_handles", None):
+            self.last_export_error = "snapshot_unavailable"
             logger.info(
                 "Consolidation export refused: no snapshot taken before detach for %s",
                 episode_id,
             )
             return None
         self.last_export_receipt = None
+        self.last_export_error = ""
         try:
             from core.brain.llm.latent_cortex.persistence import (
                 get_latent_cortex_persistence,
@@ -1750,6 +1754,8 @@ class EpisodicFastWeights:
             }
             return target_dir
         except (ImportError, OSError, RuntimeError, ValueError) as exc:
+            detail = " ".join(str(exc).split())[:240]
+            self.last_export_error = f"{type(exc).__name__}:{detail}"
             from core.runtime.errors import record_degradation
 
             record_degradation(

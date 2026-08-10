@@ -975,6 +975,9 @@ def test_consolidation_export_rejects_tampered_batch_receipt(
     assert exported is None
     assert fw.lifecycle.exported is False
     assert fw.last_export_receipt is None
+    assert fw.last_export_error.startswith(
+        "RuntimeError:fast-weight batch receipt does not match payloads"
+    )
 
 
 # ── Verifier arbitration over the adapted function (ΔW last word) ──────
