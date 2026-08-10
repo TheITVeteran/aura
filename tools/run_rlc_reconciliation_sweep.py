@@ -2239,8 +2239,8 @@ def main() -> int:
         default="certificate",
         help=(
             "component runs vanilla, the requested treatment, and its matched "
-            "adaptation ablation; pilot adds best-of-three; certificate adds "
-            "the resource-dominating control"
+            "adaptation-disabled and producer-disabled ablations; pilot adds "
+            "best-of-three; certificate adds the resource-dominating control"
         ),
     )
     parser.add_argument(
@@ -2326,7 +2326,7 @@ def main() -> int:
                 "task_count": len(tasks),
                 "commitment_sha256": commitment.commitment_sha256,
                 "registry_version": args.task_registry_version,
-                "domains": list(ft.FRONTIER_DOMAINS),
+                "domains": list(domains),
             },
             indent=1,
             sort_keys=True,

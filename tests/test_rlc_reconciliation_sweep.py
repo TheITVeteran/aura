@@ -24,6 +24,47 @@ if str(TOOLS) not in sys.path:
 import run_rlc_reconciliation_sweep as sweep  # noqa: E402
 
 
+def test_subset_self_test_binds_only_the_selected_domains(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    selected_domains = "mathematics,calibration,misleading_premise"
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "run_rlc_reconciliation_sweep.py",
+            "--model",
+            "unused-by-self-test",
+            "--out-dir",
+            str(tmp_path),
+            "--campaign-stage",
+            "component",
+            "--domains",
+            selected_domains,
+            "--per-domain",
+            "1",
+            "--arms",
+            "complete_system_closed_book",
+            "--self-test",
+        ],
+    )
+
+    assert sweep.main() == 0
+    commitment = json.loads((tmp_path / "task_commitment.json").read_text())
+    assert commitment["domains"] == selected_domains.split(",")
+    output = capsys.readouterr().out
+    self_test = json.loads(output[output.index("{") :])
+    assert self_test["domains"] == selected_domains.split(",")
+    assert self_test["execution_arms"] == [
+        "vanilla",
+        "complete_system_closed_book",
+        "complete_system_adaptation_ablation",
+        "complete_system_executable_ablation",
+    ]
+
+
 def _write_evidence_manifest(
     out_dir: Path,
     tasks,

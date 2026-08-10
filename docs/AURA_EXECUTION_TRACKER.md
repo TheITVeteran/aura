@@ -41640,3 +41640,24 @@ resident 32B. The next gate is the cheap 1.5B component experiment; resident
 32B remains locked until that causal ablation is positive and regression-free.
 No frontier, fusion, activation, or `WOW Signal` claim is authorized. The
 completion envelope is `816/920` (approximately `88.7%`).
+
+## Checkpoint 2026-08-09-120: Subset Campaign Identity Is Exact
+
+The first no-model rehearsal of the cheap component stage found that a
+domain-subset campaign committed the full seven-domain registry list even
+though it generated only the requested subset. The task hashes remained real,
+but the human-readable campaign identity was false and could make a later
+three-domain result ambiguous on replay. The component help text also named
+only one of the two matched ablations.
+
+Subset commitments now bind exactly the selected ordered domain list, and the
+stage contract names both the adaptation-disabled and producer-disabled arms.
+A self-test regression executes the real CLI without loading a model and proves
+that a three-domain component request materializes three tasks, those three
+domains, and exactly the four required arms. Reconciliation contracts pass
+`61/61`; Ruff and diff hygiene pass.
+
+This is experiment-identity closure, not model evidence. The 1.5B component
+canary remains next, and resident 32B remains locked. No reasoning-gain,
+frontier, fusion, activation, or `WOW Signal` claim is authorized. The
+completion envelope is `817/920` (approximately `88.8%`).
