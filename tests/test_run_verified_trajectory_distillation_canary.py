@@ -10,11 +10,14 @@ from tools.run_verified_trajectory_distillation_canary import (
 )
 
 
-def _model_with_scoped_projection():
+def _model_with_scoped_projection(*, coda: bool = False):
     import mlx.core as mx
     import mlx.nn as nn
 
-    from core.brain.llm.latent_cortex.recurrence_adapter import ScopedLoRALinear
+    from core.brain.llm.latent_cortex.recurrence_adapter import (
+        ScopedCodaLoRALinear,
+        ScopedLoRALinear,
+    )
 
     class _Attention:
         pass
@@ -22,7 +25,8 @@ def _model_with_scoped_projection():
     class _Layer:
         def __init__(self) -> None:
             self.self_attn = _Attention()
-            projection = ScopedLoRALinear.from_base(
+            wrapper_type = ScopedCodaLoRALinear if coda else ScopedLoRALinear
+            projection = wrapper_type.from_base(
                 nn.Linear(5, 5),
                 r=2,
                 scale=1.0,
@@ -66,6 +70,19 @@ def test_permuted_recurrence_control_preserves_norm_and_restores() -> None:
         observed = np.asarray(projection.lora_b)
         assert not np.array_equal(observed, before)
         assert np.linalg.norm(observed) == pytest.approx(np.linalg.norm(before))
+
+    assert np.array_equal(np.asarray(projection.lora_b), before)
+
+
+def test_lesion_controls_accept_decode_scoped_tissue() -> None:
+    model = _model_with_scoped_projection(coda=True)
+    projection = model.model.layers[0].self_attn.o_proj
+    before = np.asarray(projection.lora_b).copy()
+
+    with _zeroed_recurrence_adapter(model):
+        assert not np.any(np.asarray(projection.lora_b))
+    with _permuted_recurrence_adapter(model):
+        assert not np.array_equal(np.asarray(projection.lora_b), before)
 
     assert np.array_equal(np.asarray(projection.lora_b), before)
 

@@ -43131,3 +43131,34 @@ transport rather than reasoning gain. This advances the completion envelope
 to `863/920` (approximately `93.8%`). The next discriminator asks whether
 multiple independently verified corrections share a learnable same-state
 operator that transfers to unseen examples; resident-32B use remains locked.
+
+## Checkpoint 2026-08-10-168: Shared-Rule Learning Uses the Decode State It Must Change
+
+The old persistent-transfer canary paired recurrent query-slot inputs with
+teacher-minus-incumbent outputs captured from a separate answer-text pass.
+Those rows did not occupy the same causal phase, and correction normalization
+discarded the magnitude the neural operator must reproduce. A failed fit could
+not distinguish lack of shared structure from this state-space mismatch.
+
+Trajectory capture now records the frozen projection input from the incumbent
+decode and the teacher-minus-incumbent projection output at the same named
+site and pooled answer position. Incumbent and verified traces use the same
+token horizon rather than an arbitrary 96-token continuation. Their real
+correction magnitudes are retained. Fitted factors are explicitly decode-
+scoped, installed only after a clean checkpoint reload, and evaluated with the
+exact coda path identified by CP155 through CP167.
+
+A disjoint transfer diagnostic now measures held-out residual error, direction
+cosine, predicted-to-target energy, training-input subspace coverage, and
+correction-subspace coverage per site and in aggregate. Its zero operator is
+the explicit baseline: only relative error below one and positive direction
+can authorize behavioral evaluation. A diagnostic-only mode stops before the
+expensive ordinary/full-engine generations and commits a private hashed pair
+artifact, task manifests, factor receipts, and the honest boundary
+`heldout_internal_operator_transfer_only_not_behavioral_gain`. Full evaluation
+uses separate unseen tasks and deploys coda tissue with zeroed lesion and
+norm-preserving permutation controls. Synthetic shared-rule transfer, both
+recurrence and coda lesion controls, Ruff, compilation, and focused execution
+pass (`18/18`). Canonical smoke passes `103/103`. This advances the completion
+envelope to `864/920` (approximately `93.9%`). A minimal real-1.5B transfer
+preflight is next; resident-32B use remains locked.

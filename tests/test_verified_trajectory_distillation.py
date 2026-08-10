@@ -11,6 +11,7 @@ from core.learning.verified_trajectory_distillation import (
     build_verified_trajectory_artifact,
     compile_episodic_delta_factors,
     compile_episodic_delta_inventory,
+    evaluate_verified_trajectory_transfer,
     fit_verified_trajectory_factors,
     fit_verified_trajectory_inventory,
     install_verified_trajectory_inventory,
@@ -305,6 +306,40 @@ def test_verified_trajectory_inventory_rejects_partial_pair_counts() -> None:
             gain=0.25,
             adapter_scale=20.0,
         )
+
+
+def test_verified_trajectory_transfer_diagnostic_recovers_shared_rule() -> None:
+    rng = np.random.default_rng(47)
+    operator = rng.normal(size=(9, 7))
+    train_inputs = rng.normal(size=(12, 9))
+    validation_inputs = rng.normal(size=(6, 9))
+    train_corrections = train_inputs @ operator
+    validation_corrections = validation_inputs @ operator
+    site = "model.layers.3.self_attn.o_proj"
+    training = {site: (train_inputs, train_corrections)}
+    validation = {site: (validation_inputs, validation_corrections)}
+    fitted = fit_verified_trajectory_inventory(
+        training,
+        rank=7,
+        regularization=1e-8,
+        gain=0.75,
+        adapter_scale=20.0,
+        normalize_corrections=False,
+    )
+
+    diagnostic = evaluate_verified_trajectory_transfer(
+        fitted,
+        validation,
+        training_pairs=training,
+    )
+
+    aggregate = diagnostic["aggregate"]
+    assert fitted[site].receipt["corrections_normalized"] is False
+    assert aggregate["relative_error"] < 1e-3
+    assert aggregate["cosine"] > 0.999
+    assert aggregate["better_than_zero_operator"] is True
+    assert aggregate["input_subspace_coverage"] == pytest.approx(1.0)
+    assert aggregate["correction_subspace_coverage"] == pytest.approx(1.0)
 
 
 def test_verified_trajectory_inventory_installs_exact_named_site() -> None:

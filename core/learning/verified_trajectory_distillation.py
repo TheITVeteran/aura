@@ -700,6 +700,7 @@ def fit_verified_trajectory_inventory(
     gain: float,
     adapter_scale: float,
     site_phases: Mapping[str, str] | None = None,
+    normalize_corrections: bool = True,
 ) -> dict[str, DistilledTrajectoryFactors]:
     """Fit every named site and reject partial or inconsistent inventories."""
 
@@ -722,6 +723,7 @@ def fit_verified_trajectory_inventory(
             regularization=regularization,
             gain=gain,
             adapter_scale=adapter_scale,
+            normalize_corrections=normalize_corrections,
             target_phase=phases.get(site, "recurrence"),
         )
         pair_counts.add(int(fitted.receipt["teaching_pairs"]))
@@ -729,6 +731,150 @@ def fit_verified_trajectory_inventory(
     if len(pair_counts) != 1:
         raise ValueError("trajectory teaching inventories have unequal pair counts")
     return result
+
+
+def evaluate_verified_trajectory_transfer(
+    fitted: Mapping[str, DistilledTrajectoryFactors],
+    validation_pairs: Mapping[str, tuple[Any, Any]],
+    *,
+    training_pairs: Mapping[str, tuple[Any, Any]] | None = None,
+) -> dict[str, Any]:
+    """Measure whether one fitted neural rule transfers beyond its fit rows."""
+
+    if not fitted or set(fitted) != set(validation_pairs):
+        raise ValueError("trajectory transfer site inventories differ")
+    if training_pairs is not None and set(training_pairs) != set(fitted):
+        raise ValueError("trajectory transfer training inventory differs")
+
+    rows: dict[str, dict[str, Any]] = {}
+    total_target_energy = 0.0
+    total_residual_energy = 0.0
+    total_dot = 0.0
+    total_prediction_energy = 0.0
+    input_coverage_energy = 0.0
+    input_total_energy = 0.0
+    correction_coverage_energy = 0.0
+    correction_total_energy = 0.0
+    for site in sorted(fitted):
+        factors = fitted[site]
+        receipt = _validate_factor_receipt(factors)
+        pair = validation_pairs[site]
+        if not isinstance(pair, Sequence) or len(pair) != 2:
+            raise ValueError(f"trajectory validation pair is invalid at {site}")
+        inputs = _finite_matrix(pair[0], name=f"{site} validation inputs")
+        corrections = _finite_matrix(pair[1], name=f"{site} validation corrections")
+        if (
+            inputs.shape[0] != corrections.shape[0]
+            or inputs.shape[1] != factors.lora_a.shape[0]
+            or corrections.shape[1] != factors.lora_b.shape[1]
+        ):
+            raise ValueError(f"trajectory validation geometry differs at {site}")
+        correction_norms = np.linalg.norm(corrections, axis=1)
+        if np.any(correction_norms <= 1e-10):
+            raise ValueError(f"trajectory validation correction collapsed at {site}")
+        target = corrections.copy()
+        if bool(receipt.get("corrections_normalized")):
+            target /= correction_norms[:, None]
+        target *= float(receipt["gain"])
+        predicted = (
+            float(receipt["adapter_scale"])
+            * (inputs @ factors.lora_a.astype(np.float64))
+            @ factors.lora_b.astype(np.float64)
+        )
+        residual = predicted - target
+        target_energy = float(np.sum(np.square(target)))
+        residual_energy = float(np.sum(np.square(residual)))
+        prediction_energy = float(np.sum(np.square(predicted)))
+        dot = float(np.sum(predicted * target))
+        relative_error = math.sqrt(residual_energy / max(target_energy, 1e-20))
+        cosine = dot / math.sqrt(max(target_energy * prediction_energy, 1e-40))
+
+        input_coverage = None
+        correction_coverage = None
+        if training_pairs is not None:
+            training = training_pairs[site]
+            if not isinstance(training, Sequence) or len(training) != 2:
+                raise ValueError(f"trajectory training pair is invalid at {site}")
+            train_inputs = _finite_matrix(
+                training[0],
+                name=f"{site} training inputs",
+            )
+            train_corrections = _finite_matrix(
+                training[1],
+                name=f"{site} training corrections",
+            )
+            if (
+                train_inputs.shape[1] != inputs.shape[1]
+                or train_corrections.shape[1] != corrections.shape[1]
+            ):
+                raise ValueError(f"trajectory training geometry differs at {site}")
+            input_basis = np.linalg.svd(train_inputs, full_matrices=False)[2]
+            input_projection = (inputs @ input_basis.T) @ input_basis
+            input_projected_energy = float(np.sum(np.square(input_projection)))
+            input_energy = float(np.sum(np.square(inputs)))
+            input_coverage = input_projected_energy / max(input_energy, 1e-20)
+            correction_basis = np.linalg.svd(
+                train_corrections,
+                full_matrices=False,
+            )[2]
+            correction_projection = (
+                corrections @ correction_basis.T
+            ) @ correction_basis
+            correction_projected_energy = float(
+                np.sum(np.square(correction_projection))
+            )
+            correction_energy = float(np.sum(np.square(corrections)))
+            correction_coverage = correction_projected_energy / max(
+                correction_energy,
+                1e-20,
+            )
+            input_coverage_energy += input_projected_energy
+            input_total_energy += input_energy
+            correction_coverage_energy += correction_projected_energy
+            correction_total_energy += correction_energy
+
+        rows[site] = {
+            "validation_pairs": int(inputs.shape[0]),
+            "relative_error": relative_error,
+            "cosine": cosine,
+            "prediction_to_target_energy": prediction_energy
+            / max(target_energy, 1e-20),
+            "better_than_zero_operator": relative_error < 1.0,
+            "input_subspace_coverage": input_coverage,
+            "correction_subspace_coverage": correction_coverage,
+        }
+        total_target_energy += target_energy
+        total_residual_energy += residual_energy
+        total_prediction_energy += prediction_energy
+        total_dot += dot
+
+    aggregate_relative_error = math.sqrt(
+        total_residual_energy / max(total_target_energy, 1e-20)
+    )
+    aggregate_cosine = total_dot / math.sqrt(
+        max(total_target_energy * total_prediction_energy, 1e-40)
+    )
+    return {
+        "schema": "aura.verified_trajectory_transfer_diagnostic.v1",
+        "sites": rows,
+        "aggregate": {
+            "relative_error": aggregate_relative_error,
+            "cosine": aggregate_cosine,
+            "prediction_to_target_energy": total_prediction_energy
+            / max(total_target_energy, 1e-20),
+            "better_than_zero_operator": aggregate_relative_error < 1.0,
+            "input_subspace_coverage": (
+                input_coverage_energy / max(input_total_energy, 1e-20)
+                if training_pairs is not None
+                else None
+            ),
+            "correction_subspace_coverage": (
+                correction_coverage_energy / max(correction_total_energy, 1e-20)
+                if training_pairs is not None
+                else None
+            ),
+        },
+    }
 
 
 def install_verified_trajectory_inventory(
@@ -861,6 +1007,7 @@ __all__ = [
     "build_verified_trajectory_artifact",
     "compile_episodic_delta_factors",
     "compile_episodic_delta_inventory",
+    "evaluate_verified_trajectory_transfer",
     "fit_verified_trajectory_factors",
     "fit_verified_trajectory_inventory",
     "install_verified_trajectory_inventory",
