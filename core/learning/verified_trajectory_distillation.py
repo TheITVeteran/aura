@@ -408,13 +408,21 @@ def install_verified_trajectory_inventory(
         resolved.append((site, projection, factors))
 
     snapshots = [
-        (projection, projection.lora_a, projection.lora_b)
+        (
+            projection,
+            projection.lora_a,
+            projection.lora_b,
+            bool(getattr(projection, "exact_episodic_operation", False)),
+        )
         for _, projection, _ in resolved
     ]
     try:
         for _site, projection, factors in resolved:
             projection.lora_a = mx.array(factors.lora_a).astype(projection.lora_a.dtype)
             projection.lora_b = mx.array(factors.lora_b).astype(projection.lora_b.dtype)
+            projection.exact_episodic_operation = (
+                factors.receipt.get("schema") == EPISODIC_TRANSPLANT_SCHEMA
+            )
         mx.eval(
             *(
                 tensor
@@ -423,9 +431,10 @@ def install_verified_trajectory_inventory(
             )
         )
     except BaseException:
-        for projection, lora_a, lora_b in snapshots:
+        for projection, lora_a, lora_b, exact_episodic_operation in snapshots:
             projection.lora_a = lora_a
             projection.lora_b = lora_b
+            projection.exact_episodic_operation = exact_episodic_operation
         raise
 
     body = {
@@ -433,6 +442,15 @@ def install_verified_trajectory_inventory(
         "sites": list(expected),
         "site_phases": {
             site: inventory[site].target_phase for site in expected
+        },
+        "operation_modes": {
+            site: (
+                "episodic_exact"
+                if inventory[site].receipt.get("schema")
+                == EPISODIC_TRANSPLANT_SCHEMA
+                else "scoped_lora"
+            )
+            for site in expected
         },
         "factor_receipt_sha256s": {
             site: str(inventory[site].receipt["receipt_sha256"]) for site in expected

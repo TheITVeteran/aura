@@ -43008,3 +43008,29 @@ focused order-sensitive suite passes `8/8`; Ruff, compilation, and diff hygiene
 pass. Canonical smoke passes `103/103`. This advances the completion envelope
 to `859/920` (approximately `93.4%`). The same frozen transplant replay is
 next; resident-32B use remains locked.
+
+## Checkpoint 2026-08-10-164: Exact Transplants Preserve Real-Model Arithmetic
+
+CP163 reproduced the fixed producer exactly: the candidate delta remained
+`d4ff575dc0f78ea09103556e602bcbc0c2e3023bc98be86d9846c2ce6137d1fc`.
+The replay reached its intended discriminator and rejected persistent parity.
+A replay-only real-1.5B probe localized the difference: the episodic wrapper
+adds its float32 low-rank correction directly and returns float32 logits, while
+ordinary scoped LoRA casts its correction to the model input's float16 dtype.
+The persistent path diverged by up to `0.5411`; the earlier float32 synthetic
+contract could not expose that mixed-precision boundary.
+
+Mechanically compiled episodic factors now install an explicit
+`episodic_exact` operation mode. Only that mode preserves the episodic
+correction dtype and addition order; fitted recurrence/decode LoRA retains its
+existing scoped cast behavior. Installation records every site's operation
+mode and restores it transactionally with the factors on failure. The canary
+also persists its complete parity diagnostic before asserting. A float16
+projection contract proves the exact persistent and episodic outputs have the
+same float32 dtype and bytes. The replay-only real checkpoint now produces
+byte-identical logits on all eight sites with shared SHA-256
+`74c490902d5f4a7dc27798766ca8a464e8f120cffb8a19997b78d0c3e1a50f12`.
+Focused execution passes `17/17`; canonical smoke passes `103/103`, and Ruff,
+compilation, and diff hygiene pass. This advances the completion envelope to
+`860/920` (approximately `93.5%`). A clean source-bound campaign must still
+prove the entire mechanism receipt; resident-32B use remains locked.

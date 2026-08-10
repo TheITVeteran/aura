@@ -491,6 +491,10 @@ def run(
                 "episodic_tokens_sha256": tensor_sha256(episodic_tokens),
                 "persistent_tokens_sha256": tensor_sha256(persistent_tokens),
             }
+            _write_private_json(
+                out_dir / "parity_diagnostic.json",
+                parity,
+            )
             if not all(
                 parity[key]
                 for key in (

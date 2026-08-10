@@ -89,7 +89,8 @@ def test_episodic_delta_compiles_to_exact_decode_scoped_operator() -> None:
     )
     persistent.lora_a = mx.array(factors.lora_a)
     persistent.lora_b = mx.array(factors.lora_b)
-    x = mx.array(rng.normal(size=(2, 4, 9)).astype(np.float32))
+    persistent.exact_episodic_operation = True
+    x = mx.array(rng.normal(size=(2, 4, 9)).astype(np.float16))
 
     ordinary = persistent(x)
     base_output = base(x)
@@ -100,6 +101,7 @@ def test_episodic_delta_compiles_to_exact_decode_scoped_operator() -> None:
 
     assert bool(mx.array_equal(ordinary, base_output))
     assert bool(mx.array_equal(persistent_output, episodic_output))
+    assert persistent_output.dtype == episodic_output.dtype == mx.float32
     assert factors.target_phase == "decode"
     assert factors.receipt["schema"] == EPISODIC_TRANSPLANT_SCHEMA
     assert len(factors.receipt["receipt_sha256"]) == 64

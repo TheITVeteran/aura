@@ -357,6 +357,7 @@ class _ScopedLoRALinearBase(LoRALinear):  # type: ignore[misc]
             scale=scale,
         )
         scoped.linear = linear
+        scoped.exact_episodic_operation = False
         if block_index is not None:
             if type(block_index) is not int or block_index < 0:
                 raise ValueError("recurrence adapter block index must be a non-negative int")
@@ -404,7 +405,10 @@ class _ScopedLoRALinearBase(LoRALinear):  # type: ignore[misc]
         if activation.start is None or activation.stop is None:
             activation.adapted_positions += sequence_length
             activation.record_application(block_index=block_index, site=site)
-            return y + (self.scale * z).astype(x.dtype)
+            correction = self.scale * z
+            if not bool(getattr(self, "exact_episodic_operation", False)):
+                correction = correction.astype(x.dtype)
+            return y + correction
 
         start = int(activation.start)
         stop = int(activation.stop)
@@ -420,7 +424,10 @@ class _ScopedLoRALinearBase(LoRALinear):  # type: ignore[misc]
         shape = (1,) * max(0, x.ndim - 2) + (sequence_length, 1)
         activation.adapted_positions += stop - start
         activation.record_application(block_index=block_index, site=site)
-        return y + (self.scale * z * mx.reshape(mask, shape)).astype(x.dtype)
+        correction = self.scale * z * mx.reshape(mask, shape)
+        if not bool(getattr(self, "exact_episodic_operation", False)):
+            correction = correction.astype(x.dtype)
+        return y + correction
 
     def _active_scope(self) -> RecurrenceAdapterActivation | None:
         raise NotImplementedError
