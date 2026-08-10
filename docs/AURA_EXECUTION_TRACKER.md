@@ -42339,3 +42339,31 @@ norm-preserving-sham comparisons across the sealed 1.5B battery. No general
 neural gain, resident-32B gain, frontier, fusion, live activation, or
 `WOW Signal` claim is authorized. The completion envelope is `837/920`
 (approximately `91.0%`).
+
+## Checkpoint 2026-08-10-141: The Short Gate Can Isolate Neural Contribution
+
+The clean, published CP140 replay reproduced the previously discarded answer
+on the exact frozen task, model, adapter, seed, and manifest. Ordinary decode
+remained `0/2`; the complete engine reached `2/2`. At depth one the bounded
+public-objective program supplied the promoted answer. At depth two the
+recurrent branch itself supplied an exact-verified answer and the repaired
+gate promoted it. The raw receipt is preserved outside the checkout and its
+file, internal receipt, report, adapter, source, and task identities are bound
+by `artifacts/closeout/latent_cortex/cp140_exact_completion_replay.json`.
+
+That result proves the complete architecture can exceed ordinary decoding on
+the bounded case, but the producer masks whether trained neural tissue caused
+the improvement. The paired full-engine probe can now disable objective-
+program production while retaining exact objective verification and answer
+promotion. It can select only declared recurrent depths and emits observation-
+only progress events before and after every ordinary and complete-engine
+sample. Invalid depth coordinates and non-boolean producer policy fail before
+model work begins. Existing callers retain their prior default behavior.
+
+Focused canary, answer-replacement, and checkpoint-admission contracts pass
+`55/55`; diff hygiene passes. The next gate runs the full-depth trained coda,
+coda lesion, and norm-preserving coda sham with production disabled and exact
+verification retained. A strict treatment-only win is required before any
+resident-32B use. No general neural gain, resident-32B gain, frontier, fusion,
+live activation, or `WOW Signal` claim is authorized. The completion envelope
+is `838/920` (approximately `91.1%`).

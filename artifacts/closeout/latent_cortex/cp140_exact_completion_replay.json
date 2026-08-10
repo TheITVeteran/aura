@@ -1,0 +1,45 @@
+{
+  "schema": "aura.closeout.rlc_exact_completion_replay.v1",
+  "checkpoint": "CP140",
+  "source": {
+    "commit": "0058eab4297cb4306f8b7384479cd59fb59e71f0",
+    "origin_main": "0058eab4297cb4306f8b7384479cd59fb59e71f0",
+    "clean": true
+  },
+  "model": "/Users/bryan/.aura/live-source/models/Qwen2.5-1.5B-Instruct-4bit",
+  "adapter": {
+    "file_sha256": "fc06b568389c0c59e8103beec4ab33828cf97f4386452d58aa7531ed2995168e",
+    "tensor_sha256": "db77909f35b98b5854145ef0bffa37c79fc1d4f14359f6bb6094a9b0b10c285b"
+  },
+  "prior_campaign": {
+    "receipt_sha256": "95cbfc59b458037af985fed5aa640847142c57464978a766c646ba0b7432d670",
+    "seed": 2026081001,
+    "task_manifest_sha256": "690b462a93b12c2654cd60df2a7da457d2b12877b779af15d826d16d86721f4a"
+  },
+  "task_id": "recurrence-modular-d2-s2729938886285982053",
+  "result": {
+    "ordinary_correct": 0,
+    "ordinary_observations": 2,
+    "ordinary_report_sha256": "8bf6c5f2f82d66c34ecbbbc97ab1d6d788b383d6c9e072d5c91364c5ef3d6d96",
+    "full_engine_correct": 2,
+    "full_engine_observations": 2,
+    "full_engine_report_sha256": "0c14c41ce0144792bc4ffec4bae7fd7b4dd1bb4c5e743a4f029a3ab71e1af772",
+    "depth_1_source": "objective_program_solution",
+    "depth_2_source": "branch_candidate",
+    "depth_2_selected_quality": "objective_program_exact_complete",
+    "baseline_quality": "objective_program_contract_incomplete"
+  },
+  "raw_evidence": {
+    "path": "/Users/bryan/.aura/experiments/cp140-source-bound-replay-0058eab42/receipt.json",
+    "file_sha256": "1f4f1b9a1a014a772673de454407393be76c43bcf60fb9c0b406f61372d1c96e",
+    "receipt_sha256": "77024de7e4b737ac58b54e421f9de26ad7da4f3045cd09fbe5c0f50a852aa18f"
+  },
+  "claim_boundary": {
+    "bounded_architecture_gain_reproduced": true,
+    "neural_treatment_effect_proven": false,
+    "resident_32b_authorized": false,
+    "frontier_gain_proven": false,
+    "fusion_allowed": false,
+    "wow_signal": false
+  }
+}

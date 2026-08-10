@@ -275,6 +275,26 @@ def test_complete_engine_probe_is_not_the_naked_latent_ablation() -> None:
     assert config.allow_vanilla_fallback is False
 
 
+def test_complete_engine_probe_can_remove_the_producer_without_removing_verification() -> None:
+    spec = RLCExecutionSpec(
+        n_slots=4,
+        branch_roles=("constructive_solution", "critical_audit"),
+        recurrent_steps=2,
+        exchange_interval=1,
+    )
+
+    config = _full_engine_config(spec, objective_program_enabled=False)
+
+    assert config.objective_program_enabled is False
+    assert config.answer_replacement_enabled is True
+    assert config.verifier_probe_contract == "final_answer_v1"
+
+
+def test_complete_engine_probe_rejects_non_boolean_producer_policy() -> None:
+    with pytest.raises(TypeError, match="objective_program_enabled"):
+        _full_engine_config(RLCExecutionSpec(), objective_program_enabled=1)
+
+
 def test_reward_is_correctness_dominant_and_format_credit_bounded() -> None:
     task = task_battery(["boolean"], [2], 1, seed=43)[0]
 

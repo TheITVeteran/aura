@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import hashlib
 import json
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from pathlib import Path
 from typing import Any
 
@@ -118,8 +118,15 @@ def _ordinary_decode_once(
     return text, output_tokens, termination
 
 
-def _full_engine_config(spec: RLCExecutionSpec) -> Any:
+def _full_engine_config(
+    spec: RLCExecutionSpec,
+    *,
+    objective_program_enabled: bool = True,
+) -> Any:
     """Build the product treatment, not the naked recurrent ablation."""
+
+    if type(objective_program_enabled) is not bool:
+        raise TypeError("objective_program_enabled must be boolean")
 
     from core.brain.llm.latent_cortex.types import FastWeightsConfig, LatentOptConfig
 
@@ -133,6 +140,7 @@ def _full_engine_config(spec: RLCExecutionSpec) -> Any:
     config.decode_bridge_policy = "assistant_answer_v4"
     config.decode_incumbent_policy = "vanilla_incumbent"
     config.answer_replacement_enabled = True
+    config.objective_program_enabled = objective_program_enabled
     config.local_repair_enabled = True
     config.local_repair_max_attempts = len(spec.branch_roles)
     config.local_repair_max_tokens = free_generation_sampling_config().max_tokens
@@ -402,6 +410,9 @@ def build_paired_full_engine_probe_reports(
     adapter_sha256: str,
     task_manifest_sha256: str,
     seed: int,
+    depths: Sequence[int] | None = None,
+    objective_program_enabled: bool = True,
+    progress_callback: Callable[[dict[str, Any]], None] | None = None,
 ) -> tuple[dict[str, Any], dict[str, Any]]:
     """Run ordinary and complete-engine arms from one immutable incumbent."""
 
@@ -417,12 +428,33 @@ def build_paired_full_engine_probe_reports(
     from core.brain.llm.latent_cortex.task_verifiers import EpisodeTaskVerifier
 
     checkpoint = full_weight_checkpoint_identity(Path(model_path))
-    depths = tuple(sorted({1, spec.recurrent_steps}))
+    selected_depths = (
+        tuple(sorted({1, spec.recurrent_steps}))
+        if depths is None
+        else tuple(sorted(set(depths)))
+    )
+    if (
+        not selected_depths
+        or any(type(depth) is not int for depth in selected_depths)
+        or any(not 1 <= depth <= spec.recurrent_steps for depth in selected_depths)
+    ):
+        raise ValueError("probe depths must be integers inside the execution spec")
+    if type(objective_program_enabled) is not bool:
+        raise TypeError("objective_program_enabled must be boolean")
     ordinary_records: list[dict[str, Any]] = []
     full_records: list[dict[str, Any]] = []
     n_layers = len(model.model.layers)
     max_tokens = free_generation_sampling_config().max_tokens
     for task_ordinal, task in enumerate(tasks):
+        if progress_callback is not None:
+            progress_callback(
+                {
+                    "event": "ordinary_started",
+                    "task_id": task.task_id,
+                    "task_ordinal": task_ordinal,
+                    "depths": list(selected_depths),
+                }
+            )
         prompt_tokens, _answer_tokens = tokenize_task(
             tokenizer,
             task.prompt,
@@ -453,7 +485,18 @@ def build_paired_full_engine_probe_reports(
             n_layers=n_layers,
             termination=ordinary_termination,
         )
-        for depth in depths:
+        if progress_callback is not None:
+            progress_callback(
+                {
+                    "event": "ordinary_completed",
+                    "task_id": task.task_id,
+                    "task_ordinal": task_ordinal,
+                    "correct": bool(ordinary_grade["correct"]),
+                    "token_count": len(ordinary_tokens),
+                    "termination": ordinary_termination,
+                }
+            )
+        for depth in selected_depths:
             ordinary_receipt = {
                 "schema": "aura.rlc.ordinary_decode_probe.v2",
                 "arm": "ordinary_decode",
@@ -500,7 +543,10 @@ def build_paired_full_engine_probe_reports(
             engine = LatentCortexEngine(
                 model,
                 tokenizer=tokenizer,
-                config=_full_engine_config(depth_spec),
+                config=_full_engine_config(
+                    depth_spec,
+                    objective_program_enabled=objective_program_enabled,
+                ),
                 model_path=str(model_path),
                 schedule_library=None,
             )
@@ -515,6 +561,16 @@ def build_paired_full_engine_probe_reports(
                 depth,
             )
             mx.random.seed(generation_seed)
+            if progress_callback is not None:
+                progress_callback(
+                    {
+                        "event": "full_engine_started",
+                        "task_id": task.task_id,
+                        "task_ordinal": task_ordinal,
+                        "depth": depth,
+                        "objective_program_enabled": objective_program_enabled,
+                    }
+                )
             result = engine.reason(
                 messages=[{"role": "user", "content": task.prompt}],
                 verifier=verifier,
@@ -561,6 +617,20 @@ def build_paired_full_engine_probe_reports(
                     "episode_receipt": receipt_payload,
                 }
             )
+            if progress_callback is not None:
+                progress_callback(
+                    {
+                        "event": "full_engine_completed",
+                        "task_id": task.task_id,
+                        "task_ordinal": task_ordinal,
+                        "depth": depth,
+                        "correct": bool(grade["correct"]),
+                        "token_count": len(result.tokens),
+                        "termination": str(
+                            result.receipt.decode_termination or "not_reached"
+                        ),
+                    }
+                )
             del engine, verifier, result
             mx.synchronize()
             mx.clear_cache()
@@ -570,7 +640,7 @@ def build_paired_full_engine_probe_reports(
         "execution_spec_sha256": spec.sha256,
         "task_manifest_sha256": task_manifest_sha256,
         "task_ids": [task.task_id for task in tasks],
-        "depths": depths,
+        "depths": selected_depths,
     }
     ordinary = build_free_generation_report(
         arm="ordinary_decode",
