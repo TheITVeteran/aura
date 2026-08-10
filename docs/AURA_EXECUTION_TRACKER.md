@@ -43961,3 +43961,30 @@ two declared formal grammars, not open-domain semantic planning and not a genera
 reasoning gain. Next, the compiled path must become an admitted complete-engine
 candidate and beat ordinary decoding on fresh behavioral tasks before broader
 semantic IR or resident-32B work is justified.
+
+## Checkpoint 2026-08-10-193: Certified Recurrence Enters the Complete Engine
+
+Certified program composition now lives in the core latent-cortex layer rather
+than under training code, so runtime cognition can use it without reversing the
+core-to-learning dependency. The learning bridge retains its public API for
+verified private-trace audits, while compiled public programs execute directly
+through the core student-roll-in organ.
+
+For exact current-curriculum Boolean and modular prompts, the existing
+objective-program producer now obtains its answer from the compiled typed
+program and certified recurrent execution. The prior independent parser is
+retained only as a cross-check; disagreement raises instead of promoting either
+result. Producer receipts identify the certified recurrence engine, compiler
+commitment, complete student-roll-in receipt chain, and cross-check result while
+withholding states, actions, and answer payloads. Other objective-program
+families and older compatible prompt contracts keep their existing exact paths.
+
+An end-to-end answer-replacement contract begins with a wrong incumbent, two
+wrong branches, and a failed repair, then proves the complete engine promotes
+the certified depth-eight recurrent candidate and reconstructs its receipt.
+Verifier, producer, and replacement suites pass together. This advances the
+completion envelope to `889/920` (approximately `96.6%`). The result is a real
+production-causal architecture gain on declared formal tasks, but still not the
+broad frozen behavioral replication required for `WOW Signal`. The next gate is
+a source-bound 1.5B comparison across fresh seeds, multiple depths, recurrence
+lesion, equal-compute control, and ordinary decoding.

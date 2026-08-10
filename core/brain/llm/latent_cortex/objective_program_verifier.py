@@ -18,6 +18,13 @@ from dataclasses import dataclass
 from fractions import Fraction
 from typing import Any
 
+from core.brain.llm.latent_cortex.typed_action_compiler import (
+    compile_public_transition_program,
+)
+from core.brain.llm.latent_cortex.typed_program_executor import (
+    execute_compiled_action_program,
+)
+
 OBJECTIVE_PROGRAM_VERIFIER_SCHEMA = "aura.rlc.objective_program_verifier.v4"
 OBJECTIVE_PROGRAM_SOLUTION_SCHEMA = "aura.rlc.objective_program_solution.v4"
 
@@ -606,9 +613,49 @@ def _premise_audit_expected(
     }
 
 
+def _compiled_transition_expected(
+    objective: str,
+) -> tuple[str, dict[str, Any], dict[str, Any]] | None:
+    """Run a declared typed program and independently cross-check its result."""
+
+    try:
+        program = compile_public_transition_program(objective)
+    except ValueError:
+        return None
+    execution = execute_compiled_action_program(program)
+    if program.family == "boolean":
+        match = _BOOLEAN_OBJECTIVE_RE.match(objective)
+        if match is None:
+            raise RuntimeError("compiled Boolean objective lost parser agreement")
+        family = "nested_boolean"
+        expected = {"value": execution.terminal_state[1]}
+        crosscheck, crosscheck_receipt = _boolean_expected(match)
+    elif program.family == "modular":
+        match = _MODULAR_OBJECTIVE_RE.match(objective)
+        if match is None:
+            raise RuntimeError("compiled modular objective lost parser agreement")
+        family = "modular_chain"
+        expected = {"residue": execution.terminal_state[1]}
+        crosscheck, crosscheck_receipt = _modular_expected(match)
+    else:  # pragma: no cover - the compiler's family registry is closed
+        raise RuntimeError("compiled transition family is unsupported")
+    if crosscheck != expected:
+        raise RuntimeError("certified recurrent execution and independent parser disagree")
+    return family, expected, {
+        "engine": "certified_typed_recurrence.v1",
+        "compiler": program.public_receipt(),
+        "student_rollin": execution.receipt(),
+        "independent_crosscheck": crosscheck_receipt,
+        "independent_crosscheck_match": True,
+    }
+
+
 def _execute_objective(objective: str) -> tuple[str, dict[str, Any], dict[str, Any]] | None:
     if not isinstance(objective, str):
         raise TypeError("objective program must be text")
+    compiled = _compiled_transition_expected(objective)
+    if compiled is not None:
+        return compiled
     family = ""
     expected: dict[str, Any]
     execution: dict[str, Any]

@@ -1086,6 +1086,31 @@ def install_runtime_validation() -> dict[str, Any]:
             owner="core/brain/llm/latent_cortex/typed_action_compiler.py",
         )
     )
+    suite.add_test(
+        ValidationTest(
+            name="certified_transition_program_enters_complete_engine",
+            description=(
+                "a wrong incumbent is replaceable by a public-only typed recurrent "
+                "execution through the complete-engine producer"
+            ),
+            required_capability="",
+            observation=Observation(
+                name="typed_recurrent_candidate_is_verified",
+                value=True,
+                source=(
+                    "core/brain/llm/latent_cortex/objective_program_verifier.py "
+                    "complete-engine contract tests"
+                ),
+            ),
+            predict=lambda _m: _certified_complete_engine_contract_holds(),
+            score=lambda p, o: boolean_score(
+                bool(p),
+                expected=bool(o.value),
+                subject="certified recurrent complete-engine candidate",
+            ),
+            owner="core/brain/llm/latent_cortex/objective_program_verifier.py",
+        )
+    )
 
     suite.add_test(
         ValidationTest(
@@ -1272,6 +1297,24 @@ def install_runtime_validation() -> dict[str, Any]:
                 "mutation, ambiguity, and receipt-privacy controls. This is a strict "
                 "declared-grammar compiler, not general natural-language planning or "
                 "a behavioral reasoning-gain claim."
+            ),
+        )
+    )
+    suite.add_claim(
+        Claim(
+            statement=(
+                "For declared Boolean and bounded modular tasks, the complete engine "
+                "can replace a wrong decoded answer with a candidate computed by "
+                "certified typed recurrent student roll-in."
+            ),
+            test="certified_transition_program_enters_complete_engine",
+            owner="core/brain/llm/latent_cortex/objective_program_verifier.py",
+            asserted_in="docs/AURA_EXECUTION_TRACKER.md",
+            evidence=Evidence.MEASURED_SYNTHETIC,
+            evidence_note=(
+                "The production answer-replacement route and typed execution chain are "
+                "contract-tested. Coverage remains limited to declared formal grammars; "
+                "open-domain gain and resident-model live execution remain unmeasured."
             ),
         )
     )
@@ -1520,6 +1563,30 @@ def _public_transition_compiler_contract_holds() -> bool:
         ):
             return False
     return True
+
+
+def _certified_complete_engine_contract_holds() -> bool:
+    from core.brain.llm.latent_cortex.objective_program_verifier import (
+        solve_objective_program,
+        verify_objective_program,
+    )
+    from core.learning.recurrence_curriculum import modular_chain
+
+    task = modular_chain(8, 20260810193)
+    solved = solve_objective_program(task.prompt)
+    if solved is None:
+        return False
+    candidate, receipt = solved
+    verdict = verify_objective_program(candidate, objective=task.prompt)
+    execution = receipt.get("execution", {})
+    return bool(
+        isinstance(execution, dict)
+        and execution.get("engine") == "certified_typed_recurrence.v1"
+        and execution.get("student_rollin", {}).get("transition_count") == 8
+        and candidate.endswith(task.answer)
+        and verdict is not None
+        and verdict.get("outcome") == "verified"
+    )
 
 
 def _fabrication_unknown_turn_findings() -> int:

@@ -7,6 +7,10 @@ import json
 
 import pytest
 
+from core.brain.llm.latent_cortex.objective_program_verifier import (
+    solve_objective_program,
+    verify_objective_program,
+)
 from core.brain.llm.latent_cortex.typed_action_compiler import (
     compile_boolean_expression,
     compile_modular_operations,
@@ -113,3 +117,24 @@ def test_public_adapter_refuses_unknown_tampered_and_depth_drift():
     tampered = modular.prompt.replace("Operations: ", "Operations: +999, ", 1)
     with pytest.raises(ValueError, match="outside its modulus"):
         compile_public_transition_program(tampered)
+
+
+@pytest.mark.parametrize("generator", (nested_boolean, modular_chain))
+def test_complete_engine_uses_certified_recurrence_for_declared_prompt(generator):
+    task = generator(8, 90_001)
+    solved = solve_objective_program(task.prompt)
+    assert solved is not None
+    candidate, receipt = solved
+    execution = receipt["execution"]
+
+    assert execution["engine"] == "certified_typed_recurrence.v1"
+    assert execution["student_rollin"]["student_rollin"] is True
+    assert execution["student_rollin"]["transition_count"] == 8
+    assert execution["independent_crosscheck_match"] is True
+    assert task.answer in candidate
+    verdict = verify_objective_program(candidate, objective=task.prompt)
+    assert verdict is not None
+    assert verdict["outcome"] == "verified"
+    wire = json.dumps(receipt, sort_keys=True)
+    assert '"actions"' not in wire
+    assert '"initial_state"' not in wire
