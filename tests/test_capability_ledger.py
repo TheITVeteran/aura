@@ -170,3 +170,13 @@ def test_a_sentence_merely_starting_with_no_is_not_a_denial(reply):
     """The negation has to bind to the capability's own noun."""
     ledger = _ledger(_fixed("camera"), _fixed("code"))
     assert ledger.contradicted_claims(reply) == []
+
+
+def test_bare_negation_after_a_clause_boundary_is_still_a_denial():
+    """LIVE: "Code sandbox only, no execution on this surface." — with
+    code_repl installed. The "no" sits after a comma rather than at the start,
+    which the first pass missed."""
+    ledger = _ledger(_fixed("execution"))
+    assert ledger.contradicted_claims(
+        "Code sandbox only, no execution on this surface."
+    )

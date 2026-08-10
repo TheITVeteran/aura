@@ -197,9 +197,17 @@ _SENTENCE_SPLIT = re.compile(r"(?<=[.!?])\s+|\n+")
 
 
 def _negates_directly(sentence: str, subjects: tuple[str, ...]) -> bool:
-    """True when the sentence opens by negating one of ``subjects`` itself."""
+    """True when the sentence negates one of ``subjects`` as a bare noun phrase.
+
+    Anchored to the start of the sentence or to a clause boundary, so the "no"
+    belongs to this noun. Live: "No camera. No code execution." opens with it;
+    "Code sandbox only, no execution on this surface." puts it after a comma.
+    Both deny. "No problem, I can run that code" does not, and must not match.
+    """
     for subject in subjects:
-        pattern = rf"^\s*no\s+(?:\w+\s+){{0,2}}{re.escape(subject)}\b"
+        pattern = (
+            rf"(?:^|[,;:—-]\s*)no\s+(?:\w+\s+){{0,2}}{re.escape(subject)}\b"
+        )
         if re.search(pattern, sentence, re.IGNORECASE):
             return True
     return False
@@ -473,7 +481,15 @@ def _default_ledger() -> CapabilityLedger:
     ledger.register(
         LiveCapability(
             "code_execution",
-            ("code", "python", "script", "compute", "calculation"),
+            (
+                "code",
+                "python",
+                "script",
+                "execution",
+                "sandbox",
+                "compute",
+                "calculation",
+            ),
             _probe_code_execution,
         )
     )
