@@ -700,6 +700,62 @@ def test_actual_final_decode_is_the_comparator_not_short_branch_probe():
     assert _decode(tokens) == "2 + 2 = 4."
 
 
+def test_exact_objective_candidate_displaces_contract_incomplete_incumbent():
+    objective = (
+        "Start at the given value and apply each operation modulo 13: "
+        "start=1. Operations: *6, +12. Return the final residue."
+    )
+    correct = 'FINAL_ANSWER: {"residue":5}'
+    objective, candidates, graph, selector, local_repair, generated = _scenario(
+        left='FINAL_ANSWER: {"residue":12}',
+        right=correct,
+        repaired=correct,
+        objective=objective,
+    )
+
+    receipt, tokens, private = build_answer_replacement_receipt(
+        disagreement_graph=graph,
+        diagnostic_selection=selector,
+        local_repair=local_repair,
+        selected_branch=1,
+        branch_candidates=candidates,
+        generated_repairs=generated,
+        objective=objective,
+        baseline_text="Let's calculate each operation before giving the final",
+        baseline_tokens=_encode("Let's calculate each operation before giving the final"),
+        encode=_encode,
+        decode=_decode,
+        margin=0.05,
+        max_output_tokens=128,
+    )
+
+    assert receipt["schema"] == "aura.rlc.answer_replacement.v5"
+    assert receipt["baseline_quality"]["basis"] == (
+        "objective_program_contract_incomplete"
+    )
+    assert receipt["baseline_quality"]["upper_bound"] == 0.0
+    assert receipt["decision"] == "replace"
+    assert receipt["accepted_output"]["source"] in {
+        "branch_candidate",
+        "objective_program_solution",
+    }
+    assert _decode(tokens).endswith('FINAL_ANSWER: {"residue":5}')
+    validate_answer_replacement_receipt(
+        receipt,
+        disagreement_graph=graph,
+        diagnostic_selection=selector,
+        local_repair=local_repair,
+        private_evidence=private,
+        expected_objective=objective,
+        expected_selected_branch=1,
+        expected_enabled=True,
+        expected_margin=0.05,
+        expected_max_output_tokens=128,
+        expected_output_text=_decode(tokens),
+        expected_output_tokens=tokens,
+    )
+
+
 def test_refuted_selected_branch_abstains_when_request_budget_omits_it():
     objective, candidates, graph, selector, local_repair, generated = _scenario(
         left="2 + 2 = 5.",

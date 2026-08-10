@@ -33,9 +33,10 @@ from core.brain.llm.latent_cortex.local_repair import (
 from core.brain.llm.latent_cortex.objective_program_verifier import (
     solve_objective_program,
     validate_objective_program_solution,
+    verify_objective_program,
 )
 
-ANSWER_REPLACEMENT_SCHEMA = "aura.rlc.answer_replacement.v4"
+ANSWER_REPLACEMENT_SCHEMA = "aura.rlc.answer_replacement.v5"
 ANSWER_REPLACEMENT_PRIVATE_SCHEMA = "aura.rlc.answer_replacement_private.v3"
 DEFAULT_REPLACEMENT_MARGIN = 0.05
 MAX_REPLACEMENT_OUTPUT_TOKENS = 1024
@@ -103,6 +104,7 @@ def _quality_interval(
     routes: Mapping[str, Any],
     *,
     candidate: str,
+    objective: str,
 ) -> dict[str, Any]:
     atomic = validate_atomic_decomposition_envelope(decomposition)
     routed = validate_deterministic_router_envelope(
@@ -116,6 +118,12 @@ def _quality_interval(
         for row in routed["routes"]
         if row["verifier"] in _REFUTATION_VERIFIERS and row["outcome"] == "refuted"
     ]
+    objective_solution_available = solve_objective_program(objective) is not None
+    objective_program_verdict = (
+        verify_objective_program(candidate, objective=objective)
+        if objective_solution_available
+        else None
+    )
     semantic_verified = 0
     partial_or_nonsemantic = 0
     objective_program_verified = False
@@ -139,7 +147,28 @@ def _quality_interval(
     every_atom_semantically_verified = bool(atomic["atoms"]) and (
         semantic_verified == len(atomic["atoms"])
     )
-    if refuted or atomic["grade_admissible"] is not True:
+    if objective_solution_available and objective_program_verdict is None:
+        # A recognized public objective program defines an exact terminal
+        # answer object.  Text that never supplies that object is not an
+        # unmeasured answer with a possible score of one: it deterministically
+        # fails the completion contract.  Keeping it at [0, 1] made a
+        # token-limited incumbent impossible to displace even when another
+        # candidate was independently verified at [1, 1].
+        lower = upper = 0.0
+        basis = "objective_program_contract_incomplete"
+    elif (
+        objective_program_verdict is not None
+        and objective_program_verdict["outcome"] == "refuted"
+    ):
+        lower = upper = 0.0
+        basis = "deterministic_exact_refutation"
+    elif (
+        objective_program_verdict is not None
+        and objective_program_verdict["outcome"] == "verified"
+    ):
+        lower = upper = 1.0
+        basis = "objective_program_exact_complete"
+    elif refuted or atomic["grade_admissible"] is not True:
         lower = upper = 0.0
         basis = "deterministic_exact_refutation" if refuted else "structural_grade_refutation"
     elif objective_program_verified:
@@ -277,6 +306,7 @@ def _candidate_inventory(
             rebuilt_decomposition,
             rebuilt_routes,
             candidate=text,
+            objective=private_evidence["objective"],
         )
     if selected_branch in branch_quality:
         selected_quality = branch_quality[selected_branch]
@@ -302,6 +332,7 @@ def _candidate_inventory(
                 transaction["replacement_decomposition"],
                 transaction["replacement_routes"],
                 candidate=replacement_text,
+                objective=private_evidence["objective"],
             )
             if replacement_available
             else None
@@ -422,6 +453,7 @@ def _candidate_inventory(
             solution_decomposition,
             solution_routes,
             candidate=objective_solution,
+            objective=private_evidence["objective"],
         )
         dominates = bool(
             float(solution_quality["lower_bound"])
@@ -555,6 +587,7 @@ def build_answer_replacement_receipt(
         baseline_decomposition,
         baseline_routes,
         candidate=baseline_text,
+        objective=objective,
     )
     admitted_request_ids = {
         str(transaction["request_id"])
@@ -862,6 +895,7 @@ def validate_answer_replacement_receipt(
         baseline_decomposition,
         baseline_routes,
         candidate=baseline_text,
+        objective=expected_objective,
     )
     if private_required:
         expected_rows, selected_quality = _candidate_inventory(

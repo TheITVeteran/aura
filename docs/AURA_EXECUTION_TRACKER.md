@@ -42306,3 +42306,36 @@ Ruff, compilation, and diff hygiene pass. The next gate remains the bounded
 1.5B treatment/lesion/sham campaign. No reasoning gain, resident-32B gain,
 frontier, fusion, live activation, or `WOW Signal` claim is authorized. The
 completion envelope is `836/920` (approximately `90.9%`).
+
+## Checkpoint 2026-08-10-140: Exact Completion Evidence Reaches Answer Ownership
+
+The first completed coda canary exposed two distinct facts. The trained
+recurrent and coda tissue did not improve free generation on its own, but the
+complete engine later produced an exact-verified branch answer for one of the
+ordinary decoder's failures. The answer replacement gate still retained the
+ordinary output because it assigned a token-limited response with no terminal
+answer the interval `[0, 1]`. A candidate proven correct at `[1, 1]` could
+therefore never clear the configured margin. The receipt claimed that parent
+output completion governed promotion, but no completion evidence reached the
+decision.
+
+The v5 replacement authority now evaluates recognized public objective
+programs as one exact semantic object. A response with no uniquely bounded
+terminal payload is deterministically contract-incomplete at `[0, 0]`; a
+wrong payload is exactly refuted; a verified payload remains `[1, 1]`.
+Unrecognized prose retains the conservative open interval and syntax-only
+checks still cannot certify semantics. The service validator independently
+reconstructs the same evidence, and checkpoint admission rejects historical
+v4 receipts so prior decisions cannot silently inherit the stronger meaning.
+
+Focused answer-replacement, checkpoint-admission, replay, engine, and
+incumbent-floor contracts pass `117/117`; canonical smoke passes `103/103`;
+Ruff, compilation, and diff hygiene pass. A bounded candidate-worktree replay
+of the previously failed task changed the complete engine from `0/2` to `2/2`
+while ordinary decode remained `0/2`, but that observation is not yet the
+source-bound scientific record. The next gate repeats it from this clean,
+published checkpoint and then extends treatment, coda-lesion, and
+norm-preserving-sham comparisons across the sealed 1.5B battery. No general
+neural gain, resident-32B gain, frontier, fusion, live activation, or
+`WOW Signal` claim is authorized. The completion envelope is `837/920`
+(approximately `91.0%`).

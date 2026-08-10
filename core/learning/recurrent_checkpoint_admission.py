@@ -194,7 +194,7 @@ def _validate_full_engine_episode_evidence(
     decision = replacement.get("decision")
     flags = {str(flag) for flag in receipt.get("honest_flags") or []}
     if (
-        replacement.get("schema") != "aura.rlc.answer_replacement.v4"
+        replacement.get("schema") != "aura.rlc.answer_replacement.v5"
         or replacement.get("authority") != "confidence_bound_answer_replacement"
         or not _is_sha256(replacement.get("receipt_sha256"))
         or replacement["receipt_sha256"]

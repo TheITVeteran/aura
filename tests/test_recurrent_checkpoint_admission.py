@@ -652,7 +652,7 @@ def _full_engine_report(
                 ),
             }
             replacement_body = {
-                "schema": "aura.rlc.answer_replacement.v4",
+                "schema": "aura.rlc.answer_replacement.v5",
                 "authority": "confidence_bound_answer_replacement",
                 "decision": "replace" if replaces else "retain",
                 "selected_request_id": (
