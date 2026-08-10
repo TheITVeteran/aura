@@ -8,7 +8,11 @@ from typing import Any
 
 from core.runtime.desktop_objective_intent import looks_like_desktop_objective
 from core.runtime.self_state_intent import asks_about_own_runtime
-from core.runtime.structured_input import analyze_prompt_shape, looks_like_learning_resource_bundle
+from core.runtime.structured_input import (
+    analyze_prompt_shape,
+    extract_supplied_material,
+    looks_like_learning_resource_bundle,
+)
 from core.state.aura_state import AuraState
 from core.utils.intent_normalization import normalize_memory_intent_text
 
@@ -106,6 +110,14 @@ _TEMPORAL_CURRENTNESS_PATTERNS = tuple(
         r"\btoday\b",
         r"\byesterday\b",
         r"\btomorrow\b",
+        # "yesterday" was here and "last night" was not, so "who won the game
+        # last night" read as a timeless question and was answered from weights
+        # — a result she cannot possibly hold. Same clock, same lane.
+        r"\blast night\b",
+        r"\bthis morning\b",
+        r"\bthis (?:afternoon|evening)\b",
+        r"\blast (?:week|weekend|night)\b",
+        r"\bover the weekend\b",
         r"\bthis week\b",
         r"\bthis month\b",
         r"\bthis year\b",
@@ -119,6 +131,12 @@ _LIVE_FACT_PATTERNS = tuple(
         r"\bprice\b",
         r"\bstock\b",
         r"\bscore\b",
+        # An outcome question about a dated event is a live fact. Kept to the
+        # interrogative shape — a bare "game" or "won" also matches "i won an
+        # argument today", which is conversation, not a lookup.
+        r"\bwho won\b",
+        r"\bwho (?:beat|defeated)\b",
+        r"\bwho(?:'s| is| are)\s+winning\b",
         r"\bschedule\b",
         r"\bversion\b",
         r"\brelease\b",
@@ -988,12 +1006,21 @@ def build_response_contract(
     exact_format_instruction = _extract_exact_format_instruction(text) if is_user_facing else ""
     requires_exact_format = bool(exact_format_instruction)
 
-    explicit_search = _matches_any(lower, _EXPLICIT_SEARCH_PATTERNS)
-    factual_lookup = _matches_any(lower, _FACTUAL_LOOKUP_PATTERNS)
-    specific_reference = _matches_any(text, _REFERENCE_MARKERS)
-    factual_followup = _looks_like_grounded_followup(state, text)
-    temporal_currentness = _matches_any(lower, _TEMPORAL_CURRENTNESS_PATTERNS)
-    live_fact_lookup = _matches_any(lower, _LIVE_FACT_PATTERNS)
+    # Search triggers are read from what the user ASKED, never from material
+    # they pasted in. A colleague's note mentioning "the latest version" is
+    # content to summarise, not a request to look up versions. With no supplied
+    # material the instruction IS the whole message, so behaviour is unchanged.
+    supplied_material = extract_supplied_material(text)
+    carries_supplied_material = supplied_material.has_material
+    search_trigger_text = supplied_material.instruction_text if carries_supplied_material else text
+    search_lower = normalize_memory_intent_text(search_trigger_text) if carries_supplied_material else lower
+
+    explicit_search = _matches_any(search_lower, _EXPLICIT_SEARCH_PATTERNS)
+    factual_lookup = _matches_any(search_lower, _FACTUAL_LOOKUP_PATTERNS)
+    specific_reference = _matches_any(search_trigger_text, _REFERENCE_MARKERS)
+    factual_followup = _looks_like_grounded_followup(state, search_trigger_text)
+    temporal_currentness = _matches_any(search_lower, _TEMPORAL_CURRENTNESS_PATTERNS)
+    live_fact_lookup = _matches_any(search_lower, _LIVE_FACT_PATTERNS)
     time_utility_lookup = _matches_any(lower, _TIME_UTILITY_PATTERNS)
     search_negated = bool(_SEARCH_NEGATION_RE.search(lower))
     search_capability_question = _looks_like_search_capability_question(text)
@@ -1082,9 +1109,29 @@ def build_response_contract(
         factual_lookup = False
         factual_followup = False
         temporal_live_lookup = False
+    if carries_supplied_material:
+        # The turn carries the thing it is asking about, so the answer is
+        # already in the message and no search result can improve it.
+        #
+        # Measured live 2026-08-10: a pasted colleague's note prefaced with
+        # "just summarise it for me" was read as a follow-up about the PREVIOUS
+        # turn's web evidence — "summarise" alone satisfies the grounded-followup
+        # rule once any web_search has ever succeeded — and the entire pasted
+        # message became the search query. She answered with a product page for
+        # an online summarising tool and never read the note.
+        #
+        # The referent of "it" is the block the user just handed over. Derived
+        # triggers are dropped; an EXPLICIT request ("look this up", a URL in
+        # the instruction) still wins, because those are read from the
+        # instruction text and survive on their own.
+        factual_lookup = False
+        factual_followup = False
+        temporal_live_lookup = False
     # URL presence usually forces fetch/search, except for structured bundles
-    # that already need deterministic decomposition upstream.
-    has_url = bool(re.search(r'https?://[^\s]+', text)) and not is_learning_bundle
+    # that already need deterministic decomposition upstream. A link INSIDE
+    # pasted material is part of what was handed over, not a fetch request —
+    # `search_trigger_text` is the instruction, so those no longer force one.
+    has_url = bool(re.search(r'https?://[^\s]+', search_trigger_text)) and not is_learning_bundle
     # A turn about Aura HERSELF is answerable from her own state and reasoning;
     # the web cannot adjudicate what her prompt cache does. Routing such a turn
     # to search then makes the reply gate demand search grounding, and a correct
@@ -1259,5 +1306,9 @@ def build_response_contract(
         max_tool_turns=max_tool_turns,
         max_tools=max_tools,
         reason=", ".join(reasons) if reasons else "ordinary_dialogue",
-        search_query=extract_search_query_focus(text) if requires_search else "",
+        # Query focus comes from the instruction: when a turn both carries
+        # material and genuinely asks for a lookup, the pasted block is not
+        # part of the query. Sending it whole is what returned a summarising
+        # tool's landing page instead of an answer.
+        search_query=extract_search_query_focus(search_trigger_text) if requires_search else "",
     )

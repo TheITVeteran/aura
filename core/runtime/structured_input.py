@@ -59,6 +59,158 @@ _REPEATED_CLAUSE_RE = re.compile(
 
 _NUMBERED_ITEM_RE = re.compile(r"(?:^|\n)\s*\d+[.)]\s+")
 
+# --- Supplied material -------------------------------------------------------
+#
+# A turn can CARRY THE THING IT IS ASKING ABOUT. When the user pastes a note,
+# quotes a block, or attaches content, the answer is already in the message and
+# no external evidence exists that could improve it.
+#
+# Measured live 2026-08-10: "i'm pasting a note a colleague sent me, just
+# summarise it for me: --- BEGIN NOTE --- ... --- END NOTE ---" was classified
+# as a grounded follow-up (the word "summarise" plus a prior turn's web_search
+# evidence), the WHOLE message was handed to the search engine as the query,
+# and the reply was a product page for an online summarising tool. The note
+# itself was never read.
+#
+# Two things go wrong when material is present and unrecognised, and both are
+# fixed by locating the material:
+#   1. Words INSIDE the material manufacture search triggers that the user
+#      never asked for — a colleague writing "the latest policy version" is
+#      not a request to look up policy versions.
+#   2. The referent of "it"/"this" is the pasted block, not a previous web
+#      fetch, so follow-up grounding is reading the wrong antecedent.
+#
+# Detection is structural first (paired fences, blockquotes) and only falls
+# back to prose announcements when those name supplied content, so that "here's
+# the question: what's the latest release?" stays a search.
+
+_SUPPLIED_MATERIAL_FENCE_PATTERNS = tuple(
+    re.compile(pattern, re.IGNORECASE | re.DOTALL | re.MULTILINE)
+    for pattern in (
+        # --- BEGIN NOTE --- ... --- END NOTE ---  /  [BEGIN] ... [END]
+        r"^[ \t]*[-=*_\[]{2,}[ \t]*BEGIN\b[^\n]*\n(?P<body>.*?)\n[ \t]*[-=*_\[]{2,}[ \t]*END\b[^\n]*$",
+        # ```lang ... ```
+        r"^[ \t]*```[^\n]*\n(?P<body>.*?)\n[ \t]*```[ \t]*$",
+        # \"\"\" ... \"\"\"
+        r"\"\"\"(?P<body>.*?)\"\"\"",
+        # <<< ... >>>
+        r"<<<(?P<body>.*?)>>>",
+    )
+)
+
+_BLOCKQUOTE_RUN_RE = re.compile(r"(?:^[ \t]*>[ \t]?[^\n]*(?:\n|$))+", re.MULTILINE)
+
+#: Nouns that name content the user is HANDING OVER rather than asking about.
+_SUPPLIED_MATERIAL_CONTENT_NOUNS = (
+    "note", "notes", "text", "message", "email", "e-mail", "mail", "letter",
+    "memo", "paragraph", "passage", "excerpt", "snippet", "transcript",
+    "draft", "copy", "quote", "quotation", "blurb", "abstract", "review",
+    "comment", "post", "thread", "article", "entry", "content", "wording",
+    "writeup", "write-up", "description", "brief", "blurb", "bio", "readme",
+    "log", "logs", "output", "error", "traceback", "stacktrace", "snippet",
+)
+
+_SUPPLIED_MATERIAL_NOUN_ALTERNATION = "|".join(
+    re.escape(noun) for noun in sorted(set(_SUPPLIED_MATERIAL_CONTENT_NOUNS), key=len, reverse=True)
+)
+
+_SUPPLIED_MATERIAL_ANNOUNCEMENT_RE = re.compile(
+    # A paste/attach/forward verb is self-announcing.
+    r"\b(?:pasting|pasted|paste|attaching|attached|forwarding|forwarded|"
+    r"copied|copying|quoting)\b"
+    # Otherwise the phrase has to name the content being handed over.
+    r"|\b(?:here(?:'s|s| is| are)|below (?:is|are)|this is|these are|"
+    r"the following|following is|i got|i received|they sent me|he sent me|"
+    r"she sent me|someone sent me)\b"
+    rf"[^\n:]{{0,60}}?\b(?:{_SUPPLIED_MATERIAL_NOUN_ALTERNATION})\b",
+    re.IGNORECASE,
+)
+
+_URL_RE = re.compile(r"https?://[^\s<>\"')\]]+")
+
+#: A block has to be more than a pointer or a stray word to count as material.
+_MIN_SUPPLIED_MATERIAL_WORDS = 3
+
+
+def _is_substantive_material(body: str) -> bool:
+    """A block counts only if it carries prose, not just a link."""
+    stripped = _URL_RE.sub(" ", str(body or "")).strip()
+    if not stripped:
+        # A bare URL is a POINTER to content, not content. Fetching is the
+        # right lane for those, so they must not read as supplied material.
+        return False
+    return len(stripped.split()) >= _MIN_SUPPLIED_MATERIAL_WORDS
+
+
+@dataclass(frozen=True)
+class SuppliedMaterial:
+    """Content the user carried into the turn, split from their instruction."""
+
+    #: Each pasted/quoted/attached block, in the order it appeared.
+    blocks: tuple[str, ...] = ()
+    #: The message with those blocks removed — what the user is ASKING.
+    instruction_text: str = ""
+
+    @property
+    def has_material(self) -> bool:
+        return bool(self.blocks)
+
+
+def extract_supplied_material(text: str) -> SuppliedMaterial:
+    """Split a turn into the material it carries and the instruction about it."""
+    raw = str(text or "")
+    if not raw.strip():
+        return SuppliedMaterial(blocks=(), instruction_text="")
+
+    blocks: list[str] = []
+    remainder = raw
+
+    def _consume(pattern: re.Pattern[str]) -> None:
+        nonlocal remainder
+        kept: list[str] = []
+        cursor = 0
+        for match in pattern.finditer(remainder):
+            try:
+                body = match.group("body")
+            except IndexError:
+                body = match.group(0)
+            if not _is_substantive_material(body):
+                continue
+            blocks.append(body.strip())
+            kept.append(remainder[cursor:match.start()])
+            cursor = match.end()
+        if cursor:
+            kept.append(remainder[cursor:])
+            remainder = "\n".join(part for part in kept if part.strip())
+
+    for fence in _SUPPLIED_MATERIAL_FENCE_PATTERNS:
+        _consume(fence)
+    _consume(_BLOCKQUOTE_RUN_RE)
+
+    if not blocks:
+        announcement = _SUPPLIED_MATERIAL_ANNOUNCEMENT_RE.search(remainder)
+        if announcement is not None:
+            # The material begins at the first clause break after the
+            # announcement; an announcement with nothing after it is just talk.
+            tail_offset = announcement.end()
+            separator = re.search(r"[:\n]", remainder[tail_offset:])
+            if separator is not None:
+                split_at = tail_offset + separator.end()
+                body = remainder[split_at:]
+                if _is_substantive_material(body):
+                    blocks.append(body.strip())
+                    remainder = remainder[:split_at]
+
+    return SuppliedMaterial(
+        blocks=tuple(blocks),
+        instruction_text=" ".join(remainder.split()).strip(),
+    )
+
+
+def carries_supplied_material(text: str) -> bool:
+    """True when the turn hands over the content it is asking about."""
+    return extract_supplied_material(text).has_material
+
 
 def _looks_like_learning_bundle_header(line: str) -> bool:
     stripped = str(line or "").strip()
