@@ -366,6 +366,31 @@ def test_controller_rejects_a_non_contamination_safe_task_registry(tmp_path: Pat
         controller.load_config(config_path)
 
 
+def test_controller_cli_imports_repo_packages_outside_the_repo_cwd(tmp_path: Path):
+    _source_root, _out, config_path, _config = _prepared(tmp_path)
+    environment = dict(os.environ)
+    environment.pop("PYTHONPATH", None)
+
+    observed = subprocess.run(
+        [
+            sys.executable,
+            str(Path(controller.__file__).resolve()),
+            "status",
+            "--config",
+            str(config_path),
+        ],
+        cwd=tmp_path,
+        env=environment,
+        capture_output=True,
+        text=True,
+        timeout=30.0,
+        check=False,
+    )
+
+    assert observed.returncode == 0, observed.stderr
+    assert json.loads(observed.stdout)["campaign_id"] == "campaign"
+
+
 @pytest.mark.parametrize("difficulty", [0, 4, True, "2"])
 def test_config_rejects_invalid_task_difficulty_even_with_a_valid_digest(
     tmp_path: Path,

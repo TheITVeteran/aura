@@ -41940,3 +41940,25 @@ positive, non-regressing result will authorize a fresh three-domain pilot, while
 a negative result will expose the failing arm before hours are spent on a full
 certificate. No resident, frontier, fusion, activation, or `WOW Signal` claim
 is authorized. The completion envelope is `825/920` (approximately `89.7%`).
+
+## Checkpoint 2026-08-10-129: The Detached Controller Can Import Its Runtime
+
+The first real prepare-only invocation from the detached CP128 capsule failed
+before model loading with `ModuleNotFoundError: No module named 'core'`. Direct
+file execution places `tools/` rather than the repository root on `sys.path`;
+the controller's adapter and task-registry validation therefore depended on an
+ambient `PYTHONPATH` that launchd does not guarantee. Left unchanged, launchd
+would have restarted the controller indefinitely without starting a scientific
+cell.
+
+The controller now derives and prepends its own repository root before any
+project import. A subprocess regression removes `PYTHONPATH`, changes to an
+unrelated working directory, invokes the controller by absolute file path, and
+successfully reads a prepared status contract. All `38/38` controller tests
+pass; Ruff, compile, and diff hygiene pass.
+
+No 32B model was loaded and the failed preparation produced no scientific
+evidence. The stale CP128 capsule will be replaced by a clean detached capsule
+from this checkpoint before preparation is retried. No resident, frontier,
+fusion, activation, or `WOW Signal` claim is authorized. The completion
+envelope is `826/920` (approximately `89.8%`).

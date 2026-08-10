@@ -27,6 +27,10 @@ from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import Any, Final
 
+REPO_ROOT = Path(__file__).resolve().parents[1]
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
+
 SCHEMA: Final = "aura.rlc_reconciliation_controller.v1"
 SOURCE_SCHEMA: Final = "aura.rlc_reconciliation_source_manifest.v1"
 SOURCE_GIT_SCHEMA: Final = "aura.rlc_reconciliation_source_git_identity.v1"
