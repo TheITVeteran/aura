@@ -41792,3 +41792,39 @@ not resident-32B transfer, broad general reasoning, neural-weight improvement,
 frontier intelligence, fusion, activation, or the `WOW Signal`. The next gate
 is the seed-fresh 1.5B pilot against best-of-three ordinary inference. The
 completion envelope is `821/920` (approximately `89.2%`).
+
+## Checkpoint 2026-08-09-125: Gain Survives Best-of-Three
+
+The fresh-seed 1.5B pilot completed all `30/30` committed cells across novel
+algorithms, mathematics, and long-horizon planning. Ordinary decode scored
+`0/6`; best-of-three ordinary inference also scored `0/6`; the complete system
+and adaptation-disabled control each scored `6/6`; producer-disabled execution
+returned to `0/6`. All arms completed without errors, runtime evidence was
+complete, and no correct incumbent regressed.
+
+The complete architecture therefore produced six paired gains and zero losses
+against both ordinary baselines and its producer-disabled control. The exact
+one-sided sign result is `p=0.015625`, gains span all three committed domains,
+and all six promoted answers carry exact public-objective authority. This
+admits the resource-dominating certificate stage.
+
+The adaptation-disabled control again tied treatment, with zero accepted latent
+steps and zero fast-weight applications. The evidence supports a replicated,
+bounded architecture-produced gain and causal necessity of the executable
+producer. It does not support an incremental adaptive-neural or weight-level
+gain on this task family.
+
+The hash-bound evidence index is
+`artifacts/closeout/latent_cortex/cp125_1p5b_pilot_best_of_three_gain.json`.
+It binds source commit `4ee2c616a`, implementation digest
+`bd7512ce27e36eaa8a3a4cfb179af2d18e0220bce01bf0dc5eb280df6487320f`,
+task commitment
+`61584504cd85b42db163f009973e8f52c81b79a2165ea8a0221f570b51f3f00f`,
+and all durable campaign receipts without importing private task material into
+Git.
+
+The remaining cheap empirical gate is a seed-fresh certificate against an
+ordinary control whose measured resources dominate treatment. Resident 32B
+remains locked until that gate passes. No broad, neural, weight-level,
+frontier, fusion, activation, or `WOW Signal` claim is authorized. The
+completion envelope is `822/920` (approximately `89.3%`).

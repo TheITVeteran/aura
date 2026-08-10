@@ -1,0 +1,71 @@
+{
+  "schema": "aura.rlc.pilot_best_of_three_gain.v1",
+  "checkpoint": "CP125",
+  "source_commit": "4ee2c616a",
+  "campaign_root": "/Users/bryan/.aura/campaigns/cp125-1p5b-pilot-208908130",
+  "model": "Qwen2.5-1.5B-Instruct-4bit",
+  "campaign_stage": "pilot",
+  "seed": 208908130,
+  "difficulty": 3,
+  "per_domain": 2,
+  "domains": [
+    "novel_algorithms",
+    "mathematics",
+    "long_horizon_planning"
+  ],
+  "task_commitment_sha256": "61584504cd85b42db163f009973e8f52c81b79a2165ea8a0221f570b51f3f00f",
+  "implementation_sha256": "bd7512ce27e36eaa8a3a4cfb179af2d18e0220bce01bf0dc5eb280df6487320f",
+  "artifact_bindings": {
+    "decode_fingerprint_sha256": "a5fdccc838962042151edbbfca829461d2af06632c920517c88aa0c63c7b78f8",
+    "journal_sha256": "db7e2a9ce6db00585be45466e6c3a97727c4c55fa5c0813f2cf06b0f66099ce0",
+    "status_sha256": "0f2c28dda811551179b8ada1e1029d91cf234c2747e6c2e678fa79fd7ed797d2",
+    "task_commitment_file_sha256": "aa94de5aa2d6a4a49033f9765e7808091043c90872549f86b8b8266e002bf12c",
+    "verdict_sha256": "cf2950642e897f6d3df939fb6caaaf3b23a5777efaa2a4e7b53568429d464f55"
+  },
+  "scores": {
+    "vanilla": "0/6",
+    "vanilla_equal_compute_best_of_three": "0/6",
+    "complete_system_closed_book": "6/6",
+    "complete_system_adaptation_ablation": "6/6",
+    "complete_system_executable_ablation": "0/6"
+  },
+  "admission": {
+    "admitted": true,
+    "next_stage": "certificate",
+    "treatment_lifts": 6,
+    "treatment_regressions": 0,
+    "paired_sign_test_p": 0.015625,
+    "producer_lifts": 6,
+    "producer_regressions": 0,
+    "producer_sign_test_p": 0.015625,
+    "gain_domains": 3,
+    "exact_promotions": 6,
+    "outscored_preliminary_best_of_three": true,
+    "adaptive_neural_admitted": false,
+    "adaptation_lifts": 0,
+    "latent_accepted_steps": 0,
+    "fast_weight_applications": 0
+  },
+  "integrity": {
+    "planned_cells": 30,
+    "committed_cells": 30,
+    "arms_complete": true,
+    "coverage_complete": true,
+    "runtime_evidence_complete": true,
+    "runtime_evidence_issues": [],
+    "vanilla_floor_holds": true,
+    "right_to_wrong_regressions": [],
+    "unpromoted_byte_divergences": []
+  },
+  "conclusion": "The bounded architecture-produced gain replicated on a fresh seed and outscored a best-of-three ordinary-inference control. The executable public-objective producer remained causally necessary. Adaptive neural tissue again provided no incremental lift on this battery.",
+  "not_claimed": [
+    "resource_dominating_control_gain",
+    "resident_32b_transfer",
+    "broad_general_reasoning_gain",
+    "adaptive_neural_gain",
+    "weight_level_gain",
+    "frontier_level_reasoning",
+    "fusion_or_activation_authority",
+    "wow_signal"
+  ]
+}
