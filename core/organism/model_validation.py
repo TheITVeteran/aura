@@ -1061,6 +1061,31 @@ def install_runtime_validation() -> dict[str, Any]:
             owner="core/learning/certified_transition_program.py",
         )
     )
+    suite.add_test(
+        ValidationTest(
+            name="public_transition_prompts_compile_without_private_labels",
+            description=(
+                "declared Boolean and modular prompts compile into exact typed "
+                "programs using public prompt evidence only"
+            ),
+            required_capability="",
+            observation=Observation(
+                name="public_compilation_matches_private_audit_trace",
+                value=True,
+                source=(
+                    "core/brain/llm/latent_cortex/typed_action_compiler.py "
+                    "fresh-seed contract tests"
+                ),
+            ),
+            predict=lambda _m: _public_transition_compiler_contract_holds(),
+            score=lambda p, o: boolean_score(
+                bool(p),
+                expected=bool(o.value),
+                subject="public-evidence typed action compilation",
+            ),
+            owner="core/brain/llm/latent_cortex/typed_action_compiler.py",
+        )
+    )
 
     suite.add_test(
         ValidationTest(
@@ -1228,6 +1253,25 @@ def install_runtime_validation() -> dict[str, Any]:
                 "Measured on generated Boolean and modular programs with lesion and "
                 "restoration controls; semantic compilation and behavioral gain remain "
                 "separate gates."
+            ),
+        )
+    )
+    suite.add_claim(
+        Claim(
+            statement=(
+                "For the declared Boolean and bounded modular grammars, Aura can "
+                "compile public task text into certified recurrent actions without "
+                "reading an answer or private transition trace."
+            ),
+            test="public_transition_prompts_compile_without_private_labels",
+            owner="core/brain/llm/latent_cortex/typed_action_compiler.py",
+            asserted_in="docs/AURA_EXECUTION_TRACKER.md",
+            evidence=Evidence.MEASURED_SYNTHETIC,
+            evidence_note=(
+                "Measured on fresh generated prompts through depth 32 with sham, "
+                "mutation, ambiguity, and receipt-privacy controls. This is a strict "
+                "declared-grammar compiler, not general natural-language planning or "
+                "a behavioral reasoning-gain claim."
             ),
         )
     )
@@ -1453,6 +1497,27 @@ def _certified_student_rollin_contract_holds() -> bool:
             return False
         execution = execute_program_student_rollin(program)
         if execution.states != program.state_trace.states:
+            return False
+    return True
+
+
+def _public_transition_compiler_contract_holds() -> bool:
+    from core.brain.llm.latent_cortex.typed_action_compiler import (
+        compile_public_transition_program,
+    )
+    from core.learning.certified_transition_program import (
+        execute_compiled_action_program,
+    )
+    from core.learning.recurrence_curriculum import modular_chain, nested_boolean
+
+    for generator in (nested_boolean, modular_chain):
+        task = generator(32, 20260810192)
+        compiled = compile_public_transition_program(task.prompt)
+        execution = execute_compiled_action_program(compiled)
+        if (
+            task.transition_trace is None
+            or execution.states != task.transition_trace.states
+        ):
             return False
     return True
 

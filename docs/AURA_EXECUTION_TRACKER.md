@@ -43934,3 +43934,30 @@ are now closed for the two declared families. Next is the missing semantic
 compiler: it must derive typed actions from public task evidence without seeing
 answers or private traces, then pass lesion, sham, ambiguity, and held-out prompt
 controls before the full recurrent path can enter behavioral comparison.
+
+## Checkpoint 2026-08-10-192: Public Evidence Compiles Into Certified Actions
+
+The missing public-to-typed bridge now parses the two declared recurrence
+grammars without accepting an answer, solution, expected state, or private
+transition trace. A recursive-descent Boolean compiler and bounded modular
+operation compiler emit immutable typed programs whose action sequences execute
+through the same certified transition organ as CP190 and whose states roll into
+the next step through the CP191 composition path. The public receipt commits the
+source and complete private program by SHA-256 while withholding initial-state
+and action values.
+
+Fresh-seed contracts compile and execute Boolean and modular programs at depths
+`1,2,4,8,16,32`, covering 3,024 transitions, and exactly match independently
+generated private audit traces. A semantic mutation changes the terminal state
+and program commitment; deterministic sham compilation does not. Unsupported
+language, ambiguous syntax, declared-depth drift, noncanonical Boolean trees,
+out-of-modulus operands, malformed typed records, and trailing content fail
+closed. The function signature itself has only the public prompt channel.
+
+The bounded claim is registered in the organism validation system with an
+explicit synthetic-evidence boundary. This advances the completion envelope to
+`888/920` (approximately `96.5%`). It proves a real public-evidence compiler for
+two declared formal grammars, not open-domain semantic planning and not a general
+reasoning gain. Next, the compiled path must become an admitted complete-engine
+candidate and beat ordinary decoding on fresh behavioral tasks before broader
+semantic IR or resident-32B work is justified.

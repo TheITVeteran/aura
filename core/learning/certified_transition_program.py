@@ -8,6 +8,7 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any
 
+from core.brain.llm.latent_cortex.typed_action_compiler import TypedActionProgram
 from core.brain.llm.latent_cortex.typed_transition_executor import (
     CertifiedTransitionExecutor,
     CertifiedTransitionResult,
@@ -142,6 +143,24 @@ def execute_program_student_rollin(
     return execution
 
 
+def execute_compiled_action_program(
+    program: TypedActionProgram,
+    *,
+    executor: CertifiedTransitionExecutor | None = None,
+) -> CertifiedProgramExecution:
+    if not isinstance(program, TypedActionProgram):
+        raise TypeError("compiled action program has the wrong type")
+    return execute_action_sequence(
+        family=program.family,
+        depth=program.depth,
+        field_names=program.field_names,
+        initial_state=program.initial_state,
+        action_field_names=program.action_field_names,
+        actions=program.actions,
+        executor=executor,
+    )
+
+
 def execute_program_transition(
     program: StructuredTransitionProgram,
     *,
@@ -173,6 +192,7 @@ __all__ = [
     "CERTIFIED_PROGRAM_EXECUTION_SCHEMA",
     "CertifiedProgramExecution",
     "execute_action_sequence",
+    "execute_compiled_action_program",
     "execute_program_student_rollin",
     "execute_program_transition",
 ]
