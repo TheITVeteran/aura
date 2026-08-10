@@ -8,7 +8,10 @@ import pytest
 
 from core.brain.llm.latent_cortex.execution_spec import RLCExecutionSpec
 from core.learning.recurrence_curriculum import task_battery
-from core.learning.recurrent_behavioral_probe import _full_engine_config
+from core.learning.recurrent_behavioral_probe import (
+    _full_engine_config,
+    _normalize_full_engine_probe_depths,
+)
 from tools import run_recurrent_grpo_behavioral_canary as canary
 
 
@@ -293,6 +296,16 @@ def test_complete_engine_probe_can_remove_the_producer_without_removing_verifica
 def test_complete_engine_probe_rejects_non_boolean_producer_policy() -> None:
     with pytest.raises(TypeError, match="objective_program_enabled"):
         _full_engine_config(RLCExecutionSpec(), objective_program_enabled=1)
+
+
+def test_complete_engine_probe_depths_must_span_shallow_and_full() -> None:
+    spec = RLCExecutionSpec(recurrent_steps=4)
+
+    assert _normalize_full_engine_probe_depths(spec, None) == (1, 4)
+    assert _normalize_full_engine_probe_depths(spec, (1, 2, 4)) == (1, 2, 4)
+    for invalid in ((4,), (1,), (2, 4), (1, 2), (1, 4, 4), (4, 1)):
+        with pytest.raises(ValueError, match="spanning shallow and full"):
+            _normalize_full_engine_probe_depths(spec, invalid)
 
 
 def test_reward_is_correctness_dominant_and_format_credit_bounded() -> None:

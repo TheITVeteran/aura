@@ -42367,3 +42367,22 @@ verification retained. A strict treatment-only win is required before any
 resident-32B use. No general neural gain, resident-32B gain, frontier, fusion,
 live activation, or `WOW Signal` claim is authorized. The completion envelope
 is `838/920` (approximately `91.1%`).
+
+## Checkpoint 2026-08-10-142: Short Gates Respect the Report's Depth Contract
+
+The first producer-disabled invocation completed its full-depth treatment
+sample but correctly failed before report construction: checkpoint reports
+require at least two ordered depth coordinates, while CP141 had allowed a
+single selected depth. That option made the runner and its evidence schema
+disagree. It now rejects the mismatch before model work. Explicit depth sets
+must be unique, ordered, remain inside the execution spec, begin at depth one,
+and end at the configured full recurrent depth; the default remains the exact
+shallow/full pair.
+
+The incomplete invocation produced no scientific receipt and cannot support a
+gain or no-gain claim. Its observed treatment sample was incorrect, so the
+repaired short gate will persist the treatment arm first and stop before
+lesion/sham when treatment cannot beat ordinary decode. Focused helper
+contracts pass `19/19`; Ruff, compilation, and diff hygiene pass. No neural,
+resident-32B, frontier, fusion, activation, or `WOW Signal` claim is
+authorized. The completion envelope is `839/920` (approximately `91.2%`).

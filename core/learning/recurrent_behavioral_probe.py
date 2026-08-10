@@ -159,6 +159,29 @@ def _full_engine_config(
     return config
 
 
+def _normalize_full_engine_probe_depths(
+    spec: RLCExecutionSpec,
+    depths: Sequence[int] | None,
+) -> tuple[int, ...]:
+    selected = (
+        tuple(sorted({1, spec.recurrent_steps}))
+        if depths is None
+        else tuple(depths)
+    )
+    if (
+        len(selected) < 2
+        or tuple(sorted(set(selected))) != selected
+        or any(type(depth) is not int for depth in selected)
+        or selected[0] != 1
+        or selected[-1] != spec.recurrent_steps
+        or any(not 1 <= depth <= spec.recurrent_steps for depth in selected)
+    ):
+        raise ValueError(
+            "probe depths must be unique ordered integers spanning shallow and full depth"
+        )
+    return selected
+
+
 def build_behavioral_probe_report(
     model: Any,
     tokenizer: Any,
@@ -428,17 +451,7 @@ def build_paired_full_engine_probe_reports(
     from core.brain.llm.latent_cortex.task_verifiers import EpisodeTaskVerifier
 
     checkpoint = full_weight_checkpoint_identity(Path(model_path))
-    selected_depths = (
-        tuple(sorted({1, spec.recurrent_steps}))
-        if depths is None
-        else tuple(sorted(set(depths)))
-    )
-    if (
-        not selected_depths
-        or any(type(depth) is not int for depth in selected_depths)
-        or any(not 1 <= depth <= spec.recurrent_steps for depth in selected_depths)
-    ):
-        raise ValueError("probe depths must be integers inside the execution spec")
+    selected_depths = _normalize_full_engine_probe_depths(spec, depths)
     if type(objective_program_enabled) is not bool:
         raise TypeError("objective_program_enabled must be boolean")
     ordinary_records: list[dict[str, Any]] = []
