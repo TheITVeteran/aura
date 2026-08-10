@@ -162,6 +162,46 @@ def _content_words(text: str) -> set[str]:
     return normalized
 
 
+#: A turn reporting that she has no answer records the ABSENCE of a position,
+#: not a position.
+#:
+#: LIVE DEFECT, 2026-08-10. Asked twice, in different words, to name one thing
+#: from a conversation held earlier that day, she answered both times: "I can't
+#: reach that conversation — it's not available to me." The second answer was
+#: grounded on the first. Own-statement recall scores past exchanges by overlap
+#: with the current question, so a re-ask reliably resolves to her previous
+#: attempt at that same question — and the block it builds tells her "do not
+#: report a different original position than the one quoted here."
+#:
+#: That makes the first answer she gives permanent. A question re-asked can
+#: never be answered differently, which is precisely the case where a different
+#: answer is wanted: after a fix, after new evidence, after she looks again.
+#: Grounding on a refusal converts a gap into a commitment and calls it
+#: consistency.
+#:
+#: The cost of the narrower rule is that "why couldn't you remember earlier?"
+#: loses its grounding quote. That question still has the ordinary transcript
+#: to work from; the trap above has no way out from inside the conversation.
+_NO_POSITION_RE = re.compile(
+    r"(?:"
+    r"\bi\s+(?:can(?:no|')?t|cannot|could\s*n[o']?t|do(?:\s+not|n')?t|did\s*n[o']?t)\s+"
+    r"(?:\w+\s+){0,3}"
+    r"(?:reach|recall|remember|access|retrieve|answer|say|name|find|have|get)\b"
+    r"|\bi\s+have\s+no\s+(?:memory|recollection|record|access|answer)\b"
+    r"|\bno\s+(?:memory|recollection|record)\s+of\s+(?:it|that|them)\b"
+    r"|\bnot\s+available\s+to\s+me\b"
+    r"|\bnothing\s+to\s+(?:recall|remember|report|offer)\b"
+    r"|\bcouldn'?t\s+get\s+to\s+an\s+answer\b"
+    r")",
+    re.IGNORECASE,
+)
+
+
+def states_no_position(turn: str) -> bool:
+    """True when a past turn reports an absent answer rather than giving one."""
+    return bool(_NO_POSITION_RE.search(str(turn or "")))
+
+
 def _history_own_exchanges(history: Any, exclude_norm: str) -> list[tuple[str, str]]:
     """Her turns in this conversation, each paired with what prompted it.
 
@@ -170,6 +210,9 @@ def _history_own_exchanges(history: Any, exclude_norm: str) -> list[tuple[str, s
     up", her answer named the screen and telemetry and never used the word
     "senses" — so matching her turn alone scored it below an unrelated later
     reply, and grounded her on the wrong statement.
+
+    Turns that report an absent answer are left out: see :data:`_NO_POSITION_RE`
+    for what quoting one back to her did.
 
     Returns ``(prompt, her_turn)`` oldest first.
     """
@@ -185,7 +228,7 @@ def _history_own_exchanges(history: Any, exclude_norm: str) -> list[tuple[str, s
             continue
         if role != "assistant" or entry.get("ephemeral"):
             continue
-        if content.lower() != exclude_norm:
+        if content.lower() != exclude_norm and not states_no_position(content):
             exchanges.append((prompt, content))
         prompt = ""
     return exchanges
@@ -513,8 +556,14 @@ _SPEECH_ACT_FRAME_RE = re.compile(
 )
 
 
-def _content_words(text: str) -> frozenset[str]:
-    """Words in ``text`` that could evidence where the sentence came from."""
+def _provenance_words(text: str) -> frozenset[str]:
+    """Words in ``text`` that could evidence where the sentence came from.
+
+    Deliberately not :func:`_content_words`: that one singularises and uses the
+    recall stopword list, tuned for scoring which past turn a question is
+    about. This one asks a different question — did these exact words come
+    from that quote — and must not drift with it.
+    """
     return frozenset(
         word
         for word in _WORD_RE.findall(str(text or "").lower())
@@ -558,7 +607,7 @@ def repair_grounded_recall_speaker_attribution(
         return response, False
     if not re.search(r"\b(?:i|my|me)\b", str(user_message or ""), re.IGNORECASE):
         return response, False
-    quote_words = _content_words(grounded_quote)
+    quote_words = _provenance_words(grounded_quote)
     if not quote_words:
         return response, False
 
@@ -582,7 +631,7 @@ def repair_grounded_recall_speaker_attribution(
     # Provenance. Everything about to be re-attributed has to be traceable to
     # the utterance being recalled; a sentence introducing content the user
     # never said is her own, however it opens.
-    claim_words = _content_words(_SPEECH_ACT_FRAME_RE.sub("", body))
+    claim_words = _provenance_words(_SPEECH_ACT_FRAME_RE.sub("", body))
     if not claim_words or not claim_words <= quote_words:
         logger.debug(
             "🧠 [GroundedRecall] leaving first-person sentence alone — its "

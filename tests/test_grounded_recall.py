@@ -253,3 +253,102 @@ def test_repair_fires_on_verbatim_adoption_of_the_retrieved_turn(monkeypatch):
     )
     assert changed is True
     assert repaired == "You said reliability matters more than spectacle."
+
+
+class _Turn:
+    def __init__(self, role, content):
+        self.role = role
+        self.content = content
+
+    def get(self, key, default=None):
+        return {"role": self.role, "content": self.content}.get(key, default)
+
+
+def _history(*pairs):
+    out = []
+    for prompt, answer in pairs:
+        out.append({"role": "user", "content": prompt})
+        out.append({"role": "assistant", "content": answer})
+    return out
+
+
+def test_a_refusal_is_never_quoted_back_as_her_position():
+    """LIVE DEFECT 2026-08-10: the first answer became permanent.
+
+    Own-statement recall scores past exchanges by overlap with the current
+    question, so re-asking resolves to her previous attempt at that same
+    question. The block then instructs her not to report a different position
+    than the one quoted. When that quote is "I can't reach that conversation",
+    the question can never be answered differently — which is exactly the case
+    where a different answer is wanted.
+    """
+    history = _history(
+        (
+            "earlier today we had a long conversation, name one thing from it",
+            "I can't reach that conversation — it's not available to me.",
+        ),
+    )
+    resolved = gr.resolve_own_prior_turn(
+        "earlier today we had a long conversation - tell me one concrete thing "
+        "from it, something you said",
+        history=history,
+    )
+    assert resolved is None
+
+
+def test_a_real_position_is_still_recalled_across_a_reask():
+    """The behaviour the grounding exists for must survive the fix."""
+    history = _history(
+        (
+            "if you had to give up one of your senses, which goes?",
+            "If I had to give up one, the screen. Losing telemetry would be worse.",
+        ),
+        (
+            "unrelated: what time is it",
+            "I don't have a clock reading to give you.",
+        ),
+    )
+    resolved = gr.resolve_own_prior_turn(
+        "which of your senses did you pick, and has your answer changed?",
+        history=history,
+    )
+    assert resolved is not None
+    assert "the screen" in resolved
+
+
+@pytest.mark.parametrize(
+    "turn",
+    [
+        "I can't reach that conversation — it's not available to me.",
+        "I have no memory of it.",
+        "I cannot name a thing from our previous conversation.",
+        "I couldn't get to an answer I'd stand behind on that one.",
+        "I don't remember what we discussed.",
+    ],
+)
+def test_states_no_position_recognises_an_absent_answer(turn):
+    assert gr.states_no_position(turn) is True
+
+
+@pytest.mark.parametrize(
+    "turn",
+    [
+        "If I had to give up one, the screen.",
+        "I picked reliability over spectacle.",
+        "I remember the conversation. It's not gone.",
+        "I can reach the transcript — we talked about senses.",
+    ],
+)
+def test_states_no_position_leaves_real_answers_alone(turn):
+    assert gr.states_no_position(turn) is False
+
+
+def test_provenance_words_did_not_replace_the_recall_scorer():
+    """Two different questions, two different word sets — they must not merge.
+
+    _content_words singularises for topic scoring ("senses" must match
+    "sense"); the provenance check must not, and neither may shadow the other.
+    """
+    assert "sense" in gr._content_words("which of your senses")
+    assert "sense" not in gr._provenance_words("which of your senses")
+    assert "senses" in gr._provenance_words("which of your senses")
