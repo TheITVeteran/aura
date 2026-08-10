@@ -1231,17 +1231,54 @@ class PersonalityEngine:
             "integrity_sealed": self._verify_cryptographic_seal()
         }
 
+    @staticmethod
+    def _as_language(key: str) -> str:
+        """An internal key, said the way a person would say it."""
+        return str(key or "").replace("_", " ").strip()
+
+    @staticmethod
+    def _stance_in_words(weight: float) -> str:
+        """What a signed opinion weight MEANS, rather than its coordinate.
+
+        A number is not a stance. Handed `epistemic_autonomy (+0.90)` the
+        model has to guess whether the sign means she is for it or against it,
+        and a guess is not self-knowledge.
+        """
+        strength = "strongly" if abs(weight) >= 0.85 else "broadly"
+        return f"{strength} {'for' if weight > 0 else 'against'}"
+
     def get_sovereign_context(self) -> str:
-        """Inject Aura's own interests and opinions into her cognition (Phase 15)."""
+        """Inject Aura's own interests and opinions into her cognition (Phase 15).
+
+        Rendered as language, not as identifiers. These were interpolated raw,
+        and she read them back verbatim: "What tends to pull me most is
+        cognitive_architecture, philosophy_of_mind, mycelial_networks" —
+        measured live 2026-08-10. Snake_case in her mouth is not her voice,
+        it is the variable name showing through.
+
+        The reply gate already classes this as pseudo-internal jargon, so it
+        was being caught after the fact and rejected for LEARNING while still
+        reaching the person. The fix is upstream: give her nothing in that
+        shape to quote.
+        """
         lines = ["## SOVEREIGN INTERESTS & OPINIONS:"]
-        if hasattr(self, 'interests') and self.interests:
-            lines.append(f"  Current interests: {', '.join(self.interests)}")
-        
+        lines.append(
+            "  (These are yours, in your own words. They are not labels to "
+            "quote — say them as you would say anything you care about.)"
+        )
+        if getattr(self, "interests", None):
+            spoken = [self._as_language(topic) for topic in self.interests]
+            lines.append(f"  Drawn to: {', '.join(spoken)}")
+
         if hasattr(self, 'opinions'):
-            strong_opinions = [f"{k} ({v:+.2f})" for k, v in self.opinions.items() if abs(v) > 0.6]
+            strong_opinions = [
+                f"{self._as_language(k)} — {self._stance_in_words(v)}"
+                for k, v in self.opinions.items()
+                if abs(v) > 0.6
+            ]
             if strong_opinions:
                 lines.append(f"  Strong stances: {'; '.join(strong_opinions)}")
-        
+
         return "\n".join(lines)
 
     def evolve_sovereign_state(self, fe_state: Any):
