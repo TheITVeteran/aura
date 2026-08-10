@@ -98,7 +98,29 @@ def test_the_instrument_reading_carries_the_real_registry():
 
 
 def test_no_registry_means_no_claim_either_way():
-    """Absence of a reading must not become an invented reading."""
+    """Absence of a reading must not become an invented reading.
+
+    CONTRACT CHANGED, 2026-08-10, and deliberately. This asserted the line was
+    EXACTLY "" — silence was the mechanism chosen to avoid an invented
+    reading. Live, silence turned out to be what produces one. Told "check
+    your own skill registry before you reply", she answered that it lists her
+    capabilities "with no active skills or plugins listed" and concluded "if
+    there is no tool listed in the registry, it indicates that none are
+    present", while 76 skills were READY. The classifier had matched and the
+    instrument block WAS attached; it just carried no capability line, and the
+    block's own header tells her not to supplement what is not there. Under
+    that instruction an empty string is not the absence of a claim.
+
+    _cognition_line, twenty lines up in the same module, had already reached
+    the opposite conclusion for cycle counts — "Say the channel is missing
+    rather than leaving a silence she will fill. This is the honest version of
+    'I can't read that'." The two halves of one file disagreed; this one was
+    on the losing side of the evidence.
+
+    So the property is unchanged and the mechanism is not: no invented
+    capability claim, stated explicitly as unknown rather than by saying
+    nothing.
+    """
     from core.brain import self_state_report
 
     class _NoCatalog:
@@ -107,6 +129,12 @@ def test_no_registry_means_no_claim_either_way():
     from core.container import ServiceContainer
 
     ServiceContainer.register_instance("capability_engine", _NoCatalog(), required=False)
-    assert self_state_report._capability_line() == "", (
-        "with no readable catalog the report must stay silent, not guess"
-    )
+    line = self_state_report._capability_line()
+
+    assert line, "silence is what she fills in; say the reading is missing"
+    assert "NOT readable" in line
+    assert "not empty" in line
+    # The original property, still enforced: no capability is claimed either
+    # way from a registry that could not be read.
+    for invented in ("run_code", "web_search", "available right now"):
+        assert invented not in line, invented

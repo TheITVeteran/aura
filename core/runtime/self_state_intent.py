@@ -93,11 +93,57 @@ _CAPABILITY_INTROSPECTION_PATTERNS: tuple[re.Pattern[str], ...] = tuple(
     )
 )
 
+#: Asking whether she is ABLE to do something, in the phrasings people
+#: actually use.
+#:
+#: The set above solved exactly one family. Its "can you" pattern requires
+#: (execute|run) followed by (code|python|script|shell|sandbox), because
+#: code execution was the family that had been caught being denied — so
+#: "can you search the web?" and "are you able to take a screenshot" matched
+#: nothing, and she answered both from the base model's guess. Live
+#: 2026-08-10 that produced "I don't have a window, camera, thermometer or
+#: weather feed" with five search skills READY.
+#:
+#: These are deliberately NOT added to asks_about_own_runtime. That predicate
+#: also sets explicit_search = False in the response contract, so widening it
+#: would mean "can you look up the score for me" stops being able to look
+#: anything up — trading a wrong answer about capability for a broken one.
+#: Attaching her instrument reading is always safe; suppressing search is not,
+#: and the two decisions are no longer the same decision.
+_ABILITY_QUESTION_PATTERNS: tuple[re.Pattern[str], ...] = tuple(
+    re.compile(pattern, re.IGNORECASE)
+    for pattern in (
+        r"\bare you able to\b",
+        r"\bare you capable of\b",
+        r"\bdo you have (?:the )?(?:ability|capabilit(?:y|ies)|means|access|"
+        r"permission)\b",
+        r"\bcan you (?:even|actually|really)\b",
+        r"\b(?:can'?t|cannot) you\b",
+        r"\bis (?:that|this|it) something you can\b",
+        r"\bdo you (?:know how to|have a way to)\b",
+        # A bare "can you <verb> [the <thing>]?" that ENDS the utterance.
+        #
+        # "can you search the web?" is a question about ability; "can you
+        # search the web for the 76ers roster" is a request to go and do it.
+        # The discriminator is that the request keeps going — it has to name
+        # what to act on. Anchoring on the question mark separates them
+        # without needing to understand either.
+        r"\bcan you [a-z]+(?:\s+(?:the|a|an)\s+\w+)?\s*\?\s*$",
+    )
+)
+
+
 _SECOND_PERSON_RE = re.compile(r"\b(?:you|you're|your|yours|yourself)\b", re.IGNORECASE)
 
 
 def asks_about_own_runtime(text: str) -> bool:
-    """True when the honest answer is a local reading, not a web page."""
+    """True when the honest answer is a local reading, not a web page.
+
+    Consumers treat this as "answer from instruments and do NOT search", so a
+    false positive costs a search the person actually wanted. Kept narrow for
+    that reason; see asks_about_own_capabilities for the wider question that
+    only ever ADDS a reading.
+    """
     candidate = str(text or "")
     if not candidate.strip():
         return False
@@ -110,4 +156,22 @@ def asks_about_own_runtime(text: str) -> bool:
     )
 
 
-__all__ = ["asks_about_own_runtime"]
+def asks_about_own_capabilities(text: str) -> bool:
+    """True when she is being asked what she can do, however it is phrased.
+
+    Strictly wider than ``asks_about_own_runtime`` and used ONLY by the prompt
+    paths that attach her instrument reading. It must never gate whether she
+    searches: telling her what she can do is safe on any turn, while deciding
+    she should not look something up is not.
+    """
+    candidate = str(text or "")
+    if not candidate.strip():
+        return False
+    if asks_about_own_runtime(candidate):
+        return True
+    if not _SECOND_PERSON_RE.search(candidate):
+        return False
+    return any(pattern.search(candidate) for pattern in _ABILITY_QUESTION_PATTERNS)
+
+
+__all__ = ["asks_about_own_capabilities", "asks_about_own_runtime"]

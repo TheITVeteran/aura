@@ -3344,9 +3344,13 @@ class CognitiveEngine:
                     action="continued desktop turn without recent-action receipts",
                 )
             try:
-                from core.runtime.self_state_intent import asks_about_own_runtime
+                # Wider predicate: this path only adds a reading, while
+                # asks_about_own_runtime also turns off web search.
+                from core.runtime.self_state_intent import (
+                    asks_about_own_capabilities,
+                )
 
-                if asks_about_own_runtime(visible_user_message):
+                if asks_about_own_capabilities(visible_user_message):
                     from core.brain.self_state_report import runtime_self_report
 
                     instruments = runtime_self_report()

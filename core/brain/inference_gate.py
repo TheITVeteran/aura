@@ -9075,9 +9075,16 @@ class InferenceGate:
                 if _actions:
                     volatile_grounding_blocks.append(_actions)
 
-                from core.runtime.self_state_intent import asks_about_own_runtime
+                # The WIDER predicate here on purpose. This path only ADDS her
+                # instrument reading, so a false positive costs a few lines of
+                # prompt; asks_about_own_runtime additionally suppresses web
+                # search in the response contract, where a false positive
+                # costs the lookup the person asked for.
+                from core.runtime.self_state_intent import (
+                    asks_about_own_capabilities,
+                )
 
-                if asks_about_own_runtime(visible_user_prompt):
+                if asks_about_own_capabilities(visible_user_prompt):
                     from core.brain.self_state_report import runtime_self_report
 
                     _instruments = runtime_self_report()

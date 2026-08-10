@@ -223,6 +223,30 @@ _CAPABILITY_FAMILIES: tuple[tuple[str, tuple[str, ...]], ...] = (
 )
 
 
+#: What to say when the registry cannot be read at all.
+#:
+#: LIVE DEFECT, 2026-08-10. Told "check your own skill registry before you
+#: reply — how many search tools do you actually have registered right now",
+#: she answered that the registry "does list my capabilities at the moment,
+#: with no active skills or plugins listed" and concluded "if there is no tool
+#: listed in the registry, it indicates that none are present". Seventy-six
+#: skills were READY.
+#:
+#: The classifier had correctly identified the question and the instrument
+#: block WAS attached — but _capability_line() returned "" from three separate
+#: paths (no engine, an exception, a zero count), so the block simply carried
+#: no capability line, and the block's own header tells her not to supplement
+#: what is not there. An empty string is not the absence of a claim; under
+#: that instruction it reads as "nothing registered".
+#:
+#: Identical to the lesson _cognition_line records for cycle counts: silence
+#: in this block is what licenses invention.
+_UNREADABLE_CAPABILITIES = (
+    "- Skill registry: NOT readable this turn. That means unknown, not empty — "
+    "say you cannot see it rather than saying you have no skills."
+)
+
+
 def _capability_line() -> str:
     """What she can actually do, read from the live skill registry.
 
@@ -248,7 +272,7 @@ def _capability_line() -> str:
 
         engine = get_runtime_service("capability_engine", default=None)
         if engine is None or not hasattr(engine, "iter_tool_catalog"):
-            return ""
+            return _UNREADABLE_CAPABILITIES
         ready: list[str] = []
         total = 0
         for item in engine.iter_tool_catalog(include_inactive=False):
@@ -260,9 +284,9 @@ def _capability_line() -> str:
             if name and available == "available":
                 ready.append(name)
     except (AttributeError, ImportError, OSError, RuntimeError, TypeError, ValueError):
-        return ""
+        return _UNREADABLE_CAPABILITIES
     if not total:
-        return ""
+        return _UNREADABLE_CAPABILITIES
 
     families: list[str] = []
     for label, tokens in _CAPABILITY_FAMILIES:
