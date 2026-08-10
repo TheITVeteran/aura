@@ -7277,10 +7277,46 @@ class InferenceGate:
             context,
             fallback=initial_visible_user_prompt,
         )
-        if not surface_prompt.bound:
+        # The question THIS call is answering wins, always.
+        #
+        # LIVE DEFECT, 2026-08-10. Asked "look at my screen and tell me what
+        # app is in front right now" (128 chars), the worker rejected every
+        # draft with:
+        #
+        #   Rejected live user-surface draft reasons=arithmetic_answer_missing
+        #       validation_chars=31 excerpt='50864799'
+        #
+        # 31 characters is "what's 7919 multiplied by 6421?" — the PREVIOUS
+        # turn. A binding already present was treated as authoritative, so the
+        # explicit visible message handed in for this call was ignored, and the
+        # screen question was graded against the arithmetic question's expected
+        # answer. It could not pass: there is no product in a reply about
+        # windows. The turn died as arithmetic_answer_missing and the person
+        # got a refusal about their screen.
+        #
+        # A binding survives to protect a turn from losing its own question
+        # mid-flight. Carrying one INTO a different turn inverts that: it grades
+        # every later answer against an older question, and the mismatch is
+        # invisible because the reason names arithmetic while the user asked
+        # about a window.
+        stale_binding = bool(
+            surface_prompt.bound
+            and explicit_visible_user_prompt
+            and str(surface_prompt.prompt or "").strip() != explicit_visible_user_prompt
+        )
+        if not surface_prompt.bound or stale_binding:
+            if stale_binding:
+                logger.warning(
+                    "🔗 Rebinding the user-surface validation prompt: the bound "
+                    "one (%d chars) is not this turn's question (%d chars).",
+                    len(str(surface_prompt.prompt or "")),
+                    len(explicit_visible_user_prompt),
+                )
             bind_user_surface_prompt(
                 context,
-                surface_prompt.prompt or initial_visible_user_prompt,
+                explicit_visible_user_prompt
+                if stale_binding
+                else (surface_prompt.prompt or initial_visible_user_prompt),
                 source="inference_gate.visible_user_message",
                 overwrite=True,
             )
