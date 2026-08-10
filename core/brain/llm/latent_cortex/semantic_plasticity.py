@@ -8,7 +8,7 @@ requires a fresh teacher-free decode accepted by the task verifier.
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from typing import Any
 
 
@@ -83,4 +83,56 @@ def build_contrastive_semantic_seeds(
     return seeds
 
 
-__all__ = ["build_contrastive_semantic_seeds"]
+def build_layerwise_trajectory_directions(
+    target_features: Mapping[int, Any],
+    contrast_features: Mapping[int, Any],
+    *,
+    rank: int,
+) -> dict[int, Any]:
+    """Build orthonormal teacher-minus-incumbent bases at each real layer."""
+
+    import mlx.core as mx
+
+    if type(rank) is not int or rank <= 0:
+        raise ValueError("trajectory plasticity rank must be positive")
+    target_layers = {int(index) for index in target_features}
+    contrast_layers = {int(index) for index in contrast_features}
+    if not target_layers or target_layers != contrast_layers:
+        raise ValueError("trajectory feature layer inventories differ")
+    directions: dict[int, Any] = {}
+    for layer in sorted(target_layers):
+        target = target_features[layer]
+        contrast = contrast_features[layer]
+        if (
+            getattr(target, "ndim", 0) != 2
+            or getattr(contrast, "ndim", 0) != 2
+            or target.shape != contrast.shape
+            or int(target.shape[0]) < rank
+        ):
+            raise ValueError("trajectory feature shapes differ")
+        basis = []
+        for row in range(int(target.shape[0])):
+            vector = (target[row] - contrast[row]).astype(mx.float32)
+            for prior in basis:
+                vector = vector - mx.sum(vector * prior) * prior
+            norm = mx.linalg.norm(vector)
+            mx.eval(norm)
+            if float(norm) <= 1e-6:
+                continue
+            basis.append(mx.stop_gradient(vector / norm))
+            if len(basis) >= rank:
+                break
+        if len(basis) != rank:
+            raise RuntimeError(
+                f"trajectory correction rank collapsed at layer {layer}: "
+                f"{len(basis)}/{rank}"
+            )
+        directions[layer] = mx.stack(basis, axis=0)
+        mx.eval(directions[layer])
+    return directions
+
+
+__all__ = [
+    "build_contrastive_semantic_seeds",
+    "build_layerwise_trajectory_directions",
+]

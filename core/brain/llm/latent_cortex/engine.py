@@ -59,6 +59,7 @@ from core.brain.llm.latent_cortex.resource_accounting import (
 from core.brain.llm.latent_cortex.schedules import LayerSchedule, ScheduleLibrary
 from core.brain.llm.latent_cortex.semantic_plasticity import (
     build_contrastive_semantic_seeds,
+    build_layerwise_trajectory_directions,
 )
 from core.brain.llm.latent_cortex.teaching_events import (
     build_exact_objective_teaching_event,
@@ -123,6 +124,7 @@ _BRIDGE_TEXT_BY_POLICY = {
 # admitted before newline-family logits are masked for the next sample. Two
 # newlines = one blank line — enough for any legitimate paragraph/list break.
 _MAX_NEWLINE_RUN = 2
+_MAX_TEACHER_TRAJECTORY_TOKENS = 768
 _NEWLINE_RESAMPLE_ATTEMPTS = 4
 # Sentence grace: when the token limit lands mid-sentence, sampling may
 # continue up to this many extra tokens until sentence-final punctuation —
@@ -2892,6 +2894,14 @@ class LatentCortexEngine:
         )
         fast_weight_associative_capture_cost = (
             fast_weight_window_forward_cost
+            + (
+                3
+                * min(
+                    _MAX_TEACHER_TRAJECTORY_TOKENS,
+                    len(tokens) + 256 + 32,
+                )
+                * self.n_layers
+            )
             if self.config.fast_weights.enabled
             and self.config.fast_weights.associative_bootstrap_enabled
             else 0
@@ -6069,6 +6079,7 @@ class LatentCortexEngine:
         fw_sham_initial_snapshot: tuple[dict[str, Any], ...] = ()
         fw_sham_target_tokens: list[int] = []
         fw_sham_semantic_seed_vectors = None
+        fw_sham_trajectory_directions = None
         fw_sham_probe_tokens: list[int] = []
         fw_sham_score: float | None = None
         if self.config.fast_weights.enabled and not heterogeneous_finalized:
@@ -6269,7 +6280,6 @@ class LatentCortexEngine:
                 receipt.fast_weights_applied = True
                 receipt.fast_weights_layers = wrapped
                 receipt.flag(f"fast_weight_site:{self.plasticity_site.site_id}")
-                fw_initial_snapshot = fast_weights.snapshot_delta()
                 try:
                     fast_weight_learning_state["lease"] = fast_weights.lease_receipt()
                     attach_probe = self._fw_probe(budget)
@@ -6289,6 +6299,98 @@ class LatentCortexEngine:
                         or state_after_attach_sha256 != winner_state_sha256
                     ):
                         raise RuntimeError("fast-weight attachment failed measured identity")
+                    if fast_weight_teaching_event:
+                        target_features, target_context_tokens = (
+                            self._capture_teacher_forced_trajectory(
+                                fast_weights,
+                                budget,
+                                objective=verification_objective,
+                                answer_tokens=fast_weight_target_tokens,
+                                operation="fast_weight_target_trajectory",
+                            )
+                        )
+                        incumbent_features, incumbent_context_tokens = (
+                            self._capture_teacher_forced_trajectory(
+                                fast_weights,
+                                budget,
+                                objective=verification_objective,
+                                answer_tokens=incumbent_tokens,
+                                operation="fast_weight_incumbent_trajectory",
+                            )
+                        )
+                        sham_features, sham_context_tokens = (
+                            self._capture_teacher_forced_trajectory(
+                                fast_weights,
+                                budget,
+                                objective=verification_objective,
+                                answer_tokens=fw_sham_target_tokens,
+                                operation="fast_weight_sham_trajectory",
+                            )
+                        )
+                        treatment_directions = build_layerwise_trajectory_directions(
+                            target_features,
+                            incumbent_features,
+                            rank=self.config.fast_weights.rank,
+                        )
+                        fw_sham_trajectory_directions = (
+                            build_layerwise_trajectory_directions(
+                                sham_features,
+                                incumbent_features,
+                                rank=self.config.fast_weights.rank,
+                            )
+                        )
+                        fast_weights.reseed_output_subspace_by_layer(
+                            treatment_directions,
+                            seed_source="verified_semantic_contrast",
+                        )
+                        fast_weights.capture_input_summaries(
+                            lambda: self._decode_probe(
+                                winner,
+                                cache,
+                                runner,
+                                budget,
+                                bridge_tokens=bridge_tokens,
+                                use_cache=False,
+                                force_exact_tokens=True,
+                            )
+                        )
+                        layers = sorted(treatment_directions)
+                        fast_weight_learning_state["controls"][
+                            "trajectory_transplant"
+                        ] = {
+                            "schema": "aura.fast_weight_trajectory_transplant.v1",
+                            "site_id": self.plasticity_site.site_id,
+                            "layers": layers,
+                            "rank": self.config.fast_weights.rank,
+                            "target_context_sha256": token_sequence_sha256(
+                                target_context_tokens
+                            ),
+                            "incumbent_context_sha256": token_sequence_sha256(
+                                incumbent_context_tokens
+                            ),
+                            "sham_context_sha256": token_sequence_sha256(
+                                sham_context_tokens
+                            ),
+                            "query_activation_sha256s": {
+                                str(layer): digest
+                                for layer, digest in (
+                                    fast_weights.input_feature_commitments().items()
+                                )
+                            },
+                            "target_direction_sha256s": {
+                                str(layer): tensor_sha256(treatment_directions[layer])
+                                for layer in layers
+                            },
+                            "sham_direction_sha256s": {
+                                str(layer): tensor_sha256(
+                                    fw_sham_trajectory_directions[layer]
+                                )
+                                for layer in layers
+                            },
+                        }
+                        receipt.flag(
+                            f"fast_weight_teacher_trajectory_transplant:{len(layers)}"
+                        )
                 except BaseException:  # noqa: BLE001 - mutation cleanup must survive cancellation
                     self._finalize_fast_weights(
                         fast_weights,
@@ -6298,6 +6400,7 @@ class LatentCortexEngine:
                         learning_state=fast_weight_learning_state,
                     )
                     raise
+                fw_initial_snapshot = fast_weights.snapshot_delta()
                 if fast_weights.lifecycle.retrieval_seeded_columns > 0:
                     receipt.flag(
                         "fast_weight_retrieval_compiled:"
@@ -6331,12 +6434,6 @@ class LatentCortexEngine:
                     fast_weight_teaching_event
                     and self.config.fast_weights.associative_bootstrap_enabled
                 ):
-                    fast_weights.capture_input_summaries(
-                        lambda: self._nocache_window_pass(
-                            winner.z,
-                            branch_index=winner.index,
-                        )
-                    )
                     write_receipt = fast_weights.install_minimum_norm_keys(
                         gain=self.config.fast_weights.associative_bootstrap_gain,
                         regularization=(
@@ -6347,6 +6444,7 @@ class LatentCortexEngine:
                         "fast_weight_minimum_norm_write:"
                         f"{len(write_receipt['layers'])}"
                     )
+                    receipt.flag("fast_weight_answer_decode_keys_compiled")
                 # The temporary synapses optimize only toward the exact
                 # evidence atoms admitted above. Prompt reconstruction remains
                 # the latent-state optimizer's objective; using it here would
@@ -6383,7 +6481,20 @@ class LatentCortexEngine:
                     fw_initial_snapshot,
                     reason="fast_weights_matched_control_reset",
                 )
-                if fw_sham_semantic_seed_vectors is not None:
+                if fw_sham_trajectory_directions is not None:
+                    fast_weights.reseed_output_subspace_by_layer(
+                        fw_sham_trajectory_directions,
+                        seed_source="verified_semantic_contrast",
+                    )
+                    receipt.flag("fast_weight_matched_trajectory_subspace")
+                    fw_sham_initial_snapshot = fast_weights.snapshot_delta()
+                    fast_weights.install_minimum_norm_keys(
+                        gain=self.config.fast_weights.associative_bootstrap_gain,
+                        regularization=(
+                            self.config.fast_weights.associative_bootstrap_regularization
+                        ),
+                    )
+                elif fw_sham_semantic_seed_vectors is not None:
                     fast_weights.reseed_output_subspace(
                         fw_sham_semantic_seed_vectors,
                         seed_source="verified_semantic_contrast",
@@ -6529,6 +6640,9 @@ class LatentCortexEngine:
                     fast_weight_learning_state["controls"] = {
                         "decision": canary_decision,
                         "capability_canaries": dict(receipt.fast_weight_canaries),
+                        "trajectory_transplant": fast_weight_learning_state["controls"][
+                            "trajectory_transplant"
+                        ],
                         "verifier_gain_search": fast_weight_learning_state["controls"][
                             "verifier_gain_search"
                         ],
@@ -6540,6 +6654,9 @@ class LatentCortexEngine:
                     fast_weight_learning_state["controls"] = {
                         "decision": "accepted",
                         "capability_canaries": {},
+                        "trajectory_transplant": fast_weight_learning_state["controls"][
+                            "trajectory_transplant"
+                        ],
                         "verifier_gain_search": fast_weight_learning_state["controls"][
                             "verifier_gain_search"
                         ],
@@ -8303,6 +8420,65 @@ class LatentCortexEngine:
             for i in range(self.prelude_end, self.coda_start):
                 h = inner.layers[i](h, None, None)
         return h
+
+    def _capture_teacher_forced_trajectory(
+        self,
+        fast_weights: EpisodicFastWeights,
+        budget: ComputeBudget,
+        *,
+        objective: str,
+        answer_tokens: Sequence[int],
+        operation: str,
+    ) -> tuple[dict[int, Any], list[int]]:
+        """Capture private layer activations for one objective/answer pair."""
+
+        import mlx.core as mx
+
+        if self.tokenizer is None:
+            raise RuntimeError("teacher trajectory capture requires a tokenizer")
+        answer = [int(token) for token in answer_tokens]
+        if not answer:
+            raise ValueError("teacher trajectory answer is empty")
+        answer = answer[:256]
+        prefix = self.tokenizer.encode(
+            f"{objective}\nCandidate answer:\n",
+            add_special_tokens=False,
+        )
+        prefix = [int(token) for token in prefix]
+        prefix_budget = _MAX_TEACHER_TRAJECTORY_TOKENS - len(answer)
+        if prefix_budget <= 0:
+            raise RuntimeError("teacher trajectory has no objective context budget")
+        if len(prefix) > prefix_budget:
+            head = prefix_budget // 2
+            prefix = prefix[:head] + prefix[-(prefix_budget - head) :]
+        context_tokens = prefix + answer
+        layer_apps = len(context_tokens) * self.n_layers
+        if not budget.can_afford(len(context_tokens), self.n_layers):
+            raise RuntimeError("compute budget cannot admit teacher trajectory capture")
+        budget.charge(
+            tokens=len(context_tokens),
+            layers=self.n_layers,
+            operation=operation,
+            attention_pairs=(
+                triangular_attention_pairs(len(context_tokens)) * self.n_layers
+            ),
+        )
+
+        def forward():
+            inner = self.model.model
+            h = inner.embed_tokens(mx.array([context_tokens]))
+            for layer in inner.layers:
+                h = layer(h, None, None)
+            mx.eval(h)
+            return h
+
+        features = fast_weights.capture_output_features(
+            forward,
+            token_start=len(prefix),
+        )
+        if layer_apps <= 0:
+            raise RuntimeError("teacher trajectory accounting is invalid")
+        return features, context_tokens
 
     def _fw_probe(self, budget: ComputeBudget, *, cleanup: bool = False):
         """Deterministic full-stack probe for erase proofs (cache-free).

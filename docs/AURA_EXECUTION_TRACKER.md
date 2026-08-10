@@ -42099,3 +42099,35 @@ incumbent activation trajectories, then repeats teacher-removal and matched-
 sham testing at the measured site. No neural, resident, frontier, fusion,
 activation, or `WOW Signal` claim is authorized. The completion envelope is
 `830/920` (approximately `90.2%`).
+
+## Checkpoint 2026-08-10-134: Verified Trajectories Reach Answer Generation
+
+The CP132 semantic write averaged target token embeddings and used a latent-
+workspace activation as its key. CP134 replaces both proxies. While the
+checkpoint remains frozen, each registered transformer layer now captures the
+verified teacher, failed incumbent, and deterministic-wrong sham under the
+same objective. It derives an orthogonal teacher-minus-incumbent basis per
+layer, never exposes answer text in the receipt, and commits every context,
+direction, and query activation by hash. The temporary keys are captured from
+the actual teacher-free autoregressive answer path rather than the workspace.
+Attachment remains byte-identical; cleanup still restores the original module
+objects and proves exact erase.
+
+Two source-bound 1.5B probes separate the effects. Layer-specific directions
+with workspace keys were rejected at zero-write. Re-keying the same tissue to
+the answer-decode path produced real leverage: treatment score rose from
+`0.25` to `0.331019`, and teacher loss fell `15.655836 -> 9.368619` across four
+accepted steps. The matched wrong-teacher arm rose further to `0.400463`, so
+the verifier correctly rejected the update. This proves that the temporary
+synapses now reach and steer answer semantics, but not that their direction
+selectively carries verified correctness.
+
+The evidence is hash-bound in
+`artifacts/closeout/latent_cortex/cp134_teacher_trajectory_transplant.json`.
+Focused engine, learning, teaching, semantic-plasticity, service-wiring, and
+campaign contracts pass `311/311`; canonical smoke, Ruff, compile, and diff
+hygiene pass. The next bounded gate is a temporary coda/output associative
+memory that maps actual decode hidden states to verified next-token evidence,
+followed by teacher removal and the same wrong-teacher control. No neural,
+resident, frontier, fusion, activation, or `WOW Signal` claim is authorized.
+The completion envelope is `831/920` (approximately `90.3%`).

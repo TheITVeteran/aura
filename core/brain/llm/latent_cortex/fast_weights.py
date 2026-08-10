@@ -131,6 +131,11 @@ class EpisodicDeltaLinear:
         self.identity_bypass = True
         self.capture_input = False
         self.last_input_summary = None
+        self.input_summary_history = []
+        self.last_input_features = None
+        self.capture_output = False
+        self.capture_output_start = 0
+        self.last_output_features = None
         out_features, in_features = _linear_dims(base)
         seed = int.from_bytes(hashlib.sha256(tag.encode()).digest()[:4], "big")
         key = mx.random.key(seed)
@@ -200,7 +205,27 @@ class EpisodicDeltaLinear:
             axes = tuple(range(max(0, int(x.ndim) - 1)))
             summary = mx.mean(x, axis=axes) if axes else x
             self.last_input_summary = mx.stop_gradient(summary.astype(mx.float32))
+            if len(self.input_summary_history) < int(self.U.shape[1]):
+                self.input_summary_history.append(self.last_input_summary)
         base = self.base(x)
+        if self.capture_output:
+            import mlx.core as mx
+
+            sequence = base.reshape((-1, int(base.shape[-1])))
+            start = min(max(0, int(self.capture_output_start)), int(sequence.shape[0]) - 1)
+            suffix = sequence[start:]
+            candidates = [mx.mean(suffix, axis=0), suffix[-1]]
+            if int(self.U.shape[1]) > 2:
+                count = int(suffix.shape[0])
+                for index in range(int(self.U.shape[1]) - 2):
+                    position = min(
+                        count - 1,
+                        ((index + 1) * count) // (int(self.U.shape[1]) - 1),
+                    )
+                    candidates.append(suffix[position])
+            self.last_output_features = mx.stop_gradient(
+                mx.stack(candidates[: int(self.U.shape[1])], axis=0).astype(mx.float32)
+            )
         if self.identity_bypass:
             return base
         delta = (x @ self.V.T) @ self.U.T
@@ -517,18 +542,119 @@ class EpisodicFastWeights:
         if any(bool(mx.any(handle.wrapper.V != 0)) for handle in self.handles):
             raise RuntimeError("fast-weight activation capture requires zero V")
         for handle in self.handles:
-            handle.wrapper.last_input_summary = None
-            handle.wrapper.capture_input = True
+            wrapper = handle.wrapper
+            wrapper.last_input_summary = None
+            wrapper.input_summary_history = []
+            wrapper.last_input_features = None
+            wrapper.capture_input = True
         try:
             output = forward_fn()
             summaries = [handle.wrapper.last_input_summary for handle in self.handles]
             if any(summary is None for summary in summaries):
                 raise RuntimeError("fast-weight activation capture missed a projection")
-            mx.eval(output, *summaries)
+            for handle in self.handles:
+                wrapper = handle.wrapper
+                history = list(wrapper.input_summary_history)
+                while len(history) < int(wrapper.U.shape[1]):
+                    history.append(history[-1])
+                wrapper.last_input_features = mx.stop_gradient(
+                    mx.stack(history[: int(wrapper.U.shape[1])], axis=0).astype(
+                        mx.float32
+                    )
+                )
+            features = [handle.wrapper.last_input_features for handle in self.handles]
+            mx.eval(output, *summaries, *features)
             return output
         finally:
             for handle in self.handles:
                 handle.wrapper.capture_input = False
+
+    def input_feature_commitments(self) -> dict[int, str]:
+        """Commit captured query keys without exposing private activations."""
+
+        from core.brain.llm.latent_cortex.verified_best import tensor_sha256
+
+        commitments = {}
+        for handle in self.handles:
+            features = handle.wrapper.last_input_features
+            if features is None:
+                raise RuntimeError("fast-weight query-key capture is absent")
+            commitments[int(handle.layer_index)] = tensor_sha256(features)
+        return commitments
+
+    def capture_output_features(
+        self,
+        forward_fn: Callable[[], Any],
+        *,
+        token_start: int,
+    ) -> dict[int, Any]:
+        """Capture rank-bounded projection features from an answer suffix.
+
+        The wrappers remain exact identity (`V=0`) while the frozen checkpoint
+        processes a teacher-forced sequence. Returned tensors are private,
+        detached layer-local representations; no teacher text enters decode.
+        """
+
+        import mlx.core as mx
+
+        if type(token_start) is not int or token_start < 0:
+            raise ValueError("fast-weight output capture token start is invalid")
+        if not self.handles:
+            raise RuntimeError("fast-weight output capture requires wrappers")
+        if any(bool(mx.any(handle.wrapper.V != 0)) for handle in self.handles):
+            raise RuntimeError("fast-weight output capture requires zero V")
+        for handle in self.handles:
+            wrapper = handle.wrapper
+            wrapper.last_output_features = None
+            wrapper.capture_output_start = token_start
+            wrapper.capture_output = True
+        try:
+            output = forward_fn()
+            features = {
+                int(handle.layer_index): handle.wrapper.last_output_features
+                for handle in self.handles
+            }
+            if any(value is None for value in features.values()):
+                raise RuntimeError("fast-weight output capture missed a projection")
+            mx.eval(output, *features.values())
+            return features
+        finally:
+            for handle in self.handles:
+                handle.wrapper.capture_output = False
+
+    def reseed_output_subspace_by_layer(
+        self,
+        seed_vectors_by_layer: Mapping[int, Any],
+        *,
+        seed_source: str,
+    ) -> int:
+        """Install a distinct checkpoint-native correction basis per layer."""
+
+        if not self.handles:
+            raise RuntimeError("fast-weight layerwise reseed requires wrappers")
+        expected = {int(handle.layer_index) for handle in self.handles}
+        observed = {int(index) for index in seed_vectors_by_layer}
+        if observed != expected:
+            raise ValueError("fast-weight layerwise seed inventory differs")
+        counts = [
+            handle.wrapper.reseed_output_subspace(
+                seed_vectors_by_layer[int(handle.layer_index)],
+                seed_source=seed_source,
+            )
+            for handle in self.handles
+        ]
+        if len(set(counts)) != 1:
+            raise RuntimeError("fast-weight layerwise seed rank differs")
+        self.lifecycle.retrieval_seeded_columns = max(
+            (handle.wrapper.retrieval_seeded_columns for handle in self.handles),
+            default=0,
+        )
+        self.lifecycle.semantic_seeded_columns = max(
+            (handle.wrapper.semantic_seeded_columns for handle in self.handles),
+            default=0,
+        )
+        self._notify_function_change("fast_weights_layerwise_output_subspace_reseeded")
+        return counts[0]
 
     def install_minimum_norm_keys(
         self,
@@ -565,9 +691,16 @@ class EpisodicFastWeights:
         for handle in self.handles:
             wrapper = handle.wrapper
             x = wrapper.last_input_summary
-            if x is None or getattr(x, "ndim", 0) != 1:
+            features = wrapper.last_input_features
+            if features is None and x is not None:
+                features = mx.stack([x for _ in range(int(wrapper.U.shape[1]))])
+            if (
+                x is None
+                or getattr(x, "ndim", 0) != 1
+                or getattr(features, "ndim", 0) != 2
+            ):
                 raise RuntimeError("minimum-norm key write lacks captured activation")
-            if int(x.shape[0]) != int(wrapper.V.shape[1]):
+            if int(features.shape[1]) != int(wrapper.V.shape[1]):
                 raise RuntimeError("minimum-norm key activation width differs")
             seeded = max(
                 int(wrapper.semantic_seeded_columns),
@@ -575,18 +708,27 @@ class EpisodicFastWeights:
             )
             if seeded <= 0:
                 raise RuntimeError("minimum-norm key write lacks seeded output directions")
-            denominator = mx.sum(mx.square(x)) + float(regularization)
             per_direction_gain = float(gain) / math.sqrt(seeded)
-            key = (per_direction_gain * x / denominator).astype(wrapper.V.dtype)
-            active = mx.stack([key for _ in range(seeded)], axis=0)
+            active_rows = []
+            denominators = []
+            input_norms = []
+            for index in range(seeded):
+                feature = features[index]
+                denominator = mx.sum(mx.square(feature)) + float(regularization)
+                active_rows.append(
+                    (per_direction_gain * feature / denominator).astype(wrapper.V.dtype)
+                )
+                denominators.append(denominator)
+                input_norms.append(mx.linalg.norm(feature))
+            active = mx.stack(active_rows, axis=0)
             wrapper.V = mx.concatenate([active, mx.zeros_like(wrapper.V[seeded:])], axis=0)
-            mx.eval(wrapper.V, denominator)
+            mx.eval(wrapper.V, *denominators, *input_norms)
             rows.append(
                 {
                     "layer": int(handle.layer_index),
                     "seeded_columns": seeded,
-                    "input_norm": round(float(mx.linalg.norm(x)), 8),
-                    "denominator": round(float(denominator), 8),
+                    "input_norms": [round(float(value), 8) for value in input_norms],
+                    "denominators": [round(float(value), 8) for value in denominators],
                 }
             )
         self._notify_function_change("fast_weights_minimum_norm_keys_installed")

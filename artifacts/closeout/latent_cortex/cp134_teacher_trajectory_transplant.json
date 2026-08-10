@@ -1,0 +1,42 @@
+{
+  "schema": "aura.rlc_teacher_trajectory_probe.v1",
+  "checkpoint": "CP134",
+  "model": "/Users/bryan/.aura/live-source/models/Qwen2.5-1.5B-Instruct-4bit",
+  "task": {
+    "domain": "misleading_premise",
+    "difficulty": 2,
+    "seed": 2026081018
+  },
+  "site": "down_proj:late",
+  "probes": [
+    {
+      "mechanism": "layerwise_teacher_trajectory_with_workspace_keys",
+      "campaign": "/Users/bryan/.aura/campaigns/cp134-trajectory-transplant-2026081021",
+      "runtime_receipt_sha256": "9da509f4a80894711181cede0c566fe310fd5dcc7ab49fa473a5bc478cc18bdd",
+      "baseline_score": 0.25,
+      "selected_treatment_gain": 0.0,
+      "selected_treatment_score": 0.25,
+      "selected_sham_gain": 0.0,
+      "selected_sham_score": 0.25,
+      "disposition": "rejected_no_causal_effect"
+    },
+    {
+      "mechanism": "layerwise_teacher_trajectory_with_answer_decode_keys",
+      "campaign": "/Users/bryan/.aura/campaigns/cp134-decode-key-transplant-2026081021",
+      "runtime_receipt_sha256": "4f767d902d77603c16eaf41f1690b98caf25df7bd040616a366e35225c558006",
+      "baseline_score": 0.25,
+      "selected_treatment_gain": 4.0,
+      "selected_treatment_score": 0.331019,
+      "selected_sham_gain": 2.0,
+      "selected_sham_score": 0.400463,
+      "disposition": "rejected_non_improvement"
+    }
+  ],
+  "conclusion": {
+    "teacher_trajectory_reaches_decode": true,
+    "answer_decode_key_has_more_leverage_than_workspace_key": true,
+    "verified_direction_beats_matched_sham": false,
+    "neural_transfer_proven": false,
+    "next_gate": "temporary_coda_logit_associative_memory"
+  }
+}

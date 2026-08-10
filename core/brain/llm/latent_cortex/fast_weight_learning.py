@@ -32,7 +32,7 @@ from core.brain.llm.latent_cortex.test_time_training import (
 )
 
 ADMISSION_SCHEMA = "aura.rlc.fast_weight_admission.v1"
-LEARNING_SCHEMA = "aura.rlc.fast_weight_learning.v1"
+LEARNING_SCHEMA = "aura.rlc.fast_weight_learning.v2"
 LEASE_SCHEMA = "aura.rlc.fast_weight_model_lease.v1"
 MAX_TARGET_TOKENS = 256
 
@@ -54,6 +54,7 @@ _LEARNING_POLICY = {
     "protected_behavior": "capability_canary_nonregression",
     "cleanup": "exact_detach_erase_and_lease_release",
     "gain_search": "equal_compute_public_verifier_grid_teacher_removed",
+    "learning_transform": "layerwise_teacher_minus_incumbent_activation_trajectory",
 }
 
 _ADMISSION_FIELDS = {
@@ -480,6 +481,7 @@ def empty_learning_state(
         "controls": {
             "decision": "not_run",
             "capability_canaries": {},
+            "trajectory_transplant": {},
             "verifier_gain_search": {},
             "test_time_training": (
                 build_test_time_training_receipt(
@@ -604,12 +606,17 @@ def validate_fast_weight_learning_receipt(
         "loss_trail", "gradient_norm_trail", "accepted_step_sizes", "line_search_backtracks",
     }:
         raise ValueError("fast-weight optimization receipt is invalid")
-    if not isinstance(controls, Mapping) or set(controls) != {
+    legacy_control_fields = {
         "decision",
         "capability_canaries",
         "verifier_gain_search",
         "test_time_training",
-    }:
+    }
+    current_control_fields = legacy_control_fields | {"trajectory_transplant"}
+    if (
+        not isinstance(controls, Mapping)
+        or set(controls) not in {frozenset(legacy_control_fields), frozenset(current_control_fields)}
+    ):
         raise ValueError("fast-weight control receipt is invalid")
     if not isinstance(causal, Mapping) or set(causal) != {
         "evaluated", "pre_tokens_sha256", "post_tokens_sha256", "pre_text_sha256",
@@ -659,7 +666,57 @@ def validate_fast_weight_learning_receipt(
     ):
         raise ValueError("fast-weight optimizer or control receipt is invalid")
     test_time_training = controls["test_time_training"]
+    trajectory_transplant = controls.get("trajectory_transplant", {})
     gain_search = controls["verifier_gain_search"]
+    if not isinstance(trajectory_transplant, Mapping):
+        raise ValueError("fast-weight trajectory transplant receipt is invalid")
+    if trajectory_transplant:
+        expected_transform_fields = {
+            "schema",
+            "site_id",
+            "layers",
+            "rank",
+            "target_context_sha256",
+            "incumbent_context_sha256",
+            "sham_context_sha256",
+            "query_activation_sha256s",
+            "target_direction_sha256s",
+            "sham_direction_sha256s",
+        }
+        if (
+            set(trajectory_transplant) != expected_transform_fields
+            or trajectory_transplant["schema"]
+            != "aura.fast_weight_trajectory_transplant.v1"
+            or not isinstance(trajectory_transplant["site_id"], str)
+            or type(trajectory_transplant["rank"]) is not int
+            or trajectory_transplant["rank"] <= 0
+            or not isinstance(trajectory_transplant["layers"], list)
+            or not trajectory_transplant["layers"]
+            or any(type(layer) is not int or layer < 0 for layer in trajectory_transplant["layers"])
+            or any(
+                not _is_sha256(trajectory_transplant[field])
+                for field in (
+                    "target_context_sha256",
+                    "incumbent_context_sha256",
+                    "sham_context_sha256",
+                )
+            )
+        ):
+            raise ValueError("fast-weight trajectory transplant receipt is malformed")
+        for field in (
+            "query_activation_sha256s",
+            "target_direction_sha256s",
+            "sham_direction_sha256s",
+        ):
+            commitments = trajectory_transplant[field]
+            if (
+                not isinstance(commitments, Mapping)
+                or set(commitments) != {str(layer) for layer in trajectory_transplant["layers"]}
+                or any(not _is_sha256(digest) for digest in commitments.values())
+            ):
+                raise ValueError("fast-weight trajectory direction commitments are invalid")
+        if not teaching_event:
+            raise ValueError("fast-weight trajectory transplant lacks a teaching event")
     if not isinstance(gain_search, Mapping):
         raise ValueError("fast-weight verifier gain-search receipt is invalid")
     if gain_search:

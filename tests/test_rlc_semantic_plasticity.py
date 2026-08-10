@@ -12,6 +12,7 @@ from core.brain.llm.latent_cortex.fast_weights import (  # noqa: E402
 )
 from core.brain.llm.latent_cortex.semantic_plasticity import (  # noqa: E402
     build_contrastive_semantic_seeds,
+    build_layerwise_trajectory_directions,
 )
 from core.brain.llm.latent_cortex.types import FastWeightsConfig  # noqa: E402
 
@@ -172,6 +173,7 @@ def test_minimum_norm_key_emits_requested_seeded_direction_and_erases():
         assert float(coefficient[1]) == pytest.approx(expected, rel=1e-3)
         assert write["schema"] == "aura.fast_weight_minimum_norm_write.v1"
         assert write["layers"][0]["seeded_columns"] == 2
+        assert len(write["layers"][0]["input_norms"]) == 2
     finally:
         fast_weights.detach()
 
@@ -192,6 +194,101 @@ def test_minimum_norm_key_refuses_missing_activation():
     try:
         with pytest.raises(RuntimeError, match="captured activation"):
             fast_weights.install_minimum_norm_keys(gain=0.25, regularization=1e-4)
+    finally:
+        fast_weights.detach()
+
+
+def test_layerwise_teacher_trajectory_is_distinct_and_query_scoped():
+    model = _model()
+    fast_weights = EpisodicFastWeights(
+        FastWeightsConfig(
+            enabled=True,
+            rank=2,
+            target="down_proj",
+            max_wrapped_layers=2,
+            layer_placement="late",
+        )
+    )
+    fast_weights.attach(
+        model.model,
+        (1, 4),
+        seed_stat=0.5,
+        episode_id="trajectory-transplant-test",
+        seed_vectors=mx.ones((2, 32)),
+        seed_source="verified_semantic_contrast",
+    )
+    try:
+        incumbent = mx.array([[1, 2, 3, 4]])
+        teacher = mx.array([[1, 2, 9, 10]])
+        incumbent_features = fast_weights.capture_output_features(
+            lambda: model(incumbent),
+            token_start=2,
+        )
+        teacher_features = fast_weights.capture_output_features(
+            lambda: model(teacher),
+            token_start=2,
+        )
+        directions = build_layerwise_trajectory_directions(
+            teacher_features,
+            incumbent_features,
+            rank=2,
+        )
+        assert set(directions) == {2, 3}
+        assert all(value.shape == (2, 32) for value in directions.values())
+        assert not bool(mx.array_equal(directions[2], directions[3]))
+
+        before = model(incumbent)
+        mx.eval(before)
+        fast_weights.reseed_output_subspace_by_layer(
+            directions,
+            seed_source="verified_semantic_contrast",
+        )
+        after = model(incumbent)
+        mx.eval(after)
+        assert bool(mx.array_equal(after, before))
+    finally:
+        fast_weights.detach()
+
+
+def test_layerwise_trajectory_rejects_missing_layer():
+    with pytest.raises(ValueError, match="inventories differ"):
+        build_layerwise_trajectory_directions(
+            {1: mx.ones((2, 8))},
+            {2: mx.ones((2, 8))},
+            rank=2,
+        )
+
+
+def test_decode_activation_capture_assigns_distinct_rank_keys():
+    model = _model()
+    fast_weights = EpisodicFastWeights(
+        FastWeightsConfig(enabled=True, rank=2, max_wrapped_layers=1)
+    )
+    fast_weights.attach(
+        model.model,
+        (1, 2),
+        seed_stat=0.5,
+        episode_id="decode-key-test",
+        seed_vectors=mx.ones((2, 32)),
+        seed_source="verified_semantic_contrast",
+    )
+    try:
+        fast_weights.capture_input_summaries(
+            lambda: (model(mx.array([[1, 2, 3]])), model(mx.array([[1, 2, 4]])))
+        )
+        commitments = fast_weights.input_feature_commitments()
+        wrapper = fast_weights.handles[0].wrapper
+        assert set(commitments) == {1}
+        assert len(commitments[1]) == 64
+        assert wrapper.last_input_features.shape == (2, 32)
+        assert not bool(
+            mx.array_equal(
+                wrapper.last_input_features[0],
+                wrapper.last_input_features[1],
+            )
+        )
+        fast_weights.install_minimum_norm_keys(gain=0.5, regularization=1e-4)
+        assert not bool(mx.array_equal(wrapper.V[0], wrapper.V[1]))
     finally:
         fast_weights.detach()
 
