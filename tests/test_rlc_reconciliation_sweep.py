@@ -1550,6 +1550,36 @@ def test_one_solved_control_task_makes_the_battery_informative(tmp_path: Path):
     assert verdict["decision"] == "proceed_to_checkpoint_phase"
 
 
+def test_strict_lift_from_zero_baseline_is_informative_not_mutual_failure(tmp_path: Path):
+    from core.brain.llm.latent_cortex import frontier_tasks as ft
+
+    tasks = ft.generate_task_battery([202608071], difficulty=2)
+    journal = sweep.Journal(tmp_path / "journal.jsonl")
+    for task in tasks:
+        correct = "FINAL_ANSWER: " + json.dumps(task.reveal_for_verifier()["expected"])
+        for arm, text in (
+            ("vanilla", "I am not able to answer this."),
+            ("rlc_asrun", correct),
+        ):
+            journal.append(
+                {
+                    "event": "CELL",
+                    "arm": arm,
+                    "task_id": task.task_id,
+                    "domain": task.domain,
+                    "text": text,
+                    "error": "",
+                }
+            )
+
+    verdict = sweep.grade(tmp_path, tasks)
+    assert verdict["vanilla_correct"] == 0
+    assert verdict["best_recurrent_correct"] == len(tasks)
+    assert verdict["battery_informative"] is True
+    assert verdict["reaches_parity_with_ordinary_decode"] is True
+    assert verdict["decision"] == "proceed_to_checkpoint_phase"
+
+
 def test_a_cell_from_a_superseded_decode_configuration_is_re_run(tmp_path: Path):
     """The defect that cost two restarts: a resumed run reused cells produced
     under an older decode configuration, so the control and the treatment were

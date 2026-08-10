@@ -3212,14 +3212,18 @@ def grade(out_dir: Path, tasks) -> dict[str, Any]:
     resource_advantaged_control_proven = bool(
         resource_dominating_control_measured and complete and not resource_dominance_issues
     )
-    # A battery the ordinary decode cannot score on has not measured the
-    # recurrent path either: 0 >= 0 satisfies every inequality below, so mutual
-    # failure would otherwise be published as parity and promote a model that
-    # answered nothing. Parity is a claim about a baseline, and with no solved
-    # control task there is no baseline to be at parity with. The floor is
-    # structural (a baseline exists / does not), not a tuned threshold.
-    informative = vanilla > 0
-    contract_neutral_informative = vanilla_contract_neutral > 0
+    # A mutual 0 == 0 failure is not parity and must never advance. A strict
+    # 0 < N treatment result is different: it directly demonstrates solved
+    # tasks where ordinary decode solved none. Requiring vanilla itself to be
+    # positive mislabeled that strongest possible paired lift as uninformative.
+    # The battery is informative when either claimant has solved at least one
+    # task; floor, paired-sign, domain-coverage, and ablation gates still decide
+    # whether that observation can advance.
+    informative = max(vanilla, best_rlc) > 0
+    contract_neutral_informative = max(
+        vanilla_contract_neutral,
+        best_rlc_contract_neutral,
+    ) > 0
     # No recurrent arm ran, so nothing about the recurrent path was observed.
     # The sentinel -1 is smaller than any vanilla score, which would otherwise
     # publish "below ordinary decode" as a finding drawn from no data at all.

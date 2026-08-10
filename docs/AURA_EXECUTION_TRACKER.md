@@ -41725,3 +41725,34 @@ one task is underpowered. A clean-source replication and then at least six
 fresh tasks across three domains remain required. Resident 32B remains locked,
 and no frontier, fusion, activation, or `WOW Signal` claim is authorized. The
 completion envelope is `819/920` (approximately `89.0%`).
+
+## Checkpoint 2026-08-09-123: Strict Lift Is Informative
+
+The clean-source one-domain replication repeated the complete causal pattern:
+ordinary decode `0/1`, treatment `1/1`, adaptation-disabled `1/1`, and
+producer-disabled `0/1`. All four cells completed without errors, runtime
+evidence was complete, the vanilla floor held, and treatment promotion carried
+exact public-objective authority. This independently reproduced CP122's
+engineering observation under the profile-aware evidence contract.
+
+Two six-task vanilla-only calibrations then showed that this 1.5B checkpoint
+scores `0/6` at both difficulty 1 and difficulty 2 on the selected structured
+families. The prior informativeness rule rejected any zero vanilla score. That
+correctly blocks mutual `0 == 0` failure from masquerading as parity, but it
+also incorrectly rejects a strict `0 < N` paired lift. Informativeness now
+requires at least one solved task by either claimant. Mutual zero remains
+invalid; a positive treatment is measured, while floor, paired-sign,
+producer-ablation, domain-coverage, and runtime-integrity gates still decide
+whether it advances.
+
+The new regression proves a fully correct recurrent claimant against a zero
+ordinary baseline is informative, while the existing mutual-failure regression
+remains negative. Campaign, evidence, promotion, objective-program, engine,
+floor, and reconciliation contracts pass `195/195`; canonical smoke passes
+`103/103`; Ruff and diff hygiene pass.
+
+The next bounded step is six fresh tasks across three domains, which is the
+minimum no-regression sample capable of a one-sided exact paired result at
+`p=0.03125`. Resident 32B remains locked, and no frontier, fusion, activation,
+or `WOW Signal` claim is authorized. The completion envelope is `820/920`
+(approximately `89.1%`).
