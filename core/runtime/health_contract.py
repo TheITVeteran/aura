@@ -1224,6 +1224,35 @@ def _runtime_integrity_block() -> dict[str, Any]:
     except Exception as exc:  # noqa: BLE001 — integrity reporting is additive
         block["existence_guard_error"] = repr(exc)
 
+    # Whether the compiled launcher is the launcher its source describes.
+    #
+    # LIVE DEFECT, 2026-08-10. Bryan reported companion mode did not work: he
+    # closed the window and no bubble appeared. Every Python-side organ was
+    # correct, and the reason was that the installed launcher binary was built
+    # 2026-08-03 while scripts/AuraLauncher.swift had gained the entire
+    # companion surface on 2026-08-09. The resident binary contained zero
+    # occurrences of "/api/ambient/visibility"; the feature was not broken, it
+    # was absent from the executable.
+    #
+    # Aura.app is deliberately a thin launcher over live source, so Python,
+    # assets and config cannot go stale — which is exactly why this one
+    # artifact is dangerous. It is the only compiled thing, so it is the only
+    # thing a restart does NOT bring current, and its drift therefore looks
+    # like a feature that silently does nothing.
+    #
+    # core.runtime.app_bundle_sync detects and repairs this correctly and was
+    # reachable only from launch_aura.sh, which the normal double-click path
+    # never executes — spawnAuraProcess runs aura_main.py directly and only
+    # falls back to the shell script for protected folders. So the detector
+    # existed, was tested, and could not fire for the user who needed it.
+    # Reporting it here is what makes the condition observable at all.
+    try:
+        from core.runtime.app_bundle_sync import launcher_currency
+
+        block["launcher_currency"] = launcher_currency()
+    except Exception as exc:  # noqa: BLE001 — integrity reporting is additive
+        block["launcher_currency_error"] = repr(exc)
+
     # What Aura has been ALLOWED to learn permanently, and on whose evidence.
     # Without this the durable-learning gate could be doing anything and the
     # health surface would look identical — the gate's own report existed and

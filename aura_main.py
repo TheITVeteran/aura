@@ -895,6 +895,26 @@ async def bootstrap_aura(orchestrator: Any):
     
     logger.info("🛡️  Task Supervisor active (Memory monitoring enabled).")
 
+    # Keep the compiled launcher in step with its source.
+    #
+    # Aura.app is a thin launcher over live source, so this is the ONLY
+    # artifact a restart does not bring current — and its drift presents as a
+    # feature that silently does nothing rather than as an error. Companion
+    # mode was missing from the installed binary for six days for exactly this
+    # reason. The repair already existed in launch_aura.sh, which the normal
+    # double-click path never runs; hooking it here instead means it cannot be
+    # bypassed, because every launch path ends in this process.
+    try:
+        from core.runtime.app_bundle_sync import keep_launcher_current
+
+        tracker.create_task(
+            keep_launcher_current(), name="app_bundle_sync.keep_launcher_current"
+        )
+    except _AURA_MAIN_BOUNDARY_ERRORS as exc:
+        record_degradation(
+            'aura_main', exc, action="installed launcher not checked against its source"
+        )
+
     # Hot-Swap Bridge
     runtime_loop = asyncio.get_running_loop()
 

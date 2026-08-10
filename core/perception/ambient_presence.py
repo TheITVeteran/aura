@@ -109,6 +109,18 @@ class SkipReason(StrEnum):
     CAPTURE_FAILED = "capture_failed"
 
 
+#: Skips that mean the organ is broken rather than behaving. PRIVATE_WINDOW,
+#: UNCHANGED, HIDDEN and SUPPRESSED are all the design working — they must
+#: never raise an alarm, or the alarm becomes noise and stops being read.
+_BROKEN_SKIP_REASONS = frozenset(
+    {SkipReason.CAPTURE_FAILED, SkipReason.NO_PERMISSION}
+)
+
+#: How many consecutive broken ticks mean "blind" rather than "unlucky".
+#: At the 6s default cadence this is about two minutes of seeing nothing.
+_BROKEN_SKIP_ESCALATION = 20
+
+
 @dataclass(frozen=True)
 class ScreenContext:
     """The cheap query: what is in front, without reading anything."""
@@ -195,6 +207,12 @@ class AmbientPresence:
         self._ticks = 0
         self._observations = 0
         self._skips: dict[str, int] = {}
+        # Why each reason last fired. A bare count cannot distinguish "no
+        # frontmost window" from "the OCR returned nothing", and those want
+        # completely different fixes.
+        self._skip_details: dict[str, str] = {}
+        self._last_skip: tuple[str, str, float] | None = None
+        self._consecutive_broken_skips = 0
         self._private_skips = 0
         self._running = False
         self._last_spoke_at = 0.0
@@ -604,7 +622,15 @@ class AmbientPresence:
             capture_duration_ms = 0.0
 
         if not text.strip():
-            return self._skip(SkipReason.CAPTURE_FAILED, context=context)
+            # This branch reported nothing at all, so a capture that succeeded
+            # and returned an empty screen was indistinguishable from one that
+            # never ran. Naming the adapter is what separates "OCR is broken"
+            # from "the window really is blank".
+            return self._skip(
+                SkipReason.CAPTURE_FAILED,
+                context=context,
+                detail=f"empty capture from adapter {capture_adapter or 'unknown'!r}",
+            )
 
         provenance = {
             "context": {
@@ -636,6 +662,10 @@ class AmbientPresence:
             self._last_observed_at = time.time()
             self._observations += 1
             self._last_observation_provenance = provenance
+            # An actual observation is the only thing that proves she is not
+            # blind. Clearing the run here, and not only on a benign skip,
+            # keeps "blind" meaning "has not seen anything recently".
+            self._consecutive_broken_skips = 0
         return TickResult(
             observed=True,
             context=context,
@@ -704,8 +734,51 @@ class AmbientPresence:
         context: ScreenContext | None = None,
         detail: str = "",
     ) -> TickResult:
+        """Count the skip, keep WHY, and escalate once it is total.
+
+        LIVE DEFECT, 2026-08-10. The live organ reported ticks=794,
+        observations=0, skips={"capture_failed": 791}. Four different branches
+        raise CAPTURE_FAILED — no frontmost window, the read raising, the
+        receipt reporting failure, and an empty capture — and all four landed
+        in that single integer. Two of them recorded no degradation at all, so
+        791 consecutive total failures produced no log line, no health entry
+        and no way to tell which branch was firing. The organ had never
+        observed anything once, and nothing anywhere said so.
+
+        So: retain the last detail per reason, and escalate a run of failures
+        exactly once. Once, because this fires every few seconds and a
+        degradation per tick is its own outage; and only for the reasons that
+        mean something is broken — PRIVATE_WINDOW and UNCHANGED are the organ
+        working correctly and must never escalate.
+        """
+        escalate = False
         with self._lock:
             self._skips[reason.value] = self._skips.get(reason.value, 0) + 1
+            if detail:
+                self._skip_details[reason.value] = detail[:300]
+            self._last_skip = (reason.value, detail[:300], time.time())
+            if reason in _BROKEN_SKIP_REASONS:
+                self._consecutive_broken_skips += 1
+                # Total, not merely frequent: nothing has ever been observed,
+                # or nothing has been observed for a long run of ticks.
+                if self._consecutive_broken_skips == _BROKEN_SKIP_ESCALATION:
+                    escalate = True
+            else:
+                self._consecutive_broken_skips = 0
+
+        if escalate:
+            record_degradation(
+                "ambient_presence",
+                RuntimeError(
+                    f"{_BROKEN_SKIP_ESCALATION} consecutive ambient ticks failed "
+                    f"({reason.value}): {detail or 'no detail reported'}"
+                ),
+                severity="warning",
+                action=(
+                    "companion mode is blind: she observes nothing and can say "
+                    "nothing unprompted until this clears"
+                ),
+            )
         return TickResult(
             observed=False, skip_reason=reason, context=context, detail=detail
         )
@@ -822,6 +895,23 @@ class AmbientPresence:
                 "ticks": self._ticks,
                 "observations": self._observations,
                 "skips": dict(self._skips),
+                # The counters say how often; these say why. Without them a
+                # reader of this endpoint can see that observation is dead and
+                # cannot see what killed it.
+                "skip_details": dict(self._skip_details),
+                "last_skip": (
+                    {
+                        "reason": self._last_skip[0],
+                        "detail": self._last_skip[1],
+                        "age_s": round(time.time() - self._last_skip[2], 1),
+                    }
+                    if self._last_skip
+                    else None
+                ),
+                "consecutive_broken_skips": self._consecutive_broken_skips,
+                "blind": (
+                    self._consecutive_broken_skips >= _BROKEN_SKIP_ESCALATION
+                ),
                 # Surfaced, because a person should be able to see that the
                 # privacy rule is doing something rather than trusting that
                 # it is.

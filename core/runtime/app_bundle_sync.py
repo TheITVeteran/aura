@@ -126,6 +126,52 @@ def launcher_drift(root: Path, bundle: Path) -> dict[str, Any]:
     }
 
 
+def launcher_currency() -> dict[str, Any]:
+    """Whether the compiled launcher matches its source. Read-only, never raises.
+
+    ``launcher_drift`` needs a root and a bundle and is the thing that decides
+    whether to compile. This is the observable half: something any health
+    surface can call without knowing where the repo is and without the risk of
+    starting a build.
+
+    It exists because the detector could not fire on the path users take.
+    ``sync_app_bundle`` is invoked from ``launch_aura.sh``; the normal launch
+    is ``Aura.app`` -> ``spawnAuraProcess`` -> ``aura_main.py``, which never
+    sources that script. So the installed launcher went six days stale with
+    the whole companion-mode surface missing from the binary, and no surface
+    anywhere said a word. A condition nothing reports is a condition nobody
+    can act on.
+    """
+    report: dict[str, Any] = {"schema": "aura.launcher_currency.v1"}
+    try:
+        root = Path(__file__).resolve().parents[2]
+        drift = launcher_drift(root, resident_bundle_path())
+        report.update(
+            {
+                "bundle": drift["bundle"],
+                "bundle_present": drift["bundle_present"],
+                "stale": drift["stale"],
+                "built_from_sha256": drift["built_from_sha256"][:12],
+                "launcher_source_sha256": drift["launcher_source_sha256"][:12],
+                # The consequence, stated in the terms a reader cares about:
+                # a stale launcher is not a cosmetic lag, it is UI and
+                # behaviour that the running executable does not contain.
+                "consequence": (
+                    "installed launcher predates its source; features added to "
+                    "scripts/AuraLauncher.swift are absent from the running app "
+                    "until it is rebuilt"
+                )
+                if drift["stale"]
+                else "",
+            }
+        )
+    except _RECOVERABLE_ERRORS as exc:
+        report["error"] = f"{type(exc).__name__}: {exc}"
+        # Unable to tell is not the same as current, and must not read as it.
+        report["stale"] = None
+    return report
+
+
 def sync_app_bundle(
     root: str | Path,
     *,
@@ -221,6 +267,66 @@ def sync_app_bundle(
         return receipt
     finally:
         receipt["duration_s"] = round(time.monotonic() - started, 3)
+
+
+async def keep_launcher_current(root: str | Path | None = None) -> dict[str, Any]:
+    """Install a staged launcher, then stage a rebuild if the source moved.
+
+    The runtime-side entry point, and the reason it exists: ``sync_app_bundle``
+    was called only from ``launch_aura.sh``, and the ordinary launch path does
+    not run it. ``Aura.app`` spawns ``aura_main.py`` directly and reaches the
+    shell script only through ``requiresProtectedFolderFallback()``. So the
+    one artifact that genuinely goes stale had a repair that the common path
+    could not reach, and the installed launcher sat six days behind its source
+    with a whole feature missing from the binary.
+
+    Calling it from the runtime fixes that by construction: every launch path
+    ends at this process, whatever started it.
+
+    Both halves run in a worker thread. ``sync_app_bundle`` shells out to a
+    Swift compile with a five-minute ceiling, and a boot must never wait on a
+    compiler.
+    """
+    import asyncio
+
+    receipt: dict[str, Any] = {"schema": "aura.launcher_currency_task.v1"}
+    if os.environ.get("AURA_TESTING"):
+        # A test run must not compile or replace anything on the host.
+        receipt["action"] = "skipped"
+        receipt["reason"] = "AURA_TESTING"
+        return receipt
+
+    root_path = Path(root).expanduser().resolve() if root else Path(__file__).resolve().parents[2]
+    try:
+        # Cheap and read-only. Doing this first means the overwhelmingly
+        # common case — the launcher is current — costs one hash and no
+        # thread, rather than a compile that exits immediately.
+        drift = await asyncio.to_thread(
+            launcher_drift, root_path, resident_bundle_path()
+        )
+        if not drift["bundle_present"]:
+            receipt["action"] = "skipped"
+            receipt["reason"] = "no installed bundle"
+            return receipt
+        receipt["installed_staged"] = await asyncio.to_thread(
+            install_staged_bundle, root_path
+        )
+        if not drift["stale"]:
+            receipt["action"] = "current"
+            return receipt
+        receipt["sync"] = await asyncio.to_thread(sync_app_bundle, root_path)
+        receipt["action"] = str(receipt["sync"].get("action") or "unknown")
+        return receipt
+    except _RECOVERABLE_ERRORS as exc:
+        receipt["action"] = "failed"
+        receipt["reason"] = f"{type(exc).__name__}: {exc}"
+        record_degradation(
+            "app_bundle_sync",
+            exc,
+            action="installed launcher may be older than its source",
+            enforce_failure_policy=False,
+        )
+        return receipt
 
 
 def install_staged_bundle(
