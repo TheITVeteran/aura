@@ -59,6 +59,10 @@
         ready: false,
         serverReady: false,
         audioStartPromise: null,
+        captureGeneration: 0,
+        captureRecoveryPromise: null,
+        captureMuteTimer: null,
+        captureStopIntentional: false,
         terminalFailure: false,
         serverState: 'idle',
         speechUtteranceId: 0,
@@ -344,48 +348,103 @@
 
     // ── audio capture ────────────────────────────────────────────────────
 
-    async function startCapture() {
-        if (state.micStream && state.captureCtx && state.micNode) return true;
-        const stream = await navigator.mediaDevices.getUserMedia({
-            audio: {
-                // Not optional. See the note at the top of this file.
-                echoCancellation: true,
-                noiseSuppression: true,
-                autoGainControl: true,
-                channelCount: 1,
-                sampleRate: CAPTURE_RATE,
-            },
+    function sendDeviceState(deviceState, reason, generation = state.captureGeneration) {
+        sendCommand('device_state', {
+            state: deviceState,
+            reason: String(reason || '').slice(0, 160),
+            generation,
         });
-        state.micStream = stream;
-
-        const ctx = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: CAPTURE_RATE });
-        state.captureCtx = ctx;
-        await ctx.audioWorklet.addModule('/static/voice-capture-processor.js');
-
-        const source = ctx.createMediaStreamSource(stream);
-        const node = new AudioWorkletNode(ctx, 'voice-capture-processor', {
-            processorOptions: { targetSampleRate: CAPTURE_RATE },
-        });
-        state.micNode = node;
-
-        node.port.onmessage = (e) => {
-            const d = e.data;
-            if (d.type === 'pcm') {
-                if (state.ready && state.ws && state.ws.readyState === WebSocket.OPEN && !state.muted) {
-                    state.ws.send(d.pcm);
-                }
-            } else if (d.type === 'level') {
-                state.micLevel = d.level;
-            }
-        };
-
-        source.connect(node);
-        // Do NOT connect the capture node to the destination: routing the
-        // microphone to the speakers is a feedback loop.
-        return true;
     }
 
-    async function stopCapture() {
+    async function startCapture({ reason = 'capture_started' } = {}) {
+        const currentTrack = state.micStream && state.micStream.getAudioTracks()[0];
+        if (
+            currentTrack
+            && currentTrack.readyState === 'live'
+            && state.captureCtx
+            && state.micNode
+        ) return true;
+
+        let stream = null;
+        let ctx = null;
+        let node = null;
+        try {
+            stream = await navigator.mediaDevices.getUserMedia({
+                audio: {
+                    // Not optional. See the note at the top of this file.
+                    echoCancellation: true,
+                    noiseSuppression: true,
+                    autoGainControl: true,
+                    channelCount: 1,
+                    sampleRate: CAPTURE_RATE,
+                },
+            });
+            const track = stream.getAudioTracks()[0];
+            if (!track) throw new Error('microphone stream has no audio track');
+
+            ctx = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: CAPTURE_RATE });
+            await ctx.audioWorklet.addModule('/static/voice-capture-processor.js');
+            const source = ctx.createMediaStreamSource(stream);
+            node = new AudioWorkletNode(ctx, 'voice-capture-processor', {
+                processorOptions: { targetSampleRate: CAPTURE_RATE },
+            });
+            source.connect(node);
+
+            state.captureGeneration += 1;
+            const generation = state.captureGeneration;
+            state.micStream = stream;
+            state.captureCtx = ctx;
+            state.micNode = node;
+
+            track.addEventListener('ended', () => {
+                if (!state.captureStopIntentional && generation === state.captureGeneration) {
+                    void recoverCapture('track_ended');
+                }
+            });
+            track.addEventListener('mute', () => {
+                clearTimeout(state.captureMuteTimer);
+                state.captureMuteTimer = setTimeout(() => {
+                    if (
+                        track.muted
+                        && !state.captureStopIntentional
+                        && generation === state.captureGeneration
+                    ) void recoverCapture('track_muted');
+                }, 1200);
+            });
+            track.addEventListener('unmute', () => {
+                clearTimeout(state.captureMuteTimer);
+                if (generation === state.captureGeneration) {
+                    sendDeviceState('active', 'track_unmuted', generation);
+                }
+            });
+
+            node.port.onmessage = (e) => {
+                const d = e.data;
+                if (d.type === 'pcm') {
+                    if (state.ready && state.ws && state.ws.readyState === WebSocket.OPEN && !state.muted) {
+                        state.ws.send(d.pcm);
+                    }
+                } else if (d.type === 'level') {
+                    state.micLevel = d.level;
+                }
+            };
+
+            // Do NOT connect capture to destination: that creates feedback.
+            sendDeviceState('active', reason, generation);
+            return true;
+        } catch (err) {
+            if (node) { try { node.disconnect(); } catch (_e) { /* partial setup */ } }
+            if (stream) stream.getTracks().forEach((track) => track.stop());
+            if (ctx && ctx.state !== 'closed') {
+                try { await ctx.close(); } catch (_e) { /* partial setup */ }
+            }
+            throw err;
+        }
+    }
+
+    async function stopCapture({ notify = true, reason = 'capture_stopped' } = {}) {
+        state.captureStopIntentional = true;
+        clearTimeout(state.captureMuteTimer);
         if (state.micNode) {
             try { state.micNode.disconnect(); } catch (_e) { /* already gone */ }
             state.micNode = null;
@@ -400,6 +459,71 @@
             try { await ctx.close(); } catch (_e) { /* already closed */ }
         }
         state.micLevel = 0;
+        state.captureStopIntentional = false;
+        if (notify) sendDeviceState('stopped', reason);
+    }
+
+    async function recoverCapture(reason) {
+        if (state.captureRecoveryPromise) return state.captureRecoveryPromise;
+        state.captureRecoveryPromise = (async () => {
+            state.ready = false;
+            setStatus('recovering');
+            sendDeviceState('recovering', reason);
+            await stopCapture({ notify: false, reason });
+            const delays = [0, 250, 750, 1500, 3000];
+            let lastError = null;
+            for (const delay of delays) {
+                if (
+                    !state.active
+                    || state.muted
+                    || !state.serverReady
+                    || !state.ws
+                    || state.ws.readyState !== WebSocket.OPEN
+                ) return false;
+                if (delay) await new Promise((resolve) => setTimeout(resolve, delay));
+                try {
+                    await startCapture({ reason: `recovered:${reason}` });
+                    state.ready = true;
+                    setStatus(state.serverState === 'idle' ? 'listening' : state.serverState);
+                    showMeta('microphone recovered');
+                    return true;
+                } catch (err) {
+                    lastError = err;
+                }
+            }
+            sendDeviceState(
+                'unavailable',
+                `${reason}:${lastError && lastError.name ? lastError.name : 'reopen_failed'}`,
+            );
+            setStatus('error');
+            showMeta('Microphone unavailable. Reconnecting a device will retry.');
+            return false;
+        })();
+        try {
+            return await state.captureRecoveryPromise;
+        } finally {
+            state.captureRecoveryPromise = null;
+        }
+    }
+
+    async function handleMediaDeviceChange() {
+        if (!state.active || state.muted || !state.serverReady) return;
+        const track = state.micStream && state.micStream.getAudioTracks()[0];
+        if (!track || track.readyState !== 'live') {
+            await recoverCapture('device_change_no_live_track');
+            return;
+        }
+        try {
+            const currentId = String((track.getSettings && track.getSettings().deviceId) || '');
+            const devices = await navigator.mediaDevices.enumerateDevices();
+            const currentPresent = !currentId || devices.some(
+                (device) => device.kind === 'audioinput' && device.deviceId === currentId
+            );
+            if (!currentPresent) await recoverCapture('active_input_removed');
+        } catch (err) {
+            console.warn('[voice] device-change inspection failed', err);
+            if (track.readyState !== 'live') await recoverCapture('device_change_inspection_failed');
+        }
     }
 
     async function startPlayback() {
@@ -707,6 +831,14 @@
                 // Metrics are emitted once the utterance has actually been
                 // heard, which is the honest moment to close the chat bubble.
                 ambient.replyDone();
+                break;
+
+            case 'voice.device':
+                if (msg.state === 'recovering') showMeta('microphone reconnecting');
+                if (msg.state === 'unavailable') showMeta('microphone unavailable');
+                if (msg.state === 'active' && String(msg.reason || '').startsWith('recovered:')) {
+                    showMeta('microphone recovered');
+                }
                 break;
 
             case 'voice.error':
@@ -1186,6 +1318,11 @@
     document.addEventListener('pointerdown', () => {
         if (state.active) void ensureAudioRunning();
     }, { passive: true });
+    if (navigator.mediaDevices && navigator.mediaDevices.addEventListener) {
+        navigator.mediaDevices.addEventListener('devicechange', () => {
+            void handleMediaDeviceChange();
+        });
+    }
 
     window.AuraVoiceMode = {
         enter: enterVoiceMode,

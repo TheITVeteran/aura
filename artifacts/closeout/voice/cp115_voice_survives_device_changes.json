@@ -1,0 +1,53 @@
+{
+  "schema": "aura.closeout.voice_checkpoint.v1",
+  "checkpoint": "CP115",
+  "recorded_at": "2026-08-09",
+  "parent_commit": "97c94c9ed501a1fded913eb2289564f011898a5c",
+  "claim": "Voice capture detects transport discontinuities, preserves one authoritative conversation and model runtime while reacquiring the physical input, and reports capture state separately from socket or lease state.",
+  "implemented": [
+    "The duplex wire protocol carries monotonic device generations and active, recovering, muted, stopped, or unavailable capture states.",
+    "A capture discontinuity clears partial PCM, VAD, transcript, and speculative state so audio from two physical devices cannot become one utterance.",
+    "The browser detects track end, mute, unmute, and media-device changes, cleans partial getUserMedia initialization, and reacquires only the capture track inside the same authenticated voice socket.",
+    "The resident sounddevice owner detects inactive streams and callback stalls, retries bounded device opens without reloading ASR, TTS, conversation, or mind state, and exposes a generation-fenced device receipt.",
+    "A passive resident owner displaced by focused duplex voice registers a resource waiter and resumes only after the focused physical lease has actually released.",
+    "A timed-out PortAudio constructor retains its lease until the late handle is closed; authority transfer and recovery cannot overlap a still-opening CoreAudio device."
+  ],
+  "verification": {
+    "focused_recovery_matrix": {
+      "command": "pytest -q tests/test_voice_device_recovery.py tests/test_voice_duplex.py tests/test_voice_microphone_route.py tests/test_microphone_authority.py tests/test_ambient_client_contract.py tests/test_boot_runtime_safety.py tests/test_runtime_settings.py tests/test_voice_desktop_runtime_path.py",
+      "result": "266 passed"
+    },
+    "broad_voice_audio_privacy_suite": {
+      "command": "pytest -q $(rg --files tests | rg '/test_.*(voice|audio|speech|microphone|privacy|ambient|acoustic).*\\.py$' | sort)",
+      "result": "560 passed"
+    },
+    "canonical_smoke": {
+      "command": "PYTHON=/Users/bryan/.aura/live-source/.venv/bin/python make smoke",
+      "result": "103 passed"
+    },
+    "static_integrity": {
+      "result": "Ruff touched-file checks, Python byte compilation, Node syntax, and git diff hygiene passed"
+    }
+  },
+  "scientific_campaign": {
+    "campaign": "/Users/bryan/.aura/campaigns/cp103-wow-pilot-repaired-20260809",
+    "terminal_decision": "inconclusive_resource_dominance_unproven",
+    "scores": {
+      "vanilla": "1/7",
+      "vanilla_equal_compute_best_of_3": "2/7",
+      "complete_system_closed_book": "3/7",
+      "vanilla_resource_dominating": "4/7"
+    },
+    "claims_authorized": {
+      "reasoning_gain": false,
+      "frontier_level": false,
+      "fusion": false,
+      "activation": false,
+      "wow_signal": false
+    }
+  },
+  "remaining": [
+    "Prove default-device switching, physical removal and restoration, noisy and multilingual endpointing, barge-in, and one microphone-to-mind-to-speaker trace in the rebuilt Aura.app.",
+    "Repair invalid equal-tool receipts, operation-specific code objectives, semantic independence, latent acceptance, and resource-matched attempt budgets before rerunning the WOW campaign."
+  ]
+}

@@ -209,18 +209,23 @@ async def test_voice_engine_mic_stream_start_is_timeout_bounded(monkeypatch, tmp
     engine.stt_model = object()
     engine._pulse_hypha = lambda *args, **kwargs: None
     engine._signal_mycelium = lambda *args, **kwargs: None
+    recoveries: list[str] = []
+    engine._schedule_microphone_recovery = recoveries.append
 
     started = await engine.start_listening()
 
     assert started is False
     assert engine._mic_listening is False
     assert engine._is_feeding is False
+    assert engine._mic_lease is not None
     assert await asyncio.to_thread(stream_closed.wait, 0.5)
     for _ in range(20):
-        if engine._mic_start_task is None:
+        if engine._mic_start_task is None and engine._mic_lease is None:
             break
         await asyncio.sleep(0.01)
     assert engine._mic_start_task is None
+    assert engine._mic_lease is None
+    assert recoveries == ["startup_timeout"]
 
 
 def test_continuous_vision_blocks_forced_camera_on_darwin(monkeypatch):

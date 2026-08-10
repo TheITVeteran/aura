@@ -335,6 +335,14 @@ class SovereignVoiceEngine:
         self._mic_start_task: asyncio.Task[Any] | None = None
         self._mic_start_cancel_event: threading.Event | None = None
         self._mic_lease: MicrophoneLease | None = None
+        self._mic_monitor_task: asyncio.Task[Any] | None = None
+        self._mic_recovery_task: asyncio.Task[Any] | None = None
+        self._mic_last_frame_at = 0.0
+        self._mic_frames_seen = 0
+        self._mic_device_generation = 0
+        self._mic_device_state = "idle"
+        self._mic_device_reason = ""
+        self._mic_capture_requested = False
 
         # ── TTS State ─────────────────────────────────────
         self._tts_initialized = False
@@ -1342,6 +1350,7 @@ class SovereignVoiceEngine:
         if self._mic_start_task is not None and not self._mic_start_task.done():
             logger.info("Microphone start already in progress")
             return False
+        self._mic_capture_requested = True
 
         # Ensure STT model is ready
         if not self._stt_initialized:
@@ -1371,6 +1380,10 @@ class SovereignVoiceEngine:
                 lease.reason,
                 lease.detail,
             )
+            if lease.reason == "device_busy" and self._mic_capture_requested:
+                self._mic_device_state = "waiting"
+                self._mic_device_reason = "device_busy"
+                self._register_microphone_waiter(authority)
             return False
         self._mic_lease = lease
 
@@ -1432,9 +1445,26 @@ class SovereignVoiceEngine:
                     asyncio.shield(start_task),
                     timeout=start_timeout_s,
                 )
-            except (TimeoutError, asyncio.CancelledError):
+            except TimeoutError:
                 start_cancelled.set()
-                start_task.add_done_callback(self._finish_late_mic_start)
+                start_task.add_done_callback(
+                    lambda completed: self._finish_late_mic_start(
+                        completed,
+                        authority=authority,
+                        lease=lease,
+                        recovery_reason="startup_timeout",
+                    )
+                )
+                raise
+            except asyncio.CancelledError:
+                start_cancelled.set()
+                start_task.add_done_callback(
+                    lambda completed: self._finish_late_mic_start(
+                        completed,
+                        authority=authority,
+                        lease=lease,
+                    )
+                )
                 raise
             finally:
                 if start_task.done() and self._mic_start_task is start_task:
@@ -1458,6 +1488,12 @@ class SovereignVoiceEngine:
             )
             self._stt_thread.start()
             self._mic_listening = True
+            self._mic_last_frame_at = time.monotonic()
+            self._mic_frames_seen = 0
+            self._mic_device_generation += 1
+            self._mic_device_state = "active"
+            self._mic_device_reason = "capture_started"
+            self._start_microphone_monitor(lease, stream)
 
             self._pulse_hypha("voice_engine", "cognition", success=True)
             self._signal_mycelium(
@@ -1479,22 +1515,147 @@ class SovereignVoiceEngine:
             )
             self._is_feeding = False
             self._mic_listening = False
-            authority.release(lease, reason="startup_timeout")
-            if self._mic_lease is lease:
-                self._mic_lease = None
             self._pulse_hypha("voice_engine", "cognition", success=False)
             return False
         except (ImportError, AttributeError, RuntimeError, OSError, TypeError, ValueError) as e:
             record_degradation('voice_engine', e)
             logger.error("Failed to start mic capture: %s", e, exc_info=True)
-            self.stop_listening()
+            recoverable_device_failure = isinstance(e, OSError)
+            self.stop_listening(preserve_request=recoverable_device_failure)
+            if recoverable_device_failure:
+                self._schedule_microphone_recovery("stream_start_failed")
             self._pulse_hypha("voice_engine", "cognition", success=False)
             return False
 
     def _on_microphone_lease_revoked(self, reason: str) -> None:
         """Close native capture when a focused session or setting supersedes it."""
         logger.info("Resident microphone lease revoked: %s", reason)
-        self.stop_listening()
+        preempted = str(reason or "").startswith("preempted_by:")
+        self.stop_listening(preserve_request=preempted)
+        if preempted:
+            self._mic_device_state = "waiting"
+            self._mic_device_reason = str(reason)
+            self._register_microphone_waiter(get_microphone_authority())
+
+    def _on_microphone_available(self, _group: str) -> None:
+        self._unregister_microphone_waiter(get_microphone_authority())
+        self._schedule_microphone_recovery("resource_available")
+
+    def _register_microphone_waiter(self, authority: Any) -> bool:
+        register = getattr(authority, "register_availability_waiter", None)
+        if not callable(register):
+            logger.warning(
+                "Microphone authority cannot wake a displaced resident capture owner"
+            )
+            return False
+        register(
+            self._voice_owner_generation,
+            principal="owner:local",
+            source="sounddevice",
+            callback=self._on_microphone_available,
+        )
+        return True
+
+    def _unregister_microphone_waiter(self, authority: Any) -> None:
+        unregister = getattr(authority, "unregister_availability_waiter", None)
+        if callable(unregister):
+            unregister(self._voice_owner_generation)
+
+    def _start_microphone_monitor(
+        self,
+        lease: MicrophoneLease,
+        stream: Any,
+    ) -> None:
+        task = self._mic_monitor_task
+        if task is not None and not task.done():
+            task.cancel()
+        self._mic_monitor_task = get_task_tracker().create_task(
+            self._monitor_microphone_stream(lease, stream),
+            name="voice_engine.monitor_microphone",
+        )
+
+    async def _monitor_microphone_stream(
+        self,
+        lease: MicrophoneLease,
+        stream: Any,
+    ) -> None:
+        """Detect a dead PortAudio stream even when no callback can report it."""
+        try:
+            while self._mic_listening and self._mic_lease is lease:
+                await asyncio.sleep(0.5)
+                lease_ok, _reason = get_microphone_authority().validate(lease)
+                if not lease_ok:
+                    return
+                active = getattr(stream, "active", None)
+                if active is False:
+                    self._schedule_microphone_recovery("stream_inactive")
+                    return
+                if (
+                    self._mic_frames_seen > 0
+                    and time.monotonic() - self._mic_last_frame_at > 3.0
+                ):
+                    self._schedule_microphone_recovery("callback_stalled")
+                    return
+        except asyncio.CancelledError:
+            raise
+        except (AttributeError, OSError, RuntimeError, TypeError, ValueError) as exc:
+            record_degradation(
+                "voice_engine.device_monitor",
+                exc,
+                severity="warning",
+                action="scheduled microphone recovery after monitor failure",
+                enforce_failure_policy=False,
+            )
+            self._schedule_microphone_recovery("monitor_failed")
+
+    def _schedule_microphone_recovery(self, reason: str) -> None:
+        if (
+            not self._mic_capture_requested
+            or not self.microphone_enabled
+            or self._voice_closing()
+        ):
+            return
+
+        def _schedule() -> None:
+            task = self._mic_recovery_task
+            if task is not None and not task.done():
+                return
+            self._mic_recovery_task = get_task_tracker().create_task(
+                self._recover_microphone(str(reason or "device_fault")),
+                name="voice_engine.recover_microphone",
+            )
+
+        loop = getattr(self, "loop", None)
+        if loop is None or not loop.is_running():
+            return
+        if getattr(self, "_owner_loop_thread_id", None) == threading.get_ident():
+            _schedule()
+        else:
+            with contextlib.suppress(RuntimeError):
+                loop.call_soon_threadsafe(_schedule)
+
+    async def _recover_microphone(self, reason: str) -> bool:
+        """Reopen a lost native device without losing model or mind state."""
+        self._mic_device_generation += 1
+        self._mic_device_state = "recovering"
+        self._mic_device_reason = reason
+        self.stop_listening(preserve_request=True)
+        for delay in (0.0, 0.25, 0.75, 1.5, 3.0):
+            if (
+                not self._mic_capture_requested
+                or not self.microphone_enabled
+                or self._voice_closing()
+            ):
+                return False
+            if delay:
+                await asyncio.sleep(delay)
+            if await self.start_listening():
+                self._mic_device_state = "active"
+                self._mic_device_reason = f"recovered:{reason}"
+                return True
+        self._mic_device_state = "unavailable"
+        self._mic_device_reason = f"reopen_failed:{reason}"
+        return False
 
     @staticmethod
     def _close_mic_stream(stream: Any) -> None:
@@ -1513,17 +1674,53 @@ class SovereignVoiceEngine:
         except (RuntimeError, AttributeError, OSError, TypeError, ValueError):
             pass
 
-    def _finish_late_mic_start(self, task: asyncio.Task[Any]) -> None:
+    def _finish_late_mic_start(
+        self,
+        task: asyncio.Task[Any],
+        *,
+        authority: Any | None = None,
+        lease: MicrophoneLease | None = None,
+        recovery_reason: str = "",
+    ) -> None:
         if self._mic_start_task is task:
             self._mic_start_task = None
         try:
             stream = task.result()
         except (asyncio.CancelledError, RuntimeError, OSError, TypeError, ValueError):
+            if authority is not None:
+                authority.release(lease, reason="late_start_finished")
+            if self._mic_lease is lease:
+                self._mic_lease = None
+            if recovery_reason:
+                self._schedule_microphone_recovery(recovery_reason)
             return
         self._close_mic_stream(stream)
+        if authority is not None:
+            authority.release(lease, reason="late_start_finished")
+        if self._mic_lease is lease:
+            self._mic_lease = None
+        if recovery_reason:
+            self._schedule_microphone_recovery(recovery_reason)
 
-    def stop_listening(self):
+    def stop_listening(self, *, preserve_request: bool = False):
         """Stop microphone capture."""
+        if not preserve_request:
+            self._mic_capture_requested = False
+            self._unregister_microphone_waiter(get_microphone_authority())
+        current_task = None
+        with contextlib.suppress(RuntimeError):
+            current_task = asyncio.current_task()
+        monitor_task, self._mic_monitor_task = self._mic_monitor_task, None
+        if monitor_task is not None and monitor_task is not current_task:
+            monitor_task.cancel()
+        recovery_task = self._mic_recovery_task
+        if (
+            not preserve_request
+            and recovery_task is not None
+            and recovery_task is not current_task
+        ):
+            recovery_task.cancel()
+            self._mic_recovery_task = None
         if self._mic_start_cancel_event is not None:
             self._mic_start_cancel_event.set()
         self._mic_listening = False
@@ -1561,6 +1758,10 @@ class SovereignVoiceEngine:
             "event": "mic_deactivated"
         })
         logger.info("🎙️ Mic capture stopped")
+        if not preserve_request:
+            self._mic_device_generation += 1
+            self._mic_device_state = "stopped"
+            self._mic_device_reason = "capture_stopped"
         return not self._mic_listening and self._mic_stream is None
 
     def on_stop(self) -> None:
@@ -1574,6 +1775,8 @@ class SovereignVoiceEngine:
         if status:
             logger.debug("Mic status: %s", status)
         if self._mic_listening and self.microphone_enabled:
+            self._mic_last_frame_at = time.monotonic()
+            self._mic_frames_seen += 1
             # indata is numpy int16 array, convert to bytes
             payload = bytes(indata)
             if get_audio_ingress_broker().admit(self._mic_lease, len(payload)):
@@ -2505,6 +2708,20 @@ class SovereignVoiceEngine:
             "stt_backend": "faster_whisper" if _stt_dependency_available() else "unavailable",
             "tts_backend": tts_type,
             "tts_import_error": _tts_api_import_error,
+            "device": {
+                "generation": self._mic_device_generation,
+                "state": self._mic_device_state,
+                "reason": self._mic_device_reason,
+                "capture_active": bool(
+                    self._mic_listening and self._mic_stream is not None
+                ),
+                "frames_seen": self._mic_frames_seen,
+                "last_frame_age_s": (
+                    round(max(0.0, time.monotonic() - self._mic_last_frame_at), 3)
+                    if self._mic_last_frame_at
+                    else None
+                ),
+            },
         }
 
 # ── Singleton ─────────────────────────────────────────────

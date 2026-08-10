@@ -132,6 +132,10 @@ class MicrophoneAuthority:
         self._denials: dict[str, int] = {}
         self._preemptions = 0
         self._revocations = 0
+        self._availability_waiters: dict[
+            str,
+            dict[str, Callable[[str], Any]],
+        ] = {}
 
     @staticmethod
     def resource_group(*, source: str, principal: str) -> str:
@@ -263,9 +267,62 @@ class MicrophoneAuthority:
                 lease._released = True
                 lease._revoked_reason = str(reason or "released")
             self._generation += 1
+            waiters = (
+                tuple(self._availability_waiters.pop(lease.group, {}).values())
+                if was_current
+                else ()
+            )
         if was_current:
             logger.info("Microphone lease %s released (%s)", lease.lease_id[:10], reason)
+            self._notify_availability(lease.group, waiters)
         return was_current
+
+    def register_availability_waiter(
+        self,
+        holder: str,
+        *,
+        principal: str,
+        source: str,
+        callback: Callable[[str], Any],
+    ) -> str:
+        """Wake a displaced owner once its physical resource is actually free."""
+        group = self.resource_group(source=source, principal=principal)
+        notify_now = False
+        with self._lock:
+            existing = self._leases.get(group)
+            if existing is None or not existing.active:
+                notify_now = True
+            else:
+                self._availability_waiters.setdefault(group, {})[str(holder)] = callback
+        if notify_now:
+            self._notify_availability(group, (callback,))
+        return group
+
+    def unregister_availability_waiter(self, holder: str) -> None:
+        with self._lock:
+            for group in tuple(self._availability_waiters):
+                waiters = self._availability_waiters[group]
+                waiters.pop(str(holder), None)
+                if not waiters:
+                    self._availability_waiters.pop(group, None)
+
+    @staticmethod
+    def _notify_availability(
+        group: str,
+        callbacks: tuple[Callable[[str], Any], ...],
+    ) -> None:
+        for callback in callbacks:
+            try:
+                callback(group)
+            except (AttributeError, OSError, RuntimeError, TypeError, ValueError) as exc:
+                record_degradation(
+                    "microphone_authority",
+                    exc,
+                    severity="warning",
+                    action="microphone availability callback failed",
+                    extra={"resource_group": group},
+                    enforce_failure_policy=False,
+                )
 
     def revoke(self, lease: MicrophoneLease | None, *, reason: str) -> bool:
         if lease is None:
@@ -347,6 +404,10 @@ class MicrophoneAuthority:
             denials = dict(self._denials)
             preemptions = self._preemptions
             revocations = self._revocations
+            waiters = {
+                group: sorted(group_waiters)
+                for group, group_waiters in self._availability_waiters.items()
+            }
         return {
             "schema": "aura.voice.microphone_authority.v1",
             "input_permitted": microphone_allowed(),
@@ -359,6 +420,7 @@ class MicrophoneAuthority:
             "preemptions": preemptions,
             "revocations": revocations,
             "denials": denials,
+            "availability_waiters": waiters,
         }
 
 

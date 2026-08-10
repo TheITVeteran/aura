@@ -90,6 +90,7 @@ EVT_DUCK = "voice.duck"                # ramp playback gain (overlap handling)
 EVT_METRICS = "voice.metrics"
 EVT_STYLE = "voice.style"              # delivery changed at the user's request
 EVT_VOICES = "voice.voices"            # available voice list
+EVT_DEVICE = "voice.device"            # capture generation and recovery state
 EVT_ERROR = "voice.error"
 
 # ── JSON commands, client -> server ──────────────────────────────────────
@@ -103,6 +104,7 @@ CMD_PLAYBACK = "playback"          # periodic playback position report
 CMD_TEXT = "text"                  # typed message while in voice mode
 CMD_SET_VOICE = "set_voice"        # switch her speaking voice mid-session
 CMD_LIST_VOICES = "list_voices"
+CMD_DEVICE_STATE = "device_state"  # browser capture lifecycle receipt
 # Whether the user has deliberately opened the floor — focused voice mode or
 # push-to-talk, as opposed to a microphone that is merely on. Inside an open
 # floor everything said is for her by definition, and the addressivity gate

@@ -85,6 +85,40 @@ def test_focused_conversation_preempts_passive_capture(monkeypatch):
     assert authority.state()["preemptions"] == 1
 
 
+def test_displaced_passive_owner_wakes_only_after_focused_handle_releases(monkeypatch):
+    authority = _authority(monkeypatch)
+    passive = authority.acquire(
+        "resident",
+        principal="owner:local",
+        source="sounddevice",
+        mode="passive",
+    )
+    focused = authority.acquire(
+        "browser",
+        principal="owner:local",
+        source="browser_duplex",
+        mode="focused",
+    )
+    assert isinstance(passive, MicrophoneLease)
+    assert isinstance(focused, MicrophoneLease)
+    available: list[str] = []
+    authority.register_availability_waiter(
+        "resident",
+        principal="owner:local",
+        source="sounddevice",
+        callback=available.append,
+    )
+
+    assert available == []
+    assert authority.state()["availability_waiters"] == {
+        "host_microphone": ["resident"]
+    }
+    authority.release(focused)
+
+    assert available == ["host_microphone"]
+    assert authority.state()["availability_waiters"] == {}
+
+
 def test_remote_microphone_does_not_contend_with_host_microphone(monkeypatch):
     authority = _authority(monkeypatch)
     host = authority.acquire(

@@ -294,6 +294,11 @@ class DuplexVoiceSession:
         self._client_playback_drained = False
         self._client_playback_overflow_samples = 0
         self._metrics = TurnMetrics()
+        self._capture_available = True
+        self._device_generation = 0
+        self._device_state = "unreported"
+        self._device_reason = ""
+        self._device_observed_at = time.monotonic()
         self._stable_text = ""
         # A final decode started during the endpoint's silence wait, valid
         # only until the user speaks again.
@@ -429,7 +434,7 @@ class DuplexVoiceSession:
         Must stay bounded. Anything that could take longer than a frame
         period is dispatched to a task instead of awaited here.
         """
-        if self._closed or self._muted:
+        if self._closed or self._muted or not self._capture_available:
             return
         if len(data) > MAX_AUDIO_MESSAGE_BYTES:
             raise ValueError(
@@ -1802,6 +1807,8 @@ class DuplexVoiceSession:
             self._splitter.reset()
             self._vad.reset()
             await self._send_json({"type": protocol.EVT_STATE, "state": self._state.value, "muted": False})
+        elif command == protocol.CMD_DEVICE_STATE:
+            await self._apply_device_state(message)
         elif command == protocol.CMD_BARGE_IN:
             reported_utterance = self._bounded_nonnegative_int(
                 message.get("utterance_id"),
@@ -1907,6 +1914,45 @@ class DuplexVoiceSession:
                 self._metrics = TurnMetrics(speech_end_at=time.monotonic())
                 await self._set_state(SessionState.THINKING)
                 self._turn_task = self._spawn(self._run_typed_turn(text))
+
+    async def _apply_device_state(self, message: dict[str, Any]) -> None:
+        """Commit one monotonic browser capture-generation receipt."""
+        generation = self._bounded_nonnegative_int(
+            message.get("generation"),
+            maximum=0x7FFFFFFF,
+        )
+        if generation < self._device_generation:
+            return
+        state = str(message.get("state") or "").strip().lower()
+        if state not in {"active", "recovering", "muted", "stopped", "unavailable"}:
+            raise ValueError(f"unsupported voice device state: {state or 'empty'}")
+        reason = str(message.get("reason") or "")[:160]
+        discontinuity = state in {"recovering", "stopped", "unavailable"}
+        if discontinuity:
+            self._capture_available = False
+            self._splitter.reset()
+            self._vad.reset()
+            self._utterance.clear()
+            self._stable_text = ""
+            self._discard_speculation()
+            if self._state is SessionState.USER_SPEAKING:
+                await self._set_state(SessionState.LISTENING)
+        elif state == "active":
+            self._capture_available = True
+
+        self._device_generation = generation
+        self._device_state = state
+        self._device_reason = reason
+        self._device_observed_at = time.monotonic()
+        receipt = {
+            "type": protocol.EVT_DEVICE,
+            "generation": generation,
+            "state": state,
+            "reason": reason,
+            "capture_available": self._capture_available,
+        }
+        await self._send_json(receipt)
+        await self._mind.publish("voice_device_state", dict(receipt))
 
     async def _run_typed_turn(self, text: str) -> None:
         """A typed message while in voice mode still gets a spoken answer."""
@@ -2055,6 +2101,16 @@ class DuplexVoiceSession:
             "vad_backend": self._vad.backend_name,
             "asr_available": self._asr.available,
             "metrics": self._metrics.as_dict(),
+            "device": {
+                "generation": self._device_generation,
+                "state": self._device_state,
+                "reason": self._device_reason,
+                "capture_available": self._capture_available,
+                "observed_age_s": round(
+                    max(0.0, time.monotonic() - self._device_observed_at),
+                    3,
+                ),
+            },
         }
 
 

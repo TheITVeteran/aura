@@ -41428,3 +41428,46 @@ resource-heavy vanilla; its receipt and reasoning-engine defects remain the
 next non-physical implementation target. No reasoning-gain, frontier, fusion,
 activation, or `WOW Signal` claim is authorized. The completion envelope is
 `811/920` (approximately `88.2%`).
+
+## Checkpoint 2026-08-09-115: Voice Survives Device Changes
+
+CP114 made physical microphone ownership exclusive, but a correct first open
+was still the only path treated as healthy. A browser track ending, a default
+input changing, a native callback stopping, or focused voice preempting passive
+listening could leave an authenticated conversation alive while capture was
+dead. The socket, model runtime, and lease could each still look healthy, and a
+retry could race a PortAudio constructor that had timed out but not returned.
+
+The duplex protocol now carries a monotonic physical-device generation and a
+typed capture state independently of transport readiness. A discontinuity
+clears partial PCM, VAD, transcript, and speculative state before the next
+generation is admitted, so two physical inputs cannot become one utterance.
+Browser voice detects track end, mute/unmute, and device-list changes, closes
+partial acquisition on every failure, and reacquires only the MediaStream
+inside the same authenticated socket and warm model session.
+
+The resident engine now detects an inactive PortAudio stream and a stalled
+callback, performs bounded reopen attempts without rebuilding ASR, TTS, mind,
+or conversation state, and exposes capture generation, activity, frame count,
+age, and cause. A passive owner displaced by focused voice registers a
+resource-availability waiter and resumes only after the focused physical lease
+has released. A timed-out device constructor retains its authority until its
+late handle is closed; only then can capture ownership transfer or recovery
+start.
+
+The focused device, duplex, route, authority, settings, boot, ambient, and
+desktop matrix passes `266/266`; the broad voice, audio, speech, microphone,
+privacy, ambient, and acoustic suite passes `560/560`; canonical smoke passes
+`103/103`. Ruff, touched-file byte compilation, Node syntax, and diff hygiene
+pass. Evidence is
+`artifacts/closeout/voice/cp115_voice_survives_device_changes.json`.
+
+This is simulated and source-level recovery proof, not the physical verdict.
+The rebuilt app must still prove live default-device switching, removal and
+restoration, multilingual/noisy endpointing, barge-in, and one complete
+microphone-to-mind-to-speaker trace. The completed WOW pilot remains
+inconclusive at `1/7` ordinary, `2/7` best-of-three, `3/7` complete system, and
+`4/7` resource-heavy vanilla; invalid equal-tool receipts and reasoning-engine
+defects must be repaired before rerun. No reasoning-gain, frontier, fusion,
+activation, or `WOW Signal` claim is authorized. The completion envelope is
+`812/920` (approximately `88.3%`).

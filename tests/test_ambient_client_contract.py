@@ -106,8 +106,8 @@ def test_the_focused_surface_tells_the_server_the_floor_is_open() -> None:
 def test_audio_does_not_flow_before_voice_models_are_ready() -> None:
     """Warmup may take seconds; stale pre-ready room audio must not queue."""
     source = _voice()
-    capture = source[source.index("node.port.onmessage = (e) =>") :]
-    capture = capture[: capture.index("source.connect(node)")]
+    capture = source[source.index("async function startCapture") :]
+    capture = capture[: capture.index("async function stopCapture")]
     assert "state.ready" in capture
     opened = source[source.index("ws.onopen = () =>") :]
     opened = opened[: opened.index("ws.onmessage")]
@@ -197,7 +197,7 @@ def test_muting_releases_the_physical_browser_track() -> None:
     mute = source[source.index("async function toggleMute()") :]
     mute = mute[: mute.index("// ── ambient startup")]
     assert "await stopCapture()" in mute
-    stop = source[source.index("async function stopCapture()") :]
+    stop = source[source.index("async function stopCapture(") :]
     stop = stop[: stop.index("async function startPlayback()")]
     assert "track.stop()" in stop
 
