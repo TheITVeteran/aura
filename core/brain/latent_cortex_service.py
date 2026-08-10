@@ -5291,12 +5291,38 @@ class LatentCortexService:
         if result.get("ok"):
             if contract_errors:
                 reason = "receipt_contract_failed:" + ",".join(contract_errors)
-                record_degradation(
-                    "latent_cortex",
-                    RuntimeError(reason),
-                    action="refused to count incomplete latent episode as successful",
-                    severity="degraded",
-                )
+                # Report this condition when it APPEARS or CHANGES, not once
+                # per turn.
+                #
+                # LIVE, 2026-08-10: the recurrent cortex declined every single
+                # foreground turn with an identical contract failure — the
+                # decode bridge is not wired on this path, so the refusal is
+                # correct and it is also unchanging. Recording it per turn
+                # opened a fresh incident every turn (INC-…-0003, -0005, -0006,
+                # -0007 in one hour, each auto-resolving after 300s only to be
+                # replaced), and each one pushed resilience toward the
+                # depletion state that suppresses execution.
+                #
+                # This is exactly the case CONTRIBUTING/CLAUDE describe: log a
+                # persistent, total condition at info and record a degradation
+                # when it is new or has changed. _record_failure below still
+                # increments the streak and retains the receipt, so nothing
+                # about the refusal becomes invisible — only the duplicate
+                # incident does.
+                if reason == self._last_refusal:
+                    logger.info(
+                        "Recurrent latent cortex still declining on the same "
+                        "unchanged contract failure (streak=%d): %s",
+                        self._failure_streak + 1,
+                        reason,
+                    )
+                else:
+                    record_degradation(
+                        "latent_cortex",
+                        RuntimeError(reason),
+                        action="refused to count incomplete latent episode as successful",
+                        severity="degraded",
+                    )
                 failed = dict(result)
                 failed.update(self._record_failure(reason))
                 failed["receipt"] = result_receipt

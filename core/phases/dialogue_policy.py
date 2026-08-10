@@ -605,7 +605,23 @@ def _lowercase_continuation_start(body: str) -> str:
     if not text or not text[:1].isupper():
         return text
     first_word = text.split(maxsplit=1)[0].strip(".,;:!?\"'")
-    if not first_word or first_word.isupper() or not first_word[1:].islower():
+    if not first_word:
+        return text
+    # "A" is an article, not an acronym.
+    #
+    # LIVE DEFECT, 2026-08-10: "From my conversation memory, A room with walls
+    # made of memory…". Both guards below exist to protect multi-letter
+    # acronyms — RAM, CPU, MLX — and a single capital letter satisfies
+    # isupper() just as well, while first_word[1:] is "" and "".islower() is
+    # False. So the two guards written for acronyms blocked, between them, the
+    # commonest sentence opener in English after a comma-continuation.
+    #
+    # The safe-opener set already holds the right answer: "a" is in it and "i"
+    # is not, so the article is down-cased and the pronoun keeps its capital.
+    # The guards only have to let a one-letter word reach that check.
+    if len(first_word) > 1 and (
+        first_word.isupper() or not first_word[1:].islower()
+    ):
         return text
     lowered = first_word.lower()
     # Contractions open sentences constantly ("That's", "There's", "It's"), and
