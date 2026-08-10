@@ -43463,3 +43463,48 @@ No neural or behavioral result is claimed yet. The next action is the real-1.5B
 run over depths one through four; its evidence decides whether current
 recurrence creates, destroys, merely preserves, or never represents the exact
 computational state.
+
+## Checkpoint 2026-08-10-178: Recurrent Tissue Carries Position Better Than Answer State
+
+The source-bound real-1.5B localization run completed from published commit
+`8a0843a94c2d62c28537309f65887dbb833e011f`. It collected task-disjoint
+training and validation trajectories for Boolean and modular programs at
+depths one through four. All state trails replayed, the base checkpoint
+remained immutable, source publication and task disjointness passed, and the
+owner-private activation artifact was hash-bound to the public receipt.
+
+The result separates control metadata from computational content. Program
+counter and done state were perfectly recoverable at both initialization and
+the task terminal for both families. Boolean value was not linearly
+recoverable: initialization accuracy was `0.375` against a `0.5625` majority
+baseline and `0.4375` shuffled-label null, while terminal accuracy was `0.375`
+against equal `0.375` controls. Modular residue showed a small positive
+direction: initialization accuracy was `0.125` against `0.0625` majority and
+null controls; terminal accuracy rose to `0.1875` against a `0.0625` majority
+baseline and `0.0` null. That improvement is diagnostic, not a powered
+capability result; individual depth cells contain only four to sixteen
+validation observations.
+
+The canonical embedded receipt SHA-256 is
+`2e3c2bb6ed12435cb7399151fa1e45ef4dae0197ddf5bf275fa574f3a7c34f2d`;
+the serialized receipt SHA-256 is
+`e74f027cbb723f48c9f98a435ceef0b043b6ace0add8201c490f3c216ff7e6ad`;
+the owner-private state inventory SHA-256 is
+`0c1b5abe4dcad205446b3f457a491032212abe5e79bcdb7db0a969ba5d76c232`.
+Evidence is preserved at
+`~/.aura/experiments/cp177-state-localization-8a0843a94-20260810-145309/`.
+
+The admitted boundary remains
+`recurrent_state_localization_only_not_behavioral_or_reasoning_gain`. The
+current shared Qwen recurrent window reliably exposes where an execution is,
+but does not yet reliably encode the Boolean answer state and only weakly
+improves modular answer-state recoverability. The next discriminator is direct
+one-step state-transition supervision with one shared recurrent operator, one
+branch, no trainable coda, and task-level held-out splits. Failure to transfer
+a single exact transition will retire this operator class for algorithmic RLC
+and trigger the identity-initialized recurrent transition core; it will not be
+answered by adding depth or geometric losses.
+
+This advances the completion envelope to `874/920` (approximately `95.0%`).
+Behavioral depth scaling, broader families, resident-32B use, fusion,
+activation, frontier reasoning, and the `WOW Signal` remain locked.
