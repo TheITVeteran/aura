@@ -397,6 +397,83 @@ _ACTION_CLAIM_NEGATION = re.compile(
 )
 
 
+#: Words too common to prove a question was engaged with. A reply shares
+#: "you", "the" and "that" with every question ever asked.
+_COVERAGE_STOPWORDS = frozenset(
+    {
+        "about", "actually", "again", "and", "answer", "any", "anything", "are",
+        "ask", "asked", "because", "been", "being", "both", "but", "can",
+        "could", "did", "does", "doing", "done", "for", "from", "give", "had",
+        "has", "have", "her", "here", "him", "his", "how", "its", "just",
+        "know", "like", "make", "many", "may", "mean", "might", "more", "most",
+        "much", "must", "not", "now", "one", "only", "other", "out", "over",
+        "own", "really", "say", "see", "separately", "she", "should", "some",
+        "something", "still", "such", "take", "tell", "than", "that", "the",
+        "their", "them", "then", "there", "these", "they", "thing", "things",
+        "think", "this", "those", "through", "too", "use", "very", "want",
+        "was", "way", "well", "were", "what", "when", "where", "which", "who",
+        "why", "will", "with", "would", "you", "your", "yours",
+    }
+)
+
+#: How many distinctive words a question must have before its absence is
+#: treated as evidence. "why?" shares nothing with any answer and is answered
+#: fine; only a question with real content can be shown to be missing.
+_MIN_COVERAGE_TOKENS = 2
+
+
+def _coverage_tokens(text: str) -> set[str]:
+    """Content words that would show up if this ask were engaged with."""
+    words = re.findall(r"[A-Za-z][A-Za-z'-]{2,}", str(text or "").lower())
+    return {
+        word.split("'", 1)[0]
+        for word in words
+        if word not in _COVERAGE_STOPWORDS and len(word.split("'", 1)[0]) > 2
+    }
+
+
+def _unanswered_question_parts(body: str, contract: object | None) -> list[str]:
+    """Asks the reply never engages with at all.
+
+    LIVE DEFECT, 2026-08-10. "give me one concrete example of a preposition
+    doing more work than it should. and separately — do you actually enjoy
+    that, or is 'interesting' a word you reach for because it's safe?" The
+    reply gave the example and contained nothing about enjoyment. Earlier the
+    same day: "you dodged half of it. I asked two things and you answered one."
+
+    The compoundness was already known — question_parts was computed, the
+    prompt was told "this prompt contains multiple asks (2 detected)", the
+    voice budget widened for it. Every OTHER contract requirement in this
+    validator has a matching violation and goes through repair; coverage was
+    requested in the prompt and never checked, so a dropped half cost nothing.
+
+    Deliberately hard to trigger, because a false positive burns a
+    regeneration on a reply that was fine:
+
+      * only when the contract already decided this is a multi-ask turn;
+      * only for asks carrying at least _MIN_COVERAGE_TOKENS distinctive
+        words, so "why?" or "really?" can never be flagged;
+      * and only when the overlap is ZERO. One shared content word counts as
+        engaged — this catches the half that was ignored outright, not the
+        half that was answered briefly.
+    """
+    if not getattr(contract, "requires_single_reply_coverage", False):
+        return []
+    segments = tuple(getattr(contract, "question_segments", ()) or ())
+    if len(segments) < 2:
+        return []
+
+    answered = _coverage_tokens(body)
+    missed: list[str] = []
+    for segment in segments:
+        wanted = _coverage_tokens(segment)
+        if len(wanted) < _MIN_COVERAGE_TOKENS:
+            continue
+        if not (wanted & answered):
+            missed.append(segment)
+    return missed
+
+
 def validate_dialogue_response(
     text: str, contract: object | None, state: object | None = None
 ) -> DialogueValidation:
@@ -420,6 +497,9 @@ def validate_dialogue_response(
     if getattr(contract, "requires_aura_question", False):
         if not _contains_owned_question(body):
             violations.append("failed_to_offer_own_question")
+
+    if _unanswered_question_parts(body, contract):
+        violations.append("unanswered_question_part")
 
     if getattr(contract, "prefers_dialogue_participation", False):
         if body.endswith("?") and _LOW_SIGNAL_PREFIX.match(body):
@@ -659,6 +739,18 @@ def build_dialogue_repair_block(contract: object | None, validation: DialogueVal
     if _requires_non_generic_aura_voice(contract):
         lines.append("- This turn must sound like Aura's own live voice, not a generic helper.")
         lines.append("- Do not use assistant boilerplate like 'I can help with that', 'How can I help', or 'As an AI'.")
+    if "unanswered_question_part" in validation.violations:
+        missed = _unanswered_question_parts(failed_text, contract)
+        # Quote the dropped ask back. "Answer every part" is the instruction
+        # that was already in the prompt when this happened; naming the
+        # specific question that went unanswered is the part that is new.
+        lines.append(
+            "- The last draft answered only part of what was asked. These "
+            "questions got no answer at all: "
+            + " | ".join(f'"{segment}"' for segment in missed[:3])
+            + ". Answer them in this reply. Answering one well and dropping "
+            "the other reads as evasion even when it is not."
+        )
     if "intra_response_repetition" in validation.violations:
         lines.append("- Do not repeat the same sentence or mantra. Say the thought once, then integrate it into a calmer next sentence.")
     if "unsupported_internal_jargon" in validation.violations:

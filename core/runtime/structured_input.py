@@ -148,8 +148,15 @@ class PromptShape:
     imperative_parts: int = 0
     prefers_extended_answer: bool = False
     requires_single_reply_coverage: bool = False
+    #: The actual text of each ask, not just how many there were.
+    #:
+    #: The count alone can shape a prompt ("3 parts detected") and size a
+    #: voice budget, and it cannot check whether a reply covered them —
+    #: checking needs to know WHAT was asked. Retained so
+    #: validate_dialogue_response can hold the answer against the question.
+    question_segments: tuple[str, ...] = ()
 
-    def to_dict(self) -> dict[str, int | bool]:
+    def to_dict(self) -> dict[str, int | bool | tuple[str, ...]]:
         return {
             "question_parts": self.question_parts,
             "explicit_question_marks": self.explicit_question_marks,
@@ -160,7 +167,48 @@ class PromptShape:
             "imperative_parts": self.imperative_parts,
             "prefers_extended_answer": self.prefers_extended_answer,
             "requires_single_reply_coverage": self.requires_single_reply_coverage,
+            "question_segments": self.question_segments,
         }
+
+
+#: Splits an utterance into the units a person would count as separate asks:
+#: sentence enders, and the line breaks / numbered items that carry a list.
+_ASK_SPLIT_RE = re.compile(r"(?<=[.?!])\s+|\n+")
+
+
+def _question_segments(text: str) -> tuple[str, ...]:
+    """The individual asks in an utterance, as text.
+
+    LIVE DEFECT, 2026-08-10. "give me one concrete example of a preposition
+    doing more work than it should. and separately — do you actually enjoy
+    that, or is 'interesting' a word you reach for because it's safe?" She
+    answered the example and said nothing whatever about enjoyment. The same
+    failure was called out earlier in the same session — "you dodged half of
+    it. I asked two things and you answered one."
+
+    The runtime already KNEW it was compound: question_parts was computed,
+    the prompt was told "this prompt contains multiple asks (2 detected)",
+    and the voice budget was widened for it. Nothing ever checked the reply
+    against it, because the count was all that survived analysis. Keeping the
+    segments is what makes coverage checkable at all.
+
+    An ask is a SENTENCE that either ends in a question mark or opens with a
+    directive verb. Sentences, not lines, because everything else here counts
+    per line and that is what missed the case above: it arrived as one line,
+    so _INTERROGATIVE_LINE_RE — which requires the LINE to begin with what,
+    why, do, is — never matched, the line began with "give", and a two-part
+    utterance scored one part. Anyone typing in a chat box writes several
+    sentences on one line constantly.
+    """
+    raw = str(text or "").strip()
+    if not raw:
+        return ()
+    segments = [part.strip() for part in _ASK_SPLIT_RE.split(raw) if part.strip()]
+    return tuple(
+        part
+        for part in segments
+        if part.endswith("?") or _DIRECTIVE_LINE_RE.match(part)
+    )
 
 
 def analyze_prompt_shape(text: str) -> PromptShape:
@@ -187,8 +235,15 @@ def analyze_prompt_shape(text: str) -> PromptShape:
     repeated_clause_parts = max(0, len(_REPEATED_CLAUSE_RE.findall(raw)) - 1)
     imperative_parts = len(_COORDINATED_DIRECTIVE_RE.findall(raw))
 
+    ask_segments = _question_segments(raw)
+
     part_candidates = [
         1,
+        # Sentence-level asks. Every other candidate below counts per LINE or
+        # per verb list, and a chat box is one line: "give me an example of X.
+        # and separately — do you enjoy it?" scored 1 part, so the prompt was
+        # never told it was compound and the reply dropped half of it.
+        len(ask_segments),
         explicit_question_marks,
         question_like_lines,
         numbered_parts,
@@ -209,6 +264,7 @@ def analyze_prompt_shape(text: str) -> PromptShape:
     )
 
     return PromptShape(
+        question_segments=ask_segments,
         question_parts=question_parts,
         explicit_question_marks=explicit_question_marks,
         question_like_lines=question_like_lines,
