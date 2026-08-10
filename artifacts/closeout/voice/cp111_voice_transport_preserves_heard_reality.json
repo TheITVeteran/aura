@@ -1,0 +1,59 @@
+{
+  "schema": "aura.closeout.checkpoint.v1",
+  "checkpoint": 111,
+  "date": "2026-08-09",
+  "subject": "duplex voice transport preserves the audio and words the owner actually heard",
+  "status": "implemented_and_bounded_verified",
+  "defects_closed": [
+    "the browser transmitted microphone audio before ASR and TTS readiness, accumulating stale room speech while presenting a false listening state",
+    "capture and playback trusted requested AudioContext rates even when the device selected a different hardware clock",
+    "playback time accumulated across utterances because the binary utterance identity was ignored",
+    "idle playback emitted high-frequency progress receipts with no audio to report",
+    "barge-in flush discarded buffered samples before applying its advertised fade",
+    "live-mirrored voice turns were exported into chat again when the voice surface closed",
+    "interrupted replies retained unheard text in the visible chat even though spoken memory was truncated",
+    "stale playback and barge-in receipts could mutate a newer utterance",
+    "client buffer overflow could be reported as complete delivery"
+  ],
+  "implementation": {
+    "readiness": "capture packets are discarded until the authenticated server emits voice.ready; floor and listen commands are reasserted only after that handshake",
+    "capture_clock": "the AudioWorklet converts the actual source clock to bounded 20ms 16kHz wire frames",
+    "playback_clock": "the AudioWorklet continuously resamples 24kHz wire PCM to the actual device clock",
+    "utterance_fencing": "binary sequence and utterance headers bind playback, progress receipts, draining, and barge-in to one speech generation",
+    "delivery_truth": "progress is monotonic, idle reports are suppressed, overflow stops the utterance, and only the measured audible prefix enters interruption receipts",
+    "conversation_unity": "voice streams through the canonical chat bubble and exit export includes only turns that were not already mirrored",
+    "interruption_ui": "the visible chat is rewritten to the heard prefix so UI, spoken memory, and delivery receipts agree"
+  },
+  "verification": {
+    "duplex_ambient_and_streaming_suite": "129 passed",
+    "focused_playback_and_interruption_subset": "21 passed, 102 deselected",
+    "canonical_smoke_repository_venv": "103 passed",
+    "worklet_clock_simulation": "48kHz capture produced one 320-sample 16kHz packet from 1024 source frames; 2400 24kHz playback frames measured 99.9583ms at a 48kHz device clock",
+    "node_syntax": "pass",
+    "ruff_touched_surface": "pass",
+    "python_byte_compile_touched_surface": "pass",
+    "diff_check": "pass"
+  },
+  "claim_boundary": {
+    "transport_contract_proven": true,
+    "real_microphone_conversation_proven": false,
+    "real_model_warm_start_proven": false,
+    "reason": "the active resident-32B proof campaign owns the model lane; rebuilt-app microphone, ASR, Aura cognition, TTS, interruption, reconnect, and recovery evidence remains a later live gate"
+  },
+  "remaining_voice_work": [
+    "make ASR and TTS warm state process-scoped instead of reloading per WebSocket session",
+    "prevent partial and final MLX Whisper models from evicting each other",
+    "arbitrate exclusive microphone ownership between legacy capture and browser duplex mode",
+    "prove language-aware endpointing and recovery under noise, pauses, reconnects, device-rate changes, and real barge-in",
+    "replace scripted conversational filler with Aura-authored semantic progress while retaining a minimal transport failure sentence",
+    "prove the rebuilt owner app end to end on physical microphone and speaker hardware"
+  ],
+  "concurrent_campaign": {
+    "campaign_id": "cp103-wow-pilot-repaired-20260809",
+    "source_commit": "b62bd4fa78fd28fe62cb51f7677614774c3482fc",
+    "cells_at_last_check": 25,
+    "active_arm": "vanilla_resource_dominating",
+    "active_arm_progress": "4/7",
+    "capability_verdict_claimed": false
+  }
+}

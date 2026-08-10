@@ -56,6 +56,12 @@
         voices: [],
         currentVoice: '',
         metrics: null,
+        ready: false,
+        serverState: 'idle',
+        speechUtteranceId: 0,
+        expectedSpeechSeq: 0,
+        lastPlaybackReportMs: -1,
+        currentReplyMirrored: false,
         reconnectAttempts: 0,
         reconnectTimer: null,
         closingIntentionally: false,
@@ -144,20 +150,34 @@
             userSaid(text) {
                 if (typeof window.auraAppendVoiceTurn === 'function') {
                     window.auraAppendVoiceTurn('user', text);
+                    return true;
                 }
                 streaming = false;
+                return false;
             },
 
             auraChunk(text) {
-                if (!text) return;
-                if (typeof window.auraStreamVoiceReply !== 'function') return;
+                if (!text) return false;
+                if (typeof window.auraStreamVoiceReply !== 'function') return false;
                 window.auraStreamVoiceReply(text, !streaming);
                 streaming = true;
+                return true;
             },
 
             replyDone() {
                 if (streaming && typeof window.auraFinishVoiceReply === 'function') {
                     window.auraFinishVoiceReply();
+                }
+                const wasStreaming = streaming;
+                streaming = false;
+                return wasStreaming;
+            },
+
+            interrupted(spoken) {
+                if (typeof window.auraInterruptVoiceReply === 'function') {
+                    window.auraInterruptVoiceReply(spoken || '');
+                } else {
+                    this.replyDone();
                 }
                 streaming = false;
             },
@@ -266,7 +286,10 @@
         });
 
         el.mute.addEventListener('click', toggleMute);
-        el.interrupt.addEventListener('click', () => sendCommand('barge_in', { played_ms: state.playedMs }));
+        el.interrupt.addEventListener('click', () => sendCommand('barge_in', {
+            played_ms: state.playedMs,
+            utterance_id: state.speechUtteranceId,
+        }));
         el.transcriptToggle.addEventListener('click', () => {
             root.classList.toggle('vm-show-transcript');
             el.transcriptToggle.classList.toggle('vm-active');
@@ -277,7 +300,10 @@
         // gesture people reach for instinctively when they want it to stop.
         el.orbWrap.addEventListener('click', () => {
             if (state.sessionState === 'speaking') {
-                sendCommand('barge_in', { played_ms: state.playedMs });
+                sendCommand('barge_in', {
+                    played_ms: state.playedMs,
+                    utterance_id: state.speechUtteranceId,
+                });
             }
         });
 
@@ -302,7 +328,10 @@
             // Space is the universal "stop talking" key here.
             e.preventDefault();
             if (state.sessionState === 'speaking') {
-                sendCommand('barge_in', { played_ms: state.playedMs });
+                sendCommand('barge_in', {
+                    played_ms: state.playedMs,
+                    utterance_id: state.speechUtteranceId,
+                });
             }
         } else if (e.key.toLowerCase() === 'm' && e.target === document.body) {
             e.preventDefault();
@@ -330,13 +359,15 @@
         await ctx.audioWorklet.addModule('/static/voice-capture-processor.js');
 
         const source = ctx.createMediaStreamSource(stream);
-        const node = new AudioWorkletNode(ctx, 'voice-capture-processor');
+        const node = new AudioWorkletNode(ctx, 'voice-capture-processor', {
+            processorOptions: { targetSampleRate: CAPTURE_RATE },
+        });
         state.micNode = node;
 
         node.port.onmessage = (e) => {
             const d = e.data;
             if (d.type === 'pcm') {
-                if (state.ws && state.ws.readyState === WebSocket.OPEN && !state.muted) {
+                if (state.ready && state.ws && state.ws.readyState === WebSocket.OPEN && !state.muted) {
                     state.ws.send(d.pcm);
                 }
             } else if (d.type === 'level') {
@@ -357,11 +388,11 @@
         // Two independent lanes so a backchannel can overlap speech without
         // either one flushing the other.
         state.speechNode = new AudioWorkletNode(ctx, 'voice-playback-processor', {
-            processorOptions: { bufferSeconds: 60 },
+            processorOptions: { bufferSeconds: 60, sourceSampleRate: PLAYBACK_RATE },
             outputChannelCount: [1],
         });
         state.asideNode = new AudioWorkletNode(ctx, 'voice-playback-processor', {
-            processorOptions: { bufferSeconds: 10 },
+            processorOptions: { bufferSeconds: 10, sourceSampleRate: PLAYBACK_RATE },
             outputChannelCount: [1],
         });
 
@@ -372,9 +403,33 @@
                 state.bufferedMs = d.bufferedMs;
                 state.auraLevel = d.level;
                 // The server needs this to know what was actually heard.
-                sendCommand('playback', { played_ms: d.playedMs });
+                if (
+                    state.speechUtteranceId > 0
+                    && (state.lastPlaybackReportMs < 0
+                        || Math.abs(d.playedMs - state.lastPlaybackReportMs) >= 35)
+                ) {
+                    state.lastPlaybackReportMs = d.playedMs;
+                    sendCommand('playback', {
+                        played_ms: d.playedMs,
+                        utterance_id: state.speechUtteranceId,
+                    });
+                }
+            } else if (d.type === 'drained' && state.speechUtteranceId > 0) {
+                state.playedMs = d.playedMs;
+                state.bufferedMs = 0;
+                state.lastPlaybackReportMs = d.playedMs;
+                sendCommand('playback', {
+                    played_ms: d.playedMs,
+                    utterance_id: state.speechUtteranceId,
+                    drained: true,
+                });
             } else if (d.type === 'overflow') {
                 console.warn('[voice] playback buffer overflow, dropped', d.dropped, 'samples');
+                sendCommand('playback', {
+                    played_ms: state.playedMs,
+                    utterance_id: state.speechUtteranceId,
+                    overflow_samples: d.dropped,
+                });
             }
         };
         state.asideNode.port.onmessage = (e) => {
@@ -395,21 +450,18 @@
     }
 
     function connect() {
+        state.ready = false;
+        state.serverState = 'idle';
+        resetSpeechPlayback();
         const ws = new WebSocket(wsUrl());
         ws.binaryType = 'arraybuffer';
         state.ws = ws;
 
         ws.onopen = () => {
             state.reconnectAttempts = 0;
-            setStatus('listening');
+            setStatus('preparing');
             const token = (window.AURA_API_TOKEN || '');
             if (token) ws.send(JSON.stringify({ type: 'auth', token }));
-            sendCommand('list_voices');
-            // Re-assert the floor on every connect. A reconnect gets a fresh
-            // session that defaults to ambient, so without this a dropped
-            // socket would silently put the gate back in front of a user who
-            // is sitting in focused voice mode.
-            sendCommand('set_floor', { open: !state.ambient });
         };
 
         ws.onmessage = (e) => {
@@ -423,6 +475,7 @@
         };
 
         ws.onclose = () => {
+            state.ready = false;
             if (state.closingIntentionally || !state.active) return;
             scheduleReconnect();
         };
@@ -456,11 +509,19 @@
     function handleEvent(msg) {
         switch (msg.type) {
             case 'voice.ready':
+                state.ready = true;
+                void ensureAudioRunning();
+                setStatus(state.serverState === 'idle' ? 'listening' : state.serverState);
                 showMeta(`${msg.tts_engine} · ${msg.vad_backend}${msg.asr_available ? '' : ' · ASR unavailable'}`);
+                sendCommand('list_voices');
+                // Re-assert the floor only after the server is ready. A
+                // reconnect gets a fresh session that defaults to ambient.
+                sendCommand('set_floor', { open: !state.ambient });
                 break;
 
             case 'voice.state':
-                setStatus(msg.state);
+                state.serverState = msg.state || 'idle';
+                setStatus(state.ready ? state.serverState : 'preparing');
                 if (typeof msg.muted === 'boolean') {
                     state.muted = msg.muted;
                     if (el.mute) el.mute.classList.toggle('vm-active', state.muted);
@@ -492,8 +553,8 @@
                     break;
                 }
                 if (msg.text) {
-                    addTranscript('user', msg.text);
-                    ambient.userSaid(msg.text);
+                    const mirrored = ambient.userSaid(msg.text);
+                    addTranscript('user', msg.text, mirrored);
                     if (el.captionUser) el.captionUser.textContent = msg.text;
                 } else if (el.captionUser) {
                     el.captionUser.textContent = '';
@@ -503,15 +564,21 @@
             case 'voice.reply':
                 state.currentReply = msg.text || '';
                 state.spokenSoFar = '';
-                addTranscript('aura', state.currentReply);
+                addTranscript('aura', state.currentReply, state.currentReplyMirrored);
+                state.currentReplyMirrored = false;
                 break;
 
             case 'voice.chunk':
                 // Caption follows the audio clause by clause, so the words
                 // on screen are the words currently in the air.
+                if (msg.utterance_id && msg.utterance_id !== state.speechUtteranceId) {
+                    beginSpeechUtterance(msg.utterance_id, msg.seq || 0);
+                }
                 state.spokenSoFar = (state.spokenSoFar ? state.spokenSoFar + ' ' : '') + msg.text;
                 if (el.captionAura) el.captionAura.textContent = state.spokenSoFar;
-                ambient.auraChunk(msg.text);
+                state.currentReplyMirrored = ambient.auraChunk(msg.text)
+                    || state.currentReplyMirrored;
+                if (state.currentReplyMirrored) markLatestAuraTranscriptMirrored();
                 break;
 
             case 'voice.backchannel':
@@ -525,7 +592,8 @@
             case 'voice.interrupted':
                 if (state.speechNode) state.speechNode.port.postMessage({ type: 'flush' });
                 markInterrupted(msg.spoken || '');
-                ambient.replyDone();
+                ambient.interrupted(msg.spoken || '');
+                state.currentReplyMirrored = true;
                 break;
 
             case 'voice.metrics_done':
@@ -579,7 +647,27 @@
         if (bytes.length < HEADER_BYTES) return;
         const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
         const opcode = view.getUint8(0);
+        const flags = view.getUint8(1);
+        const seq = view.getUint16(2, true);
+        const utteranceId = view.getUint32(4, true);
         const payload = bytes.subarray(HEADER_BYTES);
+
+        if (opcode === OPCODE.SPEECH) {
+            if (utteranceId !== state.speechUtteranceId) {
+                beginSpeechUtterance(utteranceId, seq);
+            } else if (seq !== state.expectedSpeechSeq) {
+                console.warn('[voice] non-contiguous speech sequence', {
+                    utteranceId, expected: state.expectedSpeechSeq, received: seq,
+                });
+                // A missing audio frame makes transcript/playback accounting
+                // uncertain. Flush rather than joining two non-contiguous
+                // waveform regions with an audible click.
+                if (state.speechNode) state.speechNode.port.postMessage({ type: 'flush' });
+                state.expectedSpeechSeq = seq;
+            }
+            if (payload.length > 0) state.expectedSpeechSeq = (seq + 1) & 0xffff;
+            if ((flags & 1) && payload.length === 0) return;
+        }
         if (payload.length === 0) return;
 
         // Copy: the worklet takes ownership of the buffer it is handed.
@@ -590,10 +678,25 @@
 
         const node = opcode === OPCODE.SPEECH ? state.speechNode : state.asideNode;
         if (!node) return;
-        if (opcode === OPCODE.SPEECH && state.speechSeqReset) {
-            state.speechSeqReset = false;
-        }
         node.port.postMessage({ type: 'push', pcm: pcm.buffer }, [pcm.buffer]);
+    }
+
+    function beginSpeechUtterance(utteranceId, seq) {
+        state.speechUtteranceId = Number(utteranceId || 0);
+        state.expectedSpeechSeq = Number(seq || 0);
+        state.playedMs = 0;
+        state.bufferedMs = 0;
+        state.lastPlaybackReportMs = -1;
+        if (state.speechNode) state.speechNode.port.postMessage({ type: 'reset' });
+    }
+
+    function resetSpeechPlayback() {
+        state.speechUtteranceId = 0;
+        state.expectedSpeechSeq = 0;
+        state.playedMs = 0;
+        state.bufferedMs = 0;
+        state.lastPlaybackReportMs = -1;
+        if (state.speechNode) state.speechNode.port.postMessage({ type: 'reset' });
     }
 
     // ── rendering ────────────────────────────────────────────────────────
@@ -605,7 +708,7 @@
             idle: 'ready', listening: 'listening', user_speaking: 'listening',
             thinking: 'thinking', speaking: 'speaking', closed: 'ended',
             connecting: 'connecting', reconnecting: 'reconnecting',
-            disconnected: 'disconnected', error: 'error',
+            preparing: 'preparing voice', disconnected: 'disconnected', error: 'error',
         };
         el.status.textContent = labels[s] || s;
         if (root) {
@@ -624,9 +727,9 @@
             escapeHtml(stable) + (tail ? ` <span class="vm-tentative">${escapeHtml(tail)}</span>` : '');
     }
 
-    function addTranscript(who, text) {
+    function addTranscript(who, text, mirroredToChat = false) {
         if (!text) return;
-        state.transcript.push({ who, text, at: Date.now() });
+        state.transcript.push({ who, text, at: Date.now(), mirroredToChat });
         const line = document.createElement('div');
         line.className = `vm-line vm-line-${who}`;
         line.innerHTML = `<span class="vm-who">${who === 'user' ? 'You' : 'Aura'}</span><span class="vm-text">${escapeHtml(text)}</span>`;
@@ -634,7 +737,21 @@
         el.transcript.scrollTop = el.transcript.scrollHeight;
     }
 
+    function markLatestAuraTranscriptMirrored() {
+        for (let i = state.transcript.length - 1; i >= 0; i--) {
+            if (state.transcript[i].who !== 'aura') continue;
+            state.transcript[i].mirroredToChat = true;
+            return;
+        }
+    }
+
     function markInterrupted(spoken) {
+        for (let i = state.transcript.length - 1; i >= 0; i--) {
+            if (state.transcript[i].who !== 'aura') continue;
+            state.transcript[i].text = spoken;
+            state.transcript[i].mirroredToChat = true;
+            break;
+        }
         const lines = el.transcript.querySelectorAll('.vm-line-aura');
         const last = lines[lines.length - 1];
         if (!last) return;
@@ -779,6 +896,7 @@
         try {
             await startPlayback();
             await startCapture();
+            await ensureAudioRunning();
         } catch (err) {
             console.error('[voice] audio init failed', err);
             const denied = err && err.name === 'NotAllowedError';
@@ -846,6 +964,19 @@
             if (ctx && ctx.state !== 'closed') { try { await ctx.close(); } catch (_e) { /* already closed */ } }
             state[key] = null;
         }
+        state.ready = false;
+        resetSpeechPlayback();
+    }
+
+    async function ensureAudioRunning() {
+        for (const ctx of [state.captureCtx, state.playbackCtx]) {
+            if (!ctx || ctx.state === 'running' || ctx.state === 'closed') continue;
+            try { await ctx.resume(); } catch (_e) { /* next user gesture retries */ }
+        }
+        const suspended = [state.captureCtx, state.playbackCtx]
+            .some((ctx) => ctx && ctx.state === 'suspended');
+        if (suspended && !state.ambient) showMeta('Tap once to enable audio.');
+        return !suspended;
     }
 
     // Leaving the focused surface is not the same as ending the conversation.
@@ -891,7 +1022,8 @@
         if (!state.transcript.length) return;
         const sink = window.auraAppendVoiceTranscript;
         if (typeof sink === 'function') {
-            try { sink(state.transcript.slice()); } catch (err) { console.warn('[voice] transcript export failed', err); }
+            const missing = state.transcript.filter((line) => !line.mirroredToChat);
+            try { if (missing.length) sink(missing); } catch (err) { console.warn('[voice] transcript export failed', err); }
         }
         state.transcript = [];
         if (el.transcript) el.transcript.innerHTML = '';
@@ -953,6 +1085,14 @@
         void maybeStartAmbient();
     }
 
+    // Browsers may create a suspended AudioContext even when microphone
+    // permission already exists. Any later deliberate gesture is sufficient
+    // to resume it; install one bounded shared retry instead of letting a
+    // session remain visibly active but inaudible.
+    document.addEventListener('pointerdown', () => {
+        if (state.active) void ensureAudioRunning();
+    }, { passive: true });
+
     window.AuraVoiceMode = {
         enter: enterVoiceMode,
         exit: exitVoiceMode,
@@ -960,6 +1100,10 @@
         // listening is on, closing it returns to ambient rather than going
         // deaf — the button controls the window, not the microphone.
         toggle: async () => {
+            if (state.active && state.sessionState === 'error') {
+                await exitVoiceMode();
+                return enterVoiceMode();
+            }
             if (state.active && !state.ambient) return leaveFocusedMode();
             return enterVoiceMode();
         },

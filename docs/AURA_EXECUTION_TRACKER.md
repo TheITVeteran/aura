@@ -41241,3 +41241,46 @@ response, TTS playback, barge-in, durable follow-up context, recovery, and
 visible phase evidence. The review must remove startup failures and avoidable
 latency causes rather than imposing deadlines or substituting canned dialogue.
 The completion envelope remains `809/920` (approximately `87.9%`).
+
+## Checkpoint 2026-08-09-111: Voice Transport Preserves Heard Reality
+
+The full-duplex surface could route speech through Aura's canonical mind, but
+its transport could still disagree with physical playback. Browser
+`AudioContext` sample-rate requests were treated as guarantees, playback time
+was cumulative across utterances, stale receipts could interrupt newer speech,
+idle audio emitted twenty progress reports per second, and the advertised
+barge-in fade discarded the buffered waveform before fading it. Voice capture
+also began before model readiness, so warmup could accumulate stale room audio
+while the surface already claimed to be listening.
+
+Capture and playback worklets now resample between the actual device clocks and
+Aura's 16kHz/24kHz wire contracts. Every speech generation carries its binary
+utterance identity through chunk metadata, playback receipts, drain completion,
+and barge-in. Progress is monotonic and utterance-fenced; idle reports are
+silent; a playback overflow terminates delivery at the last measured prefix
+instead of claiming dropped samples were heard. Flush applies a real waveform
+fade before releasing buffered audio.
+
+Conversation history now has one authority. Spoken clauses stream into the same
+chat bubble as typed replies, exit-time transcript export is repair-only, and an
+interruption rewrites the visible reply to the words actually heard. The server
+records and emits that same prefix. A reconnect cannot send microphone packets
+or present a listening state until the authenticated `voice.ready` handshake
+has completed.
+
+The duplex, ambient, and streaming suite passes `129/129`; a focused playback,
+interruption, and surface subset passes `21/21`; canonical smoke passes
+`103/103`. A worklet simulation proves 48kHz capture produces the required
+16kHz wire frames and 24kHz playback retains approximately 100ms duration on a
+48kHz output clock. Node syntax, Ruff, touched-file byte compilation, and diff
+hygiene pass. Evidence is
+`artifacts/closeout/voice/cp111_voice_transport_preserves_heard_reality.json`.
+
+This is not yet the physical-device voice verdict. Process-scoped ASR/TTS warm
+state, partial/final recognizer residency, exclusive microphone ownership,
+multilingual/noisy endpointing, Aura-authored progress speech, reconnect and
+device-loss recovery, and the rebuilt-app microphone-to-mind-to-speaker proof
+remain open. At the last campaign check, the independent WOW pilot was `25/28`
+with the resource-dominating control at `4/7`; no reasoning-gain or frontier
+claim is made before terminal reconciliation. The completion envelope remains
+`809/920` (approximately `87.9%`).

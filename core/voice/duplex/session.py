@@ -32,6 +32,44 @@ import numpy as np
 
 from core.runtime.errors import record_degradation
 from core.utils.task_tracker import get_task_tracker
+from core.voice.duplex import protocol
+from core.voice.duplex.addressivity import AddressivityGate
+from core.voice.duplex.audio import (
+    FrameSplitter,
+    UtteranceBuffer,
+    float32_to_pcm16,
+    pcm16_to_float32,
+)
+from core.voice.duplex.backchannel import BackchannelReflex
+from core.voice.duplex.clause_chunker import StreamingChunker
+from core.voice.duplex.config import (
+    CAPTURE_RATE,
+    OUTPUT_RATE,
+    VAD_FRAME_SAMPLES,
+    DuplexConfig,
+)
+from core.voice.duplex.echo_guard import EchoGuard
+from core.voice.duplex.endpointing import Completeness, Endpointer
+from core.voice.duplex.fillers import FillerReflex, ThinkingCause
+from core.voice.duplex.governed_stream import stream_governed_reply
+from core.voice.duplex.mind_bridge import MindBridge, SpokenRecord, StreamingTurn
+from core.voice.duplex.overlap import OverlapArbiter, OverlapVerdict
+from core.voice.duplex.paralinguistics import (
+    DeliveryReading,
+    SpeakerBaseline,
+    convergence_factors,
+)
+from core.voice.duplex.paralinguistics import (
+    analyze as analyze_delivery,
+)
+from core.voice.duplex.paralinguistics import (
+    interpret as interpret_delivery,
+)
+from core.voice.duplex.prosody import ProsodyCompiler, live_speech_profile
+from core.voice.duplex.streaming_asr import StreamingAsr, looks_hallucinated
+from core.voice.duplex.style import StyleController
+from core.voice.duplex.tts_stream import CancellationToken, StreamingTts
+from core.voice.duplex.vad_gate import SpeechEvent, VadGate
 
 #: Exception class names that mean "the peer's transport is gone".
 #:
@@ -68,44 +106,6 @@ def _is_peer_disconnect(exc: BaseException | None) -> bool:
             return True
         current = current.__cause__ or current.__context__
     return False
-from core.voice.duplex import protocol
-from core.voice.duplex.audio import (
-    FrameSplitter,
-    UtteranceBuffer,
-    float32_to_pcm16,
-    pcm16_to_float32,
-)
-from core.voice.duplex.addressivity import AddressivityGate
-from core.voice.duplex.backchannel import BackchannelReflex
-from core.voice.duplex.clause_chunker import StreamingChunker
-from core.voice.duplex.config import (
-    CAPTURE_RATE,
-    OUTPUT_RATE,
-    VAD_FRAME_SAMPLES,
-    DuplexConfig,
-)
-from core.voice.duplex.echo_guard import EchoGuard
-from core.voice.duplex.endpointing import Completeness, Endpointer
-from core.voice.duplex.fillers import FillerReflex, ThinkingCause
-from core.voice.duplex.governed_stream import stream_governed_reply
-from core.voice.duplex.mind_bridge import MindBridge, SpokenRecord, StreamingTurn
-from core.voice.duplex.overlap import OverlapArbiter, OverlapVerdict
-from core.voice.duplex.paralinguistics import (
-    DeliveryReading,
-    SpeakerBaseline,
-    convergence_factors,
-)
-from core.voice.duplex.paralinguistics import (
-    analyze as analyze_delivery,
-)
-from core.voice.duplex.paralinguistics import (
-    interpret as interpret_delivery,
-)
-from core.voice.duplex.prosody import ProsodyCompiler, live_speech_profile
-from core.voice.duplex.streaming_asr import StreamingAsr, looks_hallucinated
-from core.voice.duplex.style import StyleController
-from core.voice.duplex.tts_stream import CancellationToken, StreamingTts
-from core.voice.duplex.vad_gate import SpeechEvent, VadGate
 
 logger = logging.getLogger("Aura.Voice.Session")
 
@@ -285,6 +285,9 @@ class DuplexVoiceSession:
         self._utterance_generation = 0
         self._barge_run_ms = 0.0
         self._client_played_s = 0.0
+        self._client_playback_utterance_id = 0
+        self._client_playback_drained = False
+        self._client_playback_overflow_samples = 0
         self._metrics = TurnMetrics()
         self._stable_text = ""
         # A final decode started during the endpoint's silence wait, valid
@@ -1327,8 +1330,17 @@ class DuplexVoiceSession:
             with contextlib.suppress(asyncio.CancelledError):
                 await producer
 
+        visible_reply = (
+            str(last.spoken or "")
+            if interrupted
+            else (delivered or spoken_via_stream)
+        )
         await self._send_json(
-            {"type": protocol.EVT_REPLY, "text": delivered or spoken_via_stream}
+            {
+                "type": protocol.EVT_REPLY,
+                "text": visible_reply,
+                "interrupted": interrupted,
+            }
         )
 
         final = await turn.final()
@@ -1505,6 +1517,9 @@ class DuplexVoiceSession:
         )
         self._speaking = track
         self._client_played_s = 0.0
+        self._client_playback_utterance_id = track.utterance_id
+        self._client_playback_drained = False
+        self._client_playback_overflow_samples = 0
         self._overlap.reset()
         self._overlap_audio = []
         await self._set_state(SessionState.SPEAKING)
@@ -1538,7 +1553,12 @@ class DuplexVoiceSession:
                 self._echo.note_spoken(result.text)
 
                 await self._send_json(
-                    {"type": protocol.EVT_SPEAKING_CHUNK, "text": result.text, "seq": seq}
+                    {
+                        "type": protocol.EVT_SPEAKING_CHUNK,
+                        "text": result.text,
+                        "seq": seq,
+                        "utterance_id": track.utterance_id,
+                    }
                 )
                 await self._send_binary(
                     protocol.encode_audio(
@@ -1621,6 +1641,21 @@ class DuplexVoiceSession:
             if track.token.cancelled or self._speaking is not track:
                 return delivered_text
 
+            if self._client_playback_overflow_samples:
+                delivery_complete = False
+                record_degradation(
+                    "voice_duplex.playback",
+                    RuntimeError(
+                        "client playback overflowed by "
+                        f"{self._client_playback_overflow_samples} samples"
+                    ),
+                    action=(
+                        "recorded speech delivery as incomplete instead of claiming "
+                        "the dropped audio was heard"
+                    ),
+                    severity="warning",
+                )
+
             self._mind.record_spoken(
                 SpokenRecord(
                     intended=intended_text,
@@ -1662,6 +1697,11 @@ class DuplexVoiceSession:
             return
         deadline = time.monotonic() + total + 3.0
         while not track.token.cancelled and self._speaking is track:
+            if (
+                self._client_playback_utterance_id == track.utterance_id
+                and self._client_playback_drained
+            ):
+                return
             if self._client_played_s >= total - 0.05:
                 return
             if time.monotonic() >= deadline:
@@ -1730,6 +1770,21 @@ class DuplexVoiceSession:
             self._vad.reset()
             await self._send_json({"type": protocol.EVT_STATE, "state": self._state.value, "muted": False})
         elif command == protocol.CMD_BARGE_IN:
+            reported_utterance = self._bounded_nonnegative_int(
+                message.get("utterance_id"),
+                maximum=0xFFFFFFFF,
+            )
+            if (
+                self._speaking is not None
+                and reported_utterance
+                and reported_utterance != self._speaking.utterance_id
+            ):
+                logger.debug(
+                    "Ignored stale barge-in for utterance %s (current %s)",
+                    reported_utterance,
+                    self._speaking.utterance_id,
+                )
+                return
             played_ms = self._bounded_nonnegative_float(
                 message.get("played_ms"),
                 maximum=3_600_000.0,
@@ -1740,10 +1795,44 @@ class DuplexVoiceSession:
                 return_to_listening=True,
             )
         elif command == protocol.CMD_PLAYBACK:
-            self._client_played_s = self._bounded_nonnegative_float(
-                message.get("played_ms"),
-                maximum=3_600_000.0,
-            ) / 1000.0
+            reported_utterance = self._bounded_nonnegative_int(
+                message.get("utterance_id"),
+                maximum=0xFFFFFFFF,
+            )
+            track = self._speaking
+            if track is None:
+                return
+            if reported_utterance and reported_utterance != track.utterance_id:
+                logger.debug(
+                    "Ignored stale playback receipt for utterance %s (current %s)",
+                    reported_utterance,
+                    track.utterance_id,
+                )
+                return
+            self._client_playback_utterance_id = track.utterance_id
+            self._client_played_s = max(
+                self._client_played_s,
+                self._bounded_nonnegative_float(
+                    message.get("played_ms"),
+                    maximum=3_600_000.0,
+                )
+                / 1000.0,
+            )
+            self._client_playback_drained = bool(message.get("drained"))
+            overflow_samples = self._bounded_nonnegative_int(
+                message.get("overflow_samples"),
+                maximum=100_000_000,
+            )
+            self._client_playback_overflow_samples += overflow_samples
+            if overflow_samples:
+                # Once a ring-buffer segment is dropped, later audio is no
+                # longer a contiguous prefix of the intended utterance. Stop
+                # at the last measured frame; continuing would make both the
+                # audible sentence and the spoken-memory ledger unknowable.
+                await self._interrupt(
+                    reason="client_playback_overflow",
+                    played_s=self._client_played_s,
+                )
         elif command == protocol.CMD_SET_FLOOR:
             # Focused voice mode and push-to-talk are the user saying "this is
             # all for you". The addressivity gate is for a microphone that
@@ -1879,6 +1968,14 @@ class DuplexVoiceSession:
         if not np.isfinite(parsed):
             return 0.0
         return max(0.0, min(parsed, maximum))
+
+    @staticmethod
+    def _bounded_nonnegative_int(value: Any, *, maximum: int) -> int:
+        try:
+            parsed = int(value or 0)
+        except (TypeError, ValueError, OverflowError):
+            return 0
+        return max(0, min(parsed, int(maximum)))
 
     def _task_done(self, task: asyncio.Task[Any]) -> None:
         self._side_tasks.discard(task)

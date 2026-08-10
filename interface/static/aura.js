@@ -7910,6 +7910,24 @@ window.auraFinishVoiceReply = function () {
     if (activeStreamDiv) finishStreamMsg();
 };
 
+/**
+ * Reconcile the visible spoken reply with what reached the speakers.
+ *
+ * Voice chunks are mirrored into chat when synthesis starts, not when their
+ * samples finish playing. On a barge-in the tail may therefore be visible
+ * even though it was flushed before the listener heard it. The server sends
+ * the rendered prefix measured from client playback; make that prefix the
+ * visible record too, so chat, memory, and the room agree.
+ */
+window.auraInterruptVoiceReply = function (spoken) {
+    if (!activeStreamDiv) return;
+    activeStreamContentRaw = '';
+    appendStreamChunk(String(spoken || ''));
+    activeStreamDiv.classList.add('voice-interrupted');
+    activeStreamDiv.setAttribute('aria-label', 'Aura was interrupted');
+    finishStreamMsg();
+};
+
 const micBtn = $('mic-btn');
 if (micBtn) micBtn.addEventListener('click', (e) => {
     e.preventDefault();

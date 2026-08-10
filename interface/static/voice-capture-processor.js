@@ -12,15 +12,31 @@
  * Runs on the audio thread: preallocated buffer, no allocation in `process`
  * except the transferable that leaves.
  */
-const CHUNK_SAMPLES = 320; // 20 ms at 16 kHz
-
 class VoiceCaptureProcessor extends AudioWorkletProcessor {
-    constructor() {
+    constructor(options) {
         super();
-        this._buffer = new Int16Array(CHUNK_SAMPLES);
+        const requested = options && options.processorOptions
+            ? Number(options.processorOptions.targetSampleRate) : 16000;
+        this._targetRate = Number.isFinite(requested) && requested > 0 ? requested : 16000;
+        this._chunkSamples = Math.max(1, Math.round(this._targetRate * 0.02));
+        this._buffer = new Int16Array(this._chunkSamples);
         this._filled = 0;
         this._level = 0;
         this._levelCountdown = 0;
+        this._resamplePhase = 0;
+        this._resampleSum = 0;
+        this._resampleCount = 0;
+    }
+
+    _emit(sample) {
+        let s = sample;
+        if (s > 1) s = 1; else if (s < -1) s = -1;
+        this._buffer[this._filled++] = s < 0 ? s * 0x8000 : s * 0x7fff;
+        if (this._filled === this._chunkSamples) {
+            const out = new Int16Array(this._buffer);
+            this.port.postMessage({ type: 'pcm', pcm: out.buffer }, [out.buffer]);
+            this._filled = 0;
+        }
     }
 
     process(inputs) {
@@ -30,18 +46,31 @@ class VoiceCaptureProcessor extends AudioWorkletProcessor {
 
         let peak = 0;
         for (let i = 0; i < samples.length; i++) {
-            let s = samples[i];
-            if (s > 1) s = 1; else if (s < -1) s = -1;
+            const s = samples[i];
             const abs = s < 0 ? -s : s;
             if (abs > peak) peak = abs;
 
-            this._buffer[this._filled++] = s < 0 ? s * 0x8000 : s * 0x7fff;
-
-            if (this._filled === CHUNK_SAMPLES) {
-                // Copy out so the transfer cannot race the next fill.
-                const out = new Int16Array(this._buffer);
-                this.port.postMessage({ type: 'pcm', pcm: out.buffer }, [out.buffer]);
-                this._filled = 0;
+            if (sampleRate >= this._targetRate) {
+                // Boxcar decimation is intentionally simple and stable. It
+                // also provides the low-pass averaging a raw 48 -> 16 kHz
+                // sample drop would omit.
+                this._resampleSum += s;
+                this._resampleCount++;
+                this._resamplePhase += this._targetRate;
+                if (this._resamplePhase >= sampleRate) {
+                    this._emit(this._resampleSum / this._resampleCount);
+                    this._resamplePhase -= sampleRate;
+                    this._resampleSum = 0;
+                    this._resampleCount = 0;
+                }
+            } else {
+                // Rare low-rate devices: zero-order hold preserves timing
+                // and intelligibility until the server's ASR sees 16 kHz.
+                this._resamplePhase += this._targetRate;
+                while (this._resamplePhase >= sampleRate) {
+                    this._emit(s);
+                    this._resamplePhase -= sampleRate;
+                }
             }
         }
 

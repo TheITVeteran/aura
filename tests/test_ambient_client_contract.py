@@ -92,12 +92,61 @@ def test_the_focused_surface_tells_the_server_the_floor_is_open() -> None:
     spoken to, which is the one place that judgement is not wanted."""
     source = _voice()
     assert "sendCommand('set_floor'" in source
-    # Re-asserted on connect: a reconnect gets a fresh session that defaults
-    # to ambient, and a user sitting in focused mode would find the gate
-    # silently back in front of them.
-    connect = source[source.index("ws.onopen = () =>") :]
-    connect = connect[: connect.index("};")]
-    assert "set_floor" in connect
+    # Re-asserted after the server's readiness handshake: a reconnect gets a
+    # fresh session that defaults to ambient, but commands sent while remote
+    # authentication/warmup is still in flight are not readiness evidence.
+    ready = source[source.index("case 'voice.ready':") :]
+    ready = ready[: ready.index("break;")]
+    assert "set_floor" in ready
+
+
+def test_audio_does_not_flow_before_voice_models_are_ready() -> None:
+    """Warmup may take seconds; stale pre-ready room audio must not queue."""
+    source = _voice()
+    capture = source[source.index("node.port.onmessage = (e) =>") :]
+    capture = capture[: capture.index("source.connect(node)")]
+    assert "state.ready" in capture
+    opened = source[source.index("ws.onopen = () =>") :]
+    opened = opened[: opened.index("ws.onmessage")]
+    assert "setStatus('preparing')" in opened
+    assert "setStatus('listening')" not in opened
+
+
+def test_wire_audio_is_rate_converted_and_utterance_bound() -> None:
+    """AudioContext sample-rate requests are hints on several browsers."""
+    source = _voice()
+    assert "targetSampleRate: CAPTURE_RATE" in source
+    assert "sourceSampleRate: PLAYBACK_RATE" in source
+    assert "view.getUint32(4, true)" in source
+    assert "beginSpeechUtterance(utteranceId, seq)" in source
+    assert "utterance_id: state.speechUtteranceId" in source
+
+
+def test_live_voice_turns_are_not_exported_into_chat_twice() -> None:
+    """The chat mirror is live; exit-time export is repair-only."""
+    source = _voice()
+    export = source[source.index("function exportTranscript()") :]
+    export = export[: export.index("function toggleMute()")]
+    assert "!line.mirroredToChat" in export
+    assert "if (missing.length) sink(missing)" in export
+    chunk = source[source.index("case 'voice.chunk':") :]
+    chunk = chunk[: chunk.index("break;")]
+    assert "markLatestAuraTranscriptMirrored()" in chunk
+    aura = _aura()
+    assert "window.auraInterruptVoiceReply" in aura
+    assert "activeStreamContentRaw = '';" in aura
+
+
+def test_playback_worklet_reports_only_live_audio_and_fades_before_drop() -> None:
+    source = (ROOT / "interface/static/voice-playback-processor.js").read_text(
+        encoding="utf-8"
+    )
+    assert "if (this._draining && this._reportCountdown <= 0)" in source
+    flush = source[source.index("case 'flush':") : source.index("case 'duck':")]
+    assert flush.index("this._fadeRemaining = this._fadeLength") < flush.index(
+        "if (this._available === 0) this._dropAll()"
+    )
+    assert "sourceSampleRate" in source
 
 
 def test_the_overheard_line_is_transient_and_never_enters_the_thread() -> None:

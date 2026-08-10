@@ -1462,6 +1462,90 @@ def test_stale_overlap_verifier_cannot_restore_playback():
     asyncio.run(exercise())
 
 
+def test_playback_receipts_are_monotonic_and_bound_to_the_utterance():
+    async def exercise() -> None:
+        events: list[dict[str, object]] = []
+
+        async def send_json(payload):
+            events.append(dict(payload))
+
+        async def send_binary(_payload):
+            return None
+
+        session = DuplexVoiceSession(
+            session_id="playback-receipts",
+            send_json=send_json,
+            send_binary=send_binary,
+        )
+        session._speaking = _SpeakingTrack(utterance_id=7, intended="answer")
+
+        await session.handle_command(
+            {"command": "playback", "utterance_id": 6, "played_ms": 900}
+        )
+        assert session._client_played_s == 0.0
+
+        await session.handle_command(
+            {"command": "playback", "utterance_id": 7, "played_ms": 500}
+        )
+        await session.handle_command(
+            {"command": "playback", "utterance_id": 7, "played_ms": 200}
+        )
+        assert session._client_played_s == 0.5
+
+        # A buffer overflow destroys prefix continuity, so the session stops
+        # at the last measured sample instead of claiming later audio played.
+        await session.handle_command(
+            {
+                "command": "playback",
+                "utterance_id": 7,
+                "played_ms": 500,
+                "drained": True,
+                "overflow_samples": 320,
+            }
+        )
+        assert session._client_playback_utterance_id == 7
+        assert session._client_playback_drained is True
+        assert session._client_playback_overflow_samples == 320
+        assert session._speaking is None
+        assert any(event.get("type") == "voice.interrupted" for event in events)
+        await session.close()
+
+    asyncio.run(exercise())
+
+
+def test_stale_barge_in_cannot_interrupt_a_newer_utterance():
+    async def exercise() -> None:
+        events: list[dict[str, object]] = []
+
+        async def send_json(payload):
+            events.append(dict(payload))
+
+        async def send_binary(_payload):
+            return None
+
+        session = DuplexVoiceSession(
+            session_id="stale-client-barge",
+            send_json=send_json,
+            send_binary=send_binary,
+        )
+        track = _SpeakingTrack(
+            utterance_id=9,
+            intended="new answer",
+            started_at=1.0,
+        )
+        session._speaking = track
+        session._state = type(session._state).SPEAKING
+
+        await session.handle_command(
+            {"command": "barge_in", "utterance_id": 8, "played_ms": 100}
+        )
+        assert session._speaking is track
+        assert not any(event.get("type") == "voice.interrupted" for event in events)
+        await session.close()
+
+    asyncio.run(exercise())
+
+
 # ── paralinguistics ──────────────────────────────────────────────────────
 
 
