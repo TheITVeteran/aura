@@ -466,6 +466,85 @@ def _probe_interoception() -> Availability:
     )
 
 
+#: A line that presents a named internal quantity: "Energy: 0.23 / 1".
+_LABELLED_METRIC_RE = re.compile(
+    r"^\s*[-*•]?\s*([A-Za-z][A-Za-z /_-]{2,40}?)\s*[:=]\s*"
+    r"[-+]?\d+(?:\.\d+)?\s*(?:/\s*\d+)?\s*%?\s*$",
+    re.MULTILINE,
+)
+
+
+def measured_self_metrics() -> dict[str, float]:
+    """Internal quantities this runtime can actually read, right now."""
+    reading = _probe_interoception()
+    if not reading.known:
+        return {}
+    return {
+        str(key).lower(): value
+        for key, value in reading.evidence.items()
+        if isinstance(value, (int, float))
+    }
+
+
+def fabricated_self_metrics(reply: str) -> list[str]:
+    """Named internal quantities in ``reply`` that no instrument produces.
+
+    LIVE DEFECT, 2026-08-10. Asked "give me your actual numbers right now —
+    energy, focus, whatever you track. real values, not adjectives.", she
+    produced a thirty-line instrument panel::
+
+        Energy: 0.23 / 1
+        Substrate pH: 7.56 / 1
+        Humidity deviation: -0.38 / 1
+        Ion concentration error: +0.29 / 1
+        Spatial distortion: +0.69 / 1
+        Temporal disjunction: -0.42 / 1
+
+    There is no pH sensor, no hygrometer and no spatial distortion channel.
+    The precision is what makes it dangerous: two decimal places read as
+    measurement, and the person had explicitly asked for real values rather
+    than adjectives — the one request that makes invention least excusable.
+
+    The existing guard was a list of five phrases caught live, so it could
+    only ever recognise the fabrications someone had already seen.
+
+    The bar here is deliberately "none of them": a report mixing real
+    readings with invented ones is a different, milder problem than a panel
+    invented whole, and this must not fire on an honest answer that happens
+    to phrase a real metric unusually.
+    """
+    labels = [
+        match.group(1).strip().lower()
+        for match in _LABELLED_METRIC_RE.finditer(str(reply or ""))
+    ]
+    if len(labels) < 2:
+        return []
+    measured = measured_self_metrics()
+    if not measured:
+        return []
+
+    # Whole tokens, never substrings: "ion concentration error" shares the
+    # letters of "operational_health" and shares nothing with it.
+    measured_tokens = {
+        token
+        for name in measured
+        for token in re.split(r"[^a-z]+", name)
+        if len(token) > 2
+    }
+
+    def _is_measured(label: str) -> bool:
+        tokens = {token for token in re.split(r"[^a-z]+", label) if len(token) > 2}
+        return bool(tokens & measured_tokens)
+
+    if any(_is_measured(label) for label in labels):
+        return []
+    # More dials than the runtime owns instruments for. Not a tuned threshold:
+    # a panel claiming more readings than exist cannot be a reading.
+    if len(labels) <= len(measured):
+        return []
+    return labels
+
+
 def _default_ledger() -> CapabilityLedger:
     ledger = CapabilityLedger()
     ledger.register(
@@ -555,6 +634,8 @@ def correction_context(claims: Iterable[ContradictedClaim]) -> str:
 
 __all__ = [
     "Availability",
+    "fabricated_self_metrics",
+    "measured_self_metrics",
     "CapabilityLedger",
     "ContradictedClaim",
     "LiveCapability",

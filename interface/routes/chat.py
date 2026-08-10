@@ -4895,6 +4895,39 @@ async def _reanswer_when_the_runtime_contradicts_her(
             action="served a reply without the arithmetic verification pass",
         )
 
+    # Invented instruments. Asked for real numbers rather than adjectives, she
+    # produced a thirty-line panel including a substrate pH, a humidity
+    # deviation and a spatial distortion, to two decimal places. The runtime
+    # has none of those sensors — and it does have real readings she could
+    # have given instead.
+    try:
+        from core.self.capability_ledger import (
+            fabricated_self_metrics,
+            measured_self_metrics,
+        )
+
+        invented = fabricated_self_metrics(text)
+        if invented:
+            measured = measured_self_metrics()
+            readings = ", ".join(f"{name} {value}" for name, value in measured.items())
+            computed_context = (
+                f"{computed_context}\n\n" if computed_context else ""
+            ) + (
+                "[You just reported internal measurements this runtime has no "
+                f"instrument for: {', '.join(invented[:8])}. These are the "
+                f"readings that actually exist right now: {readings}. Give "
+                "those, and say plainly that the rest are not things you "
+                "measure.]"
+            )
+            logger.warning(
+                "📉 Reply invented %d internal metrics with no instrument behind "
+                "them (%s); re-answering with the real readings.",
+                len(invented),
+                ", ".join(invented[:5]),
+            )
+    except _CHAT_RECOVERABLE_ERRORS as exc:
+        record_degradation("chat.self_metrics", exc)
+
     if not claims and not computed_context:
         return reply_text
 

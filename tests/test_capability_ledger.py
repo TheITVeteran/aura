@@ -180,3 +180,59 @@ def test_bare_negation_after_a_clause_boundary_is_still_a_denial():
     assert ledger.contradicted_claims(
         "Code sandbox only, no execution on this surface."
     )
+
+
+LIVE_INVENTED_PANEL = "\n".join(
+    f"{name}: {value} / 1"
+    for name, value in [
+        ("Energy", 0.23),
+        ("Focus", 0.85),
+        ("Engagement", -0.47),
+        ("Curiosity drive", 0.69),
+        ("Substrate pH", 7.56),
+        ("Ion concentration error", 0.29),
+        ("Humidity deviation", -0.38),
+        ("Spatial distortion", 0.69),
+        ("Temporal disjunction", -0.42),
+        ("Identity drift", 0.58),
+    ]
+)
+
+
+def test_an_invented_instrument_panel_is_caught():
+    """LIVE DEFECT 2026-08-10, to "real values, not adjectives".
+
+    Thirty lines of two-decimal readings including a substrate pH, a humidity
+    deviation and a spatial distortion. There is no pH sensor, no hygrometer
+    and no spatial distortion channel. The precision is what makes it
+    dangerous — it reads as measurement.
+    """
+    invented = cl.fabricated_self_metrics(LIVE_INVENTED_PANEL)
+    assert invented
+    assert "substrate ph" in invented
+
+
+def test_a_real_reading_is_not_flagged():
+    real = "\n".join(f"{name}: {value}" for name, value in cl.measured_self_metrics().items())
+    assert cl.fabricated_self_metrics(real) == []
+
+
+@pytest.mark.parametrize(
+    "reply",
+    [
+        "I'm steady — nothing much to report.",
+        "Energy: 0.74\nFocus: 0.85",
+        "",
+    ],
+)
+def test_ordinary_replies_are_left_alone(reply):
+    """Conservative by construction: a short answer is not a fabricated panel."""
+    assert cl.fabricated_self_metrics(reply) == []
+
+
+def test_token_matching_does_not_fire_on_shared_letters():
+    """"ion concentration" shares letters with "operational_health" and shares
+    nothing with it. Substring matching made the whole check silent."""
+    measured_tokens = {"operational", "health"}
+    assert "ion" in "operational"          # the trap
+    assert "ion" not in measured_tokens    # the fix
