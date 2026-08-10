@@ -19546,6 +19546,21 @@ async def _execute_desktop_objective_from_chat(
                 response = (
                     f"{summary or 'Done.'} Here is what I wrote:\n\n{produced}"
                 )
+            elif _is_step_bookkeeping_only(summary):
+                # Live 2026-08-10: "can you read text that is only pixels?
+                # answer yes or no, then tell me how you know" was answered
+                # with "Desktop task completed 1/1 governed computer-use steps
+                # through heuristic_compat planning. Completed 1/1 governed
+                # desktop steps." — the step count TWICE, in the branch whose
+                # own comment says to report what was produced instead of it.
+                #
+                # The lane ran something and came back with no observation and
+                # no deliverable. It therefore has no answer to give, and the
+                # bookkeeping is not one. Same reasoning already written for
+                # specific perception questions above: returning no reply here
+                # loses nothing, because the turn continues into cognition,
+                # which has the receipt and the question.
+                response = ""
             else:
                 response = (
                     f"{summary or 'I completed the requested desktop task through governed desktop control.'} "
@@ -19564,6 +19579,31 @@ async def _execute_desktop_objective_from_chat(
         "response": response,
         "result": result,
     }
+
+
+#: A desktop summary that only reports how the machinery ran. These are the
+#: exact shapes the executor emits — "Desktop task completed 1/1 governed
+#: computer-use steps through heuristic_compat planning" — matched narrowly on
+#: purpose. A summary that says anything about the WORLD (a window, a file, a
+#: value) must never be suppressed just because it also mentions a step count.
+_STEP_BOOKKEEPING_RE = re.compile(
+    r"^\s*(?:desktop task\s+)?(?:completed|finished|executed)\s+\d+\s*/\s*\d+\s+"
+    r"governed[\w\s-]*steps?\b[^.]*\.?\s*$",
+    re.IGNORECASE,
+)
+
+
+def _is_step_bookkeeping_only(summary: str) -> bool:
+    """True when a desktop summary reports step counts and nothing else.
+
+    The desktop lane's own summary string is frequently a step count. Pasting
+    it in front of the step sentence produced replies that stated the count
+    twice and answered nothing — see the call site.
+    """
+    text = str(summary or "").strip()
+    if not text:
+        return True
+    return bool(_STEP_BOOKKEEPING_RE.match(text))
 
 
 def _desktop_task_research_response(

@@ -38,6 +38,13 @@ class ScreenSnapshot:
     focused_value: str = ""
     accessibility_text: str = ""    # frontmost app accessibility tree text
     screen_text: str = ""           # OCR text
+    #: Why screen_text is what it is. An empty screen_text meant two entirely
+    #: different things and said neither: "there are no words on this screen"
+    #: and "the pixels were never read". Through the whole life of the
+    #: governance defect that blocked take_screenshot, OCR never ran once, and
+    #: every consumer of screen_text saw "" and could only conclude the screen
+    #: was blank. Absence of a reading is not a reading of absence.
+    screen_text_status: str = "not_attempted"
     #: Every window on the screen, front to back, with geometry and how much
     #: of each survives the windows above it. The fields above describe the
     #: ONE window that happens to be in front; a person sees the whole desk.
@@ -309,6 +316,17 @@ class ScreenPerception:
         # OCR (if screenshot was taken or we need text)
         if snap.screenshot_path:
             snap.screen_text = await self._ocr_screenshot(snap.screenshot_path)
+            snap.screen_text_status = "read" if snap.screen_text else "read_empty"
+        elif save_screenshot:
+            # A capture was asked for and did not arrive. That is the case
+            # that spent this defect's lifetime masquerading as a blank screen.
+            snap.screen_text_status = (
+                f"unreadable:{snap.unavailable_reason}"
+                if snap.unavailable_reason
+                else "unreadable:capture_failed"
+            )
+        else:
+            snap.screen_text_status = "not_attempted"
         if snap.screen_text:
             snap.text_hash = hashlib.sha256(snap.screen_text.encode()).hexdigest()[:16]
         elif snap.accessibility_text:
