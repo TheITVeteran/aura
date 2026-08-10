@@ -41511,3 +41511,48 @@ shared output budget and zero accepted latent steps remain open; a bounded 1.5B
 calibration must precede another immutable resident-32B run. No general
 reasoning-gain, frontier, fusion, activation, or `WOW Signal` claim is
 authorized. The completion envelope is `813/920` (approximately `88.4%`).
+
+## Checkpoint 2026-08-09-117: The Proof Ladder Blocks Expensive Guessing
+
+The prior workflow still allowed a small engine change to trigger another
+four-arm resident-32B campaign. Even with honest grading, that is an expensive
+way to discover producer defects. The mathematical floor only guaranteed that
+unproven work could not replace vanilla; it did not guarantee that the system
+would generate a correct new candidate. Those are now separate gates.
+
+The reconciliation harness has three committed stages. `component` runs the
+ordinary incumbent, complete system, and a matched adaptation ablation on
+explicitly selected domains. The ablation preserves recurrence, acquisition,
+amplification, verification, and the incumbent gate while disabling latent
+gradient updates and temporary fast weights; internal movement can no longer
+be mistaken for a causal contribution. `pilot` adds best-of-three. Only
+`certificate` adds the resource-dominating fifth arm. Stage, domain set,
+completion-budget policy, source, model, and
+per-task budgets are part of the evidence identity, so a cheap diagnostic can
+never be relabeled as a certificate.
+
+Generation room is semantic and paired. Coding receives at least 768 tokens,
+long-horizon planning at least 640, and the remaining structured domains at
+least 512; an explicitly larger budget is preserved. Every arm receives the
+same allowance for the same task. Contract-aware generation still stops when
+the answer is complete, so the floor is capacity, not mandatory verbosity.
+
+Escalation is now mechanical. The next stage is blocked by any regression,
+clipped completion, absent exact public promotion, zero latent and fast-weight
+yield, or no right-answer lift. The treatment must beat both vanilla and the
+matched adaptation ablation with no losses, and those causal gains must span
+at least three domains. Both contrasts require a one-sided exact paired sign
+test at `p <= 0.05`. With the no-regression floor, the minimum clean contrast
+is five paired task gains and zero losses (`1/32 = 0.03125`). A pilot must also
+beat best-of-three before the certificate may consume resident-32B hours.
+
+Focused campaign, resource, incumbent, stage, and proof-ladder contracts pass
+`87/87`. A no-model component dry run generated six tasks across three selected
+domains and exactly three arms; the certificate dry run retained seven domains
+and all five arms. Ruff, Python compilation, and diff hygiene pass. Evidence
+is `artifacts/closeout/latent_cortex/cp117_proof_ladder_blocks_expensive_guessing.json`.
+
+No capability claim follows from a launch gate. Zero accepted latent steps and
+zero fast-weight applications remain the next implementation defect, followed
+by the cheap 1.5B component stage. The completion envelope is `814/920`
+(approximately `88.5%`).

@@ -30,6 +30,7 @@ def _write_evidence_manifest(
     *,
     required_arms: list[str],
     requested_arms: list[str] | None = None,
+    campaign_stage: str = "certificate",
 ) -> None:
     from core.brain.llm.latent_cortex import frontier_tasks as ft
 
@@ -37,17 +38,29 @@ def _write_evidence_manifest(
     task_manifest = ft.build_task_manifest(tasks)
     commitment = ft.build_task_commitment(task_manifest)
     fingerprints = {name: "a" * 64 for name in required_arms}
+    arm_tokens = {name: 512 for name in required_arms}
+    task_tokens = {
+        name: {
+            task.task_id: sweep._task_decode_max_tokens(task, arm_tokens[name])
+            for task in tasks
+        }
+        for name in required_arms
+    }
     (out_dir / "decode_fingerprint.json").write_text(
         json.dumps(
             {
                 "schema": sweep.EVIDENCE_MANIFEST_SCHEMA,
                 "decode_fingerprint": fingerprints,
-                "arm_max_tokens": {name: 512 for name in required_arms},
+                "arm_max_tokens": arm_tokens,
+                "completion_budget_policy": sweep.COMPLETION_BUDGET_POLICY,
+                "task_max_tokens": task_tokens,
                 "requested_arms": requested_arms or list(required_arms),
                 "required_arms": required_arms,
                 "expected_task_ids": [task.task_id for task in tasks],
                 "task_commitment_sha256": commitment.commitment_sha256,
                 "task_registry_version": task_manifest.registry_version,
+                "campaign_stage": campaign_stage,
+                "domains": list(dict.fromkeys(task.domain for task in tasks)),
                 "implementation_files": implementation,
                 "implementation_sha256": sweep._implementation_sha256(implementation),
             }
@@ -123,6 +136,44 @@ def test_the_battery_leads_with_the_unified_system_not_the_ablation():
     assert "oracle" in by_name["full_stack_oracle"].name
 
 
+def test_completion_budget_is_task_aware_and_identical_across_arms():
+    from core.brain.llm.latent_cortex import frontier_tasks as ft
+
+    tasks = ft.generate_task_battery([20260809], difficulty=1)
+    budgets = {
+        task.domain: sweep._task_decode_max_tokens(task, 320) for task in tasks
+    }
+
+    assert budgets["coding"] == 768
+    assert budgets["long_horizon_planning"] == 640
+    assert all(
+        budget == 512
+        for domain, budget in budgets.items()
+        if domain not in {"coding", "long_horizon_planning"}
+    )
+    for task in tasks:
+        treatment = sweep._task_decode_max_tokens(task, 320)
+        control = sweep._task_decode_max_tokens(task, 320)
+        assert treatment == control
+        assert sweep._task_decode_max_tokens(task, 1024) == 1024
+
+
+def test_evidence_manifest_rejects_task_token_policy_drift(tmp_path: Path):
+    from core.brain.llm.latent_cortex import frontier_tasks as ft
+
+    tasks = ft.generate_task_battery([20260809], difficulty=1)
+    _write_evidence_manifest(tmp_path, tasks, required_arms=["vanilla"])
+    path = tmp_path / "decode_fingerprint.json"
+    manifest = json.loads(path.read_text(encoding="utf-8"))
+    manifest["task_max_tokens"]["vanilla"][tasks[0].task_id] += 1
+    path.write_text(json.dumps(manifest), encoding="utf-8")
+
+    assert "task_token_budget_policy_mismatch" in sweep._manifest_integrity_issues(
+        manifest,
+        tasks,
+    )
+
+
 def test_implementation_identity_binds_extracted_complete_system_modules():
     manifest = sweep._implementation_manifest()
 
@@ -137,8 +188,104 @@ def test_complete_system_request_expands_to_controls_without_narrower_treatments
         "vanilla",
         "vanilla_equal_compute",
         "complete_system_closed_book",
+        "complete_system_adaptation_ablation",
         "vanilla_resource_dominating",
     ]
+
+
+def test_staged_campaigns_do_not_pay_for_the_full_certificate_early():
+    component = {
+        arm.name
+        for arm in sweep._expand_requested_arms(
+            {"complete_system_closed_book"}, campaign_stage="component"
+        )
+    }
+    pilot = {
+        arm.name
+        for arm in sweep._expand_requested_arms(
+            {"complete_system_closed_book"}, campaign_stage="pilot"
+        )
+    }
+    certificate = {
+        arm.name
+        for arm in sweep._expand_requested_arms(
+            {"complete_system_closed_book"}, campaign_stage="certificate"
+        )
+    }
+
+    assert component == {
+        "vanilla",
+        "complete_system_closed_book",
+        "complete_system_adaptation_ablation",
+    }
+    assert pilot == {
+        "vanilla",
+        "vanilla_equal_compute",
+        "complete_system_closed_book",
+        "complete_system_adaptation_ablation",
+    }
+    assert certificate == {
+        "vanilla",
+        "vanilla_equal_compute",
+        "complete_system_closed_book",
+        "complete_system_adaptation_ablation",
+        "vanilla_resource_dominating",
+    }
+
+
+def test_stage_admission_blocks_expensive_runs_until_mechanisms_move():
+    common = {
+        "campaign_stage": "component",
+        "complete": True,
+        "floor_holds": True,
+        "treatment_lifts": 5,
+        "treatment_regressions": 0,
+        "adaptation_lifts": 5,
+        "adaptation_regressions": 0,
+        "gain_domains": 3,
+        "exact_promotions": 5,
+        "completion_limited_cells": 0,
+        "treatment_correct": 2,
+        "preliminary_control_correct": None,
+    }
+    inert = sweep._next_stage_admission(
+        **common,
+        latent_accepted_steps=0,
+        fast_weight_applications=0,
+    )
+    moving = sweep._next_stage_admission(
+        **common,
+        latent_accepted_steps=1,
+        fast_weight_applications=0,
+    )
+
+    assert inert["admitted"] is False
+    assert inert["reasons"] == ["neural_tissue_zero_yield"]
+    assert moving["admitted"] is True
+    assert moving["next_stage"] == "pilot"
+    assert moving["paired_sign_test_p"] == 0.03125
+
+
+def test_pilot_must_beat_preliminary_control_before_certificate():
+    verdict = sweep._next_stage_admission(
+        campaign_stage="pilot",
+        complete=True,
+        floor_holds=True,
+        treatment_lifts=5,
+        treatment_regressions=0,
+        adaptation_lifts=5,
+        adaptation_regressions=0,
+        gain_domains=3,
+        exact_promotions=5,
+        latent_accepted_steps=1,
+        fast_weight_applications=0,
+        completion_limited_cells=0,
+        treatment_correct=2,
+        preliminary_control_correct=2,
+    )
+
+    assert verdict["admitted"] is False
+    assert verdict["reasons"] == ["pilot_did_not_beat_preliminary_control"]
 
 
 def test_complete_system_config_runs_the_same_neural_pillars_as_full_stack():
@@ -154,6 +301,23 @@ def test_complete_system_config_runs_the_same_neural_pillars_as_full_stack():
     assert config.local_repair_enabled is True
     assert config.answer_replacement_enabled is True
     assert config.recurrence.fixed_depth is False
+
+
+def test_adaptation_ablation_preserves_the_outer_system_but_removes_neural_updates():
+    config = sweep._build_config(
+        8,
+        16,
+        "suppressed",
+        512,
+        profile="complete_closed_book_adaptation_ablation",
+    )
+
+    assert config.recurrence.fixed_depth is False
+    assert config.local_repair_enabled is True
+    assert config.answer_replacement_enabled is True
+    assert config.latent_opt.enabled is False
+    assert config.fast_weights.enabled is False
+    assert config.verifier_accept_non_regression is False
 
 
 def test_requesting_a_treatment_always_expands_to_both_controls():
@@ -1816,7 +1980,7 @@ def test_manifest_tampering_invalidates_the_campaign(tmp_path: Path):
     ]
 
 
-def test_claim_manifest_cannot_omit_either_control(tmp_path: Path):
+def test_claim_manifest_cannot_omit_stage_required_control(tmp_path: Path):
     from core.brain.llm.latent_cortex import frontier_tasks as ft
 
     tasks = ft.generate_task_battery([20260807], difficulty=2)
@@ -1827,8 +1991,29 @@ def test_claim_manifest_cannot_omit_either_control(tmp_path: Path):
         requested_arms=["full_stack"],
     )
     verdict = sweep.grade(tmp_path, tasks)
-    assert "treatment_controls_missing" in verdict["evidence_manifest_issues"]
+    assert "campaign_stage_arm_set_mismatch" in verdict["evidence_manifest_issues"]
     assert verdict["decision"] == "inconclusive_evidence_manifest_invalid"
+
+
+def test_component_manifest_does_not_require_expensive_stage_controls(tmp_path: Path):
+    from core.brain.llm.latent_cortex import frontier_tasks as ft
+
+    tasks = ft.generate_task_battery([20260807], difficulty=2)
+    required = [
+        "vanilla",
+        "complete_system_closed_book",
+        "complete_system_adaptation_ablation",
+    ]
+    _write_evidence_manifest(
+        tmp_path,
+        tasks,
+        required_arms=required,
+        requested_arms=["complete_system_closed_book"],
+        campaign_stage="component",
+    )
+
+    manifest = json.loads((tmp_path / "decode_fingerprint.json").read_text())
+    assert sweep._manifest_integrity_issues(manifest, tasks) == []
 
 
 def test_full_stack_receipt_must_measure_every_claimed_mechanism(tmp_path: Path):

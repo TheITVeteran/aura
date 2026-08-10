@@ -1,0 +1,47 @@
+{
+  "schema": "aura.closeout.checkpoint.v1",
+  "checkpoint": "CP117",
+  "title": "The proof ladder blocks expensive guessing",
+  "date": "2026-08-09",
+  "parent_commit": "df7831876",
+  "implementation": {
+    "campaign_stages": [
+      "component",
+      "pilot",
+      "certificate"
+    ],
+    "component_arms": [
+      "vanilla",
+      "complete_system_closed_book",
+      "complete_system_adaptation_ablation"
+    ],
+    "pilot_adds": "vanilla_equal_compute",
+    "certificate_adds": "vanilla_resource_dominating",
+    "domain_subsets_are_committed": true,
+    "semantic_completion_budget_policy": "semantic_completion_floor.v1",
+    "coding_token_floor": 768,
+    "planning_token_floor": 640,
+    "other_structured_domain_token_floor": 512,
+    "explicit_larger_budgets_preserved": true,
+    "treatment_control_task_budgets_identical": true,
+    "next_stage_alpha": 0.05,
+    "minimum_clean_gain_pattern": "5 paired treatment wins, 0 regressions, one-sided exact sign p=0.03125",
+    "requires_exact_public_promotion": true,
+    "requires_nonzero_latent_or_fast_weight_yield": true,
+    "requires_matched_adaptation_ablation_gain": true,
+    "minimum_causal_gain_domains": 3,
+    "completion_limited_cells_block_escalation": true
+  },
+  "verification": {
+    "focused_campaign_and_proof_ladder_contracts": "87 passed",
+    "component_self_test": "6 tasks across 3 selected domains expanded to vanilla, complete system, and matched adaptation ablation",
+    "certificate_self_test": "7 tasks expanded to all five required arms",
+    "static_integrity": "Ruff and Python compilation passed"
+  },
+  "claim_boundary": "This checkpoint proves that expensive campaign escalation is mechanically gated by bounded producer evidence and a predeclared paired margin. It does not itself establish a model reasoning gain, neural gain, frontier performance, fusion authority, activation authority, or WOW Signal.",
+  "next": [
+    "Repair the observed zero accepted latent-optimization steps and zero fast-weight applications.",
+    "Run the selected-domain component stage on the local 1.5B checkpoint.",
+    "Permit a 32B pilot only if the cheaper stage clears the committed admission contract."
+  ]
+}

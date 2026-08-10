@@ -40,8 +40,11 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO_ROOT))
 
 SWEEP_SCHEMA = "aura.rlc_reconciliation_sweep.v1"
-EVIDENCE_MANIFEST_SCHEMA = "aura.rlc.reconciliation_evidence_manifest.v1"
+EVIDENCE_MANIFEST_SCHEMA = "aura.rlc.reconciliation_evidence_manifest.v2"
 CLAIM_TASK_REGISTRY_VERSION = "2026.08.06.1"
+COMPLETION_BUDGET_POLICY = "semantic_completion_floor.v1"
+CAMPAIGN_STAGES: Final[tuple[str, ...]] = ("component", "pilot", "certificate")
+NEXT_STAGE_ALPHA: Final[float] = 0.05
 
 
 # (name, recurrent steps or None for ordinary decode, terminal-instruction
@@ -103,6 +106,18 @@ ARMS: tuple[Arm, ...] = (
         None,
         "complete_closed_book",
     ),
+    # Same acquisition, amplifier, verifier, incumbent and recurrence path as
+    # the treatment, but without latent-gradient updates or temporary fast
+    # weights.  This matched ablation distinguishes a gain caused by adaptive
+    # neural execution from one produced entirely by the outer deterministic
+    # system.  It is diagnostic only and can never become the serving winner.
+    Arm(
+        "complete_system_adaptation_ablation",
+        8,
+        "suppressed",
+        None,
+        "complete_closed_book_adaptation_ablation",
+    ),
     # Claim-grade conservative control. It runs only after the complete
     # treatment has produced a digest-bound resource target, then grants
     # ordinary sampled decoding at least every measured resource dimension
@@ -125,18 +140,151 @@ ARMS: tuple[Arm, ...] = (
     Arm("vanilla_long", None, "applied", 1024, "ordinary"),
 )
 
+
+def _task_decode_max_tokens(task: Any, requested_max_tokens: int) -> int:
+    """Return one public-semantics completion budget shared by every arm."""
+
+    if type(requested_max_tokens) is not int or requested_max_tokens <= 0:
+        raise ValueError("requested max tokens must be a positive integer")
+    domain = str(getattr(task, "domain", "") or "").strip().lower()
+    prompt = str(getattr(getattr(task, "public", None), "prompt", "") or "").lower()
+    floor = 512
+    if domain == "coding" or any(
+        phrase in prompt
+        for phrase in (
+            "return the corrected function",
+            "complete program",
+            "implementation",
+        )
+    ):
+        floor = 768
+    elif domain == "long_horizon_planning" or any(
+        phrase in prompt
+        for phrase in ("complete plan", "schedule", "prerequisite", "deadline")
+    ):
+        floor = 640
+    return max(requested_max_tokens, floor)
+
+
+def _next_stage_admission(
+    *,
+    campaign_stage: str,
+    complete: bool,
+    floor_holds: bool,
+    treatment_lifts: int,
+    treatment_regressions: int,
+    adaptation_lifts: int,
+    adaptation_regressions: int,
+    gain_domains: int,
+    exact_promotions: int,
+    latent_accepted_steps: int,
+    fast_weight_applications: int,
+    completion_limited_cells: int,
+    treatment_correct: int,
+    preliminary_control_correct: int | None,
+) -> dict[str, Any]:
+    """Decide whether evidence merits paying for the next model-heavy stage."""
+
+    discordant = treatment_lifts + treatment_regressions
+    paired_sign_test_p = (
+        sum(
+            math.comb(discordant, index)
+            for index in range(treatment_lifts, discordant + 1)
+        )
+        / (2**discordant)
+        if discordant
+        else 1.0
+    )
+    adaptation_discordant = adaptation_lifts + adaptation_regressions
+    adaptation_sign_test_p = (
+        sum(
+            math.comb(adaptation_discordant, index)
+            for index in range(adaptation_lifts, adaptation_discordant + 1)
+        )
+        / (2**adaptation_discordant)
+        if adaptation_discordant
+        else 1.0
+    )
+    reasons: list[str] = []
+    if campaign_stage not in CAMPAIGN_STAGES:
+        reasons.append("campaign_stage_invalid")
+    if not complete:
+        reasons.append("stage_incomplete_or_invalid")
+    if not floor_holds:
+        reasons.append("vanilla_floor_violated")
+    if completion_limited_cells:
+        reasons.append("completion_budget_still_clipping")
+    if treatment_lifts <= 0:
+        reasons.append("no_right_answer_lift_observed")
+    if treatment_regressions > 0:
+        reasons.append("right_answer_regression_observed")
+    if paired_sign_test_p > NEXT_STAGE_ALPHA:
+        reasons.append("paired_gain_margin_underpowered")
+    if adaptation_lifts <= 0:
+        reasons.append("no_adaptive_neural_lift_observed")
+    if adaptation_regressions > 0:
+        reasons.append("adaptive_neural_regression_observed")
+    if adaptation_sign_test_p > NEXT_STAGE_ALPHA:
+        reasons.append("adaptive_neural_margin_underpowered")
+    if gain_domains < 3:
+        reasons.append("gain_domain_coverage_underpowered")
+    if exact_promotions <= 0:
+        reasons.append("no_exact_public_promotion_observed")
+    if latent_accepted_steps <= 0 and fast_weight_applications <= 0:
+        reasons.append("neural_tissue_zero_yield")
+    if (
+        campaign_stage == "pilot"
+        and preliminary_control_correct is not None
+        and treatment_correct <= preliminary_control_correct
+    ):
+        reasons.append("pilot_did_not_beat_preliminary_control")
+    next_stage = {
+        "component": "pilot",
+        "pilot": "certificate",
+        "certificate": "none",
+    }.get(campaign_stage, "none")
+    return {
+        "schema": "aura.rlc.next_stage_admission.v1",
+        "campaign_stage": campaign_stage,
+        "next_stage": next_stage,
+        "admitted": not reasons and next_stage != "none",
+        "reasons": reasons,
+        "treatment_lifts": int(treatment_lifts),
+        "treatment_regressions": int(treatment_regressions),
+        "paired_sign_test_p": round(paired_sign_test_p, 12),
+        "adaptation_lifts": int(adaptation_lifts),
+        "adaptation_regressions": int(adaptation_regressions),
+        "adaptation_sign_test_p": round(adaptation_sign_test_p, 12),
+        "gain_domains": int(gain_domains),
+        "admission_alpha": NEXT_STAGE_ALPHA,
+        "exact_promotions": int(exact_promotions),
+        "latent_accepted_steps": int(latent_accepted_steps),
+        "fast_weight_applications": int(fast_weight_applications),
+        "completion_limited_cells": int(completion_limited_cells),
+    }
+
 CONTROL_ARM_NAMES: Final[tuple[str, ...]] = ("vanilla", "vanilla_equal_compute")
 RESOURCE_DOMINATING_CONTROL_ARM: Final[str] = "vanilla_resource_dominating"
 CLAIM_ARM_NAMES: Final[frozenset[str]] = frozenset({"complete_system_closed_book", "full_stack"})
 DIAGNOSTIC_ARM_NAMES: Final[frozenset[str]] = frozenset(
-    {"full_stack_disposition", "full_stack_oracle", "rlc_mechanism", "vanilla_long"}
+    {
+        "complete_system_adaptation_ablation",
+        "full_stack_disposition",
+        "full_stack_oracle",
+        "rlc_mechanism",
+        "vanilla_long",
+    }
 )
 RUNTIME_STACK_ARM_NAMES: Final[frozenset[str]] = frozenset(
     arm.name for arm in ARMS if arm.profile in {"complete_closed_book", "full", "full_oracle"}
 )
 
 
-def _expand_requested_arms(requested_names: set[str]) -> list[Arm]:
+def _expand_requested_arms(
+    requested_names: set[str],
+    *,
+    campaign_stage: str = "certificate",
+) -> list[Arm]:
     """Return an executable experiment, never a treatment without controls.
 
     A subset restart used to write a manifest containing only ``full_stack``.
@@ -147,14 +295,20 @@ def _expand_requested_arms(requested_names: set[str]) -> list[Arm]:
     """
 
     by_name = {arm.name: arm for arm in ARMS}
+    if campaign_stage not in CAMPAIGN_STAGES:
+        raise ValueError(f"unknown campaign stage: {campaign_stage}")
     unknown = requested_names - set(by_name)
     if unknown:
         raise ValueError(f"unknown arms requested: {sorted(unknown)}")
     expanded = set(requested_names)
     if expanded - set(CONTROL_ARM_NAMES):
-        expanded.update(CONTROL_ARM_NAMES)
-    if "complete_system_closed_book" in expanded:
+        expanded.add("vanilla")
+        if campaign_stage in {"pilot", "certificate"}:
+            expanded.add("vanilla_equal_compute")
+    if "complete_system_closed_book" in expanded and campaign_stage == "certificate":
         expanded.add(RESOURCE_DOMINATING_CONTROL_ARM)
+    if "complete_system_closed_book" in expanded:
+        expanded.add("complete_system_adaptation_ablation")
     if RESOURCE_DOMINATING_CONTROL_ARM in expanded:
         expanded.add("complete_system_closed_book")
     return [arm for arm in ARMS if arm.name in expanded]
@@ -255,6 +409,7 @@ def decode_fingerprint(
     arm: str = "",
     adapter: str = "",
     implementation_sha256: str | None = None,
+    campaign_stage: str = "certificate",
 ) -> str:
     """Identity of the decode configuration every cell in a run must share.
 
@@ -272,6 +427,8 @@ def decode_fingerprint(
             "adapter": str(adapter),
             "arm": str(arm),
             "contract": "rlc_reconciliation_decode.v4",
+            "completion_budget_policy": COMPLETION_BUDGET_POLICY,
+            "campaign_stage": str(campaign_stage),
             "difficulty": int(difficulty),
             "episode_wall_s": float(episode_wall_s),
             "implementation_sha256": (implementation_sha256 or _implementation_sha256()),
@@ -405,7 +562,14 @@ def _build_config(
         WorkspaceConfig,
     )
 
-    full = profile in {"complete_closed_book", "full", "full_oracle"}
+    full_profiles = {
+        "complete_closed_book",
+        "complete_closed_book_adaptation_ablation",
+        "full",
+        "full_oracle",
+    }
+    full = profile in full_profiles
+    adaptive_neural = full and profile != "complete_closed_book_adaptation_ablation"
     # Adaptive halting is the program's own latency lever and its own
     # capability claim: easy problems converge in two steps and stop paying,
     # hard ones are allowed to keep going. Pinning min == max, as every run
@@ -433,15 +597,15 @@ def _build_config(
         # Anima Rationis pillars 5 and 6. Off in every prior run, which is
         # why "the recurrent path" had never actually been measured: without
         # these the second pass is the same computation as the first.
-        latent_opt=LatentOptConfig(enabled=full, steps=4, lr=0.05),
+        latent_opt=LatentOptConfig(enabled=adaptive_neural, steps=4, lr=0.05),
         # Raw latent proposals often preserve the exact greedy text while
         # reducing the answer-independent proxy. Rejecting those ties means
         # every proposal is reverted before it can accumulate into a changed
         # decode. The optimizer already requires BOTH semantic non-regression
         # and strict proxy descent; enable that conservative continuation rule
         # for the complete-engine arm so latent search can actually move.
-        verifier_accept_non_regression=full,
-        fast_weights=FastWeightsConfig(enabled=full, rank=2, opt_steps=4),
+        verifier_accept_non_regression=adaptive_neural,
+        fast_weights=FastWeightsConfig(enabled=adaptive_neural, rank=2, opt_steps=4),
         prelude_frac=0.25,
         coda_frac=0.25,
         decode_max_tokens=max_tokens,
@@ -1733,6 +1897,13 @@ def _manifest_integrity_issues(
         issues.append("task_commitment_mismatch")
     if recorded.get("task_registry_version") != task_manifest.registry_version:
         issues.append("task_registry_version_mismatch")
+    campaign_stage = recorded.get("campaign_stage")
+    if campaign_stage not in CAMPAIGN_STAGES:
+        issues.append("campaign_stage_invalid")
+    recorded_domains = recorded.get("domains")
+    expected_domains = list(dict.fromkeys(task.domain for task in tasks))
+    if recorded_domains != expected_domains:
+        issues.append("campaign_domain_set_mismatch")
 
     required = recorded.get("required_arms")
     requested = recorded.get("requested_arms")
@@ -1753,11 +1924,24 @@ def _manifest_integrity_issues(
         or any(name not in required_set for name in requested)
     ):
         issues.append("requested_arms_invalid")
-    if required_set - set(CONTROL_ARM_NAMES) and not set(CONTROL_ARM_NAMES).issubset(required_set):
-        issues.append("treatment_controls_missing")
+    if isinstance(requested, list) and requested:
+        try:
+            expected_arms = {
+                arm.name
+                for arm in _expand_requested_arms(
+                    set(requested),
+                    campaign_stage=str(campaign_stage),
+                )
+            }
+        except ValueError:
+            issues.append("requested_arms_invalid")
+        else:
+            if required_set != expected_arms:
+                issues.append("campaign_stage_arm_set_mismatch")
 
     fingerprints = recorded.get("decode_fingerprint")
     arm_tokens = recorded.get("arm_max_tokens")
+    task_tokens = recorded.get("task_max_tokens")
     if not isinstance(fingerprints, dict) or set(fingerprints) != required_set:
         issues.append("decode_fingerprint_arm_set_mismatch")
     elif any(
@@ -1767,8 +1951,28 @@ def _manifest_integrity_issues(
         for value in fingerprints.values()
     ):
         issues.append("decode_fingerprint_invalid")
-    if not isinstance(arm_tokens, dict) or set(arm_tokens) != required_set:
+    arm_tokens_valid = bool(
+        isinstance(arm_tokens, dict)
+        and set(arm_tokens) == required_set
+        and all(
+            type(value) is int and value > 0 for value in arm_tokens.values()
+        )
+    )
+    if not arm_tokens_valid:
         issues.append("arm_token_budget_set_mismatch")
+    else:
+        expected_task_tokens = {
+            arm: {
+                task.task_id: _task_decode_max_tokens(task, arm_tokens[arm])
+                for task in tasks
+            }
+            for arm in required_set
+        }
+        if (
+            recorded.get("completion_budget_policy") != COMPLETION_BUDGET_POLICY
+            or task_tokens != expected_task_tokens
+        ):
+            issues.append("task_token_budget_policy_mismatch")
 
     implementation = _implementation_manifest()
     implementation_digest = _implementation_sha256(implementation)
@@ -2014,7 +2218,22 @@ def main() -> int:
         ),
     )
     parser.add_argument("--n-slots", type=int, default=16)
-    parser.add_argument("--max-tokens", type=int, default=320)
+    parser.add_argument("--max-tokens", type=int, default=512)
+    parser.add_argument(
+        "--campaign-stage",
+        choices=CAMPAIGN_STAGES,
+        default="certificate",
+        help=(
+            "component runs vanilla, the requested treatment, and its matched "
+            "adaptation ablation; pilot adds best-of-three; certificate adds "
+            "the resource-dominating control"
+        ),
+    )
+    parser.add_argument(
+        "--domains",
+        default="",
+        help="comma-separated public task domains; empty selects the full battery",
+    )
     parser.add_argument("--memory-fraction", type=float, default=0.40)
     # Per-episode wall clock. The engine default is 120s; the campaign's median
     # recurrent episode was 298s, so the default silently starves every arm.
@@ -2046,7 +2265,10 @@ def main() -> int:
 
     requested_names = {v.strip() for v in args.arms.split(",") if v.strip()}
     try:
-        selected = _expand_requested_arms(requested_names)
+        selected = _expand_requested_arms(
+            requested_names,
+            campaign_stage=args.campaign_stage,
+        )
     except ValueError as exc:
         print(str(exc), file=sys.stderr)
         return 2
@@ -2063,8 +2285,17 @@ def main() -> int:
             file=sys.stderr,
         )
         return 2
+    domains = tuple(
+        value.strip() for value in args.domains.split(",") if value.strip()
+    ) or tuple(ft.FRONTIER_DOMAINS)
+    if len(set(domains)) != len(domains) or any(
+        domain not in ft.FRONTIER_DOMAINS for domain in domains
+    ):
+        print("domains must be unique members of the frontier registry", file=sys.stderr)
+        return 2
     tasks = ft.generate_task_battery(
         seeds,
+        domains=domains,
         difficulty=args.difficulty,
         registry_version=args.task_registry_version,
     )
@@ -2098,6 +2329,8 @@ def main() -> int:
                     "task_registry_version": args.task_registry_version,
                     "requested_arms": sorted(requested_names),
                     "execution_arms": [a.name for a in selected],
+                    "campaign_stage": args.campaign_stage,
+                    "domains": list(domains),
                 },
                 indent=2,
             )
@@ -2106,6 +2339,13 @@ def main() -> int:
 
     arm_tokens = {
         a.name: (args.max_tokens if a.max_tokens is None else a.max_tokens) for a in selected
+    }
+    task_tokens = {
+        arm: {
+            task.task_id: _task_decode_max_tokens(task, base_tokens)
+            for task in tasks
+        }
+        for arm, base_tokens in arm_tokens.items()
     }
     implementation_files = _implementation_manifest()
     implementation_sha256 = _implementation_sha256(implementation_files)
@@ -2122,6 +2362,7 @@ def main() -> int:
             arm=name,
             adapter=args.adapter,
             implementation_sha256=implementation_sha256,
+            campaign_stage=args.campaign_stage,
         )
         for name, tokens in arm_tokens.items()
     }
@@ -2132,6 +2373,10 @@ def main() -> int:
                 "schema": EVIDENCE_MANIFEST_SCHEMA,
                 "decode_fingerprint": fingerprints,
                 "arm_max_tokens": arm_tokens,
+                "completion_budget_policy": COMPLETION_BUDGET_POLICY,
+                "task_max_tokens": task_tokens,
+                "campaign_stage": args.campaign_stage,
+                "domains": list(domains),
                 "difficulty": args.difficulty,
                 "task_registry_version": args.task_registry_version,
                 "implementation_files": implementation_files,
@@ -2319,13 +2564,19 @@ def main() -> int:
 
         for spec in selected:
             arm, steps, policy = spec.name, spec.steps, spec.policy
-            tokens = arm_tokens[arm]
-            config = (
-                None
-                if steps is None
-                else _build_config(steps, args.n_slots, policy, tokens, profile=spec.profile)
-            )
             for index, task in enumerate(tasks):
+                tokens = task_tokens[arm][task.task_id]
+                config = (
+                    None
+                    if steps is None
+                    else _build_config(
+                        steps,
+                        args.n_slots,
+                        policy,
+                        tokens,
+                        profile=spec.profile,
+                    )
+                )
                 key = (arm, task.task_id)
                 if key in journal.done:
                     continue
@@ -2439,23 +2690,42 @@ def main() -> int:
                         # arm name carries so no downstream reader can lose
                         # track of which one produced a number.
                         verifier = None
-                        if spec.profile in {"complete_closed_book", "full"}:
+                        if spec.profile in {
+                            "complete_closed_book",
+                            "complete_closed_book_adaptation_ablation",
+                            "full",
+                        }:
                             verifier = _episode_verifier(task)
                         elif spec.profile == "full_oracle":
                             verifier = _oracle_verifier(task)
                         incumbent = (
                             incumbent_by_task.get(task.task_id)
-                            if spec.profile in {"complete_closed_book", "full", "full_oracle"}
+                            if spec.profile
+                            in {
+                                "complete_closed_book",
+                                "complete_closed_book_adaptation_ablation",
+                                "full",
+                                "full_oracle",
+                            }
                             else None
                         )
                         if (
-                            spec.profile in {"complete_closed_book", "full", "full_oracle"}
+                            spec.profile
+                            in {
+                                "complete_closed_book",
+                                "complete_closed_book_adaptation_ablation",
+                                "full",
+                                "full_oracle",
+                            }
                             and incumbent is None
                         ):
                             raise EpisodeFault(
                                 "paired canonical ordinary-decode incumbent is absent"
                             )
-                        if spec.profile == "complete_closed_book":
+                        if spec.profile in {
+                            "complete_closed_book",
+                            "complete_closed_book_adaptation_ablation",
+                        }:
                             text, receipt = _run_complete_system_closed_book(
                                 model,
                                 config,
@@ -2485,24 +2755,29 @@ def main() -> int:
                             cell_information_accounting = validate_information_receipt(
                                 system_receipt.get("information_accounting")
                             )
-                            complete_resource_by_task[task.task_id] = cell_resource_accounting
-                            complete_information_by_task[task.task_id] = (
-                                cell_information_accounting
-                            )
+                            if spec.profile == "complete_closed_book":
+                                complete_resource_by_task[task.task_id] = (
+                                    cell_resource_accounting
+                                )
+                                complete_information_by_task[task.task_id] = (
+                                    cell_information_accounting
+                                )
                             acquisition = dict(
                                 system_receipt.get("cognitive_acquisition") or {}
                             )
-                            complete_acquisition_by_task[task.task_id] = acquisition
+                            if spec.profile == "complete_closed_book":
+                                complete_acquisition_by_task[task.task_id] = acquisition
                             continuation_objective = str(
                                 acquisition.get("continuation_objective") or ""
                             )
-                            complete_prompt_by_task[task.task_id] = (
-                                _render_objective(tokenizer, continuation_objective)
-                                if acquisition.get("status")
-                                == "completed_new_context"
-                                and continuation_objective
-                                else _render_prompt(tokenizer, task)
-                            )
+                            if spec.profile == "complete_closed_book":
+                                complete_prompt_by_task[task.task_id] = (
+                                    _render_objective(tokenizer, continuation_objective)
+                                    if acquisition.get("status")
+                                    == "completed_new_context"
+                                    and continuation_objective
+                                    else _render_prompt(tokenizer, task)
+                                )
                         else:
                             text, receipt = _run_rlc(
                                 model,
@@ -2543,7 +2818,13 @@ def main() -> int:
                     vanilla_latency_by_task[task.task_id] = incremental_latency_s
                 paired_incumbent_latency_s = (
                     vanilla_latency_by_task.get(task.task_id, 0.0)
-                    if spec.profile in {"complete_closed_book", "full", "full_oracle"}
+                    if spec.profile
+                    in {
+                        "complete_closed_book",
+                        "complete_closed_book_adaptation_ablation",
+                        "full",
+                        "full_oracle",
+                    }
                     else 0.0
                 )
                 journal.append(
@@ -2581,7 +2862,11 @@ def main() -> int:
                                 .get("promotion", {})
                                 .get("decision")
                             )
-                            if spec.profile == "complete_closed_book"
+                            if spec.profile
+                            in {
+                                "complete_closed_book",
+                                "complete_closed_book_adaptation_ablation",
+                            }
                             else (receipt.get("answer_replacement") or {}).get("decision")
                         ),
                         "answer_replacement_reason": (
@@ -2590,17 +2875,31 @@ def main() -> int:
                                 .get("promotion", {})
                                 .get("reason")
                             )
-                            if spec.profile == "complete_closed_book"
+                            if spec.profile
+                            in {
+                                "complete_closed_book",
+                                "complete_closed_book_adaptation_ablation",
+                            }
                             else (receipt.get("answer_replacement") or {}).get("reason")
                         ),
                         "full_stack_evidence": (
                             _full_stack_evidence(receipt)
-                            if spec.profile in {"complete_closed_book", "full", "full_oracle"}
+                            if spec.profile
+                            in {
+                                "complete_closed_book",
+                                "complete_closed_book_adaptation_ablation",
+                                "full",
+                                "full_oracle",
+                            }
                             else None
                         ),
                         "complete_system_evidence": (
                             _complete_system_evidence(receipt)
-                            if spec.profile == "complete_closed_book"
+                            if spec.profile
+                            in {
+                                "complete_closed_book",
+                                "complete_closed_book_adaptation_ablation",
+                            }
                             else None
                         ),
                         "incumbent_artifact": (
@@ -2978,6 +3277,106 @@ def grade(out_dir: Path, tasks) -> dict[str, Any]:
     contract_neutral_beats_equal_compute = bool(
         resource_matched_control_proven and contract_neutral_outscored_best_of_three
     )
+    treatment_rows = scored.get("complete_system_closed_book", {})
+    treatment_lifts = sum(
+        1
+        for task_id, candidate in treatment_rows.items()
+        if candidate["correct"] and not vanilla_rows.get(task_id, {}).get("correct", False)
+    )
+    treatment_regressions = sum(
+        1
+        for task_id, candidate in treatment_rows.items()
+        if not candidate["correct"] and vanilla_rows.get(task_id, {}).get("correct", False)
+    )
+    adaptation_rows = scored.get("complete_system_adaptation_ablation", {})
+    adaptation_lift_task_ids = {
+        task_id
+        for task_id, candidate in treatment_rows.items()
+        if candidate["correct"]
+        and not adaptation_rows.get(task_id, {}).get("correct", False)
+    }
+    adaptation_lifts = len(adaptation_lift_task_ids)
+    adaptation_regressions = sum(
+        1
+        for task_id, candidate in treatment_rows.items()
+        if not candidate["correct"]
+        and adaptation_rows.get(task_id, {}).get("correct", False)
+    )
+    causal_gain_task_ids = {
+        task_id
+        for task_id in adaptation_lift_task_ids
+        if not vanilla_rows.get(task_id, {}).get("correct", False)
+    }
+    gain_domains = len(
+        {
+            by_id[task_id].domain
+            for task_id in causal_gain_task_ids
+            if task_id in by_id
+        }
+    )
+    complete_cells = [
+        cell
+        for (arm, _task_id), cell in unique_cells.items()
+        if arm == "complete_system_closed_book"
+    ]
+    stage_comparison_cells = [
+        cell
+        for (arm, _task_id), cell in unique_cells.items()
+        if arm
+        in {
+            "complete_system_closed_book",
+            "complete_system_adaptation_ablation",
+        }
+    ]
+    exact_promotions = sum(
+        cell.get("answer_replacement_decision") == "replace"
+        and cell.get("answer_replacement_reason")
+        == "exact_candidate_replaces_unproven_incumbent"
+        for cell in complete_cells
+    )
+    latent_accepted_steps = sum(
+        int(
+            (
+                ((cell.get("complete_system_evidence") or {}).get("engine") or {})
+            ).get("latent_opt_accepted_steps")
+            or 0
+        )
+        for cell in complete_cells
+    )
+    fast_weight_applications = sum(
+        (
+            ((cell.get("complete_system_evidence") or {}).get("engine") or {}).get(
+                "fast_weights_applied"
+            )
+            is True
+        )
+        for cell in complete_cells
+    )
+    completion_limited_cells = sum(
+        _is_policy_failure("", str(cell.get("decode_termination") or ""))
+        for cell in stage_comparison_cells
+    )
+    campaign_stage = str((recorded or {}).get("campaign_stage") or "certificate")
+    next_stage_admission = _next_stage_admission(
+        campaign_stage=campaign_stage,
+        complete=complete,
+        floor_holds=floor_holds,
+        treatment_lifts=treatment_lifts,
+        treatment_regressions=treatment_regressions,
+        adaptation_lifts=adaptation_lifts,
+        adaptation_regressions=adaptation_regressions,
+        gain_domains=gain_domains,
+        exact_promotions=exact_promotions,
+        latent_accepted_steps=latent_accepted_steps,
+        fast_weight_applications=fast_weight_applications,
+        completion_limited_cells=completion_limited_cells,
+        treatment_correct=int(
+            arms.get("complete_system_closed_book", {}).get("correct", 0)
+        ),
+        preliminary_control_correct=(
+            int(equal_compute) if equal_compute is not None else None
+        ),
+    )
     if not complete:
         if manifest_issues:
             decision = "inconclusive_evidence_manifest_invalid"
@@ -3071,6 +3470,7 @@ def grade(out_dir: Path, tasks) -> dict[str, Any]:
             "right_to_wrong_regressions": sorted(floor_violations),
             "unpromoted_byte_divergences": sorted(incumbent_byte_violations),
         },
+        "next_stage_admission": next_stage_admission,
         "decision": decision,
         "claims": {
             "reasoning_gain_proven": False,
