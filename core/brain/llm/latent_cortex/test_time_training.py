@@ -7,9 +7,11 @@ same-compute sham target.  All authority-bearing fields are reconstructible
 from public hashes, counts, and scores; candidate prose and latent values stay
 inside the worker.
 
-The first admitted verifier family is exact bounded integer arithmetic.  Python
-AST and JSON parsing remain useful diagnostics, but syntax validity is not
-task correctness and therefore cannot authorize a gradient target.
+Admission is verifier-family specific.  Exact bounded integer arithmetic and
+the public-objective executable verifier each carry their own held-out
+calibration battery.  Python AST and JSON parsing remain useful diagnostics,
+but syntax validity is not task correctness and therefore cannot authorize a
+gradient target.
 """
 
 from __future__ import annotations
@@ -42,7 +44,10 @@ MAX_REWARD_DRIFT = 0.02
 MATCHED_LINE_SEARCH_EVALUATIONS = 2
 _Z95 = 1.959963984540054
 _OBJECTIVE = "Check the exact bounded integer arithmetic claim."
-_AUTHORIZED_VERIFIERS = frozenset({"exact_integer_arithmetic"})
+_AUTHORIZED_VERIFIERS = frozenset(
+    {"exact_integer_arithmetic", "exact_objective_program"}
+)
+_OBJECTIVE_PROGRAM_CALIBRATION_SEED_BASE = 6_300_000
 
 
 def _canonical_sha256(value: Any) -> str:
@@ -88,7 +93,7 @@ def _wilson_lower(successes: int, trials: int) -> float:
     return max(0.0, (centre - margin) / denominator)
 
 
-def _calibration_cases() -> tuple[dict[str, Any], ...]:
+def _arithmetic_calibration_cases() -> tuple[dict[str, Any], ...]:
     """Return a fixed, balanced, content-addressed verifier holdout.
 
     The expected labels are generated from integer semantics independently of
@@ -121,14 +126,94 @@ def _calibration_cases() -> tuple[dict[str, Any], ...]:
                     "case_id": f"arith-{index:03d}-{'pass' if correct else 'fail'}",
                     "source": source,
                     "source_sha256": _text_sha256(source),
+                    "objective": _OBJECTIVE,
+                    "objective_sha256": _text_sha256(_OBJECTIVE),
                     "expected_outcome": "verified" if correct else "refuted",
+                    "independent_label_sha256": _canonical_sha256(
+                        {
+                            "authority": "python_integer_semantics",
+                            "answer": answer,
+                            "claimed": claimed,
+                            "correct": correct,
+                        }
+                    ),
                 }
             )
     return tuple(rows)
 
 
-def _recalibration_payload() -> dict[str, Any]:
-    cases = _calibration_cases()
+def _objective_program_calibration_cases() -> tuple[dict[str, Any], ...]:
+    """Cross-calibrate the public executor against the blinded task scorers.
+
+    The candidate-facing verifier derives its result from the public prompt.
+    Labels here come from the separately implemented private scorer and answer
+    commitment.  Only the terminal answer is routed so explanatory prose
+    cannot accidentally become calibration authority.
+    """
+
+    from core.brain.llm.latent_cortex import frontier_tasks as ft
+    from core.brain.llm.latent_cortex.objective_program_verifier import (
+        solve_objective_program,
+    )
+
+    rows: list[dict[str, Any]] = []
+    for index in range(64):
+        domain = ft.FRONTIER_DOMAINS[index % len(ft.FRONTIER_DOMAINS)]
+        task = ft.generate_task(
+            domain,
+            seed=_OBJECTIVE_PROGRAM_CALIBRATION_SEED_BASE + index,
+            difficulty=1 + (index % 3),
+            registry_version=ft.CONTAMINATION_SAFE_REGISTRY_VERSION,
+        )
+        solved = solve_objective_program(task.public.prompt)
+        if solved is None:
+            raise RuntimeError("objective-program calibration task was not executable")
+        solution, _solution_receipt = solved
+        positive = solution.rsplit("\n", 1)[-1]
+        negative = "FINAL_ANSWER: " + json.dumps(
+            {"calibration_case": index},
+            sort_keys=True,
+            separators=(",", ":"),
+        )
+        for candidate, label in ((positive, True), (negative, False)):
+            hidden_score = ft.score_task(task, candidate)
+            if hidden_score.correct is not label:
+                raise RuntimeError(
+                    "objective-program calibration label disagreed with hidden scorer"
+                )
+            rows.append(
+                {
+                    "case_id": (
+                        f"objective-{index:03d}-{'pass' if label else 'fail'}"
+                    ),
+                    "source": candidate,
+                    "source_sha256": _text_sha256(candidate),
+                    "objective": task.public.prompt,
+                    "objective_sha256": _text_sha256(task.public.prompt),
+                    "expected_outcome": "verified" if label else "refuted",
+                    "independent_label_sha256": _canonical_sha256(
+                        {
+                            "task_id": task.task_id,
+                            "scorer_id": task.public.scorer_id,
+                            "score_result": hidden_score.to_dict(),
+                        }
+                    ),
+                }
+            )
+    return tuple(rows)
+
+
+@lru_cache(maxsize=len(_AUTHORIZED_VERIFIERS))
+def _calibration_cases(verifier_family: str) -> tuple[dict[str, Any], ...]:
+    if verifier_family == "exact_integer_arithmetic":
+        return _arithmetic_calibration_cases()
+    if verifier_family == "exact_objective_program":
+        return _objective_program_calibration_cases()
+    raise ValueError("test-time critic verifier family is not authorized")
+
+
+def _recalibration_payload(verifier_family: str) -> dict[str, Any]:
+    cases = _calibration_cases(verifier_family)
     case_receipts: list[str] = []
     predictions: list[float] = []
     labels: list[float] = []
@@ -136,16 +221,21 @@ def _recalibration_payload() -> dict[str, Any]:
     verified_successes = 0
     false_accepts = 0
     for case in cases:
-        atomic = build_atomic_decomposition(case["source"], objective=_OBJECTIVE)
+        objective = case["objective"]
+        atomic = build_atomic_decomposition(case["source"], objective=objective)
         router = build_deterministic_router_receipt(
             case["source"],
-            objective=_OBJECTIVE,
+            objective=objective,
             atomic_receipt=atomic,
         )
         routes = router["routes"]
         if len(routes) != 1:
             raise RuntimeError("test-time critic calibration case did not isolate one claim")
-        observed = routes[0]["outcome"]
+        observed = (
+            routes[0]["outcome"]
+            if routes[0]["verifier"] == verifier_family
+            else "unsupported"
+        )
         expected = case["expected_outcome"]
         prediction = 1.0 if observed == "verified" else 0.0
         label = 1.0 if expected == "verified" else 0.0
@@ -160,8 +250,12 @@ def _recalibration_payload() -> dict[str, Any]:
                 {
                     "case_id": case["case_id"],
                     "source_sha256": case["source_sha256"],
+                    "objective_sha256": case["objective_sha256"],
                     "expected_outcome": expected,
                     "observed_outcome": observed,
+                    "independent_label_sha256": case[
+                        "independent_label_sha256"
+                    ],
                     "router_receipt_sha256": router["receipt_sha256"],
                 }
             )
@@ -208,14 +302,29 @@ def _recalibration_payload() -> dict[str, Any]:
     )
     return {
         "schema": CRITIC_RECALIBRATION_SCHEMA,
-        "verifier_family": "exact_integer_arithmetic",
-        "objective_sha256": _text_sha256(_OBJECTIVE),
+        "verifier_family": verifier_family,
+        "calibration_authority": (
+            "independent_integer_semantics"
+            if verifier_family == "exact_integer_arithmetic"
+            else "blinded_frontier_task_scorers"
+        ),
+        "objective_sha256": (
+            _text_sha256(_OBJECTIVE)
+            if verifier_family == "exact_integer_arithmetic"
+            else _canonical_sha256(
+                sorted({case["objective_sha256"] for case in cases})
+            )
+        ),
         "dataset_sha256": _canonical_sha256(
             [
                 {
                     "case_id": case["case_id"],
                     "source_sha256": case["source_sha256"],
+                    "objective_sha256": case["objective_sha256"],
                     "expected_outcome": case["expected_outcome"],
+                    "independent_label_sha256": case[
+                        "independent_label_sha256"
+                    ],
                 }
                 for case in cases
             ]
@@ -236,8 +345,8 @@ def _recalibration_payload() -> dict[str, Any]:
     }
 
 
-@lru_cache(maxsize=1)
-def _cached_critic_recalibration_json() -> str:
+@lru_cache(maxsize=len(_AUTHORIZED_VERIFIERS))
+def _cached_critic_recalibration_json(verifier_family: str) -> str:
     """Calibrate once per loaded critic implementation.
 
     The cache stores canonical immutable text, not a caller-visible mapping.
@@ -245,7 +354,7 @@ def _cached_critic_recalibration_json() -> str:
     alter later admission authority.
     """
 
-    payload = _recalibration_payload()
+    payload = _recalibration_payload(verifier_family)
     receipt = {**payload, "receipt_sha256": _canonical_sha256(payload)}
     return json.dumps(
         receipt,
@@ -256,14 +365,21 @@ def _cached_critic_recalibration_json() -> str:
     )
 
 
-def build_critic_recalibration_receipt() -> dict[str, Any]:
-    return json.loads(_cached_critic_recalibration_json())
+def build_critic_recalibration_receipt(
+    verifier_family: str = "exact_integer_arithmetic",
+) -> dict[str, Any]:
+    if verifier_family not in _AUTHORIZED_VERIFIERS:
+        raise ValueError("test-time critic verifier family is not authorized")
+    return json.loads(_cached_critic_recalibration_json(verifier_family))
 
 
 def validate_critic_recalibration_receipt(value: Any) -> dict[str, Any]:
     if not isinstance(value, Mapping):
         raise ValueError("test-time critic recalibration receipt is missing")
-    expected = build_critic_recalibration_receipt()
+    verifier_family = value.get("verifier_family")
+    if verifier_family not in _AUTHORIZED_VERIFIERS:
+        raise ValueError("test-time critic verifier family is not authorized")
+    expected = build_critic_recalibration_receipt(str(verifier_family))
     if dict(value) != expected:
         raise ValueError("test-time critic recalibration differs from reconstruction")
     if value["admitted"] is not True:
@@ -283,22 +399,34 @@ def build_pseudo_label_admission(
         router_receipt,
         atomic_receipt=atomic_receipt,
     )
-    critic = validate_critic_recalibration_receipt(
-        critic_recalibration or build_critic_recalibration_receipt()
-    )
     if source_sha256 != router["source_sha256"]:
         raise ValueError("pseudo-label source differs from deterministic routes")
     structural_sha = structural_diversity.get("receipt_sha256")
     structural_certified = structural_diversity.get("certified") is True
     verified_routes = [row for row in router["routes"] if row["outcome"] == "verified"]
     verifier_inventory = sorted({row["verifier"] for row in verified_routes})
+    inferred_family = (
+        verifier_inventory[0]
+        if len(verifier_inventory) == 1
+        and verifier_inventory[0] in _AUTHORIZED_VERIFIERS
+        else "exact_integer_arithmetic"
+    )
+    critic = validate_critic_recalibration_receipt(
+        critic_recalibration
+        or build_critic_recalibration_receipt(inferred_family)
+    )
     learning_atoms_verified = bool(verified_routes) and not any(
         row["outcome"] in {"refuted", "unsupported"} for row in router["routes"]
     )
     exact_domain = bool(
-        verifier_inventory and set(verifier_inventory).issubset(_AUTHORIZED_VERIFIERS)
+        len(verifier_inventory) == 1
+        and verifier_inventory[0] == critic["verifier_family"]
+        and verifier_inventory[0] in _AUTHORIZED_VERIFIERS
     )
-    calibration_sources = {case["source_sha256"] for case in _calibration_cases()}
+    calibration_sources = {
+        case["source_sha256"]
+        for case in _calibration_cases(str(critic["verifier_family"]))
+    }
     query_disjoint = source_sha256 not in calibration_sources
     lower_bound = float(critic["verified_precision_lower_95"])
     if not structural_certified or not _is_sha256(structural_sha):
@@ -417,6 +545,8 @@ def build_matched_compute_receipt(
     sham_arm = _validate_arm(sham, expected_arm="sham")
     critic_pre = validate_critic_recalibration_receipt(critic_before)
     critic_post = validate_critic_recalibration_receipt(critic_after)
+    if critic_pre["verifier_family"] != critic_post["verifier_family"]:
+        raise ValueError("test-time critic family changed during adaptation")
     if not _is_sha256(baseline_tokens_sha256) or not _finite(baseline_score):
         raise ValueError("test-time training baseline is invalid")
     compute_fields = (

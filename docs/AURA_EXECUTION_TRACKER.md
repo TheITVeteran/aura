@@ -41962,3 +41962,33 @@ evidence. The stale CP128 capsule will be replaced by a clean detached capsule
 from this checkpoint before preparation is retried. No resident, frontier,
 fusion, activation, or `WOW Signal` claim is authorized. The completion
 envelope is `826/920` (approximately `89.8%`).
+
+## Checkpoint 2026-08-10-130: Exact Objective Evidence May Teach Temporary Tissue
+
+The query-scoped fast-weight gate previously recognized only the
+`exact_integer_arithmetic` verifier family. CP126's successful executable
+producer used `exact_objective_program` across seven frontier task families,
+so its independently verified answers could replace a failed decode but could
+not become temporary neural supervision.
+
+Critic recalibration is now verifier-family specific. The objective-program
+critic reconstructs a fixed 128-case holdout spanning all seven
+contamination-safe frontier domains and all three supported difficulties.
+Positive and adversarial-negative candidates are labeled by the private
+blinded task scorers, while the candidate-facing verifier sees only each
+public objective. It admits with `64/64` verified positives, zero false
+accepts, zero Brier/ECE error, and a 95% Wilson precision lower bound of
+`0.943375940207`. Family substitution is rejected, calibration queries cannot
+authorize themselves, and the engine now rechecks the same critic family after
+adaptation instead of silently reverting to arithmetic.
+
+Fresh exact-objective terminal answers can now authorize bounded query-scoped
+learning. Python/JSON syntax checks remain non-authoritative. The focused
+critic, router, and fast-weight contracts pass `43/43`; canonical smoke, Ruff,
+compile, and diff hygiene pass. This proves an authority path, not neural
+transfer: no teacher-derived update has yet been shown to survive teacher
+removal and improve a fresh decode. The previously prepared CP129 resident
+campaign remains unlaunched and is superseded because its immutable source
+predates this change. No resident, neural, frontier, fusion, activation, or
+`WOW Signal` claim is authorized. The completion envelope is `827/920`
+(approximately `89.9%`).

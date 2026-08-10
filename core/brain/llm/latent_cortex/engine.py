@@ -7950,7 +7950,9 @@ class LatentCortexEngine:
             }
 
         critic_before = learning_state["admission"]["critic_recalibration"]
-        critic_after = build_critic_recalibration_receipt()
+        critic_after = build_critic_recalibration_receipt(
+            str(critic_before["verifier_family"])
+        )
         matched_compute = build_matched_compute_receipt(
             treatment=arm_receipt(
                 arm="treatment",

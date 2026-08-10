@@ -259,7 +259,15 @@ def build_fast_weight_admission(
     if any(type(token) is not int or token < 0 for token in raw_tokens):
         raise ValueError("fast-weight evidence tokenizer returned an invalid token")
     counts = router["counts"]
-    critic_recalibration = build_critic_recalibration_receipt()
+    verifier_inventory = sorted({row["verifier"] for row in verified_rows})
+    critic_family = (
+        verifier_inventory[0]
+        if len(verifier_inventory) == 1
+        and verifier_inventory[0]
+        in {"exact_integer_arithmetic", "exact_objective_program"}
+        else "exact_integer_arithmetic"
+    )
+    critic_recalibration = build_critic_recalibration_receipt(critic_family)
     pseudo_label_admission = build_pseudo_label_admission(
         router_receipt=router,
         atomic_receipt=atomic,

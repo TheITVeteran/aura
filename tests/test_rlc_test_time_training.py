@@ -94,6 +94,91 @@ def test_cached_critic_receipt_is_copy_isolated():
     validate_critic_recalibration_receipt(fresh)
 
 
+def test_exact_objective_program_critic_cross_calibrates_against_blinded_scorers():
+    receipt = build_critic_recalibration_receipt("exact_objective_program")
+
+    validated = validate_critic_recalibration_receipt(receipt)
+    assert validated["verifier_family"] == "exact_objective_program"
+    assert validated["calibration_authority"] == "blinded_frontier_task_scorers"
+    assert validated["sample_count"] == 128
+    assert validated["positives"] == validated["negatives"] == 64
+    assert validated["verified_successes"] == validated["verified_trials"] == 64
+    assert validated["false_accept_rate"] == 0.0
+    assert validated["verified_precision_lower_95"] > MIN_PSEUDO_LABEL_CONFIDENCE
+
+
+def test_fresh_exact_objective_solution_can_authorize_query_scoped_learning():
+    from core.brain.llm.latent_cortex import frontier_tasks as ft
+    from core.brain.llm.latent_cortex.objective_program_verifier import (
+        solve_objective_program,
+    )
+
+    task = ft.generate_task(
+        "misleading_premise",
+        seed=7_000_001,
+        difficulty=2,
+        registry_version=ft.CONTAMINATION_SAFE_REGISTRY_VERSION,
+    )
+    solved = solve_objective_program(task.public.prompt)
+    assert solved is not None
+    candidate = solved[0].rsplit("\n", 1)[-1]
+    verifier = EpisodeTaskVerifier(task.public.prompt)
+    evaluation = verifier.evaluate(candidate)
+
+    admission, target = build_fast_weight_admission(
+        evaluation,
+        candidate=candidate,
+        objective=task.public.prompt,
+        evaluation_index=0,
+        tokenizer=_ByteTokenizer(),
+        structural_diversity=_structural(),
+    )
+
+    assert admission["admitted"] is True
+    assert admission["critic_recalibration"]["verifier_family"] == (
+        "exact_objective_program"
+    )
+    assert admission["pseudo_label_admission"]["verifier_inventory"] == [
+        "exact_objective_program"
+    ]
+    assert admission["pseudo_label_admission"]["query_disjoint_from_calibration"] is True
+    assert bytes(target).decode("utf-8") == candidate
+
+
+def test_pseudo_label_rejects_cross_family_critic_substitution():
+    from core.brain.llm.latent_cortex import frontier_tasks as ft
+    from core.brain.llm.latent_cortex.objective_program_verifier import (
+        solve_objective_program,
+    )
+
+    task = ft.generate_task(
+        "calibration",
+        seed=7_000_002,
+        difficulty=1,
+        registry_version=ft.CONTAMINATION_SAFE_REGISTRY_VERSION,
+    )
+    solved = solve_objective_program(task.public.prompt)
+    assert solved is not None
+    candidate = solved[0].rsplit("\n", 1)[-1]
+    atomic = build_atomic_decomposition(candidate, objective=task.public.prompt)
+    router = build_deterministic_router_receipt(
+        candidate,
+        objective=task.public.prompt,
+        atomic_receipt=atomic,
+    )
+
+    pseudo = build_pseudo_label_admission(
+        router_receipt=router,
+        atomic_receipt=atomic,
+        source_sha256=atomic["source_sha256"],
+        structural_diversity=_structural(),
+        critic_recalibration=build_critic_recalibration_receipt(),
+    )
+
+    assert pseudo["admitted"] is False
+    assert pseudo["reason"] == "pseudo_label_verifier_not_calibrated"
+
+
 def test_only_calibrated_correctness_verifier_can_authorize_pseudo_label():
     objective = "Check the answer."
     for candidate, expected in (
