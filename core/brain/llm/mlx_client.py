@@ -8796,12 +8796,39 @@ class MLXLocalClient:
                 "treating the lane as lost (a blocked event loop cannot "
                 "distinguish a dead lease from an unasked question)."
             )
-        alive = bool(
-            await asyncio.wait_for(
-                controller.heartbeat_owner(owner_id, fencing_token=fencing_token),
-                timeout=_LEASE_RENEWAL_TIMEOUT_S,
+        try:
+            alive = bool(
+                await asyncio.wait_for(
+                    controller.heartbeat_owner(owner_id, fencing_token=fencing_token),
+                    timeout=_LEASE_RENEWAL_TIMEOUT_S,
+                )
             )
-        )
+        except TimeoutError:
+            # Second timeout. Before killing anything, ask the one question
+            # that is actually about the worker: is the process alive?
+            #
+            # A lease renewal talks to the lane CONTROLLER — a file lock and a
+            # small database. Its silence is evidence about that controller, or
+            # about an event loop too busy to run it. It is not evidence about
+            # a 32B process that the operating system says is running and whose
+            # response pipe is healthy. Killing it for a controller stall is a
+            # category error, and an expensive one: the reload takes ~35s, the
+            # reload itself blocks the loop, and the next renewal then times out
+            # the same way. That is the spiral observed live — "Primary 32B
+            # cortex is dead. Triggering background respawn (Attempt 1/5)" on a
+            # worker that had never stopped answering.
+            if self.is_alive():
+                _record_mlx_degradation(
+                    TimeoutError("lane_lease_renewal_unanswered_worker_alive"),
+                    action=(
+                        "lane lease renewal did not answer twice, but the worker "
+                        "process is alive and its pipe is healthy; kept it and "
+                        "left the lease to the next heartbeat"
+                    ),
+                    severity="warning",
+                )
+                return True
+            raise
         if alive:
             _record_mlx_degradation(
                 TimeoutError("lane_lease_renewal_timeout_recovered"),

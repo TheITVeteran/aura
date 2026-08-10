@@ -39,8 +39,10 @@ class _Controller:
         return self.alive_after
 
 
-def _client() -> MLXLocalClient:
-    return MLXLocalClient.__new__(MLXLocalClient)
+def _client(*, worker_alive: bool = False) -> MLXLocalClient:
+    client = MLXLocalClient.__new__(MLXLocalClient)
+    client.is_alive = lambda: worker_alive  # type: ignore[method-assign]
+    return client
 
 
 @pytest.mark.asyncio
@@ -78,7 +80,9 @@ async def test_a_loop_that_never_recovers_still_fails_closed(monkeypatch):
     controller = _Controller(timeouts=99)
 
     with pytest.raises(TimeoutError):
-        await _client()._renew_durable_lane_lease(controller, "owner-1", 7)
+        await _client(worker_alive=False)._renew_durable_lane_lease(
+            controller, "owner-1", 7
+        )
 
     assert controller.calls == 2
 
@@ -91,3 +95,37 @@ async def test_a_healthy_lease_is_renewed_without_a_second_call(monkeypatch):
 
     assert await _client()._renew_durable_lane_lease(controller, "owner-1", 7) is True
     assert controller.calls == 1
+
+
+@pytest.mark.asyncio
+async def test_a_stalled_lease_controller_never_kills_a_living_worker(monkeypatch):
+    """The spiral: "Primary 32B cortex is dead" about a worker still answering.
+
+    A lease renewal talks to the lane controller — a file lock and a small
+    database. Its silence is evidence about that controller, or about a loop
+    too busy to run it. It says nothing about a process the OS reports as
+    running. Killing it costs a ~35s reload, the reload blocks the loop, and
+    the next renewal times out the same way.
+    """
+    monkeypatch.setattr("core.brain.llm.mlx_client._LEASE_RENEWAL_TIMEOUT_S", 0.01)
+    controller = _Controller(timeouts=99)
+
+    alive = await _client(worker_alive=True)._renew_durable_lane_lease(
+        controller, "owner-1", 7
+    )
+
+    assert alive is True
+    assert controller.calls == 2
+
+
+@pytest.mark.asyncio
+async def test_a_definitive_no_still_kills_even_with_a_live_worker(monkeypatch):
+    """Worker liveness excuses SILENCE, never an actual fence loss."""
+    monkeypatch.setattr("core.brain.llm.mlx_client._LEASE_RENEWAL_TIMEOUT_S", 0.01)
+    controller = _Controller(timeouts=0, alive_after=False)
+
+    alive = await _client(worker_alive=True)._renew_durable_lane_lease(
+        controller, "owner-1", 7
+    )
+
+    assert alive is False
