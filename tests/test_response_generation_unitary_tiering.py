@@ -7,6 +7,7 @@ import pytest
 from core.phases.response_contract import ResponseContract
 from core.phases.response_generation_unitary import UnitaryResponsePhase
 from core.state.aura_state import AuraState
+from tests.support.amplifier_doubles import amplified_answer
 
 
 class AsyncCallProbe:
@@ -640,21 +641,19 @@ async def test_unitary_healthy_chat_commits_full_latent_answer_before_direct_dec
 
     async def _amplify(_objective, _generate, **kwargs):
         amplification.update(kwargs)
-        return SimpleNamespace(
-            answer=(
-                "Verified composition: Raft is appropriate for a crash-only failure "
-                "model, while PBFT handles Byzantine faults. The recommendation changes "
-                "because Byzantine nodes may equivocate instead of merely stopping, so "
-                "Raft's majority-log guarantees no longer cover the requested threat."
-            ),
+        # The REAL AmplifiedAnswer/ReasoningReceipt. The hand-rolled version
+        # omitted promotion_authority, which became an adoption precondition
+        # after this fake was written — so the phase correctly kept the latent
+        # draft and this test asserted a composed answer on a path it never
+        # took.
+        return amplified_answer(
+            "Verified composition: Raft is appropriate for a crash-only failure "
+            "model, while PBFT handles Byzantine faults. The recommendation changes "
+            "because Byzantine nodes may equivocate instead of merely stopping, so "
+            "Raft's majority-log guarantees no longer cover the requested threat.",
+            promotion_authority="checked_verifier",
             confidence=0.96,
-            verified=True,
-            receipt=SimpleNamespace(
-                to_dict=lambda: {
-                    "strategy_used": "rlc_seed+verifier",
-                    "valid_candidates": 1,
-                }
-            ),
+            strategy_used="rlc_seed+verifier",
         )
 
     monkeypatch.setattr(

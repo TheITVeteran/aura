@@ -7,6 +7,7 @@ import pytest
 from core.brain.generation_provenance import generation_metadata_of
 from core.phases.response_generation import ResponseGenerationPhase
 from core.state.aura_state import AuraState, CognitiveMode
+from tests.support.amplifier_doubles import amplified_answer
 
 
 class _Container:
@@ -967,12 +968,18 @@ async def test_response_amplifier_adopts_selected_candidate_metadata_not_last_co
             generate("candidate-1", 0.8),
         )
         winner = candidates[0]
-        return SimpleNamespace(
-            answer=str(winner),
-            confidence=0.95,
-            verified=True,
+        # The REAL AmplifiedAnswer/ReasoningReceipt, not a SimpleNamespace.
+        # This used to hand-roll a receipt of {"winner": 0}, and when
+        # promotion_authority became an adoption precondition the fake kept
+        # omitting it — so the phase correctly kept the draft and the
+        # assertions below were checking candidate selection on a path the
+        # test never reached. A double built from the production dataclass
+        # cannot drift from it silently.
+        return amplified_answer(
+            str(winner),
+            promotion_authority="checked_verifier",
             generation_metadata=generation_metadata_of(winner),
-            receipt=SimpleNamespace(to_dict=lambda: {"winner": 0}),
+            winning_candidate_id=0,
         )
 
     monkeypatch.setattr(
