@@ -42852,3 +42852,36 @@ canonical smoke passes `103/103`, and Ruff, compilation, and diff hygiene pass.
 This advances the completion envelope to `853/920` (approximately `92.7%`).
 The source-bound real-checkpoint campaign is next; resident-32B use remains
 locked.
+
+## Checkpoint 2026-08-10-158: Rejected Adaptation Cannot Leave a Partial Answer Inventory
+
+The first source-bound CP157 real-checkpoint transplant campaign is
+infrastructure-invalid, not a negative mechanism result. The frozen 1.5B
+teaching episode reached post-adaptation candidate refresh, rejected the
+adapted winner under the strict answer contract, and then raised
+`ValueError: answer replacement private branch coverage differs` before it
+could export any episodic candidate. No transplant replay ran and no
+scientific conclusion is authorized from that artifact.
+
+The failure was a consistency defect between two strict boundaries. Candidate
+refresh correctly removed the rejected winner from the deployable branch map,
+but left all other pre-adaptation candidates in place. Disagreement evidence
+correctly refused to rebuild from that incomplete branch inventory, while the
+answer-replacement private witness still received the partial map. Its exact
+coverage validator then correctly failed closed because the private candidate
+keys no longer matched the public decomposition keys.
+
+Post-adaptation refresh now treats answer replacement as one comparative
+transaction. If any branch is missing after refresh, the complete deployable
+candidate inventory is revoked, the incumbent ordinary decode is retained,
+and the receipt records
+`post_adaptation_candidate_inventory_incomplete`. Research-oracle diagnostics
+remain separate and cannot regain serving authority. A focused regression
+forces the selected adapted observation through the real strict parser's
+rejection path and proves that the episode completes honestly with an empty
+decomposition and no private replacement witness. The successful-refresh
+contract remains green. Focused engine and answer-replacement execution passes
+`89/89`; canonical smoke passes `103/103`, and Ruff, compilation, and diff
+hygiene pass. This advances the completion envelope to `854/920`
+(approximately `92.8%`). The source-bound 1.5B transplant must be rerun from
+this checkpoint; resident-32B use remains locked.

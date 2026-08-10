@@ -1368,6 +1368,54 @@ def test_latent_opt_refreshes_the_candidate_and_its_evidence_before_replacement(
     assert decomposition["source_sha256"] == refresh["final_candidate_sha256"]
 
 
+def test_rejected_post_adaptation_candidate_revokes_partial_replacement_inventory(
+    tiny_model,
+    monkeypatch,
+):
+    from core.brain.llm.latent_cortex import post_adaptation_candidate
+
+    engine = LatentCortexEngine(
+        tiny_model,
+        _ExactEvidenceTokenizer(),
+        config=_config(
+            latent_opt=LatentOptConfig(enabled=True, steps=2, lr=0.05),
+            verifier_accept_non_regression=True,
+        ),
+    )
+    verifier = _exact_evidence_verifier()
+    latent_scores = iter((0.5, 0.75, 0.75))
+    verifier.latent_state_score = lambda _text: next(latent_scores)
+    original = post_adaptation_candidate.advance_post_adaptation_candidate
+
+    def reject_refresh(**kwargs):
+        return original(
+            **{
+                **kwargs,
+                "observed_candidate": "",
+            }
+        )
+
+    monkeypatch.setattr(
+        post_adaptation_candidate,
+        "advance_post_adaptation_candidate",
+        reject_refresh,
+    )
+    result = engine.reason(
+        token_ids=PROMPT_TOKENS,
+        verifier=verifier,
+    )
+
+    assert result.ok
+    receipt = result.receipt
+    assert receipt.post_adaptation_candidate["final_candidate_available"] is False
+    assert (
+        "post_adaptation_candidate_inventory_incomplete"
+        in receipt.honest_flags
+    )
+    assert receipt.disagreement_graph["candidate_decompositions"] == {}
+    assert result.answer_replacement_private == {}
+
+
 def test_fast_weight_episode_proves_erase_and_invariant():
     model = _model()  # fresh model: this test mutates wrappers
     before = parameter_fingerprint(model)

@@ -7066,6 +7066,20 @@ class LatentCortexEngine:
                         if research_oracle_enabled:
                             research_oracle_candidates[winner.index] = admitted_candidate
 
+                    # Answer replacement is a comparative decision over the
+                    # complete branch inventory. If refreshing the adapted
+                    # winner invalidates that one candidate, the surviving
+                    # pre-adaptation branches cannot retain partial authority:
+                    # their decomposition graph is intentionally rebuilt as
+                    # empty below, and private evidence must match it exactly.
+                    # Keep research-oracle diagnostics separate, but revoke
+                    # the deployable inventory and retain the incumbent.
+                    if len(branch_probe_texts) != len(ensemble.branches):
+                        branch_probe_texts = {}
+                        receipt.flag(
+                            "post_adaptation_candidate_inventory_incomplete"
+                        )
+
                     # Confidence-bound replacement validates candidate text
                     # against these exact receipts. Rebuild them from the
                     # refreshed inventory; pre-adaptation decompositions and
