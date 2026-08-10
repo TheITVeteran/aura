@@ -25355,6 +25355,36 @@ async def _api_chat_turn(body: ChatRequest, request: Request):
                 "won't send you a thinner one and pass it off as the real thing. "
                 "Ask me again in a moment and I should have it."
             )
+            # A refusal is the right answer when nothing better is known. When
+            # the runtime has ALREADY worked the answer out, it is the worst of
+            # the three options available.
+            #
+            # LIVE, 2026-08-10: "7919 times 6421 — what do you get?" The
+            # preflight computed 50847899. The model produced 50864799 five
+            # times; the worker's own gate rejected each one as
+            # arithmetic_answer_missing — correctly — and then the turn died
+            # with nothing served. So the number was known, the wrong number
+            # was caught, and the person got neither fact.
+            #
+            # Deterministic beats absent. This does not ask the model again,
+            # because the model has just demonstrated five times that it cannot
+            # produce this value; a calculator's answer does not need one.
+            try:
+                from core.conversation.response_reliability import (
+                    requested_arithmetic_result,
+                )
+
+                _known = requested_arithmetic_result(_semantic_user_message)
+                if _known is not None:
+                    _shown = int(_known) if float(_known).is_integer() else _known
+                    failure_reply = f"{_shown}."
+                    logger.warning(
+                        "🔢 Serving the computed arithmetic result (%s) instead of "
+                        "a refusal — the value was known the whole turn.",
+                        _shown,
+                    )
+            except _CHAT_RECOVERABLE_ERRORS as _known_exc:
+                record_degradation("chat.arithmetic_fallback", _known_exc)
             logger.error("%s Surface=%s", failure_reply, request_surface or "unknown")
             if pending_exchange_id:
                 await _complete_logged_exchange(
