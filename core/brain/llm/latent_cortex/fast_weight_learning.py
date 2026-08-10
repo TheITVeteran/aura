@@ -726,7 +726,7 @@ def validate_fast_weight_learning_receipt(
     if not isinstance(output_associative_memory, Mapping):
         raise ValueError("fast-weight output-memory receipt is invalid")
     if output_associative_memory:
-        from core.brain.llm.latent_cortex.episodic_output_memory import (
+        from core.brain.llm.latent_cortex.episodic_output_memory_contract import (
             validate_output_memory_experiment_receipt,
         )
 

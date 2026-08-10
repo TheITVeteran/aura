@@ -1,0 +1,35 @@
+{
+  "artifact_file_sha256": "4bdd12c6b578aef0e5ef3b3320b9456afcf2da6bbf4d791c37ee3c4f1fb3fe6e",
+  "controls_executed": false,
+  "depths": [
+    1,
+    2
+  ],
+  "elapsed_s": 32.71984267234802,
+  "exact_objective_verifier_enabled": true,
+  "failed_gates": [
+    "treatment_beats_ordinary",
+    "strict_neural_causal_gain"
+  ],
+  "finding": "The configured executable ablation also disabled the verified fast-weight teacher, so this is a valid no-producer/no-teacher negative control rather than an isolated test of verified neural teaching.",
+  "model_path": "/Users/bryan/.aura/live-source/models/Qwen2.5-1.5B-Instruct-4bit",
+  "objective_program_producer_enabled": false,
+  "ordinary_correct": [
+    false,
+    false
+  ],
+  "origin_main": "6d7fdf522e37fc13be4a68d1321a48236c3752c8",
+  "receipt_sha256": "372e4f6b6e6eb58e7f65dc908ca427eb8356e9da1ebeceabce5562341ddefcdc",
+  "schema": "aura.rlc.cp142_neural_causal_short_gate.compact_evidence.v1",
+  "seed": 2026081001,
+  "source_clean": true,
+  "source_commit": "6d7fdf522e37fc13be4a68d1321a48236c3752c8",
+  "strict_neural_causal_gain": false,
+  "task_id": "recurrence-modular-d2-s2729938886285982053",
+  "trained_adapter_tensor_sha256": "db77909f35b98b5854145ef0bffa37c79fc1d4f14359f6bb6094a9b0b10c285b",
+  "treatment_beats_ordinary": false,
+  "treatment_correct": [
+    false,
+    false
+  ]
+}

@@ -289,6 +289,7 @@ def test_complete_engine_probe_can_remove_the_producer_without_removing_verifica
     config = _full_engine_config(spec, objective_program_enabled=False)
 
     assert config.objective_program_enabled is False
+    assert config.verified_objective_teacher_enabled is True
     assert config.answer_replacement_enabled is True
     assert config.verifier_probe_contract == "final_answer_v1"
 
@@ -296,6 +297,23 @@ def test_complete_engine_probe_can_remove_the_producer_without_removing_verifica
 def test_complete_engine_probe_rejects_non_boolean_producer_policy() -> None:
     with pytest.raises(TypeError, match="objective_program_enabled"):
         _full_engine_config(RLCExecutionSpec(), objective_program_enabled=1)
+
+
+def test_complete_engine_probe_can_independently_remove_verified_neural_teacher() -> None:
+    config = _full_engine_config(
+        RLCExecutionSpec(),
+        objective_program_enabled=False,
+        verified_objective_teacher_enabled=False,
+    )
+
+    assert config.objective_program_enabled is False
+    assert config.verified_objective_teacher_enabled is False
+
+    with pytest.raises(TypeError, match="verified_objective_teacher_enabled"):
+        _full_engine_config(
+            RLCExecutionSpec(),
+            verified_objective_teacher_enabled=1,
+        )
 
 
 def test_complete_engine_probe_depths_must_span_shallow_and_full() -> None:

@@ -1013,6 +1013,8 @@ def test_config_from_job_defaults_are_conservative():
     assert cfg.local_repair_max_attempts == 1
     assert cfg.local_repair_max_tokens == 128
     assert cfg.answer_replacement_enabled is True
+    assert cfg.objective_program_enabled is True
+    assert cfg.verified_objective_teacher_enabled is True
     assert cfg.answer_replacement_margin == pytest.approx(0.05)
     assert cfg.uncertainty_head is None
     assert cfg.mistake_locator is None
@@ -1056,6 +1058,8 @@ def test_config_from_job_rejects_out_of_band_requests():
         config_from_job({"local_repair_max_tokens": 16})
     with pytest.raises(ValueError, match="outside"):
         config_from_job({"answer_replacement_margin": 1.0})
+    with pytest.raises(ValueError, match="JSON boolean"):
+        config_from_job({"verified_objective_teacher_enabled": "true"})
     with pytest.raises(ValueError, match="calibrator config"):
         config_from_job({"prefix_stability_calibrator": {"mode": "learned"}})
     with pytest.raises(ValueError, match="requires head_path"):
@@ -1179,6 +1183,8 @@ def test_config_from_job_maps_every_advanced_mechanism():
             "decode_top_p": 0.82,
             "verifier_probe_max_tokens": 24,
             "verifier_accept_non_regression": True,
+            "objective_program_enabled": False,
+            "verified_objective_teacher_enabled": True,
             "input_context_max_chars": 4096,
             "allow_vanilla_fallback": False,
             "transient_negative_constraints": {
@@ -1207,6 +1213,8 @@ def test_config_from_job_maps_every_advanced_mechanism():
     assert cfg.decode_top_p == 0.82
     assert cfg.verifier_probe_max_tokens == 24
     assert cfg.verifier_accept_non_regression is True
+    assert cfg.objective_program_enabled is False
+    assert cfg.verified_objective_teacher_enabled is True
     assert cfg.input_context_max_chars == 4096
     assert cfg.allow_vanilla_fallback is False
     assert cfg.transient_negative_constraints == {

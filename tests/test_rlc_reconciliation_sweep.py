@@ -440,6 +440,7 @@ def test_executable_ablation_preserves_adaptive_neural_tissue():
     assert config.local_repair_enabled is True
     assert config.answer_replacement_enabled is True
     assert config.objective_program_enabled is False
+    assert config.verified_objective_teacher_enabled is True
     assert config.latent_opt.enabled is True
     assert config.fast_weights.enabled is True
     assert config.verifier_accept_non_regression is True

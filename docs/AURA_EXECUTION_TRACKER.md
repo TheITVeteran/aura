@@ -42386,3 +42386,35 @@ lesion/sham when treatment cannot beat ordinary decode. Focused helper
 contracts pass `19/19`; Ruff, compilation, and diff hygiene pass. No neural,
 resident-32B, frontier, fusion, activation, or `WOW Signal` claim is
 authorized. The completion envelope is `839/920` (approximately `91.2%`).
+
+## Checkpoint 2026-08-10-143: Neural Teaching Is Independent of Answer Production
+
+The completed CP142 short gate was a valid negative control, but source and
+receipt tracing found that its executable-ablation switch removed two causal
+mechanisms at once. It disabled both direct objective-program answer production
+and the independently verified teaching event used to write an episode-scoped
+correction into fast weights. Ordinary and treatment both failed at depths one
+and two, and the receipt explicitly recorded that no fast-weight evidence was
+admitted. The compact checked-in evidence preserves that result without
+committing the large private episode trace.
+
+`CortexConfig` now grants those authorities independently. An experiment may
+keep `verified_objective_teacher_enabled` while setting
+`objective_program_enabled` false, so the verified target can affect private
+temporary neural tissue but cannot enter the public answer as an executable
+candidate. A separate no-teacher ablation remains available. Both controls are
+typed on the worker wire and rejected when malformed. This makes the next
+bounded gate decisive: teach privately, remove direct-answer authority, then
+require neural regeneration to beat ordinary decode and matched no-teacher and
+sham controls.
+
+The affected suite also exposed a pre-existing critic-closure regression:
+fast-weight receipt validation had begun importing the MLX-backed episodic
+output memory, making the supposedly parameterless critic dependency audit
+fail and silently removing verifier authority. Receipt construction and
+validation now live in a pure module shared by the neural implementation and
+symbolic critic; the reconstructed dependency closure has no MLX imports or
+undeclared internal edges. This closes the authority separation and critic
+closure tasks, bringing the completion envelope to `841/920` (approximately
+`91.4%`). It does not authorize a neural-gain, resident-32B, frontier, fusion,
+activation, or `WOW Signal` claim.

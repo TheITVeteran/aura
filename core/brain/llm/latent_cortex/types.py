@@ -530,6 +530,13 @@ class CortexConfig:
     # separate from answer replacement itself so causal experiments can remove
     # the producer while preserving every selection and safety boundary.
     objective_program_enabled: bool = True
+    # Permit an independently verified objective program to provide a private
+    # teaching target to episode-scoped fast weights.  This authority is
+    # deliberately separate from ``objective_program_enabled``: a causal
+    # experiment must be able to withdraw the executable answer producer while
+    # retaining the neural intervention, then require the adapted model to
+    # regenerate the answer without exposing the target on the public lane.
+    verified_objective_teacher_enabled: bool = True
     answer_replacement_margin: float = 0.05
     # Strict experiments accept only a higher task-verifier score. The live
     # product profile may additionally accept an exactly non-regressing score
@@ -1067,6 +1074,8 @@ class CortexConfig:
             problems.append("answer_replacement_enabled must be boolean")
         if type(self.objective_program_enabled) is not bool:
             problems.append("objective_program_enabled must be boolean")
+        if type(self.verified_objective_teacher_enabled) is not bool:
+            problems.append("verified_objective_teacher_enabled must be boolean")
         if (
             isinstance(self.answer_replacement_margin, bool)
             or not isinstance(self.answer_replacement_margin, (int, float))

@@ -6222,7 +6222,7 @@ class LatentCortexEngine:
                     )
             if (
                 admission["admitted"] is not True
-                and self.config.objective_program_enabled
+                and self.config.verified_objective_teacher_enabled
                 and callable(evidence_provider)
                 and self.tokenizer is not None
                 and fw_verifier_pre_text

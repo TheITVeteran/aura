@@ -122,11 +122,14 @@ def _full_engine_config(
     spec: RLCExecutionSpec,
     *,
     objective_program_enabled: bool = True,
+    verified_objective_teacher_enabled: bool = True,
 ) -> Any:
     """Build the product treatment, not the naked recurrent ablation."""
 
     if type(objective_program_enabled) is not bool:
         raise TypeError("objective_program_enabled must be boolean")
+    if type(verified_objective_teacher_enabled) is not bool:
+        raise TypeError("verified_objective_teacher_enabled must be boolean")
 
     from core.brain.llm.latent_cortex.types import FastWeightsConfig, LatentOptConfig
 
@@ -141,6 +144,7 @@ def _full_engine_config(
     config.decode_incumbent_policy = "vanilla_incumbent"
     config.answer_replacement_enabled = True
     config.objective_program_enabled = objective_program_enabled
+    config.verified_objective_teacher_enabled = verified_objective_teacher_enabled
     config.local_repair_enabled = True
     config.local_repair_max_attempts = len(spec.branch_roles)
     config.local_repair_max_tokens = free_generation_sampling_config().max_tokens
@@ -435,6 +439,7 @@ def build_paired_full_engine_probe_reports(
     seed: int,
     depths: Sequence[int] | None = None,
     objective_program_enabled: bool = True,
+    verified_objective_teacher_enabled: bool = True,
     progress_callback: Callable[[dict[str, Any]], None] | None = None,
 ) -> tuple[dict[str, Any], dict[str, Any]]:
     """Run ordinary and complete-engine arms from one immutable incumbent."""
@@ -454,6 +459,8 @@ def build_paired_full_engine_probe_reports(
     selected_depths = _normalize_full_engine_probe_depths(spec, depths)
     if type(objective_program_enabled) is not bool:
         raise TypeError("objective_program_enabled must be boolean")
+    if type(verified_objective_teacher_enabled) is not bool:
+        raise TypeError("verified_objective_teacher_enabled must be boolean")
     ordinary_records: list[dict[str, Any]] = []
     full_records: list[dict[str, Any]] = []
     n_layers = len(model.model.layers)
@@ -559,6 +566,9 @@ def build_paired_full_engine_probe_reports(
                 config=_full_engine_config(
                     depth_spec,
                     objective_program_enabled=objective_program_enabled,
+                    verified_objective_teacher_enabled=(
+                        verified_objective_teacher_enabled
+                    ),
                 ),
                 model_path=str(model_path),
                 schedule_library=None,
@@ -582,6 +592,9 @@ def build_paired_full_engine_probe_reports(
                         "task_ordinal": task_ordinal,
                         "depth": depth,
                         "objective_program_enabled": objective_program_enabled,
+                        "verified_objective_teacher_enabled": (
+                            verified_objective_teacher_enabled
+                        ),
                     }
                 )
             result = engine.reason(
