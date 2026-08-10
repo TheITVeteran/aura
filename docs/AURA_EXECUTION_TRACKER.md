@@ -42418,3 +42418,33 @@ undeclared internal edges. This closes the authority separation and critic
 closure tasks, bringing the completion envelope to `841/920` (approximately
 `91.4%`). It does not authorize a neural-gain, resident-32B, frontier, fusion,
 activation, or `WOW Signal` claim.
+
+## Checkpoint 2026-08-10-144: Verified Teaching Produces a Neural Win, Not Yet a Persistent One
+
+The published CP143 authority split produced the first clean positive result
+for the exact mechanism it was designed to isolate. On the held-out modular
+task that ordinary decode failed at both depth coordinates, the direct
+objective-program answer producer remained disabled. The no-teacher arm also
+failed `0/2`. Enabling only the private verified teacher changed the depth-two
+RLC result to the exact answer, for a treatment score of `1/2`. Answer
+replacement selected `branch-0`, not `objective-program`; the fast-weight
+causal probe improved from `0.25` to `0.709302`, the temporary neural function
+changed its token sequence, and all temporary weights erased exactly.
+
+The matched controls sharply bound the result. Disabling the trained coda did
+not remove the win (`1/2`), and a norm-preserving coda-output permutation also
+retained it (`1/2`) before restoring the exact adapter fingerprint. Therefore
+the CP139 persistent coda did not cause this gain. The causal mechanism is the
+query-scoped verified neural write operating through the recurrent depth-two
+path. This proves that Aura's temporary tissue can absorb a verified correction
+and regenerate it without direct executable-answer authority. It does not yet
+prove teacher-free transfer, broad reasoning gain, or persistent adapter gain.
+
+The next bounded milestone distills successful temporary correction
+trajectories into expanded recurrent/coda tissue, then tests fresh held-out
+tasks with both producer and teacher disabled. The resident 32B remains
+ineligible until that persistent treatment beats ordinary decode, coda lesion,
+and norm-preserving sham without per-query answer teaching. This evidence
+closes the bounded neural-teaching mechanism task and advances the completion
+envelope to `842/920` (approximately `91.5%`). No resident-32B, frontier,
+fusion, activation, or `WOW Signal` claim is authorized.

@@ -1,0 +1,44 @@
+{
+  "adapter_sha256": "db77909f35b98b5854145ef0bffa37c79fc1d4f14359f6bb6094a9b0b10c285b",
+  "claim_boundary": "bounded_same_query_mechanism_gain_not_teacher_free_general_capability",
+  "controls": {
+    "coda_lesion_correct": 1,
+    "coda_sham_correct": 1,
+    "coda_sham_restored_exactly": true,
+    "no_teacher_correct": 0,
+    "ordinary_correct": 0,
+    "treatment_correct": 1
+  },
+  "controls_file_sha256": "ea44a861aec229db10a9a43d659a9b0bed90e1c4ed131f7549da539a17070bfb",
+  "controls_receipt_sha256": "e5bc25d892137f5d7700ca6b5fb914be16e78417f4daaa1175a0785808712884",
+  "depths": [
+    {
+      "correct": false,
+      "depth": 1,
+      "fast_weights_erased": true,
+      "learning_disposition": "rejected_non_improvement",
+      "post_score": 0.190674,
+      "pre_score": 0.25,
+      "selected_request_id": ""
+    },
+    {
+      "correct": true,
+      "depth": 2,
+      "fast_weights_erased": true,
+      "learning_disposition": "accepted_probe_not_output_under_incumbent_policy",
+      "post_score": 0.709302,
+      "pre_score": 0.25,
+      "selected_request_id": "branch-0"
+    }
+  ],
+  "diagnostic_file_sha256": "b1a68126e41f4af4438e10b6092e8cd57c6af2cea69f6f125cca212dfac47ce7",
+  "diagnostic_receipt_sha256": "e8ed2d95a45b1e7de328f70ea2b1f3b768068586b08caa651f1fb5459dbeb5f7",
+  "finding": "Private verified teaching caused a correct producer-disabled neural branch at depth two, but persistent trained coda lesion and sham did not remove the gain. The temporary fast-weight path is causal; the CP139 coda is not.",
+  "model_path": "/Users/bryan/.aura/live-source/models/Qwen2.5-1.5B-Instruct-4bit",
+  "objective_program_enabled": false,
+  "schema": "aura.rlc.cp143_verified_neural_teacher_controls.v1",
+  "seed": 2026081001,
+  "source_commit": "40ac784d1c641d815aaf9e32346ceb404e53428e",
+  "task_id": "recurrence-modular-d2-s2729938886285982053",
+  "verified_objective_teacher_enabled": true
+}
