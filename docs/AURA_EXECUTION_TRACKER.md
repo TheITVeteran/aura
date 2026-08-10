@@ -43335,3 +43335,28 @@ frozen at rank `32`, regularization `100`, and gain `0.25`. Its claim boundary
 is internal operator scaling only. Behavioral power, unseen-family/depth
 transfer, recurrent-workspace causality, resident-32B use, fusion, activation,
 and the `WOW Signal` remain locked.
+
+## Checkpoint 2026-08-10-174: Sample Boundaries Follow Captured Features
+
+The first source-bound CP173 invocation stopped immediately after model load.
+Its new complete-example guard assumed that one captured activation row equals
+one lexical target token. The capture seam deliberately summarizes an answer
+into a rank-bounded inventory: mean and terminal states plus bounded sampled
+positions. A complete example can therefore contain two feature rows while its
+verified lexical target contains many more tokens. No learner fit, validation,
+or scientific verdict ran.
+
+The manifest now records both quantities independently. `feature_row_count`
+must exactly equal the contiguous observed row interval for every task/branch
+example; `target_token_count` remains separate positive provenance. Nested
+sample sizes may end only at those validated feature boundaries. A regression
+proves that differing feature and lexical counts are accepted while a gap,
+overlap, wrong feature count, or empty target is refused. Focused execution
+passes `30/30`; Ruff and compilation pass; the repository-venv smoke gate
+passes `103/103`. The host interpreter's missing NumPy dependency remains
+irrelevant to the source verdict and is not counted as a test failure.
+
+This advances the completion envelope to `870/920` (approximately `94.6%`).
+The unchanged fixed-hyperparameter, multi-seed 1.5B scaling run is next. No
+behavioral, recurrent-workspace, resident-32B, frontier, fusion, activation,
+or `WOW Signal` claim is authorized.

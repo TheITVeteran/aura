@@ -122,7 +122,12 @@ def test_receipt_validator_rejects_post_write_mutation(tmp_path) -> None:
 
 def test_sample_rows_preserve_complete_example_boundaries() -> None:
     manifest = [
-        {"row_start": index * 2, "row_stop": (index + 1) * 2}
+        {
+            "row_start": index * 2,
+            "row_stop": (index + 1) * 2,
+            "feature_row_count": 2,
+            "target_token_count": 5 + index,
+        }
         for index in range(16)
     ]
 
@@ -138,10 +143,65 @@ def test_sample_rows_preserve_complete_example_boundaries() -> None:
 
 def test_sample_rows_reject_partial_or_noncontiguous_manifest() -> None:
     manifest = [
-        {"row_start": 0, "row_stop": 2},
-        {"row_start": 3, "row_stop": 5},
+        {
+            "row_start": 0,
+            "row_stop": 2,
+            "feature_row_count": 2,
+            "target_token_count": 7,
+        },
+        {
+            "row_start": 3,
+            "row_stop": 5,
+            "feature_row_count": 2,
+            "target_token_count": 11,
+        },
     ]
 
+    with pytest.raises(ValueError, match="row boundaries"):
+        _sample_rows_from_complete_examples(
+            manifest,
+            per_cell_levels=(1, 2),
+            stratum_count=1,
+            branch_count=1,
+        )
+
+
+@pytest.mark.parametrize(
+    "manifest",
+    [
+        [
+            {
+                "row_start": 0,
+                "row_stop": 2,
+                "feature_row_count": 1,
+                "target_token_count": 7,
+            },
+            {
+                "row_start": 2,
+                "row_stop": 4,
+                "feature_row_count": 2,
+                "target_token_count": 9,
+            },
+        ],
+        [
+            {
+                "row_start": 0,
+                "row_stop": 2,
+                "feature_row_count": 2,
+                "target_token_count": 0,
+            },
+            {
+                "row_start": 2,
+                "row_stop": 4,
+                "feature_row_count": 2,
+                "target_token_count": 9,
+            },
+        ],
+    ],
+)
+def test_sample_rows_reject_invalid_feature_or_target_counts(
+    manifest: list[dict[str, int]],
+) -> None:
     with pytest.raises(ValueError, match="row boundaries"):
         _sample_rows_from_complete_examples(
             manifest,

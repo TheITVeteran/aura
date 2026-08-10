@@ -323,7 +323,8 @@ def _capture_training_inventory(
                     raise RuntimeError("trajectory decode row offsets differ by site")
                 row_stop = row_counts.pop()
                 row_start = int(manifest[-1]["row_stop"]) if manifest else 0
-                if row_stop - row_start != int(len(target_tokens)):
+                feature_row_count = row_stop - row_start
+                if feature_row_count <= 0:
                     raise RuntimeError("trajectory decode example boundary is invalid")
                 manifest.append(
                     {
@@ -338,6 +339,7 @@ def _capture_training_inventory(
                         ),
                         "row_start": row_start,
                         "row_stop": row_stop,
+                        "feature_row_count": feature_row_count,
                         "target_token_count": int(len(target_tokens)),
                     }
                 )
@@ -467,11 +469,17 @@ def _sample_rows_from_complete_examples(
     for row in manifest:
         start = row.get("row_start")
         stop = row.get("row_stop")
+        feature_rows = row.get("feature_row_count")
+        target_tokens = row.get("target_token_count")
         if (
             type(start) is not int
             or type(stop) is not int
             or start != previous_stop
             or stop <= start
+            or type(feature_rows) is not int
+            or feature_rows != stop - start
+            or type(target_tokens) is not int
+            or target_tokens < 1
         ):
             raise ValueError("sample-complexity teaching row boundaries are invalid")
         previous_stop = stop
