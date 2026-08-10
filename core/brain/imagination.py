@@ -94,6 +94,105 @@ _STOPWORDS = {
     "would",
     "you",
     "your",
+    # The auxiliary and pronoun families were each half-present: "have" was
+    # here but not "has"/"had", "does" but not "do"/"did", "are" but not
+    # "is"/"was", "you" but not "we"/"they". Finishing them is what lets
+    # contraction stemming bite — "haven't" only resolves to a stop word if
+    # "have" is reachable from it, and "we're" only if "are" is in this set.
+    #
+    # Everything below is closed-class: an auxiliary, a pronoun, a determiner,
+    # a conjunction or a preposition. Nothing that could be what a request is
+    # ABOUT belongs here — the modals ("should", "will", "shall") are subjects
+    # often enough that they live in _WEAK_TOPIC_TOKENS and get demoted
+    # instead. Membership here means *deleted*, and the two sets are asserted
+    # disjoint by tests/brain/test_imagination_keyword_focus.py.
+    "after",
+    "against",
+    "all",
+    "although",
+    "always",
+    "another",
+    "before",
+    "below",
+    "between",
+    "both",
+    "but",
+    "did",
+    "done",
+    "during",
+    "each",
+    "either",
+    "else",
+    "ever",
+    "every",
+    "few",
+    "had",
+    "has",
+    "her",
+    "hers",
+    "him",
+    "his",
+    "however",
+    "its",
+    "itself",
+    "mine",
+    "most",
+    "neither",
+    "never",
+    "once",
+    "only",
+    "other",
+    "others",
+    "our",
+    "ours",
+    "over",
+    "own",
+    "rather",
+    "same",
+    "she",
+    "since",
+    "such",
+    # Indefinite pronouns. Closed class, and they were outranking real nouns:
+    # the live frame led with "something" from "let's do something you haven't
+    # done today", which is grammar, not a subject.
+    "anybody",
+    "anyone",
+    "anything",
+    "everybody",
+    "everyone",
+    "everything",
+    "nobody",
+    "nothing",
+    "somebody",
+    "someone",
+    "something",
+    "than",
+    "their",
+    "theirs",
+    "themselves",
+    "these",
+    "them",
+    "they",
+    "those",
+    "though",
+    "thus",
+    "too",
+    "under",
+    "until",
+    "upon",
+    "very",
+    "was",
+    "were",
+    "which",
+    "while",
+    "who",
+    "whom",
+    "whose",
+    "why",
+    "without",
+    "yet",
+    "yours",
+    "yourself",
 }
 
 
@@ -204,9 +303,15 @@ _WEAK_TOPIC_TOKENS = frozenset({
     "actually", "add", "answer", "any", "ask", "asked", "asking", "build",
     "check", "come", "consider", "create", "day", "describe", "design",
     "discuss", "explain", "figure", "find", "get", "give", "going", "help",
-    "here", "invent", "keep", "know", "let", "look", "may", "maybe", "mean",
+    # "imagine" is the instruction verb into an imagination engine — the most
+    # common word in its input and never once its subject. "describe" and
+    # "invent" were already demoted; this one was missed, so "imagine a
+    # cathedral" ranked the request's own imperative above the cathedral.
+    "here", "imagine", "invent", "keep", "know", "let", "look", "may",
+    "maybe", "mean",
     "might", "much", "must", "one", "please", "put", "question", "really",
-    "run", "say", "search", "see", "set", "should", "show", "some", "start",
+    "run", "say", "search", "see", "set", "shall", "should", "show", "some",
+    "start",
     "still", "sure", "take", "talk", "tell", "thing", "things", "think",
     "time", "try", "understand", "use", "using", "verify", "way", "well",
     "will", "work", "write", "yes",
@@ -287,6 +392,33 @@ def imagination_subject(text: Any, context: Any = None) -> str:
     return body
 
 
+#: Contractions whose written head is not a prefix of the word it stands for.
+#: Every other English contraction stems by truncation ("haven't" -> "have",
+#: "we're" -> "we"), so only these three need to be spelled out.
+_IRREGULAR_CONTRACTIONS = {"wo": "will", "ca": "can", "sha": "shall"}
+
+
+def _contraction_stem(token: str) -> str:
+    """The word a clitic is attached to, or the token unchanged.
+
+    Classification below reads three sets keyed by whole words, so a token
+    carrying a clitic matches none of them: "haven't" is not "have" and
+    "let's" is not "let". Reducing to the stem FIRST — rather than testing the
+    stem against the stop list only — is what keeps the three-way decision
+    intact, so a demoted word stays demoted through its contraction instead of
+    silently being promoted to a subject.
+
+    Possessives fall out of the same rule: "the room's architecture" yields
+    "room", which is the noun the sentence is actually about.
+    """
+    if "'" not in token:
+        return token
+    if token.endswith("n't"):
+        head = token[:-3]
+        return _IRREGULAR_CONTRACTIONS.get(head, head)
+    return token.split("'", 1)[0]
+
+
 def _extract_keywords(text: str, *, limit: int = 8) -> list[str]:
     """Content words in the order Aura should care about them.
 
@@ -300,7 +432,15 @@ def _extract_keywords(text: str, *, limit: int = 8) -> list[str]:
     weak: list[str] = []
     for order, match in enumerate(_WORD_RE.finditer(text)):
         surface = match.group(0).strip("'_-")
-        token = surface.lower()
+        # LIVE DEFECT, 2026-08-10. Asked to imagine a room whose architecture
+        # only makes sense without hands, the live frame's keywords were
+        # ["something", "haven't", "value", "let's", "i'll", "face", "take",
+        # "answer"] and its visual model read "An internal sketch of something,
+        # haven't, value, let's". She was imagining about the throat-clearing
+        # in front of the request, and not one of room, architecture, hands or
+        # heartbeat survived. Two causes: clitics dodged every set below, and
+        # the loop stopped ranking after the first `limit` candidates.
+        token = _contraction_stem(surface.lower())
         if len(token) < 3 or token in _STOPWORDS or token in seen:
             continue
         seen.add(token)
@@ -308,8 +448,21 @@ def _extract_keywords(text: str, *, limit: int = 8) -> list[str]:
             weak.append(token)
         else:
             strong.append((-_topic_informativeness(surface, match.start()), order, token))
-        if len(strong) + len(weak) >= limit:
-            break
+    # Rank the whole request, then take `limit`.
+    #
+    # This used to stop as soon as `limit` candidates had been SEEN, in
+    # document order — so the ranking below only ever sorted the first eight
+    # acceptable words. A request that opens with any preamble therefore lost
+    # its subject entirely: "I'll take that answer at face value for now.
+    # let's do something you haven't done today: imagine … a room whose
+    # architecture only makes sense if you have no hands …" yielded
+    # ["something", "value", "today", "face", "done", "take", "answer"] and
+    # never reached room, architecture, hands or heartbeat. The informativeness
+    # score exists precisely to make that judgement and was never shown the
+    # candidates worth judging.
+    #
+    # The text is already clipped to 500 characters upstream, so scoring all
+    # of it is bounded work.
     strong.sort()
     return ([token for _, _, token in strong] + weak)[:limit]
 
