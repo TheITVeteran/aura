@@ -621,7 +621,7 @@ def test_resource_dominating_control_spends_until_every_target_dimension_is_met(
     assert certificate["admitted"] is True
     assert receipt["selected_index"] == 3
     assert receipt["sample_count"] == 4
-    assert receipt["equal_tool_cycle_limit"] == 4
+    assert receipt["equal_tool_cycle_limit"] == 6
     mismatched_sources = [dict(source) for source in information["sources"]]
     prompt_source = next(
         source for source in mismatched_sources if source["source_id"] == "rendered_model_input"
@@ -719,8 +719,22 @@ def test_equal_tool_cycle_plan_is_target_derived_and_rejects_impossible_bytes():
     setup = {"totals": {"tool_calls": 0, "tool_input_bytes": 0, "tool_result_bytes": 0}}
     target = {"totals": {"tool_calls": 3, "tool_input_bytes": 9, "tool_result_bytes": 4}}
 
-    assert sweep._equal_tool_cycle_limit(setup, target, max_samples=12) == 5
+    assert sweep._equal_tool_cycle_limit(setup, target, max_samples=12) == 12
     assert sweep._equal_tool_cycle_limit(setup, target, max_samples=4) == 4
+
+    calls_met_bytes_short = {
+        "totals": {"tool_calls": 3, "tool_input_bytes": 9, "tool_result_bytes": 1}
+    }
+    assert sweep._equal_tool_cycle_limit(
+        calls_met_bytes_short,
+        target,
+        max_samples=7,
+    ) == 7
+
+    target_met = {
+        "totals": {"tool_calls": 3, "tool_input_bytes": 9, "tool_result_bytes": 4}
+    }
+    assert sweep._equal_tool_cycle_limit(target_met, target, max_samples=7) == 0
 
     impossible = {"totals": {"tool_calls": 0, "tool_input_bytes": 1, "tool_result_bytes": 0}}
     with pytest.raises(RuntimeError, match="without a measured tool call"):

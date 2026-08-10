@@ -971,21 +971,29 @@ def _equal_tool_cycle_limit(
     *,
     max_samples: int,
 ) -> int:
-    """Derive a bounded tool-control plan from the measured call deficit.
+    """Return the bounded budget for independently matching tool resources.
 
-    A valid executable operation advances the call counter by at least one.
-    Two additional cycles allow an inapplicable strategy without restoring the
-    old fixed loop that could run independently of the campaign sample budget.
+    Tool-call count does not bound input or result bytes. A treatment can emit
+    a large, useful sandbox trace in one call while an independent control's
+    first several calls emit short diagnostics. The control therefore owns the
+    remaining campaign sample budget and stops as soon as every measured tool
+    dimension is met. The caller's no-progress guard still fails fast when the
+    executable affordance is not producing any measurable work.
     """
 
     if isinstance(max_samples, bool) or not isinstance(max_samples, int) or max_samples < 1:
         raise ValueError("resource-dominating sample budget must be positive")
-    current_calls, _, _ = _tool_progress(control_resource)
+    current_calls, current_input, current_result = _tool_progress(control_resource)
     target_calls, target_input, target_result = _tool_progress(target_resource)
     if target_calls == 0 and (target_input > 0 or target_result > 0):
         raise RuntimeError("tool-byte target is positive without a measured tool call")
-    call_deficit = max(0, target_calls - current_calls)
-    return min(max_samples, max(0, call_deficit + 2))
+    if (
+        current_calls >= target_calls
+        and current_input >= target_input
+        and current_result >= target_result
+    ):
+        return 0
+    return max_samples
 
 
 def _select_verified_candidate(outputs: list[str], scores: list[float]) -> str:
@@ -1256,8 +1264,13 @@ def _run_vanilla_resource_dominating(
                     "for two consecutive cycles"
                 )
         else:
+            observed_calls, observed_input, observed_result = _tool_progress(aggregate)
             raise RuntimeError(
-                "equal-tool ordinary control could not reach the treatment's measured tool envelope"
+                "equal-tool ordinary control exhausted its bounded cycle budget below "
+                "the treatment's measured tool envelope: "
+                f"cycles={equal_tool_cycles}/{equal_tool_cycle_limit};"
+                f"observed=({observed_calls},{observed_input},{observed_result});"
+                f"target={_tool_progress(target_resource)}"
             )
 
     for _ in range(max_samples - len(outputs)):
@@ -1730,21 +1743,33 @@ def _resource_dominating_control_receipt_issues(
             issues.append("resource_control_cell_information_mismatch")
         if cell.get("resource_dominance_certificate") != recorded_certificate:
             issues.append("resource_control_cell_certificate_mismatch")
-        tool_target = recorded_certificate["resource_dimensions"]["tool_calls"]["treatment"]
+        dimensions = recorded_certificate["resource_dimensions"]
+        tool_target = dimensions["tool_calls"]["treatment"]
         if tool_target > 0 and equal_tool_candidates == 0:
             issues.append("resource_control_equal_tool_path_absent")
-        expected_cycle_limit = min(
-            int(receipt.get("sample_limit") or 0),
-            max(
-                0,
-                int(tool_target)
-                - int((setup_resource or {"totals": {"tool_calls": 0}})["totals"]["tool_calls"])
-                + 2,
-            ),
-        )
-        if tool_target == 0:
-            expected_cycle_limit = 0
-        if cycle_limit != expected_cycle_limit:
+        target_tool_resource = {
+            "totals": {
+                name: int(dimensions[name]["treatment"])
+                for name in ("tool_calls", "tool_input_bytes", "tool_result_bytes")
+            }
+        }
+        try:
+            expected_cycle_limit = _equal_tool_cycle_limit(
+                setup_resource
+                or {
+                    "totals": {
+                        "tool_calls": 0,
+                        "tool_input_bytes": 0,
+                        "tool_result_bytes": 0,
+                    }
+                },
+                target_tool_resource,
+                max_samples=int(receipt.get("sample_limit") or 0),
+            )
+        except (RuntimeError, ValueError):
+            issues.append("resource_control_equal_tool_limit_invalid")
+            expected_cycle_limit = None
+        if expected_cycle_limit is not None and cycle_limit != expected_cycle_limit:
             issues.append("resource_control_equal_tool_limit_mismatch")
     return sorted(set(issues))
 
