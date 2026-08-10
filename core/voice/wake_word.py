@@ -61,9 +61,14 @@ class WakeState(StrEnum):
 # of a name the transcriber routinely gets wrong is a wake word that does not
 # work. These variants are what was observed, not a guess; each is anchored
 # behind a greeting so an ordinary sentence cannot trip them.
+#: Observed live in a single afternoon: "Aura", "Laura", "Orrick". A fixed list
+#: of spellings loses to the next one the transcriber invents, so the name is
+#: matched by shape instead — an optional leading consonant, an "or"/"au"/"ar"
+#: vowel core, and whatever tail the transcriber appended. Anchored behind a
+#: greeting, which is what keeps "laura called me yesterday" silent.
 _WAKE_GAP = r"[\s,.\-–—:;]+"
 _GREETING = r"(?:hey|hi|hello|ok(?:ay)?|yo)"
-_NAME = r"(?:aura|aurora|laura|lora|ora)"
+_NAME = r"(?:[lmnrd]?[oa]u?r[aeiouy]?\w{0,4})"
 WAKE_PHRASES = [
     rf"\b{_GREETING}{_WAKE_GAP}{_NAME}\b",
     rf"\b{_NAME}\b.*\blisten\b",

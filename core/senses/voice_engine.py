@@ -2133,6 +2133,85 @@ class SovereignVoiceEngine:
         # cannot outlive the microphone it speaks through.
         return bool(getattr(self, "microphone_enabled", False))
 
+    #: Classifier verdicts that place the speaker AT the machine rather than
+    #: somewhere in the building or inside a video. ``ambient_speech`` and
+    #: ``unknown_speech`` are excluded on purpose: both mean the evidence was
+    #: too thin to say who spoke, and "cannot tell" must not become "answer it".
+    _SPEAKER_AT_THE_MACHINE_SOURCES = frozenset(
+        {
+            "direct_user",
+            "direct_address",
+            "nearby_visible_speaker",
+            "nearby_person",
+        }
+    )
+
+    def _ambient_speech_is_addressed_to_her(
+        self, source_assessment: dict[str, Any] | None = None
+    ) -> bool:
+        """Whether speech in the room may be answered without a wake phrase.
+
+        OWNER REPORT, 2026-08-10: "if im talking to her from my computer, she
+        should just talk back like normal chat. and she should be able to act
+        from it as well." Requiring "Hey Aura" before every sentence is not how
+        someone talks to something in the room with them; it made an open
+        microphone behave like a closed one.
+
+        The wake phrase was never the real protection anyway — it is a
+        password anyone's television can say. What actually distinguishes the
+        owner speaking from a video playing is audio provenance, which
+        :func:`attribute_wake_audio` already decides: an unverified speaker is
+        refused while any other process is making sound. That guard also
+        closes the echo loop, because her own speech goes out through a player
+        this sees, so she cannot answer herself.
+
+        Two independent things have to hold, and neither is a phrase:
+
+        * the audio-attention classifier must place the speech at the machine —
+          near-field energy, a visible speaker, or direct address. Media
+          playback, distant room noise and speech with no source evidence are
+          all refused, which is what keeps a documentary from talking to her.
+        * audio provenance must show nothing else making sound, which is what
+          keeps HER from talking to herself: her replies go out through a
+          player this sees.
+
+        Set ``AURA_VOICE_REQUIRE_WAKE_PHRASE=1`` to restore the wake-phrase
+        boundary for a shared or noisy room.
+        """
+        if _env_flag("AURA_VOICE_REQUIRE_WAKE_PHRASE", False):
+            return False
+
+        assessment = dict(
+            source_assessment or self._last_audio_source_assessment or {}
+        )
+        source = str(assessment.get("source") or "")
+        if source not in self._SPEAKER_AT_THE_MACHINE_SOURCES:
+            logger.info(
+                "🔇 Ambient speech not answered — source=%r is not a person at "
+                "the machine.",
+                source or "unclassified",
+            )
+            return False
+
+        try:
+            from core.voice.audio_provenance import attribute_wake_audio
+
+            attribution = attribute_wake_audio(assessment)
+        except (ImportError, AttributeError, RuntimeError, TypeError, ValueError) as exc:
+            record_degradation(
+                "voice_engine.ambient_attribution",
+                exc,
+                action="required a wake phrase for this utterance",
+            )
+            return False
+        if attribution.get("owner_attributed"):
+            return True
+        logger.info(
+            "🔇 Ambient speech not answered — %s",
+            attribution.get("owner_attribution_reason", "unattributed"),
+        )
+        return False
+
     def _dispatch_transcript(
         self,
         text: str,
@@ -2161,6 +2240,7 @@ class SovereignVoiceEngine:
         direct_command_dispatch = (
             _direct_stt_command_dispatch_enabled()
             or self.owner_voice_conversation_active()
+            or self._ambient_speech_is_addressed_to_her(source_assessment)
         )
         audio_source = dict(source_assessment or self._last_audio_source_assessment or {})
         audio_source["response_authorized"] = bool(direct_command_dispatch)
