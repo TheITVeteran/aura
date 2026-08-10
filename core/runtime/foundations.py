@@ -475,11 +475,19 @@ async def _activate_verification(*, foreground_only: bool) -> ActivationResult:
     """Wave 2 — structural verifier, pass instrumentation, sanitizers."""
     # Importing registers the standing invariants; the module is a
     # declaration site, not a service.
+    from core.observability.turn_observer import install_turn_observer
     from core.pipeline.pass_manager import get_instrumentation, install_default_instrumentation
     from core.verify import runtime_invariants  # noqa: F401 — import registers
     from core.verify.invariants import get_registry, verify
 
     instrumentation = install_default_instrumentation()
+
+    # Per-turn cost and stuck verdicts. Registered here because this is where
+    # the pass seam is armed, and it attaches to that same seam. It installs an
+    # after-hook only, so it can observe every turn and alter none of them —
+    # see core/observability/turn_observer.py for why that is structural rather
+    # than a promise.
+    install_turn_observer()
 
     # The first verification runs over the runtime as boot left it. This is
     # the moment a structural regression is cheapest to see: before any
@@ -493,6 +501,7 @@ async def _activate_verification(*, foreground_only: bool) -> ActivationResult:
         detail=(
             f"{declared} invariants declared, {report.summary()}; "
             f"pass instrumentation {'armed' if instrumentation['installed'] else 'already armed'}"
+            ", turn observer metering (observe-only)"
             + (
                 f", opt-bisect limit={get_instrumentation().bisect_limit()}"
                 if get_instrumentation().bisect_limit() is not None
