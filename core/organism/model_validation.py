@@ -654,9 +654,57 @@ def install_runtime_validation() -> dict[str, Any]:
         "rlc_verified_amplifier_composition",
         "kernel_confined_symbolic_cognition",
         "rlc_closed_loop_compute",
+        "work_grounded_claims",
+        "prompt_boundary_detection",
     )
     suite.add_model(model)
 
+    suite.add_test(
+        ValidationTest(
+            name="fabrication_audit_never_accuses_an_unknown_turn",
+            description=(
+                "a claim of work whose turn the ledger never saw resolves "
+                "UNKNOWN, never UNSUPPORTED, so eviction cannot manufacture a "
+                "fabrication finding"
+            ),
+            required_capability="work_grounded_claims",
+            observation=Observation(
+                name="unsupported_findings_on_an_unknown_turn",
+                value=0,
+                source=(
+                    "core/verify/fabrication_audit.py and "
+                    "tests/test_fabrication_audit.py"
+                ),
+                units="findings",
+            ),
+            predict=lambda _m: _fabrication_unknown_turn_findings(),
+            score=lambda p, o: threshold_score(float(p), float(o.value), units=" findings"),
+            owner="core/verify/fabrication_audit.py",
+        )
+    )
+    suite.add_test(
+        ValidationTest(
+            name="canary_failure_is_never_reported_as_an_attack",
+            description=(
+                "an unevaluable injection probe resolves INCONCLUSIVE and stays "
+                "out of the incident rate, so a model outage cannot manufacture "
+                "a security verdict"
+            ),
+            required_capability="prompt_boundary_detection",
+            observation=Observation(
+                name="incidents_from_unevaluable_probes",
+                value=0,
+                source=(
+                    "core/security/injection_canary.py and "
+                    "tests/test_injection_canary.py"
+                ),
+                units="incidents",
+            ),
+            predict=lambda _m: _canary_incidents_from_failures(),
+            score=lambda p, o: threshold_score(float(p), float(o.value), units=" incidents"),
+            owner="core/security/injection_canary.py",
+        )
+    )
     suite.add_test(
         ValidationTest(
             name="sequential_exclusion_dominates_iid_sampling",
@@ -1080,6 +1128,46 @@ def install_runtime_validation() -> dict[str, Any]:
             Claim(statement=statement, test=test_name, owner=asserted_in, asserted_in=asserted_in)
         )
 
+    # Graded honestly. Both mechanisms are proven by construction and by
+    # test, and neither has yet run against live traffic — the work ledger
+    # has recorded no production turns and no canary has been evaluated on
+    # a real request. Every previous claim in this file that skipped that
+    # distinction had to be walked back later, so these say it up front.
+    suite.add_claim(
+        Claim(
+            statement=(
+                "A persisted claim to have done work is checked against the "
+                "record of what the turn actually ran."
+            ),
+            test="fabrication_audit_never_accuses_an_unknown_turn",
+            owner="core/verify/fabrication_audit.py",
+            asserted_in="core/verify/fabrication_audit.py",
+            evidence=Evidence.MEASURED_SYNTHETIC,
+            evidence_note=(
+                "the UNKNOWN-vs-UNSUPPORTED property is measured on constructed "
+                "turns; no live turn has been audited, and the claim-pattern "
+                "table's recall against real confabulations is unmeasured"
+            ),
+        )
+    )
+    suite.add_claim(
+        Claim(
+            statement=(
+                "Whether the model followed instructions inside a fenced block "
+                "is detected rather than assumed."
+            ),
+            test="canary_failure_is_never_reported_as_an_attack",
+            owner="core/security/injection_canary.py",
+            asserted_in="core/security/injection_canary.py",
+            evidence=Evidence.MEASURED_SYNTHETIC,
+            evidence_note=(
+                "fail-open behaviour is measured against constructed responses; "
+                "no canary has ridden a live request, so the detection rate "
+                "against a real injection attempt is unmeasured"
+            ),
+        )
+    )
+
     # Graded MEASURED_SYNTHETIC on purpose. The arithmetic is proven and the
     # policy is wired into live best-of-N, but no live reasoning gain has
     # been measured — and every previous RLC claim that skipped that
@@ -1205,6 +1293,48 @@ def install_runtime_validation() -> dict[str, Any]:
 
 
 # ── prediction helpers, kept small and failure-tolerant ───────────────
+
+def _fabrication_unknown_turn_findings() -> int:
+    """Findings wrongly marked UNSUPPORTED for a turn the ledger never saw.
+
+    Structurally zero: audit_text reads Support.UNKNOWN whenever the work
+    ledger has no record of the turn. Measured rather than asserted, because
+    the whole value of the audit rests on it — a detector that converts
+    ledger eviction into accusations is worse than no detector.
+    """
+    try:
+        from core.verify.fabrication_audit import Support, audit_text
+
+        findings = audit_text(
+            "I searched for it and ran the code to check.",
+            "a-turn-that-was-never-recorded",
+        )
+        return sum(1 for f in findings if f.support is Support.UNSUPPORTED)
+    except Exception:
+        # A check that cannot run is a violation, not a pass.
+        return 1
+
+
+def _canary_incidents_from_failures() -> int:
+    """Security incidents produced by probes that could not be evaluated.
+
+    Structurally zero: an empty, missing or unreadable response resolves
+    INCONCLUSIVE, which is_incident excludes. Measured because the failure
+    mode it guards — a busy 32B manufacturing hijack verdicts — would be
+    both invisible and self-reinforcing.
+    """
+    try:
+        from core.security.injection_canary import inspect_response, mint_canary
+
+        canary = mint_canary()
+        return sum(
+            1
+            for bad in (None, "", "   ")
+            if inspect_response(bad, canary).is_incident
+        )
+    except Exception:
+        return 1
+
 
 def _exclusion_losses_to_iid() -> int:
     """Count distributions where i.i.d. sampling beats exclusion. Must be 0.
