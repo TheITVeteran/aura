@@ -42026,3 +42026,46 @@ campaign; direct synaptic writes and verifier-scored latent search remain
 pending if gradient fast weights do not transfer. No resident, neural,
 frontier, fusion, activation, or `WOW Signal` claim is authorized. The
 completion envelope is `828/920` (approximately `90.0%`).
+
+## Checkpoint 2026-08-10-132: Verified Corrections Reach Temporary Synapses
+
+The CP131 teaching event reached an optimizer, but its first real-checkpoint
+probe showed that cross-entropy could fall while answer semantics worsened.
+The temporary write therefore had a valid mutation path and the wrong credit
+assignment. CP132 replaces the random output basis with checkpoint-native
+target-minus-incumbent token directions, captures the actual per-layer query
+activation, and analytically installs the minimum-norm association before
+bounded gradient refinement. Treatment and deterministic-wrong sham receive
+independent semantic bases and equal optimizer work.
+
+The final write magnitude is now selected by the actual public objective
+verifier over a signed, bounded gain grid. Zero-write is a first-class
+candidate and wins equal-score ties, so this search cannot make a verifier-
+worse update authoritative. The teacher remains absent from every probe,
+capability canaries still gate the selected update, and exact detach/erase
+identity remains mandatory. The critic source closure now includes teaching
+and gain-search policy code, preventing a stale identity from silently
+revoking the calibrated verifier.
+
+The source-bound 1.5B canary completed all four component cells. Ordinary
+decode and producer-disabled execution scored `0/1`; the complete system and
+adaptation-disabled control scored `1/1`, confirming that executable answer
+promotion remains causal while neural adaptation adds no task-level lift on
+this cell. The neural receipt is more diagnostic: all four gradient steps were
+accepted and teacher loss fell `15.813012 -> 15.121382`, but treatment gains
+through `2.0` were byte-identical to zero-write; gain `4.0` changed the decode
+without raising its `0.25` verifier score. Nonzero sham gains mostly lowered
+the score. Both arms therefore selected zero and the update was erased as
+`rejected_no_causal_effect`.
+
+This proves a safe teacher-to-synapse mechanism and localizes the next defect:
+the current early recurrent-window `o_proj` site is not sufficiently causally
+aligned with answer semantics. It does not prove neural transfer. Focused
+critic, engine, fast-weight, semantic-plasticity, and wiring contracts pass
+`251/251`; canonical smoke passes `103/103`; Ruff, compile, and diff hygiene
+pass. The hash-bound evidence index is
+`artifacts/closeout/latent_cortex/cp132_semantic_plasticity_canary.json`.
+The next bounded gate is a measured plasticity-site registry spanning layer
+placement and projection family before another model campaign. No resident,
+neural, frontier, fusion, activation, or `WOW Signal` claim is authorized.
+The completion envelope is `829/920` (approximately `90.1%`).

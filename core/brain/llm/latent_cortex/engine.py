@@ -22,7 +22,7 @@ import logging
 import math
 import time
 import uuid
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import replace
 from pathlib import Path
 from typing import Any
@@ -56,6 +56,9 @@ from core.brain.llm.latent_cortex.resource_accounting import (
     triangular_attention_pairs,
 )
 from core.brain.llm.latent_cortex.schedules import LayerSchedule, ScheduleLibrary
+from core.brain.llm.latent_cortex.semantic_plasticity import (
+    build_contrastive_semantic_seeds,
+)
 from core.brain.llm.latent_cortex.teaching_events import (
     build_exact_objective_teaching_event,
 )
@@ -82,6 +85,10 @@ from core.brain.llm.latent_cortex.value_of_computation import (
     validate_evidence_snapshot,
 )
 from core.brain.llm.latent_cortex.verified_best import tensor_sha256
+from core.brain.llm.latent_cortex.verifier_gain_search import (
+    VERIFIER_GAIN_GRID,
+    build_verifier_gain_search_receipt,
+)
 from core.brain.llm.latent_cortex.workspace import per_position_rms, role_anchor
 from core.runtime.errors import record_degradation
 
@@ -2878,12 +2885,24 @@ class LatentCortexEngine:
             if self.config.fast_weights.enabled
             else 0
         )
+        fast_weight_associative_capture_cost = (
+            fast_weight_window_forward_cost
+            if self.config.fast_weights.enabled
+            and self.config.fast_weights.associative_bootstrap_enabled
+            else 0
+        )
         fast_weight_matched_trial_cost = (
             2
             * self.config.fast_weights.opt_steps
             * (3 + MATCHED_LINE_SEARCH_EVALUATIONS)
             * fast_weight_window_forward_cost
             + fast_weight_verifier_probe_cost
+            + fast_weight_associative_capture_cost
+            + (
+                2 * len(VERIFIER_GAIN_GRID) * fast_weight_verifier_probe_cost
+                if self.config.fast_weights.associative_bootstrap_enabled
+                else 0
+            )
             if self.config.fast_weights.enabled
             else 0
         )
@@ -6042,7 +6061,9 @@ class LatentCortexEngine:
         fw_treatment_snapshot: tuple[dict[str, Any], ...] = ()
         fw_treatment_trace: dict[str, Any] = {}
         fw_sham_trace: dict[str, Any] = {}
+        fw_sham_initial_snapshot: tuple[dict[str, Any], ...] = ()
         fw_sham_target_tokens: list[int] = []
+        fw_sham_semantic_seed_vectors = None
         fw_sham_probe_tokens: list[int] = []
         fw_sham_score: float | None = None
         if self.config.fast_weights.enabled and not heterogeneous_finalized:
@@ -6199,6 +6220,7 @@ class LatentCortexEngine:
                     canary_generated_baseline = self._run_generated_canaries(canaries, budget)
                 seed_stat = float(mx.mean(per_position_rms(winner.z)))
                 retrieval_seed_vectors = None
+                seed_source = "retrieval"
                 retrieval_indices = [
                     int(row["slot"])
                     for row in receipt.cognitive_slots
@@ -6207,12 +6229,37 @@ class LatentCortexEngine:
                 ]
                 if retrieval_indices:
                     retrieval_seed_vectors = winner.z[0, retrieval_indices, :]
+                if fast_weight_teaching_event:
+                    incumbent_tokens = self.tokenizer.encode(
+                        fw_verifier_pre_text,
+                        add_special_tokens=False,
+                    )
+                    retrieval_seed_vectors = build_contrastive_semantic_seeds(
+                        self.model,
+                        target_tokens=fast_weight_target_tokens,
+                        contrast_tokens=incumbent_tokens,
+                        rank=self.config.fast_weights.rank,
+                    )
+                    seed_source = "verified_semantic_contrast"
+                    vocab_size = int(self.model.model.embed_tokens.weight.shape[0])
+                    fw_sham_target_tokens = deterministic_sham_target(
+                        fast_weight_target_tokens,
+                        vocab_size=vocab_size,
+                        episode_id=receipt.episode_id,
+                    )
+                    fw_sham_semantic_seed_vectors = build_contrastive_semantic_seeds(
+                        self.model,
+                        target_tokens=fw_sham_target_tokens,
+                        contrast_tokens=incumbent_tokens,
+                        rank=self.config.fast_weights.rank,
+                    )
                 wrapped = fast_weights.attach(
                     self.model.model,
                     (self.prelude_end, self.coda_start),
                     seed_stat=seed_stat,
                     episode_id=receipt.episode_id,
                     seed_vectors=retrieval_seed_vectors,
+                    seed_source=seed_source,
                 )
                 receipt.fast_weights_applied = True
                 receipt.fast_weights_layers = wrapped
@@ -6250,6 +6297,11 @@ class LatentCortexEngine:
                         "fast_weight_retrieval_compiled:"
                         f"{fast_weights.lifecycle.retrieval_seeded_columns}"
                     )
+                if fast_weights.lifecycle.semantic_seeded_columns > 0:
+                    receipt.flag(
+                        "fast_weight_verified_semantic_subspace:"
+                        f"{fast_weights.lifecycle.semantic_seeded_columns}"
+                    )
             else:
                 receipt.flag(f"fast_weight_not_admitted:{admission['reason']}")
 
@@ -6269,6 +6321,26 @@ class LatentCortexEngine:
                 # identity probe above succeeds. Only then may the temporary
                 # adaptation function enter the execution graph.
                 fast_weights.activate_adaptation_path()
+                if (
+                    fast_weight_teaching_event
+                    and self.config.fast_weights.associative_bootstrap_enabled
+                ):
+                    fast_weights.capture_input_summaries(
+                        lambda: self._nocache_window_pass(
+                            winner.z,
+                            branch_index=winner.index,
+                        )
+                    )
+                    write_receipt = fast_weights.install_minimum_norm_keys(
+                        gain=self.config.fast_weights.associative_bootstrap_gain,
+                        regularization=(
+                            self.config.fast_weights.associative_bootstrap_regularization
+                        ),
+                    )
+                    receipt.flag(
+                        "fast_weight_minimum_norm_write:"
+                        f"{len(write_receipt['layers'])}"
+                    )
                 # The temporary synapses optimize only toward the exact
                 # evidence atoms admitted above. Prompt reconstruction remains
                 # the latent-state optimizer's objective; using it here would
@@ -6305,13 +6377,27 @@ class LatentCortexEngine:
                     fw_initial_snapshot,
                     reason="fast_weights_matched_control_reset",
                 )
+                if fw_sham_semantic_seed_vectors is not None:
+                    fast_weights.reseed_output_subspace(
+                        fw_sham_semantic_seed_vectors,
+                        seed_source="verified_semantic_contrast",
+                    )
+                    receipt.flag("fast_weight_matched_semantic_subspace")
+                    fw_sham_initial_snapshot = fast_weights.snapshot_delta()
+                    fast_weights.install_minimum_norm_keys(
+                        gain=self.config.fast_weights.associative_bootstrap_gain,
+                        regularization=(
+                            self.config.fast_weights.associative_bootstrap_regularization
+                        ),
+                    )
                 fast_weights.reset_optimization_trace()
                 vocab_size = int(self.model.model.embed_tokens.weight.shape[0])
-                fw_sham_target_tokens = deterministic_sham_target(
-                    fast_weight_target_tokens,
-                    vocab_size=vocab_size,
-                    episode_id=receipt.episode_id,
-                )
+                if not fw_sham_target_tokens:
+                    fw_sham_target_tokens = deterministic_sham_target(
+                        fast_weight_target_tokens,
+                        vocab_size=vocab_size,
+                        episode_id=receipt.episode_id,
+                    )
                 sham_loss_fn = build_proxy_loss(
                     self.model,
                     winner.anchor,
@@ -6340,6 +6426,35 @@ class LatentCortexEngine:
                 )
                 fw_sham_trace = fast_weights.optimization_trace()
                 if (
+                    fast_weight_candidate_verifier is not None
+                    and self.tokenizer is not None
+                    and fast_weight_teaching_event
+                    and fw_sham_initial_snapshot
+                ):
+                    (
+                        fw_treatment_snapshot,
+                        fw_sham_probe_tokens,
+                        fw_sham_score,
+                        gain_search_receipt,
+                    ) = self._search_fast_weight_gains(
+                        verifier=fast_weight_candidate_verifier,
+                        fast_weights=fast_weights,
+                        winner=winner,
+                        cache=cache,
+                        runner=runner,
+                        budget=budget,
+                        bridge_tokens=bridge_tokens,
+                        safety_reserve=safety_reserve,
+                        baseline_score=float(fw_verifier_pre),
+                        treatment_initial=fw_initial_snapshot,
+                        treatment_candidate=fw_treatment_snapshot,
+                        sham_initial=fw_sham_initial_snapshot,
+                        sham_candidate=fast_weights.snapshot_delta(),
+                    )
+                    fast_weight_learning_state["controls"][
+                        "verifier_gain_search"
+                    ] = gain_search_receipt
+                elif (
                     fast_weight_candidate_verifier is not None
                     and self.tokenizer is not None
                 ):
@@ -6408,6 +6523,9 @@ class LatentCortexEngine:
                     fast_weight_learning_state["controls"] = {
                         "decision": canary_decision,
                         "capability_canaries": dict(receipt.fast_weight_canaries),
+                        "verifier_gain_search": fast_weight_learning_state["controls"][
+                            "verifier_gain_search"
+                        ],
                         "test_time_training": fast_weight_learning_state["controls"][
                             "test_time_training"
                         ],
@@ -6416,6 +6534,9 @@ class LatentCortexEngine:
                     fast_weight_learning_state["controls"] = {
                         "decision": "accepted",
                         "capability_canaries": {},
+                        "verifier_gain_search": fast_weight_learning_state["controls"][
+                            "verifier_gain_search"
+                        ],
                         "test_time_training": fast_weight_learning_state["controls"][
                             "test_time_training"
                         ],
@@ -8053,6 +8174,91 @@ class LatentCortexEngine:
             "incremental_gain_over_sham": matched_compute["incremental_gain_over_sham"],
         }
         return decision
+
+    def _search_fast_weight_gains(
+        self,
+        *,
+        verifier: Callable[[str], float],
+        fast_weights: EpisodicFastWeights,
+        winner: BranchState,
+        cache,
+        runner: WindowRunner,
+        budget: ComputeBudget,
+        bridge_tokens: list[int] | None,
+        safety_reserve: int,
+        baseline_score: float,
+        treatment_initial: Sequence[Mapping[str, Any]],
+        treatment_candidate: Sequence[Mapping[str, Any]],
+        sham_initial: Sequence[Mapping[str, Any]],
+        sham_candidate: Sequence[Mapping[str, Any]],
+    ) -> tuple[tuple[dict[str, Any], ...], list[int], float, dict[str, Any]]:
+        """Select signed episodic strength with the actual public verifier."""
+
+        probe_cost = self._verifier_probe_layer_apps(bridge_tokens)
+        required = 2 * len(VERIFIER_GAIN_GRID) * probe_cost
+        if required + safety_reserve > budget.remaining_layer_apps:
+            raise RuntimeError("compute budget cannot admit matched verifier gain search")
+
+        snapshots = {
+            "treatment": (treatment_initial, treatment_candidate),
+            "sham": (sham_initial, sham_candidate),
+        }
+        rows: dict[str, list[dict[str, Any]]] = {"treatment": [], "sham": []}
+        private: dict[str, list[tuple[float, tuple[dict[str, Any], ...], list[int], float]]] = {
+            "treatment": [],
+            "sham": [],
+        }
+        for arm in ("treatment", "sham"):
+            initial, candidate = snapshots[arm]
+            for index, gain in enumerate(VERIFIER_GAIN_GRID):
+                fast_weights.interpolate_delta(
+                    initial,
+                    candidate,
+                    gain=gain,
+                    reason=f"fast_weights_{arm}_gain_{index}",
+                )
+                probe = self._decode_probe(
+                    winner,
+                    cache,
+                    runner,
+                    budget,
+                    bridge_tokens=bridge_tokens,
+                    use_cache=False,
+                    force_exact_tokens=True,
+                )
+                score = float(verifier(self.tokenizer.decode(probe)))
+                snapshot = fast_weights.snapshot_delta()
+                row = {
+                    "arm": arm,
+                    "index": index,
+                    "gain": float(gain),
+                    "probe_tokens_sha256": token_sequence_sha256(probe),
+                    "probe_token_count": len(probe),
+                    "score": score,
+                    "layer_apps": probe_cost,
+                }
+                rows[arm].append(row)
+                private[arm].append((float(gain), snapshot, probe, score))
+
+        gain_receipt = build_verifier_gain_search_receipt(
+            treatment_rows=rows["treatment"],
+            sham_rows=rows["sham"],
+            baseline_score=baseline_score,
+        )
+        treatment_gain = gain_receipt["selected_treatment_gain"]
+        sham_gain = gain_receipt["selected_sham_gain"]
+        selected_treatment = next(row for row in private["treatment"] if row[0] == treatment_gain)
+        selected_sham = next(row for row in private["sham"] if row[0] == sham_gain)
+        fast_weights.restore_delta(
+            selected_treatment[1],
+            reason="fast_weights_verifier_selected_treatment_gain",
+        )
+        return (
+            selected_treatment[1],
+            selected_sham[2],
+            selected_sham[3],
+            gain_receipt,
+        )
 
     def _canary_logits(self, probe_tokens: list[int], budget: ComputeBudget):
         """Standard causal full-stack forward over one canary sequence."""

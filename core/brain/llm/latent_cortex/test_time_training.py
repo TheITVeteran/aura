@@ -41,7 +41,11 @@ MIN_CALIBRATION_PER_CLASS = 48
 MAX_CALIBRATION_BRIER = 0.01
 MAX_CALIBRATION_ECE = 0.02
 MAX_REWARD_DRIFT = 0.02
-MATCHED_LINE_SEARCH_EVALUATIONS = 2
+# A semantic U basis can produce a substantially larger V gradient than the
+# historical random basis.  Two evaluations only reach lr/2 and repeatedly
+# rejected a finite descent direction at resident scale.  Eight remains
+# strictly bounded and equal across treatment/sham while reaching lr/128.
+MATCHED_LINE_SEARCH_EVALUATIONS = 8
 _Z95 = 1.959963984540054
 _OBJECTIVE = "Check the exact bounded integer arithmetic claim."
 _AUTHORIZED_VERIFIERS = frozenset(

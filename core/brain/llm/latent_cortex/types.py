@@ -130,6 +130,13 @@ class FastWeightsConfig:
     # Layers (within the recurrent window) that receive fast weights; None ⇒
     # every window layer. Keep small on big models.
     max_wrapped_layers: int = 8
+    # A verified teaching event may compile its semantic U directions into a
+    # query key analytically: V_j = gain*x/(||x||^2 + lambda).  This is an
+    # episode-scoped minimum-norm write, followed by the ordinary optimizer,
+    # verifier, canaries, and exact erase boundary.
+    associative_bootstrap_enabled: bool = True
+    associative_bootstrap_gain: float = 0.25
+    associative_bootstrap_regularization: float = 1e-4
     # Export mechanically-clean episode synapses (accepted descent + proven
     # erase) to the governed consolidation queue for the compounding loop.
     export_candidates: bool = False
@@ -848,6 +855,22 @@ class CortexConfig:
             ABSOLUTE_MAX_RECURRENT_STEPS,
         ):
             problems.append("fast_weights.max_wrapped_layers outside [1, 64]")
+        if type(self.fast_weights.associative_bootstrap_enabled) is not bool:
+            problems.append("fast_weights.associative_bootstrap_enabled must be boolean")
+        if (
+            not finite(self.fast_weights.associative_bootstrap_gain)
+            or not 0.0 < self.fast_weights.associative_bootstrap_gain <= 4.0
+        ):
+            problems.append(
+                "fast_weights.associative_bootstrap_gain must be finite and inside (0, 4]"
+            )
+        if (
+            not finite(self.fast_weights.associative_bootstrap_regularization)
+            or not 0.0 < self.fast_weights.associative_bootstrap_regularization <= 1.0
+        ):
+            problems.append(
+                "fast_weights.associative_bootstrap_regularization must be finite and inside (0, 1]"
+            )
         if type(self.fast_weights.canary_enabled) is not bool:
             problems.append("fast_weights.canary_enabled must be boolean")
         if type(self.fast_weights.canary_generated_enabled) is not bool:

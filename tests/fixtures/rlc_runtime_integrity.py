@@ -287,6 +287,7 @@ def accepted_fast_weight_learning(
     state["controls"] = {
         "decision": "accepted",
         "capability_canaries": {"decision": "accepted"},
+        "verifier_gain_search": {},
         "test_time_training": build_test_time_training_receipt(
             critic_recalibration=admission["critic_recalibration"],
             pseudo_label_admission=admission["pseudo_label_admission"],

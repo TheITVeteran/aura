@@ -53,6 +53,7 @@ _LEARNING_POLICY = {
     "acceptance": "strict_matched_probe_improvement_and_token_change",
     "protected_behavior": "capability_canary_nonregression",
     "cleanup": "exact_detach_erase_and_lease_release",
+    "gain_search": "equal_compute_public_verifier_grid_teacher_removed",
 }
 
 _ADMISSION_FIELDS = {
@@ -479,6 +480,7 @@ def empty_learning_state(
         "controls": {
             "decision": "not_run",
             "capability_canaries": {},
+            "verifier_gain_search": {},
             "test_time_training": (
                 build_test_time_training_receipt(
                     critic_recalibration=admission[
@@ -605,6 +607,7 @@ def validate_fast_weight_learning_receipt(
     if not isinstance(controls, Mapping) or set(controls) != {
         "decision",
         "capability_canaries",
+        "verifier_gain_search",
         "test_time_training",
     }:
         raise ValueError("fast-weight control receipt is invalid")
@@ -656,6 +659,17 @@ def validate_fast_weight_learning_receipt(
     ):
         raise ValueError("fast-weight optimizer or control receipt is invalid")
     test_time_training = controls["test_time_training"]
+    gain_search = controls["verifier_gain_search"]
+    if not isinstance(gain_search, Mapping):
+        raise ValueError("fast-weight verifier gain-search receipt is invalid")
+    if gain_search:
+        from core.brain.llm.latent_cortex.verifier_gain_search import (
+            validate_verifier_gain_search_receipt,
+        )
+
+        validate_verifier_gain_search_receipt(gain_search)
+        if not teaching_event:
+            raise ValueError("fast-weight gain search lacks a teaching event")
     if admission["candidate_checked"]:
         validate_test_time_training_receipt(
             test_time_training,

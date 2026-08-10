@@ -34,14 +34,17 @@ _CRITIC_SOURCE_FILES = (
     "core/brain/llm/latent_cortex/deterministic_verifier_router.py",
     "core/brain/llm/latent_cortex/objective_program_verifier.py",
     "core/brain/llm/latent_cortex/fast_weight_learning.py",
+    "core/brain/llm/latent_cortex/teaching_events.py",
     "core/brain/llm/latent_cortex/task_verifiers.py",
     "core/brain/llm/latent_cortex/test_time_training.py",
+    "core/brain/llm/latent_cortex/verifier_gain_search.py",
     "core/brain/llm/latent_cortex/output_quality.py",
     "core/brain/llm/latent_cortex/response_contracts.py",
     "core/brain/llm/latent_cortex/frontier_tasks.py",
     "core/brain/canonical_json.py",
 )
 _ALLOWED_INTERNAL_IMPORTS = {
+    "core.brain.llm.latent_cortex",
     "core.brain.canonical_json",
     "core.brain.llm.latent_cortex.atomic_decomposition",
     "core.brain.llm.latent_cortex.deterministic_verifier_router",
@@ -51,6 +54,8 @@ _ALLOWED_INTERNAL_IMPORTS = {
     "core.brain.llm.latent_cortex.output_quality",
     "core.brain.llm.latent_cortex.response_contracts",
     "core.brain.llm.latent_cortex.test_time_training",
+    "core.brain.llm.latent_cortex.teaching_events",
+    "core.brain.llm.latent_cortex.verifier_gain_search",
 }
 _FORBIDDEN_IMPORT_ROOTS = {
     "jax",

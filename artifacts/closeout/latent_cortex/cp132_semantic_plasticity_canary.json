@@ -1,0 +1,54 @@
+{
+  "schema": "aura.closeout.rlc_semantic_plasticity_canary.v1",
+  "checkpoint": "CP132",
+  "source_base_commit": "827e2f5e3eb03a64d5e6e6b113cda6ad7e7b6ee0",
+  "campaign": {
+    "path": "/Users/bryan/.aura/campaigns/cp132-verifier-gain-search-canary2-2026081019",
+    "model": "/Users/bryan/.aura/live-source/models/Qwen2.5-1.5B-Instruct-4bit",
+    "seed": 2026081018,
+    "difficulty": 2,
+    "domain": "misleading_premise",
+    "task_count": 1,
+    "task_commitment_sha256": "5146e145930ba97ed35a123c967ce2adffc6d4344498ee572c2f185b0955fca0",
+    "decode_fingerprint_sha256": "52489d7d19cb59b9c7045076d20478fceac6461fe34082c425c6e7ac4875bcde",
+    "journal_sha256": "4d05c07e17dde64502aa74d68a8f72f9e02b78a88af142baf75fb0bb11d62839",
+    "verdict_sha256": "90171fd6acffdffcc18596b2084354240d7fb1e1a59b1353a9592d97b2d93125",
+    "status_sha256": "6cfb0fbec1936507e03439a247e2bed476dc69e6f10b501bcf8011bec7c9a24f",
+    "treatment_runtime_receipt_sha256": "b0c6563c24cbe6e42b2f02de2535140abd8e04c24d45d24a0c3688d6b4ef8d08"
+  },
+  "mechanism": {
+    "teacher_family": "exact_objective_program",
+    "semantic_output_basis": "checkpoint_token_embedding_target_minus_incumbent",
+    "query_key": "minimum_norm_activation_association",
+    "gradient_refinement_steps": 4,
+    "accepted_gradient_steps": 4,
+    "loss_initial": 15.813012,
+    "loss_final": 15.121382,
+    "verifier_gain_grid": [0.0, 0.25, 0.5, 1.0, 2.0, 4.0, -0.5, -1.0],
+    "matched_sham": true,
+    "teacher_removed_before_probe": true,
+    "erase_proven": true
+  },
+  "result": {
+    "baseline_score": 0.25,
+    "selected_treatment_gain": 0.0,
+    "selected_treatment_score": 0.25,
+    "selected_sham_gain": 0.0,
+    "selected_sham_score": 0.25,
+    "treatment_strict_improvement": false,
+    "treatment_tokens_changed_at_gain_4": true,
+    "treatment_score_at_gain_4": 0.25,
+    "sham_regressed_at_nonzero_gains": true,
+    "disposition": "rejected_no_causal_effect",
+    "neural_transfer_proven": false,
+    "capability_claim_authority": false
+  },
+  "interpretation": "The verified semantic basis is less harmful than the matched sham but the current early recurrent-window o_proj placement does not move the public semantic objective. The next mechanism gate is measured projection and layer placement, not a larger claim-bearing campaign.",
+  "verification": {
+    "focused_tests": "251 passed",
+    "smoke": "103 passed",
+    "ruff": "pass",
+    "compile": "pass",
+    "diff_check": "pass"
+  }
+}

@@ -116,6 +116,7 @@ class EpisodicDeltaLinear:
         seed_stat: float,
         tag: str,
         seed_vectors=None,
+        seed_source: str = "retrieval",
     ) -> None:
         import mlx.core as mx
 
@@ -127,6 +128,8 @@ class EpisodicDeltaLinear:
         # base-function pass-through until the engine has measured identity
         # and explicitly activates the adaptation path.
         self.identity_bypass = True
+        self.capture_input = False
+        self.last_input_summary = None
         out_features, in_features = _linear_dims(base)
         seed = int.from_bytes(hashlib.sha256(tag.encode()).digest()[:4], "big")
         key = mx.random.key(seed)
@@ -136,6 +139,7 @@ class EpisodicDeltaLinear:
         seed_scale = min(1.0, max(0.1, abs(float(seed_stat))))
         init_std = seed_scale / math.sqrt(max(1, out_features))
         self.U = mx.random.normal((out_features, rank), key=key) * init_std
+        self.V = mx.zeros((rank, in_features))
         # Retrieval-to-fast-weight compilation: refined retrieval slot
         # states become the leading columns of U, so the adaptation
         # SUBSPACE is spanned by retrieved knowledge — the temporary
@@ -143,26 +147,58 @@ class EpisodicDeltaLinear:
         # V learns when to fire. V stays zero, so attach remains exactly
         # identity and the erase proof is untouched.
         self.retrieval_seeded_columns = 0
+        self.semantic_seeded_columns = 0
         if (
             seed_vectors is not None
             and getattr(seed_vectors, "ndim", 0) == 2
             and int(seed_vectors.shape[1]) == out_features
         ):
-            k = min(int(rank), int(seed_vectors.shape[0]))
-            if k > 0:
-                target_norm = init_std * math.sqrt(max(1, out_features))
-                columns = []
-                for j in range(k):
-                    vector = seed_vectors[j].astype(self.U.dtype)
-                    norm = mx.maximum(mx.linalg.norm(vector), 1e-6)
-                    columns.append(vector / norm * target_norm)
-                seeded = mx.stack(columns, axis=1)
-                self.U = mx.concatenate([seeded, self.U[:, k:]], axis=1)
-                self.retrieval_seeded_columns = k
-        self.V = mx.zeros((rank, in_features))
+            self.reseed_output_subspace(seed_vectors, seed_source=seed_source)
         mx.eval(self.U, self.V)
 
+    def reseed_output_subspace(self, seed_vectors, *, seed_source: str) -> int:
+        """Replace leading U columns while V=0 preserves exact identity."""
+
+        import mlx.core as mx
+
+        if seed_source not in {"retrieval", "verified_semantic_contrast"}:
+            raise ValueError("fast-weight seed source is unsupported")
+        if (
+            getattr(seed_vectors, "ndim", 0) != 2
+            or int(seed_vectors.shape[1]) != int(self.U.shape[0])
+        ):
+            raise ValueError("fast-weight seed vectors differ from output width")
+        mx.eval(self.V)
+        if bool(mx.any(self.V != 0)):
+            raise RuntimeError("fast-weight output subspace can only change while V is zero")
+        k = min(int(self.U.shape[1]), int(seed_vectors.shape[0]))
+        if k <= 0:
+            raise ValueError("fast-weight seed vectors are empty")
+        target_norm = math.sqrt(
+            float(mx.mean(mx.square(self.U[:, :k]))) * int(self.U.shape[0])
+        )
+        target_norm = max(target_norm, 1e-6)
+        columns = []
+        for index in range(k):
+            vector = seed_vectors[index].astype(self.U.dtype)
+            norm = mx.maximum(mx.linalg.norm(vector), 1e-6)
+            columns.append(vector / norm * target_norm)
+        seeded = mx.stack(columns, axis=1)
+        self.U = mx.concatenate([seeded, self.U[:, k:]], axis=1)
+        self.retrieval_seeded_columns = k if seed_source == "retrieval" else 0
+        self.semantic_seeded_columns = (
+            k if seed_source == "verified_semantic_contrast" else 0
+        )
+        mx.eval(self.U)
+        return k
+
     def __call__(self, x):
+        if self.capture_input:
+            import mlx.core as mx
+
+            axes = tuple(range(max(0, int(x.ndim) - 1)))
+            summary = mx.mean(x, axis=axes) if axes else x
+            self.last_input_summary = mx.stop_gradient(summary.astype(mx.float32))
         base = self.base(x)
         if self.identity_bypass:
             return base
@@ -199,6 +235,7 @@ class FastWeightsLifecycle:
     canary_rescales: int = 0
     canary_erased: bool = False
     retrieval_seeded_columns: int = 0
+    semantic_seeded_columns: int = 0
     loss_trail: list[float] = field(default_factory=list)
     gradient_global_norm_trail: list[float] = field(default_factory=list)
     accepted_step_sizes: list[float] = field(default_factory=list)
@@ -231,6 +268,7 @@ class FastWeightsLifecycle:
             "canary_rescales": self.canary_rescales,
             "canary_erased": self.canary_erased,
             "retrieval_seeded_columns": self.retrieval_seeded_columns,
+            "semantic_seeded_columns": self.semantic_seeded_columns,
             "loss_trail": [round(v, 6) for v in self.loss_trail],
             "gradient_global_norm_trail": [
                 round(v, 6) for v in self.gradient_global_norm_trail
@@ -347,6 +385,7 @@ class EpisodicFastWeights:
         seed_stat: float,
         episode_id: str,
         seed_vectors=None,
+        seed_source: str = "retrieval",
     ) -> int:
         """Wrap the target linear in up to ``max_wrapped_layers`` window layers."""
         if self.handles:
@@ -381,6 +420,7 @@ class EpisodicFastWeights:
                     seed_stat=seed_stat,
                     tag=f"{episode_id}:{i}:{self.config.target}",
                     seed_vectors=seed_vectors,
+                    seed_source=seed_source,
                 )
                 setattr(parent, leaf_attr, wrapper)
                 self.handles.append(
@@ -408,6 +448,10 @@ class EpisodicFastWeights:
         self.lifecycle.rank = self.config.rank
         self.lifecycle.retrieval_seeded_columns = max(
             (h.wrapper.retrieval_seeded_columns for h in self.handles),
+            default=0,
+        )
+        self.lifecycle.semantic_seeded_columns = max(
+            (h.wrapper.semantic_seeded_columns for h in self.handles),
             default=0,
         )
         # V=0 makes attach bit-identical, but retrieval-seeded columns can
@@ -456,6 +500,121 @@ class EpisodicFastWeights:
                 changed = True
         if changed:
             self._notify_function_change("fast_weights_adaptation_activated")
+
+    def capture_input_summaries(self, forward_fn: Callable[[], Any]) -> Any:
+        """Capture one query activation per wrapped projection under identity."""
+
+        import mlx.core as mx
+
+        if not self.handles:
+            raise RuntimeError("fast-weight activation capture requires wrappers")
+        if any(bool(mx.any(handle.wrapper.V != 0)) for handle in self.handles):
+            raise RuntimeError("fast-weight activation capture requires zero V")
+        for handle in self.handles:
+            handle.wrapper.last_input_summary = None
+            handle.wrapper.capture_input = True
+        try:
+            output = forward_fn()
+            summaries = [handle.wrapper.last_input_summary for handle in self.handles]
+            if any(summary is None for summary in summaries):
+                raise RuntimeError("fast-weight activation capture missed a projection")
+            mx.eval(output, *summaries)
+            return output
+        finally:
+            for handle in self.handles:
+                handle.wrapper.capture_input = False
+
+    def install_minimum_norm_keys(
+        self,
+        *,
+        gain: float,
+        regularization: float,
+    ) -> dict[str, Any]:
+        """Compile captured query activations into regularized rank-r keys.
+
+        For each seeded semantic column ``u_j`` and captured input ``x``, the
+        key ``v_j = g*x/(||x||^2 + lambda)`` is the minimum-norm linear write
+        that makes the temporary projection emit ``g*u_j`` on that query.
+        """
+
+        import mlx.core as mx
+
+        if (
+            isinstance(gain, bool)
+            or not isinstance(gain, (int, float))
+            or not math.isfinite(float(gain))
+            or not 0.0 < float(gain) <= 4.0
+        ):
+            raise ValueError("minimum-norm key gain must be inside (0, 4]")
+        if (
+            isinstance(regularization, bool)
+            or not isinstance(regularization, (int, float))
+            or not math.isfinite(float(regularization))
+            or not 0.0 < float(regularization) <= 1.0
+        ):
+            raise ValueError("minimum-norm key regularization must be inside (0, 1]")
+        if not self.handles:
+            raise RuntimeError("minimum-norm key write requires wrappers")
+        rows = []
+        for handle in self.handles:
+            wrapper = handle.wrapper
+            x = wrapper.last_input_summary
+            if x is None or getattr(x, "ndim", 0) != 1:
+                raise RuntimeError("minimum-norm key write lacks captured activation")
+            if int(x.shape[0]) != int(wrapper.V.shape[1]):
+                raise RuntimeError("minimum-norm key activation width differs")
+            seeded = max(
+                int(wrapper.semantic_seeded_columns),
+                int(wrapper.retrieval_seeded_columns),
+            )
+            if seeded <= 0:
+                raise RuntimeError("minimum-norm key write lacks seeded output directions")
+            denominator = mx.sum(mx.square(x)) + float(regularization)
+            per_direction_gain = float(gain) / math.sqrt(seeded)
+            key = (per_direction_gain * x / denominator).astype(wrapper.V.dtype)
+            active = mx.stack([key for _ in range(seeded)], axis=0)
+            wrapper.V = mx.concatenate([active, mx.zeros_like(wrapper.V[seeded:])], axis=0)
+            mx.eval(wrapper.V, denominator)
+            rows.append(
+                {
+                    "layer": int(handle.layer_index),
+                    "seeded_columns": seeded,
+                    "input_norm": round(float(mx.linalg.norm(x)), 8),
+                    "denominator": round(float(denominator), 8),
+                }
+            )
+        self._notify_function_change("fast_weights_minimum_norm_keys_installed")
+        return {
+            "schema": "aura.fast_weight_minimum_norm_write.v1",
+            "gain": float(gain),
+            "regularization": float(regularization),
+            "layers": rows,
+        }
+
+    def reseed_output_subspace(self, seed_vectors, *, seed_source: str) -> int:
+        """Install an equal-rank matched-arm subspace before V learns a key."""
+
+        if not self.handles:
+            raise RuntimeError("fast-weight reseed requires attached wrappers")
+        counts = [
+            handle.wrapper.reseed_output_subspace(
+                seed_vectors,
+                seed_source=seed_source,
+            )
+            for handle in self.handles
+        ]
+        if len(set(counts)) != 1:
+            raise RuntimeError("fast-weight reseed inventory differs across layers")
+        self.lifecycle.retrieval_seeded_columns = max(
+            (handle.wrapper.retrieval_seeded_columns for handle in self.handles),
+            default=0,
+        )
+        self.lifecycle.semantic_seeded_columns = max(
+            (handle.wrapper.semantic_seeded_columns for handle in self.handles),
+            default=0,
+        )
+        self._notify_function_change("fast_weights_output_subspace_reseeded")
+        return counts[0]
 
     def rescale(self, factor: float) -> float:
         """Multiply every wrapper's scale — the canary ladder's step-down.
@@ -604,6 +763,44 @@ class EpisodicFastWeights:
             handle.wrapper.scale = float(row["scale"])
         mx.eval(*rebound)
         self._notify_function_change(reason)
+
+    def interpolate_delta(
+        self,
+        initial: Sequence[Mapping[str, Any]],
+        candidate: Sequence[Mapping[str, Any]],
+        *,
+        gain: float,
+        reason: str,
+    ) -> None:
+        """Install a signed point on one episodic update trajectory."""
+
+        import mlx.core as mx
+
+        if (
+            isinstance(gain, bool)
+            or not isinstance(gain, (int, float))
+            or not math.isfinite(float(gain))
+            or not -4.0 <= float(gain) <= 4.0
+        ):
+            raise ValueError("fast-weight interpolation gain is outside [-4, 4]")
+        left = list(initial)
+        right = list(candidate)
+        if len(left) != len(right) or len(left) != len(self.handles):
+            raise RuntimeError("fast-weight interpolation inventory differs")
+        interpolated = []
+        for before, after in zip(left, right, strict=True):
+            if before["layer"] != after["layer"]:
+                raise ValueError("fast-weight interpolation layer identity differs")
+            interpolated.append(
+                {
+                    "layer": before["layer"],
+                    "scale": float(before["scale"]),
+                    "U": before["U"] + float(gain) * (after["U"] - before["U"]),
+                    "V": before["V"] + float(gain) * (after["V"] - before["V"]),
+                }
+            )
+        mx.eval(*[row[name] for row in interpolated for name in ("U", "V")])
+        self.restore_delta(interpolated, reason=reason)
 
     def optimization_trace(self) -> dict[str, Any]:
         lifecycle = self.lifecycle
