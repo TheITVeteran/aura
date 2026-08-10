@@ -43650,3 +43650,32 @@ Behavioral gain, broad transfer, resident-32B use, fusion, activation, and the
 `WOW Signal` remain locked. The next checkpoint introduces verified
 state/action/state traces and the native recurrent core; it must pass the same
 one-step holdout gate before multi-step composition begins.
+
+## Checkpoint 2026-08-10-183: Verified Programs Include the Causal Action
+
+The exact curriculum previously exposed `state -> next state` but omitted the
+operation that caused the transition. That is sufficient to grade an endpoint
+and insufficient to teach a reusable transition function. Boolean and modular
+tasks now carry an immutable `StructuredTransitionProgram` alongside the
+existing state trace. Every program contains one typed integer action per
+transition and rejects missing, negative, malformed, or width-inconsistent
+actions.
+
+Boolean actions encode the exact operation, operand, and operand-presence bit;
+modular actions encode operation, operand, and modulus. The state trace and
+action sequence are bound together in one canonical private program hash. Its
+public commitment exposes schema, family, depth, field schemas, action count,
+state-trace commitment, and program SHA-256 without exposing private actions or
+states. Existing answer and textual process targets remain unchanged.
+
+Contracts independently recompute modular actions from the public prompt,
+verify Boolean and modular topology, prove deterministic commitments and
+private-value exclusion, and reject malformed programs. The full affected
+curriculum, supervision, discriminator, and state-probe selection passes
+`68/68`; Ruff and compilation pass.
+
+This advances the completion envelope to `879/920` (approximately `95.5%`).
+This is verified teacher-signal infrastructure, not a neural result. Next, the
+native recurrent transition core will consume frozen Qwen context plus
+protected control state, use one shared operator at every depth, and train
+against these exact actions and next states before any coda or behavior test.

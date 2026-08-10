@@ -13,9 +13,11 @@ import pytest
 from core.learning.recurrence_curriculum import (
     MAX_TRAINING_DEPTH,
     RECURRENCE_TRAINING_FAMILIES,
+    STRUCTURED_TRANSITION_PROGRAM_SCHEMA,
     STRUCTURED_TRANSITION_TRACE_SCHEMA,
     TASK_GENERATORS,
     RecurrenceTrainingTask,
+    StructuredTransitionProgram,
     StructuredTransitionTrace,
     disjoint_task_split,
     task_battery,
@@ -304,6 +306,14 @@ def test_boolean_answer_is_recomputable_from_prompt():
         _payload(task)["value"],
         1,
     )
+    assert task.transition_program is not None
+    assert task.transition_program.state_trace is task.transition_trace
+    assert task.transition_program.action_field_names == (
+        "opcode",
+        "operand",
+        "has_operand",
+    )
+    assert len(task.transition_program.actions) == task.depth
 
 
 def test_modular_answer_uses_the_published_initial_value():
@@ -315,8 +325,11 @@ def test_modular_answer_uses_the_published_initial_value():
     assert match
     modulus, value = map(int, match.groups()[:2])
     expected_states = [(0, value, 0)]
+    expected_actions = []
+    opcodes = {"+": 0, "*": 1, "-": 2}
     for step, operation in enumerate(match.group(3).split(", "), start=1):
         operand = int(operation[1:])
+        expected_actions.append((opcodes[operation[0]], operand, modulus))
         if operation[0] == "+":
             value += operand
         elif operation[0] == "-":
@@ -330,6 +343,13 @@ def test_modular_answer_uses_the_published_initial_value():
     assert task.transition_trace is not None
     assert task.transition_trace.field_names == ("pc", "residue", "done")
     assert task.transition_trace.states == tuple(expected_states)
+    assert task.transition_program is not None
+    assert task.transition_program.action_field_names == (
+        "opcode",
+        "operand",
+        "modulus",
+    )
+    assert task.transition_program.actions == tuple(expected_actions)
 
 
 def test_structured_transition_commitment_hides_private_states() -> None:
@@ -353,6 +373,41 @@ def test_structured_transition_commitment_hides_private_states() -> None:
         field_names=trace.field_names,
         states=trace.states,
     ).trace_sha256
+
+
+def test_structured_transition_program_commits_actions_without_exposing_them() -> None:
+    task = TASK_GENERATORS["modular"](4, 31)
+    program = task.transition_program
+    assert program is not None
+
+    commitment = program.public_commitment()
+
+    assert commitment["schema"] == STRUCTURED_TRANSITION_PROGRAM_SCHEMA
+    assert commitment["state_trace"] == task.transition_trace.public_commitment()
+    assert commitment["action_count"] == task.depth
+    assert commitment["program_sha256"] == program.program_sha256
+    assert "actions" not in commitment
+
+
+def test_structured_transition_program_rejects_incomplete_or_negative_actions() -> None:
+    trace = StructuredTransitionTrace(
+        family="modular",
+        depth=1,
+        field_names=("pc", "residue", "done"),
+        states=((0, 3, 0), (1, 5, 1)),
+    )
+    with pytest.raises(ValueError, match="program"):
+        StructuredTransitionProgram(
+            state_trace=trace,
+            action_field_names=("opcode", "operand", "modulus"),
+            actions=(),
+        )
+    with pytest.raises(ValueError, match="action"):
+        StructuredTransitionProgram(
+            state_trace=trace,
+            action_field_names=("opcode", "operand", "modulus"),
+            actions=((0, -1, 13),),
+        )
 
 
 @pytest.mark.parametrize(
