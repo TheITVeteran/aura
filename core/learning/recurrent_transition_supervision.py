@@ -262,13 +262,39 @@ def encode_structured_state(
 ) -> Any:
     """Replace only declared control slots with exact codebook prototypes."""
 
-    import mlx.core as mx
-
-    target = _validate_target(
+    _validate_target(
         trace,
         transition_index=transition_index,
         codebook=codebook,
     )
+    return encode_trace_state(
+        state,
+        trace,
+        state_index=transition_index + 1,
+        codebook=codebook,
+    )
+
+
+def encode_trace_state(
+    state: Any,
+    trace: StructuredTransitionTrace,
+    *,
+    state_index: int,
+    codebook: StateCodebookSpec,
+) -> Any:
+    """Place any exact trace state into the protected codebook slots."""
+
+    import mlx.core as mx
+
+    if (
+        not isinstance(trace, StructuredTransitionTrace)
+        or type(state_index) is not int
+        or not 0 <= state_index <= trace.depth
+        or trace.depth > codebook.max_program_depth
+        or len(trace.field_names) != len(codebook.field_slot_indices)
+    ):
+        raise ValueError("trace state is outside the codebook contract")
+    target = trace.states[state_index]
     rows = [state[:, index : index + 1, :] for index in range(int(state.shape[1]))]
     for field_name, slot_index, value in zip(
         trace.field_names,
@@ -282,6 +308,8 @@ def encode_structured_state(
             field_name=field_name,
             codebook=codebook,
         )
+        if not 0 <= value < classes:
+            raise ValueError("trace state value exceeds its codebook")
         matrix = _codebook_matrix(
             family=trace.family,
             field_name=field_name,
@@ -311,6 +339,45 @@ def decode_structured_state(
         transition_index=transition_index,
         codebook=codebook,
     )
+    return tuple(
+        int(
+            mx.argmax(
+                _field_logits(
+                    state,
+                    family=trace.family,
+                    field_name=field_name,
+                    slot_index=slot_index,
+                    codebook=codebook,
+                )
+            ).item()
+        )
+        for field_name, slot_index in zip(
+            trace.field_names,
+            codebook.field_slot_indices,
+            strict=True,
+        )
+    )
+
+
+def decode_trace_state(
+    state: Any,
+    trace: StructuredTransitionTrace,
+    *,
+    state_index: int,
+    codebook: StateCodebookSpec,
+) -> tuple[int, ...]:
+    """Decode a trace state without implying that a transition produced it."""
+
+    import mlx.core as mx
+
+    if (
+        not isinstance(trace, StructuredTransitionTrace)
+        or type(state_index) is not int
+        or not 0 <= state_index <= trace.depth
+        or trace.depth > codebook.max_program_depth
+        or len(trace.field_names) != len(codebook.field_slot_indices)
+    ):
+        raise ValueError("trace state is outside the codebook contract")
     return tuple(
         int(
             mx.argmax(
@@ -448,7 +515,9 @@ __all__ = [
     "StateCodebookSpec",
     "StateTransitionEvaluation",
     "StateTransitionGradient",
+    "decode_trace_state",
     "decode_structured_state",
+    "encode_trace_state",
     "encode_structured_state",
     "evaluate_state_supervised_transition",
     "state_supervised_transition_loss",

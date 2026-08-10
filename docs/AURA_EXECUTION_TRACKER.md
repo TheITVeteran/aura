@@ -43679,3 +43679,38 @@ This is verified teacher-signal infrastructure, not a neural result. Next, the
 native recurrent transition core will consume frozen Qwen context plus
 protected control state, use one shared operator at every depth, and train
 against these exact actions and next states before any coda or behavior test.
+
+## Checkpoint 2026-08-10-184: Native Recurrence Has a Protected Transition Organ
+
+The failed Qwen-window operator is replaced by a small recurrence-native
+transition core rather than another terminal-loss variation. Frozen Qwen
+remains the semantic encoder and supplies read-only prompt context. One shared
+cross-attentive transition is applied to exactly three protected control slots;
+the semantic workspace prefix is copied unchanged. Its residual output
+projection starts at exact zero and its write gate starts closed, so attaching
+an untrained core is bitwise identity rather than an uncalibrated intervention.
+
+The objective now supplies the complete verified object required to learn a
+reusable step: exact current state, exact typed action, and exact next state.
+Current and next state use immutable hash-derived codebooks over `pc`, value or
+residue, and `done`. Action fields use separate immutable codebooks for opcode,
+operand, operand presence, and modulus. No learned evaluator or readout can
+absorb credit that belongs to the transition. Public receipts bind both
+codebook identities and aggregate field correctness while excluding predicted
+and expected private labels.
+
+Contracts prove exact identity on attachment, semantic-prefix immutability
+after writes are enabled, malformed-shape refusal, round trips for initial,
+intermediate, and terminal trace states, finite nonzero gradients throughout
+the native core, private-label exclusion, and substantial loss reduction on a
+bounded exact transition. The affected curriculum, supervision, and native
+core suite passes `65/65`; canonical smoke passes `103/103`; Ruff and bytecode
+compilation pass.
+
+This advances the completion envelope to `880/920` (approximately `95.7%`).
+This checkpoint proves the operator and supervision contracts, not transfer.
+Next, a source-bound real-1.5B discriminator will freeze Qwen, cache its prompt
+context, train only this shared core, select on development, and open untouched
+holdout exactly once. A positive result advances to student-roll-in multi-step
+composition; a negative result diagnoses native state/action learning before
+any broader or resident-32B campaign.
