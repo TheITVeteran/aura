@@ -172,3 +172,16 @@ def register_memory_services(container):
         from core.memory.memory_facade import MemoryFacade
         return MemoryFacade()
     container.register('memory_facade', create_memory_facade, lifetime=SERVICE_LIFETIME_SINGLETON, required=True)
+
+    # 28. Interpersonal Memory — her typed, evidence-bound notes on a person.
+    # Registered rather than imported so context assembly, which lives in the
+    # runtime foundation, can read it without the foundation depending on it.
+    def create_interpersonal_memory():
+        from core.memory.interpersonal_store import get_interpersonal_store
+        return get_interpersonal_store()
+    container.register(
+        'interpersonal_memory',
+        create_interpersonal_memory,
+        lifetime=SERVICE_LIFETIME_SINGLETON,
+        required=False,
+    )

@@ -52,6 +52,7 @@ class ServiceNames:
     
     # Memory Systems
     MEMORY_FACADE = "memory_facade"
+    INTERPERSONAL = "interpersonal_memory"  # core/memory/interpersonal_store.py — typed person-knowledge
     EPISODIC = "episodic_memory"
     SEMANTIC = "semantic_memory"
     VECTOR = "vector_memory"

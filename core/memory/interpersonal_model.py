@@ -179,6 +179,23 @@ class Occurrence:
     at: float = field(default_factory=time.time)
     note: str = ""
 
+    def to_dict(self) -> dict[str, object]:
+        return {
+            "episode_id": self.episode_id,
+            "provenance": str(self.provenance),
+            "at": self.at,
+            "note": self.note,
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict[str, object]) -> "Occurrence":
+        return cls(
+            episode_id=str(data["episode_id"]),
+            provenance=Provenance(str(data.get("provenance", Provenance.OBSERVED))),
+            at=float(data.get("at", 0.0)),
+            note=str(data.get("note", "")),
+        )
+
 
 @dataclass
 class Observation:
@@ -270,6 +287,51 @@ class Observation:
     def episodes(self) -> list[str]:
         return [o.episode_id for o in self.occurrences]
 
+    def to_dict(self) -> dict[str, object]:
+        """Every field, because a serialiser that drops one is this module's
+        own failure arriving through a different door.
+
+        Losing ``counter_examples`` across a restart would leave a record that
+        can only accumulate confirmations, which is the grudge this store was
+        built to refuse. ``tests/test_interpersonal_persistence.py`` derives the
+        expected keys from the dataclass, so a new field that is not written
+        here fails rather than being silently forgotten at the next restart.
+        """
+        return {
+            "claim": self.claim,
+            "facet": str(self.facet),
+            "subject": str(self.subject),
+            "valence": str(self.valence),
+            "conditions": self.conditions,
+            "occurrences": [o.to_dict() for o in self.occurrences],
+            "counter_examples": [o.to_dict() for o in self.counter_examples],
+            "ttl": self.ttl,
+            "corrected_by": self.corrected_by.to_dict() if self.corrected_by else None,
+            "resolved_by": self.resolved_by.to_dict() if self.resolved_by else None,
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict[str, object]) -> "Observation":
+        ttl = data.get("ttl")
+        corrected = data.get("corrected_by")
+        resolved = data.get("resolved_by")
+        return cls(
+            claim=str(data["claim"]),
+            facet=Facet(str(data.get("facet", Facet.TRAIT))),
+            subject=Subject(str(data.get("subject", Subject.THEM))),
+            valence=Valence(str(data.get("valence", Valence.NEUTRAL))),
+            conditions=str(data.get("conditions", "")),
+            occurrences=[
+                Occurrence.from_dict(o) for o in data.get("occurrences", [])  # type: ignore[union-attr]
+            ],
+            counter_examples=[
+                Occurrence.from_dict(o) for o in data.get("counter_examples", [])  # type: ignore[union-attr]
+            ],
+            ttl=None if ttl is None else float(ttl),  # type: ignore[arg-type]
+            corrected_by=Occurrence.from_dict(corrected) if corrected else None,  # type: ignore[arg-type]
+            resolved_by=Occurrence.from_dict(resolved) if resolved else None,  # type: ignore[arg-type]
+        )
+
     def render(self, *, now: float | None = None) -> str:
         """As context text, stating kind, evidence and how she knows it."""
         now = time.time() if now is None else now
@@ -356,7 +418,7 @@ class PersonModel:
             raise ValueError("max_observations must be positive")
         self.person = person.strip()
         self.max_observations = max_observations
-        self._observations: dict[tuple[str, str, str], Observation] = {}
+        self._observations: dict[tuple[str, str, str, str], Observation] = {}
 
     def __len__(self) -> int:
         return len(self._observations)
@@ -575,8 +637,20 @@ class PersonModel:
     def unrepaired(self, *, now: float | None = None) -> list[Observation]:
         return self.current(facet=Facet.RUPTURE, now=now)
 
-    def render(self, *, per_facet: int = 6, now: float | None = None) -> str:
-        """The block text, grouped by kind of knowledge."""
+    def render(
+        self,
+        *,
+        per_facet: int = 6,
+        now: float | None = None,
+        include_dynamics: bool = True,
+    ) -> str:
+        """The block text, grouped by kind of knowledge.
+
+        ``include_dynamics`` exists for callers working to a character budget.
+        The readings are *derived* from the same records printed above them, so
+        when something has to go they go first: they can be recomputed from
+        what remains, and the evidence cannot be recomputed from them.
+        """
         sections: list[str] = []
         for facet, heading in _FACET_HEADINGS:
             observations = self.current(facet=facet, now=now)[:per_facet]
@@ -588,7 +662,7 @@ class PersonModel:
         if not sections:
             return f"I do not know anything about {self.person} yet."
 
-        readings = [d for d in self.dynamics(now=now) if d.basis]
+        readings = [d for d in self.dynamics(now=now) if d.basis] if include_dynamics else []
         if readings:
             sections.append("Where this stands:")
             sections.extend(f"- {d.render()}" for d in readings)
@@ -801,6 +875,34 @@ class PersonModel:
                 f"{total} recorded moment(s)",
             ),
         )
+
+    # -- durability --------------------------------------------------------
+
+    def to_dict(self) -> dict[str, object]:
+        """The whole model, field for field.
+
+        Restoring goes through ``from_dict`` rather than replaying ``observe``:
+        replaying would re-stamp every occurrence with the time of the restart,
+        turning a year of evidence into a burst of sightings on boot day, and
+        would silently drop anything he had corrected — ``observe`` refuses a
+        corrected claim, which is right at the door and wrong on reload.
+        """
+        return {
+            "person": self.person,
+            "max_observations": self.max_observations,
+            "observations": [o.to_dict() for o in self._observations.values()],
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict[str, object]) -> "PersonModel":
+        model = cls(
+            str(data["person"]),
+            max_observations=int(data.get("max_observations", 256)),  # type: ignore[arg-type]
+        )
+        for entry in data.get("observations", []):  # type: ignore[union-attr]
+            observation = Observation.from_dict(entry)
+            model._observations[observation.key] = observation
+        return model
 
     def audit(self) -> list[dict[str, object]]:
         """Every claim with its kind, source and evidence, for a human to check."""

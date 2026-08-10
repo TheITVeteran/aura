@@ -31,6 +31,13 @@ Three further positions:
 * **Background edits are attributed.** The block history distinguishes what a
   live turn learned from what a background pass inferred, because those two
   warrant different amounts of trust when they later disagree.
+* **Some blocks are never summarised at all.** A block carrying
+  ``derived_from`` is the display surface of a structured store, not prose.
+  Summarising what she knows about a person is the operation that walks
+  "seemed frustrated once, during a failing deploy" to "is easily frustrated" —
+  compression drops adjectives before nouns, and in person-knowledge the
+  qualifiers *are* the adjectives. No care in the summariser prevents that, so
+  those blocks are skipped here and would refuse the write anyway.
 """
 from __future__ import annotations
 
@@ -39,6 +46,7 @@ from dataclasses import dataclass
 from typing import Callable, Iterable, Sequence
 
 from core.memory.memory_blocks import (
+    BlockDerived,
     BlockImmutable,
     BlockOverflow,
     BlockVersionConflict,
@@ -75,6 +83,7 @@ REWRITTEN = "rewritten"
 UNCHANGED = "unchanged"
 SKIPPED_BELOW_PRESSURE = "skipped_below_pressure"
 SKIPPED_IMMUTABLE = "skipped_immutable"
+SKIPPED_DERIVED = "skipped_derived"
 FAILED_CONFLICT = "failed_conflict"
 FAILED_OVERFLOW = "failed_overflow"
 FAILED_SUMMARIZER = "failed_summarizer"
@@ -99,7 +108,7 @@ class ConsolidationResult:
     @property
     def ok(self) -> bool:
         return self.outcome in {REWRITTEN, UNCHANGED, SKIPPED_BELOW_PRESSURE,
-                                SKIPPED_IMMUTABLE}
+                                SKIPPED_IMMUTABLE, SKIPPED_DERIVED}
 
     @property
     def reclaimed(self) -> float:
@@ -146,7 +155,9 @@ class SleepTimeConsolidator:
         candidates = [
             (block.utilization, block.label)
             for block in self.blocks
-            if not block.immutable and block.utilization >= self.pressure_threshold
+            if not block.immutable
+            and not block.derived_from
+            and block.utilization >= self.pressure_threshold
         ]
         return [label for _, label in sorted(candidates, reverse=True)]
 
@@ -166,6 +177,22 @@ class SleepTimeConsolidator:
                 label=label, outcome=SKIPPED_IMMUTABLE,
                 before_utilization=block.utilization,
                 after_utilization=block.utilization,
+            )
+
+        if block.derived_from:
+            # Never summarised, at any pressure. This block is the display
+            # surface of a structured store, and summarising it is precisely
+            # the operation that walks "seemed frustrated once, during a
+            # failing deploy" to "is easily frustrated" — no step unreasonable,
+            # nobody deciding. Returned before the summarizer is consulted so
+            # the model is never even asked; the block would refuse the write
+            # regardless, but paying for a call in order to be refused is a
+            # standing cost for nothing.
+            return ConsolidationResult(
+                label=label, outcome=SKIPPED_DERIVED,
+                before_utilization=block.utilization,
+                after_utilization=block.utilization,
+                detail=f"rendered from {block.derived_from}",
             )
 
         before = block.utilization

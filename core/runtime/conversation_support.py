@@ -228,6 +228,33 @@ def build_conversational_context_blocks(state: Any, objective: str = "") -> list
         logger.debug("ConversationalProfile injection failed: %s", exc)
 
     try:
+        # What she knows about this person, rendered from the typed store rather
+        # than from a prose block. The distinction is the whole point: this text
+        # is generated from records with fields, so a qualifier cannot go missing
+        # between what she observed and what she reads back — there is no
+        # summarisation step in which it could.
+        #
+        # Gated here for the same reason as the profile block above; the store
+        # re-checks consent itself, because it is reachable from more than one
+        # seam and a gate that lives only at the seams is one the next seam
+        # forgets.
+        interpersonal = service_access.optional_service("interpersonal_memory", default=None)
+        if (
+            interpersonal
+            and hasattr(interpersonal, "render")
+            and relational_memory_allows(user_id, "derived_profile", "prompt")
+        ):
+            interpersonal_block = interpersonal.render(user_id)
+            if interpersonal_block:
+                blocks.append(interpersonal_block)
+    except (RuntimeError, AttributeError, TypeError, ValueError) as exc:
+        _record_conversation_degradation(
+            exc,
+            action="continued context assembly without the interpersonal block",
+        )
+        logger.debug("Interpersonal injection failed: %s", exc)
+
+    try:
         dialogue = service_access.resolve_dialogue_cognition(default=None)
         if dialogue and hasattr(dialogue, "get_context_injection"):
             source_ids = (

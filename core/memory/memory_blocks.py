@@ -43,6 +43,7 @@ __all__ = [
     "MemoryBlockSet",
     "BlockOverflow",
     "BlockImmutable",
+    "BlockDerived",
     "BlockVersionConflict",
     "UnknownBlock",
 ]
@@ -56,6 +57,15 @@ class BlockOverflow(ValueError):
 
 class BlockImmutable(PermissionError):
     """The block refuses edits — by anyone, including its owner."""
+
+
+class BlockDerived(PermissionError):
+    """The block is rendered from a structured source, and this author is not it.
+
+    Distinct from immutability: a derived block changes constantly. What it
+    refuses is being *rewritten as prose* by anyone other than the store whose
+    records it displays.
+    """
 
 
 class BlockVersionConflict(RuntimeError):
@@ -94,6 +104,19 @@ class MemoryBlock:
     description: str = ""
     immutable: bool = False
     version: int = 0
+    #: The source that owns this block's text, if it is rendered from one.
+    #:
+    #: Some blocks are not prose at all — they are the display surface of a
+    #: structured store, regenerated from records with fields. What she knows
+    #: about a person is the case that forced this: summarising that block is
+    #: exactly the operation that turns "seemed frustrated once, during a
+    #: failing deploy" into "is easily frustrated", because compression drops
+    #: adjectives before nouns and the qualifiers there are all adjectives.
+    #:
+    #: Naming the owner rather than setting a flag means the refusal can say
+    #: who *should* be writing, and means the store itself is not locked out of
+    #: its own block.
+    derived_from: str = ""
 
     def __post_init__(self) -> None:
         if not self.label or not self.label.strip():
@@ -187,6 +210,15 @@ class MemoryBlockSet:
             raise BlockImmutable(
                 f"block {label!r} is immutable. It is refusing rather than "
                 "ignoring you: proceeding as though this succeeded would be worse."
+            )
+
+        if block.derived_from and author != block.derived_from:
+            raise BlockDerived(
+                f"block {label!r} is rendered from {block.derived_from!r} and "
+                f"{author!r} may not rewrite it. Its text is generated from "
+                "records with fields; rewriting it as prose would discard the "
+                "structure that keeps the qualifiers attached. Change the "
+                "records and let it re-render."
             )
 
         if expected_version is not None and expected_version != block.version:

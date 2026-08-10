@@ -164,7 +164,60 @@ class ChatTurnLogger:
             record_degradation("chat_turn_logger.profile_learning", exc)
             logger.debug("Profile learning unavailable: %s", exc)
             return False
-    
+
+    def _schedule_interpersonal_observation(
+        self,
+        *,
+        user_id: str,
+        user_message: str,
+        aura_response: str,
+        episode_id: str,
+    ) -> bool:
+        """Record what this turn showed about the person, against its episode.
+
+        Scheduled after the episode exists rather than alongside profile
+        learning, and that ordering is the point: the interpersonal store
+        refuses a claim that has no episode behind it, so that `audit()` can
+        hand a human the evidence for anything she believes. Passing a
+        synthesised id to make the call fit earlier would satisfy the check and
+        void the guarantee.
+
+        Consent, admissibility and durability are all the store's business; this
+        only supplies the turn.
+        """
+        normalized_user_id = " ".join(str(user_id or "").strip().split())[:160]
+        if not normalized_user_id or not episode_id:
+            return False
+        try:
+            from core.memory.interpersonal_store import get_interpersonal_store
+
+            async def _observe() -> None:
+                try:
+                    written = await get_interpersonal_store().observe_turn(
+                        normalized_user_id,
+                        episode_id=str(episode_id),
+                        user_text=user_message,
+                        assistant_text=aura_response,
+                    )
+                    if written:
+                        logger.debug(
+                            "Interpersonal: recorded %d observation(s)", len(written)
+                        )
+                except _CHAT_TURN_RECOVERABLE_ERRORS as exc:
+                    record_degradation("chat_turn_logger.interpersonal", exc)
+                    logger.debug("Interpersonal observation skipped: %s", exc)
+
+            get_task_tracker().create_task(
+                _observe(),
+                name=f"interpersonal_observation_{str(episode_id)[:64]}",
+            )
+            return True
+        except _CHAT_TURN_RECOVERABLE_ERRORS as exc:
+            record_degradation("chat_turn_logger.interpersonal", exc)
+            logger.debug("Interpersonal observation unavailable: %s", exc)
+            return False
+
+
     async def log_chat_turn(
         self,
         user_message: str,
@@ -237,6 +290,12 @@ class ChatTurnLogger:
             
             if episode_id:
                 logger.debug(f"✓ Chat turn logged to episodic memory (episode={episode_id})")
+                self._schedule_interpersonal_observation(
+                    user_id=profile_user_id,
+                    user_message=user_message,
+                    aura_response=aura_response,
+                    episode_id=str(episode_id),
+                )
                 return True
             else:
                 logger.debug("Chat turn logging returned empty episode_id (governance blocked or deferral)")
