@@ -38,12 +38,35 @@ class WakeState(StrEnum):
     REPORTING = "reporting"     # Summarizing results
 
 
-# Wake phrases (case-insensitive)
+# Wake phrases (case-insensitive), written against what ASR ACTUALLY EMITS.
+#
+# LIVE DEFECT, 2026-08-10. "when i talk to my computer nothing happens. no
+# response or anything." The microphone, the voice-activity gate, and the
+# transcriber were all working perfectly; the log holds the proof:
+#
+#   Heard 'Hey, Aura, can you turn on your camera?' but did not answer:
+#   no wake word and no open voice conversation.
+#
+# He said the wake word. It was transcribed correctly. `\bhey\s+aura\b` still
+# missed, because Whisper punctuates and `\s+` cannot cross the comma in
+# "Hey, Aura". Every utterance he spoke that day missed for the same reason,
+# and the detector logged "OFFLINE (detected 0 wake events)" each session.
+#
+# The pattern had been tested against idealised strings — "hey aura" — which
+# is the one form a real transcriber almost never produces for a sentence.
+#
+# The second half of the same failure: ASR renders her name as whatever it
+# sounds like. The same log has "Hey, Laura, can you hear me right now?" from
+# a man saying "Hey, Aura". A wake word that only matches the correct spelling
+# of a name the transcriber routinely gets wrong is a wake word that does not
+# work. These variants are what was observed, not a guess; each is anchored
+# behind a greeting so an ordinary sentence cannot trip them.
+_WAKE_GAP = r"[\s,.\-–—:;]+"
+_GREETING = r"(?:hey|hi|hello|ok(?:ay)?|yo)"
+_NAME = r"(?:aura|aurora|laura|lora|ora)"
 WAKE_PHRASES = [
-    r"\bhey\s+aura\b",
-    r"\bhi\s+aura\b",
-    r"\bokay?\s+aura\b",
-    r"\baura\b.*\blisten\b",
+    rf"\b{_GREETING}{_WAKE_GAP}{_NAME}\b",
+    rf"\b{_NAME}\b.*\blisten\b",
 ]
 WAKE_PATTERN = re.compile("|".join(WAKE_PHRASES), re.IGNORECASE)
 
