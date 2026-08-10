@@ -16,6 +16,7 @@ from core.brain.llm.latent_cortex.recurrent_transition_core import (  # noqa: E4
 )
 from core.learning.native_recurrent_transition import (  # noqa: E402
     ActionCodebookSpec,
+    encode_transition_action,
     evaluate_native_transition,
     native_transition_loss,
     native_transition_value_and_grad,
@@ -47,10 +48,22 @@ def _inputs():
     )
 
 
+def _action(program, transition_index: int = 0):
+    return encode_transition_action(
+        program,
+        transition_index=transition_index,
+        width=16,
+        codebook=ActionCodebookSpec(),
+    )
+
+
 def test_native_core_attaches_as_exact_identity_and_protects_semantic_slots():
     core = _core()
     state, context = _inputs()
-    attached = core(state, context)
+    program = nested_boolean(2, 17).transition_program
+    assert program is not None
+    action = _action(program)
+    attached = core(state, context, action)
     mx.eval(attached.state, attached.write_gate, attached.delta)
 
     assert bool(mx.array_equal(attached.state, state))
@@ -59,7 +72,7 @@ def test_native_core_attaches_as_exact_identity_and_protects_semantic_slots():
     assert attached.delta.shape == (1, 3, 32)
 
     core.delta_up.weight = mx.ones_like(core.delta_up.weight) * 0.01
-    moved = core(state, context).state
+    moved = core(state, context, action).state
     mx.eval(moved)
     assert bool(mx.array_equal(moved[:, :-3, :], state[:, :-3, :]))
     assert not bool(mx.array_equal(moved[:, -3:, :], state[:, -3:, :]))
@@ -68,17 +81,43 @@ def test_native_core_attaches_as_exact_identity_and_protects_semantic_slots():
 def test_native_core_refuses_malformed_workspace_shapes():
     core = _core()
     state, context = _inputs()
+    program = nested_boolean(2, 17).transition_program
+    assert program is not None
+    action = _action(program)
 
     with pytest.raises(ValueError, match="tensor shape"):
-        core(state[:, -3:, :], context)
+        core(state[:, -3:, :], context, action)
     with pytest.raises(ValueError, match="tensor shape"):
-        core(state, context[:, :, :-1])
+        core(state, context[:, :, :-1], action)
+    with pytest.raises(ValueError, match="tensor shape"):
+        core(state, context, action[:, :, :-1])
     with pytest.raises(ValueError, match="configuration"):
         RecurrentTransitionCoreConfig(
             hidden_size=32,
             bottleneck_size=15,
             attention_heads=4,
         )
+
+
+def test_typed_action_is_a_causal_operand_of_the_state_update():
+    core = _core()
+    state, context = _inputs()
+    first = nested_boolean(2, 17).transition_program
+    second = nested_boolean(2, 18).transition_program
+    assert first is not None and second is not None
+    first_action = _action(first)
+    second_action = _action(second)
+    if bool(mx.array_equal(first_action, second_action)):
+        second = nested_boolean(2, 19).transition_program
+        assert second is not None
+        second_action = _action(second)
+    assert not bool(mx.array_equal(first_action, second_action))
+
+    core.delta_up.weight = mx.ones_like(core.delta_up.weight) * 0.01
+    first_state = core(state, context, first_action).state
+    second_state = core(state, context, second_action).state
+    mx.eval(first_state, second_state)
+    assert not bool(mx.array_equal(first_state[:, -3:, :], second_state[:, -3:, :]))
 
 
 def test_trace_codebook_round_trips_initial_and_terminal_states():

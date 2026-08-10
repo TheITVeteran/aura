@@ -43765,3 +43765,44 @@ disjointness, and rejects overflow.
 This advances the completion envelope to `882/920` (approximately `95.9%`).
 It is an experiment-validity repair, not transfer evidence. The next action is
 the republished-source full 1.5B native transition discriminator.
+
+## Checkpoint 2026-08-10-187: The Causal Action Becomes an Actual Operand
+
+The source-bound CP186 run completed all 512 native-core updates. Development
+state exact accuracy moved `0/40 -> 5/40`, while holdout moved `0/80 -> 7/80`.
+Holdout loss fell `6.691688 -> 2.224679`, but target-value accuracy remained
+unchanged at `0.2375`; exact action accuracy moved only `0.05 -> 0.075`, and
+every modular cell remained at zero exact transitions. The run is a clean
+negative result, not an admission. Its embedded receipt SHA-256 is
+`d1617b9d36fbfdf99e27bbebe4de6277c91b27b9f611b6218a8f466af0b5af4f`;
+the receipt file SHA-256 is
+`9b50ec78c2772935759c5b597f3af465224369fe8dfba789d419316955b2d524`;
+the selected core SHA-256 is
+`c493937c6038144da4940339fc61050dccb57af092bfa09bf686bf7cb771c871`.
+Evidence remains at
+`~/.aura/experiments/cp186-native-full-b66b930d-20260810-153626/`.
+
+The result exposed an implementation error in the intended transition
+signature. CP183 had created verified `state/action/state` programs, but the
+CP184 core accepted only `(state, semantic_context)`; actions were auxiliary
+labels, never causal operands. The core therefore had to discover which
+operation applied from a complete prompt while simultaneously learning how to
+execute it. Loss collapsed through easy program-counter and done marginals
+without learning the requested state machine.
+
+The shared operator now implements
+`T(state, typed_action, semantic_context) -> next_state`. Each exact action is
+encoded through the immutable action codebook and enters a dedicated normalized
+attention path before the protected-state write. It contains no next-state
+label. Contracts prove exact identity still holds before training, malformed
+action tensors fail closed, distinct actions causally produce distinct control
+writes once enabled, gradients remain finite, private receipts remain sealed,
+and bounded optimization still reduces the exact objective. The affected suite
+passes `72/72`; Ruff and compilation pass.
+
+This advances the completion envelope to `883/920` (approximately `96.0%`).
+The next one-step result is explicitly conditional on a correct typed action;
+it cannot claim action parsing, composition, behavioral gain, or reasoning
+gain. Those are separate gates. A positive execution result advances to a
+semantic action compiler and student-roll-in composition; a negative result
+means the native state transition itself still needs repair.

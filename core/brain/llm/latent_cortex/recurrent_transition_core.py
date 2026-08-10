@@ -72,7 +72,9 @@ class RecurrentTransitionCore(nn.Module):
         self.context_down = nn.Linear(hidden, width, bias=False)
         self.state_norm = nn.RMSNorm(width)
         self.context_norm = nn.RMSNorm(width)
+        self.action_norm = nn.RMSNorm(width)
         self.cross_attention = nn.MultiHeadAttention(width, config.attention_heads)
+        self.action_attention = nn.MultiHeadAttention(width, config.attention_heads)
         self.self_attention = nn.MultiHeadAttention(width, config.attention_heads)
         self.mixed_norm = nn.RMSNorm(width)
         self.ff_up = nn.Linear(width, width * 4, bias=False)
@@ -88,13 +90,22 @@ class RecurrentTransitionCore(nn.Module):
             float(config.gate_bias),
         )
 
-    def __call__(self, state: Any, context: Any) -> RecurrentTransitionCoreOutput:
+    def __call__(
+        self,
+        state: Any,
+        context: Any,
+        action: Any,
+    ) -> RecurrentTransitionCoreOutput:
         if (
             state.ndim != 3
             or context.ndim != 3
+            or action.ndim != 3
             or int(state.shape[0]) != int(context.shape[0])
+            or int(state.shape[0]) != int(action.shape[0])
             or int(state.shape[-1]) != self.config.hidden_size
             or int(context.shape[-1]) != self.config.hidden_size
+            or int(action.shape[1]) != self.config.control_slots
+            or int(action.shape[-1]) != self.config.bottleneck_size
             or int(state.shape[1]) <= self.config.control_slots
             or int(context.shape[1]) < 1
         ):
@@ -104,17 +115,25 @@ class RecurrentTransitionCore(nn.Module):
         control = state[:, split:, :]
         control_hidden = self.state_norm(self.state_down(control.astype(mx.float32)))
         context_hidden = self.context_norm(self.context_down(context.astype(mx.float32)))
+        action_hidden = self.action_norm(action.astype(mx.float32))
         attended = self.cross_attention(
             control_hidden,
             context_hidden,
             context_hidden,
+        )
+        action_attended = self.action_attention(
+            control_hidden,
+            action_hidden,
+            action_hidden,
         )
         reflected = self.self_attention(
             control_hidden,
             control_hidden,
             control_hidden,
         )
-        mixed = self.mixed_norm(control_hidden + attended + reflected)
+        mixed = self.mixed_norm(
+            control_hidden + attended + reflected + action_hidden + action_attended
+        )
         transformed = self.ff_down(nn.gelu(self.ff_up(mixed)))
         action_features = self.output_norm(mixed + transformed)
         delta = self.delta_up(action_features)

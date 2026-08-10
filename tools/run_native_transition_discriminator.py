@@ -605,6 +605,7 @@ def run_discriminator(
             "action_codebook": action_codebook.to_dict(),
             "execution_spec": spec.to_dict(),
             "base_model_role": "frozen_semantic_encoder_only",
+            "transition_signature": "state_typed_action_semantic_context_to_state",
             "holdout_policy": "opened_once_after_development_selection",
         },
         "manifests": {
@@ -624,7 +625,8 @@ def run_discriminator(
         "gates": gates,
         "admitted": all(gates.values()),
         "claim_boundary": (
-            "one_step_native_transition_transfer_only_not_composition_behavioral_or_reasoning_gain"
+            "typed_action_given_one_step_native_transition_transfer_only_not_action_"
+            "parsing_composition_behavioral_or_reasoning_gain"
         ),
     }
     return _write_receipt(out_dir / "receipt.json", body)

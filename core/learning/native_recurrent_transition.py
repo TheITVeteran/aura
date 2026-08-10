@@ -166,6 +166,39 @@ def _action_logits(
     return (matrix @ vector) / float(codebook.temperature)
 
 
+def encode_transition_action(
+    program: StructuredTransitionProgram,
+    *,
+    transition_index: int,
+    width: int,
+    codebook: ActionCodebookSpec,
+) -> Any:
+    """Encode the typed causal action as an immutable core operand."""
+
+    import mlx.core as mx
+
+    action = _validate_program_target(program, transition_index)
+    if type(width) is not int or width < 8:
+        raise ValueError("native action width is invalid")
+    rows = []
+    for field_name, value in zip(program.action_field_names, action, strict=True):
+        classes = _action_class_count(
+            family=program.state_trace.family,
+            field_name=field_name,
+        )
+        matrix = _action_codebook_matrix(
+            family=program.state_trace.family,
+            field_name=field_name,
+            classes=classes,
+            width=width,
+            seed=codebook.seed,
+        )
+        rows.append(matrix[value])
+    encoded = mx.stack(rows, axis=0)[None, :, :]
+    mx.eval(encoded)
+    return encoded
+
+
 def _validate_program_target(
     program: StructuredTransitionProgram,
     transition_index: int,
@@ -218,7 +251,13 @@ def native_transition_loss(
         state_index=transition_index,
         codebook=state_codebook,
     )
-    output = core(current, context)
+    encoded_action = encode_transition_action(
+        program,
+        transition_index=transition_index,
+        width=core.config.bottleneck_size,
+        codebook=action_codebook,
+    )
+    output = core(current, context, encoded_action)
     state_loss = structured_state_loss(
         output.state,
         trace,
@@ -313,7 +352,13 @@ def evaluate_native_transition(
         state_index=transition_index,
         codebook=state_codebook,
     )
-    output = core(current, context)
+    encoded_action = encode_transition_action(
+        program,
+        transition_index=transition_index,
+        width=core.config.bottleneck_size,
+        codebook=action_codebook,
+    )
+    output = core(current, context, encoded_action)
     loss = native_transition_loss(
         core,
         base_state,
@@ -372,6 +417,7 @@ __all__ = [
     "NATIVE_TRANSITION_OBJECTIVE_SCHEMA",
     "NativeTransitionEvaluation",
     "NativeTransitionGradient",
+    "encode_transition_action",
     "evaluate_native_transition",
     "native_transition_loss",
     "native_transition_value_and_grad",
