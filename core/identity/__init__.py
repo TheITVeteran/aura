@@ -11,6 +11,7 @@ from typing import Any, Dict, List, Optional
 
 # Re-export key components
 from .identity_guard import PersonaEnforcementGate
+from .identity_content_guard import inspect_identity_text
 
 from .biography import get_legacy_context
 from core.utils.paths import CORE_DIR, DATA_DIR
@@ -153,13 +154,32 @@ class IdentityCore:
 
     def evolve(self, new_insights: str) -> bool:
         """Safely update the evolved identity state.
-        Ensures the base identity remains immutable.
+
+        Ensures the base identity remains immutable, and that what lands in
+        the evolved block is a self-description rather than prompt
+        machinery. This file is concatenated into every system prompt, so
+        anything reaching it is injected once and then again on every boot
+        — with the authority of the system prompt. The length check that
+        used to be the only gate here could not tell a sentence about
+        herself from a chat-template delimiter.
         """
         try:
-            if len(new_insights) < 10:
-                logger.warning("Attempted to set dangerously thin evolved identity. Rejected.")
+            verdict = inspect_identity_text(new_insights)
+            if not verdict.accepted:
+                record_degradation(
+                    "identity_evolution",
+                    ValueError("; ".join(verdict.reasons)),
+                    severity="warning",
+                    action="refused the identity revision; the previous identity stands",
+                    extra={"findings": list(verdict.findings)},
+                )
+                logger.warning(
+                    "Refused an identity revision: %s", "; ".join(verdict.reasons)
+                )
                 return False
-                
+            for warning in verdict.warnings:
+                logger.warning("Identity revision warning: %s", warning)
+
             atomic_write_text(self.evolved_path, new_insights)
             logger.info("Aura's identity has evolved based on recent cognitive reflections.")
             return True
