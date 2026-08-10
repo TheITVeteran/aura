@@ -44,6 +44,7 @@ from core.learning.recurrent_behavioral_probe import (  # noqa: E402
 )
 from core.learning.recurrent_checkpoint_admission import (  # noqa: E402
     build_recurrence_task_manifest,
+    validate_free_generation_report,
 )
 from core.learning.recurrent_grpo import (  # noqa: E402
     attach_coda_policy_adapters_at_sites,
@@ -725,6 +726,22 @@ def run_canary(
         "lesion_restored_exactly": restored_after_lesion,
         "sham_restored_exactly": restored_after_sham,
     }
+    reports = {
+        "ordinary_before": ordinary_before,
+        "untreated": untreated,
+        "ordinary_after": ordinary_after,
+        "treatment": treatment,
+        "lesion": lesion,
+        "sham": sham,
+    }
+    persisted_reports = {
+        name: (
+            None
+            if report is None
+            else validate_free_generation_report(json.loads(_canonical_bytes(report)))
+        )
+        for name, report in reports.items()
+    }
     body = {
         "schema": CANARY_SCHEMA,
         "source_commit": source_commit,
@@ -753,14 +770,7 @@ def run_canary(
         "installation": installation,
         "adapter_artifact": adapter_artifact,
         "proxy_manifest": proxy_manifest,
-        "reports": {
-            "ordinary_before": ordinary_before,
-            "untreated": untreated,
-            "ordinary_after": ordinary_after,
-            "treatment": treatment,
-            "lesion": lesion,
-            "sham": sham,
-        },
+        "reports": persisted_reports,
         "gates": gates,
         "admitted": all(gates.values()),
         "claim_boundary": (

@@ -43227,3 +43227,34 @@ passes (`103/103`). This advances the completion envelope to `866/920`
 (approximately `94.1%`). The same bounded 1.5B campaign must rerun through
 this publisher before any positive capability claim is recorded. Scaling,
 broad-domain replication, and resident-32B use remain locked.
+
+## Checkpoint 2026-08-10-171: Nested Episode Evidence Survives Persistence
+
+The CP170 rerun again produced the same bounded behavioral scores and its new
+top-level envelope and adapter artifact both replayed exactly. Independent
+validation then rejected the nested treatment, lesion, and sham report
+commitments. Coda activation used integer block indices as JSON object keys.
+The in-memory hash sorted those keys numerically, while persistence converted
+them to strings and replay sorted them lexicographically. Ordinary and
+untreated reports, which did not carry active coda block maps, remained valid.
+The CP170 result remains rejected rather than being promoted through repair.
+
+Coda receipts now use canonical decimal-string block identities at creation.
+Admission of coda-only full-engine evidence also requires nonempty, typed,
+positive block and site attribution plus coherent observed/adapted position
+counts; a nonzero aggregate call count is no longer sufficient. The shared
+free-generation report builder validates the caller's original episode
+commitment, then crosses an explicit JSON-native normalization boundary and
+binds the exact persistent episode and report forms. The campaign publisher
+round-trips every report through the public validator before constructing its
+top-level envelope.
+
+An offline two-stage replay over the exact rejected CP170 artifact reproduced
+all 24 legacy coda episode hashes only in their integer-key form, then migrated
+the equivalent string-key form and successfully persisted and revalidated all
+six reports. Focused engine, admission, publisher, and trajectory contracts
+pass (`52/52`); Ruff and compilation pass; canonical smoke passes (`103/103`).
+This advances the completion envelope to `867/920` (approximately `94.2%`).
+The identical bounded 1.5B campaign must now pass this complete nested replay
+path before a positive capability result is recorded. Scaling, broader unseen
+domains, and resident-32B use remain locked.

@@ -714,7 +714,10 @@ class LatentCortexEngine:
             "calls": activation.calls,
             "adapted_positions": activation.adapted_positions,
             "observed_positions": activation.observed_positions,
-            "applied_blocks": dict(sorted(activation.applied_blocks.items())),
+            "applied_blocks": {
+                str(block): count
+                for block, count in sorted(activation.applied_blocks.items())
+            },
             "applied_sites": dict(sorted(activation.applied_sites.items())),
             "active": activation.calls > 0,
         }

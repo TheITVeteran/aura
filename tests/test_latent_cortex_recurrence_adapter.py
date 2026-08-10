@@ -202,7 +202,7 @@ def test_engine_reports_coda_activation_without_claiming_recurrence():
         "calls": 1,
         "adapted_positions": 3,
         "observed_positions": 3,
-        "applied_blocks": {7: 1},
+        "applied_blocks": {"7": 1},
         "applied_sites": {"model.layers.7.self_attn.o_proj": 1},
         "active": True,
     }

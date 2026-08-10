@@ -66,6 +66,20 @@ def _sha(value: Any) -> str:
     ).hexdigest()
 
 
+def _json_native(value: Any) -> Any:
+    """Normalize a validated value to the structure JSON will persist."""
+
+    return json.loads(
+        json.dumps(
+            value,
+            sort_keys=True,
+            separators=(",", ":"),
+            ensure_ascii=True,
+            allow_nan=False,
+        )
+    )
+
+
 def _is_sha256(value: Any) -> bool:
     return (
         isinstance(value, str)
@@ -134,6 +148,27 @@ def _validate_episode_evidence(
         and coda_activation["calls"] >= 1
         and type(coda_activation.get("adapted_positions")) is int
         and coda_activation["adapted_positions"] >= 1
+        and type(coda_activation.get("observed_positions")) is int
+        and coda_activation["observed_positions"]
+        >= coda_activation["adapted_positions"]
+        and isinstance(coda_activation.get("applied_blocks"), Mapping)
+        and bool(coda_activation["applied_blocks"])
+        and all(
+            isinstance(block, str)
+            and block.isdigit()
+            and type(count) is int
+            and count >= 1
+            for block, count in coda_activation["applied_blocks"].items()
+        )
+        and isinstance(coda_activation.get("applied_sites"), Mapping)
+        and bool(coda_activation["applied_sites"])
+        and all(
+            isinstance(site, str)
+            and bool(site)
+            and type(count) is int
+            and count >= 1
+            for site, count in coda_activation["applied_sites"].items()
+        )
     )
     if (
         _sha(receipt) != episode_receipt_sha256
@@ -536,6 +571,12 @@ def build_free_generation_report(
                 branch_selection_admitted=row["branch_selection_admitted"],
                 episode_receipt_sha256=row["episode_receipt_sha256"],
             )
+        # The input commitment is checked above before normalization. Public
+        # report evidence then crosses a JSON boundary, so bind the exact
+        # structure that survives persistence (not Python-only integer keys or
+        # tuples whose canonical ordering can change after reload).
+        row["episode_receipt"] = _json_native(row["episode_receipt"])
+        row["episode_receipt_sha256"] = _sha(row["episode_receipt"])
         normalized_rows.append(row)
     correct_by_depth = {
         str(depth): sum(int(row["correct"]) for row in normalized_rows if row["depth"] == depth)
@@ -554,6 +595,7 @@ def build_free_generation_report(
         "total_correct": sum(correct_by_depth.values()),
         "total_observations": len(normalized_rows),
     }
+    body = _json_native(body)
     return {**body, "report_sha256": _sha(body)}
 
 
