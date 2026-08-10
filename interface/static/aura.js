@@ -4387,7 +4387,25 @@ function visibleUserMessageMatches(message) {
     const expected = String(message || '').trim();
     if (!expected) return false;
     const visible = Array.from(container.querySelectorAll('.msg.user')).slice(-12);
-    return visible.some(node => String(node.textContent || '').trim() === expected);
+    // Compare against the MESSAGE, not the bubble.
+    //
+    // LIVE DEFECT, 2026-08-10. The same user message appeared twice in the
+    // transcript, 27 seconds apart, from a single send — the server logged
+    // exactly one turn, so this was a duplicate render, and this guard is what
+    // should have stopped it.
+    //
+    // appendMsg renders the timestamp INSIDE the bubble:
+    //   <div class="msg-content">…</div><div class="msg-meta">09:09:10</div>
+    // so node.textContent is "…sure?09:09:10" while `expected` is "…sure?".
+    // The equality could never hold, and a guard that never fires reads
+    // exactly like a guard that was never needed.
+    return visible.some(node => {
+        const content = node.querySelector('.msg-content');
+        const rendered = String(
+            (content ? content.textContent : node.textContent) || ''
+        ).trim();
+        return rendered === expected;
+    });
 }
 
 function chatDeliveryEnvelope(httpStatus, payload, { source = 'post' } = {}) {
