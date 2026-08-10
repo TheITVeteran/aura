@@ -41471,3 +41471,43 @@ inconclusive at `1/7` ordinary, `2/7` best-of-three, `3/7` complete system, and
 defects must be repaired before rerun. No reasoning-gain, frontier, fusion,
 activation, or `WOW Signal` claim is authorized. The completion envelope is
 `812/920` (approximately `88.3%`).
+
+## Checkpoint 2026-08-09-116: Executable Reasoning Repairs And Proves
+
+The completed WOW pilot was not merely underpowered. It exposed four concrete
+engine defects. Planning and calibration each generated three syntax-invalid
+programs because every strategy received one unrepairable generation. Three
+algorithm programs independently encoded the same wrong upper-median rule and
+their different source hashes were allowed to vote that answer into authority.
+The resource control then invalidated truthful refused and failed sandbox calls,
+and several long structured responses reached the shared 320-token ceiling.
+
+Executable reasoning now parses generated Python before spending a sandbox
+call and gives each independent strategy one bounded, strategy-preserving repair
+round. Every sandbox invocation is retained and byte-metered across all repair
+attempts. A static refusal remains a refusal; a process that actually launched
+must prove network denial. Equal-tool summaries are reconstructed from the full
+amplifier receipt, so a validator can no longer demand success or trust a
+detached summary.
+
+Agreement is no longer proof. Distinct program and strategy hashes remain
+useful exploration evidence, but probabilistic consensus cannot replace the
+ordinary incumbent. Replacement requires an exact public-objective proof. A
+new bounded rule compiler handles stable ordered traversal generally: it
+distinguishes lower from upper medians, preserves original indices, applies
+distance/value/index tie-breaks in order, and proves the weighted checksum from
+the public request. It refutes the campaign's wrong `1070` result and derives
+the correct result without an answer key or private grader.
+
+Focused executable, amplifier, reconciliation, exact-router, and answer-
+replacement contracts pass `125/125`; supporting resource-accounting,
+incumbent, controller, pipeline, handoff, and checkpoint-admission contracts
+pass `91/91`; canonical smoke passes `103/103`. Ruff, Python compilation, and
+diff hygiene pass. Evidence is
+`artifacts/closeout/latent_cortex/cp116_executable_reasoning_repairs_and_proves.json`.
+
+This is a campaign repair checkpoint, not a positive campaign verdict. The
+shared output budget and zero accepted latent steps remain open; a bounded 1.5B
+calibration must precede another immutable resident-32B run. No general
+reasoning-gain, frontier, fusion, activation, or `WOW Signal` claim is
+authorized. The completion envelope is `813/920` (approximately `88.4%`).

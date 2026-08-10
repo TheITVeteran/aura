@@ -98,9 +98,14 @@ def test_strategy_selection_uses_problem_semantics_not_task_ids() -> None:
         "Update the prior probability using both likelihoods and report the posterior.",
         task_type="math",
     )
+    ordered = select_executable_strategies(
+        "Choose the lower median, then the nearest remaining value, retaining original index.",
+        task_type="logic",
+    )
     assert causal[0] == "causal_total_effect_reconstruction"
     assert planning[0] == "exhaustive_feasible_schedule_search"
     assert probability[0] == "exact_fraction_probability_update"
+    assert ordered[0] == "literal_order_statistic_interpreter"
     assert not should_use_executable_reasoning(
         "Explain why curiosity matters.",
         task_type="factual",
@@ -193,6 +198,35 @@ async def test_failed_program_is_withheld_from_disjoint_restart() -> None:
     assert "AssertionError: anchoring literal" not in prompts[1]
     assert "sandbox_execution_failed:AssertionError" in prompts[1]
     assert result.receipt["attempts"][0]["program_sha256"] in prompts[1]
+    assert "reference_enumeration_or_simulation" in prompts[1]
+
+
+@pytest.mark.asyncio
+async def test_syntax_error_is_repaired_before_spending_a_sandbox_call() -> None:
+    prompts: list[str] = []
+
+    async def generate(prompt: str, temperature: float) -> str:
+        prompts.append(prompt)
+        if temperature == 0.2:
+            return "```python\nprint('private source'\n```"
+        return "```python\nprint('private source')\n```"
+
+    sandbox = _Sandbox(_Execution(stdout='FINAL_ANSWER: {"answer":4}'))
+    result = await derive_executable_candidate(
+        objective="Compute 2 + 2.",
+        task_type="math",
+        generate=generate,
+        sandbox=sandbox,
+        deadline=time.monotonic() + 10.0,
+        response_contract='{"answer":int}',
+    )
+
+    assert result.succeeded is True
+    assert sandbox.calls == 1
+    assert result.receipt["generation_calls"] == 2
+    assert result.receipt["attempts"][0]["status"] == "syntax_invalid"
+    assert "program_syntax_invalid" in prompts[1]
+    assert "reference_enumeration_or_simulation" in prompts[1]
 
 
 class _ExactCandidateVerifier:

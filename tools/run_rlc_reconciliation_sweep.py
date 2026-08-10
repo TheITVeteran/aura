@@ -1406,6 +1406,41 @@ def _resource_dominating_control_receipt_issues(
                 equal_tool_resource = validate_resource_receipt(equal_tool_resource)
             except (TypeError, ValueError):
                 issues.append("resource_control_equal_tool_resource_invalid")
+            operation_rows = (
+                equal_tool_receipt.get("executable_operations")
+                if isinstance(equal_tool_receipt, dict)
+                else None
+            )
+            operation_rows_valid = bool(operation_rows) and all(
+                isinstance(operation, dict)
+                and operation.get("status")
+                in {"executed", "refused", "timed_out", "execution_failed"}
+                and type(operation.get("program_bytes")) is int
+                and operation.get("program_bytes") > 0
+                and type(operation.get("result_bytes")) is int
+                and operation.get("result_bytes") >= 0
+                and (
+                    operation.get("network_denied") is True
+                    if operation.get("process_launched") is True
+                    else True
+                )
+                for operation in operation_rows or []
+            )
+            if isinstance(equal_tool_receipt, dict) and isinstance(
+                equal_tool_receipt.get("amplifier_receipt"), dict
+            ):
+                from tools.rlc_complete_system_closed_book import (
+                    _summarize_executable_operations,
+                )
+
+                operation_rows_valid = operation_rows_valid and operation_rows == (
+                    _summarize_executable_operations(
+                        equal_tool_receipt["amplifier_receipt"].get(
+                            "cognitive_operations"
+                        )
+                        or []
+                    )
+                )
             if (
                 not isinstance(equal_tool_receipt, dict)
                 or equal_tool_receipt.get("schema")
@@ -1419,18 +1454,7 @@ def _resource_dominating_control_receipt_issues(
                 != hashlib.sha256(text.encode("utf-8")).hexdigest()
                 or equal_tool_receipt.get("generated_tokens")
                 != candidate.get("generated_tokens")
-                or not isinstance(equal_tool_receipt.get("executable_operations"), list)
-                or not equal_tool_receipt.get("executable_operations")
-                or any(
-                    not isinstance(operation, dict)
-                    or operation.get("sandbox_ok") is not True
-                    or operation.get("network_denied") is not True
-                    or type(operation.get("program_bytes")) is not int
-                    or operation.get("program_bytes") <= 0
-                    or type(operation.get("result_bytes")) is not int
-                    or operation.get("result_bytes") < 0
-                    for operation in equal_tool_receipt.get("executable_operations") or []
-                )
+                or not operation_rows_valid
             ):
                 issues.append("resource_control_equal_tool_receipt_invalid")
             if (

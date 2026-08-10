@@ -1335,10 +1335,10 @@ class ReasoningAmplifierV2:
                 excluded_program_sha256s=excluded_program_sha256s,
                 excluded_candidate_sha256s=excluded_candidate_sha256s,
                 prior_failure_class=prior_failure_class,
-                # The outer controller owns independent strategy retries. One
-                # generation per strategy keeps the total model-call budget
-                # explicit instead of multiplying hidden repair rounds.
-                max_generation_attempts=1,
+                # Each independent strategy owns one bounded repair round. The
+                # generation wrapper meters both calls, and executable receipts
+                # preserve every preflight or sandbox outcome.
+                max_generation_attempts=2,
             )
         except (TimeoutError, OSError, RuntimeError, AttributeError, TypeError, ValueError) as exc:
             record_degradation(

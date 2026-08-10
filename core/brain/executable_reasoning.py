@@ -15,6 +15,7 @@ carry hashes, sizes, containment evidence, and bounded status only.
 """
 from __future__ import annotations
 
+import ast
 import asyncio
 import hashlib
 import re
@@ -56,6 +57,11 @@ _AUDIT_STRATEGIES = (
     "independent_recomputation_and_rank",
     "counterexample_search_against_the_claim",
     "dual_formula_audit_with_tiebreak_check",
+)
+_ORDERED_SELECTION_STRATEGIES = (
+    "literal_order_statistic_interpreter",
+    "stable_indexed_selection_simulation",
+    "independent_rank_and_tiebreak_crosscheck",
 )
 _STRATEGY_GUIDANCE = {
     "reference_enumeration_or_simulation": (
@@ -124,6 +130,21 @@ _STRATEGY_GUIDANCE = {
     "dual_formula_audit_with_tiebreak_check": (
         "Compute all scores in two independent functions, require agreement, then evaluate "
         "the stated winner and every tie-break explicitly."
+    ),
+    "literal_order_statistic_interpreter": (
+        "Translate each ordering phrase literally. For a lower median of n sorted values, "
+        "use zero-based rank (n-1)//2; do not silently substitute the upper median. Preserve "
+        "original indices and apply every subsequent selection and tie-break in stated order."
+    ),
+    "stable_indexed_selection_simulation": (
+        "Represent every item as (value, original_index), simulate the requested selection "
+        "one step at a time, and keep original indices stable. Encode lower/upper, nearest, "
+        "and tie-break rules as separate explicit key functions."
+    ),
+    "independent_rank_and_tiebreak_crosscheck": (
+        "Compute the requested ordered selection twice: once by direct sorted ranks and once "
+        "by enumerating candidates with an explicit objective tuple. Print only if both paths "
+        "agree, including original-index and checksum rules."
     ),
 }
 
@@ -195,6 +216,17 @@ def select_executable_strategies(
         return _PROBABILITY_STRATEGIES
     if any(token in text for token in ("premise", "claim", "actual winner", "highest score")):
         return _AUDIT_STRATEGIES
+    if any(
+        token in text
+        for token in (
+            "lower median",
+            "upper median",
+            "original index",
+            "nearest remaining",
+            "order statistic",
+        )
+    ):
+        return _ORDERED_SELECTION_STRATEGIES
     del task_type
     return EXECUTABLE_STRATEGIES
 
@@ -256,6 +288,8 @@ def _restart_prompt(
     diagnostic: str,
     response_contract: str,
     prior_program_sha256: str,
+    *,
+    strategy: str,
 ) -> str:
     """Request a disjoint retry without exposing the failed source or answer."""
 
@@ -274,6 +308,8 @@ def _restart_prompt(
             if contract
             else "It must print only the final user-facing answer. "
         )
+        + f"Continue using the assigned independent strategy: {strategy}. "
+        + f"{_STRATEGY_GUIDANCE.get(strategy, 'Use an independent pure computation.')} "
         + f"\n\nPRIOR_PROGRAM_SHA256: {prior_program_sha256}"
         + f"\nFAILURE_CLASS: {diagnostic[:512]}"
         + f"\n\nORIGINAL_TASK:\n{str(objective or '').strip()[:_MAX_OBJECTIVE_CHARS]}"
@@ -420,6 +456,7 @@ async def derive_executable_candidate(
                 diagnostic or "prior_attempt_failed",
                 response_contract,
                 _sha256(program),
+                strategy=strategy,
             )
         )
         try:
@@ -463,6 +500,24 @@ async def derive_executable_candidate(
                     "program_sha256": program_sha256,
                     "program_chars": len(program),
                     "program_bytes": len(program.encode("utf-8")),
+                }
+            )
+            continue
+        try:
+            ast.parse(program)
+        except SyntaxError as exc:
+            diagnostic = (
+                "program_syntax_invalid:"
+                f"{exc.msg}:line={int(exc.lineno or 0)}:offset={int(exc.offset or 0)}"
+            )
+            attempts.append(
+                {
+                    "attempt": attempt_index + 1,
+                    "status": "syntax_invalid",
+                    "program_sha256": program_sha256,
+                    "program_chars": len(program),
+                    "program_bytes": len(program.encode("utf-8")),
+                    "diagnostic": diagnostic,
                 }
             )
             continue

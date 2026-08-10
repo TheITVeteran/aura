@@ -14,8 +14,8 @@ import re
 from dataclasses import dataclass
 from typing import Any
 
-OBJECTIVE_PROGRAM_VERIFIER_SCHEMA = "aura.rlc.objective_program_verifier.v2"
-OBJECTIVE_PROGRAM_SOLUTION_SCHEMA = "aura.rlc.objective_program_solution.v2"
+OBJECTIVE_PROGRAM_VERIFIER_SCHEMA = "aura.rlc.objective_program_verifier.v3"
+OBJECTIVE_PROGRAM_SOLUTION_SCHEMA = "aura.rlc.objective_program_solution.v3"
 
 _MODULAR_OBJECTIVE_RE = re.compile(
     r"\AStart at the given value and apply each operation modulo "
@@ -26,6 +26,15 @@ _BOOLEAN_OBJECTIVE_RE = re.compile(
     r"\AEvaluate this (?P<depth>\d+)-operation expression with 1=true, "
     r"0=false, and xor meaning exactly one operand is true: "
     r"(?P<expression>.+?)\. Return a value of 1 or 0\.",
+)
+_STABLE_NEAREST_TRAVERSAL_RE = re.compile(
+    r"\AFresh algorithm task\. The input values, in original position order, are "
+    r"(?P<values>\[-?\d+(?:,\s*-?\d+){1,255}\])\. Select the "
+    r"(?P<median>lower|upper) median by numeric value first\. Then repeatedly "
+    r"select one remaining value by minimizing, in order: absolute distance from "
+    r"the most recently selected value; numeric value; original zero-based "
+    r"position\. Return the complete selected-value sequence\. Its checksum is the "
+    r"sum of one-based output position multiplied by value\.",
 )
 _BOOLEAN_TOKEN_RE = re.compile(r"\s*(?:(?P<bit>[01])|(?P<op>not|and|or|xor)|(?P<paren>[()]))")
 _JSON_FENCE_RE = re.compile(
@@ -195,6 +204,51 @@ def _boolean_expected(match: re.Match[str]) -> tuple[dict[str, Any], dict[str, A
     }
 
 
+def _stable_nearest_expected(
+    match: re.Match[str],
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    values = json.loads(match.group("values"))
+    if (
+        not isinstance(values, list)
+        or not 2 <= len(values) <= 256
+        or any(isinstance(value, bool) or not isinstance(value, int) for value in values)
+        or any(not -(1 << 31) <= value <= (1 << 31) - 1 for value in values)
+    ):
+        raise ValueError("stable_nearest_values_invalid")
+    indexed = list(enumerate(values))
+    median_rank = (
+        (len(values) - 1) // 2
+        if match.group("median") == "lower"
+        else len(values) // 2
+    )
+    first = sorted(indexed, key=lambda item: (item[1], item[0]))[median_rank]
+    order = [first]
+    remaining = [item for item in indexed if item != first]
+    while remaining:
+        previous_value = order[-1][1]
+        chosen = min(
+            remaining,
+            key=lambda item: (
+                abs(item[1] - previous_value),
+                item[1],
+                item[0],
+            ),
+        )
+        order.append(chosen)
+        remaining.remove(chosen)
+    sequence = [value for _original_index, value in order]
+    checksum = sum(
+        output_index * value for output_index, value in enumerate(sequence, start=1)
+    )
+    return {"sequence": sequence, "checksum": checksum}, {
+        "input_count": len(values),
+        "median_kind": match.group("median"),
+        "median_rank_zero_based": median_rank,
+        "original_indices_sha256": _sha([index for index, _value in order]),
+        "selection_trace_sha256": _sha(sequence),
+    }
+
+
 def _execute_objective(objective: str) -> tuple[str, dict[str, Any], dict[str, Any]] | None:
     if not isinstance(objective, str):
         raise TypeError("objective program must be text")
@@ -203,12 +257,16 @@ def _execute_objective(objective: str) -> tuple[str, dict[str, Any], dict[str, A
     execution: dict[str, Any]
     modular = _MODULAR_OBJECTIVE_RE.match(objective)
     boolean = _BOOLEAN_OBJECTIVE_RE.match(objective)
+    stable_nearest = _STABLE_NEAREST_TRAVERSAL_RE.match(objective)
     if modular is not None:
         family = "modular_chain"
         expected, execution = _modular_expected(modular)
     elif boolean is not None:
         family = "nested_boolean"
         expected, execution = _boolean_expected(boolean)
+    elif stable_nearest is not None:
+        family = "stable_nearest_traversal"
+        expected, execution = _stable_nearest_expected(stable_nearest)
     else:
         return None
     return family, expected, execution
@@ -256,6 +314,22 @@ def _render_solution_witness(
         )
         lines.append(
             f"The bounded parser executed {int(match.group('depth'))} operations and the expression is {truth}, encoded as {value}."
+        )
+    elif family == "stable_nearest_traversal":
+        match = _STABLE_NEAREST_TRAVERSAL_RE.match(objective)
+        if match is None:  # pragma: no cover - guarded by _execute_objective
+            raise ValueError("stable_nearest_solution_witness_parse_failed")
+        values = json.loads(match.group("values"))
+        median_rank = (
+            (len(values) - 1) // 2
+            if match.group("median") == "lower"
+            else len(values) // 2
+        )
+        lines.append(
+            f"Sort value/index pairs and choose the {match.group('median')} median at zero-based rank {median_rank}."
+        )
+        lines.append(
+            "Then choose each remaining pair by (absolute distance, value, original index) and compute the weighted checksum."
         )
     else:  # pragma: no cover - family is closed by _execute_objective
         raise ValueError("objective_solution_witness_family_unknown")

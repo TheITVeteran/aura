@@ -333,9 +333,13 @@ def test_resource_dominating_control_spends_until_every_target_dimension_is_met(
             "final_text_sha256": hashlib.sha256(text.encode()).hexdigest(),
             "executable_operations": [
                 {
+                    "status": "executed",
                     "program_bytes": 4,
                     "result_bytes": 1,
                     "sandbox_ok": True,
+                    "refused": False,
+                    "timed_out": False,
+                    "process_launched": True,
                     "network_denied": True,
                 }
             ],
@@ -1069,7 +1073,11 @@ def test_complete_system_promotion_preserves_incumbent_until_verified_improvemen
         candidate_verified=True,
         authority="independent_executable_consensus",
     )
-    assert consensus == "candidate"
+    assert consensus == "incumbent"
+    assert consensus_receipt["decision"] == "retain"
+    assert consensus_receipt["reason"] == (
+        "probabilistic_consensus_not_promotion_authority"
+    )
     assert consensus_receipt["promotion_is_probabilistic"] is True
     assert consensus_receipt["ground_truth_verified"] is False
     assert consensus_receipt["no_regression_guaranteed"] is False
@@ -2342,6 +2350,79 @@ def test_executable_accounting_requires_a_real_sandbox_invocation_and_counts_byt
     assert receipt["totals"]["tool_result_bytes"] == 5
     assert len(recorded) == 1
     assert recorded[0]["program_bytes"] == 2
+
+
+def test_executable_accounting_preserves_every_sandbox_attempt():
+    from core.brain.llm.latent_cortex.resource_accounting import (
+        ModelComputeProfile,
+        ResourceLedger,
+    )
+    from tools.rlc_complete_system_closed_book import (
+        _charge_executable_operations,
+    )
+
+    ledger = ResourceLedger(
+        ModelComputeProfile(
+            model_type="fixture",
+            hidden_size=8,
+            intermediate_size=16,
+            num_hidden_layers=2,
+            num_attention_heads=2,
+            num_key_value_heads=1,
+            vocab_size=32,
+            head_dim=4,
+        )
+    )
+    recorded = _charge_executable_operations(
+        ledger,
+        [
+            {
+                "schema": "aura.executable_reasoning.v1",
+                "status": "candidate_ready",
+                "strategy": "direct",
+                "candidate_sha256": "c" * 64,
+                "attempts": [
+                    {
+                        "attempt": 1,
+                        "status": "refused",
+                        "program_sha256": "a" * 64,
+                        "program_bytes": 9,
+                        "sandbox": {
+                            "ok": False,
+                            "refused": True,
+                            "timed_out": False,
+                            "stdout_total_bytes": 0,
+                            "stderr_total_bytes": 0,
+                            "isolation": {"isolation_level": "unavailable"},
+                        },
+                    },
+                    {
+                        "attempt": 2,
+                        "status": "executed",
+                        "program_sha256": "b" * 64,
+                        "program_bytes": 11,
+                        "sandbox": {
+                            "ok": True,
+                            "refused": False,
+                            "timed_out": False,
+                            "stdout_total_bytes": 7,
+                            "stderr_total_bytes": 0,
+                            "isolation": {
+                                "isolation_level": "kernel:seatbelt",
+                                "network_denied": True,
+                            },
+                        },
+                    },
+                ],
+            }
+        ],
+        prefix="fixture",
+    )
+
+    assert ledger.to_receipt()["totals"]["tool_calls"] == 2
+    assert [row["status"] for row in recorded] == ["refused", "executed"]
+    assert recorded[0]["process_launched"] is False
+    assert recorded[1]["network_denied"] is True
 
 
 def test_candidate_quality_separates_proxy_admission_from_exact_public_proof():

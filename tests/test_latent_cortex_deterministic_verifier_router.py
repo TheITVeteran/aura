@@ -141,6 +141,28 @@ def test_router_executes_public_boolean_objective_with_bounded_parser() -> None:
     assert len(execution["expression_sha256"]) == 64
 
 
+def test_router_executes_public_stable_nearest_traversal_exactly() -> None:
+    objective = (
+        "Fresh algorithm task. The input values, in original position order, are "
+        "[72, 13, 66, 60, 51, 73]. Select the lower median by numeric value first. "
+        "Then repeatedly select one remaining value by minimizing, in order: absolute "
+        "distance from the most recently selected value; numeric value; original "
+        "zero-based position. Return the complete selected-value sequence. Its checksum "
+        "is the sum of one-based output position multiplied by value. You may reason "
+        "before the answer."
+    )
+    correct = 'FINAL_ANSWER: {"sequence":[60,66,72,73,51,13],"checksum":1033}'
+    upper_median = 'FINAL_ANSWER: {"sequence":[66,60,51,72,73,13],"checksum":1070}'
+
+    good = _route(correct, objective)
+    bad = _route(upper_median, objective)
+
+    assert good["routes"][0]["verifier"] == "exact_objective_program"
+    assert good["routes"][0]["outcome"] == "verified"
+    assert good["routes"][0]["detail"]["family"] == "stable_nearest_traversal"
+    assert bad["routes"][0]["outcome"] == "refuted"
+
+
 @pytest.mark.parametrize(
     ("candidate", "outcome"),
     [

@@ -416,7 +416,8 @@ def _promotion_assessment(
         candidate_text
         and candidate_verified
         and candidate_contract
-        and ((candidate_exact and exact_authority) or consensus_authority)
+        and candidate_exact
+        and exact_authority
         and not incumbent_exact
     )
     final_text = candidate_text if replace else incumbent_text
@@ -424,18 +425,16 @@ def _promotion_assessment(
         "schema": "aura.rlc.closed_book_promotion.v1",
         "decision": "replace" if replace else "retain",
         "reason": (
-            (
-                "exact_candidate_replaces_unproven_incumbent"
-                if exact_authority
-                else "independent_consensus_replaces_unproven_incumbent"
-            )
+            "exact_candidate_replaces_unproven_incumbent"
             if replace
             else "candidate_not_verified"
             if not candidate_verified
             else "candidate_contract_invalid"
             if not candidate_contract
+            else "probabilistic_consensus_not_promotion_authority"
+            if consensus_authority
             else "candidate_lacks_exact_public_objective_proof"
-            if not ((candidate_exact and exact_authority) or consensus_authority)
+            if not (candidate_exact and exact_authority)
             else "incumbent_already_exactly_verified"
         ),
         "answer_key_used": False,
@@ -497,50 +496,81 @@ def _aggregate_complete_system_resources(
     return ledger
 
 
+def _summarize_executable_operations(
+    operations: list[dict[str, Any]] | tuple[dict[str, Any], ...],
+) -> list[dict[str, Any]]:
+    """Reconstruct every sandbox invocation from durable amplifier receipts."""
+
+    recorded: list[dict[str, Any]] = []
+    for index, operation in enumerate(operations):
+        if operation.get("schema") != "aura.executable_reasoning.v1":
+            continue
+        attempts = operation.get("attempts")
+        source_rows = attempts if isinstance(attempts, list) else []
+        sandbox_rows = [row for row in source_rows if isinstance(row, dict) and isinstance(row.get("sandbox"), dict)]
+        if not sandbox_rows and isinstance(operation.get("sandbox"), dict):
+            sandbox_rows = [operation]
+        for row_index, row in enumerate(sandbox_rows):
+            sandbox = row["sandbox"]
+            program_bytes = row.get("program_bytes")
+            if (
+                isinstance(program_bytes, bool)
+                or not isinstance(program_bytes, int)
+                or program_bytes <= 0
+            ):
+                continue
+            result_bytes = int(sandbox.get("stdout_total_bytes") or 0) + int(
+                sandbox.get("stderr_total_bytes") or 0
+            )
+            isolation = sandbox.get("isolation") or {}
+            process_launched = bool(
+                isolation.get("sandboxed") is True
+                or str(isolation.get("isolation_level") or "").startswith("kernel:")
+            )
+            status = str(row.get("status") or operation.get("status") or "")
+            if not status:
+                status = (
+                    "executed" if sandbox.get("ok") is True
+                    else "refused" if sandbox.get("refused") is True
+                    else "timed_out" if sandbox.get("timed_out") is True
+                    else "execution_failed"
+                )
+            recorded.append(
+                {
+                    "operation_index": index,
+                    "attempt": int(row.get("attempt") or row_index + 1),
+                    "status": status,
+                    "program_sha256": str(row.get("program_sha256") or operation.get("program_sha256") or ""),
+                    "candidate_sha256": str(operation.get("candidate_sha256") or ""),
+                    "strategy": str(operation.get("strategy") or ""),
+                    "program_bytes": program_bytes,
+                    "result_bytes": result_bytes,
+                    "sandbox_ok": sandbox.get("ok") is True,
+                    "refused": sandbox.get("refused") is True,
+                    "timed_out": sandbox.get("timed_out") is True,
+                    "process_launched": process_launched,
+                    "network_denied": isolation.get("network_denied") is True,
+                }
+            )
+    return recorded
+
+
 def _charge_executable_operations(
     ledger: Any,
     operations: list[dict[str, Any]] | tuple[dict[str, Any], ...],
     *,
     prefix: str,
 ) -> list[dict[str, Any]]:
-    """Meter only sandbox invocations, using byte-accurate program input."""
+    """Meter every sandbox invocation, including failed and refused attempts."""
 
-    recorded: list[dict[str, Any]] = []
-    for index, operation in enumerate(operations):
-        if operation.get("schema") != "aura.executable_reasoning.v1":
-            continue
-        sandbox = operation.get("sandbox")
-        program_bytes = operation.get("program_bytes")
-        if (
-            not isinstance(sandbox, dict)
-            or isinstance(program_bytes, bool)
-            or not isinstance(program_bytes, int)
-            or program_bytes <= 0
-        ):
-            continue
-        result_bytes = int(sandbox.get("stdout_total_bytes") or 0) + int(
-            sandbox.get("stderr_total_bytes") or 0
-        )
+    recorded = _summarize_executable_operations(operations)
+    for index, operation in enumerate(recorded):
         ledger.charge(
             f"{prefix}_{index}",
             tool_calls=1,
-            tool_input_bytes=program_bytes,
-            tool_result_bytes=result_bytes,
-            host_scalar_ops=max(1, program_bytes + result_bytes),
-        )
-        recorded.append(
-            {
-                "program_sha256": str(operation.get("program_sha256") or ""),
-                "candidate_sha256": str(operation.get("candidate_sha256") or ""),
-                "strategy": str(operation.get("strategy") or ""),
-                "program_bytes": program_bytes,
-                "result_bytes": result_bytes,
-                "sandbox_ok": sandbox.get("ok") is True,
-                "network_denied": (sandbox.get("isolation") or {}).get(
-                    "network_denied"
-                )
-                is True,
-            }
+            tool_input_bytes=operation["program_bytes"],
+            tool_result_bytes=operation["result_bytes"],
+            host_scalar_ops=max(1, operation["program_bytes"] + operation["result_bytes"]),
         )
     return recorded
 
