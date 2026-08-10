@@ -68,9 +68,11 @@ SOURCE_PATHS: Final = (
     "core/brain/llm/latent_cortex/engine.py",
     "core/brain/llm/latent_cortex/fast_weights.py",
     "core/brain/llm/latent_cortex/recurrence_adapter.py",
+    "core/brain/llm/latent_cortex/types.py",
     "core/learning/recurrence_curriculum.py",
     "core/learning/recurrence_native_objective_v2.py",
     "core/learning/recurrent_behavioral_probe.py",
+    "core/learning/recurrent_checkpoint_admission.py",
     "core/learning/recurrent_grpo.py",
     "core/learning/verified_trajectory_distillation.py",
     "tools/run_verified_trajectory_distillation_canary.py",
@@ -89,6 +91,41 @@ def _canonical_bytes(value: Any) -> bytes:
 
 def _sha256_bytes(value: bytes) -> str:
     return hashlib.sha256(value).hexdigest()
+
+
+def _validate_receipt_payload(payload: bytes) -> dict[str, Any]:
+    """Replay a receipt hash against the exact canonical bytes on disk."""
+
+    try:
+        value = json.loads(payload)
+    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise RuntimeError("trajectory receipt is not canonical JSON") from exc
+    if not isinstance(value, dict) or _canonical_bytes(value) != payload:
+        raise RuntimeError("trajectory receipt is not canonical JSON")
+    receipt_sha256 = value.pop("receipt_sha256", None)
+    if (
+        not isinstance(receipt_sha256, str)
+        or len(receipt_sha256) != 64
+        or _sha256_bytes(_canonical_bytes(value)) != receipt_sha256
+    ):
+        raise RuntimeError("trajectory receipt hash does not bind persisted body")
+    return {**value, "receipt_sha256": receipt_sha256}
+
+
+def _write_receipt(path: Path, body: Mapping[str, Any]) -> dict[str, Any]:
+    """Normalize once, hash what will persist, and verify the atomic write."""
+
+    normalized = json.loads(_canonical_bytes(dict(body)))
+    receipt = {
+        **normalized,
+        "receipt_sha256": _sha256_bytes(_canonical_bytes(normalized)),
+    }
+    payload = _canonical_bytes(receipt)
+    atomic_write_bytes(path, payload, mode=0o600)
+    persisted = path.read_bytes()
+    if persisted != payload:
+        raise RuntimeError("trajectory receipt atomic write changed payload")
+    return _validate_receipt_payload(persisted)
 
 
 class ProgressLedger:
@@ -543,14 +580,9 @@ def run_canary(
                     "heldout_internal_operator_transfer_only_not_behavioral_gain"
                 ),
             }
-            preflight_receipt = {
-                **preflight_body,
-                "receipt_sha256": _sha256_bytes(_canonical_bytes(preflight_body)),
-            }
-            atomic_write_bytes(
+            preflight_receipt = _write_receipt(
                 out_dir / "receipt.json",
-                _canonical_bytes(preflight_receipt),
-                mode=0o600,
+                preflight_body,
             )
             progress.emit(
                 "complete",
@@ -662,7 +694,15 @@ def run_canary(
             restored_after_sham = (
                 adapter_tensor_fingerprint(adapter_tensor_dict(model)) == adapter_after
             )
-        mx.save_safetensors(str(out_dir / "adapter.safetensors"), adapter_tensor_dict(model))
+        adapter_path = out_dir / "adapter.safetensors"
+        mx.save_safetensors(str(adapter_path), adapter_tensor_dict(model))
+        adapter_path.chmod(0o600)
+        adapter_payload = adapter_path.read_bytes()
+        adapter_artifact = {
+            "sha256": _sha256_bytes(adapter_payload),
+            "size_bytes": len(adapter_payload),
+            "mode": "0600",
+        }
 
     gates = {
         "base_checkpoint_immutable": base_before == full_weight_checkpoint_identity(model_path),
@@ -711,6 +751,7 @@ def run_canary(
         "transfer_diagnostic": transfer_diagnostic,
         "factor_receipts": {site: dict(value.receipt) for site, value in fitted.items()},
         "installation": installation,
+        "adapter_artifact": adapter_artifact,
         "proxy_manifest": proxy_manifest,
         "reports": {
             "ordinary_before": ordinary_before,
@@ -726,8 +767,7 @@ def run_canary(
             "bounded_teacher_free_persistent_gain_only_not_general_or_frontier_gain"
         ),
     }
-    receipt = {**body, "receipt_sha256": _sha256_bytes(_canonical_bytes(body))}
-    atomic_write_bytes(out_dir / "receipt.json", _canonical_bytes(receipt), mode=0o600)
+    receipt = _write_receipt(out_dir / "receipt.json", body)
     progress.emit("complete", admitted=receipt["admitted"], **gates)
     return receipt
 

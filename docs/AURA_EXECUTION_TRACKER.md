@@ -43199,3 +43199,31 @@ norm-preserving-sham controls under a valid source-bound receipt. This advances
 the completion envelope to `865/920` (approximately `94.0%`). Within-family
 scaling and broader unseen-domain replication remain open; resident-32B use
 remains locked.
+
+## Checkpoint 2026-08-10-170: Positive Campaign Receipts Must Replay From Disk
+
+The clean CP169 rerun reproduced the provisional behavior and completed its
+controls: ordinary decode `4/8`, untreated RLC `6/8`, coda treatment `8/8`,
+zeroed lesion `6/8`, and norm-preserving permutation sham `7/8`. All ten
+behavioral and restoration gates reported true. Independent post-run audit,
+however, found that the top-level embedded receipt SHA-256 did not reproduce
+after reading and canonically reserializing the persisted JSON. Earlier
+diagnostic and trajectory-artifact receipts replayed correctly, isolating the
+defect to the full campaign publisher. The attractive result is therefore
+rejected as certification evidence rather than repaired post hoc.
+
+Receipt publication now first converts the complete body to its JSON-native
+form, hashes those exact canonical body bytes, writes the final envelope
+atomically with owner-only permissions, reads the file back, requires exact
+byte identity, and independently replays the embedded hash before returning
+success. The emitted adapter is now owner-only and bound into the receipt by
+SHA-256 and byte length. Exact source bindings now also include the episode
+receipt type and recurrent-checkpoint admission modules that distinguish
+coda-phase evidence from recurrent-window evidence.
+
+Canonical persistence, mutation refusal, control, admission, trajectory, and
+engine contracts pass (`52/52`); Ruff and compilation pass; canonical smoke
+passes (`103/103`). This advances the completion envelope to `866/920`
+(approximately `94.1%`). The same bounded 1.5B campaign must rerun through
+this publisher before any positive capability claim is recorded. Scaling,
+broad-domain replication, and resident-32B use remain locked.

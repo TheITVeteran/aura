@@ -6,6 +6,8 @@ import pytest
 from tools.run_verified_trajectory_distillation_canary import (
     _permuted_recurrence_adapter,
     _report_score,
+    _validate_receipt_payload,
+    _write_receipt,
     _zeroed_recurrence_adapter,
 )
 
@@ -91,3 +93,26 @@ def test_report_score_requires_integer_total() -> None:
     assert _report_score({"total_correct": 3}) == 3
     with pytest.raises(KeyError):
         _report_score({})
+
+
+def test_receipt_writer_hashes_the_exact_persisted_body(tmp_path) -> None:
+    path = tmp_path / "receipt.json"
+    body = {
+        "schema": "aura.test.receipt.v1",
+        "nested": {7: (np.float64(0.36725152632439967), "evidence")},
+    }
+
+    receipt = _write_receipt(path, body)
+
+    assert path.stat().st_mode & 0o777 == 0o600
+    assert _validate_receipt_payload(path.read_bytes()) == receipt
+    assert receipt["nested"] == {"7": [0.36725152632439967, "evidence"]}
+
+
+def test_receipt_validator_rejects_post_write_mutation(tmp_path) -> None:
+    path = tmp_path / "receipt.json"
+    _write_receipt(path, {"schema": "aura.test.receipt.v1", "admitted": True})
+    payload = path.read_bytes().replace(b'"admitted":true', b'"admitted":false')
+
+    with pytest.raises(RuntimeError, match="hash does not bind"):
+        _validate_receipt_payload(payload)
