@@ -42824,3 +42824,31 @@ token/logit parity, complete coda-site activation, ordinary-path darkness, and
 serialization round-trip before any shared-rule scaling experiment. No broad
 neural gain, resident-32B use, frontier result, fusion, activation, or
 `WOW Signal` is authorized.
+
+## Checkpoint 2026-08-10-157: The Real-Checkpoint Transplant Has a Source-Bound Discriminator
+
+The temporary-to-persistent mechanism gate is now executable as one bounded,
+source-bound campaign rather than a collection of manual tensor experiments.
+It runs one frozen 1.5B RLC teaching episode with the executable producer
+removed, exports the mechanically clean episodic `U,V` candidate through
+Aura's governed consolidation path, validates the candidate's exact evidence
+and tensor inventory, unloads the producer model, and reloads the checkpoint
+for an independent transplant replay.
+
+The replay installs the real candidate twice on identical model inputs: first
+through `EpisodicDeltaLinear` with `decode_only` activation, then through exact
+same-site `ScopedCodaLoRALinear` tissue after the episodic wrappers have erased.
+It refuses a verdict unless the full logits and greedy token tensors are
+byte-identical, ordinary unscoped logits remain byte-identical to the base,
+the coda lesion restores the base, every declared coda site fires, no ordinary
+call fires any coda site, and all outputs, factors, source/model/task identity,
+and private candidate artifacts are hash-bound in the final receipt. This gate
+still proves mechanism preservation only; it cannot promote a correctness or
+generalization claim by itself.
+
+Pure candidate-boundary tests reject undeclared extra tensors and reconstruct
+the exact private inventory. The focused RLC/transplant suite passes `66/66`,
+canonical smoke passes `103/103`, and Ruff, compilation, and diff hygiene pass.
+This advances the completion envelope to `853/920` (approximately `92.7%`).
+The source-bound real-checkpoint campaign is next; resident-32B use remains
+locked.
