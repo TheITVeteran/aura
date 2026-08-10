@@ -42448,3 +42448,29 @@ and norm-preserving sham without per-query answer teaching. This evidence
 closes the bounded neural-teaching mechanism task and advances the completion
 envelope to `842/920` (approximately `91.5%`). No resident-32B, frontier,
 fusion, activation, or `WOW Signal` claim is authorized.
+
+## Checkpoint 2026-08-10-145: Persistent Tissue Now Matches the Proven Plasticity Site
+
+CP144 localized the successful temporary intervention to eight early recurrent
+`o_proj` layers while CP139 had trained only the final two recurrent layers and
+then required a coda contribution that its own lesion disproved. The persistent
+experiment was therefore optimizing and ablating different neural sites from
+the intervention it was supposed to retain.
+
+The shared adapter constructor now supports deterministic early, distributed,
+and late placement. Existing callers retain the late default; the next
+distillation can explicitly occupy the same early recurrent layers used by the
+successful temporary write. The bounded canary now makes rank, layer count,
+targets, placement, coda topology, and curriculum dimensions source-bound
+experimental inputs instead of hard-coded rank-two/four-example constants.
+
+Most importantly, persistent causality is now tested at the recurrent tissue
+itself. A candidate must lose its gain under a full recurrent-adapter lesion
+and under a norm-preserving output-basis permutation, and the sham must restore
+the exact adapter fingerprint. Coda controls remain available only when a coda
+is part of the declared treatment. Focused contracts pass `53/53`; repository
+smoke passes `103/103`; Ruff, compilation, and diff hygiene pass. This closes
+the topology/ablation mismatch and advances the completion envelope to
+`843/920` (approximately `91.6%`). It does not yet authorize a persistent
+reasoning-gain, resident-32B, frontier, fusion, activation, or `WOW Signal`
+claim.

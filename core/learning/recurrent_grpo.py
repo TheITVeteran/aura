@@ -431,6 +431,7 @@ def attach_recurrent_policy_adapters(
     initialization_seed: int,
     lora_dropout: float = 0.0,
     lora_scale: float = 20.0,
+    lora_layer_placement: str = "late",
     depth_conditioned_steps: int | None = None,
     role_conditioned_branches: int | None = None,
     coda_lora_layers: int = 0,
@@ -464,6 +465,7 @@ def attach_recurrent_policy_adapters(
         or not isinstance(lora_scale, (int, float))
         or not math.isfinite(float(lora_scale))
         or not 0.0 < float(lora_scale) <= 1024.0
+        or lora_layer_placement not in {"early", "distributed", "late"}
         or not isinstance(lora_targets, Sequence)
         or isinstance(lora_targets, (str, bytes, bytearray))
         or type(coda_lora_layers) is not int
@@ -527,7 +529,16 @@ def attach_recurrent_policy_adapters(
     available_coda_layers = len(layers) - coda_start
     if coda_lora_layers > available_coda_layers:
         raise ValueError("requested coda adapter layers exceed the coda window")
-    adapted_indices = range(coda_start - lora_layers, coda_start)
+    from core.brain.llm.latent_cortex.plasticity_sites import (
+        select_plasticity_layers,
+    )
+
+    adapted_indices = select_plasticity_layers(
+        prelude_end,
+        coda_start,
+        lora_layers,
+        placement=lora_layer_placement,
+    )
     planned: list[tuple[Any, str, Any, int, str, type[Any]]] = []
 
     def plan_layer(

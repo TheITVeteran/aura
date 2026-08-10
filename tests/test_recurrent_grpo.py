@@ -72,6 +72,7 @@ from core.learning.recurrent_grpo import (  # noqa: E402
 from core.learning.recurrent_sft_execution import (  # noqa: E402
     RecurrentSFTExecutionError,
     adapter_tensor_dict,
+    adapter_tensor_fingerprint,
     assert_adapter_tensor_topology,
 )
 from core.learning.verified_recurrent_transition_evidence import (  # noqa: E402
@@ -110,6 +111,9 @@ from core.learning.verified_transition_reward import (  # noqa: E402
     validate_verified_transition_reward_batch,
 )
 from tools.recurrence_native_train_v2 import _wrap_window_layers  # noqa: E402
+from tools.run_generated_rollin_objective_canary import (  # noqa: E402
+    _permuted_recurrence_sham,
+)
 from tools.train_grpo import sample_recurrent_group  # noqa: E402
 
 
@@ -217,6 +221,78 @@ def test_proof_campaign_adapter_honors_bound_scale_and_dropout():
     adapter = model.model.layers[2].self_attn.o_proj
     assert isinstance(adapter, ScopedLoRALinear)
     assert adapter.scale == 7.5
+
+
+def test_proof_campaign_adapter_can_match_early_plasticity_sites():
+    model = _model(seed=412)
+
+    sites = attach_recurrent_policy_adapters(
+        model,
+        _spec(),
+        lora_rank=2,
+        lora_layers=2,
+        lora_targets=("o_proj",),
+        initialization_seed=44,
+        lora_layer_placement="early",
+    )
+
+    assert sites == (
+        "model.layers.1.self_attn.o_proj",
+        "model.layers.2.self_attn.o_proj",
+    )
+
+
+def test_proof_campaign_adapter_rejects_unknown_layer_placement():
+    with pytest.raises(ValueError, match="configuration"):
+        attach_recurrent_policy_adapters(
+            _model(seed=413),
+            _spec(),
+            lora_rank=2,
+            lora_layers=1,
+            lora_targets=("o_proj",),
+            initialization_seed=45,
+            lora_layer_placement="middle",
+        )
+
+
+def test_recurrence_sham_changes_learned_basis_and_restores_exactly():
+    model = _model(seed=414)
+    attach_recurrent_policy_adapters(
+        model,
+        _spec(branch_roles=("constructive_solution", "critical_audit")),
+        lora_rank=2,
+        lora_layers=2,
+        lora_targets=("o_proj",),
+        initialization_seed=46,
+        lora_layer_placement="early",
+        depth_conditioned_steps=2,
+        role_conditioned_branches=2,
+    )
+    for layer_index in (1, 2):
+        adapter = model.model.layers[layer_index].self_attn.o_proj
+        adapter.lora_b = mx.arange(adapter.lora_b.size).reshape(
+            adapter.lora_b.shape
+        ).astype(adapter.lora_b.dtype)
+        adapter.depth_b = [
+            mx.arange(tensor.size).reshape(tensor.shape).astype(tensor.dtype)
+            for tensor in adapter.depth_b
+        ]
+        adapter.depth_bank.depth_b = adapter.depth_b
+        adapter.role_b = [
+            mx.arange(tensor.size).reshape(tensor.shape).astype(tensor.dtype)
+            for tensor in adapter.role_b
+        ]
+        adapter.role_bank.role_b = adapter.role_b
+    mx.eval(model.trainable_parameters())
+    before = adapter_tensor_fingerprint(adapter_tensor_dict(model))
+
+    with _permuted_recurrence_sham(model) as receipt:
+        during = adapter_tensor_fingerprint(adapter_tensor_dict(model))
+
+    assert receipt["norm_preserved"] is True
+    assert len(receipt["sites"]) == 2
+    assert during != before
+    assert adapter_tensor_fingerprint(adapter_tensor_dict(model)) == before
 
 
 def test_coda_adapter_is_independent_and_dark_outside_rlc_decode():

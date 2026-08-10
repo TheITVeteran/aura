@@ -171,7 +171,12 @@ def test_warmup_target_gate_is_exact_and_fail_closed(loss: object, expected: boo
 def test_coda_causal_arms_are_admitted_report_identities() -> None:
     from core.learning.recurrent_checkpoint_admission import _ARMS
 
-    assert {"trained_coda_lesion", "trained_coda_sham"}.issubset(_ARMS)
+    assert {
+        "trained_adapter_lesion",
+        "trained_adapter_sham",
+        "trained_coda_lesion",
+        "trained_coda_sham",
+    }.issubset(_ARMS)
 
 
 def test_progress_ledger_is_durable_monotonic_and_failure_aware(

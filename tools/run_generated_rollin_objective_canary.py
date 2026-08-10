@@ -19,7 +19,7 @@ import os
 import subprocess
 import sys
 import time
-from collections.abc import Iterator
+from collections.abc import Iterator, Sequence
 from contextlib import contextmanager
 from pathlib import Path
 from typing import Any, Final
@@ -76,7 +76,7 @@ from core.runtime.atomic_writer import atomic_append_text, atomic_write_bytes  #
 from core.runtime.mlx_memory_guard import mlx_memory_envelope  # noqa: E402
 from core.runtime.model_lane_control import standalone_model_lane  # noqa: E402
 
-CANARY_SCHEMA: Final = "aura.generated_rollin_objective_canary.v4"
+CANARY_SCHEMA: Final = "aura.generated_rollin_objective_canary.v5"
 PROGRESS_SCHEMA: Final = "aura.generated_rollin_objective_canary.progress.v1"
 SOURCE_PATHS: Final = (
     "core/learning/recurrence_native_objective_v2.py",
@@ -385,6 +385,73 @@ def _permuted_coda_sham(model: Any) -> Iterator[dict[str, Any]]:
         mx.eval(model.trainable_parameters())
 
 
+@contextmanager
+def _permuted_recurrence_sham(model: Any) -> Iterator[dict[str, Any]]:
+    """Permute every learned recurrent output basis, then restore exactly."""
+
+    import mlx.core as mx
+
+    from core.brain.llm.latent_cortex.recurrence_adapter import ScopedLoRALinear
+
+    snapshots: list[tuple[Any, str, Any]] = []
+    sites: list[str] = []
+    layers = getattr(getattr(model, "model", None), "layers", None) or []
+    for layer_index, layer in enumerate(layers):
+        for parent_name in ("self_attn", "mlp"):
+            parent = getattr(layer, parent_name, None)
+            if parent is None:
+                continue
+            for target in (
+                "q_proj",
+                "k_proj",
+                "v_proj",
+                "o_proj",
+                "gate_proj",
+                "up_proj",
+                "down_proj",
+            ):
+                projection = getattr(parent, target, None)
+                if not isinstance(projection, ScopedLoRALinear):
+                    continue
+                sites.append(f"model.layers.{layer_index}.{parent_name}.{target}")
+                tensor_names = ["lora_b"]
+                tensor_names.extend(
+                    name
+                    for name in ("depth_b", "role_b")
+                    if hasattr(projection, name)
+                )
+                for name in tensor_names:
+                    value = getattr(projection, name)
+                    if isinstance(value, list):
+                        for index, tensor in enumerate(value):
+                            snapshots.append((projection, f"{name}.{index}", tensor))
+                            width = int(tensor.shape[-1])
+                            permutation = mx.array(list(reversed(range(width))))
+                            value[index] = tensor[:, permutation]
+                    else:
+                        snapshots.append((projection, name, value))
+                        width = int(value.shape[-1])
+                        permutation = mx.array(list(reversed(range(width))))
+                        setattr(projection, name, value[:, permutation])
+    if not snapshots:
+        raise RuntimeError("recurrent sham found no recurrence-scoped projections")
+    mx.eval(model.trainable_parameters())
+    try:
+        yield {
+            "method": "reverse_output_basis_permutation_v1",
+            "sites": sites,
+            "norm_preserved": True,
+        }
+    finally:
+        for projection, name, original in reversed(snapshots):
+            if "." in name:
+                collection_name, index_text = name.split(".", 1)
+                getattr(projection, collection_name)[int(index_text)] = original
+            else:
+                setattr(projection, name, original)
+        mx.eval(model.trainable_parameters())
+
+
 def run_canary(
     *,
     model_path: Path,
@@ -398,6 +465,16 @@ def run_canary(
     warmup_steps: int,
     warmup_learning_rate: float,
     joint_learning_rate: float,
+    lora_rank: int = 2,
+    lora_layers: int = 2,
+    lora_targets: Sequence[str] = ("o_proj",),
+    lora_layer_placement: str = "late",
+    coda_lora_layers: int = 2,
+    coda_lora_targets: Sequence[str] = ("o_proj", "down_proj"),
+    training_families: Sequence[str] = ("boolean", "modular"),
+    training_depths: Sequence[int] = (2,),
+    training_per_cell: int = 2,
+    proxy_per_cell: int = 2,
 ) -> dict[str, Any]:
     import mlx.core as mx
     import mlx.optimizers as optim
@@ -405,10 +482,36 @@ def run_canary(
 
     from core.learning.recurrence_curriculum import task_battery
 
-    if type(steps) is not int or not 1 <= steps <= 8:
-        raise ValueError("steps must be inside [1, 8]")
-    if type(warmup_steps) is not int or not 1 <= warmup_steps <= 8:
-        raise ValueError("warmup_steps must be inside [1, 8]")
+    if type(steps) is not int or not 1 <= steps <= 256:
+        raise ValueError("steps must be inside [1, 256]")
+    if type(warmup_steps) is not int or not 1 <= warmup_steps <= 64:
+        raise ValueError("warmup_steps must be inside [1, 64]")
+    if (
+        type(lora_rank) is not int
+        or not 1 <= lora_rank <= 64
+        or type(lora_layers) is not int
+        or not 1 <= lora_layers <= 64
+        or not isinstance(lora_targets, Sequence)
+        or isinstance(lora_targets, (str, bytes, bytearray))
+        or not lora_targets
+        or lora_layer_placement not in {"early", "distributed", "late"}
+        or type(coda_lora_layers) is not int
+        or not 0 <= coda_lora_layers <= 64
+        or not isinstance(coda_lora_targets, Sequence)
+        or isinstance(coda_lora_targets, (str, bytes, bytearray))
+        or bool(coda_lora_layers) != bool(coda_lora_targets)
+        or not isinstance(training_families, Sequence)
+        or isinstance(training_families, (str, bytes, bytearray))
+        or not training_families
+        or not isinstance(training_depths, Sequence)
+        or isinstance(training_depths, (str, bytes, bytearray))
+        or not training_depths
+        or type(training_per_cell) is not int
+        or not 1 <= training_per_cell <= 128
+        or type(proxy_per_cell) is not int
+        or not 1 <= proxy_per_cell <= 128
+    ):
+        raise ValueError("canary topology or curriculum configuration is invalid")
     if type(seed) is not int or not 0 <= seed <= 2**63 - 1:
         raise ValueError("seed must be inside [0, 2^63-1]")
     for name, value in (
@@ -481,31 +584,32 @@ def run_canary(
         attach_recurrent_policy_adapters(
             model,
             spec,
-            lora_rank=2,
-            lora_layers=2,
-            lora_targets=("o_proj",),
+            lora_rank=lora_rank,
+            lora_layers=lora_layers,
+            lora_targets=tuple(lora_targets),
             initialization_seed=(seed ^ 0x51F7A11) & 0xFFFFFFFF,
             lora_scale=1.0,
+            lora_layer_placement=lora_layer_placement,
             depth_conditioned_steps=spec.recurrent_steps,
             role_conditioned_branches=len(spec.branch_roles),
-            coda_lora_layers=2,
-            coda_lora_targets=("o_proj", "down_proj"),
+            coda_lora_layers=coda_lora_layers,
+            coda_lora_targets=tuple(coda_lora_targets),
         )
         progress.emit(
             "model_ready",
-            recurrent_adapter_sites=2,
-            coda_adapter_layers=2,
-            coda_adapter_targets=["o_proj", "down_proj"],
+            recurrent_adapter_layers=lora_layers,
+            recurrent_adapter_targets=list(lora_targets),
+            recurrent_adapter_placement=lora_layer_placement,
+            coda_adapter_layers=coda_lora_layers,
+            coda_adapter_targets=list(coda_lora_targets),
         )
         adapter_before = adapter_tensor_fingerprint(adapter_tensor_dict(model))
         training_tasks = task_battery(
-            ["boolean", "modular"],
-            [2],
-            2,
+            list(training_families),
+            list(training_depths),
+            training_per_cell,
             seed=seed,
         )
-        if len(training_tasks) != 4:
-            raise RuntimeError("canary training battery did not produce four tasks")
         training_rows = []
         for task in training_tasks:
             prompt_tokens, answer_tokens = _tokenize(
@@ -521,9 +625,9 @@ def run_canary(
                 }
             )
         proxy_tasks = task_battery(
-            ["boolean", "modular"],
-            [2],
-            2,
+            list(training_families),
+            list(training_depths),
+            proxy_per_cell,
             seed=seed + 7_919,
             excluded_prompts=tuple(task.prompt for task in training_tasks),
             excluded_task_ids=tuple(task.task_id for task in training_tasks),
@@ -757,47 +861,92 @@ def run_canary(
         )
         from core.brain.llm.latent_cortex.recurrence_adapter import (
             coda_adapter_disabled,
+            recurrence_adapter_disabled,
         )
 
-        with coda_adapter_disabled():
-            free_generation_coda_lesion = _free_generation_report(
+        with recurrence_adapter_disabled():
+            free_generation_recurrence_lesion = _free_generation_report(
                 model,
                 tokenizer,
                 proxy_tasks,
                 spec=spec,
-                arm="trained_coda_lesion",
+                arm="trained_adapter_lesion",
                 adapter_sha256=adapter_after,
                 task_manifest_sha256=proxy_manifest_sha256,
                 seed=seed,
                 progress_callback=probe_progress,
             )
         progress.emit(
-            "coda_lesion_complete",
-            total_correct=free_generation_coda_lesion["total_correct"],
-            total_observations=free_generation_coda_lesion["total_observations"],
+            "recurrence_lesion_complete",
+            total_correct=free_generation_recurrence_lesion["total_correct"],
+            total_observations=free_generation_recurrence_lesion["total_observations"],
         )
-        with _permuted_coda_sham(model) as coda_sham:
-            sham_sha256 = adapter_tensor_fingerprint(adapter_tensor_dict(model))
-            free_generation_coda_sham = _free_generation_report(
+        with _permuted_recurrence_sham(model) as recurrence_sham:
+            recurrence_sham_sha256 = adapter_tensor_fingerprint(adapter_tensor_dict(model))
+            free_generation_recurrence_sham = _free_generation_report(
                 model,
                 tokenizer,
                 proxy_tasks,
                 spec=spec,
-                arm="trained_coda_sham",
-                adapter_sha256=sham_sha256,
+                arm="trained_adapter_sham",
+                adapter_sha256=recurrence_sham_sha256,
                 task_manifest_sha256=proxy_manifest_sha256,
                 seed=seed,
                 progress_callback=probe_progress,
             )
-        coda_restore_exact = (
+        recurrence_restore_exact = (
             adapter_tensor_fingerprint(adapter_tensor_dict(model)) == adapter_after
         )
         progress.emit(
-            "coda_sham_complete",
-            total_correct=free_generation_coda_sham["total_correct"],
-            total_observations=free_generation_coda_sham["total_observations"],
-            restored_exactly=coda_restore_exact,
+            "recurrence_sham_complete",
+            total_correct=free_generation_recurrence_sham["total_correct"],
+            total_observations=free_generation_recurrence_sham["total_observations"],
+            restored_exactly=recurrence_restore_exact,
         )
+        free_generation_coda_lesion = None
+        free_generation_coda_sham = None
+        coda_sham = None
+        coda_restore_exact = True
+        if coda_lora_layers:
+            with coda_adapter_disabled():
+                free_generation_coda_lesion = _free_generation_report(
+                    model,
+                    tokenizer,
+                    proxy_tasks,
+                    spec=spec,
+                    arm="trained_coda_lesion",
+                    adapter_sha256=adapter_after,
+                    task_manifest_sha256=proxy_manifest_sha256,
+                    seed=seed,
+                    progress_callback=probe_progress,
+                )
+            progress.emit(
+                "coda_lesion_complete",
+                total_correct=free_generation_coda_lesion["total_correct"],
+                total_observations=free_generation_coda_lesion["total_observations"],
+            )
+            with _permuted_coda_sham(model) as coda_sham:
+                coda_sham_sha256 = adapter_tensor_fingerprint(adapter_tensor_dict(model))
+                free_generation_coda_sham = _free_generation_report(
+                    model,
+                    tokenizer,
+                    proxy_tasks,
+                    spec=spec,
+                    arm="trained_coda_sham",
+                    adapter_sha256=coda_sham_sha256,
+                    task_manifest_sha256=proxy_manifest_sha256,
+                    seed=seed,
+                    progress_callback=probe_progress,
+                )
+            coda_restore_exact = (
+                adapter_tensor_fingerprint(adapter_tensor_dict(model)) == adapter_after
+            )
+            progress.emit(
+                "coda_sham_complete",
+                total_correct=free_generation_coda_sham["total_correct"],
+                total_observations=free_generation_coda_sham["total_observations"],
+                restored_exactly=coda_restore_exact,
+            )
         # The vanilla floor. Measured on the same weights and the same tasks,
         # after training, because the base weights never move -- only the
         # adapter does, and the ordinary path does not read it.
@@ -872,16 +1021,32 @@ def run_canary(
         "heldout_depth_improvement_non_regression": after["trajectory_loss"]
         <= before["trajectory_loss"] + 1e-6,
         "heldout_free_generation_strict_gain": behavioral_admission["admitted"],
-        "coda_causal_contribution": (
+        "recurrence_causal_contribution": (
             free_generation_after["total_correct"]
-            > free_generation_coda_lesion["total_correct"]
+            > free_generation_recurrence_lesion["total_correct"]
         ),
-        "coda_outperforms_norm_preserving_sham": (
+        "recurrence_outperforms_norm_preserving_sham": (
             free_generation_after["total_correct"]
-            > free_generation_coda_sham["total_correct"]
+            > free_generation_recurrence_sham["total_correct"]
         ),
-        "coda_sham_restored_exactly": coda_restore_exact,
+        "recurrence_sham_restored_exactly": recurrence_restore_exact,
     }
+    if coda_lora_layers:
+        assert free_generation_coda_lesion is not None
+        assert free_generation_coda_sham is not None
+        gates.update(
+            {
+                "coda_causal_contribution": (
+                    free_generation_after["total_correct"]
+                    > free_generation_coda_lesion["total_correct"]
+                ),
+                "coda_outperforms_norm_preserving_sham": (
+                    free_generation_after["total_correct"]
+                    > free_generation_coda_sham["total_correct"]
+                ),
+                "coda_sham_restored_exactly": coda_restore_exact,
+            }
+        )
     body = {
         "schema": CANARY_SCHEMA,
         "objective_schema": RECURRENCE_NATIVE_OBJECTIVE_V6_SCHEMA,
@@ -896,8 +1061,16 @@ def run_canary(
             "generated": objective_config.to_dict(),
             "specialization": specialization_config.to_dict(),
             "trajectory": trajectory_config.to_dict(),
-            "coda_lora_layers": 2,
-            "coda_lora_targets": ["o_proj", "down_proj"],
+            "lora_rank": lora_rank,
+            "lora_layers": lora_layers,
+            "lora_targets": list(lora_targets),
+            "lora_layer_placement": lora_layer_placement,
+            "coda_lora_layers": coda_lora_layers,
+            "coda_lora_targets": list(coda_lora_targets),
+            "training_families": list(training_families),
+            "training_depths": list(training_depths),
+            "training_per_cell": training_per_cell,
+            "proxy_per_cell": proxy_per_cell,
             "warmup_steps": warmup_steps,
             "warmup_learning_rate": float(warmup_learning_rate),
             "joint_learning_rate": float(joint_learning_rate),
@@ -912,6 +1085,9 @@ def run_canary(
         "proxy_task_manifest_sha256": proxy_manifest_sha256,
         "free_generation_before": free_generation_before,
         "free_generation_after": free_generation_after,
+        "free_generation_recurrence_lesion": free_generation_recurrence_lesion,
+        "free_generation_recurrence_sham": free_generation_recurrence_sham,
+        "recurrence_sham": recurrence_sham,
         "free_generation_coda_lesion": free_generation_coda_lesion,
         "free_generation_coda_sham": free_generation_coda_sham,
         "coda_sham": coda_sham,
@@ -968,7 +1144,38 @@ def main() -> int:
     parser.add_argument("--warmup-steps", type=int, default=8)
     parser.add_argument("--warmup-learning-rate", type=float, default=1e-3)
     parser.add_argument("--joint-learning-rate", type=float, default=1e-4)
+    parser.add_argument("--lora-rank", type=int, default=2)
+    parser.add_argument("--lora-layers", type=int, default=2)
+    parser.add_argument("--lora-targets", default="o_proj")
+    parser.add_argument(
+        "--lora-layer-placement",
+        choices=("early", "distributed", "late"),
+        default="late",
+    )
+    parser.add_argument("--coda-lora-layers", type=int, default=2)
+    parser.add_argument("--coda-lora-targets", default="o_proj,down_proj")
+    parser.add_argument("--training-families", default="boolean,modular")
+    parser.add_argument("--training-depths", default="2")
+    parser.add_argument("--training-per-cell", type=int, default=2)
+    parser.add_argument("--proxy-per-cell", type=int, default=2)
     args = parser.parse_args()
+    lora_targets = tuple(filter(None, (part.strip() for part in args.lora_targets.split(","))))
+    coda_targets = tuple(
+        filter(None, (part.strip() for part in args.coda_lora_targets.split(",")))
+    )
+    if args.coda_lora_layers == 0:
+        coda_targets = ()
+    training_families = tuple(
+        filter(None, (part.strip() for part in args.training_families.split(",")))
+    )
+    try:
+        training_depths = tuple(
+            int(part.strip())
+            for part in args.training_depths.split(",")
+            if part.strip()
+        )
+    except ValueError as exc:
+        parser.error(f"--training-depths must be comma-separated integers: {exc}")
     out_dir = args.out_dir.expanduser().resolve(strict=False)
     try:
         receipt = run_canary(
@@ -983,6 +1190,16 @@ def main() -> int:
             warmup_steps=args.warmup_steps,
             warmup_learning_rate=args.warmup_learning_rate,
             joint_learning_rate=args.joint_learning_rate,
+            lora_rank=args.lora_rank,
+            lora_layers=args.lora_layers,
+            lora_targets=lora_targets,
+            lora_layer_placement=args.lora_layer_placement,
+            coda_lora_layers=args.coda_lora_layers,
+            coda_lora_targets=coda_targets,
+            training_families=training_families,
+            training_depths=training_depths,
+            training_per_cell=args.training_per_cell,
+            proxy_per_cell=args.proxy_per_cell,
         )
     except BaseException as exc:
         _append_terminal_failure(out_dir, exc)

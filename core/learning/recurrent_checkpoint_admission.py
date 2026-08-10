@@ -31,6 +31,8 @@ _ARMS: Final = frozenset(
     {
         "initial_adapter",
         "trained_adapter",
+        "trained_adapter_lesion",
+        "trained_adapter_sham",
         "trained_coda_lesion",
         "trained_coda_sham",
         "ordinary_decode",
