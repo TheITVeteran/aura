@@ -1436,7 +1436,7 @@ final class TopStripPanGestureRecognizer: NSPanGestureRecognizer {
 }
 
 final class AuraLauncherDelegate: NSObject, NSApplicationDelegate,
-    WKScriptMessageHandler, NSWindowDelegate {
+    WKScriptMessageHandler, NSWindowDelegate, WKUIDelegate {
     private enum BadgeStyle {
         case violet
         case cyan
@@ -2878,6 +2878,7 @@ final class AuraLauncherDelegate: NSObject, NSApplicationDelegate,
             )
             webView.setValue(false, forKey: "drawsBackground")
             webView.allowsBackForwardNavigationGestures = false
+            webView.uiDelegate = self
 
             let panel = NSPanel(
                 contentRect: NSRect(origin: .zero, size: size),
@@ -3128,6 +3129,47 @@ final class AuraLauncherDelegate: NSObject, NSApplicationDelegate,
         bubbleWebView?.evaluateJavaScript(script, completionHandler: nil)
     }
 
+    /// Whether a page asking for the microphone is Aura's own runtime.
+    ///
+    /// The app holds the microphone TCC grant; this decides which page inside
+    /// it may use that grant. Only the local runtime may.
+    private func isLocalRuntimeOrigin(_ origin: WKSecurityOrigin) -> Bool {
+        let host = origin.host
+        let localHost = host == "127.0.0.1" || host == "localhost" || host == "::1"
+        return localHost && (origin.protocol == "http" || origin.protocol == "https")
+    }
+
+    /// Answer WebKit's microphone/camera prompt for Aura's own pages.
+    ///
+    /// LIVE DEFECT, 2026-08-10: voice mode showed a red ERROR and never heard
+    /// a word, with `[voice] authenticated audio init failed
+    /// NotAllowedError: Permission denied` in the page console.
+    ///
+    /// Nothing was wrong with the microphone. The app has the TCC grant, and
+    /// the Python side captures audio through it perfectly — the wake-word
+    /// loop was transcribing full sentences at the same time. But voice mode
+    /// runs in the WKWebView and asks for `getUserMedia`, and WebKit routes
+    /// that request to the app's WKUIDelegate. There was no WKUIDelegate on
+    /// any of the three web views, and with no delegate to answer, WebKit
+    /// denies. The permission the user had already granted the app could not
+    /// reach the page that needed it.
+    ///
+    /// Granted only for the local runtime: the app's microphone access is not
+    /// handed to whatever else a page might load.
+    func webView(
+        _ webView: WKWebView,
+        requestMediaCapturePermissionFor origin: WKSecurityOrigin,
+        initiatedByFrame frame: WKFrameInfo,
+        type: WKMediaCaptureType,
+        decisionHandler: @escaping (WKPermissionDecision) -> Void
+    ) {
+        guard isLocalRuntimeOrigin(origin) else {
+            decisionHandler(.deny)
+            return
+        }
+        decisionHandler(.grant)
+    }
+
     private func openNativeDesktopWindow() {
         if desktopWindow == nil {
             let frame = NSRect(x: 0, y: 0, width: 1280, height: 820)
@@ -3136,6 +3178,8 @@ final class AuraLauncherDelegate: NSObject, NSApplicationDelegate,
             let webView = WKWebView(frame: frame, configuration: config)
             webView.allowsBackForwardNavigationGestures = false
             webView.setValue(false, forKey: "drawsBackground")
+            // Without this, voice mode's getUserMedia is denied by default.
+            webView.uiDelegate = self
 
             let desktop = NSWindow(
                 contentRect: frame,
@@ -3355,6 +3399,7 @@ final class AuraLauncherDelegate: NSObject, NSApplicationDelegate,
                 frame: NSRect(origin: .zero, size: size), configuration: config
             )
             webView.setValue(false, forKey: "drawsBackground")
+            webView.uiDelegate = self
 
             let panel = KeyablePanel(
                 contentRect: NSRect(origin: .zero, size: size),

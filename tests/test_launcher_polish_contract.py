@@ -1046,3 +1046,30 @@ def test_memory_ui_uses_packaged_fallback_and_visible_error_panel():
     assert "semantic memory request failed" in panel
     assert "escapeHtml(text)" in panel
     assert "addActionButton(actions, 'Edit'" in panel
+
+
+def test_webviews_answer_webkits_microphone_prompt():
+    """LIVE DEFECT 2026-08-10: voice mode showed ERROR and heard nothing.
+
+    The app holds the microphone TCC grant and the Python capture path used it
+    fine — the wake-word loop was transcribing whole sentences at the time. But
+    voice mode runs in the WKWebView and calls getUserMedia, and WebKit routes
+    that to the app's WKUIDelegate. No web view had one, and with no delegate
+    to answer, WebKit denies: "NotAllowedError: Permission denied". A
+    permission the user had already granted could not reach the page needing
+    it.
+    """
+    swift = (PROJECT_ROOT / "scripts" / "AuraLauncher.swift").read_text(encoding="utf-8")
+
+    assert "WKUIDelegate" in swift, "no delegate means WebKit denies capture outright"
+    assert "requestMediaCapturePermissionFor" in swift
+
+    # Every web view that can host the voice UI must route the prompt.
+    assert swift.count("uiDelegate = self") >= 3, (
+        "desktop, bubble and companion web views each need the delegate"
+    )
+
+    # The grant is scoped: the app's microphone is not handed to any page.
+    assert "isLocalRuntimeOrigin" in swift
+    assert "decisionHandler(.deny)" in swift
+    assert "decisionHandler(.grant)" in swift
