@@ -42544,3 +42544,30 @@ requires fresh producer-disabled and teacher-disabled tasks to beat ordinary
 decode and matched controls. No persistent reasoning gain, resident-32B use,
 frontier result, fusion, activation, or `WOW Signal` is authorized. The
 completion envelope is `845/920` (approximately `91.8%`).
+
+## Checkpoint 2026-08-10-148: The Persistent Transfer Gate Tests the Real Mechanism
+
+The persistent-transfer canary now captures the actual early recurrent
+`o_proj` inputs from both branch roles, records private teacher and incumbent
+projection trajectories at the same named layers, and compiles their verified
+contrast into the CP147 adapter factors. The private target is committed by
+hash but never enters held-out generation. Treatment evaluation explicitly
+disables both the executable objective producer and per-query verified
+teacher, so only the persistent recurrence adapter can carry training-task
+information into fresh prompts.
+
+The run is bounded around the decision. It first measures ordinary decode and
+the untreated RLC on disjoint tasks, then installs the transition and requires
+treatment to beat both. A failed treatment stops there. Only a strict gain
+earns the additional zero-delta lesion and norm-preserving output permutation;
+both controls restore exact adapter tensors even through exceptions. Source,
+checkpoint, task, private-target, incumbent-token, factor, installation, and
+report identities are committed in the receipt, while the base checkpoint is
+re-hashed after execution and the learned adapter is preserved separately.
+
+The core compiler and canary/control contracts pass `10/10`; Ruff,
+compilation, CLI construction, and diff hygiene pass. This closes the missing
+real-checkpoint discriminator implementation, not its empirical verdict. The
+next action is its bounded 1.5B run. No persistent reasoning gain, resident-32B
+use, frontier result, fusion, activation, or `WOW Signal` is authorized. The
+completion envelope is `846/920` (approximately `92.0%`).
