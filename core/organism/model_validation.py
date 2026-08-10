@@ -390,6 +390,12 @@ class Claim:
     #: Required when evidence is not MEASURED_LIVE: what is missing, in a
     #: sentence someone reading the claim can act on.
     evidence_note: str = ""
+    #: Telemetry channels that carry this claim's evidence. Naming them
+    #: makes MEASURED_LIVE *decay*: when a bound channel goes silent — or
+    #: was never declared — the claim resolves to UNMEASURED instead of
+    #: standing on a measurement that stopped happening. Opt-in; a claim
+    #: naming nothing is exactly as trustworthy as its author.
+    live_channels: tuple[str, ...] = ()
 
     def __post_init__(self) -> None:
         if self.evidence is not Evidence.MEASURED_LIVE and not self.evidence_note.strip():
@@ -399,20 +405,49 @@ class Claim:
                 "measured one"
             )
 
+    def effective_evidence(self) -> tuple["Evidence", str]:
+        """Evidence as it stands NOW, after checking bound telemetry.
+
+        The declared value is what someone wrote down; this is what the
+        runtime can still show. They differ exactly when a live measurement
+        has stopped arriving, which is the failure this registry existed to
+        make impossible and could not previously see.
+        """
+        if not self.live_channels:
+            return self.evidence, ""
+        try:
+            from core.organism.claim_liveness import effective_evidence
+
+            resolved, note, _ = effective_evidence(self.evidence, self.live_channels)
+            return resolved, note
+        except Exception as exc:  # pragma: no cover - defensive
+            logger.debug("claim liveness unavailable for %r: %s", self.statement, exc)
+            return self.evidence, ""
+
     @property
     def is_evidence_for_the_system(self) -> bool:
-        """Whether this claim may be cited as evidence ABOUT AURA."""
-        return self.evidence is Evidence.MEASURED_LIVE
+        """Whether this claim may be cited as evidence ABOUT AURA.
+
+        Reads the EFFECTIVE evidence, so a claim whose telemetry has gone
+        silent stops being citable the moment it goes silent rather than
+        when someone next reviews it by hand.
+        """
+        resolved, _ = self.effective_evidence()
+        return resolved is Evidence.MEASURED_LIVE
 
     def to_dict(self) -> dict[str, Any]:
+        resolved, liveness_note = self.effective_evidence()
         return {
             "statement": self.statement,
             "test": self.test,
             "owner": self.owner,
             "asserted_in": self.asserted_in,
             "evidence": self.evidence.value,
+            "effective_evidence": resolved.value,
             "evidence_note": self.evidence_note,
-            "citable_as_evidence": self.is_evidence_for_the_system,
+            "liveness_note": liveness_note,
+            "live_channels": list(self.live_channels),
+            "citable_as_evidence": resolved is Evidence.MEASURED_LIVE,
         }
 
 
@@ -525,6 +560,20 @@ class ValidationSuite:
             claims = list(self._claims.values())
             last = dict(self._last)
         for claim in claims:
+            # A claim can lose its footing two ways: its test stops passing,
+            # or the live measurement behind it stops arriving. The second
+            # was invisible until claims could bind to telemetry, and it is
+            # the one that produced "a claim that outlived the code".
+            resolved, liveness_note = claim.effective_evidence()
+            if liveness_note and resolved is not claim.evidence:
+                out.append(
+                    {
+                        **claim.to_dict(),
+                        "reason": liveness_note,
+                        "outcome": "evidence_decayed",
+                    }
+                )
+                continue
             relevant = [r for (test, _model), r in last.items() if test == claim.test]
             if not relevant:
                 out.append({**claim.to_dict(), "reason": "never run"})

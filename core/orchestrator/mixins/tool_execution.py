@@ -25,6 +25,7 @@ from core.executive.standing_authority import (
 )
 from core.runtime.errors import record_degradation
 from core.runtime.task_ownership import drain_owned_awaitable
+from core.verify.work_ledger import record_work
 
 logger = logging.getLogger(__name__)
 _TOOL_EXECUTION_RECOVERABLE_ERRORS = (
@@ -221,6 +222,12 @@ class ToolExecutionMixin:
                         action="returned tool result after standing-authority closure degraded",
                         severity="error",
                     )
+            # The work ledger is what the fabrication audit checks a later
+            # claim against. Recording here — the one point every exit path
+            # passes through, with the success verdict already decided —
+            # means a turn's account of its own work cannot drift from what
+            # the tool path actually did.
+            record_work(tool_name, ok=success, detail=_origin)
             try:
                 from core.runtime.coding_session_memory import get_coding_session_memory
 

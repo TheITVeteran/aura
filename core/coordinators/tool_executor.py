@@ -20,6 +20,7 @@ import time
 from typing import Any
 
 from core.runtime.errors import FallbackClassification, Severity, record_degradation
+from core.verify.work_ledger import record_work
 
 logger = logging.getLogger(__name__)
 
@@ -106,6 +107,10 @@ class ToolExecutor:
         success: bool,
         error: str = "",
     ) -> None:
+        # Same chokepoint role as the orchestrator mixin's: every exit path
+        # records what actually ran, so the fabrication audit has a record
+        # to check a later claim against.
+        record_work(tool_name, ok=success, detail="tool_executor")
         try:
             from core.runtime.coding_session_memory import get_coding_session_memory
 

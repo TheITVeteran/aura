@@ -416,6 +416,23 @@ class TelemetryDictionary:
                 return None
             return entry.history[-1]
 
+    def spec(self, name: str) -> ChannelSpec | None:
+        """The channel's declaration, or ``None`` when it has none.
+
+        Distinguishing "undeclared" from "declared and nominal" is the
+        whole point: :meth:`state` answers ``NOMINAL`` for a name it has
+        never heard of, so a caller that gates on freshness must be able to
+        ask whether the channel exists at all. Without this, a misspelled
+        channel name reads as permanently healthy.
+        """
+        with self._lock:
+            entry = self._channels.get(name)
+            return entry.spec if entry is not None else None
+
+    def is_declared(self, name: str) -> bool:
+        with self._lock:
+            return name in self._channels
+
     def state(self, name: str) -> LimitState:
         """Current limit state, with staleness applied."""
         with self._lock:
