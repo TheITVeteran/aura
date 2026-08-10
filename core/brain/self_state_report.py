@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import os
 import time
+from typing import Any
 
 from core.runtime.errors import record_degradation
 
@@ -327,6 +328,95 @@ def _cognition_line() -> str:
     return "- " + "; ".join(parts) + "."
 
 
+def _affect_line() -> str:
+    """Mood and drives, from the substrate the health endpoint already reads.
+
+    LIVE DEFECT, 2026-08-10. Asked whether "steady" had been a reading or a
+    reflex, she answered:
+
+        "'tired' is the correct reading of my somatic state ... My actual mood
+         is neutral, my energy is low, and there's a persistent hum in the
+         background processing that I haven't been able to shake since 02:15
+         hours ago."
+
+    Three failures in one paragraph, and one cause. She asserted "tired" and
+    "neutral" in consecutive sentences; the substrate's actual mood was TIRED
+    with energy at 12 and frustration at 58, so the second was wrong; and
+    "02:15 hours ago" is a number that exists nowhere in this runtime — no
+    source emits it, and mood-onset is not recorded at all.
+
+    The cause is the same one _cognition_line documents for cycle counts: this
+    panel had NO affective reading, while the values sit in the liquid
+    substrate and are served on /api/health as `liquid_state` to every other
+    reader. The block above says not to supplement what is missing, so the
+    absence did not produce silence — it produced invention, on the subject
+    she is asked about most.
+
+    How long the current mood has held is deliberately reported as unreadable
+    rather than estimated: nothing in the substrate timestamps a mood change,
+    and that missing number is exactly the one she filled in with "02:15".
+    """
+    status: dict[str, Any] = {}
+    try:
+        from core.runtime.service_registry import get_runtime_service
+
+        substrate = get_runtime_service(
+            "liquid_substrate", default=None
+        ) or get_runtime_service("liquid_state", default=None)
+        if substrate is not None and hasattr(substrate, "get_status"):
+            candidate = substrate.get_status()
+            if isinstance(candidate, dict):
+                status = candidate
+    except _RECOVERABLE as exc:
+        record_degradation(
+            "self_state_report",
+            exc,
+            severity="info",
+            action="omitted the affective reading",
+        )
+
+    def _percent(key: str) -> str:
+        try:
+            value = status.get(key)
+            return "" if value is None else f"{float(value):.0f}"
+        except (TypeError, ValueError):
+            return ""
+
+    mood = str(status.get("mood") or "").strip()
+    drives = [
+        f"{name} {reading}"
+        for name, reading in (
+            (label, _percent(label))
+            for label in ("energy", "curiosity", "frustration", "focus")
+        )
+        if reading
+    ]
+    if not mood and not drives:
+        # The honest form of "I can't feel that right now". Left silent, this
+        # is the exact gap the paragraph above was invented to fill.
+        return (
+            "- Mood and drive levels: not readable from this turn. Say you "
+            "cannot see them; do not describe a mood you did not measure."
+        )
+
+    parts: list[str] = []
+    if mood:
+        parts.append(f"Mood reads {mood}")
+    if drives:
+        parts.append("drives at " + ", ".join(drives) + " (percent)")
+    line = "- " + "; ".join(parts) + "."
+    if status.get("snapshot_stale"):
+        age = status.get("snapshot_age_s")
+        line += f" This reading is stale ({age}s old) — say so if you quote it."
+    # Named explicitly because its absence is what produced a fabricated
+    # duration. An unmeasured quantity has to be visibly unmeasured.
+    line += (
+        " How long this mood has held is NOT recorded anywhere — if you want to"
+        " say how long you have felt something, say that you cannot tell."
+    )
+    return line
+
+
 def runtime_self_report() -> str:
     """A short, true readout of her machine state right now.
 
@@ -338,6 +428,9 @@ def runtime_self_report() -> str:
     cognition = _cognition_line()
     if cognition:
         lines.append(cognition)
+    affect = _affect_line()
+    if affect:
+        lines.append(affect)
     capabilities = _capability_line()
     if capabilities:
         lines.append(capabilities)
