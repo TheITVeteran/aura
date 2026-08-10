@@ -22,8 +22,28 @@
       <stop offset="55%" stop-color="#7b3fe4"/>
       <stop offset="100%" stop-color="#4a1f9e"/>
     </radialGradient>
-    <filter id="bloom" x="-60%" y="-60%" width="220%" height="220%">
-      <feGaussianBlur stdDeviation="1.6" result="blur"/>
+    <!--
+      The glow has to stay subordinate to the mark.
+
+      At 1.6 the blur was wider than the thing it was blurring: the viewBox is
+      50 units and the bubble draws it at 28px, so a 1.6-unit deviation is
+      ~0.9 CSS px of halo under strokes that are 1.1-1.6 units — 0.6-0.9 CSS px
+      wide. Every thin line carried a glow as thick as the line, and the whole
+      neuron read as soft rather than lit. Reported live 2026-08-10: "would
+      still also like the icon to be a bit sharper".
+
+      Half the radius, and the halo attenuated so it reads as light around the
+      mark rather than as a second, blurrier copy of it.
+
+      color-interpolation-filters is sRGB because the SVG default is linearRGB,
+      which lifts the midtones of a glow and is most of why this looked milky.
+    -->
+    <filter id="bloom" x="-60%" y="-60%" width="220%" height="220%"
+            color-interpolation-filters="sRGB">
+      <feGaussianBlur stdDeviation="0.7" result="raw"/>
+      <feComponentTransfer in="raw" result="blur">
+        <feFuncA type="linear" slope="0.55"/>
+      </feComponentTransfer>
       <feMerge>
         <feMergeNode in="blur"/>
         <feMergeNode in="SourceGraphic"/>
