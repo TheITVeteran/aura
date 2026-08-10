@@ -42511,3 +42511,36 @@ Ruff, compilation, and diff hygiene pass. This closes the supervision-object
 and target-budget defects and advances the completion envelope to `844/920`
 (approximately `91.7%`). It does not establish persistent reasoning gain or
 authorize resident-32B, frontier, fusion, activation, or `WOW Signal` claims.
+
+## Checkpoint 2026-08-10-147: Persistent Tissue Can Compile the Proven Internal Correction
+
+The completed CP146 1.5B discriminator rejected process-text imitation as the
+missing bridge. Across 48 site-aligned updates, held-out process loss fell from
+`6.0817` to `2.4927`, yet teacher-free recurrent generation remained `0/16`,
+exactly matching the pre-training result. The canary therefore learned a
+substantial portion of the private derivation under teacher forcing without
+learning to enter the successful reasoning state from the public prompt. The
+run was stopped at the failed treatment boundary; its attempted lesion then
+exposed a separate typed-evidence defect, so it produced no claim-grade final
+receipt and does not authorize a gain claim.
+
+The next mechanism now learns the object CP144 actually proved causal rather
+than another textual proxy. `verified_trajectory_distillation` accepts named
+query activations and independently verified teacher-minus-incumbent internal
+corrections, solves the regularized transition in sample space, compresses it
+to the permitted adapter rank without materializing a model-width square
+matrix, and emits factors in the exact orientation and scale consumed by
+`ScopedLoRALinear`. Installation is all-or-nothing over an exact named-site
+inventory; malformed, partial, non-finite, collapsed, or shape-incompatible
+evidence is rejected before mutation.
+
+The bounded mathematical contract reconstructs a known rank-three transition
+through the real recurrence-adapter factor convention with relative error
+below `1e-4`, verifies correction-magnitude normalization, rejects unequal
+site evidence, and installs only the declared projection. Focused contracts
+pass `7/7`; Ruff and compilation pass. The next gate captures real 1.5B query,
+teacher, and incumbent trajectories, installs their distilled transition, and
+requires fresh producer-disabled and teacher-disabled tasks to beat ordinary
+decode and matched controls. No persistent reasoning gain, resident-32B use,
+frontier result, fusion, activation, or `WOW Signal` is authorized. The
+completion envelope is `845/920` (approximately `91.8%`).
