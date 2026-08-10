@@ -517,8 +517,45 @@ class AmbientGovernor:
             self._daily_cap = None
 
 
+SERVICE_NAME = "ambient_governor"
+
 _GOVERNOR = AmbientGovernor()
 
 
 def get_ambient_governor() -> AmbientGovernor:
+    """The process-wide governor, published on first use.
+
+    The dependency runs this way deliberately. ``core/runtime`` is the
+    foundation and may not import ``core.agency`` — the layering gate
+    rejects it outright — so the runtime cannot fetch this itself. Agency
+    registers; the runtime reads whatever is there and reports
+    ``registered: False`` when nothing has.
+
+    That last part matters more than it looks. A health surface that
+    reported zeros for an unregistered governor would be indistinguishable
+    from one reporting a governor that ran and had nothing to say — an
+    absence presented as a clean result, which is the inversion this
+    codebase keeps finding in its own gates.
+    """
+    _register_in_container(_GOVERNOR)
     return _GOVERNOR
+
+
+def _register_in_container(governor: AmbientGovernor) -> None:
+    try:
+        from core.container import ServiceContainer
+
+        if not ServiceContainer.has(SERVICE_NAME):
+            ServiceContainer.register_instance(
+                SERVICE_NAME,
+                governor,
+                required=False,
+                registered_by="ambient_governor",
+            )
+    except (ImportError, RuntimeError, AttributeError, TypeError, ValueError) as exc:
+        record_degradation(
+            "ambient_governor_register",
+            exc,
+            severity="debug",
+            action="governor unpublished; its restraint will not appear in health",
+        )

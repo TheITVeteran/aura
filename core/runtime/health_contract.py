@@ -1577,6 +1577,88 @@ def _runtime_integrity_block() -> dict[str, Any]:
         }
     except Exception as exc:  # noqa: BLE001 — each health add-on is isolated
         block["oom_error"] = repr(exc)
+
+    # Grounding: does what she persisted match what actually ran?
+    #
+    # The work ledger and the canary counters are detectors, and a detector
+    # nobody reads is worse than no detector — it produces the confidence of
+    # having checked with none of the checking. This block is their reader.
+    try:
+        from core.security.injection_canary import canary_status
+        from core.verify.work_ledger import status as work_ledger_status
+
+        canaries = canary_status()
+        block["grounding"] = {
+            "work_ledger": work_ledger_status(),
+            "injection_canaries": {
+                "evaluated": canaries["evaluated"],
+                "incidents": canaries["hijacked"] + canaries["leaked"],
+                "incident_rate": canaries["incident_rate"],
+                # A probe lane that keeps failing has silently stopped
+                # detecting; that is itself the finding.
+                "blind": canaries["blind"],
+                "inconclusive": canaries["inconclusive"],
+            },
+        }
+    except Exception as exc:  # noqa: BLE001 — each health add-on is isolated
+        block["grounding_error"] = repr(exc)
+
+    # What keeps failing, as opposed to what failed. The degradation log
+    # answers the second; only the scar record answers the first.
+    try:
+        from core.runtime.degradation_habituation import get_habituation
+
+        habituation = get_habituation().status()
+        block["chronic_faults"] = {
+            "signatures_tracked": habituation["signatures_tracked"],
+            "saturated": habituation["saturated"],
+            "residual_floor": habituation["residual_floor"],
+            # Truncated: this is a caveat line, not a fault database.
+            "chronic": habituation["chronic"][:5],
+        }
+    except Exception as exc:  # noqa: BLE001 — each health add-on is isolated
+        block["chronic_faults_error"] = repr(exc)
+
+    # Memories that have done more harm than good, and how much the ambient
+    # mind declined to say. Both are numbers nothing else in the runtime
+    # produces.
+    try:
+        from core.memory.retrieval_outcomes import get_outcome_ledger
+
+        outcomes = get_outcome_ledger().status()
+        block["judgement"] = {
+            "retrieval": {
+                "tracked": outcomes["tracked"],
+                "graded": outcomes["graded"],
+                "harmful_memories": outcomes["harmful_memories"][:5],
+            },
+        }
+        # Resolved through the low-level runtime registry, not imported and
+        # not fetched from ServiceContainer. Two separate rules point here:
+        # core/runtime may not depend on core.agency (the layering gate
+        # rejects the direct import), and this module may not reach into
+        # the container at all (test_health_contract_uses_low_level_runtime_registry
+        # — the foundation's health surface has to work when the container
+        # is the thing that failed).
+        #
+        # The governor registers itself; the runtime reads whatever is
+        # there and reports honestly when nothing is.
+        governor = get_runtime_service("ambient_governor", default=None)
+        if governor is None:
+            block["judgement"]["ambient"] = {"registered": False}
+        else:
+            ambient = governor.status()
+            block["judgement"]["ambient"] = {
+                "registered": True,
+                "configured": ambient["configured"],
+                "spent_today": ambient["spent_today"],
+                "remaining_today": ambient["remaining_today"],
+                "withheld": ambient["withheld"],
+                "restraint_rate": ambient["restraint_rate"],
+                "calibration": ambient["calibration"],
+            }
+    except Exception as exc:  # noqa: BLE001 — each health add-on is isolated
+        block["judgement_error"] = repr(exc)
     return block
 
 
