@@ -43549,3 +43549,37 @@ transitions with student-induced roll-ins, and compare held-out exact
 transition accuracy before and after training. A failed held-out transfer
 retires this operator class for algorithmic recurrence and unlocks the native
 recurrent transition core.
+
+## Checkpoint 2026-08-10-180: Qwen-Window Transfer Has a Falsifiable Runner
+
+The one-step discriminator is now source-bound and executable on a real MLX
+checkpoint. It mints globally disjoint training, development, and final
+holdout tasks across Boolean and modular programs and depths one through four.
+Only training transitions receive gradients. Development selects among fixed
+interval checkpoints against its own recorded untrained baseline; the final
+holdout cannot select weights. All parent states are freshly rolled by the
+current student policy immediately before their single supervised transition.
+
+The treatment has one branch, one shared recurrent LoRA, no depth or role bank,
+no trainable coda, and no answer-token or geometric auxiliary objective. The
+base checkpoint is identity-checked before and after. The selected adapter is
+owner-only, hash-bound, and atomically replaced. Public manifests commit every
+task and exact private trace without exposing state values, and the receipt
+binds source files, checkpoint identity, adapter sites and fingerprints,
+training trail, all three split reports, and every admission gate.
+
+Admission is deliberately stronger than loss improvement. Final held-out exact
+transition accuracy must gain at least `0.20` and reach `0.75`; all-field and
+answer-state accuracy must each reach `0.85`; loss must fall; no family/depth
+cell may regress; development must improve by at least `0.10` exact accuracy
+without target regression; source, split, checkpoint, and adapter-mutation
+gates must all pass. Contracts cover split disjointness, private-state
+non-disclosure, metric separation, and strict gate refusal. The new runner and
+supervision tests pass `8/8`; canonical smoke passes `103/103`; Ruff and
+compilation pass.
+
+This advances the completion envelope to `876/920` (approximately `95.2%`).
+No transfer result is claimed yet. The next action is the published-source
+real-1.5B run. A positive result advances to multi-step composition; a negative
+result retires the Qwen-window operator for algorithmic recurrence and moves
+immediately to the identity-initialized native transition core.
