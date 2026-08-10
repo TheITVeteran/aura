@@ -46,9 +46,7 @@ from core.learning.recurrence_curriculum import modular_chain, nested_boolean  #
 SCHEMA: Final = "aura.certified_recurrence_behavioral_gate.v1"
 PREREG_SCHEMA: Final = "aura.certified_recurrence_behavioral_preregistration.v1"
 DEFAULT_MODEL: Final = (
-    "/Users/bryan/.cache/huggingface/hub/"
-    "models--mlx-community--Qwen2.5-1.5B-Instruct-4bit/snapshots/"
-    "8b403126fc14f14cfc99bb4cfa72ecbc129ea677"
+    "/Users/bryan/.aura/live-source/models/Qwen2.5-1.5B-Instruct-4bit"
 )
 GENERATORS: Final = {
     "boolean": nested_boolean,
