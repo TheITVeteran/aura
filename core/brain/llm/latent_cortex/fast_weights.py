@@ -1297,6 +1297,14 @@ class EpisodicFastWeights:
                 or getattr(v, "shape", None) != handle.wrapper.V.shape
             ):
                 raise ValueError("fast-weight restore tensor shape differs")
+            # Durable candidates cross the NPZ boundary as NumPy arrays.
+            # Wrappers execute in MLX, so assigning those arrays directly
+            # leaves a mixed-backend projection that fails only on its first
+            # real matmul. Normalize at the restore boundary; native MLX
+            # snapshots preserve their dtype and serialized NumPy tensors are
+            # reconstructed into the same device representation.
+            u = mx.array(u)
+            v = mx.array(v)
             rebound.extend((u, v))
             handle.wrapper.U = u
             handle.wrapper.V = v

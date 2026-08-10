@@ -16,6 +16,7 @@ import json
 import stat
 from types import SimpleNamespace
 
+import numpy as np
 import pytest
 
 mx = pytest.importorskip("mlx.core")
@@ -972,6 +973,35 @@ def test_deferred_export_detaches_without_classifying_candidate_as_regression(
         )
         is not None
     )
+
+
+def test_restore_delta_rehydrates_numpy_artifact_tensors_into_mlx(tiny_model) -> None:
+    fw = EpisodicFastWeights(FastWeightsConfig(enabled=True, rank=2, target="o_proj"))
+    fw.attach(
+        tiny_model.model,
+        (P_END, C_START),
+        seed_stat=0.4,
+        episode_id="ep-numpy-restore",
+    )
+    snapshots = tuple(
+        {
+            **row,
+            "U": np.asarray(row["U"]),
+            "V": np.asarray(row["V"]),
+        }
+        for row in fw.snapshot_delta()
+    )
+
+    try:
+        fw.restore_delta(snapshots, reason="unit_numpy_artifact_restore")
+        with coda_adapter_scope():
+            output = _probe(tiny_model)
+        mx.eval(output)
+
+        assert all(isinstance(handle.wrapper.U, mx.array) for handle in fw.handles)
+        assert all(isinstance(handle.wrapper.V, mx.array) for handle in fw.handles)
+    finally:
+        fw.detach()
 
 
 def test_consolidation_export_rejects_tampered_batch_receipt(

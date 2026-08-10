@@ -42986,3 +42986,25 @@ rejection, and the revision-independent episode ID. Focused execution passes
 hygiene pass. This advances the completion envelope to `858/920`
 (approximately `93.3%`). The next run begins the first genuinely repeatable
 source-bound transplant campaign; resident-32B use remains locked.
+
+## Checkpoint 2026-08-10-163: Durable Episodic Tensors Rehydrate Into the MLX Runtime
+
+The first fixed-identity CP162 producer passed its matched-control gate,
+exported the real eight-site candidate, and advanced into independent replay.
+Replay then failed on the first coda-scoped projection with
+`mlx.array @ ndarray`. Candidate persistence correctly serializes tensors as
+NPZ, and the loader correctly reconstructs NumPy arrays, but `restore_delta()`
+assigned those host arrays directly into MLX wrappers. Synthetic in-memory
+tests never crossed that backend boundary and therefore missed the defect.
+
+Fast-weight restoration now validates serialized shapes and explicitly
+rehydrates every factor with `mx.array` before assignment and evaluation.
+Native MLX snapshots retain their existing semantics; durable NumPy artifacts
+become executable device tensors before any model call. A regression round
+trips an attached candidate through NumPy, restores it through the public
+boundary, executes a coda-scoped model probe, verifies both factors are native
+MLX arrays, and releases the exclusive mutation lease in `finally`. The wider
+focused order-sensitive suite passes `8/8`; Ruff, compilation, and diff hygiene
+pass. Canonical smoke passes `103/103`. This advances the completion envelope
+to `859/920` (approximately `93.4%`). The same frozen transplant replay is
+next; resident-32B use remains locked.
