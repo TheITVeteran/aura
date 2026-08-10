@@ -13,7 +13,7 @@ from __future__ import annotations
 
 import pytest
 
-from core.agency.turn_budget import (
+from core.runtime.turn_budget import (
     Breach,
     Budget,
     BudgetAxis,

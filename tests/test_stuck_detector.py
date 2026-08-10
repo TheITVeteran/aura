@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import pytest
 
-from core.agency.stuck_detector import (
+from core.runtime.stuck_detector import (
     AgentStep,
     Remedy,
     StuckDetector,
