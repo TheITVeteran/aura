@@ -23,7 +23,7 @@ import math
 import time
 import uuid
 from collections.abc import Callable, Mapping, Sequence
-from contextlib import nullcontext
+from contextlib import contextmanager, nullcontext
 from dataclasses import replace
 from pathlib import Path
 from typing import Any
@@ -298,6 +298,11 @@ class LatentCortexEngine:
         self._last_decode_contract_satisfied = False
         self._last_decode_contract_grace_tokens = 0
         self._last_decode_contract_grace_used_tokens = 0
+        from core.brain.llm.latent_cortex.recurrence_adapter import (
+            RecurrenceAdapterActivation,
+        )
+
+        self._coda_adapter_activation = RecurrenceAdapterActivation()
         inner = getattr(model, "model", None)
         layers = getattr(inner, "layers", None)
         if not layers:
@@ -662,8 +667,6 @@ class LatentCortexEngine:
         import mlx.core as mx
         from mlx_lm.models.base import create_attention_mask
 
-        from core.brain.llm.latent_cortex.recurrence_adapter import coda_adapter_scope
-
         if not tokens:
             raise ValueError("decode bridge tokens cannot be empty")
         if not budget.can_afford(len(tokens), self.n_layers):
@@ -682,12 +685,39 @@ class LatentCortexEngine:
         inner = self.model.model
         h = inner.embed_tokens(mx.array([tokens]))
         mask = create_attention_mask(h, cache)
-        with coda_adapter_scope():
+        with self._coda_scope():
             for index, layer in enumerate(inner.layers):
                 h = layer(h, mask, cache[index])
         logits = self._logits(h)[0, -1]
         mx.eval(logits)
         return logits
+
+    @contextmanager
+    def _coda_scope(self):
+        """Measure one coda-only application without conflating recurrence."""
+
+        from core.brain.llm.latent_cortex.recurrence_adapter import (
+            coda_adapter_scope,
+        )
+
+        with coda_adapter_scope() as activation:
+            try:
+                yield activation
+            finally:
+                self._coda_adapter_activation.absorb(activation)
+
+    def _coda_adapter_receipt(self) -> dict[str, Any]:
+        activation = self._coda_adapter_activation
+        return {
+            "schema": "aura.coda_adapter_activation.v1",
+            "scope": "rlc_coda_only",
+            "calls": activation.calls,
+            "adapted_positions": activation.adapted_positions,
+            "observed_positions": activation.observed_positions,
+            "applied_blocks": dict(sorted(activation.applied_blocks.items())),
+            "applied_sites": dict(sorted(activation.applied_sites.items())),
+            "active": activation.calls > 0,
+        }
 
     # ── Typed cognitive ingress into the workspace ──────────────────────
     _MAX_COGNITIVE_CONTEXT_TOKENS = 64
@@ -1636,11 +1666,7 @@ class LatentCortexEngine:
                 h = inner.embed_tokens(mx.array([[token]]))
                 mask = create_attention_mask(h, cache)
                 if coda_adapter_active:
-                    from core.brain.llm.latent_cortex.recurrence_adapter import (
-                        coda_adapter_scope,
-                    )
-
-                    scope = coda_adapter_scope()
+                    scope = self._coda_scope()
                 else:
                     scope = nullcontext()
                 with scope:
@@ -2066,11 +2092,7 @@ class LatentCortexEngine:
                     )
                     hidden = inner.embed_tokens(mx.array([[token]]))
                     mask = create_attention_mask(hidden, lane_cache)
-                    from core.brain.llm.latent_cortex.recurrence_adapter import (
-                        coda_adapter_scope,
-                    )
-
-                    with coda_adapter_scope():
+                    with self._coda_scope():
                         for index, layer in enumerate(inner.layers):
                             hidden = layer(
                                 hidden,
@@ -2281,7 +2303,6 @@ class LatentCortexEngine:
         """
         import mlx.core as mx
 
-        from core.brain.llm.latent_cortex.recurrence_adapter import coda_adapter_scope
         from core.learning.role_conditioned_lora import recurrent_branch_index
 
         with recurrent_branch_index(branch.index):
@@ -2299,7 +2320,7 @@ class LatentCortexEngine:
                 self.coda_start,
                 persist=True,
             )
-            with coda_adapter_scope():
+            with self._coda_scope():
                 z_out = runner.run(
                     z_fin,
                     cache,
@@ -2427,6 +2448,11 @@ class LatentCortexEngine:
         receipt = EpisodeReceipt(
             episode_id=(episode_id if episode_id is not None else uuid.uuid4().hex[:12])
         )
+        from core.brain.llm.latent_cortex.recurrence_adapter import (
+            RecurrenceAdapterActivation,
+        )
+
+        self._coda_adapter_activation = RecurrenceAdapterActivation()
         episode_started = time.monotonic()
         receipt.n_layers = self.n_layers
         receipt.prelude_end = self.prelude_end
@@ -7704,6 +7730,7 @@ class LatentCortexEngine:
             raise _FastWeightCleanupError("fast-weight cleanup proof did not pass")
 
         receipt.recurrence_adapter = runner.adapter_receipt()
+        receipt.coda_adapter = self._coda_adapter_receipt()
         from core.brain.llm.latent_cortex.kv_state_tree import (
             validate_kv_state_tree_receipt,
         )
@@ -9066,11 +9093,7 @@ class LatentCortexEngine:
                 )
                 h = inner.embed_tokens(mx.array([[token]]))
                 mask = create_attention_mask(h, cache)
-                from core.brain.llm.latent_cortex.recurrence_adapter import (
-                    coda_adapter_scope,
-                )
-
-                with coda_adapter_scope():
+                with self._coda_scope():
                     for index, layer in enumerate(inner.layers):
                         h = layer(h, mask, cache[index])
                 self._logits(h)

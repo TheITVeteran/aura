@@ -1455,6 +1455,10 @@ class EpisodeReceipt:
     # Scoped durable-adapter activation. Zero calls means no recurrence-native
     # delta was resident; nonzero calls prove it was read only by slot windows.
     recurrence_adapter: dict[str, Any] = field(default_factory=dict)
+    # Independently scoped interpretation tissue may fire only after an RLC
+    # state is selected.  Keeping this separate prevents a decode-side coda
+    # intervention from being misreported as recurrent-window execution.
+    coda_adapter: dict[str, Any] = field(default_factory=dict)
     # Optimization evidence.
     # Digest of the first-decode logits (next-token distribution conditioned
     # on [prompt; refined thoughts]).
@@ -1868,6 +1872,7 @@ class EpisodeReceipt:
             "branch_selection_admitted": self.branch_selection_admitted,
             "exchanges": self.exchanges,
             "recurrence_adapter": dict(self.recurrence_adapter),
+            "coda_adapter": dict(self.coda_adapter),
             "latent_opt_applied": self.latent_opt_applied,
             "latent_opt_mode": self.latent_opt_mode,
             "latent_opt_loss_trail": [round(v, 6) for v in self.latent_opt_loss_trail],

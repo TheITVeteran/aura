@@ -756,6 +756,88 @@ def _full_engine_report(
     )
 
 
+def _with_coda_only_episode_evidence(
+    report: dict[str, object],
+) -> list[dict[str, object]]:
+    records = copy.deepcopy(report["records"])
+    for row in records:
+        receipt = row["episode_receipt"]
+        receipt["recurrence_adapter"] = {
+            "schema": "aura.recurrence_adapter_activation.v1",
+            "scope": "latent_slots_only",
+            "active": False,
+            "calls": 0,
+            "adapted_positions": 0,
+        }
+        receipt["coda_adapter"] = {
+            "schema": "aura.coda_adapter_activation.v1",
+            "scope": "rlc_coda_only",
+            "active": True,
+            "calls": 2,
+            "adapted_positions": 8,
+            "observed_positions": 8,
+            "applied_blocks": {7: 2},
+            "applied_sites": {"model.layers.7.self_attn.o_proj": 2},
+        }
+        row["episode_receipt_sha256"] = _canonical_digest(receipt)
+    return records
+
+
+def test_full_engine_report_accepts_bound_coda_only_activation():
+    task_a, task_b = tuple(task.task_id for task in _TASKS)
+    outcomes = {
+        (task_a, 1): True,
+        (task_a, 2): True,
+        (task_b, 1): False,
+        (task_b, 2): False,
+    }
+    ordinary = _ordinary_report_for_adapter("coda-only", outcomes)
+    full = _full_engine_report("coda-only", ordinary, outcomes)
+
+    admitted = build_free_generation_report(
+        arm="full_engine",
+        adapter_sha256=full["adapter_sha256"],
+        execution_spec_sha256=full["execution_spec_sha256"],
+        task_manifest_sha256=full["task_manifest_sha256"],
+        task_ids=full["task_ids"],
+        depths=full["depths"],
+        records=_with_coda_only_episode_evidence(full),
+    )
+
+    assert [row["correct"] for row in admitted["records"]] == [
+        row["correct"] for row in full["records"]
+    ]
+    assert all(
+        row["episode_receipt"]["coda_adapter"]["active"]
+        for row in admitted["records"]
+    )
+
+
+def test_recurrence_report_rejects_coda_as_recurrent_activation():
+    task_a, task_b = tuple(task.task_id for task in _TASKS)
+    outcomes = {
+        (task_a, 1): True,
+        (task_a, 2): False,
+        (task_b, 1): False,
+        (task_b, 2): False,
+    }
+    report = _report("trained_adapter", outcomes)
+
+    with pytest.raises(
+        RecurrentCheckpointAdmissionError,
+        match="recurrent_checkpoint_episode_evidence_invalid",
+    ):
+        build_free_generation_report(
+            arm="trained_adapter",
+            adapter_sha256=report["adapter_sha256"],
+            execution_spec_sha256=report["execution_spec_sha256"],
+            task_manifest_sha256=report["task_manifest_sha256"],
+            task_ids=report["task_ids"],
+            depths=report["depths"],
+            records=_with_coda_only_episode_evidence(report),
+        )
+
+
 def test_full_engine_evidence_accepts_only_bound_objective_solver_authority():
     task_a, task_b = tuple(task.task_id for task in _TASKS)
     ordinary_outcomes = {

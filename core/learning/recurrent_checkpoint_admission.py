@@ -94,6 +94,7 @@ def _validate_episode_evidence(
     branch_selection_admitted: bool,
     episode_receipt_sha256: str,
     decode_incumbent_policy: str = "latent",
+    allow_coda_adapter: bool = False,
 ) -> dict[str, Any]:
     """Validate the recurrent mechanics behind one graded completion.
 
@@ -108,10 +109,32 @@ def _validate_episode_evidence(
         _fail("recurrent_checkpoint_episode_evidence_invalid")
     receipt = dict(value)
     activation = receipt.get("recurrence_adapter")
+    coda_activation = receipt.get("coda_adapter")
     nonparametric = receipt.get("nonparametric_memory")
     honest_flags = receipt.get("honest_flags")
     selected_branch = receipt.get("selected_branch")
     n_branches = receipt.get("n_branches")
+    recurrence_active = bool(
+        isinstance(activation, Mapping)
+        and activation.get("schema") == "aura.recurrence_adapter_activation.v1"
+        and activation.get("scope") == "latent_slots_only"
+        and activation.get("active") is True
+        and type(activation.get("calls")) is int
+        and activation["calls"] >= 1
+        and type(activation.get("adapted_positions")) is int
+        and activation["adapted_positions"] >= 1
+    )
+    coda_active = bool(
+        allow_coda_adapter
+        and isinstance(coda_activation, Mapping)
+        and coda_activation.get("schema") == "aura.coda_adapter_activation.v1"
+        and coda_activation.get("scope") == "rlc_coda_only"
+        and coda_activation.get("active") is True
+        and type(coda_activation.get("calls")) is int
+        and coda_activation["calls"] >= 1
+        and type(coda_activation.get("adapted_positions")) is int
+        and coda_activation["adapted_positions"] >= 1
+    )
     if (
         _sha(receipt) != episode_receipt_sha256
         or not isinstance(receipt.get("episode_id"), str)
@@ -135,14 +158,7 @@ def _validate_episode_evidence(
         or nonparametric.get("status") != "disabled_by_policy"
         or not isinstance(honest_flags, list)
         or any(str(flag).startswith("fallback_") for flag in honest_flags)
-        or not isinstance(activation, Mapping)
-        or activation.get("schema") != "aura.recurrence_adapter_activation.v1"
-        or activation.get("scope") != "latent_slots_only"
-        or activation.get("active") is not True
-        or type(activation.get("calls")) is not int
-        or activation["calls"] < 1
-        or type(activation.get("adapted_positions")) is not int
-        or activation["adapted_positions"] < 1
+        or not (recurrence_active or coda_active)
     ):
         _fail("recurrent_checkpoint_episode_evidence_invalid")
     return receipt
@@ -169,6 +185,7 @@ def _validate_full_engine_episode_evidence(
         branch_selection_admitted=branch_selection_admitted,
         episode_receipt_sha256=episode_receipt_sha256,
         decode_incumbent_policy="vanilla_incumbent",
+        allow_coda_adapter=True,
     )
     incumbent = receipt.get("incumbent_artifact")
     replacement = receipt.get("answer_replacement")

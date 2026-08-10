@@ -43162,3 +43162,40 @@ recurrence and coda lesion controls, Ruff, compilation, and focused execution
 pass (`18/18`). Canonical smoke passes `103/103`. This advances the completion
 envelope to `864/920` (approximately `93.9%`). A minimal real-1.5B transfer
 preflight is next; resident-32B use remains locked.
+
+## Checkpoint 2026-08-10-169: Coda Tissue Reports Its Own Causal Phase
+
+The first CP168 real-checkpoint preflight rejected the original rank-8,
+`lambda=0.001` fit honestly: held-out relative error was `1.007834` against
+the zero-operator baseline and aggregate direction cosine was only `0.206664`.
+An offline diagnostic over the already captured private arrays isolated the
+failure to an interpolation-shaped fit rather than a dead representation. A
+fresh-seed preflight with rank 32 and `lambda=100` then passed before any
+behavioral run: held-out relative error `0.932019`, cosine `0.367252`, input
+coverage `0.710692`, correction coverage `0.477764`, and all eight named sites
+individually beat the zero operator.
+
+The ensuing source-bound behavioral attempt was promising but not admissible.
+Ordinary paired decoding scored `4/8`, untreated RLC scored `6/8`, and the
+coda treatment provisionally scored `8/8`; however, strict episode validation
+stopped the campaign before lesion and sham because the receipt exposed only
+recurrence-window adapter activation. The canary had deliberately reloaded a
+clean checkpoint and installed interpretation tissue only in the decode coda,
+so recurrence activation was correctly zero. The engine applied the treatment
+but discarded evidence of the phase that applied it.
+
+Episode receipts now expose a separate `aura.coda_adapter_activation.v1`
+record with exact scope, calls, adapted and observed positions, blocks, and
+sites. Every coda application boundary in the engine contributes to one
+exception-safe episode aggregate. Full-engine validation may accept either
+bound recurrent-window tissue or bound coda tissue, while recurrence-only
+reports still require recurrent-window activation and cannot relabel coda
+activity as recurrence. Focused admission, engine, and trajectory contracts
+pass (`46/46`); Ruff and compilation pass; canonical smoke passes (`103/103`).
+
+No behavioral gain is claimed from the interrupted run. A clean CP169 rerun
+must reproduce the treatment result and complete both zeroed-lesion and
+norm-preserving-sham controls under a valid source-bound receipt. This advances
+the completion envelope to `865/920` (approximately `94.0%`). Within-family
+scaling and broader unseen-domain replication remain open; resident-32B use
+remains locked.

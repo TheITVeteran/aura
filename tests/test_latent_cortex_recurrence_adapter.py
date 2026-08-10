@@ -8,8 +8,11 @@ pytest.importorskip("mlx_lm")
 
 from mlx import nn  # noqa: E402
 
+from core.brain.llm.latent_cortex.engine import LatentCortexEngine  # noqa: E402
 from core.brain.llm.latent_cortex.recurrence import WindowRunner  # noqa: E402
 from core.brain.llm.latent_cortex.recurrence_adapter import (  # noqa: E402
+    RecurrenceAdapterActivation,
+    ScopedCodaLoRALinear,
     ScopedLoRALinear,
     current_recurrence_adapter_scope,
     recurrence_adapter_disabled,
@@ -173,6 +176,56 @@ def test_episode_receipt_exposes_adapter_activation_evidence():
         }
     )
     assert receipt.to_dict()["recurrence_adapter"]["calls"] == 2
+
+
+def test_engine_reports_coda_activation_without_claiming_recurrence():
+    base = nn.Linear(4, 3, bias=False)
+    wrapped = ScopedCodaLoRALinear.from_base(
+        base,
+        r=2,
+        scale=1.0,
+        block_index=7,
+        site="model.layers.7.self_attn.o_proj",
+    )
+    wrapped.lora_a = mx.ones_like(wrapped.lora_a)
+    wrapped.lora_b = mx.ones_like(wrapped.lora_b)
+    mx.eval(wrapped.parameters())
+    engine = object.__new__(LatentCortexEngine)
+    engine._coda_adapter_activation = RecurrenceAdapterActivation()
+
+    with engine._coda_scope():
+        wrapped(mx.ones((1, 3, 4)))
+
+    assert engine._coda_adapter_receipt() == {
+        "schema": "aura.coda_adapter_activation.v1",
+        "scope": "rlc_coda_only",
+        "calls": 1,
+        "adapted_positions": 3,
+        "observed_positions": 3,
+        "applied_blocks": {7: 1},
+        "applied_sites": {"model.layers.7.self_attn.o_proj": 1},
+        "active": True,
+    }
+
+
+def test_engine_preserves_coda_activation_when_decode_raises():
+    base = nn.Linear(4, 3, bias=False)
+    wrapped = ScopedCodaLoRALinear.from_base(base, r=2, scale=1.0)
+    wrapped.lora_a = mx.ones_like(wrapped.lora_a)
+    wrapped.lora_b = mx.ones_like(wrapped.lora_b)
+    mx.eval(wrapped.parameters())
+    engine = object.__new__(LatentCortexEngine)
+    engine._coda_adapter_activation = RecurrenceAdapterActivation()
+
+    with pytest.raises(RuntimeError, match="decode failed"):
+        with engine._coda_scope():
+            wrapped(mx.ones((1, 2, 4)))
+            raise RuntimeError("decode failed")
+
+    receipt = engine._coda_adapter_receipt()
+    assert receipt["active"] is True
+    assert receipt["calls"] == 1
+    assert receipt["adapted_positions"] == 2
 
 
 # --- attributable activation (SPARK-066) ------------------------------------
