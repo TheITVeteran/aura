@@ -940,6 +940,40 @@ def test_consolidation_export_requires_proven_erase(tiny_model, tmp_path, monkey
     }
 
 
+def test_deferred_export_detaches_without_classifying_candidate_as_regression(
+    tiny_model,
+    tmp_path,
+):
+    baseline = _probe(tiny_model)
+    fw = EpisodicFastWeights(FastWeightsConfig(enabled=True, rank=2, target="o_proj"))
+    fw.attach(
+        tiny_model.model,
+        (P_END, C_START),
+        seed_stat=0.4,
+        episode_id="ep-deferred",
+    )
+
+    fw.stage_for_deferred_export()
+
+    assert fw.handles == []
+    assert fw.lifecycle.erased is True
+    assert fw.lifecycle.canary_erased is False
+    assert fw.prove_erase(lambda: _probe(tiny_model), baseline) is True
+    # Final cleanup may request another snapshot after detachment; the staged
+    # private tensors must survive that idempotent call.
+    staged = tuple(fw._exported_handles)
+    fw.snapshot_for_export()
+    assert tuple(fw._exported_handles) == staged
+    assert (
+        fw.export_candidate(
+            tmp_path / "queue",
+            episode_id="ep-deferred",
+            evidence={"disposition": "accepted_probe_not_output"},
+        )
+        is not None
+    )
+
+
 def test_consolidation_export_rejects_tampered_batch_receipt(
     tiny_model, tmp_path, monkeypatch
 ):

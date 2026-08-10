@@ -7293,7 +7293,13 @@ class LatentCortexEngine:
                 # transaction. This is the checkpoint's ordinary decode lane,
                 # not a latent reconstruction of it.
                 if fast_weight_decode_active and fast_weights is not None:
-                    fast_weights.canary_erase()
+                    # The adaptation passed verifier and matched-control
+                    # gates. Preserve it as private consolidation evidence,
+                    # then detach before incumbent decode. Calling this a
+                    # canary erasure incorrectly classified output-floor
+                    # enforcement as a neural regression and made accepted
+                    # candidates impossible to export.
+                    fast_weights.stage_for_deferred_export()
                     fast_weight_decode_active = False
                     if fast_weight_learning_state is not None:
                         fast_weight_learning_state["disposition"] = (

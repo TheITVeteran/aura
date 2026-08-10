@@ -42934,3 +42934,30 @@ hygiene pass. Canonical smoke passes `103/103`. This advances the completion
 envelope to `856/920` (approximately `93.0%`). The next source-bound rerun is
 diagnostic and will identify the precise export invariant before any further
 neural experiment; resident-32B use remains locked.
+
+## Checkpoint 2026-08-10-161: Output Floors No Longer Destroy Accepted Neural Evidence
+
+The CP160 diagnostic rerun proved that persistence was never invoked. The
+neural delta passed verifier arbitration and its equal-compute sham control,
+but `vanilla_incumbent` correctly withheld public-answer authority and then
+detached the adaptation through `canary_erase()`. That operation marks the
+candidate as a protected-behavior regression and deliberately prevents export.
+The output floor therefore made consolidation of every accepted probe
+structurally impossible, even though the floor and the learning gate answer
+different questions.
+
+An accepted adaptation under incumbent policy now stages its exact private
+`U,V` inventory and detaches before ordinary decode without claiming canary
+failure. Public output remains byte-bound to the frozen incumbent; the staged
+candidate receives no serving authority. Final cleanup remains idempotent and
+cannot overwrite the staged tensors with an empty post-detach snapshot. Exact
+erase must still pass, and the existing export gate still requires provenance,
+accepted descent, loss improvement, canary survival, and governed persistence.
+A lifecycle contract proves deferred staging detaches the wrappers, preserves
+`canary_erased=False`, survives the final snapshot call, proves exact erase,
+and publishes through the real batch gateway. The incumbent engine contract
+continues to prove the public answer was not overridden. Focused fast-weight
+and engine execution passes `25/25`; Ruff, compilation, and diff hygiene pass.
+Canonical smoke passes `103/103`. This advances the completion envelope to
+`857/920` (approximately `93.2%`). The source-bound transplant rerun is next;
+resident-32B use remains locked.

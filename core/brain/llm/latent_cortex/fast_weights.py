@@ -1769,6 +1769,12 @@ class EpisodicFastWeights:
         """Capture U/V as numpy BEFORE detach (arrays outlive the wrappers)."""
         import numpy as np
 
+        # A vanilla-incumbent episode may have already staged an accepted
+        # candidate and detached it before public decode. Final cleanup calls
+        # this method again; an empty second snapshot must not erase the
+        # candidate captured while the wrappers were still attached.
+        if not self.handles and getattr(self, "_exported_handles", None):
+            return
         self._exported_handles = [
             {
                 "layer_index": h.layer_index,
@@ -1777,6 +1783,20 @@ class EpisodicFastWeights:
             }
             for h in self.handles
         ]
+
+    def stage_for_deferred_export(self) -> None:
+        """Preserve an accepted delta while returning public decode to base.
+
+        This is not canary erasure: the adaptation passed its causal gate but
+        the incumbent output policy does not grant it serving authority. The
+        candidate remains private evidence for later consolidation while the
+        current answer is decoded with the frozen checkpoint.
+        """
+
+        if not self.handles:
+            raise RuntimeError("deferred export requires attached fast weights")
+        self.snapshot_for_export()
+        self.detach()
 
 
 __all__ = [
