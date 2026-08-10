@@ -467,6 +467,31 @@ def test_authority_reuses_sidecar_jpeg_without_importing_cv2(monkeypatch):
     assert auth.jpeg_bytes(lease, np.zeros((2, 2, 3), dtype=np.uint8)) == payload
 
 
+def test_authority_selects_the_best_measured_frame_from_a_bounded_burst(monkeypatch):
+    np = pytest.importorskip("numpy")
+    auth = CameraAuthority()
+    dark = np.full((240, 320, 3), 8, dtype=np.uint8)
+    sharp = np.random.default_rng(91).integers(
+        0, 256, (240, 320, 3), dtype=np.uint8
+    )
+    frames = iter((dark, sharp, dark))
+    lease = SimpleNamespace(active=True, last_error="", capture=object())
+    monkeypatch.setattr(auth, "read", lambda _lease: next(frames))
+    monkeypatch.setattr(
+        auth,
+        "jpeg_bytes",
+        lambda _lease, frame: b"sharp" if frame is sharp else b"dark",
+    )
+
+    selected = auth.capture_best_still(lease, attempts=3, settle_s=0)
+
+    assert selected is not None
+    assert selected.frame is sharp
+    assert selected.jpeg == b"sharp"
+    assert selected.attempt == 2
+    assert selected.attempts == 3
+
+
 @pytest.mark.asyncio
 async def test_vision_system_still_capture_reaches_sidecar_when_cv2_is_forbidden(
     monkeypatch,
@@ -493,6 +518,18 @@ async def test_vision_system_still_capture_reaches_sidecar_when_cv2_is_forbidden
         def jpeg_bytes(self, _lease, _frame):
             return jpeg.getvalue()
 
+        def capture_best_still(self, _lease):
+            from core.perception.frame_quality import assess_frame
+
+            frame = self.read(_lease)
+            return SimpleNamespace(
+                frame=frame,
+                jpeg=self.jpeg_bytes(_lease, frame),
+                quality=assess_frame(frame),
+                attempt=2,
+                attempts=4,
+            )
+
         def release(self, _lease):
             self.released = True
 
@@ -513,6 +550,7 @@ async def test_vision_system_still_capture_reaches_sidecar_when_cv2_is_forbidden
     assert result["type"] == "image"
     assert result["data"]
     assert result["frame_quality"]["pixels"] == 64
+    assert result["capture_selection"] == {"selected_attempt": 2, "attempts": 4}
     assert authority.released is True
 
 

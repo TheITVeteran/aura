@@ -488,26 +488,25 @@ class VisionSystem:
 
             try:
                 if duration == 0:
-                    frame = authority.read(lease)
-                    if frame is None:
+                    selected = authority.capture_best_still(lease)
+                    if selected is None:
                         return {"error": lease.last_error or "capture_failed"}
-                    encoded = authority.jpeg_bytes(lease, frame)
+                    frame = selected.frame
+                    encoded = selected.jpeg
                     if save_path:
                         from core.runtime.atomic_writer import atomic_write_bytes
 
                         atomic_write_bytes(Path(save_path), encoded)
-                    # Measure the conditions while the pixels are still
-                    # here. `analyze` receives base64 and a path; by then
-                    # the array is gone, and re-decoding to assess it would
-                    # need cv2 in a process that may not have it.
-                    from core.perception.frame_quality import assess_frame
-
                     return {
                         "type": "image",
                         "data": base64.b64encode(encoded).decode('utf-8'),
                         "path": save_path,
                         "timestamp": time.time(),
-                        "frame_quality": assess_frame(frame).to_dict(),
+                        "frame_quality": selected.quality.to_dict(),
+                        "capture_selection": {
+                            "selected_attempt": selected.attempt,
+                            "attempts": selected.attempts,
+                        },
                     }
                 else:
                     path = save_path or f"capture_{int(time.time())}.mp4"

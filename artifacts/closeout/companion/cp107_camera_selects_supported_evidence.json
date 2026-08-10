@@ -1,0 +1,40 @@
+{
+  "schema": "aura.closeout.checkpoint.v1",
+  "checkpoint": 107,
+  "date": "2026-08-09",
+  "subject": "camera selects physically supported evidence after bounded settling",
+  "status": "implemented_and_bounded_verified",
+  "defect": "owner-requested still capture treated the first camera frame as authoritative before exposure and autofocus could settle",
+  "implementation": {
+    "burst_attempts": 4,
+    "inter_attempt_settle_seconds": 0.04,
+    "maximum_attempts": 8,
+    "maximum_settle_seconds": 0.25,
+    "selection_inputs": [
+      "exposure",
+      "clipped pixel fraction",
+      "measured edge resolution",
+      "available pixel count",
+      "obstruction and signal state"
+    ],
+    "semantic_model_used_for_selection": false,
+    "selected_jpeg_bound_to_selected_frame": true,
+    "selection_receipt_fields": [
+      "selected_attempt",
+      "attempts",
+      "frame_quality.evidence_score"
+    ]
+  },
+  "verification": {
+    "focused_camera_sidecar_quality": "91 passed",
+    "ruff_touched_surface": "pass",
+    "python_byte_compile_touched_surface": "pass",
+    "diff_check": "pass",
+    "live_camera_device": "deferred until resident-32B proof campaign releases runtime"
+  },
+  "claim_boundary": {
+    "physical_frame_quality_selection": true,
+    "semantic_visual_accuracy_proven": false,
+    "reason": "the selector removes a known acquisition transient; labelled live arbitrary-detail accuracy remains unmeasured"
+  }
+}

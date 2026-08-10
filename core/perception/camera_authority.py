@@ -129,6 +129,17 @@ class CameraLease:
         }
 
 
+@dataclass(frozen=True)
+class StillCapture:
+    """The best physically supported frame from one bounded camera burst."""
+
+    frame: Any
+    jpeg: bytes
+    quality: Any
+    attempt: int
+    attempts: int
+
+
 # ───────────────────────────────────────────── the out-of-process device
 
 
@@ -523,6 +534,50 @@ class CameraAuthority:
             raise RuntimeError("camera_frame_encode_bounds_invalid")
         return payload
 
+    def capture_best_still(
+        self,
+        lease: CameraLease,
+        *,
+        attempts: int = 4,
+        settle_s: float = 0.04,
+    ) -> StillCapture | None:
+        """Select the best frame after bounded exposure/autofocus settling.
+
+        Camera hardware commonly emits a dark or blurred first frame after
+        opening. Returning it immediately made a healthy camera look incapable
+        of detail. The burst stays short, keeps every read under the canonical
+        lease, and ranks only measurable pixel conditions; it does not ask a
+        model which answer it prefers.
+        """
+        from core.perception.frame_quality import assess_frame
+
+        count = max(1, min(8, int(attempts)))
+        delay = max(0.0, min(0.25, float(settle_s)))
+        best: StillCapture | None = None
+        best_score = -1.0
+        for attempt in range(1, count + 1):
+            frame = self.read(lease)
+            if frame is not None:
+                quality = assess_frame(frame)
+                try:
+                    jpeg = self.jpeg_bytes(lease, frame)
+                except RuntimeError as exc:
+                    lease.last_error = str(exc)
+                else:
+                    score = quality.evidence_score
+                    if score > best_score:
+                        best_score = score
+                        best = StillCapture(
+                            frame=frame,
+                            jpeg=jpeg,
+                            quality=quality,
+                            attempt=attempt,
+                            attempts=count,
+                        )
+            if attempt < count and delay:
+                time.sleep(delay)
+        return best
+
     def release(self, lease: CameraLease | None) -> None:
         if lease is None:
             return
@@ -665,5 +720,6 @@ __all__ = [
     "CameraAuthority",
     "CameraDenial",
     "CameraLease",
+    "StillCapture",
     "get_camera_authority",
 ]

@@ -36,6 +36,7 @@ and the half that was missing.
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass
 from typing import Any
 
@@ -87,6 +88,26 @@ class FrameQuality:
         this, and collapsing the two loses real information."""
         return "lens_obstructed" not in self.limits and "no_signal" not in self.limits
 
+    @property
+    def evidence_score(self) -> float:
+        """Comparable physical quality for selecting among adjacent frames.
+
+        This is not semantic confidence and must not be presented as model
+        accuracy. It ranks frames from the same camera burst by exposure,
+        clipping, edge resolution, and available pixels so an autofocus or
+        auto-exposure transient does not become the authoritative observation.
+        """
+        if "no_signal" in self.limits or "lens_obstructed" in self.limits:
+            return 0.0
+        exposure = 1.0 - min(1.0, abs(self.mean_luminance - 127.5) / 127.5)
+        unclipped = 1.0 - min(1.0, self.dark_fraction + self.bright_fraction)
+        sharp = min(1.0, math.log1p(max(0.0, self.sharpness)) / math.log1p(1000.0))
+        resolution = min(1.0, self.pixels / max(1, MIN_DETAIL_PIXELS))
+        return round(
+            0.30 * exposure + 0.25 * unclipped + 0.35 * sharp + 0.10 * resolution,
+            6,
+        )
+
     def to_dict(self) -> dict[str, Any]:
         return {
             "mean_luminance": round(self.mean_luminance, 2),
@@ -98,6 +119,7 @@ class FrameQuality:
             "limits": list(self.limits),
             "supports_detail": self.supports_detail,
             "supports_presence": self.supports_presence,
+            "evidence_score": self.evidence_score,
         }
 
     def why(self) -> str:

@@ -41069,3 +41069,35 @@ battery remain open. Reasoning gain, frontier performance, fusion authority,
 activation authority, and `WOW Signal` also remain false pending the complete
 four-arm verdict. The completion envelope remains `809/920` (approximately
 `87.9%`).
+
+## Checkpoint 2026-08-09-107: A Glance Waits For Supported Evidence
+
+With every camera consumer finally reaching the sidecar, owner-requested still
+capture exposed the next physical defect: it treated the first frame after
+opening the device as authoritative. Camera auto-exposure and autofocus commonly
+settle over the next few frames, so a healthy camera could deliver one dark or
+blurred opening frame, have its detail claims correctly tempered, and still fail
+a question that the settled hardware could answer.
+
+The camera authority now performs a bounded four-frame burst under the same
+canonical lease, separated by 40 ms settling intervals. Every candidate is
+measured from its pixels for exposure, clipping, edge resolution, available
+pixels, obstruction, and signal state. The highest physically supported frame is
+selected without asking a language or vision model which answer it prefers. The
+JPEG is captured at the same attempt as the selected array, preventing later
+sidecar frames from being paired with stale quality evidence. The receipt records
+the selected attempt, total attempts, and frame-quality evidence score.
+
+The ranking is explicitly an acquisition-quality score, not model confidence or
+semantic accuracy. Attempts and settling are hard bounded at eight and 250 ms per
+interval, with the production default remaining four and 40 ms. Focused camera,
+sidecar, frame-quality, and sensory contracts pass `91/91`; Ruff, touched-file
+byte compilation, and diff hygiene pass. Evidence is
+`artifacts/closeout/companion/cp107_camera_selects_supported_evidence.json`.
+
+The live rebuilt-app arbitrary-detail battery remains open and must measure
+objects, counts, text, spatial relations, distance, lighting, occlusion, and
+motion rather than a hard-coded gesture. The resident-32B proof campaign remains
+independently active. Reasoning gain, frontier performance, fusion authority,
+activation authority, and `WOW Signal` remain false pending its complete valid
+verdict. The completion envelope remains `809/920` (approximately `87.9%`).

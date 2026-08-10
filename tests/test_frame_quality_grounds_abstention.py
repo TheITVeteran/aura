@@ -105,6 +105,14 @@ def test_sharpness_separates_a_blurred_frame_from_a_sharp_one():
     assert sharp.sharpness > blurred.sharpness * 10
 
 
+def test_evidence_score_prefers_a_resolved_frame_over_an_opening_transient():
+    sharp = assess_frame(_noise())
+    opening_transient = assess_frame(np.full((480, 640, 3), 8, dtype=np.uint8))
+
+    assert sharp.evidence_score > opening_transient.evidence_score
+    assert sharp.to_dict()["evidence_score"] == sharp.evidence_score
+
+
 # ────────────────────────────────────────────────── distance / size
 
 
@@ -304,7 +312,14 @@ def test_quality_is_measured_where_the_pixels_still_exist():
         / "sensory_integration.py"
     ).read_text("utf-8")
 
-    assert "assess_frame(frame)" in source
+    assert "capture_best_still(lease)" in source
+    authority = (
+        Path(__file__).resolve().parents[1]
+        / "core"
+        / "perception"
+        / "camera_authority.py"
+    ).read_text("utf-8")
+    assert "quality = assess_frame(frame)" in authority
 
 
 def test_frame_quality_of_a_dataclass_round_trips():
