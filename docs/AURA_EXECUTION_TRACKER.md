@@ -43714,3 +43714,34 @@ context, train only this shared core, select on development, and open untouched
 holdout exactly once. A positive result advances to student-roll-in multi-step
 composition; a negative result diagnoses native state/action learning before
 any broader or resident-32B campaign.
+
+## Checkpoint 2026-08-10-185: Native One-Step Transfer Has a Frozen Gate
+
+The real-checkpoint discriminator for the native core is now source-bound and
+published before execution. It mints globally disjoint Boolean and modular
+training, development, and holdout splits across depths one through four. Each
+manifest commits the complete private state/action/state program by hash while
+excluding its states and actions from public evidence.
+
+Qwen is frozen and used once per task to produce read-only semantic context and
+an initial latent workspace. Those tensors are materialized and cached before
+the model is released; every optimizer update thereafter changes only one
+shared native transition core. Identity and treatment arms begin from the same
+seeded, byte-identical parameters. Development alone selects a checkpoint. The
+holdout is opened only after selection and then evaluated once as a paired
+identity-versus-treatment comparison.
+
+Admission requires more than a favorable surrogate: state exact accuracy must
+gain at least `0.50` and reach `0.75`; aggregate state fields must reach `0.90`;
+the target value or residue must reach `0.85`; action fields must reach `0.85`
+and complete actions `0.60`; every family/depth cell must reach at least `0.50`
+exact state accuracy without regression; loss, development, source, split,
+checkpoint immutability, and core-mutation gates must all pass. The selected
+core is owner-only, atomically published, reload-tested, and fingerprinted.
+
+The affected native-core, curriculum, supervision, evidence, and runner suite
+passes `70/70`; Ruff and bytecode compilation pass. This advances the
+completion envelope to `881/920` (approximately `95.8%`). No transfer or
+reasoning claim is awarded by this checkpoint. Next is the published-source
+real-1.5B execution; its untouched holdout verdict decides whether to proceed
+to multi-step student roll-in or repair the native transition itself.
