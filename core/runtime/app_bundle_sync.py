@@ -146,6 +146,21 @@ def launcher_currency() -> dict[str, Any]:
     try:
         root = Path(__file__).resolve().parents[2]
         drift = launcher_drift(root, resident_bundle_path())
+        # A rebuild that is staged and never installed is the same silence in
+        # a later place. install_staged_bundle refuses while the resident app
+        # is running — correctly, because replacing a bundle underneath the
+        # process executing from it is how a signed app loses its TCC identity
+        # — and the runtime only exists WHILE it is running. So on the
+        # double-click path the staged build waits for a launch_aura.sh run
+        # that may never come. Say so, and say what clears it.
+        staged_digest = str(
+            _read_manifest(root / "dist" / "Aura.app").get("launcher_source_sha256") or ""
+        ).strip().lower()
+        pending = bool(
+            staged_digest
+            and staged_digest != drift["built_from_sha256"]
+            and staged_digest == drift["launcher_source_sha256"]
+        )
         report.update(
             {
                 "bundle": drift["bundle"],
@@ -153,6 +168,19 @@ def launcher_currency() -> dict[str, Any]:
                 "stale": drift["stale"],
                 "built_from_sha256": drift["built_from_sha256"][:12],
                 "launcher_source_sha256": drift["launcher_source_sha256"][:12],
+                "staged_install_pending": pending,
+                # Deliberately the exact command rather than "relaunch".
+                # Relaunching by double-click starts the OLD launcher, which
+                # has no staged-install step, so the staged build would sit
+                # there forever and this field would be a false promise —
+                # which is the same defect as the silence it replaces.
+                "clears_by": (
+                    "with Aura quit, run: python -m core.runtime.app_bundle_sync "
+                    "--root . --install-staged   (launch_aura.sh does this "
+                    "automatically; double-clicking Aura.app does not)"
+                )
+                if pending
+                else "",
                 # The consequence, stated in the terms a reader cares about:
                 # a stale launcher is not a cosmetic lag, it is UI and
                 # behaviour that the running executable does not contain.

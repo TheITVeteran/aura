@@ -176,3 +176,85 @@ def test_the_companion_surface_is_still_in_the_launcher_source(flag: str):
     Both were needed: the source was correct the whole time.
     """
     assert flag in Path("scripts/AuraLauncher.swift").read_text(encoding="utf-8")
+
+
+def test_a_staged_build_that_cannot_install_itself_says_so(monkeypatch, tmp_path):
+    """Staging without installing is the same silence one step later.
+
+    install_staged_bundle refuses while the resident app runs — correctly,
+    because replacing a bundle underneath the process executing from it is how
+    a signed app loses its TCC identity. But the runtime only exists WHILE it
+    runs, so on the double-click path the staged build waits for a
+    launch_aura.sh invocation that never comes.
+    """
+    live = "a" * 64
+    monkeypatch.setattr(
+        "core.runtime.app_bundle_sync.launcher_drift",
+        lambda *a, **k: {
+            "bundle": "/Applications/Aura.app",
+            "bundle_present": True,
+            "launcher_binary_present": True,
+            "launcher_source_sha256": live,
+            "built_from_sha256": "b" * 64,
+            "stale": True,
+        },
+    )
+    monkeypatch.setattr(
+        "core.runtime.app_bundle_sync._read_manifest",
+        lambda bundle: {"launcher_source_sha256": live},
+    )
+
+    report = launcher_currency()
+
+    assert report["staged_install_pending"] is True
+    assert report["clears_by"]
+
+
+def test_the_remedy_is_not_a_bare_relaunch(monkeypatch):
+    """"Relaunch" would be false: double-click starts the OLD launcher.
+
+    A remedy that does not work is worse than none — it converts a visible
+    problem into a person believing they already fixed it.
+    """
+    live = "a" * 64
+    monkeypatch.setattr(
+        "core.runtime.app_bundle_sync.launcher_drift",
+        lambda *a, **k: {
+            "bundle": "/Applications/Aura.app",
+            "bundle_present": True,
+            "launcher_binary_present": True,
+            "launcher_source_sha256": live,
+            "built_from_sha256": "b" * 64,
+            "stale": True,
+        },
+    )
+    monkeypatch.setattr(
+        "core.runtime.app_bundle_sync._read_manifest",
+        lambda bundle: {"launcher_source_sha256": live},
+    )
+
+    remedy = launcher_currency()["clears_by"]
+
+    assert "--install-staged" in remedy
+
+
+def test_no_staged_build_means_no_pending_claim(monkeypatch):
+    monkeypatch.setattr(
+        "core.runtime.app_bundle_sync.launcher_drift",
+        lambda *a, **k: {
+            "bundle": "/Applications/Aura.app",
+            "bundle_present": True,
+            "launcher_binary_present": True,
+            "launcher_source_sha256": "a" * 64,
+            "built_from_sha256": "b" * 64,
+            "stale": True,
+        },
+    )
+    monkeypatch.setattr(
+        "core.runtime.app_bundle_sync._read_manifest", lambda bundle: {}
+    )
+
+    report = launcher_currency()
+
+    assert report["staged_install_pending"] is False
+    assert report["clears_by"] == ""
