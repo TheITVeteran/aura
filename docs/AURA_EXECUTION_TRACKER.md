@@ -41756,3 +41756,39 @@ minimum no-regression sample capable of a one-sided exact paired result at
 `p=0.03125`. Resident 32B remains locked, and no frontier, fusion, activation,
 or `WOW Signal` claim is authorized. The completion envelope is `820/920`
 (approximately `89.1%`).
+
+## Checkpoint 2026-08-09-124: Bounded Architecture Gain Admitted
+
+The minimum fresh 1.5B component campaign completed all `24/24` matched cells
+across novel algorithms, mathematics, and long-horizon planning. Scores were
+ordinary decode `0/6`, complete system `6/6`, adaptation-disabled `6/6`, and
+producer-disabled `0/6`. Every treatment answer was an exact public-objective
+promotion. All arms completed without errors, runtime evidence was complete,
+the ordinary incumbent floor held, and no right answer regressed.
+
+The complete system produced six paired gains and zero losses against both
+ordinary decode and the producer-disabled ablation. The one-sided exact sign
+test is `p=0.015625` for each contrast, with gains spanning all three committed
+domains. Component admission is therefore positive and authorizes the cheap
+best-of-three pilot.
+
+The adaptation-disabled arm tied treatment `6/6`; latent optimization accepted
+zero steps and fast weights applied zero times. This is a clean split result:
+the bounded gain is real at complete-architecture scope and causally requires
+the executable producer, but this battery provides no evidence of an
+incremental adaptive-neural or weight-level gain.
+
+The hash-bound evidence index is
+`artifacts/closeout/latent_cortex/cp124_1p5b_component_architecture_gain.json`.
+It binds source commit `d35c1565a`, implementation digest
+`bd7512ce27e36eaa8a3a4cfb179af2d18e0220bce01bf0dc5eb280df6487320f`,
+task commitment
+`c805f40f44c6b87984225a6d4b0ab430790e87d96300867445cd70acd917c136`,
+and the durable campaign receipts without importing private task material into
+Git.
+
+This is positive evidence for a bounded architecture-produced reasoning gain,
+not resident-32B transfer, broad general reasoning, neural-weight improvement,
+frontier intelligence, fusion, activation, or the `WOW Signal`. The next gate
+is the seed-fresh 1.5B pilot against best-of-three ordinary inference. The
+completion envelope is `821/920` (approximately `89.2%`).
