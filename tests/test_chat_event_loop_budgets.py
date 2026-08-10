@@ -199,20 +199,36 @@ def test_repo_probe_refuses_oversized_file_without_partial_claim(tmp_path, monke
 def test_memory_pin_recall_reads_bounded_tail(tmp_path, monkeypatch):
     from interface.routes import chat as chat_routes
 
-    ledger = tmp_path / "pins.jsonl"
+    # This test went stale in three ways behind deliberate refactors, and the
+    # property it guards — recall reads a bounded TAIL, not the whole file —
+    # is unchanged by both.
+    #
+    # 1. The read bound moved out of the route and into the ledger that owns
+    #    it, so it is read from there now.
+    # 2. The ledger became encrypted-records-only, so a plaintext v2 row can
+    #    no longer be recalled and the cipher has to be supplied the way
+    #    every other session-pin test supplies it (a fixed test key, rather
+    #    than a macOS Keychain that does not exist in CI).
+    from core.memory.session_pin_cipher import SessionPinCipher
+    from core.memory.session_pin_ledger import SESSION_PIN_LEDGER_MAX_BYTES
+
+    cipher = SessionPinCipher(b"k" * 32)
+    monkeypatch.setattr(chat_routes, "_session_memory_pin_cipher", lambda: cipher)
+
+    # 3. The ledger pins its own filename (a governed write-scope
+    #    constraint), so the fixture has to use the real one.
+    ledger = tmp_path / "session_memory_pins.jsonl"
     prefix = b"not-json\n" * (
-        chat_routes._SESSION_MEMORY_PIN_LEDGER_READ_BYTES // len(b"not-json\n") + 10
+        SESSION_PIN_LEDGER_MAX_BYTES // len(b"not-json\n") + 10
     )
-    record = {
-        "schema": "aura.session_memory_pin.v2",
-        "content": "orcas remain my favorite animal",
-        "source": "Remember this",
-        "timestamp": "2026-08-08T00:00:00Z",
-        "session_id": "owner-session",
-        "principal_id": "owner:test",
-        "principal_surface": "owner",
-        "session_memory_pin": True,
-    }
+    record = cipher.seal(
+        content="orcas remain my favorite animal",
+        source="Remember this",
+        timestamp="2026-08-08T00:00:00Z",
+        session_id="owner-session",
+        principal_id="owner:test",
+        principal_surface="owner",
+    )
     ledger.write_bytes(prefix + json.dumps(record).encode() + b"\n")
     monkeypatch.setattr(chat_routes, "_session_memory_pin_ledger_path", lambda: ledger)
 

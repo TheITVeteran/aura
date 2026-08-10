@@ -179,28 +179,6 @@
       "path": "scripts/generate_steering_vectors.py"
     },
     {
-      "expected_load_references": 1,
-      "guard_symbol": "acquire_standalone_model_lane",
-      "min_guard_sites": 1,
-      "modules": [
-        "mlx_lm"
-      ],
-      "ownership_mode": "standalone_process",
-      "path": "tools/capability_ablation_mlx.py",
-      "purpose": "evaluation"
-    },
-    {
-      "expected_load_references": 1,
-      "guard_symbol": "acquire_standalone_model_lane",
-      "min_guard_sites": 1,
-      "modules": [
-        "mlx_lm"
-      ],
-      "ownership_mode": "standalone_process",
-      "path": "tools/affect_causality_mlx.py",
-      "purpose": "evaluation"
-    },
-    {
       "expected_load_references": 2,
       "guard_symbol": "standalone_model_lane",
       "min_guard_sites": 1,
@@ -231,6 +209,17 @@
       "path": "scripts/train_with_recurrent_depth.py"
     },
     {
+      "expected_load_references": 1,
+      "guard_symbol": "acquire_standalone_model_lane",
+      "min_guard_sites": 1,
+      "modules": [
+        "mlx_lm"
+      ],
+      "ownership_mode": "standalone_process",
+      "path": "tools/affect_causality_mlx.py",
+      "purpose": "evaluation"
+    },
+    {
       "expected_load_references": 2,
       "guard_symbol": "standalone_model_lane",
       "min_guard_sites": 1,
@@ -239,6 +228,17 @@
       ],
       "ownership_mode": "standalone_process",
       "path": "tools/bench_speculative_decoding.py"
+    },
+    {
+      "expected_load_references": 1,
+      "guard_symbol": "acquire_standalone_model_lane",
+      "min_guard_sites": 1,
+      "modules": [
+        "mlx_lm"
+      ],
+      "ownership_mode": "standalone_process",
+      "path": "tools/capability_ablation_mlx.py",
+      "purpose": "evaluation"
     },
     {
       "expected_load_references": 1,
@@ -369,6 +369,17 @@
     },
     {
       "expected_load_references": 1,
+      "guard_symbol": "acquire_standalone_model_lane",
+      "min_guard_sites": 1,
+      "modules": [
+        "mlx_lm"
+      ],
+      "ownership_mode": "standalone_process",
+      "path": "tools/measure_candidate_peakedness.py",
+      "purpose": "evaluation"
+    },
+    {
+      "expected_load_references": 1,
       "guard_symbol": "standalone_model_lane",
       "min_guard_sites": 1,
       "modules": [
@@ -448,6 +459,17 @@
       ],
       "ownership_mode": "standalone_process",
       "path": "tools/rlc_accuracy_ladder.py",
+      "purpose": "evaluation"
+    },
+    {
+      "expected_load_references": 1,
+      "guard_symbol": "acquire_standalone_model_lane",
+      "min_guard_sites": 1,
+      "modules": [
+        "mlx_lm"
+      ],
+      "ownership_mode": "standalone_process",
+      "path": "tools/run_exclusion_ab.py",
       "purpose": "evaluation"
     },
     {

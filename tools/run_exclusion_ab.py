@@ -276,9 +276,25 @@ def main(argv: list[str] | None = None) -> int:
 
     started = time.time()
     path = args.model
-    model, tokenizer = load(
-        str(REPO_ROOT / path) if not Path(path).is_absolute() else path
+    model_path = str(REPO_ROOT / path) if not Path(path).is_absolute() else path
+    # Through the standalone model lane, like every other measurement tool.
+    # An unleased load here can bring a second 32B up beside the resident
+    # one on a 64GB host — the duplicate-runtime cascade. Flagged by
+    # tools/closeout/audit_model_load_ownership.py, which exists for this.
+    from core.runtime.model_lane_control import acquire_standalone_model_lane
+
+    lease = acquire_standalone_model_lane(
+        owner_id=f"exclusion-ab:{Path(model_path).name or 'model'}",
+        model_path=model_path,
+        purpose="evaluation",
+        preemptible=False,
+        metadata={"tool": "run_exclusion_ab"},
     )
+    try:
+        model, tokenizer = load(model_path)
+    except BaseException:
+        lease.release(reason="exclusion_ab_load_failed")
+        raise
 
     tasks = build_tasks(args.band, max(1, args.tasks), args.seed)
     arms: dict[str, list[dict[str, Any]]] = {
@@ -400,6 +416,7 @@ def main(argv: list[str] | None = None) -> int:
         args.out.parent.mkdir(parents=True, exist_ok=True)
         args.out.write_text(payload + "\n", encoding="utf-8")
     print(payload)
+    lease.release(reason="exclusion_ab_complete")
     return 0 if verdict == "EXCLUSION_WINS" else (2 if verdict == "INCONCLUSIVE" else 1)
 
 

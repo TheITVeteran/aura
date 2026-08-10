@@ -4216,10 +4216,23 @@ class CognitiveEngine:
         )
         if not desktop_required:
             return {}
+        # A snapshot is READY only if one actually exists. `snapshot_ready`
+        # above is derived from mind_snapshot_quality.ready, which is a
+        # health flag about the snapshot pipeline — it can be true while
+        # nothing was ever captured. Synthesising controls on that flag
+        # alone is precisely the defect
+        # test_structured_floor_does_not_fabricate_controls_when_the_mind_is_absent
+        # exists to keep shut: four constants written into the receipt for
+        # a turn the mind never touched, byte-identical to the receipt for
+        # a turn it shaped.
+        snapshot_present = isinstance(live_mind_context, dict) and isinstance(
+            live_mind_context.get("mind_snapshot"), dict
+        )
         if (
             not generation_controls
             and snapshot_ready
             and required_subsystems_ok
+            and snapshot_present
         ):
             # A structured refusal performs no model generation, but the desktop
             # proof contract still needs an explicit bounded control policy. Keep
@@ -4232,7 +4245,10 @@ class CognitiveEngine:
                 "clean_user_surface_recurrent_loops": 1,
                 "clean_user_surface_steering_alpha": 0.01,
             }
-            controls_bound = True
+            # Deliberately NOT controls_bound. These constants are a policy
+            # this function chose, not values the live mind produced, and
+            # the whole point of the field is to tell those two apart. The
+            # provenance string carries what they are.
             controls_provenance = "structured_floor_neutral_policy"
         surface_control_receipt = {
             "enabled": False,

@@ -494,9 +494,19 @@ class VisionSystem:
                     frame = selected.frame
                     encoded = selected.jpeg
                     if save_path:
-                        from core.runtime.atomic_writer import atomic_write_bytes
+                        # Through the gateway, not the raw atomic writer: a
+                        # captured frame written to an owner-supplied path is
+                        # a consequential write, and the gateway is where
+                        # those are governed and accounted. Called from the
+                        # synchronous _do_capture body, so the blocking
+                        # variant is correct here — the async lane exists to
+                        # keep fsync off the event loop, and this is already
+                        # off it.
+                        from core.runtime.file_write_gateway import get_file_write_gateway
 
-                        atomic_write_bytes(Path(save_path), encoded)
+                        get_file_write_gateway().write_bytes(
+                            Path(save_path), encoded, source="sensory_integration.capture"
+                        )
                     return {
                         "type": "image",
                         "data": base64.b64encode(encoded).decode('utf-8'),

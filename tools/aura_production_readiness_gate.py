@@ -157,7 +157,16 @@ def run_checks() -> list[Check]:
     add("compile_gate", "compile:" in makefile and "compileall" in makefile, "Makefile compile target uses compileall")
     add("pytest_collection_gate", "enterprise-collect:" in makefile, "Fast pytest collection gate is present")
     add("full_test_gate", re.search(r"^test:", makefile, re.MULTILINE) is not None, "Makefile test target is present")
-    add("source_hygiene_gate", "source-hygiene:" in makefile and "__pycache__" in makefile and "*.py[cod]" in _read(".gitignore"), "Tracked cache artifacts are blocked from release snapshots")
+    # The __pycache__ literal moved out of the Makefile recipe and into
+    # tools/check_source_hygiene.py when the target was refactored to call
+    # a real checker instead of inlining shell. Grepping the Makefile for
+    # it therefore failed on a target that had got BETTER — the gate was
+    # asserting where the check lives rather than that it exists. Look in
+    # whichever of the two actually carries it.
+    _hygiene_covers_cache = "__pycache__" in makefile or "__pycache__" in _read(
+        "tools/check_source_hygiene.py"
+    )
+    add("source_hygiene_gate", "source-hygiene:" in makefile and _hygiene_covers_cache and "*.py[cod]" in _read(".gitignore"), "Tracked cache artifacts are blocked from release snapshots")
     add("ruff_format_type_security_gates", all(item in makefile for item in ("lint:", "typecheck:", "security:", "governance-lint:")), "Quality gates include lint/type/security/governance")
     add("whole_surface_lint_bug_gate", all(token in makefile for token in ("RUFF_SURFACE_TARGETS", "RUFF_CRITICAL_TARGETS", "F821,F822,F823,F601", "--select E9")), "Ruff covers whole-surface syntax and production undefined-name/repeated-key bugs")
     strict_typecheck_ok, strict_typecheck_detail = _strict_typecheck_status(makefile)

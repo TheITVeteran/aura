@@ -120,7 +120,28 @@ def main(argv: list[str] | None = None) -> int:
         return 2
 
     started = time.time()
-    model, tokenizer = load(str(REPO_ROOT / args.model) if not Path(args.model).is_absolute() else args.model)
+    model_path = (
+        str(REPO_ROOT / args.model) if not Path(args.model).is_absolute() else args.model
+    )
+    # Through the standalone model lane, like every other measurement tool.
+    # Without a lease this could bring a second 32B up beside the resident
+    # one on a 64GB host, which is how the duplicate-runtime memory cascade
+    # happens. The audit that flagged this
+    # (tools/closeout/audit_model_load_ownership.py) exists for exactly that.
+    from core.runtime.model_lane_control import acquire_standalone_model_lane
+
+    lease = acquire_standalone_model_lane(
+        owner_id=f"candidate-peakedness:{Path(model_path).name or 'model'}",
+        model_path=model_path,
+        purpose="evaluation",
+        preemptible=False,
+        metadata={"tool": "measure_candidate_peakedness"},
+    )
+    try:
+        model, tokenizer = load(model_path)
+    except BaseException:
+        lease.release(reason="candidate_peakedness_load_failed")
+        raise
 
     rows: list[dict[str, Any]] = []
     for prompt, expected in TASKS[: max(1, args.tasks)]:
@@ -196,6 +217,7 @@ def main(argv: list[str] | None = None) -> int:
         args.out.parent.mkdir(parents=True, exist_ok=True)
         args.out.write_text(payload + "\n", encoding="utf-8")
     print(payload)
+    lease.release(reason="candidate_peakedness_complete")
     return 0 if verdict != "PREMISE_REFUTED" else 1
 
 

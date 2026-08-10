@@ -4593,6 +4593,14 @@
       "scope": "<module>.AmbientPresence.persist_bubble_position"
     },
     {
+      "callee": "core.runtime.file_write_gateway.get_file_write_gateway().write_bytes",
+      "canonical_owner": false,
+      "category": "file_write_gateway",
+      "count": 1,
+      "path": "core/perception/sensory_integration.py",
+      "scope": "<module>.VisionSystem.capture._do_capture"
+    },
+    {
       "callee": "core.runtime.file_write_gateway.get_file_write_gateway().write_text",
       "canonical_owner": false,
       "category": "file_write_gateway",
@@ -15950,7 +15958,7 @@
       "category": "subprocess_gateway",
       "count": 1,
       "path": "core/senses/sensory_client.py",
-      "scope": "<module>.SensoryLocalClient.start"
+      "scope": "<module>.SensoryLocalClient._start_blocking"
     },
     {
       "callee": "core.runtime.subprocess_gateway.get_subprocess_gateway().run",
@@ -16570,6 +16578,6 @@
     }
   ],
   "description": "Exact AST effect-ownership debt ratchet; refresh only after reviewed change",
-  "inventory_sha256": "c1477ab2f971c383d88d0a80642f21d758d5f740bd3d49b921205f04ce465151",
+  "inventory_sha256": "8f12d98c8e37f2e5617ef8ffa701fabc1aefe700d7e4bc10175ea0ed7157a97d",
   "schema_version": 1
 }
