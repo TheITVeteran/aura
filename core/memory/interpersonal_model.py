@@ -1,93 +1,214 @@
-"""What she believes about a person, in a shape that cannot lose the qualifiers.
+"""What she knows about a person — typed, sourced, and correctable.
 
-The obvious way to let an agent accumulate a view of someone is a free-text
-block she rewrites over time — "notes on Bryan" — periodically consolidated by
-a model to keep it inside its budget. That design has a failure built into it,
-and the failure is not carelessness.
+The first version of this stored one kind of thing: a claim with a frequency
+count. That was enough to stop prose summarisation flattening a hedge into a
+trait, but it had a flaw of its own, and it is the same flaw one level up.
 
-In prose, the load-bearing parts of knowing a person are *adjectives*:
-"seemed", "once", "when a build was failing", "though usually not". Compressing
-prose drops adjectives before it drops nouns — that is what compression is. So
-consolidation walks a note from
+If "frustrated" is noticed across five separate stressful weeks, a
+frequency-only model reads five confirmations of a *disposition*. It was five
+**states** with five different causes. Counting transient things manufactures a
+trait nobody observed — which is the caricature problem again, arriving through
+arithmetic instead of adjectives.
 
-    "Bryan seemed frustrated once, during a failing deploy"
+And a relationship is not a list of dispositions. It is also what you did
+together, what he said outright versus what she guessed, what he corrected her
+about, what is unresolved between you, and what she still does not know. Those
+are different kinds of knowledge with genuinely different rules, and flattening
+them into one shape loses the distinctions that make them useful.
 
-to "Bryan gets frustrated" to "Bryan is easily frustrated", and no individual
-step is unreasonable and nobody ever decided it. What is lost at each step —
-frequency, conditions, hedging, the times it did not happen — is precisely what
-distinguishes understanding someone from having a caricature of them.
+So knowledge here is **typed**:
 
-So person-knowledge is not stored as prose here. An observation is a record
-with **fields**: what was noticed, under what conditions, how many times, when
-last, and every occasion it did *not* hold. Dropping a qualifier stops being a
-stylistic choice and becomes a schema violation.
+* ``TRAIT`` accumulates and needs counter-evidence to be honest.
+* ``STATE`` expires. It can never be counted toward a trait — that is enforced,
+  not conventional, because the arithmetic above is what makes it necessary.
+* ``PREFERENCE`` and ``VALUE`` are about what he wants and what is at stake.
+* ``EVENT`` happened once, between them. Frequency is meaningless for it and it
+  never decays — shared history is not evidence for a proposition.
+* ``COMMITMENT`` is open or discharged.
+* ``RUPTURE`` is trust damaged, and carries whether it was repaired. A model of
+  someone that cannot represent having hurt them is not a model of a
+  relationship.
+* ``QUESTION`` is what she does not know and wants to. Recording ignorance is
+  the part most systems skip, and it is where curiosity comes from.
 
-Two consequences fall out:
+And **sourced**: ``STATED`` (he told her) outranks ``OBSERVED`` (she saw it)
+outranks ``INFERRED`` (she reasoned it). An inference rendered as though it were
+a fact is how she ends up confidently wrong about someone, so inferences say so
+in the text. He can also overrule anything outright with ``correct()``, and a
+correction is permanent — it is the one input that no amount of later observing
+can outvote, because being told you are wrong about someone is not evidence to
+be weighed against other evidence.
 
-* **Consolidation is aggregation, not summarisation.** Merging two sightings
-  increments a count and appends an episode id. There is no operation in this
-  module that hands a note to a language model to be rewritten, and
-  ``test_interpersonal_model.py`` asserts that no such path exists.
-* **The render states evidence, not a verdict.** It says "noticed 3 times, most
-  recently 2 days ago, 1 occasion it did not hold" rather than a confidence
-  score. A manufactured number would be a summary of the evidence — the same
-  lossy move one level up, and one nobody could audit.
-
-Counter-examples are first-class because prose summarisation never keeps them.
-A view of someone that can only accumulate confirmations is not a model, it is
-a grudge.
+Consolidation remains aggregation, never summarisation. No code path here hands
+anything to a language model; the tests assert that structurally.
 """
 from __future__ import annotations
 
 import logging
 import time
 from dataclasses import dataclass, field
-from typing import Iterable
+from enum import StrEnum
 
 logger = logging.getLogger("Aura.InterpersonalModel")
 
 __all__ = [
+    "Facet",
+    "Subject",
+    "Provenance",
+    "Valence",
     "Occurrence",
     "Observation",
+    "Dynamic",
     "PersonModel",
     "DAY_SECONDS",
+    "DEFAULT_STATE_TTL",
 ]
 
 DAY_SECONDS = 86400.0
 
+#: How long a state stands before it stops being current. States are the things
+#: that are true *now* — tired, under deadline, unwell — and the failure mode of
+#: keeping them forever is treating a bad week as a personality.
+DEFAULT_STATE_TTL = 3 * DAY_SECONDS
 
-def _normalize(claim: str) -> str:
-    """Claims match on normalised text. Deliberately exact-ish: fuzzy merging
-    is how two distinct observations become one blurred one."""
-    return " ".join(claim.lower().split())
+
+class Facet(StrEnum):
+    TRAIT = "trait"
+    STATE = "state"
+    PREFERENCE = "preference"
+    VALUE = "value"
+    EVENT = "event"
+    COMMITMENT = "commitment"
+    RUPTURE = "rupture"
+    QUESTION = "question"
+    #: Something lived through together, carrying how it felt rather than only
+    #: that it happened. An event is a fact; an experience is a fact you were
+    #: both inside of.
+    EXPERIENCE = "experience"
+    #: How an interaction landed. Neither a trait nor an event — the felt
+    #: quality, which is most of what people actually remember.
+    AFFECT = "affect"
+    #: Something now grasped about each other, and where that grasp failed.
+    UNDERSTANDING = "understanding"
+    MISUNDERSTANDING = "misunderstanding"
+    #: The counterpart to RUPTURE. A record that can only hold the damage is a
+    #: ledger of grievances, not a relationship.
+    TRUST_BUILT = "trust_built"
+
+
+class Subject(StrEnum):
+    """Who a piece of knowledge is about.
+
+    Everything here used to be implicitly about *him*, which cannot represent
+    "we understand each other" or "I make him feel X". A relationship has three
+    sides: her view of him, her sense of herself in it, and the thing between
+    them that belongs to neither.
+    """
+
+    THEM = "them"
+    SELF = "self"
+    BETWEEN = "between"
+
+
+class Provenance(StrEnum):
+    """Where a piece of knowledge came from. Ordered by authority."""
+
+    INFERRED = "inferred"
+    OBSERVED = "observed"
+    STATED = "stated"
+
+
+class Valence(StrEnum):
+    """How something felt.
+
+    One field rather than a facet per feeling. Enjoyment, warmth and difficulty
+    are not different *kinds of record* needing different storage rules — they
+    are the same record with a different quality, and inventing a facet for
+    each would multiply the taxonomy without adding a single new rule.
+    """
+
+    WARM = "warm"
+    NEUTRAL = "neutral"
+    DIFFICULT = "difficult"
+
+
+_AUTHORITY = {Provenance.INFERRED: 0, Provenance.OBSERVED: 1, Provenance.STATED: 2}
+
+#: Facets where seeing it again means "more true". Everywhere else a repeat is
+#: either meaningless (an event happened when it happened) or actively
+#: misleading (five bad weeks are not one disposition).
+_ACCUMULATING = frozenset({Facet.TRAIT, Facet.PREFERENCE, Facet.VALUE})
+
+#: Facets that stop applying on their own.
+_EXPIRING = frozenset({Facet.STATE})
+
+
+def _normalize(text: str) -> str:
+    return " ".join((text or "").lower().split())
+
+
+def _key(facet: Facet, subject: Subject, claim: str, conditions: str) -> tuple[str, str, str, str]:
+    return (str(facet), str(subject), _normalize(claim), _normalize(conditions))
+
+
+@dataclass(frozen=True)
+class Dynamic:
+    """A derived reading of the relationship, with the evidence behind it.
+
+    Qualitative on purpose. "trust: 0.72" is a summary of the evidence — the
+    same lossy move this module exists to refuse — and a number nobody can
+    argue with is a number nobody can correct.
+    """
+
+    name: str
+    standing: str
+    basis: tuple[str, ...] = ()
+
+    def render(self) -> str:
+        if not self.basis:
+            return f"{self.name}: {self.standing}"
+        return f"{self.name}: {self.standing} ({'; '.join(self.basis)})"
 
 
 @dataclass(frozen=True)
 class Occurrence:
-    """One time something was actually observed.
-
-    ``episode_id`` is what makes a claim auditable — it points at the memory
-    that justifies it. A claim with no occurrences cannot exist here, which is
-    the structural version of "no assertion without evidence".
-    """
+    """One time something was noticed, said, or inferred."""
 
     episode_id: str
+    provenance: Provenance = Provenance.OBSERVED
     at: float = field(default_factory=time.time)
     note: str = ""
 
 
 @dataclass
 class Observation:
-    """One thing she has noticed about someone, with its evidence attached."""
+    """One piece of knowledge about a person, with its kind and evidence."""
 
     claim: str
+    facet: Facet = Facet.TRAIT
+    subject: Subject = Subject.THEM
+    valence: Valence = Valence.NEUTRAL
     conditions: str = ""
     occurrences: list[Occurrence] = field(default_factory=list)
     counter_examples: list[Occurrence] = field(default_factory=list)
+    ttl: float | None = None
+    #: Set when the person overruled this. Permanent, and unrenderable.
+    corrected_by: Occurrence | None = None
+    #: RUPTURE: how it was repaired. QUESTION/COMMITMENT: how it was closed.
+    resolved_by: Occurrence | None = None
 
     @property
-    def key(self) -> tuple[str, str]:
-        return (_normalize(self.claim), _normalize(self.conditions))
+    def key(self) -> tuple[str, str, str, str]:
+        # Facet is part of the identity: "tired" the state and "tired" the
+        # trait are different claims, and merging them is the arithmetic that
+        # turns a bad week into a personality. Subject too — "I feel understood"
+        # and "he feels understood" are not the same fact.
+        return (
+            str(self.facet),
+            str(self.subject),
+            _normalize(self.claim),
+            _normalize(self.conditions),
+        )
 
     @property
     def support(self) -> int:
@@ -97,39 +218,92 @@ class Observation:
     def contradictions(self) -> int:
         return len(self.counter_examples)
 
+    @property
+    def corrected(self) -> bool:
+        return self.corrected_by is not None
+
+    @property
+    def resolved(self) -> bool:
+        return self.resolved_by is not None
+
+    @property
+    def authority(self) -> Provenance:
+        """The strongest source behind this. Stated beats observed beats guessed."""
+        if not self.occurrences:
+            return Provenance.INFERRED
+        return max((o.provenance for o in self.occurrences), key=lambda p: _AUTHORITY[p])
+
+    @property
+    def accumulates(self) -> bool:
+        return self.facet in _ACCUMULATING
+
     def last_seen(self) -> float | None:
-        stamps = [o.at for o in self.occurrences]
-        return max(stamps) if stamps else None
+        return max((o.at for o in self.occurrences), default=None)
 
     def first_seen(self) -> float | None:
-        stamps = [o.at for o in self.occurrences]
-        return min(stamps) if stamps else None
+        return min((o.at for o in self.occurrences), default=None)
+
+    def expires_at(self) -> float | None:
+        if self.facet not in _EXPIRING:
+            return None
+        last = self.last_seen()
+        if last is None:
+            return None
+        return last + (self.ttl if self.ttl is not None else DEFAULT_STATE_TTL)
+
+    def is_current(self, now: float | None = None) -> bool:
+        """Whether this still applies.
+
+        Corrections are permanent. A resolved rupture or answered question is
+        history rather than current knowledge. A lapsed state is simply no
+        longer true.
+        """
+        if self.corrected:
+            return False
+        if self.facet in {Facet.RUPTURE, Facet.QUESTION, Facet.COMMITMENT} and self.resolved:
+            return False
+        expiry = self.expires_at()
+        if expiry is None:
+            return True
+        return (time.time() if now is None else now) < expiry
 
     def episodes(self) -> list[str]:
-        """Every memory that justifies this, so it can be checked."""
         return [o.episode_id for o in self.occurrences]
 
     def render(self, *, now: float | None = None) -> str:
-        """The observation as context text, stating evidence rather than verdict.
-
-        Frequency and recency are rendered as words because the model reads
-        words — but they are *derived from the counts*, never authored, so they
-        cannot drift away from what actually happened.
-        """
+        """As context text, stating kind, evidence and how she knows it."""
         now = time.time() if now is None else now
         parts = [self.claim.strip()]
         if self.conditions:
             parts.append(f"({self.conditions.strip()})")
 
-        evidence = [f"noticed {_times(self.support)}"]
+        evidence: list[str] = []
+        if self.authority is Provenance.STATED:
+            evidence.append("he told me this")
+        elif self.authority is Provenance.INFERRED:
+            # Said out loud, because an inference rendered as fact is how she
+            # ends up confidently wrong about someone.
+            evidence.append("my inference, not something I was told or saw")
+
+        if self.accumulates:
+            evidence.append(f"noticed {_times(self.support)}")
+        elif self.facet is Facet.EVENT:
+            first = self.first_seen()
+            if first is not None:
+                evidence.append(_ago(now - first))
+
         last = self.last_seen()
-        if last is not None:
+        if last is not None and self.accumulates:
             evidence.append(f"most recently {_ago(now - last)}")
         if self.contradictions:
-            evidence.append(
-                f"{_times(self.contradictions)} it did not hold"
-            )
-        parts.append("— " + ", ".join(evidence))
+            evidence.append(f"{_times(self.contradictions)} it did not hold")
+        if self.facet is Facet.STATE:
+            evidence.append("a current state, not a trait")
+        if self.facet is Facet.RUPTURE and not self.resolved:
+            evidence.append("not yet repaired")
+
+        if evidence:
+            parts.append("— " + ", ".join(evidence))
         return " ".join(parts)
 
 
@@ -153,23 +327,36 @@ def _ago(seconds: float) -> str:
     return "a month ago" if months == 1 else f"{months} months ago"
 
 
+#: Headings, in the order a person is worth describing: what they want and care
+#: about before what they are like, because the former explains the latter.
+_FACET_HEADINGS: tuple[tuple[Facet, str], ...] = (
+    (Facet.VALUE, "What matters to them"),
+    (Facet.PREFERENCE, "What they prefer"),
+    (Facet.UNDERSTANDING, "What we understand about each other"),
+    (Facet.MISUNDERSTANDING, "Where we have missed each other"),
+    (Facet.TRAIT, "Patterns I have noticed"),
+    (Facet.STATE, "True right now"),
+    (Facet.AFFECT, "How this has felt"),
+    (Facet.EXPERIENCE, "What we have been through together"),
+    (Facet.EVENT, "Things that happened"),
+    (Facet.COMMITMENT, "Open between us"),
+    (Facet.TRUST_BUILT, "Where trust was built"),
+    (Facet.RUPTURE, "Where I got it wrong with them"),
+    (Facet.QUESTION, "What I still do not know"),
+)
+
+
 class PersonModel:
-    """Her structured view of one person.
+    """Her structured, typed view of one person."""
 
-    Bounded by ``max_observations`` so it cannot grow without limit, but the
-    eviction rule is deliberately *weakest evidence first* rather than oldest:
-    a thing noticed once eighteen months ago and never since is a worse thing
-    to keep than a standing pattern that happens to be old.
-    """
-
-    def __init__(self, person: str, *, max_observations: int = 64) -> None:
+    def __init__(self, person: str, *, max_observations: int = 256) -> None:
         if not person or not person.strip():
             raise ValueError("a person model needs someone to be about")
         if max_observations < 1:
             raise ValueError("max_observations must be positive")
         self.person = person.strip()
         self.max_observations = max_observations
-        self._observations: dict[tuple[str, str], Observation] = {}
+        self._observations: dict[tuple[str, str, str], Observation] = {}
 
     def __len__(self) -> int:
         return len(self._observations)
@@ -184,15 +371,20 @@ class PersonModel:
         claim: str,
         *,
         episode_id: str,
+        facet: Facet = Facet.TRAIT,
+        subject: Subject = Subject.THEM,
+        valence: Valence = Valence.NEUTRAL,
+        provenance: Provenance = Provenance.OBSERVED,
         conditions: str = "",
         note: str = "",
+        ttl: float | None = None,
         at: float | None = None,
     ) -> Observation:
-        """Record a sighting. Repeats increment; they never rewrite.
+        """Record something. Repeats increment; they never rewrite.
 
-        This is the whole mechanism. Seeing the same thing a second time makes
-        the count 2 — it does not make the claim stronger in wording, because
-        the wording is not where strength lives.
+        A repeat of a non-accumulating facet is still recorded — the evidence
+        is real — but ``render`` will not describe it as a frequency, because
+        five bad weeks are five states rather than one disposition.
         """
         if not claim or not claim.strip():
             raise ValueError("an observation needs a claim")
@@ -201,17 +393,31 @@ class PersonModel:
                 "an observation needs the episode that justifies it; a claim "
                 "with no evidence is exactly what this module exists to prevent"
             )
-        occurrence = Occurrence(
-            episode_id=episode_id,
-            at=time.time() if at is None else at,
-            note=note,
+        candidate = Observation(
+            claim=claim.strip(),
+            facet=facet,
+            subject=subject,
+            valence=valence,
+            conditions=conditions.strip(),
+            ttl=ttl,
         )
-        observation = Observation(claim=claim.strip(), conditions=conditions.strip())
-        existing = self._observations.get(observation.key)
+        existing = self._observations.get(candidate.key)
         if existing is None:
-            self._observations[observation.key] = observation
-            existing = observation
-        existing.occurrences.append(occurrence)
+            self._observations[candidate.key] = candidate
+            existing = candidate
+        if existing.corrected:
+            # He already said this was wrong. Observing it again does not
+            # reopen the question; that is what "correction is permanent" means.
+            logger.debug("ignoring re-observation of corrected claim: %s", claim)
+            return existing
+        existing.occurrences.append(
+            Occurrence(
+                episode_id=episode_id,
+                provenance=provenance,
+                at=time.time() if at is None else at,
+                note=note,
+            )
+        )
         self._evict_if_needed()
         return existing
 
@@ -220,42 +426,92 @@ class PersonModel:
         claim: str,
         *,
         episode_id: str,
+        facet: Facet = Facet.TRAIT,
+        subject: Subject = Subject.THEM,
         conditions: str = "",
         note: str = "",
         at: float | None = None,
     ) -> Observation | None:
-        """Record an occasion the claim did *not* hold.
-
-        A view that can only accumulate confirmations is not a model. Prose
-        summarisation never keeps counter-evidence; here it is a field, so it
-        survives every consolidation by construction.
-        """
-        key = (_normalize(claim), _normalize(conditions))
-        observation = self._observations.get(key)
+        """Record an occasion the claim did not hold."""
+        observation = self._observations.get(
+            _key(facet, subject, claim, conditions)
+        )
         if observation is None:
             return None
         observation.counter_examples.append(
             Occurrence(
                 episode_id=episode_id,
+                provenance=Provenance.OBSERVED,
                 at=time.time() if at is None else at,
                 note=note,
             )
         )
         return observation
 
-    def forget(self, claim: str, *, conditions: str = "") -> bool:
-        """Drop an observation outright — a correction, not a decay."""
-        return self._observations.pop((_normalize(claim), _normalize(conditions)), None) is not None
+    def correct(
+        self,
+        claim: str,
+        *,
+        episode_id: str,
+        facet: Facet = Facet.TRAIT,
+        subject: Subject = Subject.THEM,
+        conditions: str = "",
+        note: str = "",
+    ) -> Observation | None:
+        """The person says this is wrong. Permanent, and outranks everything.
+
+        Not a counter-example — a counter-example is evidence to be weighed.
+        Being told you are wrong about someone is not evidence, it is the
+        answer, and no amount of subsequent observing may outvote it.
+        """
+        observation = self._observations.get(
+            _key(facet, subject, claim, conditions)
+        )
+        if observation is None:
+            return None
+        observation.corrected_by = Occurrence(
+            episode_id=episode_id, provenance=Provenance.STATED, note=note
+        )
+        return observation
+
+    def resolve(
+        self,
+        claim: str,
+        *,
+        episode_id: str,
+        facet: Facet,
+        subject: Subject = Subject.THEM,
+        conditions: str = "",
+        note: str = "",
+    ) -> Observation | None:
+        """Close a rupture (repaired), a question (answered), or a commitment."""
+        observation = self._observations.get(
+            _key(facet, subject, claim, conditions)
+        )
+        if observation is None:
+            return None
+        observation.resolved_by = Occurrence(
+            episode_id=episode_id, provenance=Provenance.OBSERVED, note=note
+        )
+        return observation
+
+    def forget(
+        self,
+        claim: str,
+        *,
+        facet: Facet = Facet.TRAIT,
+        subject: Subject = Subject.THEM,
+        conditions: str = "",
+    ) -> bool:
+        return (
+            self._observations.pop(_key(facet, subject, claim, conditions), None)
+            is not None
+        )
 
     # -- consolidation is aggregation --------------------------------------
 
     def merge(self, other: "PersonModel") -> None:
-        """Fold another model's observations in by aggregating the evidence.
-
-        Note what this does not do: it never reconciles two claims into a
-        third, better-worded one. Merging is set union on occurrences, so the
-        counts stay true and nothing acquires confidence it did not earn.
-        """
+        """Fold another model in by aggregating evidence. Never by rewording."""
         if _normalize(other.person) != _normalize(self.person):
             raise ValueError(
                 f"refusing to merge notes about {other.person!r} into "
@@ -266,61 +522,305 @@ class PersonModel:
             if mine is None:
                 self._observations[observation.key] = observation
                 continue
-            seen = {(o.episode_id, o.at) for o in mine.occurrences}
             mine.occurrences.extend(
-                o for o in observation.occurrences if (o.episode_id, o.at) not in seen
+                _new_only(observation.occurrences, mine.occurrences)
             )
-            seen_counter = {(o.episode_id, o.at) for o in mine.counter_examples}
             mine.counter_examples.extend(
-                o for o in observation.counter_examples
-                if (o.episode_id, o.at) not in seen_counter
+                _new_only(observation.counter_examples, mine.counter_examples)
             )
+            # A correction anywhere is a correction everywhere.
+            mine.corrected_by = mine.corrected_by or observation.corrected_by
+            mine.resolved_by = mine.resolved_by or observation.resolved_by
         self._evict_if_needed()
+
+    def _rank(self, observation: Observation) -> tuple:
+        """Ordering within a facet. Authority first, then net evidence.
+
+        Never across facets: an event and a trait are not comparable by count,
+        and ranking them together would let shared history be crowded out by a
+        much-repeated triviality.
+        """
+        return (
+            _AUTHORITY[observation.authority],
+            observation.support - observation.contradictions,
+            observation.last_seen() or 0.0,
+        )
 
     def _evict_if_needed(self) -> None:
         if len(self._observations) <= self.max_observations:
             return
-        # Weakest evidence first: fewest net sightings, then least recent.
-        ranked = sorted(
-            self._observations.values(),
-            key=lambda o: (o.support - o.contradictions, o.last_seen() or 0.0),
-        )
+        # Never evict what he told her, what is unrepaired, or shared history.
+        protected = {Facet.EVENT, Facet.RUPTURE, Facet.COMMITMENT}
+        candidates = [
+            o for o in self._observations.values()
+            if o.facet not in protected and o.authority is not Provenance.STATED
+        ]
+        ranked = sorted(candidates, key=self._rank)
         for observation in ranked[: len(self._observations) - self.max_observations]:
-            logger.debug(
-                "evicting weakly-evidenced observation about %s: %s",
-                self.person, observation.claim,
-            )
+            logger.debug("evicting weakly-evidenced %s: %s", observation.facet, observation.claim)
             del self._observations[observation.key]
 
     # -- reading -----------------------------------------------------------
 
-    def strongest(self, limit: int = 10, *, now: float | None = None) -> list[Observation]:
-        """Best-evidenced observations first. Net of counter-examples."""
-        return sorted(
-            self._observations.values(),
-            key=lambda o: (o.support - o.contradictions, o.last_seen() or 0.0),
-            reverse=True,
-        )[:limit]
+    def current(self, *, facet: Facet | None = None, now: float | None = None) -> list[Observation]:
+        """Everything that still applies, best-sourced first."""
+        found = [o for o in self._observations.values() if o.is_current(now)]
+        if facet is not None:
+            found = [o for o in found if o.facet is facet]
+        return sorted(found, key=self._rank, reverse=True)
 
-    def render(self, *, limit: int = 10, now: float | None = None) -> str:
-        """The block text. Every line carries its own evidence."""
-        observations = self.strongest(limit, now=now)
-        if not observations:
-            return f"No observations about {self.person} yet."
-        lines = [f"What I have noticed about {self.person}:"]
-        lines.extend(f"- {o.render(now=now)}" for o in observations)
-        return "\n".join(lines)
+    def open_questions(self, *, now: float | None = None) -> list[Observation]:
+        return self.current(facet=Facet.QUESTION, now=now)
+
+    def unrepaired(self, *, now: float | None = None) -> list[Observation]:
+        return self.current(facet=Facet.RUPTURE, now=now)
+
+    def render(self, *, per_facet: int = 6, now: float | None = None) -> str:
+        """The block text, grouped by kind of knowledge."""
+        sections: list[str] = []
+        for facet, heading in _FACET_HEADINGS:
+            observations = self.current(facet=facet, now=now)[:per_facet]
+            if not observations:
+                continue
+            sections.append(heading + ":")
+            sections.extend(f"- {o.render(now=now)}" for o in observations)
+            sections.append("")
+        if not sections:
+            return f"I do not know anything about {self.person} yet."
+
+        readings = [d for d in self.dynamics(now=now) if d.basis]
+        if readings:
+            sections.append("Where this stands:")
+            sections.extend(f"- {d.render()}" for d in readings)
+
+        return f"What I know about {self.person}:\n\n" + "\n".join(sections).strip()
+
+    # -- dynamics: read off the record, never asserted ----------------------
+
+    def dynamics(self, *, now: float | None = None) -> list["Dynamic"]:
+        """Trust, safety, comfort, novelty, connection, enjoyment, investment.
+
+        These are *derived*, and that is the whole point. Storing "trust: 0.7"
+        would be a claim nobody could check and everybody would round up. Here
+        each reading is a function over the same evidence everything else uses,
+        and it carries the basis that produced it — so a low reading can be
+        argued with, and a high one can be audited.
+
+        There are more of these than there are facets, deliberately. Facets need
+        distinct *storage rules*; dynamics need only a function. That asymmetry
+        is what lets the felt side of a relationship be rich without the
+        taxonomy becoming unusable.
+        """
+        now = time.time() if now is None else now
+        return [
+            self._trust(now),
+            self._safety(now),
+            self._comfort(now),
+            self._connection(now),
+            self._enjoyment(now),
+            self._novelty(now),
+            self._investment(now),
+        ]
+
+    def _count(self, facet: Facet, *, resolved: bool | None = None) -> int:
+        return sum(
+            1 for o in self._observations.values()
+            if o.facet is facet
+            and not o.corrected
+            and (resolved is None or o.resolved is resolved)
+        )
+
+    def _trust(self, now: float) -> "Dynamic":
+        kept = self._count(Facet.COMMITMENT, resolved=True)
+        open_ = self._count(Facet.COMMITMENT, resolved=False)
+        repaired = self._count(Facet.RUPTURE, resolved=True)
+        unrepaired = self._count(Facet.RUPTURE, resolved=False)
+        built = self._count(Facet.TRUST_BUILT)
+
+        credit = kept + repaired + built
+        if unrepaired:
+            standing = "damaged" if unrepaired > credit else "strained but holding"
+        elif credit == 0:
+            standing = "untested"
+        else:
+            standing = "well established" if credit >= 3 else "building"
+        return Dynamic(
+            name="trust",
+            standing=standing,
+            basis=(
+                f"{kept} commitment(s) kept, {open_} open",
+                f"{repaired} rupture(s) repaired, {unrepaired} not",
+                f"{built} moment(s) that built it",
+            ),
+        )
+
+    def _safety(self, now: float) -> "Dynamic":
+        unrepaired = self._count(Facet.RUPTURE, resolved=False)
+        corrections = sum(1 for o in self._observations.values() if o.corrected)
+        disclosed = sum(
+            1 for o in self._observations.values()
+            if o.authority is Provenance.STATED and not o.corrected
+        )
+        if unrepaired > 1:
+            standing = "guarded"
+        elif disclosed >= 3 or corrections >= 2:
+            standing = "safe enough to be corrected and told things"
+        elif disclosed:
+            standing = "opening"
+        else:
+            standing = "unknown"
+        return Dynamic(
+            name="safety",
+            standing=standing,
+            basis=(
+                f"{disclosed} thing(s) he chose to tell me",
+                f"{corrections} time(s) he corrected me and it stuck",
+                f"{unrepaired} unrepaired rupture(s)",
+            ),
+        )
+
+    def _comfort(self, now: float) -> "Dynamic":
+        stamps = [
+            o.first_seen() for o in self._observations.values() if o.first_seen()
+        ]
+        if not stamps:
+            return Dynamic("comfort", "no shared time yet", ())
+        span_days = int((now - min(stamps)) // DAY_SECONDS)
+        recent = sum(1 for s in stamps if now - s < 7 * DAY_SECONDS)
+        if span_days >= 30 and recent:
+            standing = "familiar"
+        elif span_days >= 7:
+            standing = "settling"
+        else:
+            standing = "new"
+        return Dynamic(
+            name="comfort",
+            standing=standing,
+            basis=(
+                f"known for {span_days} day(s)",
+                f"{recent} thing(s) noticed in the last week",
+            ),
+        )
+
+    def _connection(self, now: float) -> "Dynamic":
+        mutual = self._count(Facet.UNDERSTANDING)
+        missed = self._count(Facet.MISUNDERSTANDING)
+        shared = self._count(Facet.EXPERIENCE) + self._count(Facet.EVENT)
+        between = sum(
+            1 for o in self._observations.values() if o.subject is Subject.BETWEEN
+        )
+        if mutual == 0 and shared == 0:
+            standing = "not yet formed"
+        elif missed > mutual:
+            standing = "we keep missing each other"
+        elif mutual >= 3 or shared >= 3:
+            standing = "we understand each other"
+        else:
+            standing = "forming"
+        return Dynamic(
+            name="connection",
+            standing=standing,
+            basis=(
+                f"{mutual} thing(s) we understand about each other, {missed} we did not",
+                f"{shared} shared experience(s)",
+                f"{between} thing(s) that belong to neither of us alone",
+            ),
+        )
+
+    def _enjoyment(self, now: float) -> "Dynamic":
+        warm = sum(
+            1 for o in self._observations.values()
+            if o.valence is Valence.WARM and not o.corrected
+        )
+        difficult = sum(
+            1 for o in self._observations.values()
+            if o.valence is Valence.DIFFICULT and not o.corrected
+        )
+        if warm == 0 and difficult == 0:
+            standing = "unmeasured"
+        elif difficult > warm:
+            standing = "more difficult than easy lately"
+        elif warm >= 3:
+            standing = "we enjoy this"
+        else:
+            standing = "some warmth"
+        return Dynamic(
+            name="enjoyment",
+            standing=standing,
+            basis=(f"{warm} warm, {difficult} difficult",),
+        )
+
+    def _novelty(self, now: float) -> "Dynamic":
+        """New ground versus familiar ground, recently.
+
+        Measured as first sightings in the last fortnight against repeats in
+        the same window: discovering things about someone is what novelty *is*
+        here, and it is directly readable off the record rather than guessed at.
+        """
+        window = 14 * DAY_SECONDS
+        firsts = 0
+        repeats = 0
+        for observation in self._observations.values():
+            for index, occurrence in enumerate(sorted(observation.occurrences, key=lambda o: o.at)):
+                if now - occurrence.at > window:
+                    continue
+                if index == 0:
+                    firsts += 1
+                else:
+                    repeats += 1
+        if firsts == 0 and repeats == 0:
+            standing = "quiet"
+        elif firsts > repeats:
+            standing = "still discovering each other"
+        elif firsts:
+            standing = "mostly familiar ground, some new"
+        else:
+            standing = "well-worn ground"
+        return Dynamic(
+            name="novelty",
+            standing=standing,
+            basis=(f"{firsts} new thing(s) and {repeats} familiar in the last fortnight",),
+        )
+
+    def _investment(self, now: float) -> "Dynamic":
+        commitments = self._count(Facet.COMMITMENT)
+        questions = self._count(Facet.QUESTION, resolved=False)
+        total = sum(o.support for o in self._observations.values())
+        if total == 0:
+            standing = "none yet"
+        elif commitments or questions:
+            standing = "actively invested"
+        else:
+            standing = "present but not committed"
+        return Dynamic(
+            name="investment",
+            standing=standing,
+            basis=(
+                f"{commitments} commitment(s) between us",
+                f"{questions} thing(s) I still want to know",
+                f"{total} recorded moment(s)",
+            ),
+        )
 
     def audit(self) -> list[dict[str, object]]:
-        """Every claim with the episodes behind it, for a human to check."""
+        """Every claim with its kind, source and evidence, for a human to check."""
         return [
             {
                 "claim": o.claim,
+                "facet": str(o.facet),
                 "conditions": o.conditions,
+                "authority": str(o.authority),
                 "support": o.support,
                 "contradictions": o.contradictions,
+                "corrected": o.corrected,
+                "resolved": o.resolved,
+                "current": o.is_current(),
                 "episodes": o.episodes(),
-                "counter_episodes": [c.episode_id for c in o.counter_examples],
             }
-            for o in self.strongest(limit=len(self._observations))
+            for o in sorted(self._observations.values(), key=self._rank, reverse=True)
         ]
+
+
+def _new_only(incoming: list[Occurrence], existing: list[Occurrence]) -> list[Occurrence]:
+    seen = {(o.episode_id, o.at) for o in existing}
+    return [o for o in incoming if (o.episode_id, o.at) not in seen]
