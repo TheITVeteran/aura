@@ -5597,6 +5597,13 @@ class DesktopTaskSkill(BaseSkill):
             plan_error = self._declared_plan_validation_error(task_context)
             steps, planner = self._steps_with_provenance_from_context(task_context)
             if plan_error and not steps:
+                # The context planner reads the model's own payload, which is
+                # the thing that was malformed. The objective planner works
+                # from the request text and is the one that can still answer.
+                derived = self._derive_steps_from_objective(objective, task_context)
+                if derived:
+                    steps, planner = derived, "heuristic_compat"
+            if plan_error and not steps:
                 return {
                     "ok": False,
                     "status": "invalid_desktop_task_plan",

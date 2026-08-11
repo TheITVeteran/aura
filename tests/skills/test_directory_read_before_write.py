@@ -253,3 +253,36 @@ def test_an_invalid_declared_plan_falls_back_to_heuristic_planning() -> None:
     )
     # ... and giving up now requires that it produced nothing either.
     assert "if plan_error and not steps:" in window
+
+
+def test_the_objective_planner_is_the_fallback_that_can_still_answer() -> None:
+    """The context planner reads the payload that was malformed in the first place.
+
+    LIVE: the first fallback attempt used _steps_with_provenance_from_context,
+    which derives steps from the model's own context — the very thing that had
+    just failed validation — so it returned nothing and the turn died again
+    with the identical message. The objective planner works from the request
+    text and is the one with an answer.
+    """
+    import inspect
+
+    source = inspect.getsource(DesktopTaskSkill)
+    marker = "plan_error = self._declared_plan_validation_error(task_context)"
+    window = source[source.find(marker) : source.find(marker) + 1400]
+
+    assert "_derive_steps_from_objective(objective, task_context)" in window
+    assert window.find("_derive_steps_from_objective") < window.find(
+        '"status": "invalid_desktop_task_plan"'
+    )
+
+
+def test_the_objective_planner_plans_read_then_write() -> None:
+    skill = DesktopTaskSkill.__new__(DesktopTaskSkill)
+
+    steps = skill._derive_steps_from_objective(OBJECTIVE, {})
+
+    assert [step.action for step in steps] == ["list_directory", "write_text_file"]
+    assert json.loads(steps[0].target)["path"] == (
+        "/Users/bryan/.aura/live-source/core/introspection"
+    )
+    assert json.loads(steps[1].target)["path"] == "~/Documents/aura_probe_count.txt"
