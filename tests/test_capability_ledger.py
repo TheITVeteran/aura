@@ -282,3 +282,32 @@ def test_the_real_false_claim_in_that_reply_is_caught():
 def test_locative_phrasing_does_not_make_a_denial(sentence, expected):
     ledger = _ledger(_fixed("conversation"))
     assert bool(ledger.contradicted_claims(sentence)) is expected
+
+
+LIVE_DEFERRAL_DENIAL = (
+    "The instruction would be stored in my short-term memory buffer, which has "
+    "a retention time of approximately 18 seconds. Therefore, the request would "
+    "not persist and no action would be taken after that period."
+)
+
+
+def test_borrowed_human_psychology_is_caught_as_a_false_self_claim():
+    """LIVE 2026-08-10: "approximately 18 seconds".
+
+    That is Peterson and Peterson's figure for human short-term memory, not a
+    property of this runtime, which keeps a durable intention store — 3,685
+    rows at the moment she said it, with "IntentionLoop online — 1133 active"
+    in that session's boot log.
+    """
+    flagged = {
+        claim.availability.name
+        for claim in cl.get_capability_ledger().contradicted_claims(LIVE_DEFERRAL_DENIAL)
+    }
+    assert "deferred_action" in flagged
+
+
+def test_a_denial_with_no_first_person_pronoun_is_still_a_denial():
+    """"the request would not persist" denies as completely as "I can't"."""
+    ledger = _ledger(_fixed("reminder"))
+    assert ledger.contradicted_claims("The reminder would not persist.")
+    assert ledger.contradicted_claims("No action would be taken on that reminder.")

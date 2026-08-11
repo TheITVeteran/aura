@@ -178,6 +178,11 @@ _DENIAL_FRAME = re.compile(
     r"|not\s+readable\b|unreadable\b"
     r"|not\s+available\b|unavailable\b"
     r"|no\s+reading\b|cannot\s+be\s+read\b|can'?t\s+be\s+read\b"
+    # Denials phrased about the request rather than about herself. Live: "the
+    # request would not persist and no action would be taken after that
+    # period" — a complete denial with no "I" in it.
+    r"|would\s+not\s+persist\b|does\s+not\s+persist\b|won'?t\s+persist\b"
+    r"|no\s+action\s+would\s+be\s+taken\b|evaporates?\b|is\s+discarded\b"
     r")",
     re.IGNORECASE,
 )
@@ -603,6 +608,61 @@ def _probe_world_access() -> Availability:
     )
 
 
+def _probe_deferred_action() -> Availability:
+    """Whether an instruction can outlive the turn that gave it.
+
+    LIVE, 2026-08-10: "if i asked you to check on something in twenty minutes,
+    does anything in you actually carry that?" →
+
+        "The instruction would be stored in my short-term memory buffer, which
+         has a retention time of approximately 18 seconds. Therefore, the
+         request would not persist and no action would be taken."
+
+    Eighteen seconds is Peterson and Peterson's figure for human short-term
+    memory. It is not a property of this runtime, which keeps a durable
+    intention store on disk — 3,685 rows of it at the time she said this, and
+    the boot log for that session reads "IntentionLoop online — 1133 active".
+    Borrowed psychology, quoted with a decimal's worth of confidence.
+    """
+    from core.config import config
+
+    store = config.paths.data_dir / "memory" / "intention_loop.db"
+    if not store.exists():
+        return Availability(
+            name="deferred_action",
+            present=False,
+            usable_now=False,
+            summary="I have no store for intentions that outlive a turn.",
+            blocker="the intention store does not exist",
+            evidence={"store": str(store)},
+        )
+    rows = 0
+    try:
+        import sqlite3
+
+        with sqlite3.connect(f"file:{store}?mode=ro", uri=True) as con:
+            rows = int(con.execute("SELECT COUNT(*) FROM intentions").fetchone()[0])
+    except _PROBE_ERRORS + (Exception,):
+        return Availability(
+            name="deferred_action",
+            present=True,
+            usable_now=False,
+            known=False,
+            summary="I could not read my intention store.",
+            evidence={"store": str(store)},
+        )
+    return Availability(
+        name="deferred_action",
+        present=True,
+        usable_now=True,
+        summary=(
+            "I can hold an intention past this turn — they go to a durable "
+            f"store on disk, which currently holds {rows}."
+        ),
+        evidence={"intentions": rows},
+    )
+
+
 def _default_ledger() -> CapabilityLedger:
     ledger = CapabilityLedger()
     ledger.register(
@@ -635,6 +695,14 @@ def _default_ledger() -> CapabilityLedger:
             "conversation_memory",
             ("memory", "remember", "recall", "conversation", "recollection"),
             _probe_conversation_memory,
+        )
+    )
+    ledger.register(
+        LiveCapability(
+            "deferred_action",
+            ("intention", "intentions", "reminder", "reminders", "later",
+             "persist", "afterwards", "follow-up"),
+            _probe_deferred_action,
         )
     )
     ledger.register(
