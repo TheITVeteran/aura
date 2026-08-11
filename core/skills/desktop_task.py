@@ -5636,6 +5636,31 @@ class DesktopTaskSkill(BaseSkill):
         planner = "explicit_steps" if steps else ""
         if not steps:
             plan_error = self._declared_plan_validation_error(task_context)
+            if plan_error:
+                # A DECLARED plan that will not parse is rejected, never
+                # replaced.
+                #
+                # This briefly fell back to heuristic planning, to rescue a
+                # live turn that died with "Structured desktop plan contains an
+                # invalid or unsupported step. Completed 0/0 steps." That was
+                # the wrong repair: substituting a different plan runs work
+                # nobody authored, and two tests here exist precisely to forbid
+                # it — one of them named for rejecting a malformed plan EVEN
+                # WITH a heuristic fallback available.
+                #
+                # The turn behind that symptom was fixed where it belonged, in
+                # routing and in the objective planner, so a request that needs
+                # no declared plan never produces a broken one.
+                return {
+                    "ok": False,
+                    "status": "invalid_desktop_task_plan",
+                    "error": plan_error,
+                    "objective": objective,
+                    "steps_requested": 0,
+                    "steps_completed": 0,
+                    "receipts": [],
+                    "failures": [],
+                }
             steps, planner = self._steps_with_provenance_from_context(task_context)
             if plan_error and not steps:
                 # The context planner reads the model's own payload, which is
