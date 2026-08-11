@@ -385,3 +385,156 @@ def test_an_unknown_capability_is_left_out_rather_than_guessed():
 def test_the_line_stays_one_line():
     """The compact foreground path exists to stay compact."""
     assert "\n" not in cl.self_knowledge_line()
+
+
+class TestTheLineCarriesTheReadingsNotJustThePresence:
+    """LIVE DEFECT 2026-08-10: "Your RAM pressure is currently 37%".
+
+    The instrument read 0.717 at that moment, with resource anxiety 0.948 —
+    she was under real memory stress and reported a comfortable number, about
+    half the true value.
+
+    `_probe_interoception` had measured `memory_pressure` on that very turn and
+    put it in `Availability.evidence`. `self_knowledge_line` then dropped every
+    number and emitted `interoception=yes`, so the line told her she HAS an
+    instrument and never what it READ — and closed by forbidding figures "not
+    here" while placing no figures here. A question wanting a number had
+    nowhere to get one.
+
+    A writer with no reader, which is the shape that keeps recurring: the
+    measurement existed, was taken every turn, and reached nothing.
+    """
+
+    def _line_for(self, monkeypatch, *capabilities):
+        monkeypatch.setattr(cl, "_LEDGER", _ledger(*capabilities))
+        return cl.self_knowledge_line()
+
+    def test_numeric_evidence_reaches_the_line(self, monkeypatch):
+        line = self._line_for(
+            monkeypatch,
+            _fixed("interoception", evidence={"memory_pressure": 0.717, "cpu_pressure": 0.266}),
+        )
+        assert "memory pressure 0.717" in line
+        assert "cpu pressure 0.266" in line
+
+    def test_every_reading_survives_not_just_the_first_few(self, monkeypatch):
+        """The varying quantities sit LAST in the probe's list.
+
+        A per-capability cap dropped `cpu_pressure` and `memory_pressure` —
+        the two the defect was about — and kept three constants that never
+        move. A budget that discards the signal and keeps the noise is worse
+        than no budget.
+        """
+        evidence = {
+            "operational_health": 1.0,
+            "fatigue": 0.0,
+            "total_pressure": 0.0,
+            "cpu_pressure": 0.266,
+            "memory_pressure": 0.717,
+        }
+        line = self._line_for(monkeypatch, _fixed("interoception", evidence=evidence))
+        for label in ("operational health", "fatigue", "total pressure", "cpu pressure", "memory pressure"):
+            assert label in line, f"{label} was dropped from the line"
+
+    def test_a_probe_that_read_no_numbers_contributes_none(self, monkeypatch):
+        """Silence must never become a fabricated zero."""
+        line = self._line_for(monkeypatch, _fixed("world_access", evidence={}))
+        assert "world_access=yes" in line
+        assert "world_access=yes (" not in line
+
+    def test_booleans_are_not_reported_as_quantities(self, monkeypatch):
+        line = self._line_for(
+            monkeypatch, _fixed("camera", evidence={"enabled": False, "devices": 2})
+        )
+        assert "devices 2" in line
+        assert "enabled 0" not in line
+        assert "enabled False" not in line
+
+    def test_unknown_capabilities_stay_out_entirely(self, monkeypatch):
+        line = self._line_for(
+            monkeypatch,
+            _fixed("interoception", known=False, evidence={"memory_pressure": 0.717}),
+            _fixed("code_execution", evidence={"runs": 4}),
+        )
+        assert "interoception" not in line
+        assert "memory pressure" not in line
+        assert "runs 4" in line
+
+
+class TestANumberThatContradictsTheInstrument:
+    """LIVE DEFECT 2026-08-10: "Your RAM pressure is currently 37%".
+
+    Memory pressure read 0.717 at that moment and resource anxiety 0.948. She
+    was under real memory stress and reported a comfortable number, about half
+    the true value, in reply to a request to WATCH that exact quantity.
+
+    Both existing guards were blind, and neither was wrong to be: the panel
+    check wants two or more labelled lines, and the specification check wants
+    "my <noun> … <number> <unit>" where a percentage is not a unit and "your
+    RAM pressure" is not "my". A third phrasing pattern buys one more phrasing.
+
+    This check asks the question that has a definite answer instead: she named
+    a quantity the runtime measures and gave a number — does it match?
+    """
+
+    MEASURED = {"memory_pressure": 0.717, "cpu_pressure": 0.266, "fatigue": 0.0}
+
+    @pytest.fixture(autouse=True)
+    def _measured(self, monkeypatch):
+        monkeypatch.setattr(cl, "measured_self_metrics", lambda: dict(self.MEASURED))
+
+    def test_the_live_defect_is_caught(self):
+        found = cl.contradicted_self_readings("Your RAM pressure is currently 37%.")
+        assert [(m, c) for m, c, _ in found] == [("memory_pressure", "37%")]
+
+    @pytest.mark.parametrize(
+        "reply",
+        [
+            "Your RAM pressure is currently 72%.",   # correctly rounded
+            "RAM pressure is 71.7%.",                # exact
+            "memory pressure 0.72",                  # fraction, her precision
+            "memory pressure 0.717",                 # exact fraction
+            "CPU pressure is sitting around 27%.",   # rounded
+        ],
+    )
+    def test_an_honest_answer_passes_at_its_own_precision(self, reply):
+        """Rounding correctly must never read as contradicting."""
+        assert cl.contradicted_self_readings(reply) == []
+
+    @pytest.mark.parametrize(
+        "reply",
+        [
+            "Memory pressure is high right now, I won't put a number on it.",
+            "I have 37 unread notes. Memory pressure is 72%.",
+            "RAM pressure. 37% of the tests failed.",
+        ],
+    )
+    def test_numbers_belonging_to_other_subjects_are_untouched(self, reply):
+        assert cl.contradicted_self_readings(reply) == []
+
+    def test_a_second_instrument_is_checked_too(self):
+        found = cl.contradicted_self_readings("CPU pressure is at 90%.")
+        assert [(m, c) for m, c, _ in found] == [("cpu_pressure", "90%")]
+
+    def test_nothing_is_claimed_when_no_instrument_reads(self, monkeypatch):
+        monkeypatch.setattr(cl, "measured_self_metrics", dict)
+        assert cl.contradicted_self_readings("Your RAM pressure is currently 37%.") == []
+
+    def test_the_reask_judge_consults_it(self):
+        """A guard that forces a revision must also judge the revision.
+
+        Without this the model keeps the number and rephrases around it, which
+        is how the eighteen-second figure survived its own correction twice.
+        """
+        from interface.routes.chat import _still_contradicts_the_runtime
+
+        class _NoClaims:
+            def contradicted_claims(self, _text):
+                return []
+
+        assert _still_contradicts_the_runtime(
+            "Your RAM pressure is currently 37%.", _NoClaims()
+        ) is True
+        assert _still_contradicts_the_runtime(
+            "Your RAM pressure is currently 72%.", _NoClaims()
+        ) is False

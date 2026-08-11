@@ -4954,10 +4954,41 @@ async def _reanswer_when_the_runtime_contradicts_her(
     # have given instead.
     try:
         from core.self.capability_ledger import (
+            contradicted_self_readings,
             fabricated_self_metrics,
             measured_self_metrics,
             unsupported_self_specification,
         )
+
+        # A number attached to an instrument she HAS, that the instrument
+        # denies. Live 2026-08-10: "Your RAM pressure is currently 37%" while
+        # memory pressure read 0.717 and resource anxiety 0.948 — under real
+        # memory stress, reporting a comfortable number.
+        #
+        # The two guards below were both blind to it and neither was wrong to
+        # be: one wants a panel of labelled lines, the other wants "my <noun>
+        # … <number> <unit>" where a percentage is not a unit. A third phrasing
+        # pattern would have bought one more phrasing. This asks the question
+        # that has a definite answer instead — she named a quantity this
+        # runtime measures, so does her number match the reading, at the
+        # precision she chose to state it in.
+        contradictions = contradicted_self_readings(text)
+        if contradictions:
+            stated = ", ".join(
+                f"{metric.replace('_', ' ')} as {claimed} when it reads {value:g}"
+                for metric, claimed, value in contradictions[:4]
+            )
+            computed_context = (
+                f"{computed_context}\n\n" if computed_context else ""
+            ) + (
+                f"[You gave a number for something you can actually read, and it "
+                f"disagrees with the instrument: you said {stated}. Read it off "
+                "the measurement rather than estimating it.]"
+            )
+            logger.warning(
+                "📉 Reply contradicted its own instruments (%s); re-answering.",
+                "; ".join(f"{metric}={claimed}!={value:g}" for metric, claimed, value in contradictions[:4]),
+            )
 
         # A number quoted as a property of her own machinery. Live twice in a
         # row: "my short-term memory buffer clears after about 18 seconds" —
@@ -5063,12 +5094,22 @@ def _still_contradicts_the_runtime(text: str, ledger: Any) -> bool:
     if ledger.contradicted_claims(text):
         return True
     try:
+        # Every check that can FORCE a re-ask has to appear here too. A guard
+        # that triggers the revision but is not consulted when judging it lets
+        # the model keep the defect and rephrase the sentence around it — which
+        # is precisely how the eighteen-second figure survived its own
+        # correction twice.
         from core.self.capability_ledger import (
+            contradicted_self_readings,
             fabricated_self_metrics,
             unsupported_self_specification,
         )
 
-        return bool(unsupported_self_specification(text) or fabricated_self_metrics(text))
+        return bool(
+            unsupported_self_specification(text)
+            or fabricated_self_metrics(text)
+            or contradicted_self_readings(text)
+        )
     except _CHAT_RECOVERABLE_ERRORS as exc:
         record_degradation("chat.self_metrics", exc)
         return False

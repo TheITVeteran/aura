@@ -573,6 +573,106 @@ def fabricated_self_metrics(reply: str) -> list[str]:
     return labels
 
 
+#: The one lexical gap between how an instrument is named and how anybody says
+#: it out loud. Everything else in this check derives its surface forms from
+#: the metric name itself, so this stays a single documented synonym rather
+#: than a vocabulary someone has to maintain.
+_READING_SYNONYMS = {"memory": ("ram",)}
+
+
+def _reading_aliases(metric: str) -> tuple[str, ...]:
+    """Ways a sentence might name ``metric``, derived from the metric itself."""
+    words = [word for word in re.split(r"[^a-z0-9]+", metric.lower()) if word]
+    if not words:
+        return ()
+    phrase = " ".join(words)
+    aliases = {phrase}
+    for index, word in enumerate(words):
+        for synonym in _READING_SYNONYMS.get(word, ()):
+            aliases.add(" ".join(words[:index] + [synonym] + words[index + 1 :]))
+    return tuple(sorted(aliases))
+
+
+def _claimed_as_fraction(number: float, had_percent: bool) -> float | None:
+    """The claim on the instrument's own 0–1 scale, or None if it cannot be."""
+    if had_percent:
+        return number / 100.0
+    if 0.0 <= number <= 1.0:
+        return number
+    if 1.0 < number <= 100.0:
+        return number / 100.0
+    return None
+
+
+def contradicted_self_readings(reply: str) -> list[tuple[str, str, float]]:
+    """Numbers she attached to instruments she HAS, that the instrument denies.
+
+    LIVE DEFECT, 2026-08-10. Asked to watch RAM pressure and report if it
+    crossed 80%, she answered "Your RAM pressure is currently 37%". The
+    instrument read 0.717, with resource anxiety at 0.948.
+
+    Both existing guards were blind to it, and neither was wrong to be:
+    `fabricated_self_metrics` wants a PANEL of at least two labelled lines, and
+    this was one figure inside a sentence; `unsupported_self_specification`
+    wants "my <noun> … <number> <unit>", and a percentage is not one of its
+    units while "your RAM pressure" is not "my". Adding a third phrasing
+    pattern would have bought exactly one more phrasing.
+
+    So this does not ask whether the sentence LOOKS like a fabrication. It asks
+    the only question with a definite answer: she named a quantity this runtime
+    measures, and gave a number — does it match the reading? An honest answer
+    matches by construction, however it is phrased, and no wording escapes it.
+
+    Comparison happens at the precision SHE used: "37%" is checked against
+    71.7% rounded to whole percent, so a correctly-rounded answer is never
+    called a contradiction and a wrong one cannot hide behind rounding.
+
+    Returns ``(metric, claimed_text, measured_value)`` for each contradiction.
+    """
+
+    text = str(reply or "")
+    if not text.strip():
+        return []
+    measured = measured_self_metrics()
+    if not measured:
+        return []
+
+    found: list[tuple[str, str, float]] = []
+    seen: set[str] = set()
+    for metric, value in measured.items():
+        if not isinstance(value, (int, float)):
+            continue
+        for alias in _reading_aliases(metric):
+            # Either order, but never across a sentence boundary: the number
+            # has to belong to the same clause that named the instrument.
+            pattern = (
+                rf"\b{re.escape(alias)}\b[^.!?\n]{{0,40}}?(\d+(?:\.\d+)?)\s*(%?)"
+                rf"|(\d+(?:\.\d+)?)\s*(%?)[^.!?\n]{{0,20}}?\b{re.escape(alias)}\b"
+            )
+            for match in re.finditer(pattern, text, re.IGNORECASE):
+                raw = match.group(1) or match.group(3)
+                percent = (match.group(2) or match.group(4)) == "%"
+                if raw is None:
+                    continue
+                try:
+                    claimed = float(raw)
+                except ValueError:
+                    continue
+                as_fraction = _claimed_as_fraction(claimed, percent)
+                if as_fraction is None:
+                    continue
+                decimals = len(raw.split(".")[1]) if "." in raw else 0
+                scale = 100.0 if percent else 1.0
+                if round(float(value) * scale, decimals) == round(claimed, decimals):
+                    continue
+                key = f"{metric}:{raw}"
+                if key in seen:
+                    continue
+                seen.add(key)
+                found.append((metric, f"{raw}{'%' if percent else ''}", float(value)))
+    return found
+
+
 #: A specification quoted about her own machinery: "my short-term memory buffer
 #: clears after about 18 seconds", "my context window is 4000 tokens".
 _SELF_SPECIFICATION_RE = re.compile(
@@ -790,6 +890,25 @@ def self_knowledge_line() -> str:
 
     Deliberately one line. The compact foreground path exists to stay compact,
     and a self-model that costs a paragraph a turn would be removed from it.
+
+    LIVE DEFECT, 2026-08-10, in this function. Asked "keep an eye on my RAM
+    pressure and tell me if it crosses 80%", she answered "Your RAM pressure is
+    currently 37%". The instrument read 0.717, with resource anxiety at 0.948 —
+    she was under real memory stress and reported a comfortable number.
+
+    The reason was here. Every probe already returns its readings in
+    ``Availability.evidence`` — ``_probe_interoception`` collects
+    ``memory_pressure``, ``cpu_pressure``, ``fatigue`` and more on every call —
+    and this function discarded all of them, emitting only
+    ``interoception=yes``. So the line said she HAS an instrument and never
+    what the instrument READS, and then closed by forbidding figures that "are
+    not here" while putting no figures here. A question demanding a number had
+    nowhere to get one, so it got an invented one.
+
+    Carrying the values costs nothing extra: they are measured either way, on
+    the same call, by the same probes her executors consult. The discipline is
+    unchanged — a probe that read nothing contributes nothing, so silence never
+    becomes a fabricated zero.
     """
     parts: list[str] = []
     for name, availability in get_capability_ledger().measure_all().items():
@@ -801,7 +920,8 @@ def self_knowledge_line() -> str:
             state = f"present but {availability.blocker or 'not ready'}"
         else:
             state = "no"
-        parts.append(f"{name}={state}")
+        readings = _evidence_readings(availability)
+        parts.append(f"{name}={state}" + (f" ({readings})" if readings else ""))
     if not parts:
         return ""
     return (
@@ -810,6 +930,35 @@ def self_knowledge_line() -> str:
         + ". Answer questions about yourself from these, and do not quote "
         "figures about your own machinery that are not here.]"
     )
+
+
+def _evidence_readings(availability: Availability) -> str:
+    """The numbers this probe actually returned, as a person would read them.
+
+    Only quantities. Evidence that is not a number is either already carried by
+    the state word or is not something she would be asked to quote.
+
+    Every numeric reading is included, deliberately. A first draft capped this
+    at three per capability and the cap silently dropped ``cpu_pressure`` and
+    ``memory_pressure`` — the two the live defect was about — because they sit
+    last in the probe's list, leaving three constants that never move. A budget
+    that discards the varying quantities and keeps the fixed ones is worse than
+    no budget. Each probe already curates the labels it reads; that curation is
+    the bound, and it belongs there rather than here.
+    """
+    evidence = getattr(availability, "evidence", None)
+    if not isinstance(evidence, dict):
+        return ""
+    readings: list[str] = []
+    for key, value in evidence.items():
+        if isinstance(value, bool) or not isinstance(value, (int, float)):
+            continue
+        label = str(key).replace("_", " ").strip()
+        if not label:
+            continue
+        number = f"{value:g}" if isinstance(value, float) else str(value)
+        readings.append(f"{label} {number}")
+    return ", ".join(readings)
 
 
 _LEDGER: CapabilityLedger | None = None
