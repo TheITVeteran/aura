@@ -11,9 +11,13 @@ from mlx_lm.models.qwen2 import Model, ModelArgs  # noqa: E402
 
 from core.learning.intrinsic_recurrence import RecurrentDepthPlan  # noqa: E402
 from core.learning.protected_memory import MemoryLayout  # noqa: E402
+from core.learning.recurrent_answer_emission import (  # noqa: E402
+    RecurrentAnswerEmissionContract,
+)
 from core.learning.unified_intrinsic_recurrence import (  # noqa: E402
     UnifiedRecurrenceConfig,
     UnifiedRecurrentController,
+    apply_terminal_answer_grammar,
     unified_recurrent_hidden_states,
     unified_recurrent_logits,
 )
@@ -284,6 +288,91 @@ def test_answer_digit_pointer_preserves_role_across_two_digit_value() -> None:
     pointed = controller.apply_answer_digit_pointer(logits, roles, places, state)
 
     assert mx.argmax(pointed[0], axis=-1).tolist() == [11, 17]
+
+
+def test_answer_digit_pointer_closes_one_digit_value_after_first_token() -> None:
+    controller = UnifiedRecurrentController(
+        UnifiedRecurrenceConfig(
+            hidden_size=64,
+            correction_rank=8,
+            literal_digit_token_ids=tuple(range(10, 20)),
+        )
+    )
+    logits = mx.zeros((1, 2, 32), dtype=mx.float32)
+    roles = mx.full((1, 2, 6), -100.0).at[:, :, 2].add(200.0)
+    places = mx.full((1, 2, 3), -100.0).at[:, :, 2].add(200.0)
+    state = controller.exact_probabilities(
+        (0, 7, 0, 0, 1),
+        slots=5,
+        cardinality=33,
+    )
+
+    pointed = controller.apply_answer_digit_pointer(logits, roles, places, state)
+
+    assert mx.argmax(pointed[0], axis=-1).tolist() == [17, 0]
+
+
+def test_terminal_answer_grammar_forces_only_syntax_around_neural_digits() -> None:
+    controller = UnifiedRecurrentController(
+        UnifiedRecurrenceConfig(
+            hidden_size=64,
+            correction_rank=8,
+            literal_digit_token_ids=tuple(range(10, 20)),
+        )
+    )
+    contract = RecurrentAnswerEmissionContract(
+        digit_token_ids=tuple(range(10, 20)),
+        eos_token_id=39,
+        family_markers=(
+            ("khop", (1,)),
+            ("modular", (2,)),
+            ("register_trace", (3,)),
+        ),
+        syntax=(
+            ("khop", (30,)),
+            ("modular", (31,)),
+            ("register_head", (32,)),
+            ("register_mid_r1", (33,)),
+            ("register_mid_r2", (34,)),
+            ("close", (35,)),
+        ),
+    )
+    state = controller.exact_probabilities(
+        (0, 7, 0, 0, 1), slots=5, cardinality=33
+    )
+    logits = (
+        mx.zeros((1, 1, 40), dtype=mx.float32)
+        .at[:, :, 5]
+        .add(10.0)
+        .at[:, :, 17]
+        .add(9.0)
+    )
+
+    opening = apply_terminal_answer_grammar(
+        logits,
+        mx.array([[2]]),
+        state_slot_start=1,
+        state_probabilities=state,
+        contract=contract,
+    )
+    digit = apply_terminal_answer_grammar(
+        logits,
+        mx.array([[2, 31]]),
+        state_slot_start=1,
+        state_probabilities=state,
+        contract=contract,
+    )
+    closing = apply_terminal_answer_grammar(
+        logits,
+        mx.array([[2, 31, 17]]),
+        state_slot_start=1,
+        state_probabilities=state,
+        contract=contract,
+    )
+
+    assert int(mx.argmax(opening[0, -1]).item()) == 31
+    assert int(mx.argmax(digit[0, -1]).item()) == 17
+    assert int(mx.argmax(closing[0, -1]).item()) == 35
 
 
 def test_terminal_typed_state_preserves_first_terminal_decode_state() -> None:

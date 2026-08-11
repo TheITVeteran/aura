@@ -44513,3 +44513,45 @@ fusion admission, broad reasoning gain, frontier performance or `WOW Signal`
 is claimed. The completion envelope advances to `910/920` (approximately
 `98.9%`). Next is the single-digit continuation repair, frozen causal lesions
 and a larger prompt-disjoint replication before any resident-32B allocation.
+
+## Checkpoints 2026-08-11-225 through 227: Closed Neural Emission and Causal Lesions
+
+CP225 made single-digit completion stateful. A value-bearing field closes after
+one digit when its selected categorical register is below ten; a second digit
+can continue only from a two-digit start and retains the original field role.
+The fresh decode kept the CP224 behavioral result at `7/9`, but removed the
+previous `1 -> 11` duplication. The remaining failures were now localized to
+an unconstrained syntax prefix and a one-digit field followed by a plausible
+language-model digit after the neural pointer disengaged. The report commitment
+is `214ca417bd96d12d00a1c3fc63d911bd0442e7a24e0a73e2474775447aaaebf1`.
+
+CP226 introduced a tokenizer-bound terminal grammar that exposes field names,
+punctuation, digit count and EOS while withholding every answer digit. Its
+first canary stopped honestly at step 40: value positions were still open to
+the whole vocabulary, so an early generated-history roll-in put syntax in a
+digit slot. CP227 repaired the mechanism by restricting those positions to the
+ten tokenizer-bound digit tokens while preserving their neural ranking. This
+is a grammar constraint, not an answer compiler: categorical recurrent state
+and the learned role/place pointer remain the only source of digit identity.
+Invalid prior history fails closed rather than being silently repaired.
+
+The source-bound CP227 best checkpoint retained exact initial state,
+instruction, state value, control and terminal execution on all `27/27`
+holdouts at every tested depth. T4/T8/T16 CE was `0.013588` versus T1
+`0.525733`, a `97.416%` relative reduction. On a new prompt seed, base solved
+`0/9`, trained T1 solved `4/9`, and the complete T4 and T16 neural paths each
+solved `9/9`. Removing the digit pointer collapsed T16 to `0/9`; removing only
+the grammar shell remained `9/9` on this seed. The gain is therefore causally
+carried by recurrent typed-state digit emission here, while the grammar shell
+is a reliability invariant rather than the source of the measured improvement.
+The checkpoint commitment is
+`740ef7ab4c5b053ad987a02be1fdf8ddc1b08716a2c391daac9149054d96cac5`
+and the decode report commitment is
+`077c63945bf6c67615ee2a53ea23ec1c7acaf327b64e9a5833a836f9dd024d11`.
+
+This is a complete bounded result on nine unseen executable tasks, not yet a
+powered cross-seed result or broad language-reasoning claim. No resident-32B
+transfer, fusion admission, frontier performance or `WOW Signal` is claimed.
+The completion envelope advances to `911/920` (approximately `99.0%`). Next is
+the larger prompt-disjoint replication with the same frozen full and lesion
+arms, followed by independent-seed confirmation before resident-32B admission.

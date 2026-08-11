@@ -166,6 +166,9 @@ def evaluate_decoding(
         def recurrent_logits(
             tokens: Any,
             plan: Any,
+            *,
+            grammar_enabled: bool = True,
+            pointer_enabled: bool = True,
             state_slot_start: int = int(prompt.shape[-1]),
         ) -> Any:
             logits, _telemetry = unified_recurrent_logits(
@@ -174,6 +177,10 @@ def evaluate_decoding(
                 plan,
                 bundle.controller,
                 state_slot_start=state_slot_start,
+                answer_emission_contract=(
+                    answer_contract if grammar_enabled else None
+                ),
+                answer_digit_pointer_enabled=pointer_enabled,
             )
             return logits
 
@@ -230,6 +237,7 @@ def evaluate_decoding(
             )
             return _force_next_token(logits, expected[len(generated)])
 
+        lesion_depth = max(decoded_depths)
         arms: tuple[tuple[str, Callable[[Any], Any]], ...] = (
             ("base_t1", base_logits),
             ("trained_t1", lambda tokens: recurrent_logits(tokens, t1)),
@@ -242,6 +250,22 @@ def evaluate_decoding(
                     ),
                 )
                 for depth in decoded_depths
+            ),
+            (
+                f"grammar_lesion_t{lesion_depth}",
+                lambda tokens, depth=lesion_depth: recurrent_logits(
+                    tokens,
+                    spec.plan_at(depth),
+                    grammar_enabled=False,
+                ),
+            ),
+            (
+                f"pointer_lesion_t{lesion_depth}",
+                lambda tokens, depth=lesion_depth: recurrent_logits(
+                    tokens,
+                    spec.plan_at(depth),
+                    pointer_enabled=False,
+                ),
             ),
             *(
                 (
@@ -329,15 +353,18 @@ def evaluate_decoding(
         "task_depths": list(depths),
         "task_count": len(tasks),
         "recurrence_depths": list(decoded_depths),
+        "lesion_depth": max(decoded_depths),
         "max_tokens": max_tokens,
         "arm_results": arm_results,
         "depth_results": depth_results,
         "candidates": candidates,
         "claim_boundary": (
             "compiled arms measure public typed-state execution plus "
-            "tokenizer-bound emission; trained arms remove that compiler and "
-            "measure neural internalization. This is not a preregistered broad "
-            "reasoning, resident-32B, frontier, fusion, or WOW result"
+            "tokenizer-bound value emission; trained arms constrain only the "
+            "public output grammar while neural state selects every digit. "
+            "Grammar and digit-pointer lesions test those mechanisms "
+            "separately. This is not a preregistered broad reasoning, "
+            "resident-32B, frontier, fusion, or WOW result"
         ),
     }
     return {**body, "report_sha256": _canonical_sha256(body)}

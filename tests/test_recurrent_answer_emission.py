@@ -55,3 +55,36 @@ def test_answer_emission_refuses_incomplete_or_conflicting_public_state() -> Non
     assert contract.expected_tokens((8,), (2, 7, 0, 0, 1)) is None
     with pytest.raises(ValueError, match="conflicting"):
         contract.expected_tokens((1, 2), (2, 7, 0, 0, 1))
+
+
+def test_answer_template_exposes_width_and_syntax_but_not_digit_identity() -> None:
+    contract = _contract()
+
+    assert contract.emission_template((3,), (4, 12, 3, 29, 1)) == (
+        32,
+        None,
+        None,
+        33,
+        None,
+        34,
+        None,
+        None,
+        35,
+        99,
+    )
+    assert contract.next_template_token((3,), (4, 12, 3, 29, 1), ()) == 32
+    assert contract.next_template_token((3,), (4, 12, 3, 29, 1), (32,)) is None
+    assert contract.next_template_token(
+        (3,),
+        (4, 12, 3, 29, 1),
+        (32, 11, 12),
+    ) == 33
+
+
+def test_answer_template_rejects_invalid_history_instead_of_recovering() -> None:
+    contract = _contract()
+
+    with pytest.raises(ValueError, match="diverged"):
+        contract.next_template_token((2,), (4, 7, 0, 0, 1), (30,))
+    with pytest.raises(ValueError, match="digit slot"):
+        contract.next_template_token((2,), (4, 7, 0, 0, 1), (31, 35))

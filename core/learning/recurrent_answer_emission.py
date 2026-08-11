@@ -116,6 +116,75 @@ class RecurrentAnswerEmissionContract:
             raise ValueError("recurrent answer value is outside the admitted vocabulary")
         return tuple(self.digit_token_ids[int(digit)] for digit in str(value))
 
+    def emission_template(
+        self,
+        public_tokens: Sequence[int],
+        state_values: Sequence[int],
+    ) -> tuple[int | None, ...] | None:
+        """Return canonical syntax while withholding every answer digit.
+
+        ``None`` positions are value-bearing slots whose token identity must
+        come from the neural state reader. Fixed positions carry only the
+        tokenizer-bound JSON envelope and EOS. The typed state determines the
+        number of digit slots, but this template never exposes their values.
+        """
+
+        if len(state_values) != 5 or any(type(value) is not int for value in state_values):
+            raise ValueError("recurrent answer state width differs")
+        if state_values[-1] != 1:
+            return None
+        family = self.family(public_tokens)
+        if family is None:
+            return None
+        syntax = dict(self.syntax)
+
+        def digit_slots(value: int) -> tuple[None, ...]:
+            return (None,) * len(self.number_tokens(value))
+
+        if family == "khop":
+            body = syntax["khop"] + digit_slots(state_values[1]) + syntax["close"]
+        elif family == "modular":
+            body = syntax["modular"] + digit_slots(state_values[1]) + syntax["close"]
+        else:
+            body = (
+                syntax["register_head"]
+                + digit_slots(state_values[1])
+                + syntax["register_mid_r1"]
+                + digit_slots(state_values[2])
+                + syntax["register_mid_r2"]
+                + digit_slots(state_values[3])
+                + syntax["close"]
+            )
+        return body + (self.eos_token_id,)
+
+    def next_template_token(
+        self,
+        public_tokens: Sequence[int],
+        state_values: Sequence[int],
+        generated_tokens: Sequence[int],
+    ) -> int | None:
+        """Validate emitted history and return the next syntax constraint.
+
+        A ``None`` result means the next position is a neural digit, not that
+        the contract was absent. Callers should first require a non-``None``
+        :meth:`emission_template` for the terminal state.
+        """
+
+        template = self.emission_template(public_tokens, state_values)
+        if template is None:
+            raise ValueError("terminal answer grammar is unavailable")
+        generated = tuple(int(token_id) for token_id in generated_tokens)
+        if len(generated) >= len(template):
+            raise ValueError("generated answer exceeds the terminal grammar")
+        digit_ids = frozenset(self.digit_token_ids)
+        for actual, expected in zip(generated, template, strict=False):
+            if expected is None:
+                if actual not in digit_ids:
+                    raise ValueError("generated answer put syntax in a digit slot")
+            elif actual != expected:
+                raise ValueError("generated answer diverged from terminal syntax")
+        return template[len(generated)]
+
     def expected_tokens(
         self,
         public_tokens: Sequence[int],

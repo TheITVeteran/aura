@@ -22,6 +22,10 @@ from mlx.utils import tree_unflatten  # noqa: E402
 from core.learning.intrinsic_recurrence_objective import (  # noqa: E402
     answer_cross_entropy,
 )
+from core.learning.recurrent_answer_emission import (  # noqa: E402
+    RecurrentAnswerEmissionContract,
+    tokenizer_answer_emission_contract,
+)
 from core.learning.recurrent_literal_grounding import (  # noqa: E402
     LiteralObservationContract,
     tokenizer_digit_token_ids,
@@ -142,6 +146,34 @@ def _load_checkpoint(
         or opcode_contract != tokenizer_contract
     ):
         raise RuntimeError("unified checkpoint opcode contract differs")
+    answer_identity = identity.get("answer_emission_contract")
+    if not isinstance(answer_identity, dict):
+        raise RuntimeError("unified checkpoint answer emission contract is absent")
+    answer_contract = RecurrentAnswerEmissionContract(
+        digit_token_ids=tuple(answer_identity.get("digit_token_ids", ())),
+        eos_token_id=answer_identity.get("eos_token_id"),
+        family_markers=tuple(
+            (row.get("family"), tuple(row.get("token_ids", ())))
+            for row in answer_identity.get("family_markers", ())
+            if isinstance(row, dict)
+        ),
+        syntax=tuple(
+            (row.get("name"), tuple(row.get("token_ids", ())))
+            for row in answer_identity.get("syntax", ())
+            if isinstance(row, dict)
+        ),
+        schema=answer_identity.get("schema"),
+    )
+    tokenizer_answer_contract = tokenizer_answer_emission_contract(
+        tokenizer,
+        tokenizer_contract,
+    )
+    if (
+        answer_contract.contract_sha256
+        != answer_identity.get("contract_sha256")
+        or answer_contract != tokenizer_answer_contract
+    ):
+        raise RuntimeError("unified checkpoint answer emission contract differs")
     spec = UnifiedIntrinsicTrainingSpec(**identity["spec"])
     wiring = _attach_window_adapters(
         model,

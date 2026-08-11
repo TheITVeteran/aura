@@ -683,6 +683,7 @@ def _generate_student_rollin(
     plan: Any,
     *,
     eos_token_id: int | None,
+    answer_emission_contract: RecurrentAnswerEmissionContract | None = None,
     state_slot_start: int | None = None,
 ) -> Any:
     """Greedily materialize a fixed-length deep-policy decoder history."""
@@ -703,6 +704,7 @@ def _generate_student_rollin(
                 plan,
                 bundle.controller,
                 state_slot_start=state_slot_start,
+                answer_emission_contract=answer_emission_contract,
             )
             token = int(mx.argmax(logits[0, -1]).item())
             stopped = eos_token_id is not None and token == eos_token_id
@@ -1501,6 +1503,7 @@ def main() -> int:
                                 answer,
                                 spec.plan_at(semantic_depth),
                                 eos_token_id=tokenizer.eos_token_id,
+                                answer_emission_contract=answer_emission_contract,
                                 state_slot_start=int(prompt.shape[-1]),
                             )
                             effective, selected = _deterministic_student_mix(
@@ -1594,6 +1597,7 @@ def main() -> int:
                                 answer,
                                 spec.plan_at(max(spec.train_depths)),
                                 eos_token_id=tokenizer.eos_token_id,
+                                answer_emission_contract=answer_emission_contract,
                                 state_slot_start=int(prompt.shape[-1]),
                             )
                             effective, selected = _deterministic_student_mix(

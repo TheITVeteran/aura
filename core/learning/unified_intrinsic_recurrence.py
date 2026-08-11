@@ -44,6 +44,7 @@ from core.learning.recurrent_action_schema import (
     OP_REGISTER_AFFINE,
     OP_SUB_MOD,
 )
+from core.learning.recurrent_answer_emission import RecurrentAnswerEmissionContract
 from core.learning.recurrent_literal_grounding import (
     LITERAL_MAX_VALUE,
     LiteralObservationContract,
@@ -733,17 +734,28 @@ class UnifiedRecurrentController(nn.Module):
             ),
             axis=-1,
         )
+        previous_two_digit_start = mx.zeros(
+            (*raw_roles.shape[:1], 1), dtype=mx.float32
+        )
+        previous_value_complete = mx.zeros(
+            (*raw_roles.shape[:1], 1), dtype=mx.float32
+        )
         for position in range(int(raw_roles.shape[1])):
             raw_role = raw_roles[:, position, :]
             raw_place = raw_places[:, position, :]
-            digit_mass = mx.sum(raw_place[:, 1:], axis=-1, keepdims=True)
+            digit_mass = (
+                mx.sum(raw_place[:, 1:], axis=-1, keepdims=True)
+                * (1.0 - previous_value_complete)
+            )
             previous_role_mass = mx.sum(
                 previous_role[:, 1:], axis=-1, keepdims=True
             )
             # A second digit is still part of the field selected at the first
             # digit.  Letting an independently classified role replace it made
             # multi-register answers read the ones digit from another slot.
-            continuation = digit_mass * previous_role_mass
+            continuation = (
+                digit_mass * previous_role_mass * previous_two_digit_start
+            )
             role = (1.0 - continuation) * raw_role + continuation * previous_role
             role_mass = mx.sum(role[:, 1:], axis=-1, keepdims=True)
             selected_values = mx.einsum(
@@ -768,6 +780,10 @@ class UnifiedRecurrentController(nn.Module):
                 * digit_mass
                 * mx.sigmoid(self.answer_digit_gate_logit)
             )
+            previous_value_complete = (
+                digit_mass * start * one_digit_mass + continuation
+            )
+            previous_two_digit_start = digit_mass * start * two_digit_mass
             previous_role = role
         digit_probabilities = mx.stack(digit_probabilities_by_position, axis=1)
         vocabulary = mx.arange(vocabulary_size)
@@ -1890,6 +1906,63 @@ def unified_recurrent_hidden_states(
     return final, trajectory, telemetry
 
 
+def apply_terminal_answer_grammar(
+    logits: Any,
+    tokens: Any,
+    *,
+    state_slot_start: int,
+    state_probabilities: Any,
+    contract: RecurrentAnswerEmissionContract,
+) -> Any:
+    """Constrain only canonical syntax around neurally emitted answer digits."""
+
+    if (
+        len(logits.shape) != 3
+        or len(tokens.shape) != 2
+        or len(state_probabilities.shape) != 3
+        or int(logits.shape[0]) != int(tokens.shape[0])
+        or int(logits.shape[0]) != int(state_probabilities.shape[0])
+        or state_probabilities.shape[1:] != (
+            len(STATE_SLOT_NAMES),
+            STATE_CARDINALITY,
+        )
+        or type(state_slot_start) is not int
+        or not 0 <= state_slot_start <= int(tokens.shape[1])
+    ):
+        raise ValueError("terminal answer grammar tensor layout differs")
+    rows: list[Any] = []
+    vocabulary = mx.arange(int(logits.shape[-1]))
+    state_rows = mx.argmax(state_probabilities, axis=-1).tolist()
+    token_rows = tokens.tolist()
+    for batch_index, state_values in enumerate(state_rows):
+        public_tokens = token_rows[batch_index][:state_slot_start]
+        generated_tokens = token_rows[batch_index][state_slot_start:]
+        template = contract.emission_template(public_tokens, state_values)
+        row = logits[batch_index, -1, :]
+        if template is not None:
+            forced_token = contract.next_template_token(
+                public_tokens,
+                state_values,
+                generated_tokens,
+            )
+            if forced_token is None:
+                digit_tokens = mx.array(contract.digit_token_ids)
+                allowed = mx.any(
+                    digit_tokens[:, None] == vocabulary[None, :],
+                    axis=0,
+                )
+                row = mx.where(allowed, row, -1e9).astype(logits.dtype)
+            else:
+                if forced_token >= int(logits.shape[-1]):
+                    raise ValueError("answer grammar token is outside the vocabulary")
+                row = mx.where(vocabulary == forced_token, 0.0, -1e9).astype(
+                    logits.dtype
+                )
+        rows.append(row)
+    constrained = mx.stack(rows, axis=0)
+    return mx.concatenate([logits[:, :-1, :], constrained[:, None, :]], axis=1)
+
+
 def unified_recurrent_logits(
     model: Any,
     tokens: Any,
@@ -1897,9 +1970,19 @@ def unified_recurrent_logits(
     controller: UnifiedRecurrentController,
     **kwargs: Any,
 ) -> tuple[Any, UnifiedRecurrenceTelemetry]:
+    answer_emission_contract = kwargs.pop("answer_emission_contract", None)
+    answer_digit_pointer_enabled = kwargs.pop("answer_digit_pointer_enabled", True)
+    if answer_emission_contract is not None and not isinstance(
+        answer_emission_contract, RecurrentAnswerEmissionContract
+    ):
+        raise TypeError("answer emission contract is invalid")
+    if type(answer_digit_pointer_enabled) is not bool:
+        raise TypeError("answer digit pointer flag must be bool")
     state_slot_start = kwargs.get("state_slot_start")
     pointer_enabled = (
-        state_slot_start is not None and bool(controller.config.literal_digit_token_ids)
+        answer_digit_pointer_enabled
+        and state_slot_start is not None
+        and bool(controller.config.literal_digit_token_ids)
     )
     state_probabilities: list[Any] = kwargs.setdefault(
         "state_probability_trajectory", []
@@ -1928,6 +2011,21 @@ def unified_recurrent_logits(
             state_probabilities[-1],
         )
         logits = mx.concatenate([logits[:, :answer_start, :], pointed], axis=1)
+    if answer_emission_contract is not None:
+        if state_slot_start is None or not state_probabilities:
+            raise RuntimeError("answer grammar emitted no recurrent typed state")
+        if (
+            tuple(answer_emission_contract.digit_token_ids)
+            != tuple(controller.config.literal_digit_token_ids)
+        ):
+            raise RuntimeError("answer grammar and neural digit contracts differ")
+        logits = apply_terminal_answer_grammar(
+            logits,
+            tokens,
+            state_slot_start=int(state_slot_start),
+            state_probabilities=state_probabilities[-1],
+            contract=answer_emission_contract,
+        )
     return logits, telemetry
 
 
@@ -1936,6 +2034,7 @@ __all__ = [
     "UnifiedRecurrenceConfig",
     "UnifiedRecurrenceTelemetry",
     "UnifiedRecurrentController",
+    "apply_terminal_answer_grammar",
     "unified_recurrent_hidden_states",
     "unified_recurrent_logits",
 ]
