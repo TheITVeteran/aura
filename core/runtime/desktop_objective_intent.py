@@ -251,6 +251,29 @@ def _contains_desktop_objective_term(text: str, terms: tuple[str, ...]) -> bool:
     return False
 
 
+
+#: An absolute or home-relative path with a real separator. Deliberately not
+#: matching bare words like "core/introspection" — a relative fragment is
+#: ambiguous with ordinary prose ("the input/output problem").
+_CONCRETE_PATH_RE = re.compile(r"(?<![\w/])(?:~|/)[\w.\-]+(?:/[\w.\-]+)*/?")
+
+#: What a request does with a path it names.
+_PATH_OPERATION_RE = re.compile(
+    r"\b(?:count|how\s+many|list|show|read|open|write|save|create|append|"
+    r"delete|remove|copy|move|rename|check|inspect|look\s+at|what(?:'s| is)\s+in|"
+    r"contents?\s+of|files?\s+in|find)\b",
+    re.IGNORECASE,
+)
+
+
+def _asks_about_a_concrete_path(text: str) -> bool:
+    """True when the turn names a real filesystem path and does something with it."""
+
+    if not _CONCRETE_PATH_RE.search(text or ""):
+        return False
+    return bool(_PATH_OPERATION_RE.search(text or ""))
+
+
 def looks_like_desktop_objective(user_message: str) -> bool:
     """Return true for user requests that need visible desktop/computer action.
 
@@ -277,6 +300,28 @@ def looks_like_desktop_objective(user_message: str) -> bool:
     # research/tool path; "open Chrome and search" still routes to desktop
     # because the visible app action remains after this span is stripped.
     sanitized_text = _CANONICAL_RESEARCH_TOOL_SPAN_RE.sub(" ", sanitized_text)
+    # A concrete filesystem path in the request IS the routing signal.
+    #
+    # LIVE, 2026-08-10: "Count how many .py files are in
+    # /Users/bryan/.aura/live-source/core/introspection, then write that number
+    # and the file names into ~/Documents/aura_probe_count.txt" routed here as
+    # ordinary conversation. She answered from nothing — 3 instead of 9, three
+    # invented filenames, and a report of a write that never happened.
+    #
+    # "write hello into ~/Documents/x.txt" routed correctly, so the action+
+    # surface pair works when the action verb LEADS. It missed this because the
+    # sentence opens with "count how many", and it missed the pure read
+    # "how many .py files are in /abs/path?" for the same reason.
+    #
+    # The path is the part that settles it. Nothing in the model can answer a
+    # question about the contents of a real path, and nothing can write to one
+    # without the body. Asked about a path she has not read, the only honest
+    # options are to look or to decline, and she did neither.
+    if _asks_about_a_concrete_path(sanitized_text):
+        return True
+    # Ordered ahead of the inventory check on purpose: "count how many .py
+    # files are in /abs/path" was being read as a question about her own
+    # capability inventory, which is where the live failure was decided.
     if looks_like_capability_inventory_dialogue_request(user_message):
         return False
     # Being shown her own source is not desktop work. "Show me a piece of your
