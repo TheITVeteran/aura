@@ -3571,6 +3571,26 @@ class DesktopTaskSkill(BaseSkill):
                 if verified
                 else f"the document was not found in {app} after writing",
             )
+        if action == "list_directory":
+            # A read's effect is the reading itself. Without this branch the
+            # verifier fell through to "unsupported effect evidence", so a
+            # directory that had been read correctly reported 0/2 steps and the
+            # write that depended on it never ran.
+            path = str(result.get("path") or "").strip()
+            count = result.get("count")
+            verified = (
+                bool(path)
+                and bool(result.get("ok"))
+                and type(count) is int
+                and count >= 0
+                and isinstance(result.get("names"), list)
+            )
+            return (
+                verified,
+                f"listed={path};pattern={result.get('pattern')};count={count}"
+                if verified
+                else str(result.get("error") or "missing directory listing"),
+            )
         if action == "create_folder":
             path = str(result.get("path") or "").strip()
             verified = bool(path) and bool(result.get("effect_verified"))

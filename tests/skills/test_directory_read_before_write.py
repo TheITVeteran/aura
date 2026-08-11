@@ -286,3 +286,49 @@ def test_the_objective_planner_plans_read_then_write() -> None:
         "/Users/bryan/.aura/live-source/core/introspection"
     )
     assert json.loads(steps[1].target)["path"] == "~/Documents/aura_probe_count.txt"
+
+
+def test_a_read_verifies_on_the_reading_itself() -> None:
+    """LIVE: "unsupported effect evidence for desktop action list_directory".
+
+    Every prior action changed the world, so effect verification only knew how
+    to confirm changes. A read's effect IS the reading, and without a branch
+    saying so, a directory that had been read correctly reported 0/2 steps and
+    the write that depended on it never ran.
+    """
+    step = DesktopTaskStep(
+        action="list_directory",
+        target=json.dumps({"path": "/Users/bryan/.aura/live-source/core/introspection"}),
+        reason="r",
+        expect="e",
+        critical=True,
+    )
+    verified, evidence = DesktopTaskSkill._verify_step_effect(
+        step,
+        {
+            "ok": True,
+            "path": "/Users/bryan/.aura/live-source/core/introspection",
+            "pattern": "*.py",
+            "count": 9,
+            "names": ["a.py"],
+        },
+    )
+
+    assert verified is True
+    assert "count=9" in evidence
+
+
+def test_a_failed_read_does_not_verify() -> None:
+    step = DesktopTaskStep(
+        action="list_directory",
+        target=json.dumps({"path": "/nope"}),
+        reason="r",
+        expect="e",
+        critical=True,
+    )
+    verified, evidence = DesktopTaskSkill._verify_step_effect(
+        step, {"ok": False, "error": "Not a directory"}
+    )
+
+    assert verified is False
+    assert "Not a directory" in evidence
