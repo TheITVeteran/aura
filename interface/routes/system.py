@@ -5863,6 +5863,82 @@ async def api_hot_reload(request: Request):
         )
 
 
+@router.get("/self/measured", tags=["system"])
+async def api_self_measured(request: Request):
+    """Exactly what she is carrying about herself, right now.
+
+    Read-only, owner-only, and it exists because of a specific blindness. On
+    2026-08-10 three separate defects were about a self-report disagreeing with
+    an instrument — "Your RAM pressure is currently 37%" at 0.717, "I feel
+    energized" at energy 0.058, a thirteen-line vitals panel that was almost
+    entirely invented. Each took a long forensic detour, because the only way
+    to see what she had actually been handed was to ask her and infer backwards
+    from the answer. The runtime knew; nothing exposed it.
+
+    Two surfaces, together, because the whole class of defect lives in the gap
+    between them: the one-line self-knowledge string that rides every turn, and
+    the typed self-condition projection with its supported and missing
+    dimensions. A dimension that is missing HERE is a dimension she will answer
+    from a language model's beliefs about AIs instead of from her own body.
+    """
+    _require_internal(request)
+
+    payload: dict[str, Any] = {}
+    try:
+        from core.self.capability_ledger import (
+            get_capability_ledger,
+            measured_self_metrics,
+            self_knowledge_line,
+        )
+
+        payload["self_knowledge_line"] = self_knowledge_line()
+        payload["measured_metrics"] = measured_self_metrics()
+        payload["capabilities"] = {
+            name: availability.as_dict()
+            for name, availability in get_capability_ledger().measure_all().items()
+        }
+    except _SYSTEM_RECOVERABLE_ERRORS as exc:
+        record_degradation("system.self_measured", exc)
+        payload["capability_error"] = str(exc)
+
+    try:
+        from core.self.self_condition import build_self_condition_projection
+
+        projection = build_self_condition_projection()
+        payload["self_condition"] = projection.to_dict()
+    except _SYSTEM_RECOVERABLE_ERRORS as exc:
+        record_degradation("system.self_measured", exc)
+        payload["self_condition_error"] = str(exc)
+
+    return JSONResponse(payload)
+
+
+@router.get("/system/source-drift", tags=["system"])
+async def api_source_drift(request: Request):
+    """Which loaded modules no longer match their file on disk.
+
+    `SourceBodyAwareness` watches the GIT DIRTY STATE, so committing an edit
+    leaves the tree clean while this process stays exactly as stale. Asked "are
+    you running my latest fix?", nothing could answer. This reads the bytecode
+    cache header — the interpreter's own record of what it compiled — and
+    confirms every timestamp suspicion against the compiled code objects, so a
+    touch, a `git checkout` that restores identical bytes, and a whitespace-only
+    edit all correctly read clean.
+    """
+    _require_internal(request)
+
+    try:
+        from core.runtime.loaded_source_drift import scan_drift
+
+        report = scan_drift()
+        payload = report.to_dict()
+        payload["narrative"] = report.narrative()
+        return JSONResponse(payload)
+    except _SYSTEM_RECOVERABLE_ERRORS as exc:
+        record_degradation("system.source_drift", exc)
+        return JSONResponse({"ok": False, "error": str(exc)}, status_code=500)
+
+
 @router.get("/system/hot-reload/status", tags=["system"])
 async def api_hot_reload_status(request: Request):
     """Return the current state of the hot-reload engine."""
