@@ -45002,3 +45002,39 @@ transfer, fusion, frontier performance or `WOW Signal` is claimed. The
 completion envelope remains `912/920` (approximately `99.1%`). Next is the
 small prompt-disjoint decoded resident diagnostic comparing trained recurrence
 with its initialization-matched equal-compute control and mechanism lesions.
+
+## Checkpoint 2026-08-11-242: Signed Evaluation Pressure Handoff
+
+The first CP241 decoded diagnostic completed its detached preload handshake but
+failed before model load, emitted no candidates and produced no report. The
+external admission path had just measured `46.81` GB reclaimable memory, no
+pressure reasons and `under_pressure=false`. The evaluator nevertheless
+reported pressure unavailable because it attempted to spawn `vm_stat` from
+inside the detached no-fork sandbox. Its target and sentinel exited under their
+supervisors with empty lineages. This attempt remains operational negative
+evidence only; it contains no behavioral result.
+
+Resident training already solved this boundary correctly: the external
+controller observes host pressure, binds that evidence into the HMAC-signed
+preload release and the sandboxed trainer verifies the release instead of
+forking a second observer. Both unified evaluators now use the same contract.
+When an external resource guard is requested, all ready, release, key and
+configuration bindings are mandatory. The evaluator verifies HMAC, target and
+sentinel liveness, command identity, freshness and the admitted host-pressure
+payload before model-lane acquisition. Partial preload arguments fail closed;
+an unguarded local evaluation continues to use the live probe. The final report
+retains both the signed preload release and runtime resource-guard receipt.
+
+The resident evaluation launcher supplies those exact PID-templated paths and
+the frozen evaluation identity to the inner evaluator command. Its existing
+command commitment therefore covers the pressure evidence it will consume,
+rather than relying on an ambient environment variable or weakening sandbox
+containment.
+
+The affected resident launcher/evaluator/controller surface passes `52/52`;
+repository smoke passes `104/104`; Ruff, compilation and architectural
+layering are clean. No decoded behavioral gain, broad transfer, fusion,
+frontier performance or `WOW Signal` is claimed. The completion envelope
+remains `912/920` (approximately `99.1%`). Because evaluator source is part of
+campaign identity, next is a fresh bounded canary frozen with this admission
+repair, followed by its prompt-disjoint decoded matched-compute diagnostic.

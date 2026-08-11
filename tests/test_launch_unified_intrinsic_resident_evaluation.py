@@ -121,6 +121,16 @@ def test_prepare_binds_terminal_checkpoint_and_frozen_evaluator(
     assert plan["evaluator_command"][1].startswith(
         str(Path(config["source"]["git"]["root"]))
     )
+    assert plan["evaluator_command"][-8:] == [
+        "--preload-ready-path",
+        plan["ready"],
+        "--preload-release-path",
+        plan["release"],
+        "--preload-key-path",
+        plan["heartbeat_key"],
+        "--preload-config-sha256",
+        plan["evaluation_identity_sha256"],
+    ]
     assert plan["claims_not_supported"] == [
         "broad_reasoning_gain",
         "frontier_performance",

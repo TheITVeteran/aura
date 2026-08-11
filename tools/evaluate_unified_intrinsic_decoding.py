@@ -471,6 +471,10 @@ def evaluate_decoding(
     resource_stage_path: Path | None = None,
     resource_startup_lethal_mb: float | None = None,
     resource_steady_lethal_mb: float | None = None,
+    preload_ready_path: Path | None = None,
+    preload_release_path: Path | None = None,
+    preload_key_path: Path | None = None,
+    preload_config_sha256: str | None = None,
 ) -> dict[str, Any]:
     if task_depths is not None and (
         not task_depths
@@ -495,6 +499,10 @@ def evaluate_decoding(
         resource_stage_path=resource_stage_path,
         resource_startup_lethal_mb=resource_startup_lethal_mb,
         resource_steady_lethal_mb=resource_steady_lethal_mb,
+        preload_ready_path=preload_ready_path,
+        preload_release_path=preload_release_path,
+        preload_key_path=preload_key_path,
+        preload_config_sha256=preload_config_sha256,
     ) as loaded:
         (
             bundle,
@@ -550,6 +558,10 @@ def main() -> int:
     parser.add_argument("--resource-stage-path", type=Path)
     parser.add_argument("--resource-startup-lethal-mb", type=float)
     parser.add_argument("--resource-steady-lethal-mb", type=float)
+    parser.add_argument("--preload-ready-path", type=Path)
+    parser.add_argument("--preload-release-path", type=Path)
+    parser.add_argument("--preload-key-path", type=Path)
+    parser.add_argument("--preload-config-sha256")
     args = parser.parse_args()
     report = evaluate_decoding(
         args.campaign.expanduser().resolve(strict=True),
@@ -573,6 +585,10 @@ def main() -> int:
         resource_stage_path=args.resource_stage_path,
         resource_startup_lethal_mb=args.resource_startup_lethal_mb,
         resource_steady_lethal_mb=args.resource_steady_lethal_mb,
+        preload_ready_path=args.preload_ready_path,
+        preload_release_path=args.preload_release_path,
+        preload_key_path=args.preload_key_path,
+        preload_config_sha256=args.preload_config_sha256,
     )
     encoded = json.dumps(report, indent=2, sort_keys=True) + "\n"
     if args.report is not None:

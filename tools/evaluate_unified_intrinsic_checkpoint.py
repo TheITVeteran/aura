@@ -67,6 +67,7 @@ from tools.unified_intrinsic_checkpoint import (  # noqa: E402
     UnifiedCheckpointError,
     resolve_checkpoint_generation,
 )
+from tools.unified_intrinsic_preload_barrier import verify_release  # noqa: E402
 from tools.unified_intrinsic_tokenization_contract import (  # noqa: E402
     TOKENIZED_DATASET_FILENAME,
     load_source_dataset,
@@ -136,6 +137,46 @@ def _evaluation_source_sha256s() -> dict[str, str]:
         relative: _file_sha256(REPO_ROOT / relative)
         for relative in EVALUATION_SOURCE_FILES
     }
+
+
+def _evaluation_preload_evidence(
+    *,
+    resource_enabled: bool,
+    preload_ready_path: Path | None,
+    preload_release_path: Path | None,
+    preload_key_path: Path | None,
+    preload_config_sha256: str | None,
+) -> tuple[dict[str, Any], dict[str, Any] | None]:
+    """Resolve pressure from the live probe or a signed external handoff."""
+
+    preload_values = (
+        preload_ready_path,
+        preload_release_path,
+        preload_key_path,
+        preload_config_sha256,
+    )
+    preload_enabled = all(value is not None for value in preload_values)
+    if any(value is not None for value in preload_values) != preload_enabled:
+        raise ValueError("evaluation preload arguments must be supplied together")
+    if resource_enabled and not preload_enabled:
+        raise ValueError("external evaluation resource guard requires signed preload")
+    if preload_enabled and not resource_enabled:
+        raise ValueError("evaluation signed preload requires external resource guard")
+    if preload_enabled:
+        release = verify_release(
+            preload_release_path.expanduser(),
+            ready_path=preload_ready_path.expanduser(),
+            key_path=preload_key_path.expanduser(),
+            config_sha256=str(preload_config_sha256),
+            require_live_evidence=True,
+        )
+        pressure = dict(release["host_pressure"])
+    else:
+        release = None
+        pressure = host_pressure()
+    if pressure.get("available") is not True or pressure.get("under_pressure") is not False:
+        raise RuntimeError("unified evaluation refused unavailable or pressured host")
+    return pressure, release
 
 
 def _controller_config(
@@ -423,6 +464,10 @@ def unified_evaluation_context(
     resource_stage_path: Path | None = None,
     resource_startup_lethal_mb: float | None = None,
     resource_steady_lethal_mb: float | None = None,
+    preload_ready_path: Path | None = None,
+    preload_release_path: Path | None = None,
+    preload_key_path: Path | None = None,
+    preload_config_sha256: str | None = None,
 ) -> Iterator[
     tuple[
         UnifiedTrainingBundle,
@@ -454,9 +499,6 @@ def unified_evaluation_context(
     )
     if not isinstance(model_path, str) or not model_path:
         raise RuntimeError("unified campaign model identity differs")
-    pressure = host_pressure()
-    if pressure.get("available") is not True or pressure.get("under_pressure") is not False:
-        raise RuntimeError("unified evaluation refused unavailable or pressured host")
     resource_values = (
         resource_stage_path,
         resource_startup_lethal_mb,
@@ -465,6 +507,13 @@ def unified_evaluation_context(
     resource_enabled = all(value is not None for value in resource_values)
     if any(value is not None for value in resource_values) != resource_enabled:
         raise ValueError("evaluation resource guard arguments must be supplied together")
+    _pressure, preload_release = _evaluation_preload_evidence(
+        resource_enabled=resource_enabled,
+        preload_ready_path=preload_ready_path,
+        preload_release_path=preload_release_path,
+        preload_key_path=preload_key_path,
+        preload_config_sha256=preload_config_sha256,
+    )
     with standalone_model_lane(
         owner_id=f"evaluate-unified-intrinsic:{campaign_dir.parent.name}",
         model_path=model_path,
@@ -488,13 +537,17 @@ def unified_evaluation_context(
         )
         resource_receipt: dict[str, Any] | None = None
         if resource_enabled:
-            resource_receipt = _await_resource_guard(
+            runtime_guard = _await_resource_guard(
                 resource_stage_path.expanduser(),
                 trainer_sha256=_file_sha256(Path(__file__).resolve(strict=True)),
                 startup_lethal_mb=float(resource_startup_lethal_mb),
                 steady_lethal_mb=float(resource_steady_lethal_mb),
                 timeout_s=120.0,
             )
+            resource_receipt = {
+                "preload_release": preload_release,
+                "runtime_guard": runtime_guard,
+            }
         yield (
             bundle,
             initial_controller,
@@ -680,6 +733,10 @@ def evaluate_checkpoint(
     resource_stage_path: Path | None = None,
     resource_startup_lethal_mb: float | None = None,
     resource_steady_lethal_mb: float | None = None,
+    preload_ready_path: Path | None = None,
+    preload_release_path: Path | None = None,
+    preload_key_path: Path | None = None,
+    preload_config_sha256: str | None = None,
 ) -> dict[str, Any]:
     with unified_evaluation_context(
         campaign_dir,
@@ -690,6 +747,10 @@ def evaluate_checkpoint(
         resource_stage_path=resource_stage_path,
         resource_startup_lethal_mb=resource_startup_lethal_mb,
         resource_steady_lethal_mb=resource_steady_lethal_mb,
+        preload_ready_path=preload_ready_path,
+        preload_release_path=preload_release_path,
+        preload_key_path=preload_key_path,
+        preload_config_sha256=preload_config_sha256,
     ) as loaded:
         (
             bundle,
@@ -732,6 +793,10 @@ def main() -> int:
     parser.add_argument("--resource-stage-path", type=Path)
     parser.add_argument("--resource-startup-lethal-mb", type=float)
     parser.add_argument("--resource-steady-lethal-mb", type=float)
+    parser.add_argument("--preload-ready-path", type=Path)
+    parser.add_argument("--preload-release-path", type=Path)
+    parser.add_argument("--preload-key-path", type=Path)
+    parser.add_argument("--preload-config-sha256")
     args = parser.parse_args()
     report = evaluate_checkpoint(
         args.campaign.expanduser().resolve(strict=True),
@@ -744,6 +809,10 @@ def main() -> int:
         resource_stage_path=args.resource_stage_path,
         resource_startup_lethal_mb=args.resource_startup_lethal_mb,
         resource_steady_lethal_mb=args.resource_steady_lethal_mb,
+        preload_ready_path=args.preload_ready_path,
+        preload_release_path=args.preload_release_path,
+        preload_key_path=args.preload_key_path,
+        preload_config_sha256=args.preload_config_sha256,
     )
     encoded = json.dumps(report, indent=2, sort_keys=True) + "\n"
     if args.report is not None:

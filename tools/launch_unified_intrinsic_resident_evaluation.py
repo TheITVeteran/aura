@@ -174,6 +174,14 @@ def _build_plan(arguments: argparse.Namespace) -> dict[str, Any]:
         str(arguments.startup_lethal_mb),
         "--resource-steady-lethal-mb",
         str(arguments.steady_lethal_mb),
+        "--preload-ready-path",
+        str(ready),
+        "--preload-release-path",
+        str(release),
+        "--preload-key-path",
+        str(config["paths"]["heartbeat_key"]),
+        "--preload-config-sha256",
+        evaluation_identity_sha256,
     ]
     command = [
         str(python),
