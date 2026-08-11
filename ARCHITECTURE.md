@@ -50,7 +50,7 @@ architecture alone.
 
 0. [The Unified Will: decision authority](#0-the-unified-will)
 1. [System model](#1-system-model) (includes the substrate-first inference pipeline)
-2. [The tick: Aura's atomic unit of cognition](#2-the-tick)
+2. [The tick: the pipeline that produces one committed state](#2-the-tick)
 3. [Integrated information (IIT 4.0)](#3-integrated-information)
 4. [Affective modulation pipeline](#4-affective-modulation)
 5. [Activation steering (CAA)](#5-activation-steering)
@@ -337,11 +337,33 @@ metacharacters into an exploit surface just to make command chaining easier.
 
 Aura is a discrete-time cognitive architecture. The fundamental unit of
 computation is the **tick** — a locked, linear pipeline of phases that reads
-state, transforms it, and commits the result atomically.
+state, transforms it, and commits one new **AuraState version**.
 
 ```
 tick(objective) → lock → [phase₁ → phase₂ → ... → phaseₙ] → commit → unlock
 ```
+
+**What is atomic, exactly.** The committed AuraState version is. Nothing
+larger is, and the difference matters enough to state before anything else,
+because "atomic unit of cognition" invites a reader to infer transaction
+semantics the runtime does not provide:
+
+| | |
+|---|---|
+| Atomic | The AuraState version. A commit is admitted whole or not at all: constitutional admission runs first, the version guard rejects a stale write, and a serialized owner-side transaction publishes the new version. |
+| **Not** atomic | The tick. A failing phase does not roll back the phases before it — the pipeline logs the failure and continues, so phases 1 and 2 reach the eventual commit even when phase 3 fails. |
+| **Not** covered at all | Effects outside the state object: tool executions, files, queued tasks, memory stores, logs, anything a skill did. Those already happened. |
+
+So the guarantee is `commit(Sᵥ → Sᵥ₊₁)` is all-or-nothing, not "the tick is a
+transaction". A tick is closer to a *pipeline that produces one candidate
+state*, where the candidate is admitted atomically and the world outside the
+state has no undo.
+
+This is the right design — refusing to serve a reply because one background
+phase failed would be worse — but it is not ACID over a tick, and describing
+it that way is how a reader ends up expecting a rollback that does not exist.
+`tests/test_tick_atomicity_claim.py` holds this paragraph against the code so
+the two cannot drift apart again.
 
 Two concurrent loops run at once:
 - **Foreground**: user-triggered ticks (priority, ~6-18s latency)
@@ -410,7 +432,7 @@ stalls, the orchestrator starts `_deadlock_watchdog` during boot:
 These properties have to hold at all times. If any of them is violated,
 it's a bug:
 
-1. A tick never partially commits. Lock acquisition fails → tick aborted. Phase fails → tick continues.
+1. A tick never partially commits **a state version**. Lock acquisition fails → tick aborted. Phase fails → tick continues, and the surviving phases' transformations still reach the commit. Effects outside AuraState are never rolled back. See [§1](#1-system-model) for what this does and does not guarantee.
 2. System prompt ≤ 5000 tokens. Violation causes context overflow → empty LLM output → user sees fallback.
 3. Vault commit failure is non-fatal. The tick returns a response regardless of persistence success.
 4. No raw numeric metrics in user-facing output. Affect values shape generation parameters, not dialogue.
