@@ -476,6 +476,18 @@ class Controller:
                 self._durations.append(elapsed)
                 if len(self._durations) > 256:
                     del self._durations[:-256]
+                # Aura.Reconcile.DurationMs named this file as its owner and
+                # had no writer. The retained list above is the thing the
+                # histogram exists to replace — it holds 256 samples, derives
+                # p50/p95 from them, and loses every observation before that,
+                # so "is reconcile slower than last week" was unanswerable.
+                # Both are kept: the list still feeds report().
+                try:
+                    from core.observability.histograms import record as record_histogram
+
+                    record_histogram("Aura.Reconcile.DurationMs", max(0.0, elapsed) * 1000.0)
+                except (ImportError, RuntimeError, ValueError, TypeError):
+                    pass
                 self.queue.done(request)
 
     async def _resync_loop(self) -> None:

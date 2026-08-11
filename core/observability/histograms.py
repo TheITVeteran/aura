@@ -390,6 +390,19 @@ def install_standard_histograms() -> list[str]:
             maximum=60_000.0,
         ),
         dict(
+            # The quantity Aura was asked for on 2026-08-10 — "what is your
+            # median response latency today, in milliseconds?" — and answered
+            # "152 milliseconds", with an authoritative gloss about first-byte
+            # timing. Nothing anywhere in the runtime timed a chat turn, so the
+            # number was invented, and no honest answer had ever been available.
+            name="Aura.Chat.TurnMs",
+            description="wall time of one user-visible chat turn, request to response",
+            owner="interface/routes/chat.py",
+            unit="ms",
+            minimum=1.0,
+            maximum=600_000.0,
+        ),
+        dict(
             name="Aura.Admission.DurationMs",
             description="wall time of the admission chain for one request",
             owner="core/runtime/admission.py",

@@ -348,6 +348,20 @@ class ManagedOrgan:
         self._history.append(record)
         if len(self._history) > 64:
             del self._history[:-64]
+        # Aura.Lifecycle.TransitionMs was declared in
+        # core/observability/histograms.py naming THIS file as its owner, and
+        # nothing ever wrote to it. A declared histogram with no writer reads
+        # empty forever, which is indistinguishable from a system that never
+        # transitions — so the one question it exists to answer ("are organ
+        # transitions getting slower?") could not be asked. Recorded here rather
+        # than at the three call sites because this is the chokepoint they all
+        # reach, including the error path.
+        try:
+            from core.observability.histograms import record as record_histogram
+
+            record_histogram("Aura.Lifecycle.TransitionMs", max(0.0, duration_s) * 1000.0)
+        except (ImportError, RuntimeError, ValueError, TypeError):
+            pass
         logger.log(
             logging.INFO if ok else logging.WARNING,
             "%s %s: %s --%s--> %s (%.3fs)%s",

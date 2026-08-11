@@ -328,6 +328,17 @@ class AdmissionChain:
         verdict.reason = reason
         verdict.denied_by = denied_by
         verdict.duration_s = time.perf_counter() - started
+        # Aura.Admission.DurationMs named this file as its owner and had no
+        # writer, so the histogram read empty for the life of the declaration.
+        # _finish is the one exit every verdict passes through, allowed or not —
+        # timing only the allowed path would hide the case that matters, a slow
+        # denial.
+        try:
+            from core.observability.histograms import record as record_histogram
+
+            record_histogram("Aura.Admission.DurationMs", max(0.0, verdict.duration_s) * 1000.0)
+        except (ImportError, RuntimeError, ValueError, TypeError):
+            pass
         with self._lock:
             if allowed:
                 self.admitted += 1

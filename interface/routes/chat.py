@@ -22474,10 +22474,24 @@ async def api_chat(
     session_token = _CHAT_REQUEST_SESSION.set(
         conversation_session[:_CHAT_SESSION_ID_MAX_CHARS]
     )
+    # How long a turn takes, measured where the user experiences it. Nothing in
+    # the runtime timed this until 2026-08-10, which is why "what is your median
+    # response latency?" got a confident, invented 152ms: there was no reading
+    # to give. Recorded in `finally` so a turn that fails still counts — a
+    # failure the user waited forty seconds for is latency they experienced.
+    turn_started = time.perf_counter()
     try:
         with bind_failure_ledger():
             return await _api_chat_turn(body, request)
     finally:
+        try:
+            from core.observability.histograms import record as _record_histogram
+
+            _record_histogram(
+                "Aura.Chat.TurnMs", max(0.0, time.perf_counter() - turn_started) * 1000.0
+            )
+        except (ImportError, RuntimeError, ValueError, TypeError):
+            pass
         _CHAT_REQUEST_SESSION.reset(session_token)
         _CHAT_REQUEST_SURFACE.reset(surface_token)
         _CHAT_REQUEST_PRINCIPAL.reset(principal_token)
