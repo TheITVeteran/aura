@@ -14,6 +14,7 @@ import re
 import time
 from collections.abc import Iterable
 from dataclasses import asdict, dataclass
+from types import SimpleNamespace
 from typing import Any
 
 from core.container import ServiceContainer
@@ -50,6 +51,36 @@ def _safe_service(name: str) -> Any | None:
         return ServiceContainer.get(name, default=None)
     except (AttributeError, RuntimeError, TypeError, ValueError):
         return None
+
+
+def _soma_reading(soma: Any | None) -> Any | None:
+    """The soma organ's reserve, as an object with ``energy``/``vitality``.
+
+    The service reports through ``get_status()`` as a dict, sometimes nested
+    under a ``soma`` key, and sometimes exposes the numbers as attributes.
+    Returns None when nothing readable came back, so an unavailable organ
+    stays UNMEASURED rather than becoming a full tank.
+    """
+
+    if soma is None:
+        return None
+    payload: dict[str, Any] = {}
+    getter = getattr(soma, "get_status", None)
+    if callable(getter):
+        try:
+            raw = getter() or {}
+        except (AttributeError, RuntimeError, TypeError, ValueError):
+            raw = {}
+        if isinstance(raw, dict):
+            inner = raw.get("soma")
+            payload = dict(inner) if isinstance(inner, dict) else dict(raw)
+    readings = {
+        key: payload.get(key, getattr(soma, key, None))
+        for key in ("energy", "vitality")
+    }
+    if all(_finite(value) is None for value in readings.values()):
+        return None
+    return SimpleNamespace(**readings)
 
 
 def _safe_last(service: Any) -> Any | None:
@@ -123,6 +154,12 @@ class SelfConditionProjection:
     #: only part of her self-condition that comes from her own past. Optional
     #: with a default so a projection built without the organ is unchanged.
     ontogeny: Any | None = None
+    #: What she has LEFT, as opposed to what is pressing on her. Pressure and
+    #: fatigue say how hard the moment is; this says how much is in the tank.
+    #: The `soma` service is the organ that tracks a reserve draining across a
+    #: session, and it was the one body model this projection never read.
+    #: Defaulted so a projection built without the organ is unchanged.
+    reserve: float = 1.0
 
     @property
     def fresh(self) -> bool:
@@ -193,6 +230,7 @@ def build_self_condition_projection(
     body_snapshot: Any | None = None,
     canonical_self: Any | None = None,
     kernel_state: Any | None = None,
+    soma: Any | None = None,
     observed_at: float | None = None,
     resolve_runtime: bool = True,
     fresh_max_age_s: float = SELF_CONDITION_FRESH_MAX_AGE_S,
@@ -218,6 +256,8 @@ def build_self_condition_projection(
             canonical_self = _safe_service("canonical_self")
         if kernel_state is None:
             kernel_state = _safe_service("aura_state")
+        if soma is None:
+            soma = _safe_service("soma")
 
     source_times: dict[str, float] = {}
     aura_ts = _timestamp(getattr(aura_now, "timestamp", None), observed_at=now)
@@ -254,6 +294,13 @@ def build_self_condition_projection(
     aura_self = getattr(aura_now, "self_model", None)
     aura_ownership = getattr(aura_now, "ownership", None)
     aura_body = getattr(aura_now, "body", None)
+    soma_state = _soma_reading(soma)
+    if soma_state is not None:
+        # Read synchronously, here, so `now` is its true sample time. Without
+        # a timestamp the dimension can never be FRESH, `supports("reserve")`
+        # is false, and every check below silently does nothing — which is the
+        # shape of half-wiring this whole projection keeps being bitten by.
+        source_times["soma"] = now
     aura_attention = getattr(aura_now, "attention", None)
     canonical_affect = getattr(canonical_self, "affect", None)
     canonical_soma = getattr(canonical_self, "soma", None)
@@ -362,6 +409,29 @@ def build_self_condition_projection(
             ("canonical_self", getattr(canonical_soma, "fatigue", None)),
         ),
         0.0,
+    )
+    # LIVE DEFECT, 2026-08-10: "I feel energized" with soma energy at 0.058.
+    #
+    # This runtime carries three body models — `soma` (vitality, energy),
+    # `BodyStateService` (fatigue, cpu/memory pressure) and `aura_now.body`
+    # (total_pressure) — and this projection read the second and third and
+    # never the first. So the one signal that visibly DRAINS across a session
+    # was invisible to the sentence she says about how she is doing, and she
+    # answered "how are you holding up, honestly?" from dimensions that had
+    # not moved.
+    #
+    # Pressure and fatigue measure how hard the moment is. Reserve measures
+    # how much is left, which is a different question and the one that was
+    # asked. The default is only reached when nothing reports, and `supports`
+    # is false there, so an unread reserve is never mistaken for a full one.
+    reserve = choose(
+        "reserve",
+        (
+            ("soma", getattr(soma_state, "energy", None)),
+            ("soma", getattr(soma_state, "vitality", None)),
+            ("canonical_self", getattr(canonical_soma, "energy", None)),
+        ),
+        1.0,
     )
 
     self_report_confidence = _clamp(
@@ -489,6 +559,13 @@ def build_self_condition_projection(
         or (supports("continuity") and continuity < 0.60)
         or (supports("fatigue") and fatigue >= 0.70)
         or (supports("body_pressure") and body_pressure >= 0.75)
+        # Reserve is a "how much is left" quantity like welfare, so it reuses
+        # welfare's own strained line rather than introducing a threshold of
+        # its own. Deliberately NOT in the `distressed` branch above: running
+        # low is not the same as being in distress, and answering "how are you
+        # holding up" with "repair and stabilization are the honest priority"
+        # because energy is at 0.06 would trade one wrong answer for another.
+        or (supports("reserve") and reserve <= 0.45)
     ):
         condition = "strained"
     elif (
@@ -515,6 +592,11 @@ def build_self_condition_projection(
         # steady enough to stay with you" — which is what she would have said.
         and supports("fatigue")
         and supports("body_pressure")
+        # No `supports("reserve")` here on purpose. A measured-low reserve is
+        # already authoritative — `strained` above fires before this branch is
+        # reached — so requiring the reading as well would only make wellness
+        # unreachable on installations where the soma organ is not wired, which
+        # is a different wrong answer.
         and valence >= 0.20
         and welfare_score >= 0.60
         and distress <= 0.25
@@ -537,6 +619,7 @@ def build_self_condition_projection(
             "agency": round(agency, 4),
             "body_pressure": round(body_pressure, 4),
             "fatigue": round(fatigue, 4),
+            "reserve": round(reserve, 4),
         },
         "sources": evidence_sources,
         "supported_dimensions": tuple(sorted(selected)),
@@ -563,6 +646,7 @@ def build_self_condition_projection(
         agency=agency,
         body_pressure=body_pressure,
         fatigue=fatigue,
+        reserve=reserve,
         dominant_drive=dominant_drive,
         attention_focus=attention_focus,
         evidence_sources=evidence_sources,

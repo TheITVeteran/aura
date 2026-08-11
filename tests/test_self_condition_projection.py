@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 
+import pytest
+
 
 def _sources(*, timestamp: float, body_pressure: float = 0.10):
     aura_now = SimpleNamespace(
@@ -351,7 +353,54 @@ def test_measured_and_low_depletion_still_reads_well():
         unified_felt=unified,
         welfare=welfare,
         body_snapshot=body,
+        soma=SimpleNamespace(energy=0.81, vitality=0.86),
         observed_at=1000.0,
         resolve_runtime=False,
     )
+    assert projection.condition == "well"
+
+
+def test_a_draining_reserve_is_not_energized():
+    """LIVE 2026-08-10: soma energy 0.058, and the answer was "energized".
+
+    Three body models exist — soma (energy, vitality), BodyStateService
+    (fatigue, pressures) and aura_now.body (total_pressure) — and this
+    projection read the last two. The one signal that DRAINS across a session
+    was invisible to the sentence she says about how she is doing.
+    """
+    from core.self.self_condition import (
+        build_self_condition_projection,
+        render_self_condition_reply,
+    )
+
+    aura_now, unified, welfare, body = _sources(timestamp=995.0, body_pressure=0.10)
+    projection = build_self_condition_projection(
+        aura_now=aura_now,
+        unified_felt=unified,
+        welfare=welfare,
+        body_snapshot=body,
+        soma=SimpleNamespace(energy=0.058, vitality=0.211),
+        observed_at=1000.0,
+        resolve_runtime=False,
+    )
+    assert projection.reserve == pytest.approx(0.058, abs=1e-6)
+    assert projection.condition == "strained"
+    assert "energized" not in render_self_condition_reply(projection).lower()
+
+
+def test_an_unread_soma_leaves_the_other_dimensions_in_charge():
+    """An absent organ must not silently down-rank her, either."""
+    from core.self.self_condition import build_self_condition_projection
+
+    aura_now, unified, welfare, body = _sources(timestamp=995.0, body_pressure=0.10)
+    projection = build_self_condition_projection(
+        aura_now=aura_now,
+        unified_felt=unified,
+        welfare=welfare,
+        body_snapshot=body,
+        soma=None,
+        observed_at=1000.0,
+        resolve_runtime=False,
+    )
+    assert "reserve" not in projection.supported_dimensions
     assert projection.condition == "well"
