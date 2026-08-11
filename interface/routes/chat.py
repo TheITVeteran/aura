@@ -11203,13 +11203,32 @@ async def _run_cognitive_engine_chat_turn(
                         retry_attempted=True,
                     )
                     return None
+                if not _reply_gate_proved_a_violation(assessment):
+                    # The gate said no and could not say why. An unnamed
+                    # violation is not a proven one, and discarding a complete
+                    # reply on it hands the person a canned refusal instead of
+                    # the answer that was already in hand.
+                    record_degradation(
+                        'chat',
+                        RuntimeError(
+                            "reply reliability gate rejected a reply without "
+                            "naming a violation; serving the reply"
+                        ),
+                        action="served the drafted reply and recorded the gate inconsistency",
+                    )
+                    _mark_turn_trace(
+                        cognitive_engine_reply_accepted=True,
+                        bounded_contract_used=False,
+                        response_path="cognitive_engine_reply_gate_unnamed",
+                    )
+                    return visible
                 _mark_turn_trace(
                     cognitive_engine_reply_accepted=False,
                     bounded_contract_used=False,
                     response_path="cognitive_engine_reply_rejected",
                 )
                 _record_exhausted_cognitive_failure(
-                    "reply_reliability_gate_failed:" + ",".join(assessment.reasons),
+                    _named_gate_failure(assessment),
                     retry_attempted=True,
                 )
                 return None
@@ -11385,7 +11404,7 @@ async def _run_cognitive_engine_chat_turn(
                 return source_rescue
             _mark_turn_trace(response_path="cognitive_engine_reply_rejected")
             _record_exhausted_cognitive_failure(
-                "reply_reliability_gate_failed:" + ",".join(assessment.reasons),
+                _named_gate_failure(assessment),
                 retry_attempted=True,
             )
             return None
@@ -20251,6 +20270,33 @@ _STEP_BOOKKEEPING_RE = re.compile(
     r"governed[\w\s-]*steps?\b[^.]*\.?\s*$",
     re.IGNORECASE,
 )
+
+
+def _reply_gate_proved_a_violation(assessment: object) -> bool:
+    """Did the gate actually name something wrong?
+
+    LIVE, 2026-08-10: a turn died with the failure class
+    "reply_reliability_gate_failed:" — the separator, and nothing after it. The
+    reasons list was empty, so the gate rejected a reply without naming a single
+    violation, and the person got "I couldn't get to an answer I'd stand behind."
+
+    An unnamed violation is not a proven one. This is the same principle the
+    rest of the runtime already applies in the other direction — absence of a
+    check must not be reported as a passed check — and it holds just as well
+    here: absence of a finding must not be reported as a failure.
+    """
+
+    reasons = [str(r).strip() for r in (getattr(assessment, "reasons", ()) or ())]
+    return any(reasons)
+
+
+def _named_gate_failure(assessment: object) -> str:
+    """The failure class for a gate rejection, with its reasons attached."""
+
+    reasons = [str(r).strip() for r in (getattr(assessment, "reasons", ()) or ()) if str(r).strip()]
+    if not reasons:
+        return "reply_reliability_gate_failed:unnamed_violation"
+    return "reply_reliability_gate_failed:" + ",".join(reasons)
 
 
 def _flag_unstable_choice_commitment(user_message: object, reply_text: object) -> object:
