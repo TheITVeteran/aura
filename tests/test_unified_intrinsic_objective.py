@@ -64,12 +64,16 @@ def _spec() -> UnifiedIntrinsicTrainingSpec:
     )
 
 
-def _controller() -> UnifiedRecurrentController:
+def _controller(
+    *,
+    literal_digit_token_ids: tuple[int, ...] = (),
+) -> UnifiedRecurrentController:
     return UnifiedRecurrentController(
         UnifiedRecurrenceConfig(
             hidden_size=32,
             correction_rank=4,
             minimum_iterations=1,
+            literal_digit_token_ids=literal_digit_token_ids,
         )
     )
 
@@ -198,7 +202,7 @@ def test_optimizer_moves_controller_but_not_frozen_readout() -> None:
 
 def test_exact_state_teacher_shapes_recurrent_tissue_without_entering_prompt() -> None:
     model = _model()
-    controller = _controller()
+    controller = _controller(literal_digit_token_ids=tuple(range(10, 20)))
     trace = StructuredTransitionTrace(
         family="boolean",
         depth=3,

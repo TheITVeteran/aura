@@ -4,12 +4,15 @@
 from __future__ import annotations
 
 import argparse
+import copy
 import hashlib
 import json
+import math
 import os
 import random
 import sys
 import time
+import uuid
 from dataclasses import replace
 from pathlib import Path
 from typing import Any
@@ -62,10 +65,20 @@ from core.learning.unified_intrinsic_recurrence import (  # noqa: E402
     UnifiedRecurrentController,
     unified_recurrent_logits,
 )
+from core.runtime.atomic_writer import (  # noqa: E402
+    atomic_write_bytes,
+    atomic_write_text,
+    durable_replace,
+    durable_unlink,
+    ensure_private_directory,
+    interprocess_file_lock,
+)
 from core.runtime.mlx_memory_guard import mlx_memory_envelope  # noqa: E402
 from tools.train_intrinsic_recurrence import encode_example  # noqa: E402
 
 TRAINING_SCHEMA = "aura.unified_intrinsic_training.v1"
+CHECKPOINT_GENERATION_SCHEMA = "aura.unified_intrinsic_checkpoint.v2"
+CHECKPOINT_POINTER_SCHEMA = "aura.unified_intrinsic_checkpoint_pointer.v1"
 TRAINING_SOURCE_FILES = (
     "core/learning/depth_conditioned_lora.py",
     "core/learning/recurrence_curriculum.py",
@@ -133,11 +146,7 @@ def _model_identity(model_path: str) -> dict[str, Any]:
 
 def _atomic_json(path: Path, value: dict[str, Any]) -> None:
     encoded = json.dumps(value, indent=2, sort_keys=True) + "\n"
-    scratch = path.with_name(f".{path.name}.{os.getpid()}.tmp")
-    scratch.write_text(encoded, encoding="utf-8")
-    with scratch.open("rb") as handle:
-        os.fsync(handle.fileno())
-    os.replace(scratch, path)
+    atomic_write_text(path, encoded, encoding="utf-8", mode=0o600)
 
 
 def _attach_window_adapters(
@@ -186,6 +195,7 @@ def _attach_window_adapters(
     if set(depth_operators) != set(sites):
         raise RuntimeError("continuous depth operator inventory differs from adapters")
     return {
+        "window_tissue_mode": "scoped_lora",
         "window": [spec.prelude_end, spec.coda_start],
         "adapted_sites": sorted(sites),
         "adapted_projection_count": len(sites),
@@ -196,6 +206,45 @@ def _attach_window_adapters(
         "ordinary_inference_requires_scope": True,
         "recurrence_phase_trains_shared_state_bridge": False,
         "state_bridge": "continuous_depth_residual_preserves_t1",
+    }
+
+
+def _configure_window_tissue(
+    model: Any,
+    spec: UnifiedIntrinsicTrainingSpec,
+    *,
+    mode: str,
+    rank: int,
+    targets: tuple[str, ...],
+    depth_basis_size: int,
+) -> dict[str, Any]:
+    """Build the declared recurrent tissue without silently adding base adapters."""
+
+    if mode == "scoped_lora":
+        return _attach_window_adapters(
+            model,
+            spec,
+            rank=rank,
+            targets=targets,
+            depth_basis_size=depth_basis_size,
+        )
+    if mode != "controller_only":
+        raise ValueError("unified recurrence window tissue mode is invalid")
+    layers = getattr(getattr(model, "model", None), "layers", None)
+    if layers is None or not 0 <= spec.prelude_end < spec.coda_start <= len(layers):
+        raise ValueError("controller-only recurrent window is outside the model")
+    return {
+        "window_tissue_mode": "controller_only",
+        "window": [spec.prelude_end, spec.coda_start],
+        "adapted_sites": [],
+        "adapted_projection_count": 0,
+        "continuous_depth_operator_count": 0,
+        "continuous_depth_basis_size": 0,
+        "coda_adapted": False,
+        "readout_adapted": False,
+        "ordinary_inference_requires_scope": False,
+        "recurrence_phase_trains_shared_state_bridge": False,
+        "state_bridge": "typed_recurrent_controller_only",
     }
 
 
@@ -735,6 +784,314 @@ def _residual_hidden_size(model: Any) -> int:
     return int(weight.shape[0])
 
 
+def _invocation_stop_step(
+    start_step: int,
+    max_steps: int,
+    max_invocation_steps: int | None,
+) -> int:
+    """Return an operational stop boundary without changing campaign identity."""
+
+    if start_step < 0 or max_steps < 1 or start_step > max_steps:
+        raise ValueError("unified recurrence invocation step range is invalid")
+    if max_invocation_steps is None:
+        return max_steps
+    if max_invocation_steps < 1:
+        raise ValueError("maximum invocation steps must be positive")
+    return min(max_steps, start_step + max_invocation_steps)
+
+
+def _training_halt_reason(
+    *,
+    step: int,
+    max_steps: int,
+    invocation_stop_step: int,
+) -> str:
+    if step >= max_steps:
+        return "max_steps"
+    if step >= invocation_stop_step:
+        return "invocation_step_limit"
+    return "wall_clock"
+
+
+def _initial_rollin_totals() -> dict[str, Any]:
+    return {
+        "examples": 0,
+        "answer_tokens": 0,
+        "generated_positions": 0,
+        "generated_matches": 0,
+        "last_generated_sha256": None,
+        "last_effective_sha256": None,
+        "max_preclip_gradient_norm": 0.0,
+        "max_preclip_gradient_norms": {},
+        "last_probability": None,
+        "last_state_teacher_forcing_probability": None,
+    }
+
+
+def _restore_rollin_totals(training_state: dict[str, Any]) -> dict[str, Any]:
+    if not training_state:
+        return _initial_rollin_totals()
+    candidate = training_state.get("rollin_totals")
+    expected = _initial_rollin_totals()
+    if not isinstance(candidate, dict) or set(candidate) != set(expected):
+        raise RuntimeError("unified recurrence roll-in checkpoint state differs")
+    for key in (
+        "examples",
+        "answer_tokens",
+        "generated_positions",
+        "generated_matches",
+    ):
+        value = candidate[key]
+        if type(value) is not int or value < 0:
+            raise RuntimeError("unified recurrence roll-in counters differ")
+    for key in ("last_generated_sha256", "last_effective_sha256"):
+        value = candidate[key]
+        if value is not None and (
+            not isinstance(value, str)
+            or len(value) != 64
+            or any(character not in "0123456789abcdef" for character in value)
+        ):
+            raise RuntimeError("unified recurrence roll-in digest differs")
+    maximum = candidate["max_preclip_gradient_norm"]
+    if (
+        isinstance(maximum, bool)
+        or not isinstance(maximum, (int, float))
+        or not math.isfinite(float(maximum))
+        or float(maximum) < 0.0
+    ):
+        raise RuntimeError("unified recurrence roll-in gradient maximum differs")
+    group_norms = candidate["max_preclip_gradient_norms"]
+    if not isinstance(group_norms, dict) or any(
+        not isinstance(name, str)
+        or isinstance(value, bool)
+        or not isinstance(value, (int, float))
+        or not math.isfinite(float(value))
+        or float(value) < 0.0
+        for name, value in group_norms.items()
+    ):
+        raise RuntimeError("unified recurrence roll-in gradient groups differ")
+    for key in ("last_probability", "last_state_teacher_forcing_probability"):
+        value = candidate[key]
+        if value is not None and (
+            isinstance(value, bool)
+            or not isinstance(value, (int, float))
+            or not 0.0 <= float(value) <= 1.0
+        ):
+            raise RuntimeError("unified recurrence roll-in probability differs")
+    return {
+        **candidate,
+        "max_preclip_gradient_norms": dict(group_norms),
+    }
+
+
+def _rollin_report(
+    totals: dict[str, Any],
+    *,
+    initial_probability: float,
+    final_probability: float,
+) -> dict[str, Any]:
+    snapshot = copy.deepcopy(totals)
+    generated_positions = int(snapshot["generated_positions"])
+    return {
+        **snapshot,
+        "initial_probability": initial_probability,
+        "final_probability": final_probability,
+        "generated_match_rate": (
+            int(snapshot["generated_matches"]) / generated_positions
+            if generated_positions
+            else None
+        ),
+        "labels_from_generated_tokens": False,
+    }
+
+
+def _checkpoint_tensor_bytes(tensors: dict[str, Any], out_dir: Path) -> bytes:
+    scratch = out_dir / f".checkpoint.{os.getpid()}.{uuid.uuid4().hex}.safetensors"
+    try:
+        mx.save_safetensors(str(scratch), tensors)
+        return scratch.read_bytes()
+    finally:
+        durable_unlink(scratch, missing_ok=True)
+
+
+def _publish_latest_checkpoint_generation(
+    out_dir: Path,
+    *,
+    payload: bytes,
+    step: int,
+    history: list[dict[str, Any]],
+    identity: dict[str, Any],
+    optimization_phase: str,
+    training_state: dict[str, Any],
+) -> dict[str, Any]:
+    """Publish immutable bytes, then atomically advance the latest pointer."""
+
+    generations = ensure_private_directory(out_dir / "checkpoint_generations")
+    checkpoint_id = f"step-{step:08d}-{uuid.uuid4().hex}"
+    generation_dir = ensure_private_directory(generations / checkpoint_id)
+    weights_path = generation_dir / "bundle.safetensors"
+    atomic_write_bytes(weights_path, payload, mode=0o400)
+    checkpoint_sha256 = hashlib.sha256(payload).hexdigest()
+    body = {
+        "schema": TRAINING_SCHEMA,
+        "checkpoint_generation_schema": CHECKPOINT_GENERATION_SCHEMA,
+        "checkpoint_id": checkpoint_id,
+        "step": step,
+        "optimization_phase": optimization_phase,
+        "history": history,
+        "training_state": training_state,
+        "identity": identity,
+        "checkpoint_file": weights_path.name,
+        "checkpoint_size_bytes": len(payload),
+        "checkpoint_sha256": checkpoint_sha256,
+    }
+    complete = {**body, "receipt_sha256": _canonical_sha256(body)}
+    complete_bytes = (
+        json.dumps(
+            complete,
+            sort_keys=True,
+            separators=(",", ":"),
+            ensure_ascii=True,
+            allow_nan=False,
+        ).encode("ascii")
+        + b"\n"
+    )
+    atomic_write_bytes(generation_dir / "complete.json", complete_bytes, mode=0o400)
+    pointer = {
+        "schema": CHECKPOINT_POINTER_SCHEMA,
+        "checkpoint": f"checkpoint_generations/{checkpoint_id}",
+        "complete_sha256": hashlib.sha256(complete_bytes).hexdigest(),
+        "identity_sha256": identity["identity_sha256"],
+        "step": step,
+    }
+    atomic_write_text(
+        out_dir / "checkpoint_latest_pointer.json",
+        json.dumps(pointer, sort_keys=True, separators=(",", ":")) + "\n",
+        encoding="ascii",
+        mode=0o600,
+    )
+
+    # Preserve the historical fixed paths for evaluators without duplicating
+    # the tensor payload. The immutable generation remains resume authority.
+    compatibility_weights = out_dir / "checkpoint_latest.safetensors"
+    scratch_link = out_dir / f".checkpoint_latest.{uuid.uuid4().hex}.link"
+    try:
+        os.link(weights_path, scratch_link)
+        durable_replace(scratch_link, compatibility_weights)
+    finally:
+        durable_unlink(scratch_link, missing_ok=True)
+    legacy_body = {
+        key: value
+        for key, value in body.items()
+        if key
+        not in {
+            "checkpoint_generation_schema",
+            "checkpoint_id",
+            "checkpoint_file",
+            "checkpoint_size_bytes",
+        }
+    }
+    _atomic_json(
+        out_dir / "checkpoint_latest.json",
+        {**legacy_body, "receipt_sha256": _canonical_sha256(legacy_body)},
+    )
+    return complete
+
+
+def _load_latest_checkpoint(
+    out_dir: Path,
+    *,
+    required: bool,
+) -> tuple[dict[str, Any], Path] | None:
+    pointer_path = out_dir / "checkpoint_latest_pointer.json"
+    legacy_receipt_path = out_dir / "checkpoint_latest.json"
+    legacy_weights_path = out_dir / "checkpoint_latest.safetensors"
+    if pointer_path.is_file():
+        try:
+            pointer = json.loads(pointer_path.read_text(encoding="ascii"))
+        except (json.JSONDecodeError, OSError, UnicodeError) as exc:
+            raise RuntimeError("unified recurrence checkpoint pointer is unreadable") from exc
+        if not isinstance(pointer, dict) or set(pointer) != {
+            "schema",
+            "checkpoint",
+            "complete_sha256",
+            "identity_sha256",
+            "step",
+        } or pointer.get("schema") != CHECKPOINT_POINTER_SCHEMA:
+            raise RuntimeError("unified recurrence checkpoint pointer differs")
+        relative = pointer.get("checkpoint")
+        if not isinstance(relative, str) or not relative.startswith(
+            "checkpoint_generations/"
+        ):
+            raise RuntimeError("unified recurrence checkpoint pointer path is invalid")
+        try:
+            generation_dir = (out_dir / relative).resolve(strict=True)
+            generation_root = (out_dir / "checkpoint_generations").resolve(
+                strict=True
+            )
+        except (FileNotFoundError, OSError) as exc:
+            raise RuntimeError(
+                "unified recurrence checkpoint generation is unavailable"
+            ) from exc
+        if generation_dir.parent != generation_root or not generation_dir.is_dir():
+            raise RuntimeError("unified recurrence checkpoint pointer escapes its root")
+        complete_path = generation_dir / "complete.json"
+        try:
+            complete_bytes = complete_path.read_bytes()
+            receipt = json.loads(complete_bytes.decode("ascii"))
+        except (FileNotFoundError, json.JSONDecodeError, OSError, UnicodeError) as exc:
+            raise RuntimeError("unified recurrence checkpoint generation is unreadable") from exc
+        identity = receipt.get("identity") if isinstance(receipt, dict) else None
+        if (
+            not isinstance(receipt, dict)
+            or hashlib.sha256(complete_bytes).hexdigest()
+            != pointer.get("complete_sha256")
+            or receipt.get("checkpoint_generation_schema")
+            != CHECKPOINT_GENERATION_SCHEMA
+            or receipt.get("checkpoint_id") != generation_dir.name
+            or receipt.get("step") != pointer.get("step")
+            or not isinstance(identity, dict)
+            or identity.get("identity_sha256")
+            != pointer.get("identity_sha256")
+        ):
+            raise RuntimeError("unified recurrence checkpoint generation differs")
+        receipt_body = {
+            key: value for key, value in receipt.items() if key != "receipt_sha256"
+        }
+        if receipt.get("receipt_sha256") != _canonical_sha256(receipt_body):
+            raise RuntimeError("unified recurrence checkpoint receipt differs")
+        weights_name = receipt.get("checkpoint_file")
+        if not isinstance(weights_name, str) or Path(weights_name).name != weights_name:
+            raise RuntimeError("unified recurrence checkpoint weight path is invalid")
+        weights_path = generation_dir / weights_name
+        try:
+            size = weights_path.stat().st_size
+            digest = _file_sha256(weights_path)
+        except OSError as exc:
+            raise RuntimeError("unified recurrence checkpoint weights are unreadable") from exc
+        if (
+            size != receipt.get("checkpoint_size_bytes")
+            or digest != receipt.get("checkpoint_sha256")
+        ):
+            raise RuntimeError("unified recurrence checkpoint weights differ")
+        return receipt, weights_path
+
+    legacy_present = (legacy_receipt_path.is_file(), legacy_weights_path.is_file())
+    if any(legacy_present) and not all(legacy_present):
+        raise RuntimeError("unified recurrence legacy checkpoint is incomplete")
+    if not all(legacy_present):
+        if required:
+            raise RuntimeError("unified recurrence resume checkpoint is unavailable")
+        return None
+    try:
+        receipt = json.loads(legacy_receipt_path.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError, UnicodeError) as exc:
+        raise RuntimeError("unified recurrence legacy checkpoint is unreadable") from exc
+    if not isinstance(receipt, dict):
+        raise RuntimeError("unified recurrence legacy checkpoint receipt differs")
+    return receipt, legacy_weights_path
+
+
 def _save_checkpoint(
     out_dir: Path,
     bundle: UnifiedTrainingBundle,
@@ -745,6 +1102,7 @@ def _save_checkpoint(
     identity: dict[str, Any],
     stem: str = "checkpoint_latest",
     optimization_phase: str = "recurrence",
+    training_state: dict[str, Any] | None = None,
 ) -> None:
     if not stem.startswith("checkpoint_") or not stem.replace("_", "").isalnum():
         raise ValueError("unified recurrence checkpoint stem is invalid")
@@ -757,24 +1115,34 @@ def _save_checkpoint(
             for name, value in tree_flatten(optimizer.state)
         }
     )
-    scratch = out_dir / f".checkpoint.{os.getpid()}.safetensors"
-    mx.save_safetensors(str(scratch), tensors)
-    weights_path = out_dir / f"{stem}.safetensors"
-    os.replace(scratch, weights_path)
-    body = {
-        "schema": TRAINING_SCHEMA,
-        "step": step,
-        "optimization_phase": optimization_phase,
-        "history": history,
-        "identity": identity,
-        "checkpoint_sha256": hashlib.sha256(
-            weights_path.read_bytes()
-        ).hexdigest(),
-    }
-    _atomic_json(
-        out_dir / f"{stem}.json",
-        {**body, "receipt_sha256": _canonical_sha256(body)},
-    )
+    payload = _checkpoint_tensor_bytes(tensors, out_dir)
+    with interprocess_file_lock(out_dir / ".unified_checkpoint.lock"):
+        if stem == "checkpoint_latest":
+            _publish_latest_checkpoint_generation(
+                out_dir,
+                payload=payload,
+                step=step,
+                history=history,
+                identity=identity,
+                optimization_phase=optimization_phase,
+                training_state=dict(training_state or {}),
+            )
+            return
+        weights_path = out_dir / f"{stem}.safetensors"
+        atomic_write_bytes(weights_path, payload, mode=0o600)
+        body = {
+            "schema": TRAINING_SCHEMA,
+            "step": step,
+            "optimization_phase": optimization_phase,
+            "history": history,
+            "training_state": dict(training_state or {}),
+            "identity": identity,
+            "checkpoint_sha256": hashlib.sha256(payload).hexdigest(),
+        }
+        _atomic_json(
+            out_dir / f"{stem}.json",
+            {**body, "receipt_sha256": _canonical_sha256(body)},
+        )
 
 
 def _restore_checkpoint(
@@ -786,12 +1154,13 @@ def _restore_checkpoint(
     semantic_warmup_steps: int = 0,
     state_warmup_steps: int = 0,
     answer_bridge_steps: int = 0,
-) -> tuple[int, list[dict[str, Any]]]:
-    receipt_path = out_dir / "checkpoint_latest.json"
-    weights_path = out_dir / "checkpoint_latest.safetensors"
-    if not receipt_path.is_file() or not weights_path.is_file():
-        return 0, []
-    receipt = json.loads(receipt_path.read_text(encoding="utf-8"))
+    required: bool = False,
+) -> tuple[int, list[dict[str, Any]], dict[str, Any]]:
+    with interprocess_file_lock(out_dir / ".unified_checkpoint.lock"):
+        loaded = _load_latest_checkpoint(out_dir, required=required)
+    if loaded is None:
+        return 0, [], {}
+    receipt, weights_path = loaded
     body = {key: value for key, value in receipt.items() if key != "receipt_sha256"}
     stored_identity = receipt.get("identity")
     if not isinstance(stored_identity, dict):
@@ -836,7 +1205,14 @@ def _restore_checkpoint(
     if optimizer_values:
         optimizer.state = tree_unflatten(optimizer_values)
     mx.eval(bundle.parameters(), optimizer.state)
-    return int(receipt["step"]), list(receipt.get("history", []))
+    training_state = receipt.get("training_state", {})
+    if not isinstance(training_state, dict):
+        raise RuntimeError("unified recurrence checkpoint training state differs")
+    return (
+        int(receipt["step"]),
+        list(receipt.get("history", [])),
+        dict(training_state),
+    )
 
 
 def _evaluate(
@@ -1071,6 +1447,15 @@ def main() -> int:
     parser.add_argument("--per-cell", type=int, default=24)
     parser.add_argument("--holdout-per-cell", type=int, default=6)
     parser.add_argument("--lora-rank", type=int, default=8)
+    parser.add_argument(
+        "--window-tissue-mode",
+        choices=("scoped_lora", "controller_only"),
+        default="scoped_lora",
+        help=(
+            "train scoped transformer adapters or leave every base-model tensor "
+            "frozen and train only the recurrent controller"
+        ),
+    )
     parser.add_argument("--controller-rank", type=int, default=16)
     parser.add_argument("--state-weight", type=float, default=2.0)
     parser.add_argument("--stutter-weight", type=float, default=0.1)
@@ -1143,6 +1528,14 @@ def main() -> int:
         help="global norm trust bound applied after phase masking",
     )
     parser.add_argument("--max-minutes", type=float, default=90.0)
+    parser.add_argument(
+        "--max-invocation-steps",
+        type=int,
+        help=(
+            "stop this process after N additional durable steps without changing "
+            "the scientific campaign identity; resume continues the same run"
+        ),
+    )
     parser.add_argument("--eval-every", type=int, default=20)
     parser.add_argument("--checkpoint-every", type=int, default=10)
     parser.add_argument("--checkpoint-group", type=int, default=4)
@@ -1189,6 +1582,10 @@ def main() -> int:
         )
     if args.max_gradient_norm <= 0.0:
         raise ValueError("maximum gradient norm must be positive")
+    if args.max_minutes <= 0.0:
+        raise ValueError("maximum minutes must be positive")
+    if args.max_invocation_steps is not None and args.max_invocation_steps < 1:
+        raise ValueError("maximum invocation steps must be positive")
     recurrent_learning_rate = (
         args.learning_rate
         if args.recurrent_learning_rate is None
@@ -1213,6 +1610,10 @@ def main() -> int:
         raise ValueError("learning rates must be positive")
     if args.state_weight <= 0.0 or args.stutter_weight < 0.0:
         raise ValueError("state weight must be positive and stutter weight non-negative")
+    if args.window_tissue_mode == "controller_only" and args.semantic_warmup_steps:
+        raise ValueError(
+            "controller-only tissue cannot schedule transformer semantic warmup"
+        )
 
     from mlx_lm import load
 
@@ -1322,9 +1723,10 @@ def main() -> int:
             tokenizer,
             opcode_contract,
         )
-        wiring = _attach_window_adapters(
+        wiring = _configure_window_tissue(
             model,
             spec,
+            mode=args.window_tissue_mode,
             rank=args.lora_rank,
             targets=targets,
             depth_basis_size=args.depth_basis_size,
@@ -1383,6 +1785,7 @@ def main() -> int:
             "recurrent_learning_rate": recurrent_learning_rate,
             "state_learning_rate": state_learning_rate,
             "bridge": args.bridge,
+            "window_tissue_mode": args.window_tissue_mode,
             "lora_rank": args.lora_rank,
             "controller_rank": args.controller_rank,
             "state_weight": args.state_weight,
@@ -1431,7 +1834,7 @@ def main() -> int:
                 )
             )
         )
-        step, history = (
+        step, history, restored_training_state = (
             _restore_checkpoint(
                 out_dir,
                 bundle,
@@ -1440,10 +1843,27 @@ def main() -> int:
                 semantic_warmup_steps=args.semantic_warmup_steps,
                 state_warmup_steps=args.state_warmup_steps,
                 answer_bridge_steps=args.answer_bridge_steps,
+                required=True,
             )
             if args.resume
-            else (0, [])
+            else (0, [], {})
         )
+        rollin_totals = _restore_rollin_totals(restored_training_state)
+        invocation_start_step = step
+        invocation_stop_step = _invocation_stop_step(
+            invocation_start_step,
+            args.max_steps,
+            args.max_invocation_steps,
+        )
+        optimizer.learning_rate = phase_learning_rate(
+            _optimization_phase(
+                step,
+                args.semantic_warmup_steps,
+                args.state_warmup_steps,
+                args.answer_bridge_steps,
+            )
+        )
+        mx.eval(optimizer.learning_rate)
         print(
             f"[unified] step={step} trainable={sum(v.size for v in _trainable(bundle).values()):,} "
             f"readout={readout_sha256[:12]}",
@@ -1453,20 +1873,8 @@ def main() -> int:
             recurrence_adapter_scope,
         )
 
-        rollin_totals = {
-            "examples": 0,
-            "answer_tokens": 0,
-            "generated_positions": 0,
-            "generated_matches": 0,
-            "last_generated_sha256": None,
-            "last_effective_sha256": None,
-            "max_preclip_gradient_norm": 0.0,
-            "max_preclip_gradient_norms": {},
-            "last_probability": None,
-            "last_state_teacher_forcing_probability": None,
-        }
         with checkpointed_window(model, group_size=args.checkpoint_group):
-            while step < args.max_steps and time.time() < deadline:
+            while step < invocation_stop_step and time.time() < deadline:
                 phase = _optimization_phase(
                     step,
                     args.semantic_warmup_steps,
@@ -1709,19 +2117,11 @@ def main() -> int:
                     )
                     report["step"] = step
                     report["optimization_phase"] = next_phase
-                    generated_positions = int(rollin_totals["generated_positions"])
-                    report["student_rollin"] = {
-                        **rollin_totals,
-                        "initial_probability": args.student_rollin_probability,
-                        "final_probability": rollin_final_probability,
-                        "generated_match_rate": (
-                            int(rollin_totals["generated_matches"])
-                            / generated_positions
-                            if generated_positions
-                            else None
-                        ),
-                        "labels_from_generated_tokens": False,
-                    }
+                    report["student_rollin"] = _rollin_report(
+                        rollin_totals,
+                        initial_probability=args.student_rollin_probability,
+                        final_probability=rollin_final_probability,
+                    )
                     history.append(report)
                     print(f"[eval {step}] {report}", flush=True)
                     prior = history[:-1]
@@ -1740,6 +2140,7 @@ def main() -> int:
                             identity=identity,
                             stem="checkpoint_best_heldout",
                             optimization_phase=next_phase,
+                            training_state={"rollin_totals": rollin_totals},
                         )
                     if report["trained_depth_helps"] and (
                         not prior or report["best_deep_relative_gain"] > max(
@@ -1756,6 +2157,7 @@ def main() -> int:
                             identity=identity,
                             stem="checkpoint_best_trained",
                             optimization_phase=next_phase,
+                            training_state={"rollin_totals": rollin_totals},
                         )
                 if step % args.checkpoint_every == 0 or step == args.max_steps:
                     _save_checkpoint(
@@ -1766,11 +2168,13 @@ def main() -> int:
                         history=history,
                         identity=identity,
                         optimization_phase=next_phase,
+                        training_state={"rollin_totals": rollin_totals},
                     )
                 envelope.reclaim(force=True)
 
         if (
             not history
+            or int(history[-1].get("step", -1)) != step
             or set(history[-1].get("ce", {}))
             != {f"T{depth}" for depth in spec.depths}
             or "heldout_depth_helps" not in history[-1]
@@ -1806,11 +2210,22 @@ def main() -> int:
                     args.state_warmup_steps,
                     args.answer_bridge_steps,
                 ),
+                training_state={"rollin_totals": rollin_totals},
             )
         final_readout = readout_fingerprint(model, spec.coda_start)
         if final_readout != readout_sha256:
             raise RuntimeError("unified training changed the frozen readout")
         final = history[-1] if history else None
+        halt_reason = _training_halt_reason(
+            step=step,
+            max_steps=args.max_steps,
+            invocation_stop_step=invocation_stop_step,
+        )
+        with interprocess_file_lock(out_dir / ".unified_checkpoint.lock"):
+            latest_checkpoint = _load_latest_checkpoint(out_dir, required=True)
+        if latest_checkpoint is None:
+            raise RuntimeError("unified recurrence final checkpoint is unavailable")
+        checkpoint_receipt, checkpoint_weights_path = latest_checkpoint
         body = {
             "schema": TRAINING_SCHEMA,
             "identity": identity,
@@ -1820,6 +2235,22 @@ def main() -> int:
             "readout_sha256_before": readout_sha256,
             "readout_sha256_after": final_readout,
             "readout_frozen": True,
+            "complete": step >= args.max_steps,
+            "halt_reason": halt_reason,
+            "invocation": {
+                "start_step": invocation_start_step,
+                "end_step": step,
+                "max_invocation_steps": args.max_invocation_steps,
+                "planned_stop_step": invocation_stop_step,
+                "max_minutes": args.max_minutes,
+            },
+            "latest_checkpoint": {
+                "step": checkpoint_receipt["step"],
+                "optimization_phase": checkpoint_receipt["optimization_phase"],
+                "checkpoint_sha256": checkpoint_receipt["checkpoint_sha256"],
+                "checkpoint_size_bytes": checkpoint_weights_path.stat().st_size,
+                "receipt_sha256": checkpoint_receipt["receipt_sha256"],
+            },
             "elapsed_minutes": round((time.time() - started) / 60.0, 3),
             "verdict": (
                 "heldout_depth_gain"

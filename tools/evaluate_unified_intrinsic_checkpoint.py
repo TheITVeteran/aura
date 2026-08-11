@@ -47,8 +47,8 @@ from tools.train_intrinsic_recurrence import encode_example  # noqa: E402
 from tools.train_unified_intrinsic_recurrence import (  # noqa: E402
     TRAINING_SOURCE_FILES,
     UnifiedTrainingBundle,
-    _attach_window_adapters,
     _canonical_sha256,
+    _configure_window_tissue,
     _model_identity,
     _trainable,
 )
@@ -175,9 +175,10 @@ def _load_checkpoint(
     ):
         raise RuntimeError("unified checkpoint answer emission contract differs")
     spec = UnifiedIntrinsicTrainingSpec(**identity["spec"])
-    wiring = _attach_window_adapters(
+    wiring = _configure_window_tissue(
         model,
         spec,
+        mode=str(identity.get("window_tissue_mode", "scoped_lora")),
         rank=int(identity["lora_rank"]),
         targets=tuple(identity["lora_targets"]),
         depth_basis_size=int(identity["depth_basis_size"]),

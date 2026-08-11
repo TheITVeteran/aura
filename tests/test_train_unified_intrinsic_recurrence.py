@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 import pytest
@@ -36,19 +37,26 @@ from tools.train_unified_intrinsic_recurrence import (  # noqa: E402
     _canonical_sha256,
     _clip_gradient_groups,
     _clip_gradient_norm,
+    _configure_window_tissue,
     _deterministic_student_mix,
     _evaluate,
     _generate_student_rollin,
     _ground_state_value_embeddings,
+    _initial_rollin_totals,
+    _invocation_stop_step,
+    _load_latest_checkpoint,
     _model_identity,
     _optimization_phase,
     _phase_gradients,
     _residual_hidden_size,
     _restore_checkpoint,
+    _restore_rollin_totals,
+    _rollin_report,
     _save_checkpoint,
     _semantic_execution_depth,
     _student_rollin_probability,
     _trainable,
+    _training_halt_reason,
 )
 
 
@@ -102,6 +110,98 @@ def test_trainer_adapts_window_but_never_coda_or_readout() -> None:
     for index, layer in enumerate(bundle.model.model.layers):
         wrapped = isinstance(layer.self_attn.o_proj, ScopedLoRALinear)
         assert wrapped is (2 <= index < 4)
+
+
+def test_controller_only_tissue_leaves_every_model_projection_frozen() -> None:
+    model = _model()
+    spec = UnifiedIntrinsicTrainingSpec(2, 4, (1, 2), (4, 8))
+
+    wiring = _configure_window_tissue(
+        model,
+        spec,
+        mode="controller_only",
+        rank=2,
+        targets=("o_proj",),
+        depth_basis_size=3,
+    )
+    controller = UnifiedRecurrentController(
+        UnifiedRecurrenceConfig(
+            hidden_size=32,
+            correction_rank=4,
+            minimum_iterations=1,
+        )
+    )
+    trainable = _trainable(UnifiedTrainingBundle(model, controller))
+
+    assert wiring == {
+        "window_tissue_mode": "controller_only",
+        "window": [2, 4],
+        "adapted_sites": [],
+        "adapted_projection_count": 0,
+        "continuous_depth_operator_count": 0,
+        "continuous_depth_basis_size": 0,
+        "coda_adapted": False,
+        "readout_adapted": False,
+        "ordinary_inference_requires_scope": False,
+        "recurrence_phase_trains_shared_state_bridge": False,
+        "state_bridge": "typed_recurrent_controller_only",
+    }
+    assert trainable
+    assert all(name.startswith("controller.") for name in trainable)
+    for layer in model.model.layers:
+        assert not isinstance(layer.self_attn.o_proj, ScopedLoRALinear)
+
+
+def test_invocation_boundary_is_operational_and_resumable() -> None:
+    assert _invocation_stop_step(0, 73, None) == 73
+    assert _invocation_stop_step(0, 73, 3) == 3
+    assert _invocation_stop_step(3, 73, 3) == 6
+    assert _invocation_stop_step(72, 73, 3) == 73
+    assert (
+        _training_halt_reason(step=3, max_steps=73, invocation_stop_step=3)
+        == "invocation_step_limit"
+    )
+    assert (
+        _training_halt_reason(step=3, max_steps=73, invocation_stop_step=73)
+        == "wall_clock"
+    )
+    assert (
+        _training_halt_reason(step=73, max_steps=73, invocation_stop_step=73)
+        == "max_steps"
+    )
+    with pytest.raises(ValueError, match="must be positive"):
+        _invocation_stop_step(0, 73, 0)
+
+
+def test_rollin_telemetry_round_trips_and_rejects_invalid_state() -> None:
+    totals = _initial_rollin_totals()
+    totals["examples"] = 7
+    totals["max_preclip_gradient_norm"] = 2.5
+    totals["max_preclip_gradient_norms"] = {"recurrent_controller": 2.5}
+    restored = _restore_rollin_totals({"rollin_totals": totals})
+    assert restored == totals
+    assert restored is not totals
+    assert restored["max_preclip_gradient_norms"] is not totals[
+        "max_preclip_gradient_norms"
+    ]
+    totals["last_probability"] = float("nan")
+    with pytest.raises(RuntimeError, match="probability differs"):
+        _restore_rollin_totals({"rollin_totals": totals})
+
+
+def test_rollin_report_is_an_immutable_historical_snapshot() -> None:
+    totals = _initial_rollin_totals()
+    totals["generated_positions"] = 4
+    totals["generated_matches"] = 3
+    totals["max_preclip_gradient_norms"] = {"state_answer_bridge": 2.0}
+    report = _rollin_report(
+        totals,
+        initial_probability=0.25,
+        final_probability=0.75,
+    )
+    totals["max_preclip_gradient_norms"]["state_answer_bridge"] = 9.0
+    assert report["max_preclip_gradient_norms"] == {"state_answer_bridge": 2.0}
+    assert report["generated_match_rate"] == pytest.approx(0.75)
 
 
 def test_campaign_identity_binds_curriculum_and_state_schema_sources() -> None:
@@ -381,6 +481,8 @@ def test_checkpoint_roundtrip_restores_exact_trainable_state(tmp_path: Path) -> 
     before = {name: value + 0 for name, value in _trainable(bundle).items()}
     mx.eval(before)
     history = [{"step": 3, "depth_helps": False}]
+    training_state = {"rollin_totals": _initial_rollin_totals()}
+    training_state["rollin_totals"]["examples"] = 3
     _save_checkpoint(
         tmp_path,
         bundle,
@@ -388,11 +490,12 @@ def test_checkpoint_roundtrip_restores_exact_trainable_state(tmp_path: Path) -> 
         step=3,
         history=history,
         identity=identity,
+        training_state=training_state,
     )
 
     bundle.controller.correction_b = mx.ones_like(bundle.controller.correction_b)
     mx.eval(bundle.parameters())
-    step, restored_history = _restore_checkpoint(
+    step, restored_history, restored_training_state = _restore_checkpoint(
         tmp_path,
         bundle,
         optimizer,
@@ -400,6 +503,7 @@ def test_checkpoint_roundtrip_restores_exact_trainable_state(tmp_path: Path) -> 
     )
     assert step == 3
     assert restored_history == history
+    assert restored_training_state == training_state
     after = _trainable(bundle)
     assert set(after) == set(before)
     assert all(bool(mx.array_equal(after[name], value)) for name, value in before.items())
@@ -435,6 +539,84 @@ def test_checkpoint_refuses_a_different_campaign_identity(tmp_path: Path) -> Non
         )
 
 
+def test_latest_checkpoint_uses_immutable_generation_over_compatibility_mirror(
+    tmp_path: Path,
+) -> None:
+    bundle, _wiring = _bundle()
+    optimizer = optim.Adam(learning_rate=0.01)
+    optimizer.init(bundle.trainable_parameters())
+    identity_body = {"schema": "test", "depths": (1, 2, 4)}
+    identity = {
+        **identity_body,
+        "identity_sha256": _canonical_sha256(identity_body),
+    }
+    before = {name: value for name, value in _trainable(bundle).items()}
+    _save_checkpoint(
+        tmp_path,
+        bundle,
+        optimizer,
+        step=3,
+        history=[{"step": 3}],
+        identity=identity,
+    )
+
+    pointer = json.loads((tmp_path / "checkpoint_latest_pointer.json").read_text())
+    assert pointer["step"] == 3
+    loaded = _load_latest_checkpoint(tmp_path, required=True)
+    assert loaded is not None
+    generation_receipt, generation_weights = loaded
+    assert generation_receipt["checkpoint_generation_schema"].endswith(".v2")
+    assert generation_weights.parent.name in pointer["checkpoint"]
+
+    # A crash or writer failure in the compatibility mirror cannot strand the
+    # authoritative immutable generation.
+    mirror = tmp_path / "checkpoint_latest.safetensors"
+    mirror.unlink()
+    mirror.write_bytes(b"torn compatibility mirror")
+    (tmp_path / "checkpoint_latest.json").write_text("{}", encoding="utf-8")
+    bundle.controller.correction_b = mx.ones_like(bundle.controller.correction_b)
+    mx.eval(bundle.parameters())
+    step, history, training_state = _restore_checkpoint(
+        tmp_path,
+        bundle,
+        optimizer,
+        identity,
+        required=True,
+    )
+    assert step == 3
+    assert history == [{"step": 3}]
+    assert training_state == {}
+    after = _trainable(bundle)
+    assert all(bool(mx.array_equal(after[name], value)) for name, value in before.items())
+
+
+def test_resume_requires_a_complete_checkpoint(tmp_path: Path) -> None:
+    bundle, _wiring = _bundle()
+    optimizer = optim.Adam(learning_rate=0.01)
+    identity_body = {"schema": "test", "depths": (1, 2, 4)}
+    identity = {
+        **identity_body,
+        "identity_sha256": _canonical_sha256(identity_body),
+    }
+    with pytest.raises(RuntimeError, match="resume checkpoint is unavailable"):
+        _restore_checkpoint(
+            tmp_path,
+            bundle,
+            optimizer,
+            identity,
+            required=True,
+        )
+    (tmp_path / "checkpoint_latest.json").write_text("{}", encoding="utf-8")
+    with pytest.raises(RuntimeError, match="legacy checkpoint is incomplete"):
+        _restore_checkpoint(
+            tmp_path,
+            bundle,
+            optimizer,
+            identity,
+            required=True,
+        )
+
+
 def test_named_best_checkpoint_does_not_overwrite_latest(tmp_path: Path) -> None:
     bundle, _wiring = _bundle()
     optimizer = optim.Adam(learning_rate=0.01)
@@ -463,7 +645,9 @@ def test_named_best_checkpoint_does_not_overwrite_latest(tmp_path: Path) -> None
     )
     assert (tmp_path / "checkpoint_latest.json").is_file()
     assert (tmp_path / "checkpoint_best_trained.json").is_file()
-    step, _history = _restore_checkpoint(tmp_path, bundle, optimizer, identity)
+    step, _history, _training_state = _restore_checkpoint(
+        tmp_path, bundle, optimizer, identity
+    )
     assert step == 3
 
 

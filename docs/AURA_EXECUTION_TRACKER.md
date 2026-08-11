@@ -44601,3 +44601,51 @@ reasoning, resident-32B transfer, fusion, frontier performance or a `WOW
 Signal`. The completion envelope advances to `912/920` (approximately
 `99.1%`). Next is a source-bound resident-32B transfer canary with equal-compute
 and lesion controls; broad held-out reasoning remains a separate required gate.
+
+## Checkpoint 2026-08-11-232: Portable Controller and Exact Resume
+
+CP232 removed an unnecessary resident-transfer dependency. The unified
+recurrent machine can now be trained in `controller_only` mode: every tensor in
+the frozen transformer, coda and readout remains untouched, while the typed
+state/action machine, recurrent transport and neural answer pointer live in one
+width-aware controller. On a fresh source-bound Qwen2.5-1.5B campaign this
+reduced the trainable surface to `4,576,955` parameters and completed all 73
+curriculum steps in 5.47 minutes. Initial state, action and terminal state were
+exact on all `27/27` holdouts at T1/T2/T4/T8/T16. T4/T8/T16 cross-entropy was
+`0.048590` versus T1 `0.844141`, a `94.244%` relative reduction.
+
+The frozen checkpoint then ran a new 36-task prompt-disjoint six-arm decode.
+Base solved `0/36`, the same trained controller at T1 solved `14/36`, and the
+complete T4 path solved `36/36`. T4 preserved all 14 T1 successes and converted
+the remaining 22 with no regressions (exact two-sided paired sign-test
+`p=4.768372e-7`). The digit-pointer lesion fell to `2/36`: 34 complete-path
+wins, zero losses and two ties (`p=1.164153e-10`). The grammar lesion retained
+`33/36` and the compiled positive control solved `36/36`. The checkpoint
+commitment is
+`8238caa44241d57b789c9bdb57458a74b6a6681c77661557c7146c7bda92350e`,
+the decode report commitment is
+`80a702b6e9f646b1d1022b213d82876806f595deee7f96dc50c8a89291c98b1b`,
+and the campaign identity is
+`4ecd8ffaef5ac967b3c8af8e543ca98f17da45be475e0a818ba80d87307180bb`.
+
+CP232 also replaced the trainer's crash-vulnerable two-file resume authority
+with immutable, read-only checkpoint generations and an atomically advanced
+pointer. Each generation binds controller and optimizer tensors, phase,
+cursor, history, cumulative roll-in evidence and campaign identity. A bounded
+invocation now records `complete` plus a typed halt reason, and `--resume`
+refuses missing or partial state. A real 1.5B boundary canary stopped at step 2
+with `invocation_step_limit`, resumed through the answer-bridge-to-recurrence
+phase transition and completed at step 3. Its uninterrupted twin had the same
+campaign identity, final tensor hash
+`d961a677777ac7544023c228992de1eaa78740ed02a4a0a849735afd2a8ec831`,
+full evaluation history, final evidence and frozen readout. This is exact
+computational and evidentiary resume, not merely a successful reload.
+
+This checkpoint proves a compact, structurally portable controller and a
+crash-consistent training substrate on the bounded 1.5B mechanism. It does not
+prove resident-32B transfer, broad reasoning, live serving, fusion, frontier
+performance or a `WOW Signal`. The completion envelope remains `912/920`
+(approximately `99.1%`) because the resident-transfer requirement closes only
+after a source-complete 32B canary and its frozen controls pass. Next is complete
+source/model/dataset identity closure, batched resident codebook grounding and
+the exclusive-lane resident campaign contract.
