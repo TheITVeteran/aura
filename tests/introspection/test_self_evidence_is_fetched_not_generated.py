@@ -550,3 +550,46 @@ def test_the_discriminating_words_are_not_stopworded() -> None:
 
     for discriminating in ('"count"', '"files"', '"directory"', '"file"'):
         assert discriminating not in stopword_block
+
+
+def test_recall_answers_with_the_value_not_the_ledger() -> None:
+    """LIVE: the full record was appended and never reached the person.
+
+    3,300 characters of receipt lines bolted onto a two-sentence reply reads as
+    off-topic to the shaping that follows, and it was stripped — correctly. The
+    answer to "what was the count" is a number.
+    """
+    from core.introspection.self_evidence import concise_past_action_answer
+
+    answer = concise_past_action_answer(
+        "Earlier today I asked you to count the .py files in one of your own "
+        "directories. Without guessing: what was the count?"
+    )
+    if not answer:
+        pytest.skip("no verified tool receipts on this machine")
+
+    assert len(answer) < 200
+    assert "count was" in answer
+
+
+def test_only_a_field_the_question_asked_about_is_quoted() -> None:
+    """An effect-evidence string carries bytes and sha256 too, and neither
+    answers a question about a count."""
+    import inspect
+
+    from core.introspection import self_evidence
+
+    source = inspect.getsource(self_evidence.concise_past_action_answer)
+
+    assert "if key in asked" in source
+
+
+def test_a_correct_recall_is_not_corrected() -> None:
+    from interface.routes import chat
+
+    question = (
+        "Earlier today I asked you to count the .py files in one of your own "
+        "directories. Without guessing: what was the count?"
+    )
+
+    assert chat._append_past_action_record(question, "It was 9 files.") == "It was 9 files."

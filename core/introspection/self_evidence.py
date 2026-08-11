@@ -52,6 +52,7 @@ __all__ = [
     "ReadingState",
     "asks_about_own_operational_state",
     "asks_about_past_actions",
+    "concise_past_action_answer",
     "asks_about_the_shared_present",
     "render_self_health_answer",
     "resolve_self_health",
@@ -806,3 +807,46 @@ def past_actions_answer(message: Any) -> str:
     if not bundle.grounded:
         return ""
     return render_past_actions(bundle)
+
+
+#: key=value pairs inside an effect-evidence string:
+#: "listed=/path;pattern=*.py;count=9" -> {"listed": "/path", "count": "9"}
+_EVIDENCE_FIELD_RE = re.compile(r"(?P<key>[a-z_]+)=(?P<value>[^;]+)")
+
+
+def concise_past_action_answer(message: Any) -> str:
+    """One line of recorded fact, not a dump of receipts.
+
+    LIVE, 2026-08-10: the full record — 3,300 characters of receipt lines —
+    was appended to a two-sentence reply and never reached the person. Reply
+    shaping downstream reads a wall of unrelated-looking text as off-topic and
+    strips it, which is the correct instinct: the answer to "what was the
+    count" is a number, not a ledger.
+
+    So the salient value is extracted and stated. The ledger is still available
+    through past_actions_answer for the paths that have nothing else to serve.
+    """
+
+    if not asks_about_past_actions(message):
+        return ""
+    bundle = resolve_past_actions(limit=4, query=message)
+    if not bundle.grounded:
+        return ""
+    asked = {word for word in re.findall(r"[a-z]{3,}", str(message or "").lower())}
+    for reading in bundle.readings:
+        if reading.channel != "tool_receipts" or not reading.present:
+            continue
+        for entry in reading.value or ():
+            fields = {
+                match.group("key"): match.group("value").strip()
+                for match in _EVIDENCE_FIELD_RE.finditer(str(entry.get("evidence") or ""))
+            }
+            for key, value in fields.items():
+                # Only a field the question actually asked about, so "bytes"
+                # and "sha256" never answer a question about a count.
+                if key in asked and value:
+                    return (
+                        f"From my own receipts, the {key} was {value} — that is "
+                        f"the recorded value, not a recollection."
+                    )
+    return ""

@@ -20408,12 +20408,16 @@ def _append_past_action_record(user_message: object, reply_text: object) -> obje
     try:
         from core.introspection.self_evidence import (
             asks_about_past_actions,
-            past_actions_answer,
+            concise_past_action_answer,
         )
 
         if not asks_about_past_actions(user_message):
             return reply_text
-        record = str(past_actions_answer(user_message) or "").strip()
+        # One line of recorded fact, not the ledger. The full record was
+        # 3,300 characters and never reached the person: reply shaping reads a
+        # wall of unrelated-looking text as off-topic and strips it, which is
+        # the right instinct — the answer to "what was the count" is a number.
+        record = str(concise_past_action_answer(user_message) or "").strip()
     except _CHAT_RECOVERABLE_ERRORS as exc:
         record_degradation('chat', exc)
         return reply_text
