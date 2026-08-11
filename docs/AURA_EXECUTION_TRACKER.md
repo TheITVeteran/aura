@@ -44924,3 +44924,35 @@ completion envelope remains `912/920` (approximately `99.1%`). Next is to
 freeze this evaluator identity into a fresh bounded canary, then execute the
 prompt-disjoint matched-compute behavioral falsifier from that immutable
 source.
+
+## Checkpoint 2026-08-11-240: Preserve the Frozen Training Interpreter
+
+The first CP239 resident attempt failed before model load and produced no
+checkpoint. Preparation correctly committed the repository virtualenv as the
+campaign interpreter, and detached planning correctly preserved and verified
+that launcher. After the signed preload/sentinel handoff, however, the preload
+barrier resolved the inner launcher symlink and executed its Homebrew base
+binary. That discarded the virtualenv's site-packages, so the trainer exited
+with `ModuleNotFoundError: No module named 'mlx'`. The controller retained the
+failed attempt and began its bounded retry policy; the exact launchd job and
+second detached attempt were then explicitly stopped, with no surviving
+campaign process.
+
+The preload barrier now requires an absolute inner launcher and validates its
+complete detached-step binding, including invocation path, resolved binary,
+binary digest, symlink target and `pyvenv.cfg` when present. It deliberately
+executes the validated invocation path rather than its resolved binary. This
+keeps virtualenv discovery causal while retaining the resolved-binary trust
+root. A process-level regression runs the real signed preload/release
+handshake, crosses the `execve` boundary and proves that the child retains the
+same virtualenv `sys.prefix`; the prior implementation fails that test by
+landing in the base interpreter.
+
+The affected preload, resident-controller and evaluator surface passes `34/34`
+focused tests; repository smoke passes `104/104`; Ruff, compilation, diff
+hygiene and architectural layering are clean. CP239 remains valid negative
+launch evidence only. No resident result from that package, decoded reasoning
+gain, fusion, frontier performance or `WOW Signal` is claimed. The completion
+envelope remains `912/920` (approximately `99.1%`). Next is to freeze the
+published repair and rerun the bounded resident canary, then proceed directly
+to the prompt-disjoint behavioral falsifier.

@@ -84,6 +84,56 @@ def test_replayed_wrapper_uses_fresh_pid_scoped_handshake(tmp_path: Path) -> Non
     assert observed_pids[0] != observed_pids[1]
 
 
+def test_preload_handoff_preserves_virtualenv_launcher(tmp_path: Path) -> None:
+    expected_prefix = Path(sys.prefix).resolve()
+    launcher = Path(sys.executable)
+    if not (launcher.parent.parent / "pyvenv.cfg").is_file():
+        pytest.skip("test runtime is not a virtual environment")
+    key_path = _key(tmp_path)
+    script = Path(__file__).parents[1] / "tools/unified_intrinsic_preload_barrier.py"
+    output = tmp_path / "child-prefix.txt"
+    process = subprocess.Popen(
+        [
+            sys.executable,
+            str(script),
+            "--ready",
+            str(tmp_path / "ready-{pid}.json"),
+            "--release",
+            str(tmp_path / "release-{pid}.json"),
+            "--key",
+            str(key_path),
+            "--config-sha256",
+            "a" * 64,
+            "--timeout",
+            "10",
+            "--",
+            str(launcher),
+            "-c",
+            f"import pathlib,sys; pathlib.Path({str(output)!r}).write_text(sys.prefix)",
+        ]
+    )
+    ready_path = tmp_path / f"ready-{process.pid}.json"
+    deadline = time.monotonic() + 5.0
+    while time.monotonic() < deadline and not ready_path.exists():
+        time.sleep(0.01)
+    assert ready_path.exists()
+    ready = json.loads(ready_path.read_text(encoding="ascii"))
+    publish_release(
+        tmp_path / f"release-{process.pid}.json",
+        ready_path=ready_path,
+        key_path=key_path,
+        sentinel_pid=os.getpid(),
+        sentinel_start_token=detached._process_start_token(os.getpid()),
+        sentinel_ring_entry_sha256="b" * 64,
+        host_pressure={"available": True, "under_pressure": False},
+        expected_target_pid=process.pid,
+        expected_target_start_token=ready["target_start_token"],
+        expected_command_sha256=ready["command_sha256"],
+    )
+    assert process.wait(timeout=5.0) == 0
+    assert Path(output.read_text(encoding="utf-8")).resolve() == expected_prefix
+
+
 def _key(tmp_path: Path) -> Path:
     path = tmp_path / "heartbeat.key"
     path.write_bytes(b"k" * 32)

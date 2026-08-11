@@ -438,9 +438,18 @@ def main(argv: Sequence[str] | None = None) -> int:
             config_sha256=args.config_sha256,
             timeout_s=args.timeout,
         )
-        executable = Path(command[0]).expanduser().resolve(strict=True)
-        if not executable.is_file():
+        executable = Path(command[0]).expanduser()
+        if not executable.is_absolute():
             raise UnifiedPreloadBarrierError("preload executable is invalid")
+        # Preserve the invocation path after validating its complete binding.
+        # Resolving a virtualenv launcher here executes the base interpreter
+        # and silently drops that environment's site-packages.
+        try:
+            detached._launcher_binding(executable)  # noqa: SLF001
+        except detached.DetachedStepError as exc:
+            raise UnifiedPreloadBarrierError(
+                "preload executable is invalid"
+            ) from exc
         os.execve(str(executable), [str(executable), *command[1:]], dict(os.environ))
     except Exception as exc:  # noqa: BLE001 - stable CLI failure boundary
         print(
