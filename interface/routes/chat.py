@@ -20223,9 +20223,19 @@ async def _execute_desktop_objective_from_chat(
             # never dropped for lack of a quotable deliverable.
             verified_effects, _verification_reason = _verified_desktop_task_result(result)
             if produced:
-                response = (
-                    f"{summary or 'Done.'} Here is what I wrote:\n\n{produced}"
-                )
+                # A summary that only counts steps is machinery, and prepending
+                # it to a real deliverable puts internal vocabulary in front of
+                # the answer: "Desktop task completed 2/2 governed computer-use
+                # steps through heuristic_compat planning. Here is what I
+                # wrote: ..." — the planner's identifier, in a sentence to a
+                # person. The deliverable is the answer; when the summary says
+                # nothing about the world, it leads with nothing.
+                if _is_step_bookkeeping_only(summary):
+                    response = produced
+                else:
+                    response = (
+                        f"{summary or 'Done.'} Here is what I wrote:\n\n{produced}"
+                    )
             elif _is_step_bookkeeping_only(summary):
                 # Live 2026-08-10: "can you read text that is only pixels?
                 # answer yes or no, then tell me how you know" was answered

@@ -128,3 +128,32 @@ def test_capture_path_sets_a_status_in_every_branch() -> None:
     assert 'screen_text_status = "read"' in source
     assert "unreadable:" in source
     assert 'screen_text_status = "not_attempted"' in source
+
+
+def test_a_step_count_never_leads_a_real_deliverable() -> None:
+    """LIVE, 2026-08-10, after the directory read finally worked:
+
+        "Desktop task completed 2/2 governed computer-use steps through
+         heuristic_compat planning. Here is what I wrote:
+
+         9 file(s) matching *.py in ..."
+
+    The answer was correct and complete, and it was introduced by a step count
+    and the planner's internal identifier. "heuristic_compat" is a name for the
+    engineering log, not for a person, and it arrived in front of the thing
+    they asked for.
+
+    A summary that says something about the world still leads — it is context.
+    A summary that only counts steps is machinery and leads with nothing.
+    """
+    import inspect
+
+    from interface.routes import chat
+
+    source = inspect.getsource(chat._execute_desktop_objective_from_chat)
+    marker = "Here is what I wrote:"
+    assert marker in source
+    window = source[max(0, source.find(marker) - 900) : source.find(marker) + 200]
+
+    assert "_is_step_bookkeeping_only(summary)" in window
+    assert "response = produced" in window
