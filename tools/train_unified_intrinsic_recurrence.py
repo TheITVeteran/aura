@@ -1137,6 +1137,34 @@ def _answer_bridge_task(tasks: list[Any], bridge_index: int) -> Any:
     return cell_tasks[cycle % len(cell_tasks)]
 
 
+def _recurrent_training_task(
+    tasks: list[Any],
+    tokenizer: Any,
+    bridge: str,
+    recurrence_index: int,
+) -> Any:
+    """Choose max-depth recurrence examples in deterministic memory-cost order."""
+
+    if type(recurrence_index) is not int or recurrence_index < 0 or not tasks:
+        raise ValueError("recurrent training task schedule is invalid")
+    max_depth = max(int(task.depth) for task in tasks)
+    ranked: list[tuple[int, str, str, Any]] = []
+    for task in tasks:
+        if int(task.depth) != max_depth:
+            continue
+        prompt, answer = encode_example(tokenizer, task, bridge)
+        ranked.append(
+            (
+                int(prompt.shape[-1]) + int(answer.shape[-1]),
+                str(task.family),
+                str(task.task_id),
+                task,
+            )
+        )
+    ranked.sort(key=lambda row: row[:3])
+    return ranked[recurrence_index % len(ranked)][-1]
+
+
 def _cached_answer_binding_features(
     bundle: UnifiedTrainingBundle,
     prompt: Any,
@@ -2712,6 +2740,18 @@ def main() -> int:
                         args.state_warmup_steps + args.semantic_warmup_steps
                     )
                     task = _answer_bridge_task(train_tasks, step - bridge_start)
+                elif phase == "recurrence":
+                    recurrent_start = (
+                        args.semantic_warmup_steps
+                        + args.state_warmup_steps
+                        + args.answer_bridge_steps
+                    )
+                    task = _recurrent_training_task(
+                        train_tasks,
+                        tokenizer,
+                        bridge,
+                        step - recurrent_start,
+                    )
                 else:
                     task = train_tasks[step % len(train_tasks)]
                 prompt, answer = encode_example(tokenizer, task, bridge)

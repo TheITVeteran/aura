@@ -60,6 +60,7 @@ from tools.train_unified_intrinsic_recurrence import (  # noqa: E402
     _model_lane_purpose,
     _optimization_phase,
     _phase_gradients,
+    _recurrent_training_task,
     _residual_hidden_size,
     _resolve_recurrent_window,
     _restore_checkpoint,
@@ -500,6 +501,48 @@ def test_answer_bridge_schedule_covers_every_example_before_repetition() -> None
 
     assert len({task.task_id for task in scheduled}) == len(tasks)
     assert _answer_bridge_task(tasks, len(tasks)).task_id == scheduled[0].task_id
+
+
+def test_recurrent_schedule_uses_max_depth_in_memory_cost_order(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    tasks = [
+        type(
+            "Task",
+            (),
+            {
+                "family": family,
+                "task_id": task_id,
+                "depth": depth,
+            },
+        )()
+        for family, task_id, depth in (
+            ("khop", "shallow", 2),
+            ("register_trace", "large", 4),
+            ("khop", "medium", 4),
+            ("modular", "small", 4),
+        )
+    ]
+    lengths = {
+        "shallow": (2, 1),
+        "large": (20, 5),
+        "medium": (10, 2),
+        "small": (6, 2),
+    }
+    monkeypatch.setattr(
+        "tools.train_unified_intrinsic_recurrence.encode_example",
+        lambda _tokenizer, task, _bridge: (
+            mx.zeros((1, lengths[task.task_id][0]), dtype=mx.int32),
+            mx.zeros((1, lengths[task.task_id][1]), dtype=mx.int32),
+        ),
+    )
+
+    scheduled = [
+        _recurrent_training_task(tasks, object(), "", index).task_id
+        for index in range(4)
+    ]
+
+    assert scheduled == ["small", "medium", "large", "small"]
 
 
 def test_cached_answer_binding_loss_trains_without_model_execution() -> None:
