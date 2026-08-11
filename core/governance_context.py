@@ -158,10 +158,33 @@ def governance_runtime_active() -> bool:
             # container has not finished locking registration.
             return runtime_services_present
         return runtime_services_present or registration_locked
-    except (ImportError, AttributeError, RuntimeError) as exc:
-        record_degradation("governance_context", exc)
-        logger.debug("Strict governance mode lookup failed: %s", exc)
+    except ImportError as exc:
+        # The registry module is not importable at all. That is genuinely
+        # early boot or a partial environment (a tool importing one module),
+        # and there is no runtime to enforce against yet.
+        record_degradation("governance_context", exc, severity="info")
+        logger.debug("Strict governance mode lookup unavailable: %s", exc)
         return False
+    except (AttributeError, RuntimeError) as exc:
+        # The registry EXISTS and failed to answer. That is not the same
+        # thing, and it used to be treated as if it were: any failure
+        # returned False, which selects degraded authorization at precisely
+        # the moment readiness is uncertain — the absence of the security
+        # boundary converted into permission.
+        #
+        # Enforce instead. A false "governance is active" costs a refused
+        # action that can be retried; a false "governance is inactive" is an
+        # ungoverned effect nobody can undo.
+        record_degradation(
+            "governance_context",
+            exc,
+            severity="critical",
+            action="enforced governance because runtime readiness could not be determined",
+        )
+        logger.warning(
+            "Governance readiness could not be determined (%s); enforcing", exc
+        )
+        return True
 
 
 def normalize_governance_domain(value: Any) -> str:
