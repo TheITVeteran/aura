@@ -52,6 +52,8 @@ __all__ = [
     "ReadingState",
     "asks_about_own_operational_state",
     "asks_about_past_actions",
+    "bundle_as_assertions",
+    "reading_as_assertion",
     "concise_past_action_answer",
     "asks_about_the_shared_present",
     "render_self_health_answer",
@@ -860,3 +862,46 @@ def concise_past_action_answer(message: Any) -> str:
                         f"the recorded value, not a recollection."
                     )
     return ""
+
+
+def reading_as_assertion(reading: Reading) -> Any:
+    """A Reading on the shared epistemic substrate.
+
+    Reading and EffectClaim were two types for one idea — a checkable statement
+    and what backs it — which is the fragmentation this work was criticised
+    for on 2026-08-10: "Aura has fragments of this everywhere. It does not yet
+    have one universal epistemic substrate."
+
+    A present reading is MEASURED and carries its provenance as evidence. A
+    typed absence is not measured at all, so it lowers to a GENERATED assertion
+    with verification UNVERIFIED — which is exactly what "the camera has never
+    sampled" means, and it cannot be rendered as fact.
+    """
+
+    from core.epistemics.assertion import Assertion, SourceKind, Verification
+
+    if reading.present:
+        return Assertion(
+            subject=reading.channel,
+            claim=f"{reading.channel} reads {reading.value}",
+            source=SourceKind.MEASURED,
+            provenance=reading.provenance or reading.channel,
+            evidence=(reading.provenance or reading.channel,),
+            verification=Verification.VERIFIED,
+            at=reading.at,
+            value=reading.value,
+        )
+    return Assertion(
+        subject=reading.channel,
+        claim=f"{reading.channel} has no reading ({reading.state})",
+        source=SourceKind.GENERATED,
+        provenance=reading.provenance or reading.channel,
+        verification=Verification.NOT_APPLICABLE,
+        at=reading.at,
+    )
+
+
+def bundle_as_assertions(bundle: EvidenceBundle) -> list[Any]:
+    """Every reading in a bundle, on the substrate."""
+
+    return [reading_as_assertion(reading) for reading in bundle.readings]

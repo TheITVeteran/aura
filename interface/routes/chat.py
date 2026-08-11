@@ -20656,32 +20656,21 @@ def _desktop_effect_summary(result: Any) -> str:
 
     if not isinstance(result, dict):
         return ""
-    receipts = result.get("receipts")
-    if not isinstance(receipts, list):
+    # Built from typed effect claims, not assembled by hand here.
+    #
+    # The hand-assembled version knew four actions and read receipt fields
+    # directly, so it could be made to overstate by any receipt shape it did
+    # not anticipate — and it was a fifth place that had to be taught what an
+    # effect is. render_effect_claims cannot overstate: a completed claim
+    # without a receipt raises at construction, so the sentence has no way to
+    # contain one.
+    try:
+        from core.conversation.effect_claim import render_effect_claims
+
+        return render_effect_claims(result.get("receipts"))
+    except _CHAT_RECOVERABLE_ERRORS as exc:
+        record_degradation('chat', exc)
         return ""
-    effects: list[str] = []
-    for receipt in receipts:
-        if not isinstance(receipt, dict) or not receipt.get("ok"):
-            continue
-        inner = receipt.get("result")
-        payload = inner if isinstance(inner, dict) else receipt
-        action = str(receipt.get("action") or "").strip()
-        path = str(payload.get("path") or "").strip()
-        if action == "write_text_file" and path:
-            effects.append(f"wrote {path}")
-        elif action == "create_folder" and path:
-            effects.append(f"created the folder {path}")
-        elif action == "list_directory" and path:
-            effects.append(f"read {path}")
-        elif action == "open_app":
-            opened = str(payload.get("opened") or "").strip()
-            if opened:
-                effects.append(f"opened {opened}")
-    if not effects:
-        return ""
-    if len(effects) == 1:
-        return f"{effects[0]}."
-    return ", ".join(effects[:-1]) + f", and {effects[-1]}."
 
 
 def _desktop_deliverable_text(result: Any) -> str:
