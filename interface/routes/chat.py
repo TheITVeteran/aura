@@ -22745,6 +22745,34 @@ async def _api_chat_turn(body: ChatRequest, request: Request):
                 record_degradation("chat.sight", _sight_exc)
                 logger.debug("Chat sight preflight skipped: %s", _sight_exc)
 
+            # Her own measured state, on every turn.
+            #
+            # Every earlier attempt at this fetched self-evidence only when a
+            # classifier predicted the question would need it, and questions
+            # are unbounded — so there was always a next phrasing that got
+            # nothing and answered from what a language model believes an AI
+            # is: no body, no memory, an eighteen-second buffer. She repeated
+            # that eighteen-second figure through two rounds of being
+            # corrected AFTER the fact, because nothing had told her otherwise
+            # before she answered.
+            #
+            # One line, because the compact foreground path exists to stay
+            # compact and a self-model costing a paragraph a turn would be
+            # taken back out of it.
+            try:
+                from core.self.capability_ledger import self_knowledge_line
+
+                if not conversation_only_surface:
+                    _self_line = self_knowledge_line()
+                    if _self_line:
+                        body.message = f"{_self_line}\n\n{body.message}"
+            except _CHAT_RECOVERABLE_ERRORS as _self_exc:
+                record_degradation(
+                    "chat.self_knowledge",
+                    _self_exc,
+                    action="answered without her measured self-state in context",
+                )
+
             # Decidable arithmetic is COMPUTED, never predicted.
             #
             # A transformer does not calculate; it predicts the next token, and

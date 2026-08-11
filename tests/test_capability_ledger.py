@@ -352,3 +352,36 @@ def test_the_escape_hatch_that_excused_the_defect_is_gone():
 
     source = inspect.getsource(cl.unsupported_self_specification)
     assert "measured_tokens" not in source
+
+
+def test_self_knowledge_line_names_every_measured_capability():
+    """Carried on every turn, not fetched when a classifier predicts a need.
+
+    Every earlier attempt gated self-evidence behind an input-side guess at
+    whether the question needed it, and questions are unbounded — so the turns
+    it missed answered from what a language model believes an AI is: no body,
+    no memory, an eighteen-second buffer.
+    """
+    line = cl.self_knowledge_line()
+    assert line.startswith("[Measured about you right now")
+    for name in cl.get_capability_ledger().names():
+        availability = cl.get_capability_ledger().measure(name)
+        if availability and availability.known:
+            assert name in line, name
+
+
+def test_an_unknown_capability_is_left_out_rather_than_guessed():
+    ledger = cl.CapabilityLedger()
+    ledger.register(
+        _fixed("mystery", present=True, usable_now=False, known=False, summary="?")
+    )
+    cl._LEDGER = ledger
+    try:
+        assert "mystery" not in cl.self_knowledge_line()
+    finally:
+        cl.reset_capability_ledger_for_test()
+
+
+def test_the_line_stays_one_line():
+    """The compact foreground path exists to stay compact."""
+    assert "\n" not in cl.self_knowledge_line()

@@ -773,6 +773,45 @@ def _default_ledger() -> CapabilityLedger:
     return ledger
 
 
+def self_knowledge_line() -> str:
+    """One line of measured self-state, for every turn.
+
+    Not fetched when a classifier guesses the question needs it. That was the
+    old shape and it failed the same way every time: questions are unbounded,
+    so any input-side predictor is one phrasing short, and the turns it misses
+    fall back to what a language model believes an AI is — which is that it has
+    no body, no memory and an eighteen-second buffer.
+
+    She kept saying "my short-term memory buffer clears after about 18 seconds"
+    — a human psychology figure — through two rounds of being corrected
+    afterwards, because nothing had ever told her otherwise BEFORE she
+    answered. Correction after the fact is the expensive way to learn a fact
+    she could simply have been holding.
+
+    Deliberately one line. The compact foreground path exists to stay compact,
+    and a self-model that costs a paragraph a turn would be removed from it.
+    """
+    parts: list[str] = []
+    for name, availability in get_capability_ledger().measure_all().items():
+        if not availability.known:
+            continue
+        if availability.usable_now:
+            state = "yes"
+        elif availability.present:
+            state = f"present but {availability.blocker or 'not ready'}"
+        else:
+            state = "no"
+        parts.append(f"{name}={state}")
+    if not parts:
+        return ""
+    return (
+        "[Measured about you right now, from your own instruments: "
+        + "; ".join(parts)
+        + ". Answer questions about yourself from these, and do not quote "
+        "figures about your own machinery that are not here.]"
+    )
+
+
 _LEDGER: CapabilityLedger | None = None
 
 
@@ -826,5 +865,6 @@ __all__ = [
     "LiveCapability",
     "correction_context",
     "get_capability_ledger",
+    "self_knowledge_line",
     "reset_capability_ledger_for_test",
 ]
