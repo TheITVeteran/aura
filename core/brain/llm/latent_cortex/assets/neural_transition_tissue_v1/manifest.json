@@ -9,38 +9,38 @@
       23
     ]
   },
-  "manifest_sha256": "5a4315c64bb202f8dc423acec73b70616ca95f1495728693bc6cd96007b4cff2",
+  "manifest_sha256": "a37096000595314edfd0743d07b1aab64ca5475f79ad64a6f4e78c6e20999a68",
   "schema": "aura.neural_transition_artifact.v1",
   "teacher_removed_runtime": true,
   "training_receipt": {
     "boolean_example_count": 14,
-    "example_count": 3842,
+    "example_count": 4058,
     "final_metrics": {
       "boolean_accuracy": 1.0,
       "exact_accuracy": 1.0,
       "loss": 0.0,
-      "modular_accuracy": 1.0
+      "modular_accuracy": 0.9999999403953552
     },
     "initial_metrics": {
       "boolean_accuracy": 0.5,
-      "exact_accuracy": 0.05491931285788652,
-      "loss": 3.828641414642334,
-      "modular_accuracy": 0.05329153314232826
+      "exact_accuracy": 0.07171020206998521,
+      "loss": 3.828640937805176,
+      "modular_accuracy": 0.0702274963259697
     },
     "learning_rate": 0.2,
-    "loss_history_sha256": "2d256bd9b342ff4d47f66224583415b58caa0605059caabcd2387dbff54536cf",
-    "modular_example_count": 3828,
-    "receipt_sha256": "3373cbdae75be2e8f0acf4926959c6470c774de1e2b7a8ab604075e196daff93",
+    "loss_history_sha256": "43a7a192b299ab5ea77dd00948a6e7e0b0d0e93fcf81726d6d76cf3ae30c3ed7",
+    "modular_example_count": 4044,
+    "receipt_sha256": "3603dd4b041a05c30ec41d84d31c54ea0550c88af8f0d0f703de0aed757c5ff1",
     "schema": "aura.neural_transition_training.v1",
     "source_sha256s": {
-      "core/brain/llm/latent_cortex/neural_transition_tissue.py": "3b3f99a84670913a8b1a7dca4773bddd052f7764db71ad3de0743aca0fe6749f",
+      "core/brain/llm/latent_cortex/neural_transition_tissue.py": "570322ec66751ad046e3a0dd97215a88eb62b5c2354b1a5c1aa99923af20ea7b",
       "core/brain/llm/latent_cortex/typed_transition_executor.py": "665fac5c6dea238a4e896f8de4dc86cac0013f569abcbf0ce179c897259e3bf8",
-      "core/learning/neural_transition_training.py": "99d9df8fd50fc0763e91823cafe6ea5e827270c668257d48b3e3d3b683283a41"
+      "core/learning/neural_transition_training.py": "158bb6e3dee486ed31d076b1abf4690330a8ff9ead379928f905aa0ca391dfb9"
     },
     "steps": 32,
-    "teacher_receipt_sha256": "1d5d421e775c6c356a435ecf3c5188ee85d1f9f10d0c4080d2dd5856978ea1c4",
+    "teacher_receipt_sha256": "d15f065a79b9bce9daae40523584c94c33233dff1336f7981c43314d5eb95991",
     "teacher_removed_before_evaluation": true
   },
   "weights_file": "weights.safetensors",
-  "weights_sha256": "841e417a408d5015bb069c4bbbbc367f68be78d1174dbdc00a64d60cf30350e5"
+  "weights_sha256": "3ad7941e52373ea6817e2eb953045d5c2e7e4c361d8b9a53d06965a14097b2d6"
 }

@@ -69,7 +69,7 @@ def verify_neural_transition_artifact(artifact_dir: Path) -> dict[str, Any]:
             primitive_count += 1
     for modulus in SUPPORTED_MODULI:
         for residue in range(modulus):
-            for operand in range(1, modulus):
+            for operand in range(modulus):
                 for opcode in (0, 1, 2):
                     observed = tissue.transition(
                         family="modular",

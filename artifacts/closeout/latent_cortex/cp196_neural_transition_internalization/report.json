@@ -4,11 +4,11 @@
   "fresh_program_count": 192,
   "fresh_transition_count": 2016,
   "lesion_changes": 117,
-  "primitive_count": 3842,
-  "report_sha256": "6bd3415706247fcf9f1f33ef0c1a23b2f9caa56e97a00cf3d9a4d4d72df756fa",
+  "primitive_count": 4058,
+  "report_sha256": "c6a20e9f9c007fe9a040e5a8ccf676bcba892f1bcc7c765ccba9b942671907b4",
   "schema": "aura.neural_transition_independent_verification.v1",
   "sham_matches": 50,
   "teacher_available": false,
-  "tissue_sha256": "841e417a408d5015bb069c4bbbbc367f68be78d1174dbdc00a64d60cf30350e5",
+  "tissue_sha256": "3ad7941e52373ea6817e2eb953045d5c2e7e4c361d8b9a53d06965a14097b2d6",
   "verified": true
 }

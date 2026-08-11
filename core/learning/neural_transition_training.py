@@ -96,7 +96,7 @@ def build_certified_transition_batch() -> TransitionTrainingBatch:
     modular_targets: list[int] = []
     for modulus_index, modulus in enumerate(SUPPORTED_MODULI):
         for residue in range(modulus):
-            for operand in range(1, modulus):
+            for operand in range(modulus):
                 for opcode in (0, 1, 2):
                     result = teacher.execute(
                         TypedTransitionInput(

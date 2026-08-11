@@ -43,10 +43,10 @@ def trained() -> NeuralTransitionTissue:
     return tissue
 
 
-def test_training_learns_all_3842_certified_primitives(trained: NeuralTransitionTissue) -> None:
+def test_training_learns_all_4058_certified_primitives(trained: NeuralTransitionTissue) -> None:
     batch = build_certified_transition_batch()
     assert len(batch.boolean_keys) == 14
-    assert len(batch.modular_keys) == 3_828
+    assert len(batch.modular_keys) == 4_044
     assert transition_training_metrics(trained, batch)["exact_accuracy"] == 1.0
 
 
@@ -143,7 +143,7 @@ def test_checked_in_artifact_passes_independent_teacher_free_verification() -> N
     report = verify_neural_transition_artifact(artifact)
     assert report["verified"] is True
     assert report["teacher_available"] is False
-    assert report["primitive_count"] == 3_842
+    assert report["primitive_count"] == 4_058
     assert report["fresh_program_count"] == 192
     assert report["fresh_transition_count"] == 2_016
 

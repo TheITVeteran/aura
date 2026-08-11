@@ -197,7 +197,7 @@ class NeuralTransitionTissue(nn.Module):
                 raise ValueError("modulus is outside neural tissue support") from None
             if opcode not in (0, 1, 2):
                 raise ValueError("modular neural transition opcode is unsupported")
-            if not 0 <= residue < modulus or not 1 <= operand < modulus:
+            if not 0 <= residue < modulus or not 0 <= operand < modulus:
                 raise ValueError("modular neural transition operand is invalid")
             key = self.modular_key(
                 modulus_index=modulus_index,
@@ -342,9 +342,9 @@ def load_neural_transition_tissue(
     if (
         training_receipt.get("schema") != "aura.neural_transition_training.v1"
         or training_receipt.get("receipt_sha256") != _canonical_sha256(receipt_body)
-        or training_receipt.get("example_count") != 3_842
+        or training_receipt.get("example_count") != 4_058
         or training_receipt.get("boolean_example_count") != 14
-        or training_receipt.get("modular_example_count") != 3_828
+        or training_receipt.get("modular_example_count") != 4_044
         or training_receipt.get("teacher_removed_before_evaluation") is not True
         or not isinstance(training_receipt.get("source_sha256s"), dict)
         or not isinstance(final_metrics, dict)
