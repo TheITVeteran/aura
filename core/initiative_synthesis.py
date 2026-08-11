@@ -240,15 +240,37 @@ class InitiativeSynthesizer:
         source: str,
         urgency: float = 0.5,
         drive: str = "",
-        **metadata: Any,
+        *,
+        metadata: dict[str, Any] | None = None,
+        **extra_metadata: Any,
     ) -> bool:
-        """Convenience method for submitting an impulse."""
+        """Convenience method for submitting an impulse.
+
+        Metadata arrives two ways. Literal keywords (``skill="x"``) are the
+        convenient form and stay supported. A metadata DICT, whose keys came
+        from somewhere else, must be passed as ``metadata=`` — because with
+        ``**`` alone every parameter name here is a reserved word for the
+        caller's data, and nothing tells them so.
+
+        LIVE, 2026-08-10: the overt action cycle — how Aura acts without being
+        asked — had failed 13 consecutive times with
+
+            TypeError: submit() got multiple values for keyword argument 'drive'
+
+        A pending initiative carried ``drive`` in its own metadata dict, which
+        _gather_pending_initiatives splatted in alongside an explicit
+        ``drive=``. Python raises that before the body runs, so no amount of
+        validation inside could have caught it, and TypeError was not in the
+        caller's except clause — so one initiative with an unlucky key stopped
+        her from taking any unprompted action at all.
+        """
         if is_stale_or_prompt_scaffold_goal(content):
             logger.debug("Synth: quarantined stale/scaffold impulse from %s: %s", source, content[:80])
             return False
+        merged = {**(metadata or {}), **extra_metadata}
         return self.submit_impulse(Impulse(
             content=content, source=source, urgency=urgency,
-            drive=drive, metadata=metadata,
+            drive=drive, metadata=merged,
         ))
 
     # ------------------------------------------------------------------
@@ -366,28 +388,45 @@ class InitiativeSynthesizer:
         try:
             pending = getattr(getattr(state, "cognition", None), "pending_initiatives", [])
             for init in (pending or []):
-                if isinstance(init, dict):
-                    goal = init.get("goal", "")
-                    if goal:
-                        action_metadata = dict(init.get("metadata", {}) or {})
-                        for key in (
-                            "goal_id",
-                            "params",
-                            "required_skills",
-                            "required_tools",
-                            "skill",
-                            "skill_name",
-                            "tool",
-                            "tool_name",
-                        ):
-                            if key in init and key not in action_metadata:
-                                action_metadata[key] = init[key]
-                        self.submit(
-                            content=goal, source=init.get("source", "legacy"),
-                            urgency=float(init.get("urgency", 0.5)),
-                            drive=init.get("triggered_by", ""),
-                            **action_metadata,
-                        )
+                if not isinstance(init, dict):
+                    continue
+                goal = init.get("goal", "")
+                if not goal:
+                    continue
+                # One malformed initiative must cost that initiative, not the
+                # batch. Every entry here comes from a different producer, and
+                # the loop used to abort on the first bad one — which is how a
+                # single unlucky metadata key stopped the whole overt action
+                # cycle 13 times running.
+                try:
+                    action_metadata = dict(init.get("metadata", {}) or {})
+                    for key in (
+                        "goal_id",
+                        "params",
+                        "required_skills",
+                        "required_tools",
+                        "skill",
+                        "skill_name",
+                        "tool",
+                        "tool_name",
+                    ):
+                        if key in init and key not in action_metadata:
+                            action_metadata[key] = init[key]
+                    # metadata= not **action_metadata: these keys come from
+                    # whatever produced the initiative, so any one of them
+                    # colliding with a parameter name raises at call time.
+                    self.submit(
+                        content=goal, source=init.get("source", "legacy"),
+                        urgency=float(init.get("urgency", 0.5)),
+                        drive=init.get("triggered_by", ""),
+                        metadata=action_metadata,
+                    )
+                except (TypeError, ValueError, AttributeError, KeyError) as exc:
+                    record_degradation('initiative_synthesis', exc)
+                    logger.warning(
+                        "Synth: skipped malformed pending initiative %r: %s",
+                        str(goal)[:60], exc,
+                    )
         except (OSError, ConnectionError, TimeoutError) as e:
             record_degradation('initiative_synthesis', e)
             logger.debug("Synth: pending_initiatives gather failed: %s", e)
