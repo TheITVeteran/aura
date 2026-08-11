@@ -929,17 +929,70 @@ _SEARCH_TRAILING_INSTRUCTION_RE = re.compile(
 )
 
 
+#: A search trigger in its own trailing clause, telling her HOW to answer
+#: rather than WHAT to look for: "…, if you don't know, look it up", "…, look
+#: it up rather than estimating", "…— search if you have to".
+_SEARCH_TRAILING_TRIGGER_CLAUSE_RE = re.compile(
+    r"(?:if\s+(?:you|u)\s+(?:do\s*n[o']?t|don't|cannot|can't|are\s+not)\s+"
+    r"(?:actually\s+)?(?:know|sure|certain)\b.*)"
+    r"|(?:(?:please\s+)?(?:search|google|look\s+it\s+up|look\s+up|find\s+out|"
+    r"check\s+online|web\s+search|research)\b"
+    r"(?:\s+(?:it|them|that|this))?"
+    r"(?:\s+(?:rather\s+than|instead\s+of|before|if|when|and\s+then)\b.*|"
+    r"\s+if\s+you\b.*)?)\s*$",
+    re.IGNORECASE,
+)
+
+
 def _strip_search_preamble(raw: str) -> str:
-    """Return the request from its search trigger onward."""
+    """Return the request from its search trigger onward.
+
+    A trigger normally INTRODUCES the subject — "can you look up the
+    Antikythera mechanism" — so the request begins at the last clause break
+    before it and everything earlier is conversational preamble.
+
+    LIVE DEFECT, 2026-08-10. That assumption is only true when the trigger
+    comes first. Asked:
+
+        "obscure one for you: the curator Michael T. Wright built a working
+         planetarium model … he revised Derek de Solla Price's gear count
+         upward — from what number to what number? if you dont actually know,
+         look it up rather than estimating."
+
+    the trigger was "look it up", in the FINAL clause. The last clause break
+    before it is the sentence boundary in front of "if you dont actually
+    know", so this returned exactly
+
+        "if you dont actually know, look it up rather than estimating."
+
+    and threw the entire subject away. The live search then resolved the
+    remaining pronoun to the Wikipedia article "You (TV series)", and the
+    answer she served cited it.
+
+    A trigger sitting in its own trailing clause is an instruction about how
+    to answer, not the thing to search for. The module already knew trailing
+    instructions exist — _SEARCH_TRAILING_INSTRUCTION_RE strips them from a
+    candidate — it simply was not consulted before deciding where the request
+    begins.
+    """
     trigger = _SEARCH_TRIGGER_RE.search(raw)
     if trigger is None:
         return raw
-    # The last clause break before the trigger is where the request begins.
-    start = 0
+
+    # Does the trigger live in a trailing clause that only says HOW to answer?
+    # If so the subject is what comes BEFORE it.
+    clause_start = 0
     for match in _SEARCH_PREAMBLE_BREAK_RE.finditer(raw[: trigger.start()]):
-        start = match.end()
-    trimmed = raw[start:].strip()
-    return trimmed or raw
+        clause_start = match.end()
+    tail = raw[clause_start:].strip()
+    if _SEARCH_TRAILING_TRIGGER_CLAUSE_RE.fullmatch(tail):
+        before = raw[:clause_start].strip(" \t.,;:!?-—")
+        # Only when something substantive precedes it; "look it up" alone is
+        # still a search request, and a bare trigger must keep working.
+        if len(before.split()) >= 3:
+            return before
+
+    return tail or raw
 
 
 def extract_search_query_focus(text: str) -> str:
