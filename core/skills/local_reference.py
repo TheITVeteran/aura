@@ -50,7 +50,10 @@ class LocalReferenceSearchSkill(BaseSkill):
         from core.knowledge.local_corpus import get_local_corpus_store
 
         store = get_local_corpus_store()
-        if store.document_count() <= 0:
+        # The emptiness guard wants has_documents(), not a count of 7.19M rows.
+        # document_count() is a full table scan and measured ~6s on this host —
+        # paid on every lookup, before the search itself took 29-77ms.
+        if not store.has_documents():
             return {
                 "success": False,
                 "results": [],

@@ -206,6 +206,27 @@ class EnhancedWebSearchSkill(BaseSkill):
         source_reading = query_requires_source_reading(query)
         effective_deep = bool(deep or source_reading)
 
+        # Ask the local corpus BEFORE the network when the question is not
+        # time-sensitive.
+        #
+        # LIVE, 2026-08-10. Asked for a detail about Michael T. Wright's
+        # Antikythera planetarium model, she correctly decided to look it up and
+        # spent 23,145ms on a web search. The same fact is in the local corpus —
+        # 7,189,653 Wikipedia pages — which answers that class of query in
+        # 29-77ms. The corpus was already wired here, but only as a DEGRADED
+        # fallback for when the web is unreachable, so the fast, private, offline
+        # copy was consulted only after the slow path had already failed.
+        #
+        # For a dated-snapshot question that ordering is backwards on every
+        # axis: latency, privacy (no egress at all), and offline capability. The
+        # web stays first for anything the snapshot cannot know, which is what
+        # freshness_window_for_query already decides for the research pipeline —
+        # reused here rather than restated.
+        if not force_refresh and not source_reading:
+            local_first = self._local_corpus_first(query, num_results)
+            if local_first is not None:
+                return local_first
+
         logger.info(
             "🔍 WebSearch: '%s' (deep=%s, effective_deep=%s, retain=%s, force_refresh=%s)",
             query[:80],
@@ -432,6 +453,56 @@ class EnhancedWebSearchSkill(BaseSkill):
             record_degradation("web_search", exc, severity="warning", action="continued without evidence deliberation receipts")
         return result
 
+    @classmethod
+    def _local_corpus_first(
+        cls, query: str, num_results: int
+    ) -> dict[str, Any] | None:
+        """Answer from the offline corpus when the web cannot know better.
+
+        Returns None — and the caller proceeds to the network unchanged —
+        whenever the corpus is absent, has no match, or the question is
+        time-sensitive. Provenance is stated explicitly: a snapshot answer must
+        never be presentable as live web evidence, which is a mistake this
+        runtime has already made out loud ("I checked live web evidence" over a
+        result that was not live).
+        """
+        if cls._query_wants_current_information(query):
+            return None
+        answered = cls._local_corpus_fallback(query, num_results)
+        if answered is None:
+            return None
+        answered["offline_fallback"] = False
+        answered["offline_preferred"] = True
+        answered["summary"] = (
+            "Answered from the local offline reference corpus (dated snapshot, "
+            "no network used). Ask again with force_refresh for live sources."
+        )
+        return answered
+
+    @staticmethod
+    def _query_wants_current_information(query: str) -> bool:
+        """True when a dated snapshot is the wrong source for this question.
+
+        Delegates to the research pipeline's own freshness policy so there is
+        one definition of "this needs to be current" in the runtime rather than
+        a second list that drifts from the first.
+        """
+        try:
+            from core.search.research_pipeline import (
+                _query_is_current,
+                freshness_window_for_query,
+            )
+        except (ImportError, AttributeError):
+            # Unknown freshness means the network is the safe answer.
+            return True
+        try:
+            if bool(_query_is_current(query)):
+                return True
+            # A short retention window is the pipeline saying this decays fast.
+            return int(freshness_window_for_query(query)) < 24 * 60 * 60
+        except (RuntimeError, TypeError, ValueError):
+            return True
+
     @staticmethod
     def _local_corpus_fallback(query: str, num_results: int) -> dict[str, Any] | None:
         """Degrade to the local knowledge corpus when the web is unreachable.
@@ -443,7 +514,13 @@ class EnhancedWebSearchSkill(BaseSkill):
             from core.knowledge.local_corpus import get_local_corpus_store
 
             store = get_local_corpus_store()
-            if store.document_count() <= 0:
+            # has_documents(), not document_count(): the guard only asks
+            # "is there anything here". document_count() is SELECT COUNT(*)
+            # over 7.19M rows in a 37GB table — measured at ~6s on this host,
+            # which was the entire cost of a corpus consult that then took
+            # 29-77ms to actually answer. The O(1) helper already existed and
+            # says so in its own docstring; this path had never been switched.
+            if not store.has_documents():
                 return None
             hits = store.search(query, limit=max(1, min(int(num_results), 10)))
             if not hits:

@@ -95,6 +95,14 @@ class TestPlannerToolMenuHonesty:
 
 class TestWebSearchOfflineFallback:
     def test_web_failure_degrades_to_local_corpus(self, tmp_path, monkeypatch):
+        """A query that REACHES the web must still degrade to the corpus.
+
+        The query here is deliberately time-sensitive. A timeless one is now
+        answered from the corpus before the network is attempted (see
+        test_timeless_query_never_reaches_the_web below), so it can no longer
+        demonstrate what this contract is about: when the web is tried and
+        fails, the answer comes from the corpus and says the web failed.
+        """
         import core.knowledge.local_corpus as corpus_mod
         from core.skills.web_search import EnhancedWebSearchSkill
 
@@ -104,13 +112,57 @@ class TestWebSearchOfflineFallback:
             return_value={"ok": False, "error": "network unreachable"}
         )
         out = asyncio.run(
-            skill.execute({"query": "atomic clocks time dilation"}, {})
+            skill.execute(
+                {"query": "atomic clocks time dilation latest results today"}, {}
+            )
         )
         assert out["ok"] is True
         assert out["provenance"] == "local_corpus"
         assert out["offline_fallback"] is True
         assert out["web_error"] == "network unreachable"
         assert out["results"][0]["title"].startswith("Hafele")
+
+    def test_timeless_query_never_reaches_the_web(self, tmp_path, monkeypatch):
+        """The corpus answers a dated-snapshot question without egress.
+
+        Live 2026-08-10: a question the corpus holds cost 23,145ms over the
+        network because the corpus was only consulted after the web failed.
+        """
+        import core.knowledge.local_corpus as corpus_mod
+        from core.skills.web_search import EnhancedWebSearchSkill
+
+        monkeypatch.setattr(corpus_mod, "_store", _seeded_store(tmp_path))
+        skill = EnhancedWebSearchSkill()
+        skill.pipeline.search = AsyncMock(
+            side_effect=AssertionError("the network was reached for a timeless query")
+        )
+
+        out = asyncio.run(skill.execute({"query": "atomic clocks time dilation"}, {}))
+
+        assert out["ok"] is True
+        assert out["provenance"] == "local_corpus"
+        assert out["offline_preferred"] is True
+        assert out["offline_fallback"] is False
+        assert "web_error" not in out
+
+    def test_force_refresh_still_reaches_the_web(self, tmp_path, monkeypatch):
+        """An explicit request for fresh sources must not be short-circuited."""
+        import core.knowledge.local_corpus as corpus_mod
+        from core.skills.web_search import EnhancedWebSearchSkill
+
+        monkeypatch.setattr(corpus_mod, "_store", _seeded_store(tmp_path))
+        skill = EnhancedWebSearchSkill()
+        skill.pipeline.search = AsyncMock(
+            return_value={"ok": False, "error": "network unreachable"}
+        )
+
+        out = asyncio.run(
+            skill.execute(
+                {"query": "atomic clocks time dilation", "force_refresh": True}, {}
+            )
+        )
+
+        assert out["web_error"] == "network unreachable"
 
     def test_no_corpus_keeps_the_honest_web_failure(self, tmp_path, monkeypatch):
         import core.knowledge.local_corpus as corpus_mod

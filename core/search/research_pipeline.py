@@ -47,6 +47,32 @@ _CURRENTNESS_TERMS = {
     "score",
     "schedule",
     "release date",
+    # Temporal deictics. "today" and "now" were here; the rest of the family
+    # was not, so "who won the election yesterday" and "what happened last
+    # night" were classified as timeless and could be answered from a dated
+    # snapshot. Anything anchored to the speaker's clock needs a live source.
+    "yesterday",
+    "tomorrow",
+    "tonight",
+    "this morning",
+    "this afternoon",
+    "this evening",
+    "last night",
+    "this week",
+    "last week",
+    "this month",
+    "last month",
+    "this year",
+    "so far this",
+    "right now",
+    "at the moment",
+    "as of",
+    "breaking",
+    "live",
+    "today's",
+    "upcoming",
+    "just announced",
+    "still",
 }
 
 _STOP_WORDS = {
