@@ -281,6 +281,17 @@
         "mlx_lm"
       ],
       "ownership_mode": "standalone_process",
+      "path": "tools/evaluate_unified_intrinsic_checkpoint.py",
+      "purpose": "evaluation"
+    },
+    {
+      "expected_load_references": 1,
+      "guard_symbol": "standalone_model_lane",
+      "min_guard_sites": 1,
+      "modules": [
+        "mlx_lm"
+      ],
+      "ownership_mode": "standalone_process",
       "path": "tools/evaluate_recurrent_sft_falsification.py",
       "purpose": "evaluation"
     },
@@ -620,6 +631,17 @@
       ],
       "ownership_mode": "standalone_process",
       "path": "tools/train_structured_sft_research.py",
+      "purpose": "training"
+    },
+    {
+      "expected_load_references": 1,
+      "guard_symbol": "standalone_model_lane",
+      "min_guard_sites": 1,
+      "modules": [
+        "mlx_lm"
+      ],
+      "ownership_mode": "standalone_process",
+      "path": "tools/train_unified_intrinsic_recurrence.py",
       "purpose": "training"
     },
     {

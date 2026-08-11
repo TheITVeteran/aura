@@ -190,6 +190,73 @@ def test_same_owner_cannot_reserve_or_replace_a_live_model_implicitly(tmp_path: 
     assert snapshot["owners"][0]["process"] == {"pid": 101, "started_at": 101.0}
 
 
+def test_exclusive_claim_requires_and_preserves_an_empty_lane(tmp_path: Path) -> None:
+    alive = AliveTable(101, 102)
+    controller = _controller(tmp_path, alive)
+    existing = controller.reserve_sync(
+        LaneClaim(
+            owner_id="serve:cortex",
+            model_path="/m/Aura-32B-cortex",
+            request_gb=20.0,
+            request_id="existing-owner",
+        )
+    )
+    controller.commit_sync(existing, process=ProcessIdentity(101, 101.0))
+
+    refused = controller.reserve_sync(
+        LaneClaim(
+            owner_id="train:exclusive",
+            model_path="/m/Aura-32B-cortex",
+            request_gb=20.0,
+            purpose="train",
+            exclusive=True,
+            request_id="exclusive-refused",
+        )
+    )
+
+    assert refused.admitted is False
+    assert refused.reason == "exclusive_lane_requires_zero_owners"
+
+
+def test_exclusive_reservation_atomically_blocks_following_claims(tmp_path: Path) -> None:
+    alive = AliveTable(101)
+    controller = _controller(tmp_path, alive)
+    exclusive = controller.reserve_sync(
+        LaneClaim(
+            owner_id="train:exclusive",
+            model_path="/m/Aura-32B-cortex",
+            request_gb=20.0,
+            purpose="train",
+            exclusive=True,
+            request_id="exclusive-first",
+        )
+    )
+
+    while_reserved = controller.reserve_sync(
+        LaneClaim(
+            owner_id="serve:late",
+            model_path="/m/qwen-1.5b",
+            request_gb=2.0,
+            request_id="ordinary-while-exclusive-reserved",
+        )
+    )
+    assert exclusive.ready_to_spawn is True
+    assert while_reserved.admitted is False
+    assert while_reserved.reason == "exclusive_lane_reserved:exclusive-first"
+
+    controller.commit_sync(exclusive, process=ProcessIdentity(101, 101.0))
+    while_owned = controller.reserve_sync(
+        LaneClaim(
+            owner_id="serve:later",
+            model_path="/m/qwen-1.5b",
+            request_gb=2.0,
+            request_id="ordinary-while-exclusive-owned",
+        )
+    )
+    assert while_owned.admitted is False
+    assert while_owned.reason == "exclusive_lane_owned:train:exclusive"
+
+
 def test_committed_replay_rejects_a_different_live_process(tmp_path: Path) -> None:
     alive = AliveTable(101, 102)
     controller = _controller(tmp_path, alive)
@@ -1493,6 +1560,69 @@ def test_offline_front_door_does_not_claim_accelerator_lane() -> None:
     )
 
     assert claim is None
+
+
+@pytest.mark.parametrize(
+    ("program", "purpose"),
+    (
+        ("tools/train_unified_intrinsic_recurrence.py", "train"),
+        ("tools/evaluate_unified_intrinsic_checkpoint.py", "benchmark"),
+        ("tools/evaluate_unified_intrinsic_decoding.py", "benchmark"),
+    ),
+)
+def test_unified_recurrence_commands_claim_the_resident_lane(
+    program: str,
+    purpose: str,
+) -> None:
+    claim = infer_model_process_claim(
+        [sys.executable, program, "--model", "/models/Aura-32B"],
+        source="unified-recurrence-test",
+        timeout_s=60.0,
+    )
+
+    assert claim is not None
+    assert claim.purpose == purpose
+    assert claim.model_path == "/models/Aura-32B"
+
+
+def test_standalone_lane_can_refuse_all_owner_eviction() -> None:
+    decision = SimpleNamespace(
+        admitted=True,
+        evict_owner_ids=("serving:aura",),
+        ready_to_spawn=False,
+        reason="eviction_required",
+        receipt_id="reservation-receipt",
+    )
+    cancelled = SimpleNamespace(
+        reason="standalone_model_owner_eviction_forbidden",
+        receipt_id="cancel-receipt",
+    )
+
+    class Controller:
+        def validate_inherited_claim(self, **_kwargs: object) -> bool:
+            return False
+
+        def owner_observations(self) -> list[object]:
+            return []
+
+        def reserve_sync(self, _claim: object, *, observations: object) -> object:
+            assert observations == []
+            return decision
+
+        def cancel_sync(self, candidate: object, *, reason: str) -> object:
+            assert candidate is decision
+            assert reason == "standalone_model_owner_eviction_forbidden"
+            return cancelled
+
+    with pytest.raises(ModelLaneControlError, match="owner_eviction_forbidden"):
+        acquire_standalone_model_lane(
+            owner_id="resident-training",
+            model_path="/models/Aura-32B",
+            purpose="train",
+            request_gb=38.0,
+            allow_owner_eviction=False,
+            controller=Controller(),  # type: ignore[arg-type]
+        )
 
 
 def test_import_only_mlx_probe_does_not_claim_accelerator_lane() -> None:

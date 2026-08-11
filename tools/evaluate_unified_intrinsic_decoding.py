@@ -36,9 +36,12 @@ from tools.evaluate_unified_intrinsic_checkpoint import (  # noqa: E402
     _canonical_sha256,
     _file_sha256,
     _fresh_tasks,
-    _load_checkpoint,
+    unified_evaluation_context,
 )
 from tools.train_intrinsic_recurrence import encode_example  # noqa: E402
+from tools.unified_intrinsic_checkpoint import (  # noqa: E402
+    resolve_checkpoint_generation,
+)
 
 DECODE_EVALUATION_SCHEMA = "aura.unified_intrinsic_decode_evaluation.v1"
 
@@ -93,9 +96,14 @@ def _force_next_token(logits: Any, token_id: int) -> Any:
     return mx.concatenate([logits[:, :-1, :], forced[:, None, :]], axis=1)
 
 
-def evaluate_decoding(
+def _evaluate_decoding_loaded(
     campaign_dir: Path,
     *,
+    bundle: Any,
+    tokenizer: Any,
+    spec: Any,
+    identity: dict[str, Any],
+    envelope: Any,
     stem: str,
     per_cell: int,
     evaluation_seed: int,
@@ -120,7 +128,6 @@ def evaluate_decoding(
         raise ValueError(
             "decode recurrence depths must be unique non-anchor campaign depths"
         )
-    bundle, tokenizer, spec, identity = _load_checkpoint(campaign_dir, stem=stem)
     depths = task_depths or tuple(
         int(value)
         for value in identity.get("task_depths", (identity.get("task_depth"),))
@@ -309,6 +316,7 @@ def evaluate_decoding(
                     "response_sha256": hashlib.sha256(response.encode()).hexdigest(),
                 }
             )
+        envelope.reclaim(force=True)
 
     # Grade only after every arm has emitted a committed candidate in memory.
     task_by_id = {task.task_id: task for task in tasks}
@@ -343,11 +351,13 @@ def evaluate_decoding(
                 "accuracy": correct / len(selected),
                 "eos_stops": sum(row["stopped_on_eos"] for row in selected),
             }
-    checkpoint_path = campaign_dir / f"{stem}.safetensors"
+    resolved = resolve_checkpoint_generation(campaign_dir, stem=stem, required=True)
+    if resolved is None:  # pragma: no cover - required=True is exhaustive
+        raise RuntimeError("unified checkpoint is unavailable")
     body = {
         "schema": DECODE_EVALUATION_SCHEMA,
         "campaign_identity_sha256": identity["identity_sha256"],
-        "checkpoint_sha256": _file_sha256(checkpoint_path),
+        "checkpoint_sha256": _file_sha256(resolved.weights_path),
         "evaluation_seed": evaluation_seed,
         "per_cell": per_cell,
         "task_depths": list(depths),
@@ -370,6 +380,69 @@ def evaluate_decoding(
     return {**body, "report_sha256": _canonical_sha256(body)}
 
 
+def evaluate_decoding(
+    campaign_dir: Path,
+    *,
+    stem: str,
+    per_cell: int,
+    evaluation_seed: int,
+    max_tokens: int,
+    task_depths: tuple[int, ...] | None = None,
+    recurrence_depths: tuple[int, ...] | None = None,
+    memory_limit_gb: float = 40.0,
+    cache_limit_gb: float = 2.0,
+    wired_limit_gb: float = 48.0,
+    resource_stage_path: Path | None = None,
+    resource_startup_lethal_mb: float | None = None,
+    resource_steady_lethal_mb: float | None = None,
+) -> dict[str, Any]:
+    if task_depths is not None and (
+        not task_depths
+        or len(task_depths) != len(set(task_depths))
+        or any(type(depth) is not int or depth < 1 for depth in task_depths)
+    ):
+        raise ValueError("decode task depths must be unique positive integers")
+    if recurrence_depths is not None and (
+        not recurrence_depths
+        or len(recurrence_depths) != len(set(recurrence_depths))
+        or any(type(depth) is not int or depth < 2 for depth in recurrence_depths)
+    ):
+        raise ValueError(
+            "decode recurrence depths must be unique non-anchor campaign depths"
+        )
+    with unified_evaluation_context(
+        campaign_dir,
+        stem=stem,
+        memory_limit_gb=memory_limit_gb,
+        cache_limit_gb=cache_limit_gb,
+        wired_limit_gb=wired_limit_gb,
+        resource_stage_path=resource_stage_path,
+        resource_startup_lethal_mb=resource_startup_lethal_mb,
+        resource_steady_lethal_mb=resource_steady_lethal_mb,
+    ) as loaded:
+        bundle, tokenizer, spec, identity, envelope, resource_receipt = loaded
+        report = _evaluate_decoding_loaded(
+            campaign_dir,
+            bundle=bundle,
+            tokenizer=tokenizer,
+            spec=spec,
+            identity=identity,
+            envelope=envelope,
+            stem=stem,
+            per_cell=per_cell,
+            evaluation_seed=evaluation_seed,
+            max_tokens=max_tokens,
+            task_depths=task_depths,
+            recurrence_depths=recurrence_depths,
+        )
+        body = {
+            **{key: value for key, value in report.items() if key != "report_sha256"},
+            "resource_envelope": envelope.to_receipt(),
+            "resource_guard": resource_receipt,
+        }
+        return {**body, "report_sha256": _canonical_sha256(body)}
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("campaign", type=Path)
@@ -386,6 +459,12 @@ def main() -> int:
         help="comma-separated trained/heldout recurrence depths; defaults to deepest heldout",
     )
     parser.add_argument("--report", type=Path)
+    parser.add_argument("--memory-limit-gb", type=float, default=40.0)
+    parser.add_argument("--cache-limit-gb", type=float, default=2.0)
+    parser.add_argument("--wired-limit-gb", type=float, default=48.0)
+    parser.add_argument("--resource-stage-path", type=Path)
+    parser.add_argument("--resource-startup-lethal-mb", type=float)
+    parser.add_argument("--resource-steady-lethal-mb", type=float)
     args = parser.parse_args()
     report = evaluate_decoding(
         args.campaign.expanduser().resolve(strict=True),
@@ -403,6 +482,12 @@ def main() -> int:
             if args.recurrence_depths
             else None
         ),
+        memory_limit_gb=args.memory_limit_gb,
+        cache_limit_gb=args.cache_limit_gb,
+        wired_limit_gb=args.wired_limit_gb,
+        resource_stage_path=args.resource_stage_path,
+        resource_startup_lethal_mb=args.resource_startup_lethal_mb,
+        resource_steady_lethal_mb=args.resource_steady_lethal_mb,
     )
     encoded = json.dumps(report, indent=2, sort_keys=True) + "\n"
     if args.report is not None:

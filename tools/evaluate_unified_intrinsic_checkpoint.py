@@ -9,6 +9,8 @@ import json
 import math
 import os
 import sys
+from collections.abc import Iterator
+from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
 
@@ -43,14 +45,30 @@ from core.learning.unified_intrinsic_recurrence import (  # noqa: E402
     UnifiedRecurrenceConfig,
     UnifiedRecurrentController,
 )
+from core.runtime.mlx_memory_guard import host_pressure, mlx_memory_envelope  # noqa: E402
+from core.runtime.model_lane_control import standalone_model_lane  # noqa: E402
+from tools.resident_recurrent_sft_bootstrap_identity import (  # noqa: E402
+    resident_bootstrap_tokenizer_identity,
+)
 from tools.train_intrinsic_recurrence import encode_example  # noqa: E402
 from tools.train_unified_intrinsic_recurrence import (  # noqa: E402
     TRAINING_SOURCE_FILES,
     UnifiedTrainingBundle,
+    _await_resource_guard,
     _canonical_sha256,
     _configure_window_tissue,
     _model_identity,
+    _runtime_identity,
     _trainable,
+)
+from tools.unified_intrinsic_checkpoint import (  # noqa: E402
+    UnifiedCheckpointError,
+    resolve_checkpoint_generation,
+)
+from tools.unified_intrinsic_tokenization_contract import (  # noqa: E402
+    TOKENIZED_DATASET_FILENAME,
+    load_source_dataset,
+    verify_tokenized_dataset,
 )
 
 EVALUATION_SCHEMA = "aura.unified_intrinsic_independent_evaluation.v1"
@@ -69,9 +87,18 @@ def _load_checkpoint(
     *,
     stem: str,
 ) -> tuple[UnifiedTrainingBundle, Any, UnifiedIntrinsicTrainingSpec, dict[str, Any]]:
-    receipt_path = campaign_dir / f"{stem}.json"
-    weights_path = campaign_dir / f"{stem}.safetensors"
-    receipt = json.loads(receipt_path.read_text(encoding="utf-8"))
+    try:
+        resolved = resolve_checkpoint_generation(
+            campaign_dir,
+            stem=stem,
+            required=True,
+        )
+    except UnifiedCheckpointError as exc:
+        raise RuntimeError(str(exc)) from exc
+    if resolved is None:  # pragma: no cover - required=True is exhaustive
+        raise RuntimeError("unified checkpoint is unavailable")
+    receipt = resolved.receipt
+    weights_path = resolved.weights_path
     body = {key: value for key, value in receipt.items() if key != "receipt_sha256"}
     identity = receipt.get("identity")
     if (
@@ -99,12 +126,68 @@ def _load_checkpoint(
         or _model_identity(str(model_identity.get("canonical_path"))) != model_identity
     ):
         raise RuntimeError("unified campaign model differs")
+    runtime_identity = identity.get("runtime")
+    if not isinstance(runtime_identity, dict) or _runtime_identity() != runtime_identity:
+        raise RuntimeError("unified campaign runtime differs")
+    dataset_identity = identity.get("dataset")
+    dataset_name = (
+        dataset_identity.get("path") if isinstance(dataset_identity, dict) else None
+    )
+    if (
+        not isinstance(dataset_name, str)
+        or Path(dataset_name).name != dataset_name
+        or not isinstance(dataset_identity, dict)
+    ):
+        raise RuntimeError("unified campaign dataset identity differs")
+    dataset_path = campaign_dir / dataset_name
+    try:
+        dataset_size = dataset_path.stat().st_size
+        dataset_sha256 = _file_sha256(dataset_path)
+    except OSError as exc:
+        raise RuntimeError("unified campaign dataset is unavailable") from exc
+    if (
+        dataset_size != dataset_identity.get("size_bytes")
+        or dataset_sha256 != dataset_identity.get("sha256")
+    ):
+        raise RuntimeError("unified campaign dataset differs")
+    train_tasks, holdout_tasks = load_source_dataset(dataset_path)
 
     from mlx_lm import load
 
     mx.random.seed(int(identity["init_seed"]))
     model, tokenizer = load(model_identity["canonical_path"])
     model.freeze()
+    expected_tokenizer_identity = identity.get("tokenizer")
+    observed_tokenizer_identity = resident_bootstrap_tokenizer_identity(
+        Path(model_identity["canonical_path"]),
+        tokenizer,
+    )
+    if (
+        not isinstance(expected_tokenizer_identity, dict)
+        or observed_tokenizer_identity != expected_tokenizer_identity
+    ):
+        raise RuntimeError("unified campaign tokenizer differs")
+    tokenized_identity = identity.get("tokenized_dataset")
+    tokenized_name = (
+        tokenized_identity.get("path") if isinstance(tokenized_identity, dict) else None
+    )
+    if tokenized_name != TOKENIZED_DATASET_FILENAME:
+        raise RuntimeError("unified campaign tokenized dataset identity differs")
+    bridge = {"assistant_answer": "\n\nFINAL_ANSWER: "}.get(
+        identity["bridge"],
+        identity["bridge"],
+    )
+    observed_tokenized_identity = verify_tokenized_dataset(
+        campaign_dir / tokenized_name,
+        tokenizer,
+        train_tasks,
+        holdout_tasks,
+        bridge=bridge,
+        dataset_identity=dataset_identity,
+        tokenizer_identity_sha256=observed_tokenizer_identity["identity_sha256"],
+    )
+    if observed_tokenized_identity != tokenized_identity:
+        raise RuntimeError("unified campaign tokenized dataset differs")
     literal_identity = identity.get("literal_observation_contract")
     if not isinstance(literal_identity, dict):
         raise RuntimeError("unified checkpoint literal contract is absent")
@@ -212,6 +295,86 @@ def _load_checkpoint(
     return bundle, tokenizer, spec, identity
 
 
+@contextmanager
+def unified_evaluation_context(
+    campaign_dir: Path,
+    *,
+    stem: str,
+    memory_limit_gb: float = 40.0,
+    cache_limit_gb: float = 2.0,
+    wired_limit_gb: float = 48.0,
+    resource_stage_path: Path | None = None,
+    resource_startup_lethal_mb: float | None = None,
+    resource_steady_lethal_mb: float | None = None,
+) -> Iterator[
+    tuple[
+        UnifiedTrainingBundle,
+        Any,
+        UnifiedIntrinsicTrainingSpec,
+        dict[str, Any],
+        Any,
+        dict[str, Any] | None,
+    ]
+]:
+    """Own the model lane and memory envelope for a complete evaluation."""
+
+    campaign_dir = campaign_dir.expanduser().resolve(strict=True)
+    resolved = resolve_checkpoint_generation(campaign_dir, stem=stem, required=True)
+    if resolved is None:  # pragma: no cover - required=True is exhaustive
+        raise RuntimeError("unified checkpoint is unavailable")
+    identity = resolved.receipt.get("identity")
+    model_identity = identity.get("model") if isinstance(identity, dict) else None
+    model_path = (
+        model_identity.get("canonical_path")
+        if isinstance(model_identity, dict)
+        else None
+    )
+    if not isinstance(model_path, str) or not model_path:
+        raise RuntimeError("unified campaign model identity differs")
+    pressure = host_pressure()
+    if pressure.get("available") is not True or pressure.get("under_pressure") is not False:
+        raise RuntimeError("unified evaluation refused unavailable or pressured host")
+    resource_values = (
+        resource_stage_path,
+        resource_startup_lethal_mb,
+        resource_steady_lethal_mb,
+    )
+    resource_enabled = all(value is not None for value in resource_values)
+    if any(value is not None for value in resource_values) != resource_enabled:
+        raise ValueError("evaluation resource guard arguments must be supplied together")
+    with standalone_model_lane(
+        owner_id=f"evaluate-unified-intrinsic:{campaign_dir.parent.name}",
+        model_path=model_path,
+        purpose="benchmark",
+        request_gb=memory_limit_gb,
+        preemptible=False,
+        allow_owner_eviction=False,
+        metadata={
+            "tool": "evaluate_unified_intrinsic_checkpoint",
+            "operator_launched": True,
+        },
+    ), mlx_memory_envelope(
+        memory_gb=memory_limit_gb,
+        cache_gb=cache_limit_gb,
+        wired_gb=wired_limit_gb,
+        restore_limits_on_exit=False,
+    ) as envelope:
+        bundle, tokenizer, spec, identity = _load_checkpoint(
+            campaign_dir,
+            stem=stem,
+        )
+        resource_receipt: dict[str, Any] | None = None
+        if resource_enabled:
+            resource_receipt = _await_resource_guard(
+                resource_stage_path.expanduser(),
+                trainer_sha256=_file_sha256(Path(__file__).resolve(strict=True)),
+                startup_lethal_mb=float(resource_startup_lethal_mb),
+                steady_lethal_mb=float(resource_steady_lethal_mb),
+                timeout_s=120.0,
+            )
+        yield bundle, tokenizer, spec, identity, envelope, resource_receipt
+
+
 def _sign_test_p_value(differences: list[float]) -> float | None:
     signs = [value for value in differences if abs(value) > 1e-12]
     if not signs:
@@ -268,14 +431,18 @@ def _fresh_tasks(
     return result
 
 
-def evaluate_checkpoint(
+def _evaluate_loaded_checkpoint(
     campaign_dir: Path,
     *,
+    bundle: UnifiedTrainingBundle,
+    tokenizer: Any,
+    spec: UnifiedIntrinsicTrainingSpec,
+    identity: dict[str, Any],
+    envelope: Any,
     stem: str,
     per_cell: int,
     evaluation_seed: int,
 ) -> dict[str, Any]:
-    bundle, tokenizer, spec, identity = _load_checkpoint(campaign_dir, stem=stem)
     tasks = _fresh_tasks(identity, per_cell=per_cell, seed=evaluation_seed)
     bridge = {"assistant_answer": "\n\nFINAL_ANSWER: "}.get(
         identity["bridge"],
@@ -322,6 +489,7 @@ def evaluate_checkpoint(
                 "base_ce_gain": float(base_loss.item()) - deep,
             }
         )
+        envelope.reclaim(force=True)
     differences = [row["depth_ce_gain"] for row in rows]
     base_differences = [row["base_ce_gain"] for row in rows]
     family_rows = {}
@@ -333,11 +501,13 @@ def evaluate_checkpoint(
             / len(selected),
             "depth_wins": sum(row["depth_ce_gain"] > 0.0 for row in selected),
         }
-    checkpoint_path = campaign_dir / f"{stem}.safetensors"
+    resolved = resolve_checkpoint_generation(campaign_dir, stem=stem, required=True)
+    if resolved is None:  # pragma: no cover - required=True is exhaustive
+        raise RuntimeError("unified checkpoint is unavailable")
     body = {
         "schema": EVALUATION_SCHEMA,
         "campaign_identity_sha256": identity["identity_sha256"],
-        "checkpoint_sha256": _file_sha256(checkpoint_path),
+        "checkpoint_sha256": _file_sha256(resolved.weights_path),
         "evaluation_seed": evaluation_seed,
         "per_cell": per_cell,
         "task_count": len(rows),
@@ -361,6 +531,49 @@ def evaluate_checkpoint(
     return {**body, "report_sha256": _canonical_sha256(body)}
 
 
+def evaluate_checkpoint(
+    campaign_dir: Path,
+    *,
+    stem: str,
+    per_cell: int,
+    evaluation_seed: int,
+    memory_limit_gb: float = 40.0,
+    cache_limit_gb: float = 2.0,
+    wired_limit_gb: float = 48.0,
+    resource_stage_path: Path | None = None,
+    resource_startup_lethal_mb: float | None = None,
+    resource_steady_lethal_mb: float | None = None,
+) -> dict[str, Any]:
+    with unified_evaluation_context(
+        campaign_dir,
+        stem=stem,
+        memory_limit_gb=memory_limit_gb,
+        cache_limit_gb=cache_limit_gb,
+        wired_limit_gb=wired_limit_gb,
+        resource_stage_path=resource_stage_path,
+        resource_startup_lethal_mb=resource_startup_lethal_mb,
+        resource_steady_lethal_mb=resource_steady_lethal_mb,
+    ) as loaded:
+        bundle, tokenizer, spec, identity, envelope, resource_receipt = loaded
+        report = _evaluate_loaded_checkpoint(
+            campaign_dir,
+            bundle=bundle,
+            tokenizer=tokenizer,
+            spec=spec,
+            identity=identity,
+            envelope=envelope,
+            stem=stem,
+            per_cell=per_cell,
+            evaluation_seed=evaluation_seed,
+        )
+        body = {
+            **{key: value for key, value in report.items() if key != "report_sha256"},
+            "resource_envelope": envelope.to_receipt(),
+            "resource_guard": resource_receipt,
+        }
+        return {**body, "report_sha256": _canonical_sha256(body)}
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("campaign", type=Path)
@@ -368,12 +581,24 @@ def main() -> int:
     parser.add_argument("--per-cell", type=int, default=8)
     parser.add_argument("--evaluation-seed", type=int, default=20260810203)
     parser.add_argument("--report", type=Path)
+    parser.add_argument("--memory-limit-gb", type=float, default=40.0)
+    parser.add_argument("--cache-limit-gb", type=float, default=2.0)
+    parser.add_argument("--wired-limit-gb", type=float, default=48.0)
+    parser.add_argument("--resource-stage-path", type=Path)
+    parser.add_argument("--resource-startup-lethal-mb", type=float)
+    parser.add_argument("--resource-steady-lethal-mb", type=float)
     args = parser.parse_args()
     report = evaluate_checkpoint(
         args.campaign.expanduser().resolve(strict=True),
         stem=args.stem,
         per_cell=args.per_cell,
         evaluation_seed=args.evaluation_seed,
+        memory_limit_gb=args.memory_limit_gb,
+        cache_limit_gb=args.cache_limit_gb,
+        wired_limit_gb=args.wired_limit_gb,
+        resource_stage_path=args.resource_stage_path,
+        resource_startup_lethal_mb=args.resource_startup_lethal_mb,
+        resource_steady_lethal_mb=args.resource_steady_lethal_mb,
     )
     encoded = json.dumps(report, indent=2, sort_keys=True) + "\n"
     if args.report is not None:

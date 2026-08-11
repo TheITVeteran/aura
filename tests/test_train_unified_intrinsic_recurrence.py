@@ -3,6 +3,9 @@
 from __future__ import annotations
 
 import json
+import os
+import threading
+import time
 from pathlib import Path
 
 import pytest
@@ -34,21 +37,25 @@ from tools.train_unified_intrinsic_recurrence import (  # noqa: E402
     _answer_binding_loss,
     _answer_role_place_targets,
     _attach_window_adapters,
+    _await_resource_guard,
     _canonical_sha256,
     _clip_gradient_groups,
     _clip_gradient_norm,
     _configure_window_tissue,
     _deterministic_student_mix,
     _evaluate,
+    _freeze_dataset,
     _generate_student_rollin,
     _ground_state_value_embeddings,
     _initial_rollin_totals,
     _invocation_stop_step,
+    _load_frozen_dataset,
     _load_latest_checkpoint,
     _model_identity,
     _optimization_phase,
     _phase_gradients,
     _residual_hidden_size,
+    _resolve_recurrent_window,
     _restore_checkpoint,
     _restore_rollin_totals,
     _rollin_report,
@@ -209,12 +216,55 @@ def test_campaign_identity_binds_curriculum_and_state_schema_sources() -> None:
     assert "core/learning/recurrent_state_schema.py" in TRAINING_SOURCE_FILES
     assert "core/learning/recurrent_literal_grounding.py" in TRAINING_SOURCE_FILES
     assert "core/learning/recurrent_opcode_grounding.py" in TRAINING_SOURCE_FILES
+    assert "core/learning/intrinsic_recurrence.py" in TRAINING_SOURCE_FILES
+    assert "core/learning/protected_memory.py" in TRAINING_SOURCE_FILES
+    assert "core/runtime/model_lane_control.py" in TRAINING_SOURCE_FILES
+    assert "tools/train_intrinsic_recurrence.py" in TRAINING_SOURCE_FILES
+    assert "tools/unified_intrinsic_resident_identity.py" in TRAINING_SOURCE_FILES
+    assert "requirements_lock.txt" in TRAINING_SOURCE_FILES
 
 
 def test_hidden_size_comes_from_residual_space_not_packed_embeddings() -> None:
     model = _model()
     model.model.embed_tokens.weight = mx.zeros((64, 4))
     assert _residual_hidden_size(model) == 32
+
+
+def test_fractional_window_resolves_across_checkpoint_depths(tmp_path: Path) -> None:
+    model = tmp_path / "model"
+    model.mkdir()
+    (model / "config.json").write_text(
+        json.dumps({"num_hidden_layers": 64}),
+        encoding="utf-8",
+    )
+    prelude, coda, receipt = _resolve_recurrent_window(
+        str(model),
+        prelude_end=None,
+        coda_start=None,
+        prelude_fraction=0.25,
+        coda_fraction=0.25,
+    )
+    assert (prelude, coda) == (16, 48)
+    assert receipt["mode"] == "fractional"
+    assert len(receipt["contract_sha256"]) == 64
+
+    explicit = _resolve_recurrent_window(
+        str(model),
+        prelude_end=12,
+        coda_start=50,
+        prelude_fraction=0.25,
+        coda_fraction=0.25,
+    )
+    assert explicit[:2] == (12, 50)
+    assert explicit[2]["mode"] == "explicit"
+    with pytest.raises(ValueError, match="requires both boundaries"):
+        _resolve_recurrent_window(
+            str(model),
+            prelude_end=12,
+            coda_start=None,
+            prelude_fraction=0.25,
+            coda_fraction=0.25,
+        )
 
 
 def test_state_codebook_is_grounded_in_frozen_model_representations() -> None:
@@ -233,17 +283,94 @@ def test_state_codebook_is_grounded_in_frozen_model_representations() -> None:
             del add_special_tokens
             return [1 + (sum(text.encode("ascii")) % 62)]
 
-    digest = _ground_state_value_embeddings(
+    receipt = _ground_state_value_embeddings(
         model,
         Tokenizer(),
         controller,
         prelude_end=2,
     )
-    assert len(digest) == 64
+    assert len(receipt["sha256"]) == 64
+    assert receipt["label_count"] == 462
+    assert receipt["forward_batches"] < receipt["label_count"] // 8
+    assert receipt["batch_size"] == 32
     assert controller.parameter_sha256() != before
     assert controller.state_value_embeddings.shape == (5, 33, 32)
     assert controller.action_value_embeddings.shape == (8, 33, 32)
     assert controller.literal_value_embeddings.shape == (33, 32)
+
+
+def test_batched_state_codebook_matches_single_label_grounding() -> None:
+    model = _model()
+
+    class Tokenizer:
+        def encode(self, text: str, add_special_tokens: bool = False) -> list[int]:
+            del add_special_tokens
+            width = 1 + len(text) % 3
+            return [
+                1 + (sum(text.encode("ascii")) + index) % 62
+                for index in range(width)
+            ]
+
+    def controller() -> UnifiedRecurrentController:
+        return UnifiedRecurrentController(
+            UnifiedRecurrenceConfig(
+                hidden_size=32,
+                correction_rank=4,
+                initialization_seed=19,
+                literal_digit_token_ids=tuple(range(10)),
+            )
+        )
+
+    serial = controller()
+    batched = controller()
+    repeated = controller()
+    serial_receipt = _ground_state_value_embeddings(
+        model,
+        Tokenizer(),
+        serial,
+        prelude_end=2,
+        batch_size=1,
+    )
+    batched_receipt = _ground_state_value_embeddings(
+        model,
+        Tokenizer(),
+        batched,
+        prelude_end=2,
+        batch_size=64,
+    )
+    repeated_receipt = _ground_state_value_embeddings(
+        model,
+        Tokenizer(),
+        repeated,
+        prelude_end=2,
+        batch_size=64,
+    )
+
+    assert batched_receipt["sha256"] == repeated_receipt["sha256"]
+    assert serial_receipt["label_count"] == batched_receipt["label_count"]
+    assert batched_receipt["forward_batches"] < serial_receipt["forward_batches"]
+
+    def assert_numerically_equivalent(left: object, right: object) -> None:
+        left_flat = left.reshape(-1).astype(mx.float32)
+        right_flat = right.reshape(-1).astype(mx.float32)
+        cosine = mx.sum(left_flat * right_flat) / (
+            mx.linalg.norm(left_flat) * mx.linalg.norm(right_flat)
+        )
+        assert float(cosine.item()) > 0.99999
+        assert float(mx.max(mx.abs(left_flat - right_flat)).item()) < 0.02
+
+    assert_numerically_equivalent(
+        serial.state_value_embeddings,
+        batched.state_value_embeddings,
+    )
+    assert_numerically_equivalent(
+        serial.action_value_embeddings,
+        batched.action_value_embeddings,
+    )
+    assert_numerically_equivalent(
+        serial.literal_value_embeddings,
+        batched.literal_value_embeddings,
+    )
 
 
 def test_answer_binding_targets_identify_register_roles_and_digit_places() -> None:
@@ -277,6 +404,8 @@ def test_answer_binding_targets_identify_register_roles_and_digit_places() -> No
 
 def test_model_identity_hashes_weight_content_not_only_path(tmp_path: Path) -> None:
     (tmp_path / "config.json").write_text('{"hidden_size": 4}\n')
+    (tmp_path / "tokenizer.json").write_text('{"version": 1}\n')
+    (tmp_path / "tokenizer_config.json").write_text('{"eos": 2}\n')
     weights = tmp_path / "model.safetensors"
     weights.write_bytes(b"first")
     first = _model_identity(str(tmp_path))
@@ -286,6 +415,77 @@ def test_model_identity_hashes_weight_content_not_only_path(tmp_path: Path) -> N
     assert first["weights"][0]["size"] == second["weights"][0]["size"]
     assert first["weights"][0]["sha256"] != second["weights"][0]["sha256"]
     assert first["identity_sha256"] != second["identity_sha256"]
+    (tmp_path / "tokenizer.json").write_text('{"version": 2}\n')
+    third = _model_identity(str(tmp_path))
+    assert second["weights"] == third["weights"]
+    assert second["behavior_sha256"] != third["behavior_sha256"]
+    assert second["identity_sha256"] != third["identity_sha256"]
+
+
+def test_dataset_freeze_binds_private_traces_and_refuses_drift(tmp_path: Path) -> None:
+    from core.learning.recurrence_curriculum import task_battery
+
+    train = task_battery(("khop",), (1,), 2, seed=101)
+    holdout = task_battery(("khop",), (1,), 1, seed=202)
+    first = _freeze_dataset(tmp_path, train, holdout)
+    second = _freeze_dataset(tmp_path, train, holdout)
+    assert first == second
+    assert first["train_count"] == 2
+    assert first["holdout_count"] == 1
+    assert first["partition_overlap"] == 0
+    payload = json.loads((tmp_path / "dataset.json").read_text(encoding="ascii"))
+    assert payload["train"][0]["transition_trace"] is not None
+    assert payload["train"][0]["transition_program"] is not None
+    restored_train, restored_holdout = _load_frozen_dataset(tmp_path / "dataset.json")
+    assert restored_train == train
+    assert restored_holdout == holdout
+
+    dataset = tmp_path / "dataset.json"
+    dataset.chmod(0o600)
+    dataset.write_text("{}\n", encoding="ascii")
+    with pytest.raises(RuntimeError, match="source_dataset_unreadable"):
+        _freeze_dataset(tmp_path, train, holdout)
+
+
+def test_resource_guard_blocks_until_external_exact_pid_ack(tmp_path: Path) -> None:
+    from core.runtime.resource_stage_guard import (
+        publish_armed_ack,
+        read_ready_marker,
+    )
+
+    marker = tmp_path / "resource-stage.json"
+
+    def acknowledge() -> None:
+        deadline = time.monotonic() + 2.0
+        while not marker.exists() and time.monotonic() < deadline:
+            time.sleep(0.01)
+        _payload, marker_raw = read_ready_marker(
+            marker,
+            expected_target_pid=os.getpid(),
+        )
+        publish_armed_ack(
+            marker,
+            marker_raw=marker_raw,
+            target_pid=os.getpid(),
+            sentinel_pid=os.getpid(),
+            startup_lethal_mb=100.0,
+            steady_lethal_mb=80.0,
+        )
+
+    worker = threading.Thread(target=acknowledge, daemon=True)
+    worker.start()
+    receipt = _await_resource_guard(
+        marker,
+        trainer_sha256="a" * 64,
+        startup_lethal_mb=100.0,
+        steady_lethal_mb=80.0,
+        timeout_s=2.0,
+    )
+    worker.join(timeout=2.0)
+
+    assert not worker.is_alive()
+    assert receipt["marker"]["target_pid"] == os.getpid()
+    assert receipt["ack"]["target_pid"] == os.getpid()
 
 
 def test_phase_partition_preserves_shared_t1_and_trains_depth_bridge() -> None:
@@ -509,6 +709,34 @@ def test_checkpoint_roundtrip_restores_exact_trainable_state(tmp_path: Path) -> 
     assert all(bool(mx.array_equal(after[name], value)) for name, value in before.items())
 
 
+def test_optional_resume_starts_fresh_only_when_no_checkpoint_exists(
+    tmp_path: Path,
+) -> None:
+    bundle, _wiring = _bundle()
+    optimizer = optim.Adam(learning_rate=0.01)
+    identity_body = {"schema": "test", "depths": (1, 2, 4)}
+    identity = {
+        **identity_body,
+        "identity_sha256": _canonical_sha256(identity_body),
+    }
+
+    assert _restore_checkpoint(
+        tmp_path,
+        bundle,
+        optimizer,
+        identity,
+        required=False,
+    ) == (0, [], {})
+    with pytest.raises(RuntimeError, match="checkpoint is unavailable"):
+        _restore_checkpoint(
+            tmp_path,
+            bundle,
+            optimizer,
+            identity,
+            required=True,
+        )
+
+
 def test_checkpoint_refuses_a_different_campaign_identity(tmp_path: Path) -> None:
     bundle, _wiring = _bundle()
     optimizer = optim.Adam(learning_rate=0.01)
@@ -565,8 +793,10 @@ def test_latest_checkpoint_uses_immutable_generation_over_compatibility_mirror(
     loaded = _load_latest_checkpoint(tmp_path, required=True)
     assert loaded is not None
     generation_receipt, generation_weights = loaded
-    assert generation_receipt["checkpoint_generation_schema"].endswith(".v2")
+    assert generation_receipt["checkpoint_generation_schema"].endswith(".v3")
     assert generation_weights.parent.name in pointer["checkpoint"]
+    assert generation_weights.parent.stat().st_mode & 0o222 == 0
+    assert generation_weights.stat().st_mode & 0o222 == 0
 
     # A crash or writer failure in the compatibility mirror cannot strand the
     # authoritative immutable generation.
@@ -645,6 +875,7 @@ def test_named_best_checkpoint_does_not_overwrite_latest(tmp_path: Path) -> None
     )
     assert (tmp_path / "checkpoint_latest.json").is_file()
     assert (tmp_path / "checkpoint_best_trained.json").is_file()
+    assert (tmp_path / "checkpoint_best_trained_pointer.json").is_file()
     step, _history, _training_state = _restore_checkpoint(
         tmp_path, bundle, optimizer, identity
     )

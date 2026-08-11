@@ -68,19 +68,40 @@ from core.learning.unified_intrinsic_recurrence import (  # noqa: E402
 from core.runtime.atomic_writer import (  # noqa: E402
     atomic_write_bytes,
     atomic_write_text,
-    durable_replace,
     durable_unlink,
     ensure_private_directory,
     interprocess_file_lock,
 )
-from core.runtime.mlx_memory_guard import mlx_memory_envelope  # noqa: E402
+from core.runtime.mlx_memory_guard import host_pressure, mlx_memory_envelope  # noqa: E402
+from tools.resident_recurrent_sft_bootstrap_identity import (  # noqa: E402
+    resident_bootstrap_tokenizer_identity,
+)
 from tools.train_intrinsic_recurrence import encode_example  # noqa: E402
+from tools.unified_intrinsic_checkpoint import (  # noqa: E402
+    CHECKPOINT_GENERATION_SCHEMA,
+    CHECKPOINT_POINTER_SCHEMA,
+    TRAINING_SCHEMA,
+    UnifiedCheckpointError,
+    resolve_checkpoint_generation,
+)
+from tools.unified_intrinsic_preload_barrier import verify_release  # noqa: E402
+from tools.unified_intrinsic_resident_identity import (  # noqa: E402
+    CAMPAIGN_BINDING_SCHEMA,
+)
+from tools.unified_intrinsic_tokenization_contract import (  # noqa: E402
+    TOKENIZED_DATASET_FILENAME,
+    freeze_source_dataset,
+    freeze_tokenized_dataset,
+    verify_tokenized_dataset,
+)
 
-TRAINING_SCHEMA = "aura.unified_intrinsic_training.v1"
-CHECKPOINT_GENERATION_SCHEMA = "aura.unified_intrinsic_checkpoint.v2"
-CHECKPOINT_POINTER_SCHEMA = "aura.unified_intrinsic_checkpoint_pointer.v1"
 TRAINING_SOURCE_FILES = (
+    "core/brain/llm/latent_cortex/frontier_tasks.py",
+    "core/brain/llm/latent_cortex/recurrence_adapter.py",
+    "core/brain/llm/latent_cortex/recurrence_adapter_identity_v2.py",
     "core/learning/depth_conditioned_lora.py",
+    "core/learning/intrinsic_recurrence.py",
+    "core/learning/protected_memory.py",
     "core/learning/recurrence_curriculum.py",
     "core/learning/recurrent_answer_emission.py",
     "core/learning/recurrent_action_schema.py",
@@ -89,7 +110,18 @@ TRAINING_SOURCE_FILES = (
     "core/learning/recurrent_state_schema.py",
     "core/learning/unified_intrinsic_objective.py",
     "core/learning/unified_intrinsic_recurrence.py",
+    "core/runtime/atomic_writer.py",
+    "core/runtime/mlx_memory_guard.py",
+    "core/runtime/model_lane_control.py",
+    "pyproject.toml",
+    "requirements_lock.txt",
+    "tools/resident_recurrent_sft_bootstrap_identity.py",
+    "tools/train_intrinsic_recurrence.py",
     "tools/train_unified_intrinsic_recurrence.py",
+    "tools/unified_intrinsic_checkpoint.py",
+    "tools/unified_intrinsic_preload_barrier.py",
+    "tools/unified_intrinsic_resident_identity.py",
+    "tools/unified_intrinsic_tokenization_contract.py",
 )
 
 
@@ -112,6 +144,57 @@ def _canonical_sha256(value: Any) -> str:
     ).hexdigest()
 
 
+def _parse_campaign_binding(raw: str | None) -> dict[str, Any] | None:
+    if raw is None:
+        return None
+    try:
+        binding = json.loads(raw)
+    except json.JSONDecodeError as exc:
+        raise ValueError("campaign checkpoint binding is invalid JSON") from exc
+    required = {
+        "schema",
+        "campaign_id",
+        "campaign_config_sha256",
+        "source_commit",
+        "source_tree",
+        "source_manifest_sha256",
+        "model_manifest_sha256",
+        "runtime_identity_sha256",
+        "dataset_identity_sha256",
+        "tokenizer_identity_sha256",
+        "tokenized_dataset_identity_sha256",
+        "training_profile_sha256",
+        "binding_sha256",
+    }
+    body = (
+        {key: value for key, value in binding.items() if key != "binding_sha256"}
+        if isinstance(binding, dict)
+        else {}
+    )
+    if (
+        not isinstance(binding, dict)
+        or set(binding) != required
+        or binding.get("schema") != CAMPAIGN_BINDING_SCHEMA
+        or binding.get("binding_sha256") != _canonical_sha256(body)
+        or any(
+            not isinstance(value, str) or not value
+            for key, value in body.items()
+            if key != "schema"
+        )
+    ):
+        raise ValueError("campaign checkpoint binding differs")
+    return binding
+
+
+def _adam(learning_rate: float) -> Any:
+    return optim.Adam(
+        learning_rate=learning_rate,
+        betas=[0.9, 0.999],
+        eps=1e-8,
+        bias_correction=False,
+    )
+
+
 def _file_sha256(path: Path) -> str:
     digest = hashlib.sha256()
     with path.open("rb") as handle:
@@ -126,27 +209,234 @@ def _model_identity(model_path: str) -> dict[str, Any]:
     weights = sorted(directory.glob("*.safetensors"))
     if not config.is_file() or not weights:
         raise ValueError("model checkpoint identity is incomplete")
-    rows = []
-    for path in weights:
+    files = sorted(
+        path
+        for path in directory.iterdir()
+        if path.is_file() and path.name != "README.md"
+    )
+    rows: list[dict[str, Any]] = []
+    by_name: dict[str, dict[str, Any]] = {}
+    for path in files:
+        if path.is_symlink():
+            raise ValueError("model checkpoint contains a symlinked artifact")
         resolved = path.resolve(strict=True)
-        rows.append(
-            {
-                "name": path.name,
-                "size": resolved.stat().st_size,
-                "sha256": _file_sha256(resolved),
-            }
-        )
+        before = resolved.stat()
+        row = {
+            "name": path.name,
+            "size": before.st_size,
+            "sha256": _file_sha256(resolved),
+        }
+        after = resolved.stat()
+        if (
+            before.st_dev,
+            before.st_ino,
+            before.st_size,
+            before.st_mtime_ns,
+            before.st_ctime_ns,
+        ) != (
+            after.st_dev,
+            after.st_ino,
+            after.st_size,
+            after.st_mtime_ns,
+            after.st_ctime_ns,
+        ):
+            raise RuntimeError("model checkpoint changed while hashing")
+        rows.append(row)
+        by_name[path.name] = row
+    weight_rows = [by_name[path.name] for path in weights]
+    behavior_rows = [
+        row for row in rows if not row["name"].endswith(".safetensors")
+    ]
     body = {
         "canonical_path": str(directory),
-        "config_sha256": _file_sha256(config.resolve(strict=True)),
-        "weights": rows,
+        "config_sha256": by_name[config.name]["sha256"],
+        "weights": weight_rows,
+        "behavior_files": behavior_rows,
+        "behavior_sha256": _canonical_sha256(behavior_rows),
     }
     return {**body, "identity_sha256": _canonical_sha256(body)}
+
+
+def _runtime_identity() -> dict[str, Any]:
+    from core.brain.llm.latent_cortex.recurrence_adapter_identity_v2 import (
+        runtime_environment_identity,
+    )
+
+    environment = runtime_environment_identity()
+    executable = Path(os.path.abspath(sys.executable))
+    real_executable = executable.resolve(strict=True)
+    before = real_executable.stat()
+    executable_sha256 = _file_sha256(real_executable)
+    after = real_executable.stat()
+    if (
+        before.st_dev,
+        before.st_ino,
+        before.st_size,
+        before.st_mtime_ns,
+        before.st_ctime_ns,
+    ) != (
+        after.st_dev,
+        after.st_ino,
+        after.st_size,
+        after.st_mtime_ns,
+        after.st_ctime_ns,
+    ):
+        raise RuntimeError("Python interpreter changed while hashing")
+    body = {
+        "environment": environment,
+        "interpreter": {
+            "executable": str(executable),
+            "real_executable": str(real_executable),
+            "sys_prefix": str(Path(sys.prefix).resolve(strict=True)),
+            "base_prefix": str(Path(sys.base_prefix).resolve(strict=True)),
+            "size_bytes": before.st_size,
+            "sha256": executable_sha256,
+        },
+    }
+    return {**body, "identity_sha256": _canonical_sha256(body)}
+
+
+def _freeze_dataset(
+    out_dir: Path,
+    train_tasks: list[Any],
+    holdout_tasks: list[Any],
+) -> dict[str, Any]:
+    from tools.unified_intrinsic_tokenization_contract import freeze_source_dataset
+
+    return freeze_source_dataset(out_dir / "dataset.json", train_tasks, holdout_tasks)
+
+
+def _load_frozen_dataset(path: Path) -> tuple[list[Any], list[Any]]:
+    from tools.unified_intrinsic_tokenization_contract import load_source_dataset
+
+    return load_source_dataset(path)
+
+
+def _model_layer_count(model_path: str) -> int:
+    config_path = Path(model_path).expanduser().resolve(strict=True) / "config.json"
+    try:
+        config = json.loads(config_path.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError, UnicodeError) as exc:
+        raise ValueError("model checkpoint config is unreadable") from exc
+    if not isinstance(config, dict):
+        raise ValueError("model checkpoint config differs")
+    candidates = [config]
+    text_config = config.get("text_config")
+    if isinstance(text_config, dict):
+        candidates.insert(0, text_config)
+    for candidate in candidates:
+        value = candidate.get("num_hidden_layers")
+        if type(value) is int and value >= 3:
+            return value
+    raise ValueError("model checkpoint layer count is unavailable")
+
+
+def _resolve_recurrent_window(
+    model_path: str,
+    *,
+    prelude_end: int | None,
+    coda_start: int | None,
+    prelude_fraction: float,
+    coda_fraction: float,
+) -> tuple[int, int, dict[str, Any]]:
+    layer_count = _model_layer_count(model_path)
+    supplied = (prelude_end is not None, coda_start is not None)
+    if supplied[0] != supplied[1]:
+        raise ValueError("explicit recurrent window requires both boundaries")
+    if all(supplied):
+        resolved_prelude = int(prelude_end)
+        resolved_coda = int(coda_start)
+        mode = "explicit"
+    else:
+        for name, value in (
+            ("prelude", prelude_fraction),
+            ("coda", coda_fraction),
+        ):
+            if (
+                isinstance(value, bool)
+                or not isinstance(value, (int, float))
+                or not math.isfinite(float(value))
+                or not 0.0 < float(value) < 0.5
+            ):
+                raise ValueError(f"{name} fraction must be finite and inside (0, 0.5)")
+        if float(prelude_fraction) + float(coda_fraction) >= 1.0:
+            raise ValueError("recurrent window fractions leave no middle block")
+        resolved_prelude = max(1, int(layer_count * float(prelude_fraction)))
+        resolved_coda = min(
+            layer_count - 1,
+            layer_count - max(1, int(layer_count * float(coda_fraction))),
+        )
+        mode = "fractional"
+    if not 0 < resolved_prelude < resolved_coda < layer_count:
+        raise ValueError("resolved recurrent window is outside the model")
+    body = {
+        "mode": mode,
+        "layer_count": layer_count,
+        "prelude_end": resolved_prelude,
+        "coda_start": resolved_coda,
+        "prelude_fraction": (
+            float(prelude_fraction) if mode == "fractional" else None
+        ),
+        "coda_fraction": float(coda_fraction) if mode == "fractional" else None,
+    }
+    return resolved_prelude, resolved_coda, {
+        **body,
+        "contract_sha256": _canonical_sha256(body),
+    }
 
 
 def _atomic_json(path: Path, value: dict[str, Any]) -> None:
     encoded = json.dumps(value, indent=2, sort_keys=True) + "\n"
     atomic_write_text(path, encoded, encoding="utf-8", mode=0o600)
+
+
+def _await_resource_guard(
+    marker_path: Path,
+    *,
+    trainer_sha256: str,
+    startup_lethal_mb: float,
+    steady_lethal_mb: float,
+    timeout_s: float,
+) -> dict[str, Any]:
+    """Refuse the first optimizer graph until an external sentinel is armed."""
+
+    from core.runtime.resource_stage_guard import (
+        ResourceStageGuardError,
+        ack_path,
+        publish_ready_marker,
+        read_armed_ack,
+        sha256_bytes,
+    )
+
+    acknowledgement = ack_path(marker_path)
+    if marker_path.exists() or acknowledgement.exists():
+        raise ResourceStageGuardError("resource guard attempt artifacts already exist")
+    marker, marker_raw = publish_ready_marker(
+        marker_path,
+        target_pid=os.getpid(),
+        trainer_sha256=trainer_sha256,
+    )
+    print(f"resource guard marker published: {marker_path}", flush=True)
+    deadline = time.monotonic() + timeout_s
+    while time.monotonic() < deadline:
+        if acknowledgement.exists():
+            acknowledgement_payload, acknowledgement_raw = read_armed_ack(
+                marker_path,
+                marker_raw=marker_raw,
+                expected_target_pid=os.getpid(),
+                startup_lethal_mb=startup_lethal_mb,
+                steady_lethal_mb=steady_lethal_mb,
+            )
+            return {
+                "marker": marker,
+                "marker_sha256": sha256_bytes(marker_raw),
+                "ack": acknowledgement_payload,
+                "ack_sha256": sha256_bytes(acknowledgement_raw),
+            }
+        time.sleep(0.25)
+    raise ResourceStageGuardError(
+        "external sentinel did not acknowledge unified training in time"
+    )
 
 
 def _attach_window_adapters(
@@ -258,49 +548,87 @@ def _ground_state_value_embeddings(
     controller: UnifiedRecurrentController,
     *,
     prelude_end: int,
-) -> str:
+    batch_size: int = 32,
+) -> dict[str, Any]:
     """Initialize typed values on the frozen model's native prelude manifold."""
 
-    def frozen_label_hidden(label: str) -> Any:
+    if type(batch_size) is not int or batch_size < 1:
+        raise ValueError("grounding batch size must be a positive integer")
+
+    def encode_label(label: str) -> list[int]:
         try:
             token_ids = tokenizer.encode(label, add_special_tokens=False)
         except TypeError:
             token_ids = tokenizer.encode(label)
         if not token_ids:
             raise RuntimeError("grounded semantic label encoded to no tokens")
-        tokens = mx.array([token_ids], dtype=mx.int32)
-        hidden = model.model.embed_tokens(tokens)
-        return _run(model.model.layers[:prelude_end], hidden)[0, -1, :].astype(
-            mx.float32
-        )
+        return [int(token_id) for token_id in token_ids]
 
-    rows = []
-    for slot_name in STATE_SLOT_NAMES:
-        values = []
-        for value in range(controller.config.state_cardinality):
-            label = f"Internal state {slot_name}={value}"
-            values.append(frozen_label_hidden(label))
-        rows.append(mx.stack(values))
-    grounded = mx.stack(rows)
+    labels = [
+        f"Internal state {slot_name}={value}"
+        for slot_name in STATE_SLOT_NAMES
+        for value in range(controller.config.state_cardinality)
+    ]
+    labels.extend(
+        action_value_semantic_label(slot_name, value)
+        for slot_name in ACTION_SLOT_NAMES
+        for value in range(controller.config.action_cardinality)
+    )
+    labels.extend(str(value) for value in range(LITERAL_MAX_VALUE + 1))
+    encoded = [encode_label(label) for label in labels]
+    buckets: dict[int, list[tuple[int, list[int]]]] = {}
+    for index, token_ids in enumerate(encoded):
+        buckets.setdefault(len(token_ids), []).append((index, token_ids))
+
+    grounded_rows: list[Any | None] = [None] * len(labels)
+    forward_batches = 0
+    for token_count in sorted(buckets):
+        bucket = buckets[token_count]
+        for offset in range(0, len(bucket), batch_size):
+            batch = bucket[offset : offset + batch_size]
+            tokens = mx.array(
+                [token_ids for _index, token_ids in batch],
+                dtype=mx.int32,
+            )
+            hidden = model.model.embed_tokens(tokens)
+            terminal = _run(model.model.layers[:prelude_end], hidden)[:, -1, :].astype(
+                mx.float32
+            )
+            mx.eval(terminal)
+            for row, (index, _token_ids) in enumerate(batch):
+                grounded_rows[index] = terminal[row]
+            forward_batches += 1
+
+    if any(value is None for value in grounded_rows):
+        raise RuntimeError("grounded semantic label inventory is incomplete")
+    concrete_rows = [value for value in grounded_rows if value is not None]
+    cursor = 0
+
+    def take(shape: tuple[int, int]) -> Any:
+        nonlocal cursor
+        row_count, cardinality = shape
+        count = row_count * cardinality
+        selected = concrete_rows[cursor : cursor + count]
+        cursor += count
+        return mx.stack(selected).reshape(row_count, cardinality, -1)
+
+    grounded = take(
+        (len(STATE_SLOT_NAMES), controller.config.state_cardinality)
+    )
+    grounded_actions = take(
+        (len(ACTION_SLOT_NAMES), controller.config.action_cardinality)
+    )
+    literal_count = LITERAL_MAX_VALUE + 1
+    grounded_literals = mx.stack(concrete_rows[cursor : cursor + literal_count])
+    cursor += literal_count
+    if cursor != len(labels):
+        raise RuntimeError("grounded semantic label cursor differs")
     if grounded.shape != controller.state_value_embeddings.shape:
         raise RuntimeError("grounded state codebook shape differs from controller")
     controller.state_value_embeddings = grounded
-    action_rows = []
-    for slot_name in ACTION_SLOT_NAMES:
-        values = []
-        for value in range(controller.config.action_cardinality):
-            values.append(
-                frozen_label_hidden(action_value_semantic_label(slot_name, value))
-            )
-        action_rows.append(mx.stack(values))
-    grounded_actions = mx.stack(action_rows)
     if grounded_actions.shape != controller.action_value_embeddings.shape:
         raise RuntimeError("grounded action codebook shape differs from controller")
     controller.action_value_embeddings = grounded_actions
-    literal_values = []
-    for value in range(LITERAL_MAX_VALUE + 1):
-        literal_values.append(frozen_label_hidden(str(value)))
-    grounded_literals = mx.stack(literal_values)
     if grounded_literals.shape != controller.literal_value_embeddings.shape:
         raise RuntimeError("grounded literal codebook shape differs from controller")
     controller.literal_value_embeddings = grounded_literals
@@ -318,7 +646,14 @@ def _ground_state_value_embeddings(
         + bytes(memoryview(controller.state_slot_embeddings.astype(mx.float32)))
         + bytes(memoryview(controller.action_slot_embeddings.astype(mx.float32)))
     ).hexdigest()
-    return digest
+    return {
+        "sha256": digest,
+        "label_count": len(labels),
+        "forward_batches": forward_batches,
+        "batch_size": batch_size,
+        "token_length_buckets": sorted(buckets),
+        "max_token_length": max(buckets),
+    }
 
 
 def _optimization_phase(
@@ -914,9 +1249,29 @@ def _checkpoint_tensor_bytes(tensors: dict[str, Any], out_dir: Path) -> bytes:
         durable_unlink(scratch, missing_ok=True)
 
 
+def _fsync_directory(path: Path) -> None:
+    descriptor = os.open(path, os.O_RDONLY | getattr(os, "O_CLOEXEC", 0))
+    try:
+        os.fsync(descriptor)
+    finally:
+        os.close(descriptor)
+
+
+def _discard_checkpoint_stage(path: Path) -> None:
+    if not path.exists() or path.is_symlink():
+        return
+    for name in ("bundle.safetensors", "complete.json"):
+        durable_unlink(path / name, missing_ok=True)
+    try:
+        path.rmdir()
+    except OSError:
+        pass
+
+
 def _publish_latest_checkpoint_generation(
     out_dir: Path,
     *,
+    stem: str,
     payload: bytes,
     step: int,
     history: list[dict[str, Any]],
@@ -927,45 +1282,56 @@ def _publish_latest_checkpoint_generation(
     """Publish immutable bytes, then atomically advance the latest pointer."""
 
     generations = ensure_private_directory(out_dir / "checkpoint_generations")
-    checkpoint_id = f"step-{step:08d}-{uuid.uuid4().hex}"
-    generation_dir = ensure_private_directory(generations / checkpoint_id)
-    weights_path = generation_dir / "bundle.safetensors"
-    atomic_write_bytes(weights_path, payload, mode=0o400)
-    checkpoint_sha256 = hashlib.sha256(payload).hexdigest()
-    body = {
-        "schema": TRAINING_SCHEMA,
-        "checkpoint_generation_schema": CHECKPOINT_GENERATION_SCHEMA,
-        "checkpoint_id": checkpoint_id,
-        "step": step,
-        "optimization_phase": optimization_phase,
-        "history": history,
-        "training_state": training_state,
-        "identity": identity,
-        "checkpoint_file": weights_path.name,
-        "checkpoint_size_bytes": len(payload),
-        "checkpoint_sha256": checkpoint_sha256,
-    }
-    complete = {**body, "receipt_sha256": _canonical_sha256(body)}
-    complete_bytes = (
-        json.dumps(
-            complete,
-            sort_keys=True,
-            separators=(",", ":"),
-            ensure_ascii=True,
-            allow_nan=False,
-        ).encode("ascii")
-        + b"\n"
+    checkpoint_id = f"{stem}-step-{step:08d}-{uuid.uuid4().hex}"
+    generation_dir = generations / checkpoint_id
+    stage_dir = ensure_private_directory(
+        generations / f".checkpoint-stage-{uuid.uuid4().hex}"
     )
-    atomic_write_bytes(generation_dir / "complete.json", complete_bytes, mode=0o400)
+    try:
+        weights_path = stage_dir / "bundle.safetensors"
+        atomic_write_bytes(weights_path, payload, mode=0o400)
+        checkpoint_sha256 = hashlib.sha256(payload).hexdigest()
+        body = {
+            "schema": TRAINING_SCHEMA,
+            "checkpoint_generation_schema": CHECKPOINT_GENERATION_SCHEMA,
+            "checkpoint_id": checkpoint_id,
+            "stem": stem,
+            "step": step,
+            "optimization_phase": optimization_phase,
+            "history": history,
+            "training_state": training_state,
+            "identity": identity,
+            "checkpoint_file": weights_path.name,
+            "checkpoint_size_bytes": len(payload),
+            "checkpoint_sha256": checkpoint_sha256,
+        }
+        complete = {**body, "receipt_sha256": _canonical_sha256(body)}
+        complete_bytes = (
+            json.dumps(
+                complete,
+                sort_keys=True,
+                separators=(",", ":"),
+                ensure_ascii=True,
+                allow_nan=False,
+            ).encode("ascii")
+            + b"\n"
+        )
+        atomic_write_bytes(stage_dir / "complete.json", complete_bytes, mode=0o400)
+        os.chmod(stage_dir, 0o500)
+        os.rename(stage_dir, generation_dir)
+        _fsync_directory(generations)
+    finally:
+        _discard_checkpoint_stage(stage_dir)
     pointer = {
         "schema": CHECKPOINT_POINTER_SCHEMA,
         "checkpoint": f"checkpoint_generations/{checkpoint_id}",
         "complete_sha256": hashlib.sha256(complete_bytes).hexdigest(),
         "identity_sha256": identity["identity_sha256"],
         "step": step,
+        "stem": stem,
     }
     atomic_write_text(
-        out_dir / "checkpoint_latest_pointer.json",
+        out_dir / f"{stem}_pointer.json",
         json.dumps(pointer, sort_keys=True, separators=(",", ":")) + "\n",
         encoding="ascii",
         mode=0o600,
@@ -973,13 +1339,8 @@ def _publish_latest_checkpoint_generation(
 
     # Preserve the historical fixed paths for evaluators without duplicating
     # the tensor payload. The immutable generation remains resume authority.
-    compatibility_weights = out_dir / "checkpoint_latest.safetensors"
-    scratch_link = out_dir / f".checkpoint_latest.{uuid.uuid4().hex}.link"
-    try:
-        os.link(weights_path, scratch_link)
-        durable_replace(scratch_link, compatibility_weights)
-    finally:
-        durable_unlink(scratch_link, missing_ok=True)
+    compatibility_weights = out_dir / f"{stem}.safetensors"
+    atomic_write_bytes(compatibility_weights, payload, mode=0o400)
     legacy_body = {
         key: value
         for key, value in body.items()
@@ -987,12 +1348,13 @@ def _publish_latest_checkpoint_generation(
         not in {
             "checkpoint_generation_schema",
             "checkpoint_id",
+            "stem",
             "checkpoint_file",
             "checkpoint_size_bytes",
         }
     }
     _atomic_json(
-        out_dir / "checkpoint_latest.json",
+        out_dir / f"{stem}.json",
         {**legacy_body, "receipt_sha256": _canonical_sha256(legacy_body)},
     )
     return complete
@@ -1003,6 +1365,17 @@ def _load_latest_checkpoint(
     *,
     required: bool,
 ) -> tuple[dict[str, Any], Path] | None:
+    try:
+        resolved = resolve_checkpoint_generation(
+            out_dir,
+            stem="checkpoint_latest",
+            required=False,
+        )
+    except UnifiedCheckpointError as exc:
+        raise RuntimeError(str(exc)) from exc
+    if resolved is not None:
+        return resolved.receipt, resolved.weights_path
+
     pointer_path = out_dir / "checkpoint_latest_pointer.json"
     legacy_receipt_path = out_dir / "checkpoint_latest.json"
     legacy_weights_path = out_dir / "checkpoint_latest.safetensors"
@@ -1117,31 +1490,15 @@ def _save_checkpoint(
     )
     payload = _checkpoint_tensor_bytes(tensors, out_dir)
     with interprocess_file_lock(out_dir / ".unified_checkpoint.lock"):
-        if stem == "checkpoint_latest":
-            _publish_latest_checkpoint_generation(
-                out_dir,
-                payload=payload,
-                step=step,
-                history=history,
-                identity=identity,
-                optimization_phase=optimization_phase,
-                training_state=dict(training_state or {}),
-            )
-            return
-        weights_path = out_dir / f"{stem}.safetensors"
-        atomic_write_bytes(weights_path, payload, mode=0o600)
-        body = {
-            "schema": TRAINING_SCHEMA,
-            "step": step,
-            "optimization_phase": optimization_phase,
-            "history": history,
-            "training_state": dict(training_state or {}),
-            "identity": identity,
-            "checkpoint_sha256": hashlib.sha256(payload).hexdigest(),
-        }
-        _atomic_json(
-            out_dir / f"{stem}.json",
-            {**body, "receipt_sha256": _canonical_sha256(body)},
+        _publish_latest_checkpoint_generation(
+            out_dir,
+            stem=stem,
+            payload=payload,
+            step=step,
+            history=history,
+            identity=identity,
+            optimization_phase=optimization_phase,
+            training_state=dict(training_state or {}),
         )
 
 
@@ -1432,9 +1789,31 @@ def _evaluate(
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--model", required=True)
+    parser.add_argument("--expected-model-identity-sha256")
+    parser.add_argument(
+        "--exclusive-model-lane",
+        action="store_true",
+        help="require an atomically exclusive model-memory lease before loading",
+    )
+    parser.add_argument(
+        "--campaign-binding-json",
+        help="canonical immutable source/model/runtime/training identity for checkpoints",
+    )
     parser.add_argument("--out-dir", type=Path, required=True)
-    parser.add_argument("--prelude-end", type=int, default=7)
-    parser.add_argument("--coda-start", type=int, default=21)
+    parser.add_argument(
+        "--dataset",
+        type=Path,
+        help="create-once canonical dataset generated before resident model load",
+    )
+    parser.add_argument(
+        "--tokenized-dataset",
+        type=Path,
+        help="create-once tokenizer-bound dataset generated before resident model load",
+    )
+    parser.add_argument("--prelude-end", type=int)
+    parser.add_argument("--coda-start", type=int)
+    parser.add_argument("--prelude-fraction", type=float, default=0.25)
+    parser.add_argument("--coda-fraction", type=float, default=0.25)
     parser.add_argument("--train-depths", default="1,2,4")
     parser.add_argument("--heldout-depths", default="8,16")
     parser.add_argument("--families", default="khop,modular,register_trace")
@@ -1539,12 +1918,40 @@ def main() -> int:
     parser.add_argument("--eval-every", type=int, default=20)
     parser.add_argument("--checkpoint-every", type=int, default=10)
     parser.add_argument("--checkpoint-group", type=int, default=4)
+    parser.add_argument(
+        "--grounding-batch-size",
+        type=int,
+        default=32,
+        help="equal-token-length batch size for frozen-prelude codebook grounding",
+    )
     parser.add_argument("--seed", type=int, default=20260810198)
     parser.add_argument("--init-seed", type=int, default=20260810198)
     parser.add_argument("--bridge", default="assistant_answer")
     parser.add_argument("--memory-fraction", type=float, default=0.48)
+    parser.add_argument("--memory-limit-gb", type=float)
+    parser.add_argument("--cache-limit-gb", type=float, default=2.0)
+    parser.add_argument("--wired-limit-gb", type=float)
+    parser.add_argument("--resource-stage-path", type=Path)
+    parser.add_argument("--resource-startup-lethal-mb", type=float)
+    parser.add_argument("--resource-steady-lethal-mb", type=float)
+    parser.add_argument("--resource-guard-timeout-s", type=float, default=120.0)
+    parser.add_argument("--preload-ready-path", type=Path)
+    parser.add_argument("--preload-release-path", type=Path)
+    parser.add_argument("--preload-key-path", type=Path)
+    parser.add_argument("--preload-config-sha256")
     parser.add_argument("--resume", action="store_true")
+    parser.add_argument(
+        "--resume-if-available",
+        action="store_true",
+        help=(
+            "restore a valid durable checkpoint when present, otherwise begin "
+            "at step zero; intended for one immutable supervised replay command"
+        ),
+    )
     args = parser.parse_args()
+    campaign_binding = _parse_campaign_binding(args.campaign_binding_json)
+    if args.resume and args.resume_if_available:
+        raise ValueError("resume modes are mutually exclusive")
     if not (
         0 <= args.semantic_warmup_steps < args.max_steps
         and args.state_warmup_steps >= 0
@@ -1584,8 +1991,39 @@ def main() -> int:
         raise ValueError("maximum gradient norm must be positive")
     if args.max_minutes <= 0.0:
         raise ValueError("maximum minutes must be positive")
+    if any(
+        value is not None and (not math.isfinite(value) or value <= 0.0)
+        for value in (
+            args.memory_limit_gb,
+            args.cache_limit_gb,
+            args.wired_limit_gb,
+        )
+    ):
+        raise ValueError("explicit MLX memory limits must be finite and positive")
+    if (
+        args.memory_limit_gb is not None
+        and args.cache_limit_gb is not None
+        and args.cache_limit_gb >= args.memory_limit_gb
+    ):
+        raise ValueError("MLX cache limit must be below active memory limit")
+    if (
+        args.memory_limit_gb is not None
+        and args.wired_limit_gb is not None
+        and args.wired_limit_gb <= args.memory_limit_gb
+    ):
+        raise ValueError("MLX wired limit must exceed active memory limit")
     if args.max_invocation_steps is not None and args.max_invocation_steps < 1:
         raise ValueError("maximum invocation steps must be positive")
+    if args.expected_model_identity_sha256 is not None and (
+        len(args.expected_model_identity_sha256) != 64
+        or any(
+            character not in "0123456789abcdef"
+            for character in args.expected_model_identity_sha256
+        )
+    ):
+        raise ValueError("expected model identity SHA-256 is invalid")
+    if args.grounding_batch_size < 1:
+        raise ValueError("grounding batch size must be positive")
     recurrent_learning_rate = (
         args.learning_rate
         if args.recurrent_learning_rate is None
@@ -1614,6 +2052,63 @@ def main() -> int:
         raise ValueError(
             "controller-only tissue cannot schedule transformer semantic warmup"
         )
+    resource_guard_values = (
+        args.resource_stage_path,
+        args.resource_startup_lethal_mb,
+        args.resource_steady_lethal_mb,
+    )
+    resource_guard_enabled = all(value is not None for value in resource_guard_values)
+    if any(value is not None for value in resource_guard_values) != resource_guard_enabled:
+        raise ValueError("resource guard arguments must be supplied together")
+    if resource_guard_enabled and not (
+        math.isfinite(float(args.resource_startup_lethal_mb))
+        and math.isfinite(float(args.resource_steady_lethal_mb))
+        and float(args.resource_startup_lethal_mb)
+        > float(args.resource_steady_lethal_mb)
+        > 0.0
+        and math.isfinite(args.resource_guard_timeout_s)
+        and args.resource_guard_timeout_s > 0.0
+    ):
+        raise ValueError("resource guard ceilings or timeout are invalid")
+    preload_values = (
+        args.preload_ready_path,
+        args.preload_release_path,
+        args.preload_key_path,
+        args.preload_config_sha256,
+    )
+    preload_enabled = all(value is not None for value in preload_values)
+    if any(value is not None for value in preload_values) != preload_enabled:
+        raise ValueError("preload barrier arguments must be supplied together")
+    if resource_guard_enabled and not preload_enabled:
+        raise ValueError("external resource guard requires a signed preload barrier")
+    preload_host_pressure: dict[str, Any] | None = None
+    if resource_guard_enabled:
+        preload_release = verify_release(
+            args.preload_release_path.expanduser(),
+            ready_path=args.preload_ready_path.expanduser(),
+            key_path=args.preload_key_path.expanduser(),
+            config_sha256=str(args.preload_config_sha256),
+            require_live_evidence=True,
+        )
+        preload_host_pressure = dict(preload_release["host_pressure"])
+    elif preload_enabled:
+        raise ValueError("preload barrier requires the external resource guard")
+    else:
+        preload_host_pressure = host_pressure()
+    if preload_enabled and campaign_binding is None:
+        raise ValueError("resident preload requires a campaign checkpoint binding")
+    if campaign_binding is not None and (
+        campaign_binding["campaign_config_sha256"] != args.preload_config_sha256
+    ):
+        raise ValueError("campaign checkpoint and preload identities differ")
+    if preload_enabled or resource_guard_enabled:
+        if (
+            preload_host_pressure.get("available") is not True
+            or preload_host_pressure.get("under_pressure") is not False
+        ):
+            raise RuntimeError(
+                "resident unified training refused unavailable or pressured host"
+            )
 
     from mlx_lm import load
 
@@ -1624,9 +2119,16 @@ def main() -> int:
     heldout_depths = tuple(
         int(value) for value in args.heldout_depths.split(",")
     )
-    spec = UnifiedIntrinsicTrainingSpec(
+    prelude_end, coda_start, window_geometry = _resolve_recurrent_window(
+        args.model,
         prelude_end=args.prelude_end,
         coda_start=args.coda_start,
+        prelude_fraction=args.prelude_fraction,
+        coda_fraction=args.coda_fraction,
+    )
+    spec = UnifiedIntrinsicTrainingSpec(
+        prelude_end=prelude_end,
+        coda_start=coda_start,
         train_depths=train_depths,
         heldout_depths=heldout_depths,
         state_weight=args.state_weight,
@@ -1661,21 +2163,37 @@ def main() -> int:
         args.bridge,
         args.bridge,
     )
-    train_tasks = curriculum.task_battery(
-        families,
-        task_depths,
-        args.per_cell,
-        seed=args.seed,
-    )
-    random.Random(args.seed).shuffle(train_tasks)
-    holdout = curriculum.task_battery(
-        families,
-        task_depths,
-        args.holdout_per_cell,
-        seed=args.seed + 9_973,
-    )
-    train_prompts = {task.prompt for task in train_tasks}
-    holdout = [task for task in holdout if task.prompt not in train_prompts]
+    out_dir = args.out_dir.expanduser().resolve()
+    ensure_private_directory(out_dir)
+    if args.tokenized_dataset is not None and args.dataset is None:
+        raise RuntimeError("tokenized dataset requires a frozen source dataset")
+    if args.dataset is not None:
+        dataset_path = args.dataset.expanduser().resolve(strict=True)
+        train_tasks, holdout = _load_frozen_dataset(dataset_path)
+        if (
+            {task.family for task in train_tasks + holdout} != set(families)
+            or {task.depth for task in train_tasks + holdout} != set(task_depths)
+            or len(train_tasks) != len(families) * len(task_depths) * args.per_cell
+            or len(holdout)
+            != len(families) * len(task_depths) * args.holdout_per_cell
+        ):
+            raise RuntimeError("unified recurrence frozen dataset differs from CLI")
+    else:
+        train_tasks = curriculum.task_battery(
+            families,
+            task_depths,
+            args.per_cell,
+            seed=args.seed,
+        )
+        random.Random(args.seed).shuffle(train_tasks)
+        holdout = curriculum.task_battery(
+            families,
+            task_depths,
+            args.holdout_per_cell,
+            seed=args.seed + 9_973,
+        )
+        train_prompts = {task.prompt for task in train_tasks}
+        holdout = [task for task in holdout if task.prompt not in train_prompts]
     if not holdout:
         raise RuntimeError("unified recurrence holdout is empty")
     missing_traces = [
@@ -1699,23 +2217,71 @@ def main() -> int:
             + ",".join(missing_programs[:5])
         )
 
-    out_dir = args.out_dir.expanduser().resolve()
-    out_dir.mkdir(parents=True, exist_ok=True)
+    dataset_identity = (
+        _freeze_dataset(out_dir, train_tasks, holdout)
+        if args.dataset is None
+        else freeze_source_dataset(dataset_path, train_tasks, holdout)
+    )
+    source_sha256s = {
+        relative: hashlib.sha256((REPO_ROOT / relative).read_bytes()).hexdigest()
+        for relative in TRAINING_SOURCE_FILES
+    }
+    runtime_identity = _runtime_identity()
+    model_identity = _model_identity(args.model)
+    if (
+        args.expected_model_identity_sha256 is not None
+        and model_identity["identity_sha256"]
+        != args.expected_model_identity_sha256
+    ):
+        raise RuntimeError("resident unified model identity differs from campaign")
     started = time.time()
     deadline = started + args.max_minutes * 60.0
     with standalone_model_lane(
         owner_id=f"train-unified-intrinsic:{out_dir.name}",
         model_path=args.model,
-        purpose="training",
+        purpose="train",
         preemptible=False,
+        require_exclusive=args.exclusive_model_lane,
+        allow_owner_eviction=False,
         metadata={
             "tool": "train_unified_intrinsic_recurrence",
             "operator_launched": True,
         },
-    ), mlx_memory_envelope(fraction=args.memory_fraction) as envelope:
+    ), mlx_memory_envelope(
+        fraction=args.memory_fraction,
+        memory_gb=args.memory_limit_gb,
+        cache_gb=args.cache_limit_gb,
+        wired_gb=args.wired_limit_gb,
+        restore_limits_on_exit=False,
+    ) as envelope:
         mx.random.seed(args.init_seed)
         model, tokenizer = load(args.model)
         model.freeze()
+        tokenizer_identity = resident_bootstrap_tokenizer_identity(
+            Path(args.model),
+            tokenizer,
+        )
+        if args.tokenized_dataset is not None:
+            tokenized_path = args.tokenized_dataset.expanduser().resolve(strict=True)
+            tokenized_dataset_identity = verify_tokenized_dataset(
+                tokenized_path,
+                tokenizer,
+                train_tasks,
+                holdout,
+                bridge=bridge,
+                dataset_identity=dataset_identity,
+                tokenizer_identity_sha256=tokenizer_identity["identity_sha256"],
+            )
+        else:
+            tokenized_dataset_identity = freeze_tokenized_dataset(
+                out_dir / TOKENIZED_DATASET_FILENAME,
+                tokenizer,
+                train_tasks,
+                holdout,
+                bridge=bridge,
+                dataset_identity=dataset_identity,
+                tokenizer_identity_sha256=tokenizer_identity["identity_sha256"],
+            )
         literal_digit_ids = tokenizer_digit_token_ids(tokenizer)
         literal_contract = LiteralObservationContract(literal_digit_ids)
         opcode_contract = tokenizer_opcode_contract(tokenizer)
@@ -1743,18 +2309,24 @@ def main() -> int:
                 opcode_context_patterns=opcode_contract.contexts,
             )
         )
-        state_codebook_sha256 = _ground_state_value_embeddings(
+        state_codebook_grounding = _ground_state_value_embeddings(
             model,
             tokenizer,
             controller,
             prelude_end=spec.prelude_end,
+            batch_size=args.grounding_batch_size,
         )
         bundle = UnifiedTrainingBundle(model, controller)
         readout_sha256 = readout_fingerprint(model, spec.coda_start)
         identity = {
             "schema": TRAINING_SCHEMA,
-            "model": _model_identity(args.model),
+            "model": model_identity,
+            "runtime": runtime_identity,
+            "dataset": dataset_identity,
+            "tokenizer": tokenizer_identity,
+            "tokenized_dataset": tokenized_dataset_identity,
             "spec": spec.to_dict(),
+            "window_geometry": window_geometry,
             "families": list(families),
             "task_depths": list(task_depths),
             "per_cell": args.per_cell,
@@ -1793,7 +2365,8 @@ def main() -> int:
             "state_codebook": (
                 "frozen_prelude_state_action_and_tokenizer_literal_labels"
             ),
-            "state_codebook_sha256": state_codebook_sha256,
+            "state_codebook_sha256": state_codebook_grounding["sha256"],
+            "state_codebook_grounding": state_codebook_grounding,
             "literal_observation_contract": {
                 **literal_contract.to_dict(),
                 "contract_sha256": literal_contract.contract_sha256,
@@ -1810,10 +2383,22 @@ def main() -> int:
             "lora_targets": list(targets),
             "wiring": wiring,
             "readout_sha256": readout_sha256,
-            "source_sha256s": {
-                relative: hashlib.sha256((REPO_ROOT / relative).read_bytes()).hexdigest()
-                for relative in TRAINING_SOURCE_FILES
+            "source_sha256s": source_sha256s,
+            "campaign_binding": campaign_binding,
+            "optimizer_contract": {
+                "class": "mlx.optimizers.Adam",
+                "betas": [0.9, 0.999],
+                "eps": 1e-8,
+                "bias_correction": False,
+                "phase_learning_rates": {
+                    "semantic_anchor": args.learning_rate,
+                    "answer_bridge": answer_bridge_learning_rate,
+                    "state_transition": state_learning_rate,
+                    "recurrence": recurrent_learning_rate,
+                },
+                "phase_transition_resets_optimizer_state": True,
             },
+            "mlx_memory_envelope": envelope.to_receipt(),
         }
         identity["identity_sha256"] = _canonical_sha256(identity)
         def phase_learning_rate(phase: str) -> float:
@@ -1824,8 +2409,8 @@ def main() -> int:
                 "recurrence": recurrent_learning_rate,
             }[phase]
 
-        optimizer = optim.Adam(
-            learning_rate=phase_learning_rate(
+        optimizer = _adam(
+            phase_learning_rate(
                 _optimization_phase(
                     0,
                     args.semantic_warmup_steps,
@@ -1834,6 +2419,7 @@ def main() -> int:
                 )
             )
         )
+        should_restore = args.resume or args.resume_if_available
         step, history, restored_training_state = (
             _restore_checkpoint(
                 out_dir,
@@ -1843,9 +2429,9 @@ def main() -> int:
                 semantic_warmup_steps=args.semantic_warmup_steps,
                 state_warmup_steps=args.state_warmup_steps,
                 answer_bridge_steps=args.answer_bridge_steps,
-                required=True,
+                required=args.resume,
             )
-            if args.resume
+            if should_restore
             else (0, [], {})
         )
         rollin_totals = _restore_rollin_totals(restored_training_state)
@@ -1864,6 +2450,15 @@ def main() -> int:
             )
         )
         mx.eval(optimizer.learning_rate)
+        resource_guard_receipt: dict[str, Any] | None = None
+        if resource_guard_enabled:
+            resource_guard_receipt = _await_resource_guard(
+                args.resource_stage_path.expanduser(),
+                trainer_sha256=_file_sha256(Path(__file__).resolve(strict=True)),
+                startup_lethal_mb=float(args.resource_startup_lethal_mb),
+                steady_lethal_mb=float(args.resource_steady_lethal_mb),
+                timeout_s=float(args.resource_guard_timeout_s),
+            )
         print(
             f"[unified] step={step} trainable={sum(v.size for v in _trainable(bundle).values()):,} "
             f"readout={readout_sha256[:12]}",
@@ -2095,9 +2690,7 @@ def main() -> int:
                     args.answer_bridge_steps,
                 )
                 if next_phase != phase:
-                    optimizer = optim.Adam(
-                        learning_rate=phase_learning_rate(next_phase)
-                    )
+                    optimizer = _adam(phase_learning_rate(next_phase))
                 if step % 5 == 0:
                     print(
                         f"[step {step}] phase={phase} "
@@ -2243,6 +2836,8 @@ def main() -> int:
                 "max_invocation_steps": args.max_invocation_steps,
                 "planned_stop_step": invocation_stop_step,
                 "max_minutes": args.max_minutes,
+                "preload_host_pressure": preload_host_pressure,
+                "resource_guard": resource_guard_receipt,
             },
             "latest_checkpoint": {
                 "step": checkpoint_receipt["step"],

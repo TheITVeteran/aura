@@ -44649,3 +44649,60 @@ performance or a `WOW Signal`. The completion envelope remains `912/920`
 after a source-complete 32B canary and its frozen controls pass. Next is complete
 source/model/dataset identity closure, batched resident codebook grounding and
 the exclusive-lane resident campaign contract.
+
+## Checkpoint 2026-08-11-233: Source-Bound Resident Campaign Custody
+
+CP233 closes the resident launch and recovery substrate without claiming a
+resident result. Campaign preparation now creates a detached, clean, published
+source capsule and commits the complete tracked source manifest, full model
+manifest, interpreter and behavior environment, source dataset, tokenizer and
+exact tokenized examples before launch. The checkpoint identity also commits
+the complete training profile, command arguments, controller-only parameter
+surface and explicit Adam optimizer semantics. Trainer, evaluator and resume
+paths reject identity drift rather than silently rebuilding a nearby campaign.
+
+Model admission is now an atomic exclusive transaction. An exclusive resident
+claim refuses existing owners or reservations, and later candidates cannot
+enter behind it. The resident controller does not evict the live Aura runtime:
+validation reports every observed owner and installation is refused until the
+lane is genuinely clear. Both new direct MLX load paths are registered in the
+model-load ownership inventory and remain guarded by `standalone_model_lane`.
+
+Launch custody is transactional. A read-only launch intent binds the exact
+launchd plist before bootstrap; the controller must prove its launchd PID and
+process incarnation, while the installer retains the global training lease
+until the immutable per-incarnation launch receipt is durable. The launched
+controller waits through that bounded lease handoff instead of racing the
+installer. Any post-bootstrap failure boots out the exact job, contains every
+campaign trainer and sentinel process, and proves that no job survived.
+
+The model cannot preload until an HMAC-authenticated, PID-incarnation-bound
+release proves the exact trainer command, a live external memory sentinel, a
+fresh pressure sample and the trainer-bound `caffeinate` process. The
+controller continuously revalidates the trainer, sentinel and sleep inhibitor;
+loss of any one contains the attempt. Detached recovery can also reconstruct
+and terminate an orphaned child when its supervisor died, and it rejects a
+remaining tagged descendant rather than reporting containment.
+
+Checkpoint publication now stages a complete generation, fsyncs and freezes
+its files, atomically renames the immutable generation, fsyncs the generation
+directory and only then advances the authoritative pointer. Torn first
+generations remain visible but non-authoritative; exact replay from step zero is
+allowed, while no orphan is promoted. Resume rechecks campaign, model,
+tokenizer, tokenized dataset, optimizer, cursor and detached journal identity.
+Authenticated controller status distinguishes a live controller from a stale
+nonterminal record.
+
+The complete CP233-focused surface passes `214` tests, the repository smoke
+suite passes `104` tests, and Ruff, compilation, layering and diff hygiene are
+clean. Repository-wide governance lint remains red on eleven pre-existing
+ownership drifts already present on current `main`. The model-load ownership
+audit likewise retains seven historical unowned research tools after both
+CP233 paths were removed from its findings; those residual paths are not
+treated as a CP233 success.
+
+No resident 32B training, serving integration, broad reasoning gain, fusion,
+frontier performance or `WOW Signal` is claimed. The completion envelope
+remains `912/920` (approximately `99.1%`). Next is to prepare the exact
+published resident package, validate its identities while live Aura owns the
+lane, then run the source-bound 32B canary only after a verified lane handoff.

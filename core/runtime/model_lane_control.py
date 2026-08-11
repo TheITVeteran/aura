@@ -279,6 +279,7 @@ class LaneClaim:
     priority: int = 50
     preemptible: bool = True
     foreground: bool = False
+    exclusive: bool = False
     allow_disruptive_eviction: bool = False
     allow_last_warm_eviction: bool = False
     reservation_ttl_s: float = 0.0
@@ -615,6 +616,9 @@ def _model_command_descriptor(command: Iterable[str]) -> _ModelCommandDescriptor
             "front_door_demo.py",
             "generate_lora_consolidation_proof.py",
             "probe_nonparametric_memory.py",
+            "train_unified_intrinsic_recurrence.py",
+            "evaluate_unified_intrinsic_checkpoint.py",
+            "evaluate_unified_intrinsic_decoding.py",
             "zenith_v2_state_benchmark.py",
         )
     )
@@ -630,6 +634,9 @@ def _model_command_descriptor(command: Iterable[str]) -> _ModelCommandDescriptor
                 "bench_speculative_decoding.py",
                 "generate_lora_consolidation_proof.py",
                 "probe_nonparametric_memory.py",
+                "train_unified_intrinsic_recurrence.py",
+                "evaluate_unified_intrinsic_checkpoint.py",
+                "evaluate_unified_intrinsic_decoding.py",
                 "zenith_v2_state_benchmark.py",
             )
         )
@@ -651,6 +658,8 @@ def _model_command_descriptor(command: Iterable[str]) -> _ModelCommandDescriptor
 
     if "fuse" in lowered:
         purpose = "fuse"
+    elif "train_unified_intrinsic_recurrence.py" in joined:
+        purpose = "train"
     elif (
         "--train" in lowered
         or " lora " in f" {joined} "
@@ -666,6 +675,8 @@ def _model_command_descriptor(command: Iterable[str]) -> _ModelCommandDescriptor
             "selfplay_harvest",
             "front_door_demo",
             "probe_nonparametric_memory",
+            "evaluate_unified_intrinsic_checkpoint",
+            "evaluate_unified_intrinsic_decoding",
         )
     ):
         purpose = "benchmark"
@@ -1590,6 +1601,9 @@ class ModelLaneController:
                 "observed_gb": max(0.0, float(observation.observed_gb)),
                 "priority": int(observation.priority),
                 "preemptible": bool(observation.preemptible),
+                "exclusive": bool(
+                    dict(observation.metadata).get("exclusive_model_lane", False)
+                ),
                 "last_user_facing_age_s": observation.last_user_facing_age_s,
                 "process": process.to_dict(),
                 "registered_at": float(existing.get("registered_at") or now),
@@ -1634,6 +1648,7 @@ class ModelLaneController:
             and int(record.get("priority") or 0) == int(claim.priority)
             and bool(record.get("preemptible", True)) is bool(claim.preemptible)
             and bool(record.get("foreground", False)) is bool(claim.foreground)
+            and bool(record.get("exclusive", False)) is bool(claim.exclusive)
             and bool(record.get("allow_disruptive_eviction", False))
             is bool(claim.allow_disruptive_eviction)
             and bool(record.get("allow_last_warm_eviction", False))
@@ -2153,6 +2168,28 @@ class ModelLaneController:
                     and str(record.get("state") or "") in _ACTIVE_RESERVATION_STATES
                     for request_id, record in state["reservations"].items()
                 )
+                active_other_reservations = {
+                    request_id: record
+                    for request_id, record in state["reservations"].items()
+                    if request_id != claim.request_id
+                    and str(record.get("state") or "") in _ACTIVE_RESERVATION_STATES
+                }
+                committed_exclusive_owner = next(
+                    (
+                        owner_id
+                        for owner_id, owner in state["owners"].items()
+                        if bool(owner.get("exclusive", False))
+                    ),
+                    "",
+                )
+                pending_exclusive_request = next(
+                    (
+                        request_id
+                        for request_id, record in active_other_reservations.items()
+                        if bool(record.get("exclusive", False))
+                    ),
+                    "",
+                )
                 active: list[ActiveLane] = []
                 for owner_id, owner in state["owners"].items():
                     try:
@@ -2202,6 +2239,18 @@ class ModelLaneController:
                 elif reservation_owner_conflict:
                     admitted = False
                     reason = f"owner_id_reservation_in_flight:{claim.owner_id}"
+                elif committed_exclusive_owner:
+                    admitted = False
+                    reason = f"exclusive_lane_owned:{committed_exclusive_owner}"
+                elif pending_exclusive_request:
+                    admitted = False
+                    reason = f"exclusive_lane_reserved:{pending_exclusive_request}"
+                elif claim.exclusive and state["owners"]:
+                    admitted = False
+                    reason = "exclusive_lane_requires_zero_owners"
+                elif claim.exclusive and active_other_reservations:
+                    admitted = False
+                    reason = "exclusive_lane_requires_zero_reservations"
                 if admitted:
                     blocked_target = next(
                         (
@@ -2266,6 +2315,7 @@ class ModelLaneController:
                     "priority": int(claim.priority),
                     "preemptible": bool(claim.preemptible),
                     "foreground": bool(claim.foreground),
+                    "exclusive": bool(claim.exclusive),
                     "allow_disruptive_eviction": bool(claim.allow_disruptive_eviction),
                     "allow_last_warm_eviction": bool(claim.allow_last_warm_eviction),
                     "reservation_ttl_s": float(claim.reservation_ttl_s or 0.0),
@@ -2675,6 +2725,7 @@ class ModelLaneController:
             priority=int(record.get("priority") or 0),
             preemptible=bool(record.get("preemptible", True)),
             foreground=bool(record.get("foreground", False)),
+            exclusive=bool(record.get("exclusive", False)),
             allow_disruptive_eviction=bool(record.get("allow_disruptive_eviction", False)),
             allow_last_warm_eviction=bool(record.get("allow_last_warm_eviction", False)),
             reservation_ttl_s=float(record.get("reservation_ttl_s") or 0.0),
@@ -2748,6 +2799,25 @@ class ModelLaneController:
             existing = state["owners"].get(decision.owner_id)
             if isinstance(existing, dict):
                 raise ModelLaneControlError("lane_owner_already_committed")
+            conflicting_owners = {
+                owner_id: owner
+                for owner_id, owner in state["owners"].items()
+                if owner_id != decision.owner_id
+            }
+            if bool(record.get("exclusive", False)) and conflicting_owners:
+                raise ModelLaneControlError("exclusive_lane_commit_conflict")
+            exclusive_owner = next(
+                (
+                    owner_id
+                    for owner_id, owner in conflicting_owners.items()
+                    if bool(owner.get("exclusive", False))
+                ),
+                "",
+            )
+            if exclusive_owner:
+                raise ModelLaneControlError(
+                    f"lane_commit_blocked_by_exclusive_owner:{exclusive_owner}"
+                )
             lane, qos = classify_lane(
                 decision.model_path,
                 purpose=str(record.get("purpose") or "serve"),
@@ -2762,6 +2832,7 @@ class ModelLaneController:
                 "observed_gb": max(0.0, float(observed_gb)),
                 "priority": int(record.get("priority") or 0),
                 "preemptible": bool(record.get("preemptible", True)),
+                "exclusive": bool(record.get("exclusive", False)),
                 "last_user_facing_age_s": None,
                 "process": process.to_dict(),
                 "registered_at": now,
@@ -4044,6 +4115,8 @@ def acquire_standalone_model_lane(
     request_gb: float | None = None,
     priority: int = 80,
     preemptible: bool = True,
+    require_exclusive: bool = False,
+    allow_owner_eviction: bool = True,
     metadata: Mapping[str, Any] | None = None,
     controller: ModelLaneController | None = None,
 ) -> StandaloneModelLaneLease:
@@ -4088,12 +4161,14 @@ def acquire_standalone_model_lane(
         purpose=purpose,
         priority=int(priority),
         preemptible=bool(preemptible),
+        exclusive=bool(require_exclusive),
         reservation_ttl_s=300.0,
         owner_lease_ttl_s=300.0,
         request_id=f"standalone-model-{uuid.uuid4()}",
         metadata={
             **_json_metadata(metadata or {}),
             "standalone_model_tool": True,
+            "exclusive_model_lane": bool(require_exclusive),
             "lease_mode": "process",
         },
     )
@@ -4104,6 +4179,15 @@ def acquire_standalone_model_lane(
     if not decision.admitted:
         raise ModelLaneControlError(
             f"standalone_model_admission_refused:{decision.reason}:receipt={decision.receipt_id}"
+        )
+    if decision.evict_owner_ids and not allow_owner_eviction:
+        cancelled = lane_controller.cancel_sync(
+            decision,
+            reason="standalone_model_owner_eviction_forbidden",
+        )
+        raise ModelLaneControlError(
+            "standalone_model_admission_cancelled:"
+            f"{cancelled.reason}:receipt={cancelled.receipt_id}"
         )
     if not decision.ready_to_spawn:
         decision = _run_standalone_async(
@@ -4138,7 +4222,11 @@ def acquire_standalone_model_lane(
     committed = lane_controller.commit_sync(
         decision,
         process=ProcessIdentity.current(observer=lane_controller.resource_observer),
-        metadata={"standalone_model_tool": True, "lease_mode": "process"},
+        metadata={
+            "standalone_model_tool": True,
+            "exclusive_model_lane": bool(require_exclusive),
+            "lease_mode": "process",
+        },
     )
     return StandaloneModelLaneLease(
         controller=lane_controller,
