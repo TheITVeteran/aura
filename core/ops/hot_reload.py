@@ -27,6 +27,7 @@ from core.runtime.errors import record_degradation
 
 
 import importlib
+import inspect
 import logging
 import os
 import sys
@@ -161,6 +162,10 @@ class ReloadResult:
     # names a module which does not exist is a configuration defect, and it
     # used to be indistinguishable from a clean reload.
     unmatched_prefixes: List[str] = field(default_factory=list)
+    # Modules refused because reloading them would orphan live subclasses.
+    # Reported, never silent: a skipped inheritance anchor means the change on
+    # disk is NOT live, and the caller has to know that to act on it.
+    orphan_risks: List[Dict[str, str]] = field(default_factory=list)
     duration_ms: float = 0.0
 
     @property
@@ -175,8 +180,10 @@ class ReloadResult:
             "skipped_count": len(self.skipped),
             "failed_count": len(self.failed),
             "reloaded": self.reloaded,
+            "skipped": self.skipped,
             "failed": self.failed,
             "unmatched_prefixes": self.unmatched_prefixes,
+            "orphan_risks": self.orphan_risks,
             "duration_ms": round(self.duration_ms, 1),
         }
 
@@ -212,6 +219,54 @@ class HotReloader:
             if module_name == prefix.rstrip(".") or module_name.startswith(prefix):
                 return True
         return False
+
+    @staticmethod
+    def _inheritance_anchor_reason(module_name: str) -> str:
+        """Why reloading this module would orphan classes that outlive it.
+
+        MEASURED live 2026-08-10. Every desktop task came back:
+
+            CRITICAL SERVICE FAILURE: Subsystem 'capability_engine' failed
+            with failure policy 'fail-closed'. Original error: RuntimeError:
+            TypeError: implementation does not satisfy canonical BaseSkill
+
+        All 84 skill classes conform statically — the check that failed was
+        `issubclass(skill_class, BaseSkill)`, against a BaseSkill that was no
+        longer the same object. `importlib.reload` builds NEW class objects and
+        rebinds only the reloaded module's namespace; every class that had
+        already subclassed the old base keeps pointing at it, so identity
+        checks against the new one fail forever. The `skills` scope reloads
+        `core.skills.*`, which includes `core.skills.base_skill`, so pressing
+        the update button disabled the entire capability engine until restart —
+        and the reloader reported ok=true, failed=[].
+
+        The same shape produced `PicklingError: Can't pickle
+        <class HierarchicalPhi>: it's not the same object as ...` from the
+        consciousness scope in the same session.
+
+        `__subclasses__()` answers this directly and cheaply: a class defined
+        here with live subclasses defined elsewhere is an inheritance anchor,
+        and reloading it in isolation breaks them.
+        """
+
+        module = sys.modules.get(module_name)
+        if module is None:
+            return ""
+        for obj in list(vars(module).values()):
+            if not inspect.isclass(obj) or getattr(obj, "__module__", "") != module_name:
+                continue
+            try:
+                subclasses = obj.__subclasses__()
+            except TypeError:  # e.g. `type` itself
+                continue
+            for sub in subclasses:
+                sub_module = getattr(sub, "__module__", "")
+                if sub_module and sub_module != module_name:
+                    return (
+                        f"{obj.__name__} is subclassed by "
+                        f"{sub_module}.{getattr(sub, '__name__', '?')}"
+                    )
+        return ""
 
     def _unmatched_prefixes(self, scopes: tuple[str, ...] | List[str]) -> List[str]:
         """Declared prefixes that name a module which does not exist.
@@ -320,6 +375,20 @@ class HotReloader:
                 result.skipped.append(module_name)
                 continue
 
+            anchor = self._inheritance_anchor_reason(module_name)
+            if anchor:
+                result.skipped.append(module_name)
+                result.orphan_risks.append({"module": module_name, "reason": anchor})
+                logger.warning(
+                    "♻️ HotReload: refusing to reload %s — %s. Reloading it "
+                    "would leave every existing subclass bound to the old "
+                    "class object, and identity checks against the new one "
+                    "would fail until restart.",
+                    module_name,
+                    anchor,
+                )
+                continue
+
             try:
                 importlib.reload(module)
                 result.reloaded.append(module_name)
@@ -397,6 +466,24 @@ class HotReloader:
         module = sys.modules.get(module_name)
         if module is None:
             result.skipped.append(module_name)
+            result.duration_ms = (time.monotonic() - start) * 1000
+            self._last_result = result
+            return result
+
+        # Same rule as the scope path. Targeting one file by hand is the most
+        # likely way to reach a base class deliberately, and it is exactly as
+        # destructive: `core/skills/base_skill.py` reloaded alone orphans all
+        # 84 skills and fails every capability check until restart.
+        anchor = self._inheritance_anchor_reason(module_name)
+        if anchor:
+            result.skipped.append(module_name)
+            result.orphan_risks.append({"module": module_name, "reason": anchor})
+            logger.warning(
+                "♻️ HotReload: refusing to reload %s — %s. A restart is "
+                "required for this change to take effect.",
+                module_name,
+                anchor,
+            )
             result.duration_ms = (time.monotonic() - start) * 1000
             self._last_result = result
             return result
