@@ -16864,6 +16864,7 @@ async def _stabilize_user_facing_reply(
     # not enforce.
     reply_text = _append_sensory_claim_correction(user_message, reply_text)
     reply_text = _flag_unstable_choice_commitment(user_message, reply_text)
+    reply_text = _correct_unfulfilled_write_claims(reply_text)
     frame = _build_aura_expression_frame(user_message)
     contract = frame.get("contract")
     prompt_shape = analyze_prompt_shape(user_message)
@@ -20297,6 +20298,33 @@ def _named_gate_failure(assessment: object) -> str:
     if not reasons:
         return "reply_reliability_gate_failed:unnamed_violation"
     return "reply_reliability_gate_failed:" + ",".join(reasons)
+
+
+def _correct_unfulfilled_write_claims(reply_text: object) -> object:
+    """Contradict a claim to have written a file that is not on disk.
+
+    LIVE, 2026-08-10: asked to count files in a directory and write the result
+    to ~/Documents/aura_probe_count.txt, she reported a count of 3 (the real
+    number is 9), listed three filenames that do not exist, and said "I have
+    written the number and file names into ~/Documents/aura_probe_count.txt".
+    No file was created and no tool ran.
+
+    A wrong count is bad. A false report of a completed action is worse and
+    differently: it is the failure that makes every true report worthless,
+    because the person stops checking. It is also trivially verifiable — a
+    claim about a path is a claim about a path.
+    """
+
+    try:
+        from core.conversation.claimed_effect import unfulfilled_write_correction
+
+        correction = str(unfulfilled_write_correction(reply_text) or "").strip()
+    except _CHAT_RECOVERABLE_ERRORS as exc:
+        record_degradation('chat', exc)
+        return reply_text
+    if not correction:
+        return reply_text
+    return f"{str(reply_text or '').rstrip()}\n\n{correction}"
 
 
 def _flag_unstable_choice_commitment(user_message: object, reply_text: object) -> object:
