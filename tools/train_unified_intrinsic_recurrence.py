@@ -29,6 +29,10 @@ from core.learning.recurrent_action_schema import (  # noqa: E402
     action_targets_from_program,
     action_value_semantic_label,
 )
+from core.learning.recurrent_answer_emission import (  # noqa: E402
+    RecurrentAnswerEmissionContract,
+    tokenizer_answer_emission_contract,
+)
 from core.learning.recurrent_literal_grounding import (  # noqa: E402
     LITERAL_MAX_VALUE,
     LiteralObservationContract,
@@ -375,6 +379,13 @@ def _gradient_ownership_group(name: str) -> str:
             "controller.answer_output",
             "controller.answer_gate_query",
             "controller.answer_gate_logit",
+            "controller.answer_role_projection",
+            "controller.answer_role_bias",
+            "controller.answer_place_projection",
+            "controller.answer_place_state_projection",
+            "controller.answer_place_width_projection",
+            "controller.answer_place_bias",
+            "controller.answer_digit_gate_logit",
         )
     ):
         return "state_answer_bridge"
@@ -495,8 +506,9 @@ def _deterministic_student_mix(
     *,
     probability: float,
     seed: int,
+    interchangeable_token_ids: frozenset[int] | None = None,
 ) -> tuple[Any, tuple[int, ...]]:
-    """Use generated history without allowing it to become a label."""
+    """Use generated history without relabeling or corrupting its grammar."""
 
     if answer_tokens.shape != generated_tokens.shape:
         raise ValueError("generated roll-in must be answer-aligned")
@@ -527,6 +539,16 @@ def _deterministic_student_mix(
             position + 1 < len(answer)
             and int.from_bytes(digest[:8], "big") < threshold
         )
+        if use_generated and interchangeable_token_ids is not None:
+            # A generated digit may replace another digit because this exposes
+            # the decoder to a wrong value while preserving the same grammar
+            # state.  A digit may not replace syntax (or vice versa): doing so
+            # shifts every later role/place target and trains against labels
+            # that no longer describe the autoregressive prefix.
+            use_generated = produced == target or (
+                produced in interchangeable_token_ids
+                and target in interchangeable_token_ids
+            )
         effective.append(produced if use_generated else target)
         if use_generated:
             selected.append(position)
@@ -554,6 +576,104 @@ def _record_student_rollin(
     totals["last_generated_sha256"] = _sha256_tokens(generated_tokens)
     totals["last_effective_sha256"] = _sha256_tokens(effective_tokens)
     totals["last_probability"] = probability
+
+
+def _answer_role_place_targets(
+    family: str,
+    answer_tokens: Any,
+    contract: RecurrentAnswerEmissionContract,
+) -> tuple[Any, Any]:
+    """Label syntax versus terminal-register digit positions exactly."""
+
+    syntax = dict(contract.syntax)
+    layouts = {
+        # Role zero means no pointer. Positive role N selects categorical
+        # state slot N-1, so public result register 1 is role class 2.
+        "khop": ((syntax["khop"], None), ((), 2), (syntax["close"], None)),
+        "modular": (
+            (syntax["modular"], None),
+            ((), 2),
+            (syntax["close"], None),
+        ),
+        "register_trace": (
+            (syntax["register_head"], None),
+            ((), 2),
+            (syntax["register_mid_r1"], None),
+            ((), 3),
+            (syntax["register_mid_r2"], None),
+            ((), 4),
+            (syntax["close"], None),
+        ),
+    }
+    if family not in layouts:
+        raise ValueError("answer bridge family is outside the admitted grammar")
+    values = tuple(int(value) for value in answer_tokens.tolist()[0])
+    roles = [0] * len(values)
+    places = [0] * len(values)
+    cursor = 0
+    digit_ids = set(contract.digit_token_ids)
+    for fixed, role in layouts[family]:
+        if role is None:
+            stop = cursor + len(fixed)
+            if values[cursor:stop] != fixed:
+                raise ValueError("answer tokens differ from the canonical grammar")
+            cursor = stop
+            continue
+        start = cursor
+        while cursor < len(values) and values[cursor] in digit_ids:
+            cursor += 1
+        width = cursor - start
+        if width not in {1, 2}:
+            raise ValueError("answer value is outside the admitted two-digit grammar")
+        for position in range(start, cursor):
+            roles[position] = role
+        if width == 1:
+            places[start] = 2
+        else:
+            places[start] = 1
+            places[start + 1] = 2
+    if values[cursor:] != (contract.eos_token_id,):
+        raise ValueError("answer tokens do not terminate with the bound EOS token")
+    return (
+        mx.array([roles], dtype=mx.int32),
+        mx.array([places], dtype=mx.int32),
+    )
+
+
+def _answer_binding_loss(
+    role_logits: Any,
+    place_logits: Any,
+    role_targets: Any,
+    place_targets: Any,
+) -> Any:
+    """Supervise neural slot selection without exposing answer values."""
+
+    if role_targets.shape != place_targets.shape or len(role_targets.shape) != 2:
+        raise ValueError("answer binding targets differ")
+    token_count = int(role_targets.shape[-1])
+    if (
+        len(role_logits.shape) != 3
+        or len(place_logits.shape) != 3
+        or role_logits.shape[:2] != place_logits.shape[:2]
+        or int(role_logits.shape[1]) < token_count
+        or int(place_logits.shape[1]) < token_count
+    ):
+        raise ValueError("answer binding logits differ from target positions")
+    role_terms = nn.losses.cross_entropy(
+        role_logits[:, :token_count, :].astype(mx.float32),
+        role_targets,
+        reduction="none",
+    )
+    place_terms = nn.losses.cross_entropy(
+        place_logits[:, :token_count, :].astype(mx.float32),
+        place_targets,
+        reduction="none",
+    )
+    role_weights = mx.where(role_targets == 0, 0.25, 1.0)
+    place_weights = mx.where(place_targets == 0, 0.25, 1.0)
+    role_loss = mx.sum(role_terms * role_weights) / mx.sum(role_weights)
+    place_loss = mx.sum(place_terms * place_weights) / mx.sum(place_weights)
+    return 0.5 * (role_loss + place_loss)
 
 
 def _generate_student_rollin(
@@ -1196,6 +1316,10 @@ def main() -> int:
         literal_digit_ids = tokenizer_digit_token_ids(tokenizer)
         literal_contract = LiteralObservationContract(literal_digit_ids)
         opcode_contract = tokenizer_opcode_contract(tokenizer)
+        answer_emission_contract = tokenizer_answer_emission_contract(
+            tokenizer,
+            opcode_contract,
+        )
         wiring = _attach_window_adapters(
             model,
             spec,
@@ -1273,6 +1397,10 @@ def main() -> int:
                 **opcode_contract.to_dict(),
                 "contract_sha256": opcode_contract.contract_sha256,
             },
+            "answer_emission_contract": {
+                **answer_emission_contract.to_dict(),
+                "contract_sha256": answer_emission_contract.contract_sha256,
+            },
             "depth_basis_size": args.depth_basis_size,
             "lora_targets": list(targets),
             "wiring": wiring,
@@ -1349,7 +1477,13 @@ def main() -> int:
                     if phase in {"semantic_anchor", "answer_bridge"}:
                         semantic_depth = _semantic_execution_depth(task.depth, spec)
                         effective = None
+                        binding_targets = None
                         if phase == "answer_bridge":
+                            binding_targets = _answer_role_place_targets(
+                                task.family,
+                                answer,
+                                answer_emission_contract,
+                            )
                             bridge_start = (
                                 args.state_warmup_steps + args.semantic_warmup_steps
                             )
@@ -1374,6 +1508,9 @@ def main() -> int:
                                 generated,
                                 probability=rollin_probability,
                                 seed=args.seed * 1_000_003 + step,
+                                interchangeable_token_ids=frozenset(
+                                    answer_emission_contract.digit_token_ids
+                                ),
                             )
                             _record_student_rollin(
                                 rollin_totals,
@@ -1390,7 +1527,10 @@ def main() -> int:
                             objective_answer: Any,
                             objective_depth: int = semantic_depth,
                             objective_rollin: Any | None = effective,
+                            objective_binding_targets: Any = binding_targets,
                         ):
+                            role_logits: list[Any] = []
+                            place_logits: list[Any] = []
                             _recurrent, _states, losses, _state_logits = (
                                 unified_answer_and_recurrent_trajectory(
                                     candidate.model,
@@ -1400,9 +1540,24 @@ def main() -> int:
                                     candidate.controller,
                                     decoder_input_tokens=objective_rollin,
                                     use_state_slots=True,
+                                    answer_role_logit_trajectory=role_logits,
+                                    answer_place_logit_trajectory=place_logits,
                                 )
                             )
-                            return losses[-1]
+                            if objective_binding_targets is None:
+                                return losses[-1]
+                            if not role_logits or len(role_logits) != len(place_logits):
+                                raise RuntimeError(
+                                    "answer bridge emitted no binding trajectory"
+                                )
+                            role_targets, place_targets = objective_binding_targets
+                            binding_loss = _answer_binding_loss(
+                                role_logits[-1],
+                                place_logits[-1],
+                                role_targets,
+                                place_targets,
+                            )
+                            return losses[-1] + binding_loss
 
                         loss, gradients = nn.value_and_grad(
                             bundle,
@@ -1446,6 +1601,9 @@ def main() -> int:
                                 generated,
                                 probability=rollin_probability,
                                 seed=args.seed * 1_000_003 + step,
+                                interchangeable_token_ids=frozenset(
+                                    answer_emission_contract.digit_token_ids
+                                ),
                             )
                             _record_student_rollin(
                                 rollin_totals,

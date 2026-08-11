@@ -461,6 +461,26 @@ class UnifiedRecurrentController(nn.Module):
             (config.hidden_size, 1), dtype=mx.float32
         )
         self.answer_gate_logit = mx.array(-2.0, dtype=mx.float32)
+        self.answer_role_projection = mx.zeros(
+            (config.hidden_size, config.state_slots + 1), dtype=mx.float32
+        )
+        self.answer_role_bias = mx.concatenate(
+            [mx.array([6.0], dtype=mx.float32), mx.zeros((config.state_slots,))]
+        )
+        self.answer_place_projection = mx.zeros(
+            (config.hidden_size, 3), dtype=mx.float32
+        )
+        self.answer_place_state_projection = mx.zeros(
+            (config.hidden_size, 3), dtype=mx.float32
+        )
+        self.answer_place_width_projection = mx.zeros(
+            (2, 3), dtype=mx.float32
+        )
+        self.answer_place_bias = mx.array((6.0, 0.0, 0.0), dtype=mx.float32)
+        # A high-confidence learned role/place decision must be authoritative.
+        # The no-op prior is carried by the role/place ``none`` classes, whose
+        # mass makes pointer confidence structurally zero on syntax positions.
+        self.answer_digit_gate_logit = mx.array(4.0, dtype=mx.float32)
         self.literal_grounding_logit = mx.array(-1.1, dtype=mx.float32)
         self.state_literal_copy_logit = mx.array(
             (-4.0, 0.5, 0.5, 0.5, -4.0), dtype=mx.float32
@@ -577,6 +597,9 @@ class UnifiedRecurrentController(nn.Module):
         committed_state: Any,
         *,
         state_slot_start: int,
+        state_probabilities: Any | None = None,
+        role_logit_trajectory: list[Any] | None = None,
+        place_logit_trajectory: list[Any] | None = None,
     ) -> Any:
         """Give answer positions a direct neural read path to typed registers."""
 
@@ -611,10 +634,155 @@ class UnifiedRecurrentController(nn.Module):
         delta = delta * mx.minimum(1.0, answer_rms / delta_rms)
         gate = mx.sigmoid(answer @ self.answer_gate_query + self.answer_gate_logit)
         bridged = answer + gate * delta
+
+        role_logits = answer @ self.answer_role_projection + self.answer_role_bias
+        role_probabilities = mx.softmax(role_logits.astype(mx.float32), axis=-1)
+        selected_state = mx.einsum(
+            "bar,brh->bah",
+            role_probabilities[..., 1:],
+            state,
+        )
+        width_logits = mx.zeros((*answer.shape[:2], 3), dtype=mx.float32)
+        if state_probabilities is not None:
+            if state_probabilities.shape != (
+                int(answer.shape[0]),
+                self.config.state_slots,
+                self.config.state_cardinality,
+            ):
+                raise ValueError("answer bridge state probabilities differ")
+            selected_values = mx.einsum(
+                "bar,brv->bav",
+                role_probabilities[..., 1:],
+                state_probabilities.astype(mx.float32),
+            )
+            width_features = mx.stack(
+                (
+                    mx.sum(selected_values[..., :10], axis=-1),
+                    mx.sum(selected_values[..., 10:], axis=-1),
+                ),
+                axis=-1,
+            )
+            width_logits = width_features @ self.answer_place_width_projection
+        # Prefix position identifies the output field, but it cannot reveal
+        # whether that field's value has one or two digits.  The selected typed
+        # register makes digit width causally observable to the neural head.
+        place_logits = (
+            answer @ self.answer_place_projection
+            + selected_state @ self.answer_place_state_projection
+            + width_logits
+            + self.answer_place_bias
+        )
+        if role_logit_trajectory is not None:
+            role_logit_trajectory.append(role_logits)
+        if place_logit_trajectory is not None:
+            place_logit_trajectory.append(place_logits)
         return mx.concatenate(
             [candidate[:, :answer_start, :], bridged.astype(candidate.dtype)],
             axis=1,
         )
+
+    def apply_answer_digit_pointer(
+        self,
+        logits: Any,
+        role_logits: Any,
+        place_logits: Any,
+        state_probabilities: Any,
+    ) -> Any:
+        """Mix a learned terminal-register digit pointer into frozen logits."""
+
+        if not self.config.literal_digit_token_ids:
+            raise ValueError("answer digit pointer requires bound tokenizer digits")
+        if (
+            len(logits.shape) != 3
+            or len(role_logits.shape) != 3
+            or len(place_logits.shape) != 3
+            or len(state_probabilities.shape) != 3
+            or logits.shape[:2] != role_logits.shape[:2]
+            or logits.shape[:2] != place_logits.shape[:2]
+            or int(role_logits.shape[-1]) != self.config.state_slots + 1
+            or int(place_logits.shape[-1]) != 3
+            or state_probabilities.shape[1:] != (
+                self.config.state_slots,
+                self.config.state_cardinality,
+            )
+        ):
+            raise ValueError("answer digit pointer tensor layout differs")
+        vocabulary_size = int(logits.shape[-1])
+        if max(self.config.literal_digit_token_ids) >= vocabulary_size:
+            raise ValueError("answer digit pointer token is outside the vocabulary")
+
+        raw_roles = mx.softmax(role_logits.astype(mx.float32), axis=-1)
+        raw_places = mx.softmax(place_logits.astype(mx.float32), axis=-1)
+        value_indices = mx.arange(self.config.state_cardinality)
+        digit_indices = mx.arange(10)
+        ones = ((value_indices[:, None] % 10) == digit_indices[None, :]).astype(
+            mx.float32
+        )
+        tens = ((value_indices[:, None] // 10) == digit_indices[None, :]).astype(
+            mx.float32
+        )
+        digit_probabilities_by_position: list[Any] = []
+        confidences: list[Any] = []
+        previous_role = mx.concatenate(
+            (
+                mx.ones((*raw_roles.shape[:1], 1), dtype=mx.float32),
+                mx.zeros(
+                    (*raw_roles.shape[:1], self.config.state_slots),
+                    dtype=mx.float32,
+                ),
+            ),
+            axis=-1,
+        )
+        for position in range(int(raw_roles.shape[1])):
+            raw_role = raw_roles[:, position, :]
+            raw_place = raw_places[:, position, :]
+            digit_mass = mx.sum(raw_place[:, 1:], axis=-1, keepdims=True)
+            previous_role_mass = mx.sum(
+                previous_role[:, 1:], axis=-1, keepdims=True
+            )
+            # A second digit is still part of the field selected at the first
+            # digit.  Letting an independently classified role replace it made
+            # multi-register answers read the ones digit from another slot.
+            continuation = digit_mass * previous_role_mass
+            role = (1.0 - continuation) * raw_role + continuation * previous_role
+            role_mass = mx.sum(role[:, 1:], axis=-1, keepdims=True)
+            selected_values = mx.einsum(
+                "br,brv->bv",
+                role[:, 1:],
+                state_probabilities.astype(mx.float32),
+            ) / mx.maximum(role_mass, 1e-8)
+            one_digit_mass = mx.sum(selected_values[:, :10], axis=-1, keepdims=True)
+            two_digit_mass = mx.sum(selected_values[:, 10:], axis=-1, keepdims=True)
+            start = 1.0 - previous_role_mass
+            tens_mass = digit_mass * start * two_digit_mass
+            ones_mass = digit_mass * (
+                previous_role_mass + start * one_digit_mass
+            )
+            digit_probabilities_by_position.append(
+                tens_mass
+                * ((selected_values @ tens) / mx.maximum(two_digit_mass, 1e-8))
+                + ones_mass * (selected_values @ ones)
+            )
+            confidences.append(
+                role_mass
+                * digit_mass
+                * mx.sigmoid(self.answer_digit_gate_logit)
+            )
+            previous_role = role
+        digit_probabilities = mx.stack(digit_probabilities_by_position, axis=1)
+        vocabulary = mx.arange(vocabulary_size)
+        digit_tokens = mx.array(self.config.literal_digit_token_ids)
+        digit_to_vocabulary = (digit_tokens[:, None] == vocabulary[None, :]).astype(
+            mx.float32
+        )
+        pointer_probabilities = digit_probabilities @ digit_to_vocabulary
+        confidence = mx.stack(confidences, axis=1)
+        base_probabilities = mx.softmax(logits.astype(mx.float32), axis=-1)
+        mixed = (
+            (1.0 - confidence) * base_probabilities
+            + confidence * pointer_probabilities
+        )
+        return mx.log(mx.maximum(mixed, 1e-12)).astype(logits.dtype)
 
     def state_logits(
         self,
@@ -1278,6 +1446,19 @@ class UnifiedRecurrentController(nn.Module):
             "halt_state_weight",
             "halt_motion_weight",
             "halt_bias",
+            "answer_query",
+            "answer_key",
+            "answer_value",
+            "answer_output",
+            "answer_gate_query",
+            "answer_gate_logit",
+            "answer_role_projection",
+            "answer_role_bias",
+            "answer_place_projection",
+            "answer_place_state_projection",
+            "answer_place_width_projection",
+            "answer_place_bias",
+            "answer_digit_gate_logit",
             "state_readout_weight",
             "state_readout_bias",
             "state_slot_embeddings",
@@ -1347,7 +1528,7 @@ class UnifiedRecurrentController(nn.Module):
             ),
             "transformer_answer_passes_per_state": 1,
             "state_to_answer_bridge": (
-                "token_conditioned_norm_bounded_cross_attention_before_frozen_coda"
+                "role_and_digit_place_conditioned_pointer_over_frozen_readout"
             ),
             "parameter_sha256": self.parameter_sha256(),
         }
@@ -1370,6 +1551,8 @@ def unified_recurrent_hidden_states(
     decode_state_trajectory: list[Any] | None = None,
     recurrent_input_trajectory: list[Any] | None = None,
     state_probability_trajectory: list[Any] | None = None,
+    answer_role_logit_trajectory: list[Any] | None = None,
+    answer_place_logit_trajectory: list[Any] | None = None,
     state_teacher_values: Sequence[Sequence[int]] | None = None,
     action_teacher_values: Sequence[Sequence[int]] | None = None,
     initial_state_teacher_values: Sequence[int] | None = None,
@@ -1568,17 +1751,36 @@ def unified_recurrent_hidden_states(
                     candidate,
                     hidden,
                     state_slot_start=state_slot_start,
+                    state_probabilities=state_probabilities,
+                    role_logit_trajectory=answer_role_logit_trajectory,
+                    place_logit_trajectory=answer_place_logit_trajectory,
                 )
                 if prior_terminal_mask is not None:
                     # A completed program stutters semantically as well as in
                     # its typed registers. Re-running the transformer window
                     # after termination used to move an already-correct answer
                     # representation even though the machine state was fixed.
+                    # Preserve the associated neural emission policy too;
+                    # keeping only the hidden state let later no-op iterations
+                    # overwrite role/place logits and corrupt deep decoding.
                     candidate = mx.where(
                         prior_terminal_mask[:, None, None],
                         last_decode_state,
                         candidate,
                     )
+                    for binding_trajectory in (
+                        answer_role_logit_trajectory,
+                        answer_place_logit_trajectory,
+                    ):
+                        if (
+                            binding_trajectory is not None
+                            and len(binding_trajectory) >= 2
+                        ):
+                            binding_trajectory[-1] = mx.where(
+                                prior_terminal_mask[:, None, None],
+                                binding_trajectory[-2],
+                                binding_trajectory[-1],
+                            )
             if state_logit_trajectory is not None:
                 state_logit_trajectory.append(state_logits)
             if action_logit_trajectory is not None:
@@ -1695,6 +1897,15 @@ def unified_recurrent_logits(
     controller: UnifiedRecurrentController,
     **kwargs: Any,
 ) -> tuple[Any, UnifiedRecurrenceTelemetry]:
+    state_slot_start = kwargs.get("state_slot_start")
+    pointer_enabled = (
+        state_slot_start is not None and bool(controller.config.literal_digit_token_ids)
+    )
+    state_probabilities: list[Any] = kwargs.setdefault(
+        "state_probability_trajectory", []
+    )
+    role_logits: list[Any] = kwargs.setdefault("answer_role_logit_trajectory", [])
+    place_logits: list[Any] = kwargs.setdefault("answer_place_logit_trajectory", [])
     hidden, _trajectory, telemetry = unified_recurrent_hidden_states(
         model,
         tokens,
@@ -1703,8 +1914,21 @@ def unified_recurrent_logits(
         **kwargs,
     )
     if getattr(model, "lm_head", None) is not None:
-        return model.lm_head(hidden), telemetry
-    return model.model.embed_tokens.as_linear(hidden), telemetry
+        logits = model.lm_head(hidden)
+    else:
+        logits = model.model.embed_tokens.as_linear(hidden)
+    if pointer_enabled:
+        if not state_probabilities or not role_logits or not place_logits:
+            raise RuntimeError("answer digit pointer emitted no recurrent trajectory")
+        answer_start = int(state_slot_start) + controller.config.state_slots - 1
+        pointed = controller.apply_answer_digit_pointer(
+            logits[:, answer_start:, :],
+            role_logits[-1],
+            place_logits[-1],
+            state_probabilities[-1],
+        )
+        logits = mx.concatenate([logits[:, :answer_start, :], pointed], axis=1)
+    return logits, telemetry
 
 
 __all__ = [

@@ -44461,3 +44461,55 @@ performance or `WOW Signal` is claimed. The completion envelope advances to
 `909/920` (approximately `98.8%`). Next is a role- and digit-place-supervised
 neural transducer from terminal categorical state into the frozen language
 manifold, evaluated with that supervision and the compiled emitter removed.
+
+## Checkpoints 2026-08-11-216 through 224: Recurrent Neural Emission
+
+CP216 through CP218 localized the compiler-removed readout failure. A generic
+hidden-state write could improve teacher-forced loss while still emitting the
+wrong token. The replacement is a tokenizer-bound neural pointer: learned
+answer roles select a categorical terminal register, learned digit positions
+select its place, and the selected recurrent state supplies the digit
+distribution. The compiler remains a separate positive control and is absent
+from trained-arm decoding.
+
+CP219 first made a high-confidence learned pointer authoritative. It retained
+exact typed execution and reduced held-out deep-answer CE by `58.1%`, then
+emitted `5/9` correct at T4/T16 versus `4/9` at trained T1 and `0/9` at base.
+That thin gain was not accepted as replication. Token traces then exposed two
+implementation defects: generated-history substitution could shift the output
+grammar while retaining position-indexed labels, and terminal no-op passes
+preserved hidden state but overwrote its role/place policy. CP220 and CP221
+admit generated substitutions only within the same digit class and preserve
+the complete terminal emission state. T4, T8 and T16 are now identical after
+program completion.
+
+CP222 through CP224 made value width and field continuity causal rather than
+implicit. The neural place head receives the selected categorical register's
+one- versus two-digit mass; continuation digits inherit the learned field role
+instead of independently switching registers. The controller identity hash now
+commits every answer-bridge parameter, closing a provenance gap where trained
+emission tissue could change without changing its receipt identity. Grammar
+roll-in, terminal stability, selected-state width and cross-digit role
+continuity have focused regressions.
+
+The source-bound CP224 campaign used frozen Qwen2.5-1.5B readout
+`1599d3c7ce72469195f2e76b4cb984355feeb9806d63443209da31fd74caf0e3`.
+At its best checkpoint, T4/T8/T16 CE was `0.069070` versus T1 `0.607444`, an
+`88.629%` relative reduction; all initial state, instruction, state value,
+control and terminal exactness measures remained `27/27` at every depth. On a
+fresh unseen decode seed, base solved `0/9`, trained T1 solved `3/9`, and
+trained T4 and T16 each solved `7/9`, preserving all shallow successes and
+converting four additional failures. The checkpoint commitment is
+`1b3451dfade3fc3cd4ad4553656d14059cd5f83ca6d732fe83ef7ed5801fa1c8` and
+the decode report commitment is
+`aaa4909f9ab60b1bfeafc7fa629a43232f12d99b17cdc1242ad2963bbc6df598`.
+
+This is positive bounded evidence that recurrent neural execution can improve
+emitted exact answers over the same trained one-step tissue. It is not yet a
+powered multi-seed result: two of nine outputs still failed, the measured
+families are narrow executable grammars, and causal pointer/recurrence lesions
+have not yet been run on the final checkpoint. No resident-32B transfer,
+fusion admission, broad reasoning gain, frontier performance or `WOW Signal`
+is claimed. The completion envelope advances to `910/920` (approximately
+`98.9%`). Next is the single-digit continuation repair, frozen causal lesions
+and a larger prompt-disjoint replication before any resident-32B allocation.

@@ -141,7 +141,7 @@ def test_typed_state_decision_is_committed_as_next_step_input() -> None:
     assert receipt["transformer_answer_passes_per_state"] == 1
     assert (
         receipt["state_to_answer_bridge"]
-        == "token_conditioned_norm_bounded_cross_attention_before_frozen_coda"
+        == "role_and_digit_place_conditioned_pointer_over_frozen_readout"
     )
     assert receipt["terminal_decode_semantics"] == "first_terminal_state_preserved"
 
@@ -165,10 +165,135 @@ def test_neural_answer_bridge_reads_state_without_rewriting_public_prefix() -> N
     assert controller.answer_gate_query.shape == (64, 1)
 
 
+def test_answer_digit_place_reads_the_selected_terminal_register() -> None:
+    controller = _controller()
+    controller.answer_role_bias = mx.full((6,), -100.0).at[2].add(200.0)
+    controller.answer_place_bias = mx.zeros((3,))
+    controller.answer_place_state_projection = (
+        mx.zeros((64, 3)).at[0, 2].add(10.0)
+    )
+    candidate = mx.zeros((1, 12, 64), dtype=mx.float32)
+    committed = mx.zeros((1, 12, 64), dtype=mx.float32)
+    committed = committed.at[:, 5, 0].add(1.0)
+    places: list[object] = []
+
+    controller.attend_answer_to_state(
+        candidate,
+        committed,
+        state_slot_start=4,
+        place_logit_trajectory=places,
+    )
+
+    assert int(mx.argmax(places[-1][0, -1]).item()) == 2
+
+
+def test_answer_digit_place_receives_exact_selected_value_width() -> None:
+    controller = _controller()
+    controller.answer_role_bias = mx.full((6,), -100.0).at[2].add(200.0)
+    controller.answer_place_bias = mx.zeros((3,))
+    controller.answer_place_width_projection = mx.array(
+        ((0.0, 0.0, 10.0), (0.0, 10.0, 0.0))
+    )
+    candidate = mx.zeros((1, 12, 64), dtype=mx.float32)
+    committed = mx.zeros((1, 12, 64), dtype=mx.float32)
+    one_digit_places: list[object] = []
+    two_digit_places: list[object] = []
+
+    controller.attend_answer_to_state(
+        candidate,
+        committed,
+        state_slot_start=4,
+        state_probabilities=controller.exact_probabilities(
+            (0, 3, 0, 0, 1), slots=5, cardinality=33
+        ),
+        place_logit_trajectory=one_digit_places,
+    )
+    controller.attend_answer_to_state(
+        candidate,
+        committed,
+        state_slot_start=4,
+        state_probabilities=controller.exact_probabilities(
+            (0, 13, 0, 0, 1), slots=5, cardinality=33
+        ),
+        place_logit_trajectory=two_digit_places,
+    )
+
+    assert int(mx.argmax(one_digit_places[-1][0, -1]).item()) == 2
+    assert int(mx.argmax(two_digit_places[-1][0, -1]).item()) == 1
+
+
+def test_answer_digit_pointer_copies_selected_terminal_register_only() -> None:
+    controller = UnifiedRecurrentController(
+        UnifiedRecurrenceConfig(
+            hidden_size=64,
+            correction_rank=8,
+            literal_digit_token_ids=tuple(range(10, 20)),
+        )
+    )
+    logits = mx.zeros((1, 1, 32), dtype=mx.float32)
+    role_logits = mx.full((1, 1, 6), -100.0)
+    role_logits = role_logits.at[:, :, 2].add(200.0)
+    place_logits = mx.full((1, 1, 3), -100.0)
+    place_logits = place_logits.at[:, :, 2].add(200.0)
+    state = controller.exact_probabilities(
+        (0, 7, 0, 0, 1),
+        slots=5,
+        cardinality=33,
+    )
+    pointed = controller.apply_answer_digit_pointer(
+        logits,
+        role_logits,
+        place_logits,
+        state,
+    )
+    assert int(mx.argmax(pointed[0, 0]).item()) == 17
+
+    syntax_roles = mx.full((1, 1, 6), -100.0)
+    syntax_roles = syntax_roles.at[:, :, 0].add(200.0)
+    syntax_places = mx.full((1, 1, 3), -100.0)
+    syntax_places = syntax_places.at[:, :, 0].add(200.0)
+    unchanged = controller.apply_answer_digit_pointer(
+        logits,
+        syntax_roles,
+        syntax_places,
+        state,
+    )
+    assert bool(mx.allclose(mx.softmax(unchanged, axis=-1), mx.softmax(logits, axis=-1)))
+
+
+def test_answer_digit_pointer_preserves_role_across_two_digit_value() -> None:
+    controller = UnifiedRecurrentController(
+        UnifiedRecurrenceConfig(
+            hidden_size=64,
+            correction_rank=8,
+            literal_digit_token_ids=tuple(range(10, 20)),
+        )
+    )
+    logits = mx.zeros((1, 2, 32), dtype=mx.float32)
+    roles = mx.full((1, 2, 6), -100.0)
+    roles = roles.at[:, 0, 2].add(200.0)
+    roles = roles.at[:, 1, 3].add(200.0)
+    places = mx.full((1, 2, 3), -100.0)
+    places = places.at[:, :, 2].add(200.0)
+    state = controller.exact_probabilities(
+        (0, 17, 24, 0, 1),
+        slots=5,
+        cardinality=33,
+    )
+
+    pointed = controller.apply_answer_digit_pointer(logits, roles, places, state)
+
+    assert mx.argmax(pointed[0], axis=-1).tolist() == [11, 17]
+
+
 def test_terminal_typed_state_preserves_first_terminal_decode_state() -> None:
     model = _model()
     controller = _controller()
+    controller.answer_role_projection = mx.zeros((64, 6)).at[:6, :].add(mx.eye(6))
+    controller.answer_place_projection = mx.zeros((64, 3)).at[:3, :].add(mx.eye(3))
     decode_states: list[object] = []
+    role_logits: list[object] = []
+    place_logits: list[object] = []
     _final, _trajectory, _telemetry = unified_recurrent_hidden_states(
         model,
         TOKENS,
@@ -176,6 +301,8 @@ def test_terminal_typed_state_preserves_first_terminal_decode_state() -> None:
         controller,
         state_slot_start=4,
         decode_state_trajectory=decode_states,
+        answer_role_logit_trajectory=role_logits,
+        answer_place_logit_trajectory=place_logits,
         initial_state_teacher_values=(0, 0, 0, 0, 0),
         state_teacher_values=(
             (1, 2, 3, 4, 1),
@@ -184,10 +311,14 @@ def test_terminal_typed_state_preserves_first_terminal_decode_state() -> None:
         ),
         state_teacher_forcing_probability=1.0,
     )
-    mx.eval(decode_states)
-    assert len(decode_states) == 3
+    mx.eval(decode_states, role_logits, place_logits)
+    assert len(decode_states) == len(role_logits) == len(place_logits) == 3
     assert bool(mx.array_equal(decode_states[0], decode_states[1]))
     assert bool(mx.array_equal(decode_states[1], decode_states[2]))
+    assert bool(mx.array_equal(role_logits[0], role_logits[1]))
+    assert bool(mx.array_equal(role_logits[1], role_logits[2]))
+    assert bool(mx.array_equal(place_logits[0], place_logits[1]))
+    assert bool(mx.array_equal(place_logits[1], place_logits[2]))
 
 
 def test_state_processor_reads_problem_and_state_but_not_answer_suffix() -> None:

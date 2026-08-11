@@ -144,6 +144,11 @@ def _answer_ce_from_hidden(
     hidden: Any,
     answer_tokens: Any,
     answer_start: int,
+    *,
+    controller: UnifiedRecurrentController | None = None,
+    role_logits: Any | None = None,
+    place_logits: Any | None = None,
+    state_probabilities: Any | None = None,
 ) -> Any:
     if getattr(model, "lm_head", None) is not None:
         logits = model.lm_head(hidden)
@@ -151,6 +156,16 @@ def _answer_ce_from_hidden(
         logits = model.model.embed_tokens.as_linear(hidden)
     answer_count = int(answer_tokens.shape[-1])
     predicted = logits[:, answer_start : answer_start + answer_count, :]
+    pointer_values = (controller, role_logits, place_logits, state_probabilities)
+    if any(value is not None for value in pointer_values):
+        if any(value is None for value in pointer_values):
+            raise ValueError("answer digit pointer inputs are incomplete")
+        predicted = controller.apply_answer_digit_pointer(
+            predicted,
+            role_logits[:, :answer_count, :],
+            place_logits[:, :answer_count, :],
+            state_probabilities,
+        )
     return mx.mean(
         nn.losses.cross_entropy(
             predicted.astype(mx.float32),
@@ -176,6 +191,8 @@ def unified_answer_and_recurrent_trajectory(
     state_teacher_forcing_probability: float = 0.0,
     initial_state_logit_trajectory: list[Any] | None = None,
     action_logit_trajectory: list[Any] | None = None,
+    answer_role_logit_trajectory: list[Any] | None = None,
+    answer_place_logit_trajectory: list[Any] | None = None,
 ) -> tuple[list[Any], list[Any], list[Any], list[Any]]:
     """Decode every recurrent state through one frozen coda and readout.
 
@@ -204,6 +221,17 @@ def unified_answer_and_recurrent_trajectory(
         # register trace physically impossible to learn.
         effective_memory_layout = None
     state_logits: list[Any] = []
+    state_probabilities: list[Any] = []
+    role_logits = (
+        answer_role_logit_trajectory
+        if answer_role_logit_trajectory is not None
+        else []
+    )
+    place_logits = (
+        answer_place_logit_trajectory
+        if answer_place_logit_trajectory is not None
+        else []
+    )
     decode_states: list[Any] = []
     _final, recurrent_states, _telemetry = unified_recurrent_hidden_states(
         model,
@@ -219,6 +247,15 @@ def unified_answer_and_recurrent_trajectory(
             initial_state_logit_trajectory if use_state_slots else None
         ),
         decode_state_trajectory=decode_states if use_state_slots else None,
+        state_probability_trajectory=(
+            state_probabilities if use_state_slots else None
+        ),
+        answer_role_logit_trajectory=(
+            role_logits if use_state_slots else None
+        ),
+        answer_place_logit_trajectory=(
+            place_logits if use_state_slots else None
+        ),
         state_teacher_values=state_teacher_values,
         action_teacher_values=action_teacher_values,
         initial_state_teacher_values=initial_state_teacher_values,
@@ -228,12 +265,30 @@ def unified_answer_and_recurrent_trajectory(
     hidden_states: list[Any] = []
     losses: list[Any] = []
     output_states = decode_states if use_state_slots else recurrent_states
-    for state in output_states:
+    if use_state_slots and not (
+        len(output_states)
+        == len(state_probabilities)
+        == len(role_logits)
+        == len(place_logits)
+    ):
+        raise RuntimeError("answer pointer trajectory differs from recurrent states")
+    for index, state in enumerate(output_states):
         hidden = _run(model.model.layers[plan.coda_start :], state)
         hidden = model.model.norm(hidden)
         hidden_states.append(hidden)
         losses.append(
-            _answer_ce_from_hidden(model, hidden, answer_tokens, answer_start)
+            _answer_ce_from_hidden(
+                model,
+                hidden,
+                answer_tokens,
+                answer_start,
+                controller=controller if use_state_slots else None,
+                role_logits=role_logits[index] if use_state_slots else None,
+                place_logits=place_logits[index] if use_state_slots else None,
+                state_probabilities=(
+                    state_probabilities[index] if use_state_slots else None
+                ),
+            )
         )
     return recurrent_states, hidden_states, losses, state_logits
 

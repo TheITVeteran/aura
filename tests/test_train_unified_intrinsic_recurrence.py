@@ -17,6 +17,9 @@ from core.brain.llm.latent_cortex.recurrence_adapter import (  # noqa: E402
     ScopedLoRALinear,
     recurrence_adapter_scope,
 )
+from core.learning.recurrent_answer_emission import (  # noqa: E402
+    RecurrentAnswerEmissionContract,
+)
 from core.learning.unified_intrinsic_objective import (  # noqa: E402
     UnifiedIntrinsicTrainingSpec,
 )
@@ -27,6 +30,8 @@ from core.learning.unified_intrinsic_recurrence import (  # noqa: E402
 from tools.train_unified_intrinsic_recurrence import (  # noqa: E402
     TRAINING_SOURCE_FILES,
     UnifiedTrainingBundle,
+    _answer_binding_loss,
+    _answer_role_place_targets,
     _attach_window_adapters,
     _canonical_sha256,
     _clip_gradient_groups,
@@ -115,7 +120,11 @@ def test_hidden_size_comes_from_residual_space_not_packed_embeddings() -> None:
 def test_state_codebook_is_grounded_in_frozen_model_representations() -> None:
     model = _model()
     controller = UnifiedRecurrentController(
-        UnifiedRecurrenceConfig(hidden_size=32, correction_rank=4)
+        UnifiedRecurrenceConfig(
+            hidden_size=32,
+            correction_rank=4,
+            literal_digit_token_ids=tuple(range(10)),
+        )
     )
     before = controller.parameter_sha256()
 
@@ -135,6 +144,35 @@ def test_state_codebook_is_grounded_in_frozen_model_representations() -> None:
     assert controller.state_value_embeddings.shape == (5, 33, 32)
     assert controller.action_value_embeddings.shape == (8, 33, 32)
     assert controller.literal_value_embeddings.shape == (33, 32)
+
+
+def test_answer_binding_targets_identify_register_roles_and_digit_places() -> None:
+    contract = RecurrentAnswerEmissionContract(
+        digit_token_ids=tuple(range(10, 20)),
+        eos_token_id=99,
+        family_markers=(("khop", (70,)), ("modular", (71,)), ("register_trace", (72,))),
+        syntax=(
+            ("close", (6,)),
+            ("khop", (1,)),
+            ("modular", (2,)),
+            ("register_head", (3,)),
+            ("register_mid_r1", (4,)),
+            ("register_mid_r2", (5,)),
+        ),
+    )
+    answer = mx.array([[3, 11, 12, 4, 13, 5, 14, 15, 6, 99]])
+    roles, places = _answer_role_place_targets(
+        "register_trace",
+        answer,
+        contract,
+    )
+    assert roles.tolist() == [[0, 2, 2, 0, 3, 0, 4, 4, 0, 0]]
+    assert places.tolist() == [[0, 1, 2, 0, 2, 0, 1, 2, 0, 0]]
+
+    role_logits = mx.zeros((1, 10, 6))
+    place_logits = mx.zeros((1, 10, 3))
+    loss = _answer_binding_loss(role_logits, place_logits, roles, places)
+    assert float(loss.item()) > 0.0
 
 
 def test_model_identity_hashes_weight_content_not_only_path(tmp_path: Path) -> None:
@@ -228,6 +266,22 @@ def test_student_rollin_mix_is_deterministic_and_never_relabels() -> None:
     )
     assert no_positions == ()
     assert teacher.tolist() == answer.tolist()
+
+
+def test_student_rollin_preserves_grammar_while_exposing_wrong_digits() -> None:
+    answer = mx.array([[101, 2, 102, 3, 103, 4]])
+    generated = mx.array([[999, 8, 7, 9, 6, 5]])
+
+    effective, selected = _deterministic_student_mix(
+        answer,
+        generated,
+        probability=1.0,
+        seed=23,
+        interchangeable_token_ids=frozenset(range(10)),
+    )
+
+    assert selected == (1, 3)
+    assert effective.tolist() == [[101, 8, 102, 9, 103, 4]]
 
 
 def test_student_rollin_generation_is_answer_aligned() -> None:
