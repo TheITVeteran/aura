@@ -684,10 +684,20 @@ def resolve_past_actions(limit: int = 12, query: Any = "") -> EvidenceBundle:
             ),),
         )
     try:
-        # The hot index is per-process and a restart empties it. Without this
-        # the store reports zero receipts while thousands sit on disk.
-        store.reload_from_disk()
-        rows = store.query_by_kind("tool_execution") or []
+        # Straight from the disk ledger, not the hot index.
+        #
+        # The hot index is per-process AND capped at 2048 receipts. Reloading
+        # it made recall work in a quiet test process and fail on the live
+        # runtime, where a session's traffic had already evicted the morning's
+        # directory read — so she answered "I didn't actually count the files"
+        # about a read that is on disk five times over.
+        #
+        # A memory that only reaches back 2048 receipts is not a memory of what
+        # she did; it is a memory of what she did recently.
+        rows = store.query_recent_persisted("tool_execution", limit=400) or []
+        if not rows:
+            store.reload_from_disk()
+            rows = store.query_by_kind("tool_execution") or []
     except (RuntimeError, AttributeError, TypeError, ValueError, OSError) as exc:
         return EvidenceBundle(
             demand="past_actions",

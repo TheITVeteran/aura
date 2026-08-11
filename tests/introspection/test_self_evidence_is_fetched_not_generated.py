@@ -418,18 +418,24 @@ def test_other_turns_do_not_trigger_recall(message: str) -> None:
     assert asks_about_past_actions(message) is False
 
 
-def test_the_receipt_store_is_reloaded_before_it_is_queried() -> None:
-    """The hot index is per-process, and a restart empties it.
+def test_recall_reads_the_disk_ledger_not_the_capped_hot_index() -> None:
+    """The hot index is per-process AND capped at 2048 receipts.
 
-    LIVE: query_by_kind("tool_execution") returned 0 while 15,722 receipts sat
-    on disk. Written durably, unreadable afterwards — so recall had nothing to
-    read and generated "seventeen" for a count of 9.
+    LIVE: query_by_kind("tool_execution") returned 0 in a fresh process while
+    15,722 receipts sat on disk — so recall generated "seventeen" for a count
+    of 9. Reloading the index fixed that in a quiet test process and still
+    failed on the live runtime, where a session's traffic had evicted the
+    morning's directory read, and she said "I didn't actually count the files"
+    about a read recorded five times over.
+
+    A memory reaching back 2048 receipts is a memory of what she did RECENTLY.
     """
     import inspect
 
     from core.introspection import self_evidence
 
     source = inspect.getsource(self_evidence.resolve_past_actions)
+    assert 'query_recent_persisted("tool_execution"' in source
 
     assert "reload_from_disk()" in source
     assert source.find("reload_from_disk()") < source.find('query_by_kind("tool_execution")')
