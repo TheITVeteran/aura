@@ -26,6 +26,7 @@ from tools.train_unified_intrinsic_recurrence import (  # noqa: E402
     UnifiedTrainingBundle,
     _attach_window_adapters,
     _canonical_sha256,
+    _evaluate,
     _residual_hidden_size,
     _restore_checkpoint,
     _save_checkpoint,
@@ -61,6 +62,7 @@ def _bundle() -> tuple[UnifiedTrainingBundle, dict]:
         spec,
         rank=2,
         targets=("o_proj",),
+        depth_basis_size=3,
     )
     controller = UnifiedRecurrentController(
         UnifiedRecurrenceConfig(
@@ -77,6 +79,8 @@ def test_trainer_adapts_window_but_never_coda_or_readout() -> None:
     assert wiring["window"] == [2, 4]
     assert wiring["coda_adapted"] is False
     assert wiring["readout_adapted"] is False
+    assert wiring["continuous_depth_operator_count"] == 2
+    assert wiring["continuous_depth_basis_size"] == 3
     for index, layer in enumerate(bundle.model.model.layers):
         wrapped = isinstance(layer.self_attn.o_proj, ScopedLoRALinear)
         assert wrapped is (2 <= index < 4)
@@ -153,3 +157,69 @@ def test_checkpoint_refuses_a_different_campaign_identity(tmp_path: Path) -> Non
                 "identity_sha256": "b" * 64,
             },
         )
+
+
+def test_named_best_checkpoint_does_not_overwrite_latest(tmp_path: Path) -> None:
+    bundle, _wiring = _bundle()
+    optimizer = optim.Adam(learning_rate=0.01)
+    optimizer.init(bundle.trainable_parameters())
+    identity_body = {"schema": "test", "depths": (1, 2, 4)}
+    identity = {
+        **identity_body,
+        "identity_sha256": _canonical_sha256(identity_body),
+    }
+    _save_checkpoint(
+        tmp_path,
+        bundle,
+        optimizer,
+        step=3,
+        history=[],
+        identity=identity,
+    )
+    _save_checkpoint(
+        tmp_path,
+        bundle,
+        optimizer,
+        step=2,
+        history=[],
+        identity=identity,
+        stem="checkpoint_best_trained",
+    )
+    assert (tmp_path / "checkpoint_latest.json").is_file()
+    assert (tmp_path / "checkpoint_best_trained.json").is_file()
+    step, _history = _restore_checkpoint(tmp_path, bundle, optimizer, identity)
+    assert step == 3
+
+
+def test_evaluation_separates_trained_from_heldout_depth_gains(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    bundle, _wiring = _bundle()
+    spec = UnifiedIntrinsicTrainingSpec(2, 4, (1, 2), (4, 8))
+    values = iter((1.0, 0.9, 1.2, 1.4))
+
+    def fake_trajectory(*_args, **_kwargs):
+        return [], [mx.array(next(values))]
+
+    monkeypatch.setattr(
+        "tools.train_unified_intrinsic_recurrence.unified_answer_trajectory",
+        fake_trajectory,
+    )
+    tokenizer = type("Tokenizer", (), {})()
+    task = type("Task", (), {"prompt": "p", "answer": "a"})()
+    monkeypatch.setattr(
+        "tools.train_unified_intrinsic_recurrence.encode_example",
+        lambda *_args: (mx.array([[1]]), mx.array([[2]])),
+    )
+    envelope = type("Envelope", (), {"reclaim": lambda *_args, **_kwargs: None})()
+    report = _evaluate(
+        bundle,
+        tokenizer,
+        [task],
+        spec,
+        "",
+        spec.depths,
+        envelope=envelope,
+    )
+    assert report["trained_depth_helps"] is True
+    assert report["heldout_depth_helps"] is False

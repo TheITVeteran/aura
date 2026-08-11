@@ -37,6 +37,12 @@ from core.runtime.mlx_memory_guard import mlx_memory_envelope  # noqa: E402
 from tools.train_intrinsic_recurrence import encode_example  # noqa: E402
 
 TRAINING_SCHEMA = "aura.unified_intrinsic_training.v1"
+TRAINING_SOURCE_FILES = (
+    "core/learning/depth_conditioned_lora.py",
+    "core/learning/unified_intrinsic_objective.py",
+    "core/learning/unified_intrinsic_recurrence.py",
+    "tools/train_unified_intrinsic_recurrence.py",
+)
 
 
 class UnifiedTrainingBundle(nn.Module):
@@ -73,6 +79,7 @@ def _attach_window_adapters(
     *,
     rank: int,
     targets: tuple[str, ...],
+    depth_basis_size: int,
 ) -> dict[str, Any]:
     from core.brain.llm.latent_cortex.recurrence_adapter import ScopedLoRALinear
 
@@ -101,10 +108,22 @@ def _attach_window_adapters(
                 sites.append(site)
     if not sites:
         raise RuntimeError("unified recurrence attached no window projections")
+    from core.learning.depth_conditioned_lora import (
+        wrap_continuous_depth_conditioned,
+    )
+
+    depth_operators = wrap_continuous_depth_conditioned(
+        model,
+        basis_size=depth_basis_size,
+    )
+    if set(depth_operators) != set(sites):
+        raise RuntimeError("continuous depth operator inventory differs from adapters")
     return {
         "window": [spec.prelude_end, spec.coda_start],
         "adapted_sites": sorted(sites),
         "adapted_projection_count": len(sites),
+        "continuous_depth_operator_count": len(depth_operators),
+        "continuous_depth_basis_size": depth_basis_size,
         "coda_adapted": False,
         "readout_adapted": False,
     }
@@ -141,7 +160,10 @@ def _save_checkpoint(
     step: int,
     history: list[dict[str, Any]],
     identity: dict[str, Any],
+    stem: str = "checkpoint_latest",
 ) -> None:
+    if not stem.startswith("checkpoint_") or not stem.replace("_", "").isalnum():
+        raise ValueError("unified recurrence checkpoint stem is invalid")
     tensors = {
         f"bundle.{name}": value for name, value in _trainable(bundle).items()
     }
@@ -153,18 +175,19 @@ def _save_checkpoint(
     )
     scratch = out_dir / f".checkpoint.{os.getpid()}.safetensors"
     mx.save_safetensors(str(scratch), tensors)
-    os.replace(scratch, out_dir / "checkpoint_latest.safetensors")
+    weights_path = out_dir / f"{stem}.safetensors"
+    os.replace(scratch, weights_path)
     body = {
         "schema": TRAINING_SCHEMA,
         "step": step,
         "history": history,
         "identity": identity,
         "checkpoint_sha256": hashlib.sha256(
-            (out_dir / "checkpoint_latest.safetensors").read_bytes()
+            weights_path.read_bytes()
         ).hexdigest(),
     }
     _atomic_json(
-        out_dir / "checkpoint_latest.json",
+        out_dir / f"{stem}.json",
         {**body, "receipt_sha256": _canonical_sha256(body)},
     )
 
@@ -250,15 +273,27 @@ def _evaluate(
     count = len(tasks)
     ce = {f"T{depth}": totals[depth] / count for depth in depths}
     anchor = ce["T1"]
-    deeper = [value for key, value in ce.items() if key != "T1"]
+    trained_deeper = [
+        ce[f"T{depth}"] for depth in spec.train_depths if depth != 1
+    ]
+    heldout = [ce[f"T{depth}"] for depth in spec.heldout_depths]
+    all_deeper = trained_deeper + heldout
     return {
         "examples": count,
         "ce": ce,
         "best_depth": min(ce, key=ce.__getitem__),
         "best_deep_relative_gain": (
-            (anchor - min(deeper)) / max(anchor, 1e-9) if deeper else 0.0
+            (anchor - min(all_deeper)) / max(anchor, 1e-9)
+            if all_deeper
+            else 0.0
         ),
-        "depth_helps": bool(deeper and min(deeper) < anchor),
+        "best_heldout_relative_gain": (
+            (anchor - min(heldout)) / max(anchor, 1e-9) if heldout else 0.0
+        ),
+        "trained_depth_helps": bool(
+            trained_deeper and min(trained_deeper) < anchor
+        ),
+        "heldout_depth_helps": bool(heldout and min(heldout) < anchor),
     }
 
 
@@ -276,6 +311,7 @@ def main() -> int:
     parser.add_argument("--holdout-per-cell", type=int, default=6)
     parser.add_argument("--lora-rank", type=int, default=8)
     parser.add_argument("--controller-rank", type=int, default=16)
+    parser.add_argument("--depth-basis-size", type=int, default=4)
     parser.add_argument("--lora-targets", default="o_proj,v_proj")
     parser.add_argument("--learning-rate", type=float, default=1e-4)
     parser.add_argument("--max-steps", type=int, default=120)
@@ -353,6 +389,7 @@ def main() -> int:
             spec,
             rank=args.lora_rank,
             targets=targets,
+            depth_basis_size=args.depth_basis_size,
         )
         hidden_size = _residual_hidden_size(model)
         controller = UnifiedRecurrentController(
@@ -373,6 +410,10 @@ def main() -> int:
             "seed": args.seed,
             "wiring": wiring,
             "readout_sha256": readout_sha256,
+            "source_sha256s": {
+                relative: hashlib.sha256((REPO_ROOT / relative).read_bytes()).hexdigest()
+                for relative in TRAINING_SOURCE_FILES
+            },
         }
         identity["identity_sha256"] = _canonical_sha256(identity)
         optimizer = optim.Adam(learning_rate=args.learning_rate)
@@ -423,12 +464,39 @@ def main() -> int:
                         holdout,
                         spec,
                         bridge,
-                        (1, *heldout_depths),
+                        spec.depths,
                         envelope=envelope,
                     )
                     report["step"] = step
                     history.append(report)
                     print(f"[eval {step}] {report}", flush=True)
+                    prior = history[:-1]
+                    if not prior or report["best_heldout_relative_gain"] > max(
+                        row.get("best_heldout_relative_gain", float("-inf"))
+                        for row in prior
+                    ):
+                        _save_checkpoint(
+                            out_dir,
+                            bundle,
+                            optimizer,
+                            step=step,
+                            history=history,
+                            identity=identity,
+                            stem="checkpoint_best_heldout",
+                        )
+                    if not prior or report["best_deep_relative_gain"] > max(
+                        row.get("best_deep_relative_gain", float("-inf"))
+                        for row in prior
+                    ):
+                        _save_checkpoint(
+                            out_dir,
+                            bundle,
+                            optimizer,
+                            step=step,
+                            history=history,
+                            identity=identity,
+                            stem="checkpoint_best_trained",
+                        )
                 if step % args.checkpoint_every == 0 or step == args.max_steps:
                     _save_checkpoint(
                         out_dir,
@@ -440,6 +508,32 @@ def main() -> int:
                     )
                 envelope.reclaim(force=True)
 
+        if (
+            not history
+            or set(history[-1].get("ce", {}))
+            != {f"T{depth}" for depth in spec.depths}
+            or "heldout_depth_helps" not in history[-1]
+        ):
+            final_ladder = _evaluate(
+                bundle,
+                tokenizer,
+                holdout,
+                spec,
+                bridge,
+                spec.depths,
+                envelope=envelope,
+            )
+            final_ladder["step"] = step
+            final_ladder["full_depth_ladder"] = True
+            history.append(final_ladder)
+            _save_checkpoint(
+                out_dir,
+                bundle,
+                optimizer,
+                step=step,
+                history=history,
+                identity=identity,
+            )
         final_readout = readout_fingerprint(model, spec.coda_start)
         if final_readout != readout_sha256:
             raise RuntimeError("unified training changed the frozen readout")
@@ -456,7 +550,9 @@ def main() -> int:
             "elapsed_minutes": round((time.time() - started) / 60.0, 3),
             "verdict": (
                 "heldout_depth_gain"
-                if final and final["depth_helps"]
+                if final and final["heldout_depth_helps"]
+                else "trained_depth_gain_only"
+                if final and final["trained_depth_helps"]
                 else "no_heldout_depth_gain"
             ),
         }

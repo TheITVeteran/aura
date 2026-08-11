@@ -44175,3 +44175,46 @@ advances to `894/920` (approximately `97.2%`). Next is a short 1.5B campaign
 that trains only shallow recurrence, inspects the unopened deeper ladder, and
 either supplies a positive causal diagnostic or localizes the next mechanism
 defect before any 32B allocation.
+
+## Checkpoints 2026-08-10-199 through 201: Depth Gain Localized to Transport
+
+CP199 trained the unified controller for 20 steps on 12 Qwen2.5-1.5B tasks
+across khop, modular and register traces, with six prompt-disjoint holdouts.
+T1/T2/T4 were training depths and T8 was unopened. The full final ladder was
+`T1=0.4435`, `T2=0.4365`, `T4=0.5884`, `T8=4.7329` CE. The 1.58% T2 gain is a
+bounded trained-depth effect; T8 is a decisive failure to extrapolate. The
+trainer initially mislabeled any deeper win as held-out. The schema now reports
+trained and held-out gains separately, and a regression pins that distinction.
+The CP199 receipt SHA-256 is
+`4ae6ca63e90f3d87997ccfe50a156c731311dfb013bde923cff02b5449795e12`.
+
+CP200 changed the computation rather than extending training: every adapted
+window projection gained a continuous bounded rational depth operator. T1 uses
+only the shared LoRA anchor; later steps receive learned basis factors, and the
+operator remains defined at unseen depths instead of clamping to one final
+bank. A real projection forward produces nonzero gradients in those basis
+weights. Under the same tasks, seeds, ranks and 20-step budget, T2 transiently
+improved by 18.3% at step 5 and 17.5% at step 10. T4 reached near parity at
+step 10 but T8 remained collapsed; by step 20 the gain had overtrained away.
+The trainer now preserves independent best-trained, best-held-out and latest
+checkpoints rather than overwriting its best admitted state. The CP200 receipt
+SHA-256 is
+`3499b045a3644062781f88e60af596a8bfb570ee9a0e4388fec803e5ffaffd47`.
+
+CP201 added a learned manifold transport gate after each recurrent window pass:
+candidate states are RMS-matched to the prior state and admitted through a
+bounded learned residual step. This reduced final T8 CE from `6.2154` to
+`2.9208` under the same comparison while retaining a 1.64% T2 gain, directly
+localizing the remaining failure to accumulated long-horizon transport. It did
+not produce a held-out gain. Campaign resume is now bound to exact source-file,
+model, task, seed, split, wiring and readout identities. The CP201 receipt
+SHA-256 is
+`0dcbb72a5e8b7d157d97eebe8d860376d0f07b40dba6a23dc6faa9b9ca04a6d6`.
+
+These campaigns provide real 1.5B mechanistic evidence, not a `WOW Signal`.
+They show that continuous step-specific operators can improve shallow recurrent
+semantics and that stable transport materially reduces deep collapse, while a
+constant residual gate still accumulates enough drift to lose at unseen T8.
+The completion envelope advances to `897/920` (approximately `97.5%`). Next is
+a decaying, learnable integration schedule whose cumulative state displacement
+is controlled across unseen depth, followed by the same frozen comparison.

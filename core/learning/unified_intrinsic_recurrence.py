@@ -85,6 +85,7 @@ class UnifiedRecurrenceTelemetry:
     executed_iterations: int
     halt_probabilities: tuple[float, ...]
     memory_write_means: tuple[float, ...]
+    transport_gates: tuple[float, ...]
     halted: bool
     halt_reason: str
     memory_retention: dict[str, float] | None
@@ -98,6 +99,7 @@ class UnifiedRecurrenceTelemetry:
             "executed_iterations": self.executed_iterations,
             "halt_probabilities": list(self.halt_probabilities),
             "memory_write_means": list(self.memory_write_means),
+            "transport_gates": list(self.transport_gates),
             "halted": self.halted,
             "halt_reason": self.halt_reason,
             "memory_retention": self.memory_retention,
@@ -148,6 +150,14 @@ class UnifiedRecurrentController(nn.Module):
             * scale
         )
         self.memory_write_bias = mx.array(-6.0, dtype=mx.float32)
+        self.transport_depth_weight = mx.zeros(
+            (config.depth_basis_size,),
+            dtype=mx.float32,
+        )
+        # Re-entry starts conservative. Step zero bypasses this gate exactly,
+        # retaining base-forward parity; later steps learn how much of the new
+        # window state can be admitted without leaving the coda's manifold.
+        self.transport_bias = mx.array(-0.5, dtype=mx.float32)
         self.halt_state_weight = (
             mx.random.normal((config.hidden_size,), key=key_halt).astype(mx.float32)
             * scale
@@ -176,6 +186,26 @@ class UnifiedRecurrentController(nn.Module):
         logits = disagreement @ self.memory_write_weight + self.memory_write_bias
         return mx.sigmoid(logits)[..., None]
 
+    def transport_gate(self, step: int) -> Any:
+        if type(step) is not int or step < 0:
+            raise ValueError("transport step must be a non-negative integer")
+        if step == 0:
+            return mx.array(1.0, dtype=mx.float32)
+        return mx.sigmoid(
+            self.transport_bias
+            + self.depth_features(step) @ self.transport_depth_weight
+        )
+
+    def transport(self, previous: Any, candidate: Any, step: int) -> tuple[Any, Any]:
+        gate = self.transport_gate(step)
+        if step == 0:
+            return candidate, gate
+        matched = candidate * (_rms(previous) / _rms(candidate)).astype(
+            candidate.dtype
+        )
+        transported = previous + gate.astype(previous.dtype) * (matched - previous)
+        return transported, gate
+
     def halt_probability(self, previous: Any, candidate: Any) -> Any:
         current = candidate.astype(mx.float32)
         previous_wide = previous.astype(mx.float32)
@@ -202,6 +232,8 @@ class UnifiedRecurrentController(nn.Module):
             "depth_scale",
             "memory_write_weight",
             "memory_write_bias",
+            "transport_depth_weight",
+            "transport_bias",
             "halt_state_weight",
             "halt_motion_weight",
             "halt_bias",
@@ -257,6 +289,7 @@ def unified_recurrent_hidden_states(
     trajectory: list[Any] = []
     halt_probabilities: list[float] = []
     memory_write_means: list[float] = []
+    transport_gates: list[float] = []
     window = layers[plan.prelude_end : plan.coda_start]
     halted = False
     halt_reason = "configured_depth_exhausted"
@@ -277,6 +310,11 @@ def unified_recurrent_hidden_states(
         with recurrent_iteration(iteration):
             candidate = _run(window, recurrent_input)
             candidate = controller.correction(candidate, iteration)
+            candidate, transport_gate = controller.transport(
+                prior_state,
+                candidate,
+                iteration,
+            )
 
         if memory_layout is not None and iteration > 0:
             probabilities = controller.memory_write_probabilities(
@@ -303,8 +341,9 @@ def unified_recurrent_hidden_states(
             memory_write_means.append(0.0)
 
         probability = controller.halt_probability(prior_state, hidden)
-        mx.eval(hidden, probability)
+        mx.eval(hidden, probability, transport_gate)
         halt_probabilities.append(float(probability.item()))
+        transport_gates.append(float(transport_gate.item()))
         trajectory.append(hidden)
         if (
             adaptive_halt
@@ -327,6 +366,7 @@ def unified_recurrent_hidden_states(
         executed_iterations=len(trajectory),
         halt_probabilities=tuple(halt_probabilities),
         memory_write_means=tuple(memory_write_means),
+        transport_gates=tuple(transport_gates),
         halted=halted,
         halt_reason=halt_reason,
         memory_retention=retention,

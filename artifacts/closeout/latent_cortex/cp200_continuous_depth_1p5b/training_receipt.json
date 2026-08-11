@@ -1,0 +1,160 @@
+{
+  "elapsed_minutes": 1.497,
+  "final": {
+    "best_deep_relative_gain": -0.06037455894276795,
+    "best_depth": "T1",
+    "best_heldout_relative_gain": -14.192331451256036,
+    "ce": {
+      "T1": 0.4091149965922038,
+      "T2": 0.4338151340683301,
+      "T4": 0.5644920617341995,
+      "T8": 6.215410629908244
+    },
+    "examples": 6,
+    "heldout_depth_helps": false,
+    "step": 20,
+    "trained_depth_helps": false
+  },
+  "history": [
+    {
+      "best_deep_relative_gain": 0.18283861007787983,
+      "best_depth": "T2",
+      "best_heldout_relative_gain": -7.8626033400710265,
+      "ce": {
+        "T1": 0.6258812646071116,
+        "T2": 0.5114460041125616,
+        "T4": 1.8298248052597046,
+        "T8": 5.546937386194865
+      },
+      "examples": 6,
+      "heldout_depth_helps": false,
+      "step": 5,
+      "trained_depth_helps": true
+    },
+    {
+      "best_deep_relative_gain": 0.1752922649007742,
+      "best_depth": "T2",
+      "best_heldout_relative_gain": -10.896705821336024,
+      "ce": {
+        "T1": 0.4724527696768443,
+        "T2": 0.38963545362154645,
+        "T4": 0.4710995927453041,
+        "T8": 5.620631615320842
+      },
+      "examples": 6,
+      "heldout_depth_helps": false,
+      "step": 10,
+      "trained_depth_helps": true
+    },
+    {
+      "best_deep_relative_gain": 0.12448543622808254,
+      "best_depth": "T2",
+      "best_heldout_relative_gain": -11.130629043753896,
+      "ce": {
+        "T1": 0.45242369174957275,
+        "T2": 0.39610353112220764,
+        "T4": 0.6124335726102194,
+        "T8": 5.488183975219727
+      },
+      "examples": 6,
+      "heldout_depth_helps": false,
+      "step": 15,
+      "trained_depth_helps": true
+    },
+    {
+      "best_deep_relative_gain": -0.06037455894276795,
+      "best_depth": "T1",
+      "best_heldout_relative_gain": -14.192331451256036,
+      "ce": {
+        "T1": 0.4091149965922038,
+        "T2": 0.4338151340683301,
+        "T4": 0.5644920617341995,
+        "T8": 6.215410629908244
+      },
+      "examples": 6,
+      "heldout_depth_helps": false,
+      "step": 20,
+      "trained_depth_helps": false
+    }
+  ],
+  "identity": {
+    "families": [
+      "khop",
+      "modular",
+      "register_trace"
+    ],
+    "identity_sha256": "2df6a03e01368ae3ee501984e9f9860381700fe70738ef9c2ee6b4a7bda1fc78",
+    "model": "/Users/bryan/.cache/huggingface/hub/models--mlx-community--Qwen2.5-1.5B-Instruct-4bit/snapshots/8b403126fc14f14cfc99bb4cfa72ecbc129ea677",
+    "readout_sha256": "1599d3c7ce72469195f2e76b4cb984355feeb9806d63443209da31fd74caf0e3",
+    "schema": "aura.unified_intrinsic_training.v1",
+    "seed": 20260810198,
+    "spec": {
+      "anchor_injection": 0.0,
+      "anchor_weight": 1.0,
+      "coda_start": 21,
+      "halt_weight": 0.1,
+      "heldout_depths": [
+        8
+      ],
+      "prelude_end": 7,
+      "progression_margin": 0.01,
+      "renormalize": true,
+      "schema": "aura.unified_intrinsic_objective.v1",
+      "train_depths": [
+        1,
+        2,
+        4
+      ],
+      "trajectory_weight": 0.25
+    },
+    "task_depth": 4,
+    "wiring": {
+      "adapted_projection_count": 28,
+      "adapted_sites": [
+        "model.layers.10.self_attn.o_proj",
+        "model.layers.10.self_attn.v_proj",
+        "model.layers.11.self_attn.o_proj",
+        "model.layers.11.self_attn.v_proj",
+        "model.layers.12.self_attn.o_proj",
+        "model.layers.12.self_attn.v_proj",
+        "model.layers.13.self_attn.o_proj",
+        "model.layers.13.self_attn.v_proj",
+        "model.layers.14.self_attn.o_proj",
+        "model.layers.14.self_attn.v_proj",
+        "model.layers.15.self_attn.o_proj",
+        "model.layers.15.self_attn.v_proj",
+        "model.layers.16.self_attn.o_proj",
+        "model.layers.16.self_attn.v_proj",
+        "model.layers.17.self_attn.o_proj",
+        "model.layers.17.self_attn.v_proj",
+        "model.layers.18.self_attn.o_proj",
+        "model.layers.18.self_attn.v_proj",
+        "model.layers.19.self_attn.o_proj",
+        "model.layers.19.self_attn.v_proj",
+        "model.layers.20.self_attn.o_proj",
+        "model.layers.20.self_attn.v_proj",
+        "model.layers.7.self_attn.o_proj",
+        "model.layers.7.self_attn.v_proj",
+        "model.layers.8.self_attn.o_proj",
+        "model.layers.8.self_attn.v_proj",
+        "model.layers.9.self_attn.o_proj",
+        "model.layers.9.self_attn.v_proj"
+      ],
+      "coda_adapted": false,
+      "continuous_depth_basis_size": 4,
+      "continuous_depth_operator_count": 28,
+      "readout_adapted": false,
+      "window": [
+        7,
+        21
+      ]
+    }
+  },
+  "readout_frozen": true,
+  "readout_sha256_after": "1599d3c7ce72469195f2e76b4cb984355feeb9806d63443209da31fd74caf0e3",
+  "readout_sha256_before": "1599d3c7ce72469195f2e76b4cb984355feeb9806d63443209da31fd74caf0e3",
+  "receipt_sha256": "0f12c7f3935d02097523269b431894eeb06d14024844c006961385040d0b5a6a",
+  "schema": "aura.unified_intrinsic_training.v1",
+  "steps": 20,
+  "verdict": "no_heldout_depth_gain"
+}

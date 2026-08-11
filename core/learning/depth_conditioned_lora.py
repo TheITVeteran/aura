@@ -217,10 +217,140 @@ def wrap_depth_conditioned(
     return wrapped
 
 
+class ContinuousDepthConditionedLoRA:
+    """A bounded continuous operator family defined at every recurrent depth.
+
+    Discrete depth banks either memorize their training steps or clamp unseen
+    depths to the final operator. This parameterization uses the same bounded
+    rational basis as the unified controller. Step zero has no basis features,
+    preserving the shared T=1 anchor exactly; later and unseen steps interpolate
+    or extrapolate through one learned function rather than a lookup table.
+    """
+
+    def __init__(
+        self,
+        scoped: Any,
+        *,
+        basis_size: int = 4,
+        delta_scale: float = 1.0,
+    ) -> None:
+        if type(basis_size) is not int or basis_size < 1:
+            raise ValueError("continuous depth basis_size must be positive")
+        if (
+            isinstance(delta_scale, bool)
+            or not isinstance(delta_scale, (int, float))
+            or not 0.0 <= float(delta_scale) <= 10.0
+        ):
+            raise ValueError("continuous depth delta_scale must be inside [0, 10]")
+        if hasattr(scoped, "depth_bank"):
+            raise ValueError("scoped adapter already has depth conditioning")
+        import mlx.core as mx
+
+        self.scoped = scoped
+        self.basis_size = basis_size
+        self.delta_scale = float(delta_scale)
+        # A starts from the shared random projection while B starts at zero.
+        # The complete correction is therefore exact identity at attach, but B
+        # receives a first-step gradient instead of the zero-times-zero dead
+        # gradient produced by initializing both factors to zero.
+        scoped.continuous_depth_a = [
+            scoped.lora_a + 0 for _ in range(basis_size)
+        ]
+        scoped.continuous_depth_b = [
+            mx.zeros_like(scoped.lora_b) for _ in range(basis_size)
+        ]
+        scoped.continuous_depth_basis_size = basis_size
+        scoped.continuous_depth_delta_scale = self.delta_scale
+        self.depth_a = scoped.continuous_depth_a
+        self.depth_b = scoped.continuous_depth_b
+
+    def features_for(self, step: int) -> tuple[float, ...]:
+        if type(step) is not int or step < 0:
+            raise ValueError("step must be a non-negative integer")
+        u = float(step) / float(step + 1) if step else 0.0
+        return tuple(u ** (index + 1) for index in range(self.basis_size))
+
+    def factors_for(self, step: int) -> tuple[Any, Any]:
+        features = self.features_for(step)
+        effective_a = self.scoped.lora_a
+        effective_b = self.scoped.lora_b
+        for feature, basis_a, basis_b in zip(
+            features,
+            self.depth_a,
+            self.depth_b,
+            strict=True,
+        ):
+            effective_a = effective_a + self.delta_scale * feature * basis_a
+            effective_b = effective_b + self.delta_scale * feature * basis_b
+        return effective_a, effective_b
+
+    def identity_initialized(self) -> bool:
+        import mlx.core as mx
+
+        return bool(
+            mx.all(self.scoped.lora_b == 0)
+            and all(mx.all(value == 0) for value in self.depth_b)
+        )
+
+    def trainable(self) -> dict[str, Any]:
+        parameters = {}
+        for index in range(self.basis_size):
+            parameters[f"basis_{index}.lora_a"] = self.depth_a[index]
+            parameters[f"basis_{index}.lora_b"] = self.depth_b[index]
+        return parameters
+
+    def to_receipt(self) -> dict[str, Any]:
+        return {
+            "schema": "aura.continuous_depth_conditioned_lora.v1",
+            "basis": "bounded_rational_polynomial",
+            "basis_size": self.basis_size,
+            "delta_scale": self.delta_scale,
+            "step_zero_anchor_exact": True,
+            "unseen_depths_defined": True,
+            "identity_initialized": self.identity_initialized(),
+        }
+
+
+def wrap_continuous_depth_conditioned(
+    model: Any,
+    *,
+    basis_size: int = 4,
+    delta_scale: float = 1.0,
+) -> dict[str, ContinuousDepthConditionedLoRA]:
+    """Attach one continuous depth operator to every prepared projection."""
+
+    from core.brain.llm.latent_cortex.recurrence_adapter import ScopedLoRALinear
+
+    wrapped: dict[str, ContinuousDepthConditionedLoRA] = {}
+    layers = getattr(getattr(model, "model", None), "layers", None) or []
+    for layer_index, layer in enumerate(layers):
+        for parent_name in ("self_attn", "mlp"):
+            parent = getattr(layer, parent_name, None)
+            if parent is None:
+                continue
+            for target in ("o_proj", "v_proj", "q_proj", "k_proj", "down_proj"):
+                projection = getattr(parent, target, None)
+                if not isinstance(projection, ScopedLoRALinear):
+                    continue
+                key = f"model.layers.{layer_index}.{parent_name}.{target}"
+                bank = ContinuousDepthConditionedLoRA(
+                    projection,
+                    basis_size=basis_size,
+                    delta_scale=delta_scale,
+                )
+                projection.depth_bank = bank
+                wrapped[key] = bank
+    if not wrapped:
+        raise RuntimeError("no prepared projections accepted continuous depth")
+    return wrapped
+
+
 __all__ = [
+    "ContinuousDepthConditionedLoRA",
     "DEPTH_CONDITIONED_SCHEMA",
     "DepthConditionedLoRA",
     "current_depth_index",
     "recurrent_depth_index",
     "wrap_depth_conditioned",
+    "wrap_continuous_depth_conditioned",
 ]

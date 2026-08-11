@@ -146,6 +146,19 @@ def test_trained_correction_changes_the_real_answer_path() -> None:
     assert telemetry.receipt()["solver_available"] is False
 
 
+def test_bounded_transport_preserves_t1_and_controls_deep_reentry() -> None:
+    controller = _controller()
+    previous = mx.ones((1, 4, 64))
+    candidate = mx.ones((1, 4, 64)) * 100.0
+    first, first_gate = controller.transport(previous, candidate, 0)
+    deep, deep_gate = controller.transport(previous, candidate, 8)
+    assert bool(mx.array_equal(first, candidate))
+    assert float(first_gate.item()) == 1.0
+    assert 0.0 < float(deep_gate.item()) < 1.0
+    assert float(mx.mean(mx.abs(deep))) < float(mx.mean(mx.abs(candidate)))
+    assert float(mx.mean(mx.abs(deep))) >= float(mx.mean(mx.abs(previous)))
+
+
 def test_invalid_unified_contracts_fail_closed() -> None:
     with pytest.raises(ValueError, match="correction rank"):
         UnifiedRecurrenceConfig(hidden_size=4, correction_rank=8)

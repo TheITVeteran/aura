@@ -22,9 +22,11 @@ from core.brain.llm.latent_cortex.recurrence_adapter import (  # noqa: E402
     ScopedLoRALinear,
 )
 from core.learning.depth_conditioned_lora import (  # noqa: E402
+    ContinuousDepthConditionedLoRA,
     DepthConditionedLoRA,
     current_depth_index,
     recurrent_depth_index,
+    wrap_continuous_depth_conditioned,
     wrap_depth_conditioned,
 )
 
@@ -224,6 +226,64 @@ def test_a_half_trained_delta_is_still_exactly_identity():
     a, b = conditioned.factors_for(1)
     delta = (mx.ones((1, 4, a.shape[0])) @ a) @ b
     assert float(mx.max(mx.abs(delta))) == 0.0
+
+
+def test_continuous_operator_anchors_t1_and_defines_unseen_depths():
+    scoped = _scoped()
+    conditioned = ContinuousDepthConditionedLoRA(scoped, basis_size=3)
+    at_zero = conditioned.factors_for(0)
+    at_eight = conditioned.factors_for(8)
+    at_sixty_four = conditioned.factors_for(64)
+    assert conditioned.identity_initialized()
+    assert bool(mx.array_equal(at_zero[0], scoped.lora_a))
+    assert bool(mx.array_equal(at_zero[1], scoped.lora_b))
+    assert conditioned.features_for(8) != conditioned.features_for(64)
+    assert all(0.0 <= value <= 1.0 for value in conditioned.features_for(64))
+    # Initial outputs remain identity even though the A factors differ.
+    inputs = mx.ones((1, 2, scoped.lora_a.shape[0]))
+    for factors in (at_eight, at_sixty_four):
+        assert float(mx.max(mx.abs((inputs @ factors[0]) @ factors[1]))) == 0.0
+
+
+def test_continuous_operator_receives_gradient_and_changes_unseen_depth():
+    scoped = _scoped()
+    conditioned = ContinuousDepthConditionedLoRA(scoped, basis_size=2)
+    conditioned.depth_b[0] = mx.ones_like(scoped.lora_b) * 0.2
+    at_one = conditioned.factors_for(1)
+    at_sixteen = conditioned.factors_for(16)
+    assert not bool(mx.allclose(at_one[1], at_sixteen[1]))
+    assert conditioned.to_receipt()["unseen_depths_defined"] is True
+
+
+def test_continuous_wrapper_attaches_to_every_prepared_projection():
+    model = _model()
+    banks = wrap_continuous_depth_conditioned(model, basis_size=3)
+    assert len(banks) == 2
+    assert all(bank.basis_size == 3 for bank in banks.values())
+    assert all(hasattr(bank.scoped, "continuous_depth_b") for bank in banks.values())
+
+
+def test_continuous_basis_receives_gradient_from_real_projection_forward():
+    from core.brain.llm.latent_cortex.recurrence_adapter import (
+        recurrence_adapter_scope,
+    )
+
+    model = _model()
+    wrap_continuous_depth_conditioned(model, basis_size=2)
+    inputs = mx.ones((1, 3, 32))
+
+    def loss_fn(candidate):
+        projection = candidate.model.layers[1].self_attn.o_proj
+        with recurrence_adapter_scope(start=None, stop=None):
+            with recurrent_depth_index(2):
+                output = projection(inputs)
+        return mx.mean(mx.square(output))
+
+    loss, gradients = nn.value_and_grad(model, loss_fn)(model)
+    flat = dict(tree_flatten(gradients))
+    mx.eval(loss, gradients)
+    name = "model.layers.1.self_attn.o_proj.continuous_depth_b.0"
+    assert float(mx.max(mx.abs(flat[name]))) > 0.0
 
 
 # ── Wired end-to-end, not present in name only ──────────────────────────
