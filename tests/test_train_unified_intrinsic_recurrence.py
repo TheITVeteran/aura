@@ -70,6 +70,7 @@ from tools.train_unified_intrinsic_recurrence import (  # noqa: E402
     _student_rollin_probability,
     _trainable,
     _training_halt_reason,
+    _training_verdict,
 )
 
 
@@ -191,6 +192,35 @@ def test_invocation_boundary_is_operational_and_resumable() -> None:
     )
     with pytest.raises(ValueError, match="must be positive"):
         _invocation_stop_step(0, 73, 0)
+
+
+def test_training_verdict_never_promotes_an_incomplete_invocation() -> None:
+    final = {"heldout_depth_helps": True, "trained_depth_helps": True}
+
+    assert (
+        _training_verdict(
+            complete=False,
+            answer_bridge_admission=None,
+            final=final,
+        )
+        == "incomplete_checkpoint"
+    )
+    assert (
+        _training_verdict(
+            complete=True,
+            answer_bridge_admission={"admitted": False},
+            final=final,
+        )
+        == "answer_bridge_not_admitted"
+    )
+    assert (
+        _training_verdict(
+            complete=True,
+            answer_bridge_admission={"admitted": True},
+            final=final,
+        )
+        == "heldout_depth_gain"
+    )
 
 
 def test_rollin_telemetry_round_trips_and_rejects_invalid_state() -> None:

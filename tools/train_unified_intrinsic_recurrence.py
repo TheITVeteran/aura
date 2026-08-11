@@ -1344,6 +1344,25 @@ def _training_halt_reason(
     return "wall_clock"
 
 
+def _training_verdict(
+    *,
+    complete: bool,
+    answer_bridge_admission: dict[str, Any] | None,
+    final: dict[str, Any] | None,
+) -> str:
+    """Label only terminal evidence as a scientific training verdict."""
+
+    if not complete:
+        return "incomplete_checkpoint"
+    if answer_bridge_admission is not None and not answer_bridge_admission["admitted"]:
+        return "answer_bridge_not_admitted"
+    if final and final["heldout_depth_helps"]:
+        return "heldout_depth_gain"
+    if final and final["trained_depth_helps"]:
+        return "trained_depth_gain_only"
+    return "no_heldout_depth_gain"
+
+
 def _initial_rollin_totals() -> dict[str, Any]:
     return {
         "examples": 0,
@@ -3117,15 +3136,10 @@ def main() -> int:
             },
             "elapsed_minutes": round((time.time() - started) / 60.0, 3),
             "answer_bridge_admission": answer_bridge_admission,
-            "verdict": (
-                "answer_bridge_not_admitted"
-                if answer_bridge_admission is not None
-                and not answer_bridge_admission["admitted"]
-                else "heldout_depth_gain"
-                if final and final["heldout_depth_helps"]
-                else "trained_depth_gain_only"
-                if final and final["trained_depth_helps"]
-                else "no_heldout_depth_gain"
+            "verdict": _training_verdict(
+                complete=step >= args.max_steps,
+                answer_bridge_admission=answer_bridge_admission,
+                final=final,
             ),
         }
         receipt = {**body, "receipt_sha256": _canonical_sha256(body)}
