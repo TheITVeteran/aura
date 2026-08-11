@@ -604,6 +604,76 @@ def _claimed_as_fraction(number: float, had_percent: bool) -> float | None:
     return None
 
 
+def self_reading_mentions(reply: str) -> list[tuple[str, str, float, bool]]:
+    """Every number in ``reply`` attached to a quantity this runtime measures.
+
+    Returns ``(metric, claimed_text, measured_value, agrees)``. One pass, two
+    consumers: the guard that catches a number contradicting its instrument,
+    and the check that recognises a reply as genuinely reporting her state.
+
+    Those two used to be unrelated code in unrelated files, and they disagreed
+    in the worst possible direction. On 2026-08-10 the reliability gate scored
+    "Memory pressure is 0.717 right now, CPU pressure 0.266" as
+    ``off_topic_self_reflection_reply`` — the exact readings her own instrument
+    had produced that turn, rejected as off topic — because substance was
+    defined as introspective prose and a measurement is not prose. Every
+    correct answer to "give me the real number, not a vibe" was unshippable.
+    Reading the same instrument in both places is what stops that.
+    """
+
+    text = str(reply or "")
+    if not text.strip():
+        return []
+    measured = measured_self_metrics()
+    if not measured:
+        return []
+
+    found: list[tuple[str, str, float, bool]] = []
+    seen: set[str] = set()
+    for metric, value in measured.items():
+        if not isinstance(value, (int, float)):
+            continue
+        for alias in _reading_aliases(metric):
+            # Either order, but never across a sentence boundary: the number
+            # has to belong to the same clause that named the instrument.
+            pattern = (
+                rf"\b{re.escape(alias)}\b[^.!?\n]{{0,40}}?(\d+(?:\.\d+)?)\s*(%?)"
+                rf"|(\d+(?:\.\d+)?)\s*(%?)[^.!?\n]{{0,20}}?\b{re.escape(alias)}\b"
+            )
+            for match in re.finditer(pattern, text, re.IGNORECASE):
+                raw = match.group(1) or match.group(3)
+                if raw is None:
+                    continue
+                percent = (match.group(2) or match.group(4)) == "%"
+                try:
+                    claimed = float(raw)
+                except ValueError:
+                    continue
+                if _claimed_as_fraction(claimed, percent) is None:
+                    continue
+                decimals = len(raw.split(".")[1]) if "." in raw else 0
+                scale = 100.0 if percent else 1.0
+                agrees = round(float(value) * scale, decimals) == round(claimed, decimals)
+                key = f"{metric}:{raw}:{percent}"
+                if key in seen:
+                    continue
+                seen.add(key)
+                found.append(
+                    (metric, f"{raw}{'%' if percent else ''}", float(value), agrees)
+                )
+    return found
+
+
+def reports_measured_self_state(reply: str) -> bool:
+    """True when the reply quotes at least one of her readings, correctly.
+
+    This is what "substance" means for a question about her own state, and it
+    cannot be gamed: agreement is checked against the live instrument, so an
+    invented number fails here and is caught by the contradiction guard.
+    """
+    return any(agrees for _metric, _claimed, _value, agrees in self_reading_mentions(reply))
+
+
 def contradicted_self_readings(reply: str) -> list[tuple[str, str, float]]:
     """Numbers she attached to instruments she HAS, that the instrument denies.
 
@@ -630,47 +700,11 @@ def contradicted_self_readings(reply: str) -> list[tuple[str, str, float]]:
     Returns ``(metric, claimed_text, measured_value)`` for each contradiction.
     """
 
-    text = str(reply or "")
-    if not text.strip():
-        return []
-    measured = measured_self_metrics()
-    if not measured:
-        return []
-
-    found: list[tuple[str, str, float]] = []
-    seen: set[str] = set()
-    for metric, value in measured.items():
-        if not isinstance(value, (int, float)):
-            continue
-        for alias in _reading_aliases(metric):
-            # Either order, but never across a sentence boundary: the number
-            # has to belong to the same clause that named the instrument.
-            pattern = (
-                rf"\b{re.escape(alias)}\b[^.!?\n]{{0,40}}?(\d+(?:\.\d+)?)\s*(%?)"
-                rf"|(\d+(?:\.\d+)?)\s*(%?)[^.!?\n]{{0,20}}?\b{re.escape(alias)}\b"
-            )
-            for match in re.finditer(pattern, text, re.IGNORECASE):
-                raw = match.group(1) or match.group(3)
-                percent = (match.group(2) or match.group(4)) == "%"
-                if raw is None:
-                    continue
-                try:
-                    claimed = float(raw)
-                except ValueError:
-                    continue
-                as_fraction = _claimed_as_fraction(claimed, percent)
-                if as_fraction is None:
-                    continue
-                decimals = len(raw.split(".")[1]) if "." in raw else 0
-                scale = 100.0 if percent else 1.0
-                if round(float(value) * scale, decimals) == round(claimed, decimals):
-                    continue
-                key = f"{metric}:{raw}"
-                if key in seen:
-                    continue
-                seen.add(key)
-                found.append((metric, f"{raw}{'%' if percent else ''}", float(value)))
-    return found
+    return [
+        (metric, claimed, value)
+        for metric, claimed, value, agrees in self_reading_mentions(reply)
+        if not agrees
+    ]
 
 
 #: A specification quoted about her own machinery: "my short-term memory buffer

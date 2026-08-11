@@ -5480,6 +5480,44 @@ def _has_template_telemetry_greeting(prompt: Any, reply_text: Any) -> bool:
     return bool(_TEMPLATE_TELEMETRY_GREETING_RE.search(str(reply_text or "")))
 
 
+def _reports_measured_self_state(reply_text: Any) -> bool:
+    """True when the reply quotes one of her live readings, correctly.
+
+    LIVE DEFECT, 2026-08-10, and a structural one: "how much memory pressure
+    are you actually under right now? give me the real number, not a vibe."
+    routed to the self-process branch, where substance is defined as
+    introspective prose — first person plus one of "attention", "focus",
+    "feel", "present". A measurement is not prose, so EVERY correct answer
+    failed. Measured against the live predicate, all four of
+
+        "Memory pressure is 0.717 right now, CPU pressure 0.266, fatigue 0."
+        "Right now memory pressure reads 0.717 and cpu pressure 0.266."
+        "0.717."
+        "About 72%."
+
+    scored ``off_topic_self_reflection_reply`` — her own instrument's readings,
+    from that turn, rejected as off topic. The question was unanswerable: no
+    reply existed that could ship.
+
+    It also put two fixes in direct opposition. Hours earlier the capability
+    ledger began carrying those readings into every turn so she would stop
+    inventing them; this gate then discarded any answer that used them.
+
+    A reply that reports a true reading is on topic for any question about her
+    state, by construction. Agreement is checked against the live instrument,
+    so this cannot be satisfied by inventing a number — that path fails here
+    AND trips the contradiction guard, which reads the same instrument.
+    """
+
+    try:
+        from core.self.capability_ledger import reports_measured_self_state
+
+        return bool(reports_measured_self_state(str(reply_text or "")))
+    except (ImportError, AttributeError, OSError, RuntimeError, TypeError, ValueError) as exc:
+        record_degradation("response_reliability.measured_self_state", exc, severity="warning")
+        return False
+
+
 def _has_self_reflection_substance(reply_text: Any) -> bool:
     reply = _normalize(reply_text)
     if _word_count(reply) < 12:
@@ -7683,6 +7721,7 @@ def _assess_user_facing_reply(
         if not (
             _has_self_reflection_substance(raw)
             or _has_operational_status_substance(user_message, raw)
+            or _reports_measured_self_state(raw)
         ):
             reasons.append("off_topic_self_reflection_reply")
         if _missing_requested_self_process_coverage(user_message, raw):

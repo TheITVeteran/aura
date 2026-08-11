@@ -538,3 +538,70 @@ class TestANumberThatContradictsTheInstrument:
         assert _still_contradicts_the_runtime(
             "Your RAM pressure is currently 72%.", _NoClaims()
         ) is False
+
+
+class TestATrueReadingIsSubstance:
+    """LIVE DEFECT 2026-08-10: the question had no shippable answer.
+
+    "how much memory pressure are you actually under right now? give me the
+    real number, not a vibe." routed to the self-process branch of the
+    reliability gate, where substance is defined as introspective prose —
+    first person plus one of "attention", "focus", "feel", "present". A
+    measurement is not prose, so every correct answer was rejected as
+    `off_topic_self_reflection_reply`, including the one quoting the exact
+    figures her instrument produced on that turn.
+
+    It also set two fixes against each other: the capability ledger had just
+    started carrying those readings into every turn so she would stop
+    inventing them, and this gate discarded any answer that used them.
+
+    A reply reporting a TRUE reading is on topic for any question about her
+    state. Agreement is checked against the live instrument, so inventing a
+    number fails here and trips the contradiction guard as well.
+    """
+
+    MEASURED = {"memory_pressure": 0.717, "cpu_pressure": 0.266, "fatigue": 0.0}
+    QUESTION = (
+        "how much memory pressure are you actually under right now? "
+        "give me the real number, not a vibe."
+    )
+
+    @pytest.fixture(autouse=True)
+    def _measured(self, monkeypatch):
+        monkeypatch.setattr(cl, "measured_self_metrics", lambda: dict(self.MEASURED))
+
+    @pytest.mark.parametrize(
+        "reply",
+        [
+            "Memory pressure is 0.717 right now, CPU pressure 0.266, fatigue 0.",
+            "Right now memory pressure reads 0.717 and cpu pressure 0.266.",
+            "Memory pressure 72%.",
+        ],
+    )
+    def test_the_gate_ships_a_correct_reading(self, reply):
+        from core.conversation.response_reliability import assess_user_facing_reply
+
+        reasons = [str(r) for r in (assess_user_facing_reply(self.QUESTION, reply).reasons or ())]
+        assert "off_topic_self_reflection_reply" not in reasons, reasons
+
+    def test_reports_measured_self_state_requires_agreement(self):
+        assert cl.reports_measured_self_state("Memory pressure is 0.717.") is True
+        assert cl.reports_measured_self_state("Memory pressure is 37%.") is False
+
+    @pytest.mark.parametrize("reply", ["Memory pressure is currently 37%.", "Memory pressure is about 12%."])
+    def test_an_invented_number_buys_no_substance(self, reply):
+        """The escape this must not open: satisfy the gate by making one up."""
+        from core.conversation.response_reliability import assess_user_facing_reply
+
+        reasons = [str(r) for r in (assess_user_facing_reply(self.QUESTION, reply).reasons or ())]
+        assert "off_topic_self_reflection_reply" in reasons
+        assert cl.contradicted_self_readings(reply)
+
+    def test_both_guards_read_one_instrument(self):
+        """Agreement and contradiction are one pass, so they cannot disagree."""
+        mentions = cl.self_reading_mentions("Memory pressure 0.717 and cpu pressure 90%.")
+        agreed = {m for m, _c, _v, ok in mentions if ok}
+        denied = {m for m, _c, _v, ok in mentions if not ok}
+        assert agreed == {"memory_pressure"}
+        assert denied == {"cpu_pressure"}
+        assert not agreed & denied
