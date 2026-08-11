@@ -4956,9 +4956,8 @@ async def _reanswer_when_the_runtime_contradicts_her(
         return reply_text
 
     contradicted = ", ".join(
-        sorted({claim.availability.name for claim in claims}) + (
-            ["arithmetic"] if computed_context else []
-        )
+        sorted({claim.availability.name for claim in claims})
+        + (["measured-evidence"] if computed_context else [])
     )
     logger.warning(
         "🧭 Reply denied capabilities the runtime measured as present (%s); "
@@ -4987,12 +4986,40 @@ async def _reanswer_when_the_runtime_contradicts_her(
     revised_text = str(revised or "").strip()
     # A second pass that still contradicts the instruments is not an
     # improvement, and looping on it would spend the turn.
-    if revised_text and not ledger.contradicted_claims(revised_text):
+    #
+    # The acceptance test must repeat EVERY check that triggered the re-ask,
+    # not just the one it remembers. Live 2026-08-10: a reply was re-asked for
+    # both a false capability denial and an invented "18 seconds" retention
+    # figure; the revision stopped denying, passed a test that only looked at
+    # capability claims, and was served with the fabricated number still in it
+    # — twice. A partial re-check licenses exactly the part it does not read.
+    if revised_text and not _still_contradicts_the_runtime(revised_text, ledger):
         logger.info("🧭 Re-answer no longer contradicts the runtime (%s).", contradicted)
         return revised_text
 
     corrections = " ".join(claim.correction() for claim in claims)
+    if not corrections:
+        corrections = (
+            "I quoted a figure about my own machinery that I did not read off "
+            "any instrument."
+        )
     return f"{text}\n\n[Correcting myself from my own instruments: {corrections}]"
+
+
+def _still_contradicts_the_runtime(text: str, ledger: Any) -> bool:
+    """Whether a revision still fails any check that forced the re-ask."""
+    if ledger.contradicted_claims(text):
+        return True
+    try:
+        from core.self.capability_ledger import (
+            fabricated_self_metrics,
+            unsupported_self_specification,
+        )
+
+        return bool(unsupported_self_specification(text) or fabricated_self_metrics(text))
+    except _CHAT_RECOVERABLE_ERRORS as exc:
+        record_degradation("chat.self_metrics", exc)
+        return False
 
 
 def _durable_session_may_hold_turns(session: dict[str, Any]) -> bool:
