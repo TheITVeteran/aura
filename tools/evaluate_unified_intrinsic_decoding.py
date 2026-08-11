@@ -85,16 +85,50 @@ def evaluate_decoding(
     per_cell: int,
     evaluation_seed: int,
     max_tokens: int,
+    task_depths: tuple[int, ...] | None = None,
+    recurrence_depths: tuple[int, ...] | None = None,
 ) -> dict[str, Any]:
+    if task_depths is not None and (
+        not task_depths
+        or len(task_depths) != len(set(task_depths))
+        or any(type(depth) is not int or depth < 1 for depth in task_depths)
+    ):
+        raise ValueError("decode task depths must be unique positive integers")
+    if recurrence_depths is not None and (
+        not recurrence_depths
+        or len(recurrence_depths) != len(set(recurrence_depths))
+        or any(
+            type(depth) is not int or depth < 2
+            for depth in recurrence_depths
+        )
+    ):
+        raise ValueError(
+            "decode recurrence depths must be unique non-anchor campaign depths"
+        )
     bundle, tokenizer, spec, identity = _load_checkpoint(campaign_dir, stem=stem)
-    tasks = _fresh_tasks(identity, per_cell=per_cell, seed=evaluation_seed)
+    depths = task_depths or (int(identity["task_depth"]),)
+    decoded_depths = recurrence_depths or (max(spec.heldout_depths),)
+    if (
+        any(depth not in spec.depths for depth in decoded_depths)
+    ):
+        raise ValueError(
+            "decode recurrence depths must be unique non-anchor campaign depths"
+        )
+    tasks = [
+        task
+        for depth in depths
+        for task in _fresh_tasks(
+            identity,
+            per_cell=per_cell,
+            seed=evaluation_seed + depth * 1_000_003,
+            task_depth=depth,
+        )
+    ]
     bridge = {"assistant_answer": "\n\nFINAL_ANSWER: "}.get(
         identity["bridge"],
         identity["bridge"],
     )
     t1 = spec.plan_at(1)
-    deep = max(spec.heldout_depths)
-    tdeep = spec.plan_at(deep)
     from core.brain.llm.latent_cortex.recurrence_adapter import (
         recurrence_adapter_scope,
     )
@@ -118,7 +152,16 @@ def evaluate_decoding(
         arms: tuple[tuple[str, Callable[[Any], Any]], ...] = (
             ("base_t1", base_logits),
             ("trained_t1", lambda tokens: recurrent_logits(tokens, t1)),
-            (f"trained_t{deep}", lambda tokens: recurrent_logits(tokens, tdeep)),
+            *(
+                (
+                    f"trained_t{depth}",
+                    lambda tokens, depth=depth: recurrent_logits(
+                        tokens,
+                        spec.plan_at(depth),
+                    ),
+                )
+                for depth in decoded_depths
+            ),
         )
         for arm, operation in arms:
             if arm == "base_t1":
@@ -141,6 +184,7 @@ def evaluate_decoding(
                 {
                     "task_id": task.task_id,
                     "family": task.family,
+                    "task_depth": task.depth,
                     "prompt_sha256": hashlib.sha256(task.prompt.encode()).hexdigest(),
                     "arm": arm,
                     "decoded": decoded,
@@ -167,6 +211,22 @@ def evaluate_decoding(
             "accuracy": sum(row["correct"] for row in selected) / len(selected),
             "eos_stops": sum(row["stopped_on_eos"] for row in selected),
         }
+    depth_results: dict[str, dict[str, dict[str, Any]]] = {}
+    for task_depth in depths:
+        depth_results[str(task_depth)] = {}
+        for arm in arm_results:
+            selected = [
+                row
+                for row in candidates
+                if row["arm"] == arm and row["task_depth"] == task_depth
+            ]
+            correct = sum(row["correct"] for row in selected)
+            depth_results[str(task_depth)][arm] = {
+                "correct": correct,
+                "tasks": len(selected),
+                "accuracy": correct / len(selected),
+                "eos_stops": sum(row["stopped_on_eos"] for row in selected),
+            }
     checkpoint_path = campaign_dir / f"{stem}.safetensors"
     body = {
         "schema": DECODE_EVALUATION_SCHEMA,
@@ -174,10 +234,12 @@ def evaluate_decoding(
         "checkpoint_sha256": _file_sha256(checkpoint_path),
         "evaluation_seed": evaluation_seed,
         "per_cell": per_cell,
+        "task_depths": list(depths),
         "task_count": len(tasks),
-        "heldout_depth": deep,
+        "recurrence_depths": list(decoded_depths),
         "max_tokens": max_tokens,
         "arm_results": arm_results,
+        "depth_results": depth_results,
         "candidates": candidates,
         "claim_boundary": (
             "greedy exact-answer diagnostic on fresh synthetic formal tasks; "
@@ -194,6 +256,14 @@ def main() -> int:
     parser.add_argument("--per-cell", type=int, default=1)
     parser.add_argument("--evaluation-seed", type=int, default=20260810203)
     parser.add_argument("--max-tokens", type=int, default=32)
+    parser.add_argument(
+        "--task-depths",
+        help="comma-separated task difficulties; defaults to campaign depth",
+    )
+    parser.add_argument(
+        "--recurrence-depths",
+        help="comma-separated trained/heldout recurrence depths; defaults to deepest heldout",
+    )
     parser.add_argument("--report", type=Path)
     args = parser.parse_args()
     report = evaluate_decoding(
@@ -202,6 +272,16 @@ def main() -> int:
         per_cell=args.per_cell,
         evaluation_seed=args.evaluation_seed,
         max_tokens=args.max_tokens,
+        task_depths=(
+            tuple(int(value) for value in args.task_depths.split(","))
+            if args.task_depths
+            else None
+        ),
+        recurrence_depths=(
+            tuple(int(value) for value in args.recurrence_depths.split(","))
+            if args.recurrence_depths
+            else None
+        ),
     )
     encoded = json.dumps(report, indent=2, sort_keys=True) + "\n"
     if args.report is not None:

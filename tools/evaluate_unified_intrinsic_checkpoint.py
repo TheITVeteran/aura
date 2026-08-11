@@ -139,11 +139,18 @@ def _sign_test_p_value(differences: list[float]) -> float | None:
     return min(1.0, 2.0 * probability)
 
 
-def _fresh_tasks(identity: dict[str, Any], *, per_cell: int, seed: int) -> list[Any]:
+def _fresh_tasks(
+    identity: dict[str, Any],
+    *,
+    per_cell: int,
+    seed: int,
+    task_depth: int | None = None,
+) -> list[Any]:
     from core.learning import recurrence_curriculum as curriculum
 
     families = tuple(identity["families"])
-    depths = [int(identity["task_depth"])]
+    campaign_depth = int(identity["task_depth"])
+    depths = [campaign_depth]
     train = curriculum.task_battery(
         families,
         depths,
@@ -157,7 +164,15 @@ def _fresh_tasks(identity: dict[str, Any], *, per_cell: int, seed: int) -> list[
         seed=int(identity["seed"]) + 9_973,
     )
     excluded = {task.prompt for task in (*train, *selected)}
-    fresh = curriculum.task_battery(families, depths, per_cell, seed=seed)
+    evaluation_depths = [
+        campaign_depth if task_depth is None else int(task_depth)
+    ]
+    fresh = curriculum.task_battery(
+        families,
+        evaluation_depths,
+        per_cell,
+        seed=seed,
+    )
     result = [task for task in fresh if task.prompt not in excluded]
     if len(result) != len(fresh):
         raise RuntimeError("independent task battery overlaps campaign data")

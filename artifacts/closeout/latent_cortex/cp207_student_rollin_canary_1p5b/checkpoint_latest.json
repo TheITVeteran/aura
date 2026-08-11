@@ -1,0 +1,247 @@
+{
+  "checkpoint_sha256": "19638ea9ba05c6e3ba0dfd2ad1e92d173baf3b2e877a451cdfe0170f7023ace0",
+  "history": [
+    {
+      "best_deep_relative_gain": -0.6735063621274486,
+      "best_depth": "T1",
+      "best_heldout_relative_gain": -2.858792273247022,
+      "ce": {
+        "T1": 0.6271845400333405,
+        "T2": 1.0495973179737728,
+        "T4": 1.7450081557035446,
+        "T8": 2.420174856980642
+      },
+      "examples": 12,
+      "heldout_depth_helps": false,
+      "optimization_phase": "semantic_anchor",
+      "step": 12,
+      "student_rollin": {
+        "answer_tokens": 0,
+        "examples": 0,
+        "generated_match_rate": null,
+        "generated_matches": 0,
+        "generated_positions": 0,
+        "labels_from_generated_tokens": false,
+        "last_effective_sha256": null,
+        "last_generated_sha256": null,
+        "probability": 1.0
+      },
+      "trained_depth_helps": false
+    },
+    {
+      "best_deep_relative_gain": -0.06400029203837235,
+      "best_depth": "T1",
+      "best_heldout_relative_gain": -1.7665960714244646,
+      "ce": {
+        "T1": 0.5253840051591396,
+        "T2": 0.5590087349216143,
+        "T4": 0.7112797250350317,
+        "T8": 1.4535253246625264
+      },
+      "examples": 12,
+      "heldout_depth_helps": false,
+      "optimization_phase": "semantic_anchor",
+      "step": 24,
+      "student_rollin": {
+        "answer_tokens": 0,
+        "examples": 0,
+        "generated_match_rate": null,
+        "generated_matches": 0,
+        "generated_positions": 0,
+        "labels_from_generated_tokens": false,
+        "last_effective_sha256": null,
+        "last_generated_sha256": null,
+        "probability": 1.0
+      },
+      "trained_depth_helps": false
+    },
+    {
+      "best_deep_relative_gain": -0.06857563827272606,
+      "best_depth": "T1",
+      "best_heldout_relative_gain": -2.020789645455014,
+      "ce": {
+        "T1": 0.5692947506904602,
+        "T2": 0.608334501584371,
+        "T4": 0.851088210940361,
+        "T8": 1.719719688097636
+      },
+      "examples": 12,
+      "heldout_depth_helps": false,
+      "optimization_phase": "semantic_anchor",
+      "step": 36,
+      "student_rollin": {
+        "answer_tokens": 0,
+        "examples": 0,
+        "generated_match_rate": null,
+        "generated_matches": 0,
+        "generated_positions": 0,
+        "labels_from_generated_tokens": false,
+        "last_effective_sha256": null,
+        "last_generated_sha256": null,
+        "probability": 1.0
+      },
+      "trained_depth_helps": false
+    },
+    {
+      "best_deep_relative_gain": -0.11679452388887487,
+      "best_depth": "T1",
+      "best_heldout_relative_gain": -0.46713877662090436,
+      "ce": {
+        "T1": 0.5867585949599743,
+        "T2": 0.6552887856960297,
+        "T4": 0.7228494783242544,
+        "T8": 0.8608562871813774
+      },
+      "examples": 12,
+      "heldout_depth_helps": false,
+      "optimization_phase": "recurrence",
+      "step": 48,
+      "student_rollin": {
+        "answer_tokens": 0,
+        "examples": 0,
+        "generated_match_rate": null,
+        "generated_matches": 0,
+        "generated_positions": 0,
+        "labels_from_generated_tokens": false,
+        "last_effective_sha256": null,
+        "last_generated_sha256": null,
+        "probability": 1.0
+      },
+      "trained_depth_helps": false
+    },
+    {
+      "best_deep_relative_gain": -0.1242980068123318,
+      "best_depth": "T1",
+      "best_heldout_relative_gain": -0.748814320586217,
+      "ce": {
+        "T1": 0.5867585949599743,
+        "T2": 0.6596915187935034,
+        "T4": 0.7340746174256007,
+        "T8": 1.0261318335930507
+      },
+      "examples": 12,
+      "heldout_depth_helps": false,
+      "optimization_phase": "recurrence",
+      "step": 60,
+      "student_rollin": {
+        "answer_tokens": 127,
+        "examples": 12,
+        "generated_match_rate": 0.5652173913043478,
+        "generated_matches": 65,
+        "generated_positions": 115,
+        "labels_from_generated_tokens": false,
+        "last_effective_sha256": "c763f7e5afe9301bcd122ac5f90785e15d72cc3b96dc7e169c49e82c0bffbd6e",
+        "last_generated_sha256": "c763f7e5afe9301bcd122ac5f90785e15d72cc3b96dc7e169c49e82c0bffbd6e",
+        "probability": 1.0
+      },
+      "trained_depth_helps": false
+    }
+  ],
+  "identity": {
+    "bridge": "assistant_answer",
+    "controller_rank": 16,
+    "depth_basis_size": 4,
+    "families": [
+      "khop",
+      "modular",
+      "register_trace"
+    ],
+    "holdout_per_cell": 4,
+    "identity_sha256": "b4dae6c304c6aa89630fa44b7763df3703bad8e451932b4b59df9b10c0d9b234",
+    "init_seed": 20260810207,
+    "lora_rank": 8,
+    "lora_targets": [
+      "o_proj",
+      "v_proj"
+    ],
+    "model": {
+      "canonical_path": "/Users/bryan/.cache/huggingface/hub/models--mlx-community--Qwen2.5-1.5B-Instruct-4bit/snapshots/8b403126fc14f14cfc99bb4cfa72ecbc129ea677",
+      "config_sha256": "636d3e2a15e8914b8cf82b05cc2288a811f9bd93c3bf1afc00cab701a70b47c0",
+      "identity_sha256": "1a708fe453b57fd5f677010c05ef24ec77d2a3bee529ee50752e9e8cde267dfb",
+      "weights": [
+        {
+          "name": "model.safetensors",
+          "sha256": "0979f33d1bc58afcf696d13f57977644e7b11a6f0eec3e631d8e9463d18c0717",
+          "size": 868628559
+        }
+      ]
+    },
+    "per_cell": 8,
+    "readout_sha256": "1599d3c7ce72469195f2e76b4cb984355feeb9806d63443209da31fd74caf0e3",
+    "schema": "aura.unified_intrinsic_training.v1",
+    "seed": 20260810207,
+    "semantic_warmup_steps": 48,
+    "source_sha256s": {
+      "core/learning/depth_conditioned_lora.py": "92bdfcb49fed43335a7cfe8268704b5d75784db736f38c90686072ad8a139269",
+      "core/learning/unified_intrinsic_objective.py": "ae6904d3cb16935d74c692743f461c2eccabee15def22087ab7e4ad788dcc134",
+      "core/learning/unified_intrinsic_recurrence.py": "3923fae7d7ce34639360e828698e53596a19519106762aa024fb91511054574e",
+      "tools/train_unified_intrinsic_recurrence.py": "4c99f88b2f25c75c5ad6ab353287a4f79d23ad38782b99967001d737d5d88aa5"
+    },
+    "spec": {
+      "anchor_injection": 0.0,
+      "anchor_weight": 1.0,
+      "coda_start": 21,
+      "halt_weight": 0.1,
+      "heldout_depths": [
+        8
+      ],
+      "prelude_end": 7,
+      "progression_margin": 0.01,
+      "renormalize": true,
+      "schema": "aura.unified_intrinsic_objective.v1",
+      "train_depths": [
+        1,
+        2,
+        4
+      ],
+      "trajectory_weight": 0.25
+    },
+    "student_rollin_probability": 1.0,
+    "task_depth": 4,
+    "wiring": {
+      "adapted_projection_count": 28,
+      "adapted_sites": [
+        "model.layers.10.self_attn.o_proj",
+        "model.layers.10.self_attn.v_proj",
+        "model.layers.11.self_attn.o_proj",
+        "model.layers.11.self_attn.v_proj",
+        "model.layers.12.self_attn.o_proj",
+        "model.layers.12.self_attn.v_proj",
+        "model.layers.13.self_attn.o_proj",
+        "model.layers.13.self_attn.v_proj",
+        "model.layers.14.self_attn.o_proj",
+        "model.layers.14.self_attn.v_proj",
+        "model.layers.15.self_attn.o_proj",
+        "model.layers.15.self_attn.v_proj",
+        "model.layers.16.self_attn.o_proj",
+        "model.layers.16.self_attn.v_proj",
+        "model.layers.17.self_attn.o_proj",
+        "model.layers.17.self_attn.v_proj",
+        "model.layers.18.self_attn.o_proj",
+        "model.layers.18.self_attn.v_proj",
+        "model.layers.19.self_attn.o_proj",
+        "model.layers.19.self_attn.v_proj",
+        "model.layers.20.self_attn.o_proj",
+        "model.layers.20.self_attn.v_proj",
+        "model.layers.7.self_attn.o_proj",
+        "model.layers.7.self_attn.v_proj",
+        "model.layers.8.self_attn.o_proj",
+        "model.layers.8.self_attn.v_proj",
+        "model.layers.9.self_attn.o_proj",
+        "model.layers.9.self_attn.v_proj"
+      ],
+      "coda_adapted": false,
+      "continuous_depth_basis_size": 4,
+      "continuous_depth_operator_count": 28,
+      "readout_adapted": false,
+      "window": [
+        7,
+        21
+      ]
+    }
+  },
+  "optimization_phase": "recurrence",
+  "receipt_sha256": "1d4954c3c7cb11e43531b802d5db17e6b5508f1f958f225c5ebced19c1eae4c6",
+  "schema": "aura.unified_intrinsic_training.v1",
+  "step": 66
+}

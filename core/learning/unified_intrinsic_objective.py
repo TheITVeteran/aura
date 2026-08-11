@@ -151,12 +151,23 @@ def unified_answer_trajectory(
     controller: UnifiedRecurrentController,
     *,
     memory_layout: MemoryLayout | None = None,
+    decoder_input_tokens: Any | None = None,
 ) -> tuple[list[Any], list[Any]]:
-    """Decode every recurrent state through one frozen coda and readout."""
+    """Decode every recurrent state through one frozen coda and readout.
+
+    Labels and decoder inputs are deliberately separate.  The default is exact
+    teacher forcing; an answer-aligned ``decoder_input_tokens`` tensor permits
+    student roll-in without ever relabeling the generated mistakes as truth.
+    """
 
     if int(answer_tokens.shape[-1]) < 1:
         raise ValueError("answer tokens must not be empty")
-    full = mx.concatenate([tokens, answer_tokens], axis=1)
+    decoder_inputs = (
+        answer_tokens if decoder_input_tokens is None else decoder_input_tokens
+    )
+    if decoder_inputs.shape != answer_tokens.shape:
+        raise ValueError("decoder inputs must be answer-aligned")
+    full = mx.concatenate([tokens, decoder_inputs], axis=1)
     _final, trajectory, _telemetry = unified_recurrent_hidden_states(
         model,
         full,
@@ -220,6 +231,7 @@ def unified_intrinsic_training_loss(
     *,
     memory_layout: MemoryLayout | None = None,
     readout_sha256: str | None = None,
+    decoder_input_tokens: Any | None = None,
 ) -> tuple[Any, dict[str, Any]]:
     """Train semantics at shallow depths while keeping readout immutable."""
 
@@ -239,6 +251,7 @@ def unified_intrinsic_training_loss(
             spec.plan_at(depth),
             controller,
             memory_layout=memory_layout,
+            decoder_input_tokens=decoder_input_tokens,
         )
         final_losses.append(losses[-1])
         progression = _progression_loss(losses, spec.progression_margin)
@@ -272,6 +285,12 @@ def unified_intrinsic_training_loss(
         "total": float(total.item()),
         "readout_sha256": readout_sha256,
         "readout_frozen_by_training_contract": True,
+        "decoder_history": (
+            "teacher_forced"
+            if decoder_input_tokens is None
+            else "student_rollin_answer_aligned"
+        ),
+        "labels_from_generated_tokens": False,
         "heldout_depths_unopened": list(spec.heldout_depths),
     }
 

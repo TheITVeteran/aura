@@ -15,6 +15,7 @@ from mlx_lm.models.qwen2 import Model, ModelArgs  # noqa: E402
 
 from core.brain.llm.latent_cortex.recurrence_adapter import (  # noqa: E402
     ScopedLoRALinear,
+    recurrence_adapter_scope,
 )
 from core.learning.unified_intrinsic_objective import (  # noqa: E402
     UnifiedIntrinsicTrainingSpec,
@@ -27,13 +28,17 @@ from tools.train_unified_intrinsic_recurrence import (  # noqa: E402
     UnifiedTrainingBundle,
     _attach_window_adapters,
     _canonical_sha256,
+    _clip_gradient_norm,
+    _deterministic_student_mix,
     _evaluate,
+    _generate_student_rollin,
     _model_identity,
     _optimization_phase,
     _phase_gradients,
     _residual_hidden_size,
     _restore_checkpoint,
     _save_checkpoint,
+    _student_rollin_probability,
     _trainable,
 )
 
@@ -129,6 +134,70 @@ def test_two_phase_gradient_partition_keeps_anchor_stationary() -> None:
     assert bool(mx.all(recurrent["controller.transport_bias"] == 1))
     assert _optimization_phase(39, 40) == "semantic_anchor"
     assert _optimization_phase(40, 40) == "recurrence"
+
+
+def test_student_rollin_mix_is_deterministic_and_never_relabels() -> None:
+    answer = mx.array([[2, 3, 4, 5]])
+    generated = mx.array([[7, 8, 9, 10]])
+    first, selected = _deterministic_student_mix(
+        answer,
+        generated,
+        probability=1.0,
+        seed=19,
+    )
+    replay, replay_selected = _deterministic_student_mix(
+        answer,
+        generated,
+        probability=1.0,
+        seed=19,
+    )
+    assert selected == replay_selected == (0, 1, 2)
+    assert first.tolist() == replay.tolist() == [[7, 8, 9, 5]]
+    teacher, no_positions = _deterministic_student_mix(
+        answer,
+        generated,
+        probability=0.0,
+        seed=19,
+    )
+    assert no_positions == ()
+    assert teacher.tolist() == answer.tolist()
+
+
+def test_student_rollin_generation_is_answer_aligned() -> None:
+    bundle, _wiring = _bundle()
+    with recurrence_adapter_scope(start=None, stop=None):
+        generated = _generate_student_rollin(
+            bundle,
+            mx.array([[2, 7, 11]]),
+            mx.array([[13, 17, 19, 23]]),
+            UnifiedIntrinsicTrainingSpec(2, 4, (1, 2), (4, 8)).plan_at(2),
+            eos_token_id=None,
+        )
+    assert generated.shape == (1, 4)
+    assert generated.dtype == mx.array([[1]]).dtype
+
+
+def test_student_rollin_schedule_and_gradient_trust_bound() -> None:
+    assert _student_rollin_probability(
+        4,
+        semantic_warmup_steps=4,
+        max_steps=9,
+        initial=0.1,
+        final=0.5,
+    ) == pytest.approx(0.1)
+    assert _student_rollin_probability(
+        8,
+        semantic_warmup_steps=4,
+        max_steps=9,
+        initial=0.1,
+        final=0.5,
+    ) == pytest.approx(0.5)
+    gradients = {"large": mx.array([3.0, 4.0]), "small": mx.array([0.0])}
+    clipped, before = _clip_gradient_norm(gradients, 1.0)
+    mx.eval(clipped, before)
+    assert float(before.item()) == pytest.approx(5.0)
+    after = mx.sqrt(sum(mx.sum(value**2) for value in clipped.values()))
+    assert float(after.item()) == pytest.approx(1.0)
 
 
 def test_checkpoint_roundtrip_restores_exact_trainable_state(tmp_path: Path) -> None:

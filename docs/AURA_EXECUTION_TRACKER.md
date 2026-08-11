@@ -44290,3 +44290,42 @@ result, not a behavioral reasoning gain. The completion envelope advances to
 `902/920` (approximately `98.0%`). Next is a calibrated non-floor decode band,
 sequence-level recurrence specialization against emitted correctness, causal
 operator lesions, independent-seed replication, and only then a 32B allocation.
+
+## Checkpoints 2026-08-10-207 through 208: Generated-History Training Is Stable but Behavior Remains at Floor
+
+CP207 separated decoder inputs from immutable answer labels and made the
+recurrent phase train on the deep policy's own answer-aligned history. The
+generated tokens can never become pseudo-labels; the final unused decoder
+position remains canonical, mixing is deterministic and source-bound, and each
+evaluation records generated coverage, agreement and token commitments. A
+difficulty sweep over task depths `1,2,3,4` showed that CP206 was not merely
+tested at the wrong difficulty: trained T1 solved `2/12`, while T8 solved
+`1/12`. Jumping directly to 100% generated history then destabilized T8 after
+12 updates: it solved `0/12`, emitted no EOS on any case, and produced malformed
+repetitive JSON. The run was stopped at its durable step-60 checkpoint rather
+than consuming its remaining budget. The calibration commitment is
+`b271ba13317a2dfb2515fdf9c3dce2852fecc3bbea8d5ae1031e264353904225`; the
+failed full-roll-in decode commitment is
+`1d40d148ca87aa52e4724fee5fdec551aade39076c724b76e6284019da838820`.
+
+CP208 repaired the optimization dynamics instead of weakening the behavioral
+gate. Student forcing now follows an explicit bounded schedule, semantic and
+recurrent phases have separate learning rates, phase-masked gradients receive
+a global norm trust bound, and decode reports trained T2/T4 separately from
+unopened T8. The 84-step canary completed in 6.5 minutes without output
+collapse. T1 remained stationary at CE `0.626501`; T2 improved by `0.602%`, T4
+recovered from `-13.0%` to `-4.83%`, and T8 recovered from `-66.9%` to
+`-44.8%`. The training receipt commitment is
+`67564de031e6271fee927a44ca36eeb1678fcc54e57a9557a990949d9913406f`.
+
+The independent decode remained a valid floor: base T1, trained T1, T2, T4 and
+T8 each solved `0/12`. The decode commitment is
+`436b4e554d9d3b1014e113f949847c3ca8f1f17206f7a5672fc6f5aa5529a0`.
+This rejects generated-history exposure by itself as the missing capability
+bridge. It also localizes the next implementation gap: the resident transformer
+is supervised only on terminal JSON, while the curriculum already contains
+verified state/action/state programs that are not causally shaping its
+recurrent hidden state. The completion envelope advances to `904/920`
+(approximately `98.3%`). Next is structured transition-state supervision in
+the recurrent transformer, followed by the same non-floor decoded comparison;
+no resident-32B allocation is admissible before that 1.5B behavior gate passes.

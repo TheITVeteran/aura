@@ -32,6 +32,7 @@ from core.learning.unified_intrinsic_objective import (  # noqa: E402
 from core.learning.unified_intrinsic_recurrence import (  # noqa: E402
     UnifiedRecurrenceConfig,
     UnifiedRecurrentController,
+    unified_recurrent_logits,
 )
 from core.runtime.mlx_memory_guard import mlx_memory_envelope  # noqa: E402
 from tools.train_intrinsic_recurrence import encode_example  # noqa: E402
@@ -188,6 +189,138 @@ def _phase_gradients(gradients: Any, phase: str) -> Any:
         keep = shared_adapter if phase == "semantic_anchor" else not shared_adapter
         masked.append((name, value if keep else mx.zeros_like(value)))
     return tree_unflatten(masked)
+
+
+def _clip_gradient_norm(gradients: Any, max_norm: float) -> tuple[Any, Any]:
+    if (
+        isinstance(max_norm, bool)
+        or not isinstance(max_norm, (int, float))
+        or not 0.0 < float(max_norm)
+    ):
+        raise ValueError("maximum gradient norm must be positive")
+    flattened = tree_flatten(gradients)
+    if not flattened:
+        raise ValueError("gradient tree must not be empty")
+    norm = mx.sqrt(
+        mx.sum(
+            mx.stack(
+                [
+                    mx.sum(value.astype(mx.float32) ** 2)
+                    for _name, value in flattened
+                ]
+            )
+        )
+    )
+    scale = mx.minimum(1.0, float(max_norm) / mx.maximum(norm, 1e-12))
+    return tree_unflatten(
+        [(name, value * scale.astype(value.dtype)) for name, value in flattened]
+    ), norm
+
+
+def _student_rollin_probability(
+    step: int,
+    *,
+    semantic_warmup_steps: int,
+    max_steps: int,
+    initial: float,
+    final: float,
+) -> float:
+    if not semantic_warmup_steps <= step < max_steps:
+        raise ValueError("student roll-in schedule step is outside recurrent phase")
+    recurrent_steps = max_steps - semantic_warmup_steps
+    progress = (
+        (step - semantic_warmup_steps) / (recurrent_steps - 1)
+        if recurrent_steps > 1
+        else 1.0
+    )
+    return float(initial + progress * (final - initial))
+
+
+def _sha256_tokens(tokens: Any) -> str:
+    values = [int(value) for value in tokens.tolist()[0]]
+    return hashlib.sha256(
+        json.dumps(values, separators=(",", ":")).encode("ascii")
+    ).hexdigest()
+
+
+def _deterministic_student_mix(
+    answer_tokens: Any,
+    generated_tokens: Any,
+    *,
+    probability: float,
+    seed: int,
+) -> tuple[Any, tuple[int, ...]]:
+    """Use generated history without allowing it to become a label."""
+
+    if answer_tokens.shape != generated_tokens.shape:
+        raise ValueError("generated roll-in must be answer-aligned")
+    if (
+        isinstance(probability, bool)
+        or not isinstance(probability, (int, float))
+        or not 0.0 <= float(probability) <= 1.0
+    ):
+        raise ValueError("student roll-in probability must be inside [0, 1]")
+    if type(seed) is not int or not 0 <= seed < 1 << 64:
+        raise ValueError("student roll-in seed must be inside [0, 2^64)")
+    answer = [int(value) for value in answer_tokens.tolist()[0]]
+    generated = [int(value) for value in generated_tokens.tolist()[0]]
+    threshold = int(float(probability) * (1 << 64))
+    effective: list[int] = []
+    selected: list[int] = []
+    for position, (target, produced) in enumerate(
+        zip(answer, generated, strict=True)
+    ):
+        # The final decoder input has no successor label and cannot influence
+        # this sequence loss, so leave it canonical.
+        digest = hashlib.sha256(
+            b"aura.unified.student-rollin.v1\0"
+            + seed.to_bytes(8, "big")
+            + position.to_bytes(8, "big")
+        ).digest()
+        use_generated = (
+            position + 1 < len(answer)
+            and int.from_bytes(digest[:8], "big") < threshold
+        )
+        effective.append(produced if use_generated else target)
+        if use_generated:
+            selected.append(position)
+    return mx.array([effective], dtype=answer_tokens.dtype), tuple(selected)
+
+
+def _generate_student_rollin(
+    bundle: UnifiedTrainingBundle,
+    prompt: Any,
+    answer_tokens: Any,
+    plan: Any,
+    *,
+    eos_token_id: int | None,
+) -> Any:
+    """Greedily materialize a fixed-length deep-policy decoder history."""
+
+    token_count = int(answer_tokens.shape[-1])
+    if token_count < 1:
+        raise ValueError("student roll-in target must not be empty")
+    tokens = prompt
+    generated: list[int] = []
+    stopped = False
+    for _position in range(token_count):
+        if stopped and eos_token_id is not None:
+            token = int(eos_token_id)
+        else:
+            logits, _telemetry = unified_recurrent_logits(
+                bundle.model,
+                tokens,
+                plan,
+                bundle.controller,
+            )
+            token = int(mx.argmax(logits[0, -1]).item())
+            stopped = eos_token_id is not None and token == eos_token_id
+        generated.append(token)
+        tokens = mx.concatenate(
+            [tokens, mx.array([[token]], dtype=tokens.dtype)],
+            axis=1,
+        )
+    return mx.array([generated], dtype=answer_tokens.dtype)
 
 
 def _residual_hidden_size(model: Any) -> int:
@@ -381,8 +514,30 @@ def main() -> int:
     parser.add_argument("--depth-basis-size", type=int, default=4)
     parser.add_argument("--lora-targets", default="o_proj,v_proj")
     parser.add_argument("--learning-rate", type=float, default=1e-4)
+    parser.add_argument(
+        "--recurrent-learning-rate",
+        type=float,
+        help="recurrent-phase rate; defaults to --learning-rate",
+    )
     parser.add_argument("--max-steps", type=int, default=120)
     parser.add_argument("--semantic-warmup-steps", type=int, default=0)
+    parser.add_argument(
+        "--student-rollin-probability",
+        type=float,
+        default=0.0,
+        help="initial fraction of recurrent-phase history taken from the deep policy",
+    )
+    parser.add_argument(
+        "--student-rollin-final-probability",
+        type=float,
+        help="final generated-history fraction; defaults to the initial fraction",
+    )
+    parser.add_argument(
+        "--max-gradient-norm",
+        type=float,
+        default=1.0,
+        help="global norm trust bound applied after phase masking",
+    )
     parser.add_argument("--max-minutes", type=float, default=90.0)
     parser.add_argument("--eval-every", type=int, default=20)
     parser.add_argument("--checkpoint-every", type=int, default=10)
@@ -395,6 +550,26 @@ def main() -> int:
     args = parser.parse_args()
     if not 0 <= args.semantic_warmup_steps < args.max_steps:
         raise ValueError("semantic warmup must leave at least one recurrent step")
+    rollin_final_probability = (
+        args.student_rollin_probability
+        if args.student_rollin_final_probability is None
+        else args.student_rollin_final_probability
+    )
+    if not (
+        0.0 <= args.student_rollin_probability <= 1.0
+        and 0.0 <= rollin_final_probability <= 1.0
+        and args.student_rollin_probability <= rollin_final_probability
+    ):
+        raise ValueError("student roll-in probability must be inside [0, 1]")
+    if args.max_gradient_norm <= 0.0:
+        raise ValueError("maximum gradient norm must be positive")
+    recurrent_learning_rate = (
+        args.learning_rate
+        if args.recurrent_learning_rate is None
+        else args.recurrent_learning_rate
+    )
+    if args.learning_rate <= 0.0 or recurrent_learning_rate <= 0.0:
+        raise ValueError("learning rates must be positive")
 
     from mlx_lm import load
 
@@ -485,6 +660,11 @@ def main() -> int:
             "seed": args.seed,
             "init_seed": args.init_seed,
             "semantic_warmup_steps": args.semantic_warmup_steps,
+            "student_rollin_probability": args.student_rollin_probability,
+            "student_rollin_final_probability": rollin_final_probability,
+            "max_gradient_norm": args.max_gradient_norm,
+            "semantic_learning_rate": args.learning_rate,
+            "recurrent_learning_rate": recurrent_learning_rate,
             "bridge": args.bridge,
             "lora_rank": args.lora_rank,
             "controller_rank": args.controller_rank,
@@ -498,7 +678,14 @@ def main() -> int:
             },
         }
         identity["identity_sha256"] = _canonical_sha256(identity)
-        optimizer = optim.Adam(learning_rate=args.learning_rate)
+        optimizer = optim.Adam(
+            learning_rate=(
+                args.learning_rate
+                if _optimization_phase(0, args.semantic_warmup_steps)
+                == "semantic_anchor"
+                else recurrent_learning_rate
+            )
+        )
         step, history = (
             _restore_checkpoint(
                 out_dir,
@@ -523,6 +710,7 @@ def main() -> int:
             candidate: UnifiedTrainingBundle,
             prompt: Any,
             answer: Any,
+            rollin: Any,
         ):
             return unified_intrinsic_training_loss(
                 candidate.model,
@@ -531,6 +719,7 @@ def main() -> int:
                 candidate.controller,
                 spec,
                 readout_sha256=readout_sha256,
+                decoder_input_tokens=rollin,
             )[0]
 
         def semantic_objective(
@@ -549,25 +738,89 @@ def main() -> int:
 
         recurrent_loss_and_grad = nn.value_and_grad(bundle, recurrent_objective)
         semantic_loss_and_grad = nn.value_and_grad(bundle, semantic_objective)
+        rollin_totals = {
+            "examples": 0,
+            "answer_tokens": 0,
+            "generated_positions": 0,
+            "generated_matches": 0,
+            "last_generated_sha256": None,
+            "last_effective_sha256": None,
+            "max_preclip_gradient_norm": 0.0,
+            "last_probability": None,
+        }
         with checkpointed_window(model, group_size=args.checkpoint_group):
             while step < args.max_steps and time.time() < deadline:
                 phase = _optimization_phase(step, args.semantic_warmup_steps)
                 task = train_tasks[step % len(train_tasks)]
                 prompt, answer = encode_example(tokenizer, task, bridge)
                 with recurrence_adapter_scope(start=None, stop=None):
-                    operation = (
-                        semantic_loss_and_grad
-                        if phase == "semantic_anchor"
-                        else recurrent_loss_and_grad
-                    )
-                    loss, gradients = operation(bundle, prompt, answer)
+                    if phase == "semantic_anchor":
+                        loss, gradients = semantic_loss_and_grad(
+                            bundle,
+                            prompt,
+                            answer,
+                        )
+                    else:
+                        rollin_probability = _student_rollin_probability(
+                            step,
+                            semantic_warmup_steps=args.semantic_warmup_steps,
+                            max_steps=args.max_steps,
+                            initial=args.student_rollin_probability,
+                            final=rollin_final_probability,
+                        )
+                        generated = _generate_student_rollin(
+                            bundle,
+                            prompt,
+                            answer,
+                            spec.plan_at(max(spec.train_depths)),
+                            eos_token_id=tokenizer.eos_token_id,
+                        )
+                        effective, selected = _deterministic_student_mix(
+                            answer,
+                            generated,
+                            probability=rollin_probability,
+                            seed=args.seed * 1_000_003 + step,
+                        )
+                        answer_values = [int(value) for value in answer.tolist()[0]]
+                        generated_values = [
+                            int(value) for value in generated.tolist()[0]
+                        ]
+                        rollin_totals["examples"] += 1
+                        rollin_totals["answer_tokens"] += len(answer_values)
+                        rollin_totals["generated_positions"] += len(selected)
+                        rollin_totals["generated_matches"] += sum(
+                            generated_values[index] == answer_values[index]
+                            for index in selected
+                        )
+                        rollin_totals["last_generated_sha256"] = _sha256_tokens(
+                            generated
+                        )
+                        rollin_totals["last_effective_sha256"] = _sha256_tokens(
+                            effective
+                        )
+                        rollin_totals["last_probability"] = rollin_probability
+                        loss, gradients = recurrent_loss_and_grad(
+                            bundle,
+                            prompt,
+                            answer,
+                            effective,
+                        )
                     gradients = _phase_gradients(gradients, phase)
+                    gradients, gradient_norm = _clip_gradient_norm(
+                        gradients,
+                        args.max_gradient_norm,
+                    )
+                    mx.eval(gradient_norm)
+                    rollin_totals["max_preclip_gradient_norm"] = max(
+                        float(rollin_totals["max_preclip_gradient_norm"]),
+                        float(gradient_norm.item()),
+                    )
                     optimizer.update(bundle, gradients)
                     mx.eval(bundle.parameters(), optimizer.state, loss)
                 step += 1
                 next_phase = _optimization_phase(step, args.semantic_warmup_steps)
                 if next_phase != phase:
-                    optimizer = optim.Adam(learning_rate=args.learning_rate)
+                    optimizer = optim.Adam(learning_rate=recurrent_learning_rate)
                 if step % 5 == 0:
                     print(
                         f"[step {step}] phase={phase} "
@@ -587,6 +840,19 @@ def main() -> int:
                     )
                     report["step"] = step
                     report["optimization_phase"] = next_phase
+                    generated_positions = int(rollin_totals["generated_positions"])
+                    report["student_rollin"] = {
+                        **rollin_totals,
+                        "initial_probability": args.student_rollin_probability,
+                        "final_probability": rollin_final_probability,
+                        "generated_match_rate": (
+                            int(rollin_totals["generated_matches"])
+                            / generated_positions
+                            if generated_positions
+                            else None
+                        ),
+                        "labels_from_generated_tokens": False,
+                    }
                     history.append(report)
                     print(f"[eval {step}] {report}", flush=True)
                     prior = history[:-1]

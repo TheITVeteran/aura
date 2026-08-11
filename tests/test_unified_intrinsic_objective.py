@@ -88,6 +88,51 @@ def test_every_recurrent_state_is_decoded_through_the_same_readout() -> None:
     assert all(float(value.item()) > 0.0 for value in losses)
 
 
+def test_student_rollin_changes_history_without_changing_labels() -> None:
+    model = _model()
+    controller = _controller()
+    teacher_states, teacher_losses = unified_answer_trajectory(
+        model,
+        TOKENS,
+        ANSWERS,
+        _spec().plan_at(3),
+        controller,
+    )
+    rollin = mx.array([[23, 29]])
+    student_states, student_losses = unified_answer_trajectory(
+        model,
+        TOKENS,
+        ANSWERS,
+        _spec().plan_at(3),
+        controller,
+        decoder_input_tokens=rollin,
+    )
+    mx.eval(teacher_states, teacher_losses, student_states, student_losses)
+    assert not bool(mx.array_equal(teacher_states[-1], student_states[-1]))
+    assert float(teacher_losses[-1].item()) != pytest.approx(
+        float(student_losses[-1].item())
+    )
+    _loss, receipt = unified_intrinsic_training_loss(
+        model,
+        TOKENS,
+        ANSWERS,
+        controller,
+        _spec(),
+        decoder_input_tokens=rollin,
+    )
+    assert receipt["decoder_history"] == "student_rollin_answer_aligned"
+    assert receipt["labels_from_generated_tokens"] is False
+    with pytest.raises(ValueError, match="answer-aligned"):
+        unified_answer_trajectory(
+            model,
+            TOKENS,
+            ANSWERS,
+            _spec().plan_at(3),
+            controller,
+            decoder_input_tokens=mx.array([[23]]),
+        )
+
+
 def test_optimizer_moves_controller_but_not_frozen_readout() -> None:
     model = _model()
     controller = _controller()
