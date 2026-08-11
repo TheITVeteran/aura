@@ -371,3 +371,25 @@ def test_an_unverified_read_reports_nothing() -> None:
     assert _desktop_deliverable_text({
         "receipts": [{"action": "list_directory", "ok": False, "result": {"count": 9}}],
     }) == ""
+
+
+def test_a_partial_task_still_reports_what_it_verified() -> None:
+    """LIVE: 2/2 steps, count 9 read and written, and the reply said only
+    "semantic completion incomplete: requested_source_count_found".
+
+    A checker correctly reported that the number was missing from the reply,
+    while the number sat in a verified receipt one function away. The person
+    was told the task failed and never told the answer it had found. Both facts
+    belong in the reply: what is verified, and what did not finish.
+    """
+    import inspect
+
+    from interface.routes import chat
+
+    source = inspect.getsource(chat._execute_desktop_objective_from_chat)
+    marker = "but it did not complete:"
+    assert marker in source
+    window = source[source.find(marker) : source.find(marker) + 1200]
+
+    assert "_desktop_deliverable_text(result)" in window
+    assert "That much is verified" in window

@@ -20273,6 +20273,23 @@ async def _execute_desktop_objective_from_chat(
             f"but it did not complete: {error}. Completed {completed}/{requested} steps. "
             "I am not claiming the desktop action finished."
         )
+        # A partial task can still hold the answer, and withholding it is its
+        # own failure.
+        #
+        # LIVE, 2026-08-10: "count how many .py files are in <dir> ... Tell me
+        # the number" completed 2/2 steps, read 9, wrote 9 to the right file,
+        # and replied only "semantic completion incomplete:
+        # requested_source_count_found" — a checker correctly reporting that
+        # the number was missing from the reply, while the number sat in a
+        # verified receipt one function away. The person was told the task
+        # failed and never told the answer it had found.
+        partial = _desktop_deliverable_text(result)
+        if partial:
+            response = (
+                f"{partial}\n\n"
+                f"That much is verified. The rest did not complete: {error} "
+                f"({completed}/{requested} steps)."
+            )
     return {
         "ok": bool(result.get("ok")),
         "status": status,
