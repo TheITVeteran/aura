@@ -35,6 +35,8 @@ already in hand and was not being checked against.
 
 from __future__ import annotations
 
+import re
+
 from dataclasses import dataclass, field
 from enum import StrEnum
 from typing import Any
@@ -118,10 +120,55 @@ class EffectClaim:
         """Words for this claim, or "" when it has nothing it may assert."""
         if self.tense is not EffectTense.COMPLETED:
             return ""
+        if self.action == "os_automation":
+            # The object is already a full phrase built from the proven
+            # criterion, so it is rendered as-is.
+            return self.obj.strip()
         phrase, _fields = _EFFECT_VOCABULARY.get(self.action, ("", ()))
         if not phrase:
             return ""
         return f"{phrase} {self.obj}".strip()
+
+
+#: "listed=/path;count=9" and "clipboard_contains=ORION-7" — the verifier
+#: writes its proof as key=value pairs, so the effect it proved can be read
+#: back out of the evidence rather than re-derived.
+_EVIDENCE_FIELD_RE = re.compile(r"(?P<key>[a-z_]+)=(?P<value>[^;]+)")
+
+#: Which proven criterion corresponds to which effect sentence.
+_PROVEN_CRITERION_VOCABULARY: dict[str, str] = {
+    "clipboard_contains": "put {value} on the clipboard",
+    "file_exists": "wrote {value}",
+    "file_contains": "wrote {value}",
+    "browser_url_contains": "opened {value}",
+    "app_frontmost": "brought {value} to the front",
+    "app_not_running": "quit {value}",
+}
+
+
+def _claims_from_os_automation(receipt: dict[str, Any]) -> list[EffectClaim]:
+    """Effect claims for a script lane, read from the criteria it proved."""
+
+    if not receipt.get("ok"):
+        return []
+    evidence = str(receipt.get("effect_evidence") or "")
+    identifier = str(receipt.get("durable_receipt_id") or f"step:{receipt.get('index', 0)}")
+    claims: list[EffectClaim] = []
+    for match in _EVIDENCE_FIELD_RE.finditer(evidence):
+        template = _PROVEN_CRITERION_VOCABULARY.get(match.group("key"))
+        if not template:
+            continue
+        value = match.group("value").strip()
+        if not value:
+            continue
+        claims.append(
+            EffectClaim.completed(
+                "os_automation",
+                obj=template.format(value=value),
+                evidence_ids=(identifier,),
+            )
+        )
+    return claims
 
 
 def claims_from_receipts(receipts: Any) -> list[EffectClaim]:
@@ -139,6 +186,15 @@ def claims_from_receipts(receipts: Any) -> list[EffectClaim]:
         if not isinstance(receipt, dict):
             continue
         action = str(receipt.get("action") or "").strip()
+        if action == "os_automation":
+            # This lane executes an AppleScript and names its effect in the
+            # contract it proved, not in the step's action. Without this the
+            # reply fell back to "the desktop steps completed and their effects
+            # verified" for a turn that had put an exact string on the
+            # clipboard and confirmed it — a receipt strong enough to name what
+            # it did, reported as bookkeeping.
+            claims.extend(_claims_from_os_automation(receipt))
+            continue
         if action not in _EFFECT_VOCABULARY:
             continue
         inner = receipt.get("result")

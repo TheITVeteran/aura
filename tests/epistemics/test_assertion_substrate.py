@@ -191,3 +191,58 @@ def test_every_declared_action_is_either_claimable_or_declared_not_to_be() -> No
 
 def test_the_exemptions_all_carry_a_reason() -> None:
     assert all(reason.strip() for reason in _NO_CLAIMABLE_EFFECT.values())
+
+
+# ── The script lane names its effect from what it proved ───────────────────
+
+def test_os_automation_effects_are_named_from_the_proven_criterion() -> None:
+    """LIVE, 2026-08-10, once the clipboard task finally worked in 2 seconds:
+
+        "Done — the desktop steps completed and their effects verified."
+
+    It had put an exact string on the clipboard and confirmed it. The receipt's
+    action is "os_automation" — the lane — and the effect it proved lives in
+    the evidence, so the vocabulary keyed on action names found nothing and the
+    reply fell back to bookkeeping.
+    """
+    from core.conversation.effect_claim import render_effect_claims
+
+    assert render_effect_claims([
+        {"action": "os_automation", "ok": True, "index": 1,
+         "effect_evidence": "clipboard_contains=ORION-7"},
+    ]) == "put ORION-7 on the clipboard."
+
+
+def test_an_unverified_script_step_names_nothing() -> None:
+    from core.conversation.effect_claim import render_effect_claims
+
+    assert render_effect_claims([
+        {"action": "os_automation", "ok": False, "index": 1,
+         "effect_evidence": "clipboard_contains=ORION-7"},
+    ]) == ""
+
+
+@pytest.mark.parametrize(
+    ("evidence", "expected"),
+    [
+        ("app_frontmost=Notes", "brought Notes to the front."),
+        ("browser_url_contains=example.com", "opened example.com."),
+        ("app_not_running=Calculator", "quit Calculator."),
+    ],
+)
+def test_each_proven_criterion_has_a_sentence(evidence: str, expected: str) -> None:
+    from core.conversation.effect_claim import render_effect_claims
+
+    assert render_effect_claims([
+        {"action": "os_automation", "ok": True, "index": 1, "effect_evidence": evidence},
+    ]) == expected
+
+
+def test_an_unknown_criterion_is_not_invented() -> None:
+    """A criterion with no sentence says nothing rather than guessing one."""
+    from core.conversation.effect_claim import render_effect_claims
+
+    assert render_effect_claims([
+        {"action": "os_automation", "ok": True, "index": 1,
+         "effect_evidence": "some_future_criterion=x"},
+    ]) == ""
