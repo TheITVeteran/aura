@@ -133,6 +133,9 @@ test_filter.py
 .DS_Store
 .localized
 Thumbs.db
+
+# Durable directory-batch advisory locks are runtime state, not artifacts.
+**/.aura_file_write_batch.lock
 benchmarks/latest_results.json
 benchmarks/long_horizon_results.json
 artifacts/behavioral_proof/receipts/

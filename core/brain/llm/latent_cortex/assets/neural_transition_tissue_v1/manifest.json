@@ -9,7 +9,7 @@
       23
     ]
   },
-  "manifest_sha256": "a37096000595314edfd0743d07b1aab64ca5475f79ad64a6f4e78c6e20999a68",
+  "manifest_sha256": "4b11ae6b400bbcbf3b8488864bc8351dc806cd3bf446bb05ec6d7f4d628f8fff",
   "schema": "aura.neural_transition_artifact.v1",
   "teacher_removed_runtime": true,
   "training_receipt": {
@@ -30,17 +30,18 @@
     "learning_rate": 0.2,
     "loss_history_sha256": "43a7a192b299ab5ea77dd00948a6e7e0b0d0e93fcf81726d6d76cf3ae30c3ed7",
     "modular_example_count": 4044,
-    "receipt_sha256": "3603dd4b041a05c30ec41d84d31c54ea0550c88af8f0d0f703de0aed757c5ff1",
+    "receipt_sha256": "bc890778b4e7dc864c9533869a1fef115c0e1fcd072690bc3522f212a1ef28bd",
     "schema": "aura.neural_transition_training.v1",
     "source_sha256s": {
-      "core/brain/llm/latent_cortex/neural_transition_tissue.py": "570322ec66751ad046e3a0dd97215a88eb62b5c2354b1a5c1aa99923af20ea7b",
+      "core/brain/llm/latent_cortex/neural_transition_tissue.py": "352e8e9ec68a8b5cb477de7a7f07751769796de16e0f9cd54794a201b6cf4d62",
+      "core/brain/llm/latent_cortex/persistence.py": "eab0a16f2fc0791835ef81f1a167bb672e1c5d174eb4c3d2b9fcd8f1b4fe9b0c",
       "core/brain/llm/latent_cortex/typed_transition_executor.py": "665fac5c6dea238a4e896f8de4dc86cac0013f569abcbf0ce179c897259e3bf8",
-      "core/learning/neural_transition_training.py": "158bb6e3dee486ed31d076b1abf4690330a8ff9ead379928f905aa0ca391dfb9"
+      "core/learning/neural_transition_training.py": "eee24a7ccdc4415252d5507a38370c61bc5b25c44d31cca103fc12da0bc123d9"
     },
     "steps": 32,
     "teacher_receipt_sha256": "d15f065a79b9bce9daae40523584c94c33233dff1336f7981c43314d5eb95991",
     "teacher_removed_before_evaluation": true
   },
   "weights_file": "weights.safetensors",
-  "weights_sha256": "3ad7941e52373ea6817e2eb953045d5c2e7e4c361d8b9a53d06965a14097b2d6"
+  "weights_sha256": "53939996943eec45f4a5a3643a70dbc9ab9a66a718ffd8f0ce1adc7743cbb6bc"
 }

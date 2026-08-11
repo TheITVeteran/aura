@@ -116,6 +116,10 @@ CANONICAL_PRIMITIVE_OWNERS: dict[str, frozenset[str]] = {
     "raw_browser": frozenset(),
     "direct_atomic_file_write": frozenset(
         {
+            # Latent-cortex persistence owns only schema-bound private artifact
+            # directories. Payload bytes and commit markers still cross the
+            # governed no-follow FileWriteGateway transaction below.
+            "core/brain/llm/latent_cortex/persistence.py",
             "core/memory/memory_write_gateway.py",
             # Immutable recurrence-training generations are a purpose-built
             # atomic evidence store, analogous to campaign_journal. It owns no

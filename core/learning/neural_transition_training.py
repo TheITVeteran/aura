@@ -5,7 +5,6 @@ from __future__ import annotations
 import hashlib
 import json
 import math
-import os
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Final
@@ -13,13 +12,16 @@ from typing import Any, Final
 import mlx.core as mx
 import mlx.nn as nn
 import mlx.optimizers as optim
+import numpy as np
+from safetensors.numpy import save as save_safetensors_bytes
 
 from core.brain.llm.latent_cortex.neural_transition_tissue import (
     NEURAL_TRANSITION_SOURCE_FILES,
     SUPPORTED_MODULI,
     NeuralTransitionTissue,
-    write_neural_transition_manifest,
+    build_neural_transition_manifest,
 )
+from core.brain.llm.latent_cortex.persistence import LatentCortexPersistence
 from core.brain.llm.latent_cortex.typed_transition_executor import (
     CertifiedTransitionExecutor,
     TypedTransitionInput,
@@ -249,21 +251,29 @@ def train_and_write_neural_transition_artifact(
     learning_rate: float = 0.2,
 ) -> dict[str, Any]:
     target = out_dir.expanduser().resolve()
-    target.mkdir(parents=True, exist_ok=True)
     tissue, receipt = train_neural_transition_tissue(
         steps=steps,
         learning_rate=learning_rate,
     )
-    scratch = target / f".weights.{os.getpid()}.safetensors"
-    mx.save_safetensors(
-        str(scratch),
+    weights_payload = save_safetensors_bytes(
         {
-            "boolean_logits": tissue.boolean_logits,
-            "modular_logits": tissue.modular_logits,
+            "boolean_logits": np.asarray(tissue.boolean_logits),
+            "modular_logits": np.asarray(tissue.modular_logits),
         },
     )
-    os.replace(scratch, target / "weights.safetensors")
-    return write_neural_transition_manifest(target, training_receipt=receipt)
+    manifest = build_neural_transition_manifest(
+        weights_sha256=hashlib.sha256(weights_payload).hexdigest(),
+        training_receipt=receipt,
+    )
+    manifest_payload = (
+        json.dumps(manifest, indent=2, sort_keys=True).encode("ascii") + b"\n"
+    )
+    LatentCortexPersistence().publish_neural_tissue_artifact(
+        target,
+        weights_payload=weights_payload,
+        manifest_payload=manifest_payload,
+    )
+    return manifest
 
 
 __all__ = [

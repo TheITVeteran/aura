@@ -5,7 +5,6 @@ from __future__ import annotations
 import hashlib
 import json
 import math
-import os
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any, Final
@@ -20,6 +19,7 @@ SYSTEMATIC_NEURAL_ALU_ARTIFACT_SCHEMA: Final = "aura.systematic_neural_alu_artif
 MAX_MODULUS: Final = 63
 HARMONIC_COUNT: Final = 8
 SYSTEMATIC_NEURAL_ALU_SOURCE_FILES: Final = (
+    "core/brain/llm/latent_cortex/persistence.py",
     "core/brain/llm/latent_cortex/systematic_neural_alu.py",
     "core/learning/systematic_neural_alu_training.py",
 )
@@ -319,30 +319,24 @@ def load_systematic_neural_alu(
     return tissue
 
 
-def write_systematic_neural_alu_manifest(
-    directory: Path,
+def build_systematic_neural_alu_manifest(
     *,
+    weights_sha256: str,
     training_receipt: dict[str, Any],
 ) -> dict[str, Any]:
-    target = directory.expanduser().resolve()
-    weights_path = target / "weights.safetensors"
-    if not weights_path.is_file():
-        raise FileNotFoundError("systematic neural ALU weights are absent")
+    if len(weights_sha256) != 64 or any(
+        character not in "0123456789abcdef" for character in weights_sha256
+    ):
+        raise ValueError("systematic neural ALU weights commitment is invalid")
     body = {
         "schema": SYSTEMATIC_NEURAL_ALU_ARTIFACT_SCHEMA,
         "config": SystematicNeuralALUConfig().to_dict(),
-        "weights_file": weights_path.name,
-        "weights_sha256": _file_sha256(weights_path),
+        "weights_file": "weights.safetensors",
+        "weights_sha256": weights_sha256,
         "teacher_removed_runtime": True,
         "training_receipt": training_receipt,
     }
-    manifest = {**body, "manifest_sha256": _canonical_sha256(body)}
-    scratch = target / f".manifest.{os.getpid()}.tmp"
-    scratch.write_text(json.dumps(manifest, indent=2, sort_keys=True) + "\n", encoding="utf-8")
-    with scratch.open("rb") as handle:
-        os.fsync(handle.fileno())
-    os.replace(scratch, target / "manifest.json")
-    return manifest
+    return {**body, "manifest_sha256": _canonical_sha256(body)}
 
 
 __all__ = [
@@ -353,10 +347,10 @@ __all__ = [
     "SYSTEMATIC_NEURAL_ALU_SCHEMA",
     "SYSTEMATIC_NEURAL_ALU_SOURCE_FILES",
     "SystematicNeuralALU",
+    "build_systematic_neural_alu_manifest",
     "SystematicNeuralALUConfig",
     "SystematicNeuralALUExecution",
     "SystematicNeuralALUResult",
     "execute_systematic_neural_program",
     "load_systematic_neural_alu",
-    "write_systematic_neural_alu_manifest",
 ]

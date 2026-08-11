@@ -673,6 +673,14 @@
       "scope": "<module>.CampaignJournal._write_all"
     },
     {
+      "callee": "core.runtime.atomic_writer.ensure_private_directory",
+      "canonical_owner": true,
+      "category": "direct_atomic_file_write",
+      "count": 1,
+      "path": "core/brain/llm/latent_cortex/persistence.py",
+      "scope": "<module>.LatentCortexPersistence._publish_directory_artifact"
+    },
+    {
       "callee": "core.runtime.atomic_writer.atomic_write_text",
       "canonical_owner": false,
       "category": "direct_atomic_file_write",
@@ -16650,6 +16658,6 @@
     }
   ],
   "description": "Exact AST effect-ownership debt ratchet; refresh only after reviewed change",
-  "inventory_sha256": "67377fbd0d36675389a03623c5c565b44e3d90382baf95d85f9e46211b79d0a4",
+  "inventory_sha256": "b08871eb4817252cdbebf58680ca8ea7e52c7c2446e3031f61c741861ff081eb",
   "schema_version": 1
 }

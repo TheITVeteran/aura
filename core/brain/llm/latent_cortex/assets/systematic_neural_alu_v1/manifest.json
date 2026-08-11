@@ -4,7 +4,7 @@
     "max_modulus": 63,
     "schema": "aura.systematic_neural_alu.v1"
   },
-  "manifest_sha256": "3e5742fac18730a4202fa7a60819286a328ed387239fbc7e06e870dc575d9e5a",
+  "manifest_sha256": "cb94cf04bc00cd3ade21861986c889a34e30bbe141217e80fe931427f1f99dbb",
   "schema": "aura.systematic_neural_alu_artifact.v1",
   "teacher_removed_runtime": true,
   "training_receipt": {
@@ -15,7 +15,7 @@
       19,
       23
     ],
-    "final_raw_loss": 9.499551752861768e-13,
+    "final_raw_loss": 9.437554904234702e-13,
     "frozen_test_moduli": [
       29,
       31,
@@ -25,11 +25,12 @@
     ],
     "initial_raw_loss": 14.593198776245117,
     "raw_steps": 6000,
-    "receipt_sha256": "f3321abdc8f0bffe7e0c661c9803367cbf99625812ea0c4948fb57c80ca80eee",
+    "receipt_sha256": "624d44339431a61596a348848a7bcbd819c4dd23b1acdbea3f760cea83fe7991",
     "schema": "aura.systematic_neural_alu_training.v1",
     "source_sha256s": {
-      "core/brain/llm/latent_cortex/systematic_neural_alu.py": "c2ed0df0880ca6c1cb935bf7b140e6c16526e357d9266341fcd6b1b13147fa17",
-      "core/learning/systematic_neural_alu_training.py": "1dd3b2ae971efd44f36aae073ffb44f89cd1ff2fbf25d815439f32b2d8765343"
+      "core/brain/llm/latent_cortex/persistence.py": "eab0a16f2fc0791835ef81f1a167bb672e1c5d174eb4c3d2b9fcd8f1b4fe9b0c",
+      "core/brain/llm/latent_cortex/systematic_neural_alu.py": "141a3d16aa891be182b30c38707a3f15c208734574e5af32459a8f25ac105a72",
+      "core/learning/systematic_neural_alu_training.py": "fd6c0dedce78053f27f2b89deac18da163bb48744e24c956fdf5adf02697dca7"
     },
     "teacher_removed_before_evaluation": true,
     "train_exact_accuracy": 1.0,
@@ -43,5 +44,5 @@
     ]
   },
   "weights_file": "weights.safetensors",
-  "weights_sha256": "16920810001731be57c5133155b33196a9728f0cacbf83a2329c81540297564b"
+  "weights_sha256": "059e811c0d9e1fbfd76f1a513636c713962a500f5692d4e914bd96d1372405b7"
 }

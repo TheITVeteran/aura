@@ -7,7 +7,7 @@ import json
 from pathlib import Path
 
 from core.governance_context import local_internal_governed_scope
-from core.runtime.atomic_writer import interprocess_file_lock
+from core.runtime.atomic_writer import ensure_private_directory, interprocess_file_lock
 from core.runtime.file_write_gateway import (
     DirectoryFileWriteBatchEntry,
     FileWriteBatchEntry,
@@ -67,23 +67,68 @@ class LatentCortexPersistence:
     ) -> FileWriteBatchReceipt:
         """Atomically publish one exact trajectory package generation."""
 
-        entries = (
-            DirectoryFileWriteBatchEntry("factors.npz", factors_payload),
-            DirectoryFileWriteBatchEntry("manifest.json", manifest_payload),
+        return self._publish_directory_artifact(
+            target_dir,
+            (
+                DirectoryFileWriteBatchEntry("factors.npz", factors_payload),
+                DirectoryFileWriteBatchEntry("manifest.json", manifest_payload),
+            ),
+            commit_marker="manifest.json",
+            source="latent_cortex_trajectory_artifact",
         )
-        with local_internal_governed_scope("latent_cortex_trajectory_artifact"):
-            gateway = get_file_write_gateway()
-            gateway.ensure_directory(
-                target_dir,
-                source="latent_cortex_trajectory_artifact",
-            )
-            return gateway.write_bytes_batch_in_directory(
+
+    @staticmethod
+    def _publish_directory_artifact(
+        target_dir: Path,
+        entries: tuple[DirectoryFileWriteBatchEntry, ...],
+        *,
+        commit_marker: str,
+        source: str,
+    ) -> FileWriteBatchReceipt:
+        directory = ensure_private_directory(target_dir).resolve()
+        with local_internal_governed_scope(source):
+            receipt = get_file_write_gateway().write_bytes_batch_in_directory(
                 target_dir,
                 entries,
                 allowed_existing_names={entry.name for entry in entries},
-                commit_marker="manifest.json",
-                source="latent_cortex_trajectory_artifact",
+                commit_marker=commit_marker,
+                source=source,
             )
+        expected = {
+            str(directory / entry.name): hashlib.sha256(bytes(entry.payload)).hexdigest()
+            for entry in entries
+        }
+        if (
+            not receipt.transaction_id
+            or receipt.paths != tuple(expected)
+            or dict(receipt.sha256) != expected
+        ):
+            raise RuntimeError(
+                f"{source} directory receipt does not match committed payloads"
+            )
+        return receipt
+
+    def publish_neural_tissue_artifact(
+        self,
+        target_dir: Path,
+        *,
+        weights_payload: bytes,
+        manifest_payload: bytes,
+    ) -> FileWriteBatchReceipt:
+        """Publish weights and their manifest as one rollback-safe generation."""
+
+        return self._publish_directory_artifact(
+            target_dir,
+            (
+                DirectoryFileWriteBatchEntry(
+                    "weights.safetensors",
+                    weights_payload,
+                ),
+                DirectoryFileWriteBatchEntry("manifest.json", manifest_payload),
+            ),
+            commit_marker="manifest.json",
+            source="latent_cortex_neural_tissue_artifact",
+        )
 
     def save_schedule_library(
         self,

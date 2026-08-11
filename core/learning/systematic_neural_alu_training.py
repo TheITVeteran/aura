@@ -5,18 +5,20 @@ from __future__ import annotations
 import hashlib
 import json
 import math
-import os
 from pathlib import Path
 from typing import Any, Final
 
 import mlx.core as mx
 import mlx.nn as nn
 import mlx.optimizers as optim
+import numpy as np
+from safetensors.numpy import save as save_safetensors_bytes
 
+from core.brain.llm.latent_cortex.persistence import LatentCortexPersistence
 from core.brain.llm.latent_cortex.systematic_neural_alu import (
     SYSTEMATIC_NEURAL_ALU_SOURCE_FILES,
     SystematicNeuralALU,
-    write_systematic_neural_alu_manifest,
+    build_systematic_neural_alu_manifest,
 )
 
 SYSTEMATIC_NEURAL_ALU_TRAINING_SCHEMA: Final = "aura.systematic_neural_alu_training.v1"
@@ -159,18 +161,26 @@ def train_and_write_systematic_neural_alu_artifact(
     out_dir: Path,
 ) -> dict[str, Any]:
     target = out_dir.expanduser().resolve()
-    target.mkdir(parents=True, exist_ok=True)
     tissue, receipt = train_systematic_neural_alu()
-    scratch = target / f".weights.{os.getpid()}.safetensors"
-    mx.save_safetensors(
-        str(scratch),
+    weights_payload = save_safetensors_bytes(
         {
-            "raw_coefficients": tissue.raw_coefficients,
-            "harmonic_weights": tissue.harmonic_weights,
+            "raw_coefficients": np.asarray(tissue.raw_coefficients),
+            "harmonic_weights": np.asarray(tissue.harmonic_weights),
         },
     )
-    os.replace(scratch, target / "weights.safetensors")
-    return write_systematic_neural_alu_manifest(target, training_receipt=receipt)
+    manifest = build_systematic_neural_alu_manifest(
+        weights_sha256=hashlib.sha256(weights_payload).hexdigest(),
+        training_receipt=receipt,
+    )
+    manifest_payload = (
+        json.dumps(manifest, indent=2, sort_keys=True).encode("ascii") + b"\n"
+    )
+    LatentCortexPersistence().publish_neural_tissue_artifact(
+        target,
+        weights_payload=weights_payload,
+        manifest_payload=manifest_payload,
+    )
+    return manifest
 
 
 __all__ = [

@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import hashlib
 import json
-import os
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any, Final
@@ -23,6 +22,7 @@ DEFAULT_NEURAL_TRANSITION_ARTIFACT: Final = (
 )
 NEURAL_TRANSITION_SOURCE_FILES: Final = (
     "core/brain/llm/latent_cortex/neural_transition_tissue.py",
+    "core/brain/llm/latent_cortex/persistence.py",
     "core/brain/llm/latent_cortex/typed_transition_executor.py",
     "core/learning/neural_transition_training.py",
 )
@@ -385,31 +385,24 @@ def load_neural_transition_tissue(
     return tissue
 
 
-def write_neural_transition_manifest(
-    directory: Path,
+def build_neural_transition_manifest(
     *,
+    weights_sha256: str,
     training_receipt: dict[str, Any],
 ) -> dict[str, Any]:
-    target = directory.expanduser().resolve()
-    target.mkdir(parents=True, exist_ok=True)
-    weights_path = target / "weights.safetensors"
-    if not weights_path.is_file():
-        raise FileNotFoundError("neural transition weights are absent")
+    if len(weights_sha256) != 64 or any(
+        character not in "0123456789abcdef" for character in weights_sha256
+    ):
+        raise ValueError("neural transition weights commitment is invalid")
     body = {
         "schema": NEURAL_TRANSITION_ARTIFACT_SCHEMA,
         "config": NeuralTransitionTissueConfig().to_dict(),
-        "weights_file": weights_path.name,
-        "weights_sha256": _file_sha256(weights_path),
+        "weights_file": "weights.safetensors",
+        "weights_sha256": weights_sha256,
         "teacher_removed_runtime": True,
         "training_receipt": training_receipt,
     }
-    manifest = {**body, "manifest_sha256": _canonical_sha256(body)}
-    scratch = target / f".manifest.{os.getpid()}.tmp"
-    scratch.write_text(json.dumps(manifest, indent=2, sort_keys=True) + "\n", encoding="utf-8")
-    with scratch.open("rb") as handle:
-        os.fsync(handle.fileno())
-    os.replace(scratch, target / "manifest.json")
-    return manifest
+    return {**body, "manifest_sha256": _canonical_sha256(body)}
 
 
 __all__ = [
@@ -419,11 +412,11 @@ __all__ = [
     "NEURAL_TRANSITION_TISSUE_SCHEMA",
     "NEURAL_TRANSITION_SOURCE_FILES",
     "SUPPORTED_MODULI",
+    "build_neural_transition_manifest",
     "NeuralProgramExecution",
     "NeuralTransitionResult",
     "NeuralTransitionTissue",
     "NeuralTransitionTissueConfig",
     "execute_neural_action_program",
     "load_neural_transition_tissue",
-    "write_neural_transition_manifest",
 ]
