@@ -44956,3 +44956,49 @@ gain, fusion, frontier performance or `WOW Signal` is claimed. The completion
 envelope remains `912/920` (approximately `99.1%`). Next is to freeze the
 published repair and rerun the bounded resident canary, then proceed directly
 to the prompt-disjoint behavioral falsifier.
+
+## Checkpoint 2026-08-11-241: Resident Decode Evaluation Custody
+
+The CP240 source-bound canary preserved its repository virtualenv across both
+signed preload handoffs, loaded the exact resident 32B model and completed all
+three requested training steps through two bounded detached invocations. Its
+authenticated controller reached terminal state `completed`; completion
+SHA-256 is
+`b35e8ed0e10d51b2fbf70dd201f8b2bc22e5de81a9faecf25659717a8c81e6ff`.
+The final checkpoint tensor commitment is
+`39776c77e9656b8bd29cc1913cf53137b103fd8220b5bcef569ee7d5422ffe9d`,
+its checkpoint receipt commitment is
+`e0c7419acf0e926263a20f2e75713be7d6d5e885a5e0ab9e0733727a77b4b0a4`,
+and the authoritative terminal training receipt commitment is
+`1a4a1619ed2314dccc37c1b92876c6ee26167c87f53dffdc32a0c577e26cc0df`.
+
+At step 3, teacher-forced held-out T8/T16 cross-entropy was `2.584433`
+versus T1 `3.154430`, an `18.070%` relative reduction. Initial state, terminal
+state, action, exact state values and exact action instructions remained `100%`
+across T1/T2/T4/T8/T16. The recurrence phase again recorded nonzero gradients
+in the recurrent controller, typed action transition, typed action codebook
+and typed state codebook. This independently reproduces the CP238 mechanism,
+load, checkpoint, resume and terminal-custody evidence on CP240 source. It is
+still teacher-forced evidence, not decoded reasoning gain.
+
+The decoded evaluator now has a dedicated resident launcher instead of an
+ad-hoc foreground command. It refuses a missing, incomplete, stale or
+checkpoint-mismatched terminal campaign. Its immutable plan binds the campaign
+completion, checkpoint, frozen evaluator path, task and recurrence depths,
+seed, token budget and requested arms. The frozen evaluator then runs under
+detached source custody with a target-bound `caffeinate` process, an independent
+detached external memory sentinel and the same signed preload release protocol
+as resident training. Status accepts a result only when the detached receipt
+passed, the report's canonical hash is valid and every experimental parameter
+matches the frozen plan. Failed targets, forged reports and unsupported broad
+claims remain explicit.
+
+The new launcher passes `5/5` contract tests; the complete affected resident
+launcher/evaluator/controller surface passes `49/49`; repository smoke passes
+`104/104`; Ruff, compilation and architectural layering are clean. A real
+prepare-only run against terminal CP238 also committed and replayed the frozen
+evaluation plan without loading a model. No decoded behavioral gain, broad
+transfer, fusion, frontier performance or `WOW Signal` is claimed. The
+completion envelope remains `912/920` (approximately `99.1%`). Next is the
+small prompt-disjoint decoded resident diagnostic comparing trained recurrence
+with its initialization-matched equal-compute control and mechanism lesions.
