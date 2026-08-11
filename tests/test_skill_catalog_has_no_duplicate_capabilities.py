@@ -23,6 +23,7 @@ from __future__ import annotations
 import pytest
 
 from core.capability_engine import _SKILL_ALIASES
+import logging
 
 
 class _Meta:
@@ -119,7 +120,8 @@ def _skill_classes() -> dict[str, type]:
     for module in pkgutil.iter_modules(pkg.__path__):
         try:
             loaded = importlib.import_module(f"core.skills.{module.name}")
-        except Exception:  # noqa: BLE001 — an unimportable skill is not this test's subject
+        except Exception as exc:  # noqa: BLE001 — an unimportable skill is not this test's subject
+            logging.getLogger(__name__).debug("skill %s did not import: %s", module.name, exc)
             continue
         for _, cls in inspect.getmembers(loaded, inspect.isclass):
             if cls.__module__ != loaded.__name__:

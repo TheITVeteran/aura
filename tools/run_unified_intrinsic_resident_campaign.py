@@ -608,7 +608,8 @@ def _publish_failure_status(
                 "restartable": error in RESTARTABLE_CODES,
             },
         )
-    except Exception:  # noqa: BLE001 - original controller failure remains primary
+    except Exception as exc:  # noqa: BLE001 - original controller failure remains primary
+        logger.debug("failure-report emit failed, primary error preserved: %s", exc)
         return
 
 

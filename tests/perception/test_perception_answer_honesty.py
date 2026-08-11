@@ -25,6 +25,12 @@ from __future__ import annotations
 
 import pytest
 
+#: The owner's desktop on whatever machine runs this, rather than one
+#: developer's account name baked into the fixture.
+from pathlib import Path
+
+_DESKTOP_NOTE = str(Path.home() / "Desktop" / "aura_haiku.txt")
+
 
 # ── 1. Bookkeeping must not be served as an answer ─────────────────────────
 
@@ -175,9 +181,9 @@ def test_done_reports_the_effect_not_the_step_count() -> None:
         "receipts": [{
             "action": "write_text_file",
             "ok": True,
-            "result": {"path": "/Users/owner/Desktop/aura_haiku.txt"},
+            "result": {"path": _DESKTOP_NOTE},
         }],
-    }) == "wrote /Users/owner/Desktop/aura_haiku.txt."
+    }) == f"wrote {_DESKTOP_NOTE}."
 
 
 def test_several_effects_are_listed_in_order() -> None:

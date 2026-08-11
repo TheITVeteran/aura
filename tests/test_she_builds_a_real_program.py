@@ -161,11 +161,17 @@ def _score_against_held_out(source: str) -> tuple[int, int]:
     namespace: dict = {"__name__": "candidate"}
     exec(compile(source, "<candidate>", "exec"), namespace)  # noqa: S102
     passed = 0
+    crashes: list[str] = []
     for case in held_out:
         try:
             passed += namespace["move"](case["input"]) == case["expected"]
-        except Exception:  # noqa: BLE001 - a crash is a failed case
-            pass
+        except Exception as exc:  # noqa: BLE001 - a crash is a failed case
+            # Counted, not merely skipped. "0 of 20 passed" and "20 crashed
+            # with the same TypeError" are the same score and completely
+            # different diagnoses, and the second one used to be invisible.
+            crashes.append(f"{type(exc).__name__}: {exc}")
+    if crashes:
+        print(f"{len(crashes)} held-out case(s) crashed; first: {crashes[0]}")
     return passed, len(held_out)
 
 

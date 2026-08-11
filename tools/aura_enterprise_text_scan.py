@@ -26,6 +26,15 @@ _FILESYSTEM_CALL_NAMES = frozenset(
     }
 )
 _FILESYSTEM_KEYWORDS = frozenset({"cwd", "dir", "path", "filename", "file"})
+#: Names that mean a value is being USED as a credential — bound to one, or
+#: handed to something that authenticates with it. The same distinction the
+#: /tmp/ rule already draws with ``disk_lines``: a credential-shaped literal
+#: nothing authenticates with is a fixture, exactly as a path nothing opens
+#: is not a world-writable-directory defect.
+_CREDENTIAL_NAME_PARTS = (
+    "key", "token", "secret", "password", "passwd", "credential",
+    "auth", "bearer", "api_key", "apikey", "access", "session",
+)
 _PASSTHROUGH_CALL_NAMES = frozenset({"Path", "PurePath", "str", "fspath"})
 _DOCSTRING_OWNERS = (ast.Module, ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef)
 #: Rules that describe something written in the file rather than something
@@ -71,6 +80,10 @@ class FileTextContext:
     disk_lines: set[int] | None = None
     #: Strings the file asserts must NOT appear in some output.
     redaction_evidence: tuple[str, ...] = ()
+    #: Lines where a credential-shaped literal is bound to a credential name
+    #: or passed as one. ``None`` means the file would not parse, so nothing
+    #: is known and every match is reported.
+    credential_use_lines: set[int] | None = None
     #: Lines carrying a stub/placeholder marker inside a string CONSTANT. A
     #: line that matches the text rule and is absent here carries the marker
     #: in an identifier instead.
@@ -391,6 +404,7 @@ def file_text_context(tree: ast.AST | None) -> FileTextContext:
             ):
                 evidence.append(left.value)
 
+    context.credential_use_lines = _credential_use_lines(tree)
     context.redaction_evidence = tuple(
         text for text in evidence if len(text) >= 4 and ("/" in text or len(text) >= 6)
     )
@@ -399,6 +413,79 @@ def file_text_context(tree: ast.AST | None) -> FileTextContext:
     context.unconditional_skip_lines = _unconditional_skip_lines(tree)
     context.quoted_skip_lines = _quoted_skip_lines(tree)
     return context
+
+
+
+def _is_credential_name(name: str) -> bool:
+    lowered = str(name or "").lower()
+    return any(part in lowered for part in _CREDENTIAL_NAME_PARTS)
+
+
+def _credential_use_lines(tree: ast.AST | None) -> set[int]:
+    """Lines where a credential-shaped string is USED as a credential.
+
+    A secret matters because something authenticates with it. Bound to
+    ``API_KEY``, passed as ``token=``, handed to ``authenticate(...)`` — that
+    is a key in use, and it is reported wherever it sits, including tests.
+
+    A credential-shaped literal in a list of parametrize cases is not that.
+    ``tests/test_security_scan_false_positives.py`` asserts that exactly such
+    literals are never excused by the schema-identifier rule, so the file has
+    to contain them; flagging its fixtures made the gate report the test that
+    proves the gate works. That is how a secret scanner becomes a list nobody
+    reads, and the day it finds a real key the finding arrives in that list.
+
+    Judged by USE, not by file: `API_KEY = "ghp_…"` inside tests/ still fires.
+    """
+    lines: set[int] = set()
+    if tree is None:
+        return lines
+
+    def _mark(node: ast.AST) -> None:
+        for child in ast.walk(node):
+            if isinstance(child, ast.Constant) and isinstance(child.value, str):
+                lines.add(int(getattr(child, "lineno", 0) or 0))
+
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Assign):
+            if any(
+                _is_credential_name(name)
+                for target in node.targets
+                for name in _assigned_names(target)
+            ):
+                _mark(node.value)
+        elif isinstance(node, ast.AnnAssign) and node.value is not None:
+            if any(_is_credential_name(name) for name in _assigned_names(node.target)):
+                _mark(node.value)
+        elif isinstance(node, ast.Call):
+            for keyword in node.keywords:
+                if keyword.arg and _is_credential_name(keyword.arg):
+                    _mark(keyword.value)
+            if _is_credential_name(_call_name(node)):
+                for arg in node.args:
+                    _mark(arg)
+        elif isinstance(node, ast.Dict):
+            for key, value in zip(node.keys, node.values):
+                if (
+                    isinstance(key, ast.Constant)
+                    and isinstance(key.value, str)
+                    and _is_credential_name(key.value)
+                ):
+                    _mark(value)
+    return lines
+
+
+def _assigned_names(target: ast.AST) -> list[str]:
+    if isinstance(target, ast.Name):
+        return [target.id]
+    if isinstance(target, ast.Attribute):
+        return [target.attr]
+    if isinstance(target, (ast.Tuple, ast.List)):
+        names: list[str] = []
+        for element in target.elts:
+            names.extend(_assigned_names(element))
+        return names
+    return []
 
 
 def _local_path_is_inert(matched: str, line_no: int, context: FileTextContext) -> bool:

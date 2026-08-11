@@ -16,6 +16,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
+import logging
 
 # Log hermeticity: keep test logging out of the live ~/.aura/logs so suite
 # noise (test doubles, induced failures) never pollutes the running
@@ -1965,7 +1966,8 @@ def _mlx_clients_do_not_outlive_their_test(request):
 
     try:
         from core.brain.llm import mlx_client as _mlx
-    except Exception:  # noqa: BLE001 - the module may not be importable here
+    except Exception as exc:  # noqa: BLE001 - the module may not be importable here
+        logging.getLogger(__name__).debug("mlx_client not importable for teardown: %s", exc)
         return
     registry = getattr(_mlx, "_CLIENTS", None)
     if isinstance(registry, dict) and registry:
@@ -1974,8 +1976,8 @@ def _mlx_clients_do_not_outlive_their_test(request):
             if callable(close):
                 try:
                     close()
-                except Exception:  # noqa: BLE001 - teardown may never fail a test
-                    pass
+                except Exception as exc:  # noqa: BLE001 - teardown may never fail a test
+                    logging.getLogger(__name__).debug("client close failed: %s", exc)
         registry.clear()
     gc.collect()
 

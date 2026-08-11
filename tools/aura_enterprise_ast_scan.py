@@ -76,6 +76,48 @@ def is_abstract_function(node: ast.FunctionDef | ast.AsyncFunctionDef) -> bool:
     )
 
 
+def is_overridden_abstract(
+    node: ast.FunctionDef | ast.AsyncFunctionDef,
+    enclosing: ast.AST | None,
+    module: ast.AST | None,
+) -> bool:
+    """A base method that subclasses in this module actually override.
+
+    `@abstractmethod` is one way to spell an abstract method. A base class
+    whose method body is `raise NotImplementedError`, overridden by every
+    concrete subclass, is the other — and it is the one the standard library
+    itself uses. Reporting it as parked debt says "unfinished" about the
+    exact construct that declares an interface.
+
+    Judged by SHAPE, not by path, on the same terms as
+    ``is_deliberate_constructor_override``: there must be a real subclass in
+    this module that really defines the method. A base method nobody
+    overrides is still unimplemented scaffolding and is still reported.
+    """
+    if module is None or not isinstance(enclosing, ast.ClassDef):
+        return False
+    base_name = enclosing.name
+    for candidate in ast.walk(module):
+        if not isinstance(candidate, ast.ClassDef) or candidate is enclosing:
+            continue
+        inherits = any(
+            (isinstance(base, ast.Name) and base.id == base_name)
+            or (isinstance(base, ast.Attribute) and base.attr == base_name)
+            for base in candidate.bases
+        )
+        if not inherits:
+            continue
+        for member in candidate.body:
+            if (
+                isinstance(member, (ast.FunctionDef, ast.AsyncFunctionDef))
+                and member.name == node.name
+                and body_without_docstring(member)
+                and not isinstance(body_without_docstring(member)[0], ast.Raise)
+            ):
+                return True
+    return False
+
+
 def is_deliberate_constructor_override(
     node: ast.FunctionDef | ast.AsyncFunctionDef, enclosing: ast.AST | None
 ) -> bool:
@@ -270,7 +312,49 @@ def handler_answers_with_a_value(handler: ast.ExceptHandler) -> bool:
 _DEGRADATION_RECORDERS = frozenset({"record_degradation", "_record_degradation"})
 
 
-def handler_records_a_degradation(handler: ast.ExceptHandler) -> bool:
+def module_degradation_wrappers(module: ast.AST | None) -> frozenset[str]:
+    """Functions in this module that record a degradation on the caller's behalf.
+
+    ``_DEGRADATION_RECORDERS`` names the two canonical spellings, and the
+    codebase does not use only those. It wraps them —
+    ``_record_grounding_degradation``, ``_record_capability_degradation``,
+    ``_degrade`` in the cognitive loop — so one subsystem name and one
+    severity policy is written once instead of at forty call sites. That is
+    better engineering than the literal call, and it made every handler using
+    a wrapper look to this gate exactly like a handler that reports nothing.
+
+    Resolved by SHAPE: a module-level function whose own body calls a known
+    recorder. A wrapper that does not actually record is not one, whatever it
+    is called.
+    """
+    if module is None:
+        return frozenset()
+
+    # ONE pass. The obvious version — ast.walk(fn) for every FunctionDef —
+    # re-walks each nested subtree once per enclosing function, which is the
+    # same second walk over 9.2M nodes that cost this gate a third of its
+    # running time before and pushed it past the 60s the contract test
+    # allows. Here each node is visited once and attributed to the function
+    # stack above it.
+    wrappers: set[str] = set()
+    stack: list[tuple[ast.AST, list[str]]] = [(module, [])]
+    while stack:
+        node, enclosing = stack.pop()
+        if (
+            isinstance(node, ast.Call)
+            and dotted_call_name(node).rsplit(".", 1)[-1] in _DEGRADATION_RECORDERS
+        ):
+            wrappers.update(enclosing)
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            enclosing = [*enclosing, node.name]
+        for child in ast.iter_child_nodes(node):
+            stack.append((child, enclosing))
+    return frozenset(wrappers)
+
+
+def handler_records_a_degradation(
+    handler: ast.ExceptHandler, wrappers: frozenset[str] = frozenset()
+) -> bool:
     """Did the handler report the failure through the runtime's own protocol?
 
     ``# noqa: BLE001`` says a human looked at this handler once. A call to
@@ -290,7 +374,8 @@ def handler_records_a_degradation(handler: ast.ExceptHandler) -> bool:
     for node in ast.walk(handler):
         if (
             isinstance(node, ast.Call)
-            and dotted_call_name(node).rsplit(".", 1)[-1] in _DEGRADATION_RECORDERS
+            and dotted_call_name(node).rsplit(".", 1)[-1]
+            in (_DEGRADATION_RECORDERS | wrappers)
         ):
             return True
     return False
@@ -336,6 +421,14 @@ class AstGate(ast.NodeVisitor):
         #: about a third of its running time. A ``None`` is pushed for a
         #: function so a nested def does not inherit the class above it.
         self._scopes: list[ast.AST | None] = []
+        #: The module root, so a base method can be told from parked debt by
+        #: asking whether a subclass in this file actually overrides it.
+        self._module: ast.AST | None = None
+        #: Module-level functions that record a degradation, so a handler
+        #: calling a wrapper counts as reporting the failure. Computed on
+        #: first use: most modules never reach the branch that needs it, and
+        #: paying for every module spent a tenth of the gate's budget.
+        self._degradation_wrappers: frozenset[str] | None = None
         #: Depth inside a ``__del__``. A finalizer runs while the interpreter
         #: is tearing modules out from under it, so recording a degradation
         #: there can fail on the way to reporting the failure. Silence is the
@@ -345,6 +438,18 @@ class AstGate(ast.NodeVisitor):
     @property
     def _in_finalizer(self) -> bool:
         return self._finalizer_depth > 0
+
+    def visit_Module(self, node: ast.Module) -> None:
+        # Recorded once, at the root, so `is_overridden_abstract` can look
+        # for a subclass without every method re-walking the file.
+        self._module = node
+        self._degradation_wrappers = None
+        self.generic_visit(node)
+
+    def _wrappers(self) -> frozenset[str]:
+        if self._degradation_wrappers is None:
+            self._degradation_wrappers = module_degradation_wrappers(self._module)
+        return self._degradation_wrappers
 
     @property
     def _enclosing(self) -> ast.AST | None:
@@ -416,7 +521,7 @@ class AstGate(ast.NodeVisitor):
             elif not (
                 self._line_has_reviewed_broad_except(node)
                 or handler_always_reraises(node)
-                or handler_records_a_degradation(node)
+                or handler_records_a_degradation(node, self._wrappers())
             ):
                 self.add(
                     "medium" if is_production(self.rel) else "low",
@@ -452,6 +557,10 @@ class AstGate(ast.NodeVisitor):
             len(body) == 1
             and isinstance(body[0], ast.Raise)
             and not (is_abstract_function(node) and is_not_implemented_only(node))
+            and not (
+                is_not_implemented_only(node)
+                and is_overridden_abstract(node, self._enclosing, self._module)
+            )
             and not is_serialization_guard(node)
             and not is_deliberate_refusal(node)
             and not self.rel.startswith("tests/")
@@ -486,6 +595,10 @@ class AstGate(ast.NodeVisitor):
             len(body) == 1
             and isinstance(body[0], ast.Raise)
             and not (is_abstract_function(node) and is_not_implemented_only(node))
+            and not (
+                is_not_implemented_only(node)
+                and is_overridden_abstract(node, self._enclosing, self._module)
+            )
             and not is_serialization_guard(node)
             and not is_deliberate_refusal(node)
             and not self.rel.startswith("tests/")

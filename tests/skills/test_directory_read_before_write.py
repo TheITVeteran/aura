@@ -391,7 +391,7 @@ def test_genuine_research_requests_still_require_sources(objective: str) -> None
     [
         "write hello into ~/Documents/x.txt",
         "list the files in ~/Documents/reports",
-        "read /Users/bryan/news-archive/index.txt and tell me the first line",
+        f"read {Path.home() / 'news-archive' / 'index.txt'} and tell me the first line",
     ],
 )
 def test_paths_with_research_words_in_them_stay_filesystem_tasks(objective: str) -> None:

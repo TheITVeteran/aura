@@ -22,6 +22,7 @@ import asyncio
 import pytest
 
 from core.organism import model_validation as mv
+import logging
 
 @pytest.fixture(scope="module")
 def booted_runtime():
@@ -47,8 +48,8 @@ def booted_runtime():
         from core.fsw.rate_groups import get_scheduler
 
         asyncio.run(get_scheduler().stop_all())
-    except Exception:  # noqa: BLE001 — teardown may not fail the suite
-        pass
+    except Exception as exc:  # noqa: BLE001 — teardown may not fail the suite
+        logging.getLogger(__name__).debug("scheduler stop_all failed: %s", exc)
 
 
 class TestRateGroupsActuallyRun:

@@ -24,8 +24,9 @@ from __future__ import annotations
 import pytest
 
 from core.skills.desktop_task import DesktopTaskSkill
+from pathlib import Path
 
-SOURCE = "/Users/bryan/.aura/live-source/core/introspection"
+SOURCE = str(Path(__file__).resolve().parents[2] / "core" / "introspection")
 DESTINATION = "~/Documents/aura_probe_count.txt"
 
 

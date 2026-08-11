@@ -6,6 +6,7 @@ import asyncio
 import pytest
 
 from core.bus.shared_mem_bus import SharedMemoryTransport
+import logging
 
 pytestmark = pytest.mark.unit
 
@@ -18,8 +19,8 @@ def segment():
     yield shm
     try:
         shm.close()
-    except Exception:  # noqa: BLE001 - teardown best effort
-        pass
+    except Exception as exc:  # noqa: BLE001 - teardown best effort
+        logging.getLogger(__name__).debug("shared-memory close failed: %s", exc)
 
 
 def test_oversized_write_is_refused_not_truncated(segment):

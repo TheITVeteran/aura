@@ -269,7 +269,8 @@ def run_reachability_control(responder, tasks: list[AblationTask]) -> dict[str, 
         attempted += 1
         try:
             output = str(responder(LONG_CONTEXT, task, len(task.turns) - 1, history))
-        except Exception:  # noqa: BLE001 — a crashed control is a failed control, and counted
+        except Exception as exc:  # noqa: BLE001 — a crashed control is a failed control, and counted
+            logger.debug("control responder crashed on %s: %s", task, exc)
             continue
         if grade(output, task) > 0:
             solved += 1

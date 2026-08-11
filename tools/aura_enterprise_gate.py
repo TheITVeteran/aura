@@ -364,6 +364,17 @@ def scan_file(path: Path, root: Path, report: GateReport) -> None:
             if kind == "potential_secret":
                 if _is_non_secret_literal(line):
                     continue
+                # A secret matters because something authenticates with it.
+                # Bound to API_KEY, passed as token=, handed to authenticate()
+                # — reported wherever it sits, tests included. A
+                # credential-shaped literal in a parametrize list is not
+                # that, and flagging it made the gate report the fixtures of
+                # the test that proves the gate works. Same distinction the
+                # /tmp/ rule already draws with disk_lines: judged by USE,
+                # never by which file it sits in.
+                used = context().credential_use_lines
+                if used is not None and line_no not in used:
+                    continue
                 severity = "critical"
             elif kind in {"hardcoded_local_path", "placeholder_stub_mock"} and is_production(rel):
                 severity = "high"

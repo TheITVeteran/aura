@@ -167,7 +167,7 @@ def test_the_error_message_does_not_become_a_metric_dimension():
     """error.type is the low-cardinality class name, per spec."""
     with pytest.raises(ValueError):
         with tool_span("bash") as span:
-            raise ValueError("some very specific path /Users/x/y/z failed")
+            raise ValueError("some very specific path /srv/data/report.txt failed")
 
     assert span.attributes["error.type"] == "ValueError"
 

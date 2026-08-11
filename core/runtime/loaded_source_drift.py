@@ -159,7 +159,12 @@ def _compiled_bodies_differ(source: Path, cache: Path) -> bool | None:
 
     try:
         cached_code = marshal.loads(cache.read_bytes()[_PYC_HEADER_BYTES:])
-        current_code = compile(source.read_bytes(), str(source), "exec", dont_inherit=True)
+        # noqa: S102 — reviewed. This compiles to COMPARE code objects with
+        # the cached .pyc, per the docstring above; the result is never
+        # executed and never leaves this function.
+        current_code = compile(  # noqa: S102
+            source.read_bytes(), str(source), "exec", dont_inherit=True
+        )
     except (OSError, SyntaxError, ValueError, TypeError, EOFError, MemoryError, RecursionError):
         return None
     if not isinstance(cached_code, type(current_code)):

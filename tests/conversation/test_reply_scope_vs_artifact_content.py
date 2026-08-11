@@ -30,6 +30,7 @@ produced, and what was thrown away six times.
 from __future__ import annotations
 
 import pytest
+from pathlib import Path
 
 
 LIVE_MESSAGE = (
@@ -53,7 +54,7 @@ def test_the_live_turn_no_longer_demands_a_number() -> None:
     assert _asks(LIVE_MESSAGE) is False
     # The correct answer — the path — must survive the gate.
     assert (
-        numeric_answer_missing(LIVE_MESSAGE, "/Users/owner/Documents/aura_selftest.md")
+        numeric_answer_missing(LIVE_MESSAGE, str(Path.home() / "Documents" / "aura_selftest.md"))
         is False
     )
 
