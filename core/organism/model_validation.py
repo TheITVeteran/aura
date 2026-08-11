@@ -666,6 +666,8 @@ def install_runtime_validation() -> dict[str, Any]:
         "entity_identity",
         "cognitive_contracts",
         "standing_directives",
+        "fact_custody",
+        "decision_provenance",
     )
     suite.add_model(model)
 
@@ -1230,6 +1232,26 @@ def install_runtime_validation() -> dict[str, Any]:
             _standing_prohibitions_are_deny_only,
             "core/governance/standing_directives.py",
         ),
+        (
+            "a_held_fact_survives_the_stages_that_rewrite_the_reply",
+            "a stage that drops or contradicts an established fact is detected, "
+            "attributed by name, and corrected at the terminal boundary",
+            "fact_custody",
+            "custody_breaks_are_caught_and_repaired",
+            "core/runtime/fact_custody.py, against the 2026-08-10 count failure",
+            _held_facts_survive_the_reply_path,
+            "core/runtime/fact_custody.py",
+        ),
+        (
+            "why_she_did_it_is_answered_from_the_record",
+            "the account of a decision names the measured phase and branch, and "
+            "an empty record produces no account at all",
+            "decision_provenance",
+            "the_answer_comes_from_receipts",
+            "core/introspection/decision_provenance.py against a recorded tick",
+            _why_is_answered_from_provenance,
+            "core/introspection/decision_provenance.py",
+        ),
     ):
         suite.add_test(
             ValidationTest(
@@ -1671,6 +1693,53 @@ def install_runtime_validation() -> dict[str, Any]:
         )
     )
 
+    suite.add_claim(
+        Claim(
+            statement=(
+                "A fact this turn established from evidence survives the stages "
+                "that rewrite the reply, or the stage that lost it is named and "
+                "the value is restored before the reply is sent."
+            ),
+            test="a_held_fact_survives_the_stages_that_rewrite_the_reply",
+            owner="core/runtime/fact_custody.py",
+            asserted_in="core/runtime/fact_custody.py",
+            evidence=Evidence.MEASURED_SYNTHETIC,
+            evidence_note=(
+                "Covers facts a producer HELD. A fact nobody held is not checked, "
+                "and custody makes no claim about facts that were never "
+                "established — the mechanism is a guarantee about transport, not "
+                "about knowledge. Detection is sentence-scoped and value-typed; "
+                "for TEXT-valued facts only absence is detected, because a "
+                "different string near the same subject is not evidence of "
+                "disagreement the way a different integer is."
+            ),
+        )
+    )
+    suite.add_claim(
+        Claim(
+            statement=(
+                "Asked why she did something, Aura answers from the runtime's "
+                "measured record of that tick — the phase, its branch, its "
+                "criteria and what it moved — rather than from a generated "
+                "account of her own reasoning."
+            ),
+            test="why_she_did_it_is_answered_from_the_record",
+            owner="core/introspection/decision_provenance.py",
+            asserted_in="core/introspection/decision_provenance.py",
+            evidence=Evidence.MEASURED_SYNTHETIC,
+            evidence_note=(
+                "Architectural and decision-level why only. Why the model "
+                "represented a concept or emitted a token is NOT answerable — by "
+                "Aura or by anyone, mechanistically, at this scale — and the "
+                "answer states that limit rather than describing a phase in its "
+                "place. The account covers phases that recorded a branch or moved "
+                "a watched field; 28 of 29 phases do not yet declare a contract, "
+                "so their criteria are absent from it even though their writes "
+                "are measured."
+            ),
+        )
+    )
+
     return {
         "model": model.name,
         "tests": [t.name for t in suite.tests()],
@@ -1870,6 +1939,89 @@ def _standing_prohibitions_are_deny_only() -> bool:
         ]
         return not grants and "There is no allow/grant field" in source
     except (ImportError, AttributeError, RuntimeError, TypeError, ValueError, OSError):
+        return False
+
+
+def _held_facts_survive_the_reply_path() -> bool:
+    """A dropped fact is caught, attributed, and put back; noise is not caught."""
+
+    try:
+        from core.runtime.fact_custody import (
+            BreakKind,
+            ValueKind,
+            hold_fact,
+            inspect_mutation,
+            restore_held_facts,
+        )
+        from core.runtime.turn_outcome import TurnOutcome, VerificationGrade, bind_turn
+
+        stated = "From my own receipts, the count was 9."
+        with bind_turn(TurnOutcome("validation_custody", origin="validation")):
+            hold_fact(
+                subject="read_directory",
+                predicate="count",
+                value="9",
+                subject_cues=("count", "files"),
+                canonical_rendering=stated,
+                established_by="validation",
+                grade=VerificationGrade.OBSERVED,
+                kind=ValueKind.NUMBER,
+            )
+            dropped = inspect_mutation("validation.strip", stated, "Nothing to report.")
+            if not (
+                len(dropped) == 1
+                and dropped[0].kind is BreakKind.DROPPED
+                and dropped[0].stage == "validation.strip"
+            ):
+                return False
+            repaired = restore_held_facts("Nothing to report.")
+            if not (repaired.changed and "9" in repaired.text):
+                return False
+            # An unrelated number is not a contradiction, or the mechanism
+            # would rewrite ordinary sentences.
+            return inspect_mutation("validation.append", stated, stated + " It took 42s.") == ()
+    except (ImportError, AttributeError, RuntimeError, TypeError, ValueError):
+        return False
+
+
+def _why_is_answered_from_provenance() -> bool:
+    """The account is the record; an empty record yields no account."""
+
+    try:
+        from types import SimpleNamespace
+
+        from core.introspection.decision_provenance import runtime_authored_why
+        from core.runtime.cognitive_provenance import (
+            begin_transformation,
+            note_branch,
+            recording_tick,
+        )
+
+        state = SimpleNamespace(
+            state_id="v",
+            version=1,
+            updated_at=0.0,
+            affect=SimpleNamespace(curiosity=0.5, arousal=0.4, social_hunger=0.2),
+            cognition=SimpleNamespace(
+                discourse_depth=1,
+                conversation_energy=0.5,
+                working_memory=[],
+                pending_initiatives=[],
+            ),
+            response_modifiers={},
+        )
+        with recording_tick(objective="validation"):
+            moved = begin_transformation("AffectUpdatePhase", state)
+            note_branch("ordinary_decay", arousal=0.4)
+            state.affect.curiosity = 0.69
+            moved.complete(state)
+        answer = runtime_authored_why("why did you do that?")
+        return (
+            "AffectUpdatePhase" in answer
+            and "ordinary_decay" in answer
+            and "affect.curiosity" in answer
+        )
+    except (ImportError, AttributeError, RuntimeError, TypeError, ValueError):
         return False
 
 
