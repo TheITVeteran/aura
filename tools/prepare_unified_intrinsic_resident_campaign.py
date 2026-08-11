@@ -214,16 +214,20 @@ def _profile_training(profile: str) -> dict[str, Any]:
             "eval_every": 1,
             "max_minutes": 240.0,
         }
+    full_per_cell = 8
+    family_count = len(str(common["families"]).split(","))
+    task_depth_count = len(str(common["task_depths"]).split(","))
+    full_bridge_steps = family_count * task_depth_count * full_per_cell
     return {
         **common,
-        "per_cell": 8,
+        "per_cell": full_per_cell,
         "holdout_per_cell": 3,
-        "max_steps": 10,
+        "max_steps": full_bridge_steps + 1,
         "semantic_warmup_steps": 0,
         "state_warmup_steps": 0,
-        "answer_bridge_steps": 9,
+        "answer_bridge_steps": full_bridge_steps,
         "answer_bridge_inner_steps": 32,
-        "eval_every": 4,
+        "eval_every": family_count * task_depth_count,
         "max_minutes": 2880.0,
     }
 

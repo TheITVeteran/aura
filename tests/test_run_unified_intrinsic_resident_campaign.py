@@ -203,9 +203,10 @@ def test_full_profile_uses_the_decode_admitted_cached_bridge_schedule() -> None:
 
     assert training["per_cell"] == 8
     assert training["holdout_per_cell"] == 3
-    assert training["answer_bridge_steps"] == 9
+    assert training["answer_bridge_steps"] == 72
     assert training["answer_bridge_inner_steps"] == 32
-    assert training["max_steps"] == 10
+    assert training["eval_every"] == 9
+    assert training["max_steps"] == 73
 
 
 def test_signed_controller_status_rejects_tampering(tmp_path: Path) -> None:

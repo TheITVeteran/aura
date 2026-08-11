@@ -450,6 +450,28 @@ def test_answer_bridge_schedule_covers_each_family_before_repeating() -> None:
     }
 
 
+def test_answer_bridge_schedule_covers_every_example_before_repetition() -> None:
+    tasks = [
+        type(
+            "Task",
+            (),
+            {
+                "family": family,
+                "depth": depth,
+                "task_id": f"{family}-{depth}-{example}",
+            },
+        )()
+        for family in ("modular", "khop", "register_trace")
+        for depth in (1, 2, 4)
+        for example in range(8)
+    ]
+
+    scheduled = [_answer_bridge_task(tasks, index) for index in range(len(tasks))]
+
+    assert len({task.task_id for task in scheduled}) == len(tasks)
+    assert _answer_bridge_task(tasks, len(tasks)).task_id == scheduled[0].task_id
+
+
 def test_cached_answer_binding_loss_trains_without_model_execution() -> None:
     bundle, _wiring = _bundle()
     controller = bundle.controller

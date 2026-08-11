@@ -51,6 +51,14 @@ from tools.unified_intrinsic_decode_journal import (  # noqa: E402
 )
 
 DECODE_EVALUATION_SCHEMA = "aura.unified_intrinsic_decode_evaluation.v1"
+DECODE_CLAIM_BOUNDARY = (
+    "compiled arms measure public typed-state execution plus tokenizer-bound "
+    "value emission; trained arms constrain only the public output grammar while "
+    "neural state selects every digit. Grammar and digit-pointer lesions test "
+    "those mechanisms separately. Resident model identity is established only by "
+    "the independently verified campaign binding, not this report in isolation. "
+    "This is not a broad reasoning, frontier, fusion, or WOW result"
+)
 
 
 def _logits(value: Any) -> Any:
@@ -545,14 +553,7 @@ def _evaluate_decoding_loaded(
             "candidates_committed": len(candidates),
             "candidates_resumed": resumed_candidates,
         },
-        "claim_boundary": (
-            "compiled arms measure public typed-state execution plus "
-            "tokenizer-bound value emission; trained arms constrain only the "
-            "public output grammar while neural state selects every digit. "
-            "Grammar and digit-pointer lesions test those mechanisms "
-            "separately. This is not a preregistered broad reasoning, "
-            "resident-32B, frontier, fusion, or WOW result"
-        ),
+        "claim_boundary": DECODE_CLAIM_BOUNDARY,
     }
     return {**body, "report_sha256": _canonical_sha256(body)}
 
