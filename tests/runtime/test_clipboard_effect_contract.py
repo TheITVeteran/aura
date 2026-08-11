@@ -86,3 +86,60 @@ def test_the_check_reads_the_clipboard_back() -> None:
 
     assert "EffectKind.CLIPBOARD_CONTAINS" in source
     assert "after.clipboard_excerpt" in source
+
+
+# ── A one-line script does not need a 32B model ────────────────────────────
+
+def test_the_clipboard_script_is_deterministic() -> None:
+    """LIVE, 2026-08-10, once the contract was accepted:
+
+        "os_automation failed: Skill error: TimeoutError"  (55,302ms)
+
+    The AppleScript compiler asks the resident 32B to WRITE
+    `set the clipboard to "ORION-7"` under a 35-second budget. A one-line
+    script whose only variable is a string the person typed does not need a
+    model, and every second spent generating it is latency and a chance to
+    fail.
+    """
+    from core.skills.os_automation import OSAutomationCompilerSkill
+
+    script = OSAutomationCompilerSkill._deterministic_script_for_goal(
+        "Put the text ORION-7 on my clipboard, then tell me what you put there.", {}
+    )
+
+    assert 'set the clipboard to "ORION-7"' in script
+
+
+def test_the_deterministic_script_satisfies_the_contract() -> None:
+    """If it did not cover the contract the compiler would call the model anyway."""
+    from core.skills.os_automation import OSAutomationCompilerSkill
+
+    goal = "Put the text ORION-7 on my clipboard, then tell me what you put there."
+    script = OSAutomationCompilerSkill._deterministic_script_for_goal(goal, {})
+    covered, _reason = OSAutomationCompilerSkill._deterministic_script_covers_contract(
+        goal=goal,
+        context={},
+        contract=build_effect_contract(goal),
+        script=script,
+    )
+
+    assert covered is True
+
+
+def test_the_script_and_the_verifier_share_one_payload_definition() -> None:
+    """Two definitions of "what text" would be one more place to disagree."""
+    import inspect
+
+    from core.skills.os_automation import OSAutomationCompilerSkill
+
+    source = inspect.getsource(OSAutomationCompilerSkill._clipboard_payload_for_goal)
+
+    assert "_clipboard_payload" in source
+
+
+def test_a_goal_without_a_clipboard_gets_no_clipboard_line() -> None:
+    from core.skills.os_automation import OSAutomationCompilerSkill
+
+    script = OSAutomationCompilerSkill._deterministic_script_for_goal("open Notes", {})
+
+    assert "clipboard" not in script

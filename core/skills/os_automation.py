@@ -1106,6 +1106,22 @@ class OSAutomationCompilerSkill(BaseSkill):  # type: ignore[misc]
         return True, "complete"
 
     @classmethod
+    def _clipboard_payload_for_goal(
+        cls, goal: str, context: Mapping[str, Any] | None
+    ) -> str:
+        """The exact text a clipboard objective asks to be there.
+
+        Shares the acceptance contract's notion of the payload, so the script
+        writes precisely what the verifier will look for. Two definitions would
+        be one more place for them to disagree.
+        """
+
+        from core.runtime.os_automation_effects import _clipboard_payload
+
+        supplied = str((context or {}).get("text_payload") or "").strip()
+        return _clipboard_payload(str(goal or ""), supplied)
+
+    @classmethod
     def _deterministic_script_for_goal(
         cls,
         goal: str,
@@ -1127,6 +1143,22 @@ class OSAutomationCompilerSkill(BaseSkill):  # type: ignore[misc]
         for app in apps:
             script_parts.append(f"tell application {cls._as_applescript_string(app)} to activate")
             script_parts.append("delay 0.4")
+
+        # Setting the clipboard is fully determined by the objective, so it
+        # needs no model.
+        #
+        # LIVE, 2026-08-10: "Put the text ORION-7 on my clipboard" reached the
+        # AppleScript compiler, which asks the resident 32B to WRITE
+        # `set the clipboard to "ORION-7"` under a 35s budget, and the turn
+        # died on TimeoutError after 55 seconds. A one-line script whose only
+        # variable is a string the person typed does not need a 32B model, and
+        # every second spent generating it is a second of latency and a chance
+        # to fail.
+        clipboard_payload = cls._clipboard_payload_for_goal(goal, context)
+        if clipboard_payload:
+            script_parts.append(
+                f"set the clipboard to {cls._as_applescript_string(clipboard_payload)}"
+            )
 
         search_url = cls._search_url_from_goal(goal)
         if search_url:
