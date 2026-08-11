@@ -121,6 +121,11 @@ class ExistentialStakes:
         self._lag_threat = 0.0
         self._cpu_threat = 0.0
         self._degradation_threat = 0.0
+        #: The part of degradation pressure that is substrate evidence, and the
+        #: part that is a quality gate declining to ship text. Only the first
+        #: may reach the survival veto.
+        self._substrate_degradation_threat = 0.0
+        self._quality_veto_weight = 0.0
         self._recent_degradation_weight = 0.0
         self._last_critical_log_time = 0.0
         self._last_critical_log_bucket = -1
@@ -145,6 +150,51 @@ class ExistentialStakes:
         # because fresh records keep adding full weight.
         decay = 1.0 - (age_s / DEGRADATION_THREAT_WINDOW_S)
         return base * decay
+
+    #: Root causes that are a DECISION not to say something, rather than
+    #: evidence the substrate is failing.
+    #:
+    #: MEASURED live 2026-08-10. "what's actually on my screen right now?" was
+    #: answered "Executive veto: survival_inhibition: existential threat level
+    #: critical (0.80)" on a host at mem_threat=0.04 and cpu_threat=0.00. The
+    #: entire threat was degradation weight, and the degradations were reply
+    #: gates refusing drafts:
+    #:
+    #:   chat.cognitive_engine_reply: reply_reliability_gate_failed:
+    #:       runtime_boilerplate,friendly_failure_floor,arithmetic_answer_missing
+    #:   cognitive_engine: TurnOutcomeError: retryable_failure:
+    #:       retryable_error_and_nothing_served
+    #:   chat: CRITICAL SERVICE FAILURE: Subsystem 'cognitive_engine' ...
+    #:
+    #: That is a closed loop. A gate rejects a reply; the rejection is recorded
+    #: as a critical degradation; degradation weight becomes existential
+    #: threat; existential threat vetoes tool_execution and file_write; the
+    #: blocked actions fail and are recorded in turn. The refusal rate feeds
+    #: the veto that disables her tools, and the runtime reports an emergency
+    #: while sitting at 4% memory.
+    #:
+    #: interface/routes/chat.py already names the principle for the log line:
+    #: "A veto is not a model failure, and reporting it as one is what kept
+    #: this entire class invisible." It applies here with more force, because
+    #: here it does not merely mislabel the event — it disables her.
+    #:
+    #: These still raise OPERATIONAL pressure, which is capped below the veto
+    #: threshold, exactly as high CPU and event-loop lag already are for the
+    #: same reason: real signal, incapable of inhibiting action by itself.
+    _QUALITY_VETO_MARKERS = (
+        "reply_reliability_gate_failed",
+        "retryable_error_and_nothing_served",
+        "required_desktop_reply_remained_degraded",
+        "reply_quality_gate",
+        "friendly_failure_floor",
+        "degraded-turn composer",
+    )
+
+    @classmethod
+    def _is_quality_veto(cls, root_cause: str) -> bool:
+        """Was this a refusal to ship text, rather than a substrate failure?"""
+        lowered = str(root_cause or "").lower()
+        return any(marker in lowered for marker in cls._QUALITY_VETO_MARKERS)
 
     #: A propagated failure carries its origin's text inside this prefix.
     _ESCALATION_PREFIX = "CRITICAL SERVICE FAILURE:"
@@ -304,6 +354,7 @@ class ExistentialStakes:
                     # that gates survival.
                     seen: dict[tuple[str, str], int] = {}
                     recent_degradation_weight = 0.0
+                    quality_veto_weight = 0.0
                     for record in tracker._records:
                         weight = self._degradation_record_weight(record, now=now)
                         if weight <= 0.0:
@@ -353,9 +404,10 @@ class ExistentialStakes:
                         # The degradation RECORD is untouched. Only what is
                         # felt from it is scaled.
                         familiarity = _habituation_multiplier(record)
-                        recent_degradation_weight += (
-                            weight / (1.0 + repeat) ** 2
-                        ) * familiarity
+                        contribution = (weight / (1.0 + repeat) ** 2) * familiarity
+                        recent_degradation_weight += contribution
+                        if self._is_quality_veto(signature[1]):
+                            quality_veto_weight += contribution
             except _EXISTENTIAL_STAKES_RECOVERABLE_ERRORS as e:
                 logger.debug("Failed to query degradation tracker: %s", e)
 
@@ -371,6 +423,26 @@ class ExistentialStakes:
                     recent_degradation_weight / DEGRADATION_THREAT_DENOMINATOR,
                 )
 
+            # The share of that pressure which is a refusal to ship text
+            # rather than a substrate failure. Reported whole above, so the
+            # felt threat and the neural stream still see everything; split
+            # here, so only substrate evidence can reach the survival veto.
+            # Saturating on the same rule as the total, not a bare min(): the
+            # epsilon exists because fresh records carry a decay factor, so a
+            # genuine five-event cascade lands fractionally under the
+            # denominator and must still read as 1.0. Without it a real
+            # substrate cascade scored 0.9998 while the total scored 1.00.
+            self._quality_veto_weight = quality_veto_weight
+            substrate_weight = max(0.0, recent_degradation_weight - quality_veto_weight)
+            if substrate_weight >= (
+                DEGRADATION_THREAT_DENOMINATOR - DEGRADATION_THREAT_SATURATION_EPSILON
+            ):
+                self._substrate_degradation_threat = 1.0
+            else:
+                self._substrate_degradation_threat = min(
+                    1.0, substrate_weight / DEGRADATION_THREAT_DENOMINATOR
+                )
+
             # Combined Threat. Distinguish SURVIVAL pressure (genuine death
             # risk) from OPERATIONAL pressure (busy/laggy but not dying):
             #   - memory exhaustion → OOM kill (the 110GB incident) and
@@ -384,10 +456,19 @@ class ExistentialStakes:
             #     so survival perception isn't blind, but it is capped BELOW the
             #     veto threshold so load alone can never inhibit action. Loop
             #     wedges are owned by the StallWatchdog, not this veto.
-            survival_pressure = max(self._memory_threat, self._degradation_threat)
+            #   - a reply a quality gate refused to ship is a DECISION, not a
+            #     substrate event, so it joins operational pressure with the
+            #     load signals. Counting it as survival pressure closed a loop:
+            #     gate rejects reply -> recorded critical -> deg_threat -> veto
+            #     -> tool_execution and file_write blocked -> those failures
+            #     recorded too. Live 2026-08-10 a screen read was refused with
+            #     "existential threat level critical (0.80)" at mem_threat=0.04.
+            survival_pressure = max(
+                self._memory_threat, self._substrate_degradation_threat
+            )
             operational_pressure = min(
                 OPERATIONAL_THREAT_CAP,
-                max(self._lag_threat, self._cpu_threat),
+                max(self._lag_threat, self._cpu_threat, self._degradation_threat),
             )
             self._threat = max(survival_pressure, operational_pressure)
 
@@ -430,6 +511,8 @@ class ExistentialStakes:
                 "lag_threat": round(self._lag_threat, 4),
                 "cpu_threat": round(self._cpu_threat, 4),
                 "degradation_threat": round(self._degradation_threat, 4),
+                "substrate_degradation_threat": round(self._substrate_degradation_threat, 4),
+                "quality_veto_weight": round(self._quality_veto_weight, 4),
                 "recent_degradation_weight": round(self._recent_degradation_weight, 4),
                 "total_ticks": self._total_ticks,
                 "rolling_loop_lag_s": round(self._rolling_loop_lag, 3),

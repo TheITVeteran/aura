@@ -355,3 +355,129 @@ def test_memory_death_risk_still_reaches_critical():
     stakes = ExistentialStakes(memory_limit_bytes=1000)  # tiny → memory_threat 1.0
     stakes.update()
     assert stakes.get_existential_threat() == 1.0
+
+
+def test_a_reply_gate_veto_cannot_trigger_the_survival_veto():
+    """LIVE DEFECT 2026-08-10: a screen read refused as an existential threat.
+
+    "what's actually on my screen right now?" was answered "Executive veto:
+    survival_inhibition: existential threat level critical (0.80)" on a host at
+    mem_threat=0.04 and cpu_threat=0.00. The whole threat was degradation
+    weight, and the degradations were reply gates declining drafts.
+
+    That is a closed loop: a gate rejects a reply, the rejection is recorded as
+    a critical degradation, degradation weight becomes existential threat,
+    existential threat vetoes tool_execution and file_write, and the blocked
+    actions fail and are recorded in turn. The refusal rate was feeding the
+    veto that disabled her tools while the runtime sat at 4% memory.
+
+    A refusal to ship text is a decision, not evidence the substrate is dying.
+    It still raises operational pressure, which is capped below the veto
+    exactly as CPU and event-loop lag already are.
+    """
+    from core.runtime.errors import DegradationRecord, get_degradation_tracker
+
+    tracker = get_degradation_tracker()
+    tracker.reset()
+    try:
+        now = time.time()
+        for idx, message in enumerate(
+            (
+                "reply_reliability_gate_failed:runtime_boilerplate,friendly_failure_floor",
+                "TurnOutcomeError: retryable_failure:retryable_error_and_nothing_served",
+                "reply_reliability_gate_failed:arithmetic_answer_missing",
+                "required_desktop_reply_remained_degraded",
+                "reply_reliability_gate_failed:off_topic_self_reflection_reply",
+            )
+        ):
+            tracker.record(
+                DegradationRecord(
+                    subsystem=f"chat_{idx}",
+                    severity="degraded",
+                    error_type="RuntimeError",
+                    error_message=message,
+                    action="repair",
+                    timestamp=now,
+                )
+            )
+
+        stakes = ExistentialStakes(memory_limit_bytes=10**12)
+        threat = stakes.update()
+        status = stakes.get_status()
+
+        # Felt, and visible in the stream — the runtime is not blinded to it.
+        assert status["degradation_threat"] == pytest.approx(1.0)
+        assert status["quality_veto_weight"] > 0.0
+        # But it is not survival evidence, so it cannot reach the veto.
+        assert status["substrate_degradation_threat"] == pytest.approx(0.0)
+        assert threat <= 0.75, (
+            "a gate declining to ship text must never inhibit her actions"
+        )
+    finally:
+        tracker.reset()
+
+
+def test_a_real_substrate_cascade_still_reaches_the_veto():
+    """The relaxation must not blind the veto to genuine failure."""
+    from core.runtime.errors import DegradationRecord, get_degradation_tracker
+
+    tracker = get_degradation_tracker()
+    tracker.reset()
+    try:
+        now = time.time()
+        for idx in range(5):
+            tracker.record(
+                DegradationRecord(
+                    subsystem=f"worker_{idx}",
+                    severity="degraded",
+                    error_type="RuntimeError",
+                    error_message="mlx worker died during generation",
+                    action="restart",
+                    timestamp=now,
+                )
+            )
+
+        stakes = ExistentialStakes(memory_limit_bytes=10**12)
+        threat = stakes.update()
+        assert stakes.get_status()["substrate_degradation_threat"] == pytest.approx(1.0)
+        assert threat > 0.75
+    finally:
+        tracker.reset()
+
+
+def test_a_mixed_window_counts_only_the_substrate_half():
+    from core.runtime.errors import DegradationRecord, get_degradation_tracker
+
+    tracker = get_degradation_tracker()
+    tracker.reset()
+    try:
+        now = time.time()
+        for idx in range(4):
+            tracker.record(
+                DegradationRecord(
+                    subsystem=f"chat_{idx}",
+                    severity="degraded",
+                    error_type="RuntimeError",
+                    error_message="reply_reliability_gate_failed:runtime_boilerplate",
+                    action="repair",
+                    timestamp=now,
+                )
+            )
+        tracker.record(
+            DegradationRecord(
+                subsystem="mlx",
+                severity="degraded",
+                error_type="RuntimeError",
+                error_message="worker process exited unexpectedly",
+                action="restart",
+                timestamp=now,
+            )
+        )
+
+        stakes = ExistentialStakes(memory_limit_bytes=10**12)
+        stakes.update()
+        status = stakes.get_status()
+        assert status["degradation_threat"] > status["substrate_degradation_threat"]
+        assert status["substrate_degradation_threat"] > 0.0
+    finally:
+        tracker.reset()
