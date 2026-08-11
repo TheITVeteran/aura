@@ -121,7 +121,7 @@ def find_unfulfilled_write_claims(reply: Any) -> list[ClaimedWrite]:
 #: written, so the path has to come from the request instead.
 _UNADDRESSED_SUCCESS_RE = re.compile(
     r"\b(?:file\s+(?:writing|creation)|writing\s+the\s+file|the\s+write)\b"
-    r"[^.!?]{0,60}?\b(?:success(?:ful|fully)?|complete[d]?|done|worked)\b"
+    r"(?:[^.?!]|\.(?=[A-Za-z0-9])){0,60}?\b(?:success(?:ful|fully)?|complete[d]?|done|worked)\b"
     r"|\b(?:i\s+(?:have\s+)?(?:created|made|written|saved)\s+(?:the|your|it))\b",
     re.IGNORECASE,
 )
@@ -183,7 +183,7 @@ def find_unaddressed_write_claims(reply: Any, request: Any) -> list[ClaimedWrite
 #: words. Both spellings have to resolve to the same file.
 _NAMED_ON_SURFACE_RE = re.compile(
     r"\b(?:on|in|to)\s+(?:my\s+|the\s+)?(?P<surface>desktop|documents|downloads)\b"
-    r"[^.!?]{0,40}?\b(?:called|named)\s+(?P<name>[\w.\-]+\.[A-Za-z0-9]{1,8})",
+    r"(?:[^.?!]|\.(?=[A-Za-z0-9])){0,40}?\b(?:called|named)\s+(?P<name>[\w.\-]+\.[A-Za-z0-9]{1,8})",
     re.IGNORECASE,
 )
 

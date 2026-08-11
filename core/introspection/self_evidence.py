@@ -647,7 +647,7 @@ def sensory_claim_correction(reply: Any, message: Any = "") -> str:
 # but generate.
 
 _PAST_ACTION_QUESTION_RE = re.compile(
-    r"\b(?:what|which|how\s+many|when|where)\b[^.?!]{0,90}?"
+    r"\b(?:what|which|how\s+many|when|where)\b(?:[^.?!]|\.(?=[A-Za-z0-9])){0,90}?"
     r"\b(?:did|have)\s+you\b|\bdo\s+you\s+remember\b|\bwhat\s+was\s+the\b|"
     r"\bearlier\s+(?:today|i|you)\b",
     re.IGNORECASE,

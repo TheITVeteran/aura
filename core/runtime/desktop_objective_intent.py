@@ -273,7 +273,7 @@ _PATH_OPERATION_RE = re.compile(
 #: The planner could plan it perfectly; it was never asked.
 _NAMED_ON_SURFACE_RE = re.compile(
     r"\b(?:on|in|to)\s+(?:my\s+|the\s+)?(?:desktop|documents|downloads)\b"
-    r"[^.!?]{0,40}?\b(?:called|named)\s+[\w.\-]+\.[A-Za-z0-9]{1,8}",
+    r"(?:[^.?!]|\.(?=[A-Za-z0-9])){0,40}?\b(?:called|named)\s+[\w.\-]+\.[A-Za-z0-9]{1,8}",
     re.IGNORECASE,
 )
 
@@ -289,7 +289,7 @@ _REPORTED_REQUEST_SPAN_RE = re.compile(
     # ~/Documents/x.txt now" reports history AND makes a request, and a greedy
     # span swallowed the request — refusing to act on an explicit retry is a
     # worse failure than the litter this exists to prevent.
-    r"[^.?!]*?(?=(?:[,;—–-]*\s*\b(?:please|now|actually|go\s+ahead|just)\b)|[.?!]|$)",
+    r"(?:[^.?!]|\.(?=[A-Za-z0-9]))*?(?=(?:[,;—–-]*\s*\b(?:please|now|actually|go\s+ahead|just)\b)|[.?!]|$)",
     re.IGNORECASE,
 )
 
@@ -297,7 +297,7 @@ _REPORTED_REQUEST_SPAN_RE = re.compile(
 #: doing it again. "what did you write to my Desktop earlier?" carries a write
 #: verb and a surface and is not a request to write anything.
 _PAST_ACTION_QUESTION_RE = re.compile(
-    r"\b(?:what|which|where|when|how\s+many)\b[^.?!]{0,80}?"
+    r"\b(?:what|which|where|when|how\s+many)\b(?:[^.?!]|\.(?=[A-Za-z0-9])){0,80}?"
     r"\b(?:did|have)\s+you\b|\bdo\s+you\s+remember\b|"
     r"\bwhat\s+was\s+the\b",
     re.IGNORECASE,

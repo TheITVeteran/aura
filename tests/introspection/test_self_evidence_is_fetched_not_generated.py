@@ -717,3 +717,25 @@ def test_an_ordinary_wrong_answer_still_gets_the_record_after_it() -> None:
         pytest.skip("no verified tool receipts on this machine")
 
     assert out.startswith(wrong)
+
+
+@pytest.mark.parametrize(
+    "question",
+    [
+        "Without guessing: how many .py files did you count in your introspection "
+        "directory earlier?",
+        "what did you write to notes.txt earlier?",
+        "how many .md files have you read today?",
+    ],
+)
+def test_a_file_extension_does_not_end_the_sentence(question: str) -> None:
+    """LIVE: the same question, reworded, stopped being recognised.
+
+    The intent patterns used [^.?!] to stay inside one sentence, so ".py" ended
+    the sentence as far as the regex was concerned and "how many" could never
+    reach "did you". Every question naming a file type defeated them — and file
+    types are exactly what these questions are about.
+    """
+    from core.introspection.self_evidence import asks_about_past_actions
+
+    assert asks_about_past_actions(question) is True
