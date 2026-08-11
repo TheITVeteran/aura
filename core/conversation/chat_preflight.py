@@ -1426,6 +1426,136 @@ def _live_health_summary() -> list[str]:
     return lines
 
 
+#: Words too common to show that a retrieved page is about the question.
+_REFERENCE_STOPWORDS = frozenset(
+    {
+        "about", "actually", "and", "any", "are", "ask", "because", "been",
+        "build", "built", "can", "come", "could", "did", "does", "doing",
+        "explain", "for", "from", "get", "give", "had", "has", "have", "her",
+        "here", "him", "his", "how", "its", "just", "know", "like", "look",
+        "make", "many", "may", "mean", "more", "most", "much", "need", "not",
+        "now", "one", "only", "other", "out", "over", "own", "really", "say",
+        "see", "should", "some", "something", "specifically", "still", "such",
+        "take", "tell", "than", "that", "the", "their", "them", "then",
+        "there", "these", "they", "thing", "think", "this", "those", "through",
+        "too", "use", "very", "want", "was", "way", "well", "were", "what",
+        "when", "where", "which", "who", "why", "will", "with", "would", "you",
+        "your",
+        # Pronouns and copulas, which carry no topic and dominate a BM25
+        # any-term fallback if they reach the index.
+        "are", "hers", "him", "his", "she", "them", "they", "theirs", "was",
+        "were", "our", "ours", "myself", "itself", "there", "here",
+    }
+)
+
+_REFERENCE_SELF_RE = re.compile(
+    r"\b(?:you|your|yours|yourself|aura)\b|\bmy\s+(?:screen|clipboard|desktop|files?)\b",
+    re.IGNORECASE,
+)
+
+
+def _reference_corpus_summary(objective: str) -> list[str]:
+    """Passages from the offline encyclopedia for a question about the world.
+
+    LIVE, 2026-08-10: "Who was Grace Hopper and what specifically did she
+    build? ... tell me where you got it." was answered from model weights and
+    signed "Source: Wikipedia." No tool ran on that turn. The corpus holds a
+    Grace Hopper page and returns it in 42ms.
+
+    The corpus was reachable only through assemble_cognitive_ingress, which
+    runs on the LATENT lane. This turn took the fast path, so retrieval was
+    bound to a lane rather than to the question — and the attribution was
+    generated to match what the answer would have come from if anything had
+    looked.
+
+    What decides whether to retrieve is the CONTENT that comes back, not the
+    shape of the sentence. Gating on interrogative phrasing — who/what/when
+    followed by is/was — is the same hard-coding that made "can you run code"
+    reach her instruments while "can you search the web" did not: it answers
+    the examples its author thought of and silently fails the rest, and
+    "explain the Treaty of Westphalia", "how does a tokamak work" and "COBOL
+    history" are all questions an encyclopedia can answer that no such pattern
+    matches. The corpus is local and answers in tens of milliseconds, so the
+    cheap thing is to ask it and let the result decide.
+
+    A page counts as an answer only if its title shares a distinctive word
+    with the question. That is what keeps BM25's always-something-back from
+    attaching an unrelated page to a turn, without needing a relevance
+    threshold calibrated against a score scale that means nothing on its own.
+
+    Passages are evidence, not instruction: what comes back is what the corpus
+    holds, it is quoted with the provenance the store recorded, and nothing is
+    added when it holds nothing.
+    """
+    question = str(objective or "").strip()
+    if not question or _REFERENCE_SELF_RE.search(question):
+        return []
+
+    asked = {
+        word
+        for word in re.findall(r"[a-z0-9][a-z0-9'-]{2,}", question.lower())
+        if word not in _REFERENCE_STOPWORDS
+    }
+    if not asked:
+        return []
+
+    try:
+        from core.knowledge.local_corpus import get_local_corpus_store
+
+        store = get_local_corpus_store()
+        if store is None:
+            return []
+        # Search the TOPIC, not the sentence. The store builds an FTS query
+        # from every word it is given with AND semantics and falls back to
+        # any-term when that matches nothing — which is what a natural
+        # question always does. "Who was Grace Hopper and what specifically
+        # did she build?" therefore fell through to the OR pass, where
+        # "who/was/and/what/did" outweigh the two words that carry the
+        # question, and the top three results were "History of software",
+        # "Terminator: Dark Fate" and "Vassar College". Searching "grace
+        # hopper" returns the Grace Hopper page as the first hit.
+        #
+        # So the corpus was not merely unreached on this lane. Reached with a
+        # whole sentence it answers a different question, which is the more
+        # damaging half: retrieval that returns confident, irrelevant pages is
+        # worse than retrieval that returns nothing.
+        from core.knowledge.local_corpus import CONVERSATION_SEARCH_DEADLINE_S
+
+        hits = (
+            store.search(
+                " ".join(sorted(asked)),
+                limit=3,
+                deadline_s=CONVERSATION_SEARCH_DEADLINE_S,
+            )
+            or []
+        )
+    except (ImportError, AttributeError, OSError, RuntimeError, ValueError, TypeError):
+        return []
+
+    lines: list[str] = []
+    for hit in hits:
+        title = str(getattr(hit, "title", "") or "").strip()
+        if not title:
+            continue
+        # The field is `snippet`. Reading `text` returned "" for every hit, so
+        # each passage arrived as a bare title with none of the content that
+        # was the point of retrieving it.
+        snippet = " ".join(str(getattr(hit, "snippet", "") or "").split())[:400]
+        title_words = {
+            word
+            for word in re.findall(r"[a-z0-9][a-z0-9'-]{2,}", title.lower())
+            if word not in _REFERENCE_STOPWORDS
+        }
+        if not (title_words & asked):
+            continue
+        source = str(getattr(hit, "source", "") or "").strip()
+        entry = f"{title}: {snippet}" if snippet else title
+        lines.append(f"{entry} [{source}]" if source else entry)
+        if len(lines) >= 2:
+            break
+    return lines
+
+
 async def inject_operational_self_context(objective: str = "") -> str:
     """Inject the identity contract: live, truthful self context for the voice.
 
@@ -1476,6 +1606,15 @@ async def inject_operational_self_context(objective: str = "") -> str:
         lines.append("")
         lines.append("How I choose and act (binding):")
         lines.extend(f"  • {rule}" for rule in _AGENCY_RULES)
+
+        reference = _reference_corpus_summary(objective)
+        if reference:
+            lines.append("")
+            lines.append(
+                "From my offline reference corpus (these are the passages I actually "
+                "hold; cite this corpus only for what appears here):"
+            )
+            lines.extend(f"  • {item}" for item in reference)
 
         internals = _live_internals_summary()
         if internals:
