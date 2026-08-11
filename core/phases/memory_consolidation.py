@@ -560,6 +560,9 @@ register_contract(
             "writes measured by tools/observe_phase_writes.py on the no-model "
             "path; consolidation itself lands outside AuraState, which is why "
             "the declared write set is one field"
+            "; reads reach state through this phase's delegate rather than "
+            "appearing in this module, so they are declared from the "
+            "delegate's behaviour, not by scanning this file"
         ),
     )
 )

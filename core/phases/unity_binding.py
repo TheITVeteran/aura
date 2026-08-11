@@ -80,6 +80,9 @@ register_contract(
             ),
         ),
         invariants=("cognition.mind_moment is written whenever unity_state is",),
-        calibration_source="writes measured by tools/observe_phase_writes.py",
+        calibration_source=(
+            "writes measured by tools/observe_phase_writes.py"
+            "; reads reach state through this phase's delegate rather than appearing in this module, so they are declared from the delegate's behaviour and not checkable by scanning this file alone"
+        ),
     )
 )

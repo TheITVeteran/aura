@@ -67,12 +67,13 @@ register_contract(
             "Assemble the phenomenal state for this tick — what it is like to "
             "be in it — from affect, soma and the current objective."
         ),
-        reads=(
-            "affect.valence",
-            "affect.arousal",
-            "soma.latency",
-            "cognition.current_objective",
-        ),
+        # Nothing. This phase reads no AuraState field: it pulls the
+        # phenomenal claim from the consciousness integration singleton and
+        # the causal context from the causal_world_model service. The first
+        # version of this contract declared affect and soma reads because
+        # that is what a phase called "consciousness" ought to consult —
+        # which is precisely the failure the contract layer exists to stop.
+        reads=(),
         writes=("cognition.phenomenal_state", "transition_cause"),
         preconditions=("state carries a cognition block",),
         branches=(
@@ -87,6 +88,13 @@ register_contract(
                 "write a reduced phenomenal state naming what was missing",
             ),
         ),
-        calibration_source="writes measured by tools/observe_phase_writes.py",
+        side_effects=(
+            "reads the consciousness integration singleton",
+            "reads the causal_world_model runtime service",
+        ),
+        calibration_source=(
+            "writes measured by tools/observe_phase_writes.py; reads are empty "
+            "because this phase consults services, not state"
+        ),
     )
 )

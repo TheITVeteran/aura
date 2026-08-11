@@ -359,6 +359,9 @@ register_contract(
                 "apply default social modifiers",
             ),
         ),
-        calibration_source="writes measured by tools/observe_phase_writes.py",
+        calibration_source=(
+            "writes measured by tools/observe_phase_writes.py"
+            "; reads reach state through this phase's delegate rather than appearing in this module, so they are declared from the delegate's behaviour and not checkable by scanning this file alone"
+        ),
     )
 )

@@ -537,3 +537,87 @@ def test_the_coverage_report_is_the_same_from_a_cold_registry() -> None:
     assert report["contracted_count"] >= 11, (
         "coverage regressed below the contracts written from measurement"
     )
+
+
+# ── Declared reads must be honest ──────────────────────────────────────────
+#
+# `writes` is measured. `reads` is not — nothing observes them — so a reads
+# tuple is exactly the kind of declaration that drifts into describing what
+# the author believed. It did, immediately: the first ConsciousnessPhase
+# contract written this session declared affect and soma reads because that
+# is what a phase called "consciousness" ought to consult. The phase reads no
+# state at all; it pulls from two services.
+
+
+def test_declared_reads_are_either_visible_or_declared_indirect() -> None:
+    """A read must appear in the phase's module, or the contract must say why not.
+
+    Delegation is legitimate — a phase that reads through its engine really
+    does read those fields. Silent fabrication is not, and the two are
+    indistinguishable unless the contract states which it is.
+    """
+    from pathlib import Path
+
+    offenders: list[str] = []
+    for name, contract in sorted(all_contracts().items()):
+        if not contract.reads or not contract.module:
+            continue
+        module = importlib.import_module(contract.module)
+        source = Path(module.__file__).read_text("utf-8")
+        # Exclude the contract declaration itself, or every read is trivially
+        # "present" because the contract names it.
+        marker = "register_contract("
+        code = source[: source.index(marker)] if marker in source else source
+
+        unseen = [path for path in contract.reads if path.split(".")[-1] not in code]
+        if unseen and "delegate" not in contract.calibration_source:
+            offenders.append(f"{name}: {unseen}")
+
+    assert offenders == [], (
+        "these contracts declare reads that do not appear in their own module "
+        f"and do not say the reads happen through a delegate: {offenders}"
+    )
+
+
+def test_a_contract_that_reads_nothing_says_so_rather_than_guessing() -> None:
+    """The corrected case, pinned.
+
+    ConsciousnessPhase consults the consciousness integration singleton and
+    the causal world model service. Declaring affect/soma reads made the
+    contract describe an intuition about the name.
+    """
+    contract = contract_for("ConsciousnessPhase")
+
+    assert contract is not None
+    assert contract.reads == (), (
+        "ConsciousnessPhase declares AuraState reads again; it reads services, "
+        "not state"
+    )
+    assert contract.side_effects, "the services it does consult must be declared"
+
+
+def test_calibration_source_is_a_string_not_an_accidental_tuple() -> None:
+    """A trailing comma inside the parens makes it a one-element tuple.
+
+    Which happened, and it silently broke the delegate check above: every
+    substring test against a tuple of one long string is False, so contracts
+    that DID declare their delegation read as if they had not.
+    """
+    wrong = {
+        name: type(contract.calibration_source).__name__
+        for name, contract in all_contracts().items()
+        if not isinstance(contract.calibration_source, str)
+    }
+
+    assert wrong == {}, f"calibration_source is not a string: {wrong}"
+
+
+def test_every_contract_states_where_its_thresholds_came_from() -> None:
+    """"judgement" is an honest answer; silence is not."""
+    silent = sorted(
+        name
+        for name, contract in all_contracts().items()
+        if not str(contract.calibration_source or "").strip()
+    )
+
+    assert silent == [], f"{silent} declare thresholds with no stated provenance"

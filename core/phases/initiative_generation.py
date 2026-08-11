@@ -157,7 +157,12 @@ INITIATIVE_GENERATION_CONTRACT = register_contract(
             "an impulse is never appended without governed admission",
             "a fired trigger always pays: the driving affect moves this tick",
         ),
-        calibration_source="judgement, tuned live against unprompted-message rate",
+        calibration_source=(
+            "judgement, tuned live against unprompted-message rate; reads "
+            "reach state through this phase's delegate rather than appearing "
+            "in this module, so they are declared from the delegate's "
+            "behaviour, not by scanning this file"
+        ),
         thresholds_exhaustive=True,
     )
 )

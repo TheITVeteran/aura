@@ -806,6 +806,9 @@ register_contract(
         calibration_source=(
             "writes measured by tools/observe_phase_writes.py; most of this "
             "phase's effect lands in subsystem state rather than AuraState"
+            "; reads reach state through this phase's delegate rather than "
+            "appearing in this module, so they are declared from the "
+            "delegate's behaviour, not by scanning this file"
         ),
     )
 )
