@@ -20264,9 +20264,17 @@ async def _execute_desktop_objective_from_chat(
                     # no text deliverable to quote, "it is done" IS the answer,
                     # and the receipt line is what makes it checkable rather
                     # than a claim.
+                    # LIVE, 2026-08-10: "Done — Desktop task completed 1/1
+                    # governed computer-use steps through heuristic_compat
+                    # planning." The receipt line was meant to make the claim
+                    # checkable, and a step count with a planner identifier in
+                    # it checks nothing a person can use — it just puts the
+                    # engineering log in the sentence. What makes "it is done"
+                    # checkable is WHAT was done: the file that now exists.
+                    effect_line = _desktop_effect_summary(result)
                     response = (
-                        f"Done — {summary}"
-                        if summary
+                        f"Done — {effect_line}"
+                        if effect_line
                         else "Done — the desktop steps completed and their effects verified."
                     )
                 else:
@@ -20530,6 +20538,43 @@ def _desktop_task_research_response(
 #: A written deliverable longer than this is summarised by its opening rather
 #: than pasted whole into a chat reply.
 _DESKTOP_DELIVERABLE_MAX_CHARS = 1200
+
+
+def _desktop_effect_summary(result: Any) -> str:
+    """What a verified task actually changed, in words a person can check.
+
+    Reads the receipts for effects with a name — a path written, a folder
+    created, an app opened — rather than repeating how many steps ran.
+    """
+
+    if not isinstance(result, dict):
+        return ""
+    receipts = result.get("receipts")
+    if not isinstance(receipts, list):
+        return ""
+    effects: list[str] = []
+    for receipt in receipts:
+        if not isinstance(receipt, dict) or not receipt.get("ok"):
+            continue
+        inner = receipt.get("result")
+        payload = inner if isinstance(inner, dict) else receipt
+        action = str(receipt.get("action") or "").strip()
+        path = str(payload.get("path") or "").strip()
+        if action == "write_text_file" and path:
+            effects.append(f"wrote {path}")
+        elif action == "create_folder" and path:
+            effects.append(f"created the folder {path}")
+        elif action == "list_directory" and path:
+            effects.append(f"read {path}")
+        elif action == "open_app":
+            opened = str(payload.get("opened") or "").strip()
+            if opened:
+                effects.append(f"opened {opened}")
+    if not effects:
+        return ""
+    if len(effects) == 1:
+        return f"{effects[0]}."
+    return ", ".join(effects[:-1]) + f", and {effects[-1]}."
 
 
 def _desktop_deliverable_text(result: Any) -> str:

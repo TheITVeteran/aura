@@ -83,7 +83,7 @@ def test_bookkeeping_only_result_defers_only_when_nothing_happened() -> None:
     source = inspect.getsource(chat._execute_desktop_objective_from_chat)
     marker = "elif _is_step_bookkeeping_only(summary):"
     assert marker in source
-    branch = source[source.find(marker) : source.find(marker) + 2400]
+    branch = source[source.find(marker) : source.find(marker) + 3600]
 
     assert "verified_effects" in branch
     # Still defers when the effects were not proven.
@@ -157,3 +157,54 @@ def test_a_step_count_never_leads_a_real_deliverable() -> None:
 
     assert "_is_step_bookkeeping_only(summary)" in window
     assert "response = produced" in window
+
+
+def test_done_reports_the_effect_not_the_step_count() -> None:
+    """LIVE, 2026-08-10, after the haiku task finally worked:
+
+        "Done — Desktop task completed 1/1 governed computer-use steps through
+         heuristic_compat planning."
+
+    The receipt line exists to make "it is done" checkable. A step count with a
+    planner identifier in it checks nothing a person can use. What makes the
+    claim checkable is WHAT was done — the file that now exists.
+    """
+    from interface.routes.chat import _desktop_effect_summary
+
+    assert _desktop_effect_summary({
+        "receipts": [{
+            "action": "write_text_file",
+            "ok": True,
+            "result": {"path": "/Users/bryan/Desktop/aura_haiku.txt"},
+        }],
+    }) == "wrote /Users/bryan/Desktop/aura_haiku.txt."
+
+
+def test_several_effects_are_listed_in_order() -> None:
+    from interface.routes.chat import _desktop_effect_summary
+
+    assert _desktop_effect_summary({
+        "receipts": [
+            {"action": "list_directory", "ok": True, "result": {"path": "/x"}},
+            {"action": "write_text_file", "ok": True, "result": {"path": "/y.txt"}},
+        ],
+    }) == "read /x, and wrote /y.txt."
+
+
+def test_an_unverified_step_is_not_reported_as_an_effect() -> None:
+    """Naming a file that was not written is the false claim again."""
+    from interface.routes.chat import _desktop_effect_summary
+
+    assert _desktop_effect_summary({
+        "receipts": [{"action": "write_text_file", "ok": False, "result": {"path": "/z.txt"}}],
+    }) == ""
+
+
+def test_the_done_branch_uses_the_effect_summary() -> None:
+    import inspect
+
+    from interface.routes import chat
+
+    source = inspect.getsource(chat._execute_desktop_objective_from_chat)
+    assert '_desktop_effect_summary(result)' in source
+    assert 'f"Done — {effect_line}"' in source
