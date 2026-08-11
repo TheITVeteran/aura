@@ -1,0 +1,382 @@
+"""Cognition declares itself, and the declaration is checked against behaviour.
+
+The criticism this answers: Aura has explicit criteria everywhere — throttles,
+idle windows, φ-scaled thresholds, eight-dimension score vectors, hysteresis
+windows — and no universal, versioned schema that states any of it in one
+auditable language. ``PhaseSpec`` carried a name, an attribute and a class.
+
+A declaration nothing verifies is documentation with a dataclass around it, so
+these tests hold the mechanism to the standard that makes it worth having:
+
+* the baseline of undeclared phases only shrinks;
+* a contract's thresholds are the LIVE constants, not copies of them;
+* a phase marked ``thresholds_exhaustive`` has no bare numeric comparison left;
+* an undeclared write is detected by measurement, not by self-report;
+* the provenance record answers "why" from receipts rather than from prose.
+"""
+
+from __future__ import annotations
+
+import ast
+import importlib
+import inspect
+import textwrap
+
+import pytest
+
+from core.runtime.cognitive_contract import (
+    UNCONTRACTED_PHASES,
+    BranchSpec,
+    CognitiveTransformContract,
+    all_contracts,
+    contract_coverage_report,
+    contract_for,
+    register_contract,
+)
+from core.runtime.cognitive_provenance import (
+    begin_transformation,
+    open_tick,
+    recent_graphs,
+    recording_tick,
+    reset_provenance_for_test,
+    why_field_changed,
+    write_profile,
+)
+from core.runtime.pipeline_blueprint import (
+    kernel_phase_attribute_order,
+    phase_class_for_attribute,
+)
+
+#: The size of the baseline when the mechanism landed. It only shrinks.
+_BASELINE_CEILING = 28
+
+
+class _Affect:
+    def __init__(self) -> None:
+        self.curiosity = 0.1
+        self.social_hunger = 0.1
+        self.arousal = 0.5
+
+
+class _Cognition:
+    def __init__(self) -> None:
+        self.discourse_depth = 0
+        self.conversation_energy = 0.5
+        self.working_memory: list[dict[str, str]] = []
+        self.pending_initiatives: list[dict[str, str]] = []
+
+
+class _State:
+    """The smallest object the digest walker needs. Not an AuraState.
+
+    Deliberately structural: the contract machinery resolves dotted paths by
+    attribute and mapping lookup, so anything shaped like a state works, and a
+    test that needed a real AuraState would be testing AuraState.
+    """
+
+    def __init__(self) -> None:
+        self.state_id = "s-test"
+        self.version = 1
+        self.updated_at = 1.0
+        self.affect = _Affect()
+        self.cognition = _Cognition()
+        self.response_modifiers: dict[str, float] = {}
+
+
+@pytest.fixture(autouse=True)
+def _clean_provenance():
+    reset_provenance_for_test()
+    yield
+    reset_provenance_for_test()
+
+
+# ── The ratchet ────────────────────────────────────────────────────────────
+
+
+def test_uncontracted_baseline_only_shrinks() -> None:
+    assert len(UNCONTRACTED_PHASES) <= _BASELINE_CEILING, (
+        "a phase was added to UNCONTRACTED_PHASES. The baseline only shrinks — "
+        "a new phase ships with a contract, or the mechanism decays into a "
+        "list of exemptions."
+    )
+
+
+def test_every_pipeline_phase_is_contracted_or_baselined() -> None:
+    """No phase may be silently outside the scheme."""
+
+    pipeline = {
+        phase_class_for_attribute(attribute) for attribute in kernel_phase_attribute_order()
+    }
+    contracted = set(all_contracts())
+    unaccounted = sorted(pipeline - contracted - set(UNCONTRACTED_PHASES))
+    assert unaccounted == [], (
+        f"{unaccounted} run in the pipeline with neither a contract nor a "
+        "baseline entry"
+    )
+
+
+def test_baseline_names_are_real_phases() -> None:
+    """A baseline that accumulates dead names stops meaning anything."""
+
+    pipeline = {
+        phase_class_for_attribute(attribute) for attribute in kernel_phase_attribute_order()
+    }
+    stale = sorted(name for name in UNCONTRACTED_PHASES if name not in pipeline)
+    assert stale == [], f"{stale} are baselined but no longer in the pipeline"
+
+
+def test_contracted_phases_are_not_also_baselined() -> None:
+    overlap = sorted(set(all_contracts()) & set(UNCONTRACTED_PHASES))
+    assert overlap == [], f"{overlap} have a contract and a baseline entry"
+
+
+def test_coverage_report_is_derived_from_the_pipeline() -> None:
+    report = contract_coverage_report()
+    assert report["pipeline_phases"] == len(kernel_phase_attribute_order())
+    assert report["contracted_count"] == len(report["contracted"])
+
+
+# ── Thresholds are the live constants, not copies ──────────────────────────
+
+
+def test_initiative_generation_has_an_exhaustive_contract() -> None:
+    contract = contract_for("InitiativeGenerationPhase")
+    assert contract is not None, "the exemplar contract must exist"
+    assert contract.thresholds_exhaustive is True
+    assert contract.thresholds, "an exhaustive contract with no thresholds says nothing"
+
+
+@pytest.mark.parametrize(
+    "name",
+    sorted(
+        name
+        for name, contract in all_contracts().items()
+        if contract.thresholds
+    ),
+)
+def test_declared_thresholds_are_the_modules_own_constants(name: str) -> None:
+    """A contract that copies a number is a second source of truth.
+
+    And the copy is the one that goes stale. Identity against the module
+    constant is what makes the declaration causal rather than descriptive.
+    """
+
+    contract = all_contracts()[name]
+    module = importlib.import_module(contract.module)
+    for key, value in contract.thresholds.items():
+        assert hasattr(module, key), (
+            f"{contract.module} does not define {key}, so the contract's "
+            "threshold is a literal nobody is using"
+        )
+        assert getattr(module, key) == value, (
+            f"{key} disagrees between {contract.module} and its contract"
+        )
+
+
+def _numeric_comparison_literals(func) -> list[float]:
+    """Numeric literals used in comparisons inside a function body."""
+
+    tree = ast.parse(textwrap.dedent(inspect.getsource(func)))
+    found: list[float] = []
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Compare):
+            continue
+        for operand in [node.left, *node.comparators]:
+            if isinstance(operand, ast.Constant) and isinstance(
+                operand.value, (int, float)
+            ) and not isinstance(operand.value, bool):
+                found.append(operand.value)
+    return found
+
+
+@pytest.mark.parametrize(
+    "name",
+    sorted(
+        name
+        for name, contract in all_contracts().items()
+        if contract.thresholds_exhaustive
+    ),
+)
+def test_exhaustive_contracts_leave_no_bare_comparison_literal(name: str) -> None:
+    """``thresholds_exhaustive`` is a claim, so it is checked.
+
+    A phase that says it declares every constant it branches on, and then
+    compares against 0.8 inline, has a criterion nothing can read — which is
+    the state the whole contract layer exists to leave behind.
+    """
+
+    module = importlib.import_module(all_contracts()[name].module)
+    phase_cls = getattr(module, name)
+    literals = _numeric_comparison_literals(phase_cls.execute)
+    # 0 and 1 are structural (empty checks, index bounds), not policy.
+    policy_literals = [value for value in literals if value not in (0, 1)]
+    assert policy_literals == [], (
+        f"{name}.execute compares against {policy_literals} inline while its "
+        "contract claims thresholds_exhaustive. Name the constant and "
+        "reference it from both places."
+    )
+
+
+def test_contract_hash_changes_when_a_threshold_changes() -> None:
+    """Receipts must not claim provenance from a contract that has moved."""
+
+    base = CognitiveTransformContract(
+        name="_probe", version="1.0", purpose="p", thresholds={"T": 0.5}
+    )
+    moved = CognitiveTransformContract(
+        name="_probe", version="1.0", purpose="p", thresholds={"T": 0.6}
+    )
+    assert base.content_hash != moved.content_hash
+
+
+def test_two_different_contracts_for_one_phase_are_refused() -> None:
+    register_contract(
+        CognitiveTransformContract(name="_dup", version="1.0", purpose="a")
+    )
+    with pytest.raises(ValueError):
+        register_contract(
+            CognitiveTransformContract(name="_dup", version="2.0", purpose="b")
+        )
+
+
+# ── Undeclared writes are detected by measurement ──────────────────────────
+
+
+def test_undeclared_write_is_caught_without_the_phase_reporting_it() -> None:
+    register_contract(
+        CognitiveTransformContract(
+            name="_narrow",
+            version="1.0",
+            purpose="only allowed to touch curiosity",
+            reads=("affect.curiosity",),
+            writes=("affect.curiosity",),
+        )
+    )
+    state = _State()
+    with recording_tick(objective="probe") as graph:
+        transformation = begin_transformation("_narrow", state)
+        # The phase does something it never declared.
+        state.affect.curiosity = 0.9
+        state.affect.arousal = 0.05
+        transformation.complete(state)
+
+    receipt = graph.receipts[-1]
+    assert "affect.curiosity" in receipt.observed_writes
+    assert receipt.undeclared_writes == ("affect.arousal",)
+    assert receipt.honoured_contract is False
+    assert graph.contract_violations
+
+
+def test_declared_write_is_not_a_violation() -> None:
+    register_contract(
+        CognitiveTransformContract(
+            name="_wide",
+            version="1.0",
+            purpose="allowed both",
+            writes=("affect.curiosity", "affect.arousal"),
+        )
+    )
+    state = _State()
+    with recording_tick() as graph:
+        transformation = begin_transformation("_wide", state)
+        state.affect.curiosity = 0.9
+        state.affect.arousal = 0.05
+        transformation.complete(state)
+    assert graph.receipts[-1].honoured_contract is True
+
+
+def test_uncontracted_phase_still_reports_what_it_wrote() -> None:
+    """The productive half of the ratchet: measurement before declaration."""
+
+    state = _State()
+    with recording_tick() as graph:
+        transformation = begin_transformation("_unknown_phase", state)
+        state.affect.arousal = 0.05
+        transformation.complete(state)
+    receipt = graph.receipts[-1]
+    assert receipt.contract_hash == ""
+    assert "affect.arousal" in receipt.observed_writes
+    assert receipt.undeclared_writes == ()
+
+    profile = write_profile()
+    assert profile["_unknown_phase"]["observed_writes"] == ["affect.arousal"]
+    assert profile["_unknown_phase"]["contracted"] is False
+
+
+# ── The record answers "why" ───────────────────────────────────────────────
+
+
+def test_provenance_answers_why_a_field_moved() -> None:
+    register_contract(
+        CognitiveTransformContract(
+            name="_decider",
+            version="1.0",
+            purpose="move curiosity on a named branch",
+            writes=("affect.curiosity",),
+            branches=(BranchSpec("fired", "curiosity > threshold", "decay it"),),
+        )
+    )
+    state = _State()
+    with recording_tick(objective="why probe"):
+        transformation = begin_transformation("_decider", state)
+        transformation.note_branch("fired", threshold=0.8, curiosity=0.91)
+        state.affect.curiosity = 0.51
+        transformation.complete(state)
+
+    answer = why_field_changed("affect.curiosity")
+    assert answer["found"] is True
+    assert answer["transform"] == "_decider"
+    assert answer["branch"] == "fired"
+    assert answer["criteria"]["threshold"] == 0.8
+
+
+def test_why_reports_absence_rather_than_inventing_an_answer() -> None:
+    answer = why_field_changed("affect.curiosity")
+    assert answer["found"] is False
+    assert "searched_ticks" in answer
+
+
+def test_narration_is_built_from_receipts() -> None:
+    state = _State()
+    with recording_tick(objective="narrate probe", priority=True) as graph:
+        transformation = begin_transformation("_decider", state)
+        transformation.note_branch("fired", threshold=0.8)
+        state.affect.curiosity = 0.4
+        transformation.complete(state)
+    text = graph.narrate()
+    assert "_decider" in text
+    assert "branch: fired" in text
+    assert "affect.curiosity" in text
+    assert "(foreground)" in text
+
+
+def test_open_tick_records_a_tick_that_never_finished() -> None:
+    """A tick that dies mid-phase is the one whose record is worth the most."""
+
+    state = _State()
+    open_tick(objective="crashed tick")
+    transformation = begin_transformation("_decider", state)
+    state.affect.curiosity = 0.2
+    transformation.complete(state)
+    # No close_tick — the process "died" here.
+    graphs = recent_graphs(4)
+    assert graphs and graphs[-1].objective == "crashed tick"
+    assert graphs[-1].receipts
+
+
+def test_kernel_measures_provenance_around_every_phase() -> None:
+    """The wiring, asserted against the kernel's own source.
+
+    ``_execute_phase_with_timing`` is the single seam every kernel phase passes
+    through. If provenance moves out of it, some phases stop being recorded and
+    the graph silently becomes partial.
+    """
+
+    from core.kernel.aura_kernel import AuraKernel
+
+    source = inspect.getsource(AuraKernel._execute_phase_with_timing)
+    assert "begin_transformation" in source
+    assert "transformation.complete" in source
+
+    tick_source = inspect.getsource(AuraKernel.tick)
+    assert "open_tick" in tick_source

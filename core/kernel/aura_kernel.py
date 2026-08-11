@@ -41,6 +41,7 @@ from core.phases.repair_phase import RepairPhase
 from core.phases.response_generation_unitary import UnitaryResponsePhase
 from core.phases.unity_binding import UnityBindingPhase
 from core.resilience.error_boundary import wrap_phase
+from core.runtime.cognitive_provenance import begin_transformation, close_tick, open_tick
 from core.runtime.errors import record_degradation
 from core.runtime.pipeline_blueprint import (
     bind_legacy_runtime_phase_attributes,
@@ -411,15 +412,34 @@ class AuraKernel:
     ) -> AuraState:
         """Run one phase and retain attributable latency on every terminal path."""
         started = time.perf_counter()
+        # The provenance seam. Every kernel phase passes through here, so this
+        # is where the state is digested before and after — measured around the
+        # phase rather than reported by it, which is the difference between a
+        # causal record and a phase asserting it behaved.
+        transformation = begin_transformation(phase_name, self.state)
+        phase_error = ""
+        result_state = self.state
         try:
-            return await wrap_phase(
+            result_state = await wrap_phase(
                 phase_name,
                 phase.execute,
                 self.state,
                 objective=objective,
                 priority=priority,
             )
+            return result_state
+        except BaseException as exc:  # noqa: BLE001 — recorded, then re-raised
+            phase_error = repr(exc)
+            raise
         finally:
+            try:
+                transformation.complete(
+                    result_state,
+                    error=phase_error,
+                    inputs={"objective": objective[:120], "priority": bool(priority)},
+                )
+            except Exception as exc:  # noqa: BLE001 — provenance never breaks a tick
+                logger.debug("provenance receipt failed for %s: %s", phase_name, exc)
             duration_ms = (time.perf_counter() - started) * 1000.0
             rounded_ms = round(duration_ms, 3)
             phase_durations = getattr(entry, "phase_durations_ms", None)
@@ -1210,6 +1230,11 @@ class AuraKernel:
             # silence on every tick after it. The documented behaviour, and
             # the only useful one, is per-tick.
             _begin_pass_run(f"kernel_tick/{'priority' if priority else 'background'}")
+            # Same shape and the same reason as the pass run above: one record
+            # per tick, opened here, so "why did she do that" can be answered
+            # from what the runtime measured rather than from what the model
+            # would say about itself afterwards.
+            _provenance = open_tick(objective=bound_objective, priority=priority)
             for phase in self._phases:
                 phase_name = phase.__class__.__name__
 
@@ -1376,6 +1401,8 @@ class AuraKernel:
                     raise RuntimeError(f"Phase {phase_name} returned None state")
 
                 self.state.updated_at = time.time()
+
+            close_tick(_provenance)
 
             # Flush deferred storage side-effects (eternal_append, db_write, etc.)
             # [STABILITY v53] Timeout guard — storage intents can hang on slow I/O
