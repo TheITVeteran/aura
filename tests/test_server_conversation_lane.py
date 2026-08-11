@@ -10848,7 +10848,18 @@ async def test_chat_restart_recovers_completed_exchange_from_ui_session(
     assert recovered[-1]["user"] == "Remember the UI lane continuity detail."
     assert recovered[-1]["session_id"] == "desktop-visible-session"
     assert "desktop-visible-session transcript" in recovered[-1]["aura"]
-    assert wrong_session == []
+    # Cross-session recall is deliberate — _load_durable_conversation_exchanges_sync
+    # scans other recent sessions when the current one is thin, because three
+    # reboots used to hide yesterday's conversation entirely. On a single-user
+    # desktop those other sessions are the same person's.
+    #
+    # The property that must hold is not emptiness but honest labelling: a turn
+    # from another session may be recalled, and may never be presented AS this
+    # session's. Mislabelling is what would let her claim continuity she does
+    # not have.
+    for exchange in wrong_session:
+        assert exchange["session_id"] != "different-visible-session"
+        assert exchange["session_id"] == "desktop-visible-session"
 
 
 @pytest.mark.asyncio
@@ -13063,7 +13074,17 @@ async def test_stabilize_user_facing_reply_clarifies_confusion_callout(monkeypat
     assert "synthetic fallback" not in lowered
     assert "grounded anchor" not in lowered
     assert "answer path" not in lowered
-    assert "understood you to be asking about" in lowered
+    # The clarification gives the person their OWN WORDS back rather than two
+    # inferred keywords. That inference was a bag of two tokens ranked by
+    # string length, and length is not aboutness: asked whether a request to
+    # "keep an eye on something" would "evaporate the second i stop typing",
+    # Bryan was told "I understood you to be asking about evaporate and
+    # second." Ranking words better only moves the failure — two keywords
+    # cannot demonstrate comprehension even when well chosen, and when badly
+    # chosen they assert a misunderstanding she did not have. Echoing is
+    # correct by construction on a path that exists BECAUSE inference failed.
+    assert "what reached me was" in lowered
+    assert "i'm so confused, aura" in lowered
     assert "ask me again" in lowered
     assert "confused" in lowered
     assert "I lost the thread on that answer" not in result

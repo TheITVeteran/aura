@@ -9511,7 +9511,15 @@ async def _run_cognitive_engine_chat_turn(
         recent_context_limit = min(4, _RECENT_CONVERSATION_CONTEXT_EXCHANGES)
     else:
         recent_context_limit = 0
-    if recent_context_limit > 0:
+    if memory_state_contract:
+        # Canonical memory-state evidence already answers this turn exactly.
+        # Recent history alongside it is not extra context, it is a competing
+        # account: the live failure was a stale pitch answer riding in next to
+        # the canonical evidence and steering the reply away from it. When the
+        # exact record exists, an approximate one is noise that outranks
+        # nothing and can only pull.
+        recent_exchanges = []
+    elif recent_context_limit > 0:
         recent_exchanges = await _recent_completed_conversation_exchanges(
             current_user_message=visible,
             session_id=session_id,
@@ -14572,9 +14580,21 @@ _IDENTITY_REQUEST_RE = re.compile(
 
 
 #: Words that can trail "what are you" without changing the question.
+#: What may follow "what are you" while it remains the whole question.
+#:
+#: Either nothing (bar filler and punctuation), or a CLAUSE BOUNDARY that
+#: starts a second question. "What are you, and will you remember this
+#: conversation tomorrow?" asks two things and the first one is an identity
+#: question; "what are you able to measure" is one question whose predicate
+#: happens to begin the same way. A comma plus a coordinator is the boundary
+#: between those two cases — the tail after it is a new clause with its own
+#: subject, not a completion of this one.
 _IDENTITY_TAIL_RE = re.compile(
     r"^(?:[\s,]*(?:really|exactly|actually|then|anyway|though|now|even)\b)*"
-    r"[\s?!.,;:'\"-]*$",
+    r"(?:"
+    r"[\s?!.,;:'\"-]*$"
+    r"|[\s]*[,;]\s*(?:and|or|but|then)\b\s+(?:will|do|are|can|would|did|have|is)\b"
+    r")",
     re.IGNORECASE,
 )
 
