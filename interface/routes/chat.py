@@ -20524,6 +20524,29 @@ def _desktop_deliverable_text(result: Any) -> str:
     for receipt in receipts:
         if not isinstance(receipt, dict):
             continue
+        # A read produces a FINDING, and the finding is the answer. "Count how
+        # many .py files are in <dir>, then write that ... Tell me the number"
+        # completed 2/2 steps with the right count in the right file, and the
+        # reply said only that it had run — so the semantic verifier correctly
+        # reported "requested_source_count_found" incomplete. The number was in
+        # the receipt the whole time.
+        if str(receipt.get("action") or "").strip() == "list_directory":
+            if not receipt.get("ok"):
+                continue
+            inner = receipt.get("result")
+            payload = inner if isinstance(inner, dict) else receipt
+            count = payload.get("count")
+            names = payload.get("names")
+            if type(count) is not int:
+                continue
+            line = f"{count} file(s) matching {payload.get('pattern') or '*'}"
+            path = str(payload.get("path") or "").strip()
+            if path:
+                line += f" in {path}"
+            if isinstance(names, list) and names:
+                line += ":\n" + "\n".join(f"  {name}" for name in names)
+            written.append(line)
+            continue
         if str(receipt.get("action") or "").strip() != "type":
             continue
         if not receipt.get("ok"):

@@ -332,3 +332,42 @@ def test_a_failed_read_does_not_verify() -> None:
 
     assert verified is False
     assert "Not a directory" in evidence
+
+
+def test_the_reply_reports_what_the_read_found() -> None:
+    """LIVE: 2/2 steps, correct count in the correct file, and a reply that
+    said only that it had run.
+
+    The person asked "Tell me the number" and the semantic verifier reported
+    requested_source_count_found incomplete — correctly. The number was in the
+    receipt the whole time. A read produces a finding, and the finding is the
+    answer.
+    """
+    from interface.routes.chat import _desktop_deliverable_text
+
+    text = _desktop_deliverable_text({
+        "receipts": [{
+            "action": "list_directory",
+            "ok": True,
+            "result": {
+                "ok": True,
+                "path": "/x/core/introspection",
+                "pattern": "*.py",
+                "count": 9,
+                "names": ["a.py", "b.py"],
+            },
+        }],
+    })
+
+    assert "9 file(s)" in text
+    assert "a.py" in text
+
+
+def test_an_unverified_read_reports_nothing() -> None:
+    """Quoting a finding from a step that did not verify is the false claim
+    wearing a friendlier face."""
+    from interface.routes.chat import _desktop_deliverable_text
+
+    assert _desktop_deliverable_text({
+        "receipts": [{"action": "list_directory", "ok": False, "result": {"count": 9}}],
+    }) == ""
