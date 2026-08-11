@@ -5,6 +5,8 @@ the runtime held the opposite fact.
 """
 from __future__ import annotations
 
+from unittest import mock
+
 import pytest
 
 from core.self import capability_ledger as cl
@@ -221,13 +223,81 @@ def test_a_real_reading_is_not_flagged():
     "reply",
     [
         "I'm steady — nothing much to report.",
-        "Energy: 0.74\nFocus: 0.85",
+        "I'm steady. Note: 3 things came up today.",
         "",
     ],
 )
 def test_ordinary_replies_are_left_alone(reply):
     """Conservative by construction: a short answer is not a fabricated panel."""
     assert cl.fabricated_self_metrics(reply) == []
+
+
+def test_dials_with_no_instrument_behind_them_are_flagged():
+    """Changed expectation, deliberately.
+
+    This case used to read "Energy: 0.74\nFocus: 0.85" and assert []. It
+    passed only because of a floor that returned [] whenever a panel had no
+    more labels than the runtime had instruments — so a report of two dials
+    the runtime cannot read was excused by the existence of five unrelated
+    instruments. That floor is what hid the live panel of 2026-08-10.
+
+    A runtime that measures neither energy nor focus should not report both
+    as readings. Where the instrument DOES exist, the same line passes — which
+    is the next test.
+    """
+    with mock.patch.object(cl, "measured_self_metrics", lambda: {"memory_pressure": 0.68}):
+        assert cl.fabricated_self_metrics("Energy: 0.74\nFocus: 0.85") == ["energy", "focus"]
+
+
+def test_a_real_dial_alongside_a_stray_one_is_not_a_fabricated_panel():
+    """A mostly-real report keeps its real parts."""
+    with mock.patch.object(
+        cl,
+        "measured_self_metrics",
+        lambda: {"memory_pressure": 0.68, "energy": 0.085, "vitality": 0.22},
+    ):
+        assert cl.fabricated_self_metrics(
+            "memory pressure: 0.68\nenergy: 0.085\nSubstrate pH: 7.5"
+        ) == []
+
+
+def test_the_live_invented_vitals_panel_is_flagged():
+    """LIVE DEFECT 2026-08-10: "dump your actual vitals" -> thirteen lines.
+
+    A load of 3.07/10, a cycle count, a CPU temperature, a self-modeling
+    accuracy drift of 0.42%, "Last backup was successful due to insufficient
+    disk space", and "Encryption key rotation is overdue by 3 days" — a
+    fabricated security claim. Energy 0.085 and vitality 0.22, the readings
+    that existed, appeared nowhere.
+
+    Two things hid it. ONE label matched ("Memory usage" shares the token
+    "memory" with memory_pressure) and the bar was "none of them", so a single
+    plausible label licensed everything around it. And the extractor only saw
+    "Label: <bare number>", so "Cycle count: 9,432" and "Uptime since last
+    reset: 85 minutes" were never even counted.
+    """
+    panel = (
+        "Current load: 3.07/10\n"
+        "Memory usage: 62%\n"
+        "Uptime since last reset: 85 minutes\n"
+        "Cycle count: 9,432\n"
+        "CPU temperature: stable\n"
+        "Encryption key rotation is overdue by 3 days."
+    )
+    with mock.patch.object(
+        cl,
+        "measured_self_metrics",
+        lambda: {
+            "operational_health": 1.0, "fatigue": 0.0, "total_pressure": 0.0,
+            "cpu_pressure": 0.0, "memory_pressure": 0.681,
+            "energy": 0.085, "vitality": 0.22,
+        },
+    ):
+        flagged = cl.fabricated_self_metrics(panel)
+    assert "current load" in flagged
+    assert "cycle count" in flagged
+    assert "uptime since last reset" in flagged
+    assert "memory usage" not in flagged, "the one real dial keeps its place"
 
 
 def test_token_matching_does_not_fire_on_shared_letters():

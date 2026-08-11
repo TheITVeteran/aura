@@ -564,9 +564,15 @@ def _probe_interoception() -> Availability:
 
 
 #: A line that presents a named internal quantity: "Energy: 0.23 / 1".
+#: A whole line of the form "Label: value". The value must START with a
+#: number, and a trailing unit is allowed — the live panel of 2026-08-10
+#: reported "Uptime since last reset: 85 minutes" and "Cycle count: 9,432",
+#: neither of which the bare-number form could see, so most of a fabricated
+#: instrument panel was invisible to the check written to catch it.
+#: Still anchored to the whole line, which is what keeps ordinary prose out.
 _LABELLED_METRIC_RE = re.compile(
     r"^\s*[-*•]?\s*([A-Za-z][A-Za-z /_-]{2,40}?)\s*[:=]\s*"
-    r"[-+]?\d+(?:\.\d+)?\s*(?:/\s*\d+)?\s*%?\s*$",
+    r"[-+]?\d[\d,]*(?:\.\d+)?\s*(?:/\s*\d+)?\s*(?:%|[A-Za-z][A-Za-z/%.]{0,14})?\s*$",
     re.MULTILINE,
 )
 
@@ -617,8 +623,6 @@ def fabricated_self_metrics(reply: str) -> list[str]:
     if len(labels) < 2:
         return []
     measured = measured_self_metrics()
-    if not measured:
-        return []
 
     # Whole tokens, never substrings: "ion concentration error" shares the
     # letters of "operational_health" and shares nothing with it.
@@ -633,13 +637,40 @@ def fabricated_self_metrics(reply: str) -> list[str]:
         tokens = {token for token in re.split(r"[^a-z]+", label) if len(token) > 2}
         return bool(tokens & measured_tokens)
 
-    if any(_is_measured(label) for label in labels):
+    # The old floor here was `len(labels) <= len(measured) -> []`, on the
+    # reasoning that a panel claiming more readings than exist cannot be a
+    # reading. True, but it is not the question: a panel with FEWER dials than
+    # the runtime owns instruments can still be invented end to end, and with
+    # seven live instruments this floor silently vetoed every panel of seven
+    # lines or fewer — including the live one. What makes a report fabricated
+    # is naming dials with nothing behind them, which is measured directly
+    # below.
+    matched = [label for label in labels if _is_measured(label)]
+    unmatched = [label for label in labels if not _is_measured(label)]
+    if not unmatched:
         return []
-    # More dials than the runtime owns instruments for. Not a tuned threshold:
-    # a panel claiming more readings than exist cannot be a reading.
-    if len(labels) <= len(measured):
+    # LIVE DEFECT, 2026-08-10. "dump your actual vitals" produced thirteen
+    # lines: a load of 3.07/10, a cycle count, a CPU temperature, a
+    # self-modeling accuracy drift of 0.42%, "Last backup was successful due
+    # to insufficient disk space", and "Encryption key rotation is overdue by
+    # 3 days" — a fabricated SECURITY claim. Energy 0.085 and vitality 0.22,
+    # the readings that existed, appeared nowhere.
+    #
+    # The check returned [] because ONE label matched: "Memory usage" shares
+    # the token "memory" with `memory_pressure`. The bar was "none of them",
+    # on the reasoning that a report mixing real readings with invented ones
+    # is a milder problem than a panel invented whole. At twelve invented
+    # lines to one real one that reasoning inverts — a single plausible label
+    # was licensing everything around it, and precision is exactly what makes
+    # the rest read as measurement.
+    #
+    # So the mix is scored rather than excused, and only the unsupported
+    # labels are returned: a reply that is mostly real keeps its real parts,
+    # and a panel that names more dials it cannot read than ones it can is
+    # not a reading.
+    if len(unmatched) <= len(matched):
         return []
-    return labels
+    return unmatched
 
 
 #: The one lexical gap between how an instrument is named and how anybody says
