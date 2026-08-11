@@ -623,3 +623,40 @@ def test_the_recorded_answer_is_applied_after_every_repair() -> None:
     window = source[source.find(marker) : source.find(marker) + 1400]
 
     assert "_append_past_action_record(_semantic_user_message, _final_reply)" in window
+
+
+def test_the_recorded_answer_is_applied_around_the_whole_turn() -> None:
+    """Five attempts, and the last one was about WHERE, not what.
+
+    _api_chat_turn returns from many places. The turn that needed the recorded
+    answer returned from a failure branch hundreds of lines before
+    _final_reply, because the cognitive engine failed closed with
+    "retryable_error_and_nothing_served" — and answered "I don't have that
+    count because I never actually performed the action" about a read recorded
+    five times over.
+
+    api_chat wraps every one of those branches.
+    """
+    import inspect
+
+    from interface.routes import chat
+
+    source = inspect.getsource(chat.api_chat)
+
+    assert "_apply_recorded_answer(body.message, await _api_chat_turn(" in source
+
+
+def test_the_wrapper_leaves_an_unrelated_reply_alone() -> None:
+    from starlette.responses import JSONResponse
+
+    from interface.routes import chat
+
+    original = JSONResponse(content={"response": "Lima."})
+    assert chat._apply_recorded_answer("what is the capital of Peru", original) is original
+
+
+def test_the_wrapper_survives_a_response_with_no_body() -> None:
+    from interface.routes import chat
+
+    sentinel = object()
+    assert chat._apply_recorded_answer("anything", sentinel) is sentinel

@@ -22796,6 +22796,45 @@ def _pre_gate_unavailable_response(gate: str) -> JSONResponse:
         },
         status_code=503,
     )
+def _apply_recorded_answer(user_message: object, response: Any) -> Any:
+    """Attach a recorded answer to whatever this turn ended up returning.
+
+    Applied HERE, around the whole turn, because _api_chat_turn returns from
+    many places and the ones that matter most are the failure branches.
+
+    LIVE, 2026-08-10, five attempts at one defect. Inside
+    _stabilize_user_facing_reply the correction was stripped as off-topic, then
+    overwritten by a later repair. Moved to _final_reply it survived every
+    repair — and the turn that needed it never reached _final_reply, because
+    the cognitive engine failed closed with
+    "retryable_error_and_nothing_served" and returned from a branch hundreds of
+    lines earlier. She answered "I don't have that count because I never
+    actually performed the action" about a read recorded five times over.
+
+    Every one of those branches passes through here. Nothing else does.
+    """
+
+    try:
+        payload = getattr(response, "body", None)
+        if payload is None:
+            return response
+        data = json.loads(payload)
+        if not isinstance(data, dict):
+            return response
+        reply = data.get("response")
+        if not isinstance(reply, str) or not reply.strip():
+            return response
+        corrected = str(_append_past_action_record(user_message, reply) or reply)
+        if corrected == reply:
+            return response
+        data["response"] = corrected
+        return JSONResponse(content=data, status_code=getattr(response, "status_code", 200))
+    except _CHAT_RECOVERABLE_ERRORS as exc:
+        record_degradation('chat', exc)
+        return response
+
+
+
 
 
 @router.post("/chat")
@@ -22847,7 +22886,7 @@ async def api_chat(
     turn_started = time.perf_counter()
     try:
         with bind_failure_ledger():
-            return await _api_chat_turn(body, request)
+            return _apply_recorded_answer(body.message, await _api_chat_turn(body, request))
     finally:
         try:
             from core.observability.histograms import record as _record_histogram
