@@ -212,9 +212,13 @@ class UnifiedRecurrentController(nn.Module):
             key_action_depth,
             key_state_action,
             key_literal_values,
+            key_answer_query,
+            key_answer_key,
+            key_answer_value,
+            key_answer_output,
         ) = mx.random.split(
             mx.random.key(config.initialization_seed),
-            num=23,
+            num=27,
         )
         scale = 1.0 / math.sqrt(config.hidden_size)
         self.correction_a = (
@@ -425,6 +429,35 @@ class UnifiedRecurrentController(nn.Module):
             ).astype(mx.float32)
             * 0.02
         )
+        self.answer_query = (
+            mx.random.normal(
+                (config.hidden_size, config.correction_rank),
+                key=key_answer_query,
+            ).astype(mx.float32)
+            * scale
+        )
+        self.answer_key = (
+            mx.random.normal(
+                (config.hidden_size, config.correction_rank),
+                key=key_answer_key,
+            ).astype(mx.float32)
+            * scale
+        )
+        self.answer_value = (
+            mx.random.normal(
+                (config.hidden_size, config.correction_rank),
+                key=key_answer_value,
+            ).astype(mx.float32)
+            * scale
+        )
+        self.answer_output = (
+            mx.random.normal(
+                (config.correction_rank, config.hidden_size),
+                key=key_answer_output,
+            ).astype(mx.float32)
+            / math.sqrt(config.correction_rank)
+        )
+        self.answer_gate_logit = mx.array(-2.0, dtype=mx.float32)
         self.literal_grounding_logit = mx.array(-1.1, dtype=mx.float32)
         self.state_literal_copy_logit = mx.array(
             (-4.0, 0.5, 0.5, 0.5, -4.0), dtype=mx.float32
@@ -533,6 +566,43 @@ class UnifiedRecurrentController(nn.Module):
         return mx.broadcast_to(
             self.state_slot_embeddings.astype(dtype)[None, :, :],
             (batch_size, self.config.state_slots, self.config.hidden_size),
+        )
+
+    def attend_answer_to_state(
+        self,
+        candidate: Any,
+        committed_state: Any,
+        *,
+        state_slot_start: int,
+    ) -> Any:
+        """Give answer positions a direct neural read path to typed registers."""
+
+        stop = state_slot_start + self.config.state_slots
+        answer_start = stop - 1
+        if (
+            len(candidate.shape) != 3
+            or candidate.shape != committed_state.shape
+            or int(candidate.shape[-1]) != self.config.hidden_size
+            or not 0 <= state_slot_start < stop <= int(candidate.shape[1])
+        ):
+            raise ValueError("state-to-answer bridge layout differs")
+        answer = candidate[:, answer_start:, :].astype(mx.float32)
+        state = committed_state[:, state_slot_start:stop, :].astype(mx.float32)
+        query = answer @ self.answer_query
+        key = state @ self.answer_key
+        value = state @ self.answer_value
+        attention = mx.softmax(
+            mx.einsum("bar,bsr->bas", query, key)
+            / math.sqrt(self.config.correction_rank),
+            axis=-1,
+        )
+        context = mx.einsum("bas,bsr->bar", attention, value)
+        delta = context @ self.answer_output
+        gate = mx.sigmoid(self.answer_gate_logit)
+        bridged = answer + gate * delta
+        return mx.concatenate(
+            [candidate[:, :answer_start, :], bridged.astype(candidate.dtype)],
+            axis=1,
         )
 
     def state_logits(
@@ -1242,6 +1312,7 @@ class UnifiedRecurrentController(nn.Module):
             "action_processor": "public_evidence_typed_action_transition",
             "predicted_action_is_state_transition_input": True,
             "terminal_state_semantics": "exact_idempotent_stutter",
+            "terminal_decode_semantics": "first_terminal_state_preserved",
             "state_problem_evidence": "frozen_deep_prefix_no_decoder_suffix",
             "literal_grounding": (
                 "tokenizer_bound_bounded_integer_observations"
@@ -1264,6 +1335,7 @@ class UnifiedRecurrentController(nn.Module):
                 else "disabled"
             ),
             "transformer_answer_passes_per_state": 1,
+            "state_to_answer_bridge": "trainable_cross_attention_before_frozen_coda",
             "parameter_sha256": self.parameter_sha256(),
         }
         return {**body, "receipt_sha256": _canonical_sha256(body)}
@@ -1284,6 +1356,7 @@ def unified_recurrent_hidden_states(
     initial_state_logit_trajectory: list[Any] | None = None,
     decode_state_trajectory: list[Any] | None = None,
     recurrent_input_trajectory: list[Any] | None = None,
+    state_probability_trajectory: list[Any] | None = None,
     state_teacher_values: Sequence[Sequence[int]] | None = None,
     action_teacher_values: Sequence[Sequence[int]] | None = None,
     initial_state_teacher_values: Sequence[int] | None = None,
@@ -1392,6 +1465,7 @@ def unified_recurrent_hidden_states(
     for iteration in range(plan.iterations):
         if state_slot_start is not None:
             state_stop = state_slot_start + controller.config.state_slots
+            prior_terminal_mask: Any | None = None
             if iteration > 0:
                 hidden = mx.concatenate(
                     [
@@ -1400,6 +1474,10 @@ def unified_recurrent_hidden_states(
                         anchor[:, state_stop:, :],
                     ],
                     axis=1,
+                )
+            if last_decode_state is not None and state_probabilities is not None:
+                prior_terminal_mask = (
+                    mx.argmax(state_probabilities[:, -1, :], axis=-1) == 1
                 )
             prior_state = hidden
             recurrent_input = hidden
@@ -1466,11 +1544,28 @@ def unified_recurrent_hidden_states(
                     probabilities=next_state_probabilities,
                 )
                 state_probabilities = next_state_probabilities
+                if state_probability_trajectory is not None:
+                    state_probability_trajectory.append(state_probabilities)
                 # State recurrence is cheap and explicit.  The resident
                 # transformer is used once per candidate state as the shared
                 # semantic answer bridge, never as the state transition itself.
                 candidate = _run(window, hidden)
                 candidate = controller.correction(candidate, iteration)
+                candidate = controller.attend_answer_to_state(
+                    candidate,
+                    hidden,
+                    state_slot_start=state_slot_start,
+                )
+                if prior_terminal_mask is not None:
+                    # A completed program stutters semantically as well as in
+                    # its typed registers. Re-running the transformer window
+                    # after termination used to move an already-correct answer
+                    # representation even though the machine state was fixed.
+                    candidate = mx.where(
+                        prior_terminal_mask[:, None, None],
+                        last_decode_state,
+                        candidate,
+                    )
             if state_logit_trajectory is not None:
                 state_logit_trajectory.append(state_logits)
             if action_logit_trajectory is not None:

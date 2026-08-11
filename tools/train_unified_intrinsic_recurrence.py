@@ -65,6 +65,7 @@ TRAINING_SCHEMA = "aura.unified_intrinsic_training.v1"
 TRAINING_SOURCE_FILES = (
     "core/learning/depth_conditioned_lora.py",
     "core/learning/recurrence_curriculum.py",
+    "core/learning/recurrent_answer_emission.py",
     "core/learning/recurrent_action_schema.py",
     "core/learning/recurrent_literal_grounding.py",
     "core/learning/recurrent_opcode_grounding.py",
@@ -288,6 +289,17 @@ def _optimization_phase(
     return "recurrence"
 
 
+def _semantic_execution_depth(
+    task_depth: int,
+    spec: UnifiedIntrinsicTrainingSpec,
+) -> int:
+    """Return the public execution depth at which the task is complete."""
+
+    if type(task_depth) is not int or task_depth not in spec.train_depths:
+        raise ValueError("semantic task depth is outside the trained recurrence horizon")
+    return task_depth
+
+
 def _phase_gradients(gradients: Any, phase: str) -> Any:
     """Keep the T1 semantic anchor fixed while training residual recurrence.
 
@@ -305,7 +317,9 @@ def _phase_gradients(gradients: Any, phase: str) -> Any:
             and "continuous_depth_" not in name
             and (name.endswith(".lora_a") or name.endswith(".lora_b"))
         )
-        keep = shared_adapter if phase == "semantic_anchor" else not shared_adapter
+        neural_answer_bridge = name.startswith("controller.answer_")
+        semantic_parameter = shared_adapter or neural_answer_bridge
+        keep = semantic_parameter if phase == "semantic_anchor" else not semantic_parameter
         masked.append((name, value if keep else mx.zeros_like(value)))
     return tree_unflatten(masked)
 
@@ -339,6 +353,16 @@ def _clip_gradient_norm(gradients: Any, max_norm: float) -> tuple[Any, Any]:
 def _gradient_ownership_group(name: str) -> str:
     if name.startswith("model."):
         return "scoped_transformer_bridge"
+    if name.startswith(
+        (
+            "controller.answer_query",
+            "controller.answer_key",
+            "controller.answer_value",
+            "controller.answer_output",
+            "controller.answer_gate_logit",
+        )
+    ):
+        return "state_answer_bridge"
     if name.startswith(
         ("controller.action_value_embeddings", "controller.action_slot_embeddings")
     ):
@@ -1132,6 +1156,7 @@ def main() -> int:
             "init_seed": args.init_seed,
             "semantic_warmup_steps": args.semantic_warmup_steps,
             "state_warmup_steps": args.state_warmup_steps,
+            "max_steps": args.max_steps,
             "student_rollin_probability": args.student_rollin_probability,
             "student_rollin_final_probability": rollin_final_probability,
             "state_teacher_forcing_probability": (
@@ -1231,17 +1256,20 @@ def main() -> int:
                 prompt, answer = encode_example(tokenizer, task, bridge)
                 with recurrence_adapter_scope(start=None, stop=None):
                     if phase == "semantic_anchor":
+                        semantic_depth = _semantic_execution_depth(task.depth, spec)
+
                         def semantic_objective(
                             candidate: UnifiedTrainingBundle,
                             objective_prompt: Any,
                             objective_answer: Any,
+                            objective_depth: int = semantic_depth,
                         ):
                             _recurrent, _states, losses, _state_logits = (
                                 unified_answer_and_recurrent_trajectory(
                                     candidate.model,
                                     objective_prompt,
                                     objective_answer,
-                                    spec.plan_at(1),
+                                    spec.plan_at(objective_depth),
                                     candidate.controller,
                                     use_state_slots=True,
                                 )

@@ -23,6 +23,12 @@ if str(REPO_ROOT) not in sys.path:
 
 import mlx.core as mx  # noqa: E402
 
+from core.learning.recurrent_answer_emission import (  # noqa: E402
+    tokenizer_answer_emission_contract,
+)
+from core.learning.recurrent_opcode_grounding import (  # noqa: E402
+    tokenizer_opcode_contract,
+)
 from core.learning.unified_intrinsic_recurrence import (  # noqa: E402
     unified_recurrent_logits,
 )
@@ -76,6 +82,15 @@ def _candidate_response(bridge: str, decoded: str) -> str:
     if not bridge.strip().endswith("FINAL_ANSWER:"):
         raise ValueError("decoded proof requires the exact answer bridge")
     return f"{bridge}{decoded}".strip()
+
+
+def _force_next_token(logits: Any, token_id: int) -> Any:
+    if type(token_id) is not int or not 0 <= token_id < int(logits.shape[-1]):
+        raise ValueError("compiled answer token is outside the model vocabulary")
+    vocabulary = mx.arange(int(logits.shape[-1]))[None, :]
+    forced = mx.where(vocabulary == token_id, 0.0, -1e9).astype(logits.dtype)
+    forced = mx.broadcast_to(forced, logits[:, -1, :].shape)
+    return mx.concatenate([logits[:, :-1, :], forced[:, None, :]], axis=1)
 
 
 def evaluate_decoding(
@@ -132,6 +147,10 @@ def evaluate_decoding(
         identity["bridge"],
     )
     t1 = spec.plan_at(1)
+    answer_contract = tokenizer_answer_emission_contract(
+        tokenizer,
+        tokenizer_opcode_contract(tokenizer),
+    )
     from core.brain.llm.latent_cortex.recurrence_adapter import (
         recurrence_adapter_scope,
     )
@@ -139,6 +158,7 @@ def evaluate_decoding(
     candidates: list[dict[str, Any]] = []
     for task in tasks:
         prompt, _answer = encode_example(tokenizer, task, bridge)
+        compiled_cache: dict[int, tuple[tuple[int, ...], Any, int]] = {}
 
         def base_logits(tokens: Any) -> Any:
             return _logits(bundle.model(tokens))
@@ -157,6 +177,59 @@ def evaluate_decoding(
             )
             return logits
 
+        def compiled_logits(
+            tokens: Any,
+            plan: Any,
+            state_slot_start: int = int(prompt.shape[-1]),
+            cache: dict[int, tuple[tuple[int, ...], Any, int]] = compiled_cache,
+        ) -> Any:
+            generated = tuple(
+                int(value) for value in tokens[0, state_slot_start:].tolist()
+            )
+            cached = cache.get(plan.iterations)
+            if cached is not None:
+                expected, dtype, vocabulary_size = cached
+                if (
+                    len(generated) >= len(expected)
+                    or generated != expected[: len(generated)]
+                ):
+                    raise RuntimeError(
+                        "compiled recurrent answer diverged from its terminal program"
+                    )
+                shell = mx.zeros((1, 1, vocabulary_size), dtype=dtype)
+                return _force_next_token(shell, expected[len(generated)])
+
+            state_probabilities: list[Any] = []
+            logits, _telemetry = unified_recurrent_logits(
+                bundle.model,
+                tokens,
+                plan,
+                bundle.controller,
+                state_slot_start=state_slot_start,
+                state_probability_trajectory=state_probabilities,
+            )
+            if not state_probabilities:
+                raise RuntimeError("compiled recurrent answer produced no typed state")
+            state_values = tuple(
+                int(value)
+                for value in mx.argmax(state_probabilities[-1], axis=-1)
+                .tolist()[0]
+            )
+            public_tokens = tuple(
+                int(value) for value in tokens[0, :state_slot_start].tolist()
+            )
+            expected = answer_contract.expected_tokens(public_tokens, state_values)
+            if expected is None:
+                raise RuntimeError("compiled recurrent answer did not reach terminal state")
+            if generated:
+                raise RuntimeError("compiled recurrent answer cache missed after emission began")
+            cache[plan.iterations] = (
+                expected,
+                logits.dtype,
+                int(logits.shape[-1]),
+            )
+            return _force_next_token(logits, expected[len(generated)])
+
         arms: tuple[tuple[str, Callable[[Any], Any]], ...] = (
             ("base_t1", base_logits),
             ("trained_t1", lambda tokens: recurrent_logits(tokens, t1)),
@@ -164,6 +237,16 @@ def evaluate_decoding(
                 (
                     f"trained_t{depth}",
                     lambda tokens, depth=depth: recurrent_logits(
+                        tokens,
+                        spec.plan_at(depth),
+                    ),
+                )
+                for depth in decoded_depths
+            ),
+            *(
+                (
+                    f"compiled_t{depth}",
+                    lambda tokens, depth=depth: compiled_logits(
                         tokens,
                         spec.plan_at(depth),
                     ),
@@ -251,8 +334,10 @@ def evaluate_decoding(
         "depth_results": depth_results,
         "candidates": candidates,
         "claim_boundary": (
-            "greedy exact-answer diagnostic on fresh synthetic formal tasks; "
-            "not a preregistered broad reasoning, resident-32B, or WOW result"
+            "compiled arms measure public typed-state execution plus "
+            "tokenizer-bound emission; trained arms remove that compiler and "
+            "measure neural internalization. This is not a preregistered broad "
+            "reasoning, resident-32B, frontier, fusion, or WOW result"
         ),
     }
     return {**body, "report_sha256": _canonical_sha256(body)}

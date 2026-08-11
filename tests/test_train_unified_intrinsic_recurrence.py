@@ -41,6 +41,7 @@ from tools.train_unified_intrinsic_recurrence import (  # noqa: E402
     _residual_hidden_size,
     _restore_checkpoint,
     _save_checkpoint,
+    _semantic_execution_depth,
     _student_rollin_probability,
     _trainable,
 )
@@ -157,19 +158,25 @@ def test_phase_partition_preserves_shared_t1_and_trains_depth_bridge() -> None:
                 "continuous_depth_b": [mx.ones((2, 2))],
             }
         },
-        "controller": {"transport_bias": mx.ones(())},
+        "controller": {
+            "answer_output": mx.ones((2, 2)),
+            "transport_bias": mx.ones(()),
+        },
     }
     semantic = dict(tree_flatten(_phase_gradients(gradients, "semantic_anchor")))
     state = dict(tree_flatten(_phase_gradients(gradients, "state_transition")))
     recurrent = dict(tree_flatten(_phase_gradients(gradients, "recurrence")))
     assert bool(mx.all(semantic["model.layer.lora_a"] == 1))
     assert bool(mx.all(semantic["model.layer.continuous_depth_b.0"] == 0))
+    assert bool(mx.all(semantic["controller.answer_output"] == 1))
     assert bool(mx.all(semantic["controller.transport_bias"] == 0))
     assert bool(mx.all(state["model.layer.lora_a"] == 0))
     assert bool(mx.all(state["model.layer.continuous_depth_b.0"] == 1))
+    assert bool(mx.all(state["controller.answer_output"] == 0))
     assert bool(mx.all(state["controller.transport_bias"] == 1))
     assert bool(mx.all(recurrent["model.layer.lora_a"] == 0))
     assert bool(mx.all(recurrent["model.layer.continuous_depth_b.0"] == 1))
+    assert bool(mx.all(recurrent["controller.answer_output"] == 0))
     assert bool(mx.all(recurrent["controller.transport_bias"] == 1))
     assert _optimization_phase(39, 40) == "semantic_anchor"
     assert _optimization_phase(40, 40) == "recurrence"
@@ -177,6 +184,14 @@ def test_phase_partition_preserves_shared_t1_and_trains_depth_bridge() -> None:
     assert _optimization_phase(20, 40, 20) == "semantic_anchor"
     assert _optimization_phase(59, 40, 20) == "semantic_anchor"
     assert _optimization_phase(60, 40, 20) == "recurrence"
+
+
+def test_semantic_supervision_runs_at_the_tasks_public_execution_depth() -> None:
+    spec = UnifiedIntrinsicTrainingSpec(2, 4, (1, 2, 4), (8, 16))
+    assert _semantic_execution_depth(1, spec) == 1
+    assert _semantic_execution_depth(4, spec) == 4
+    with pytest.raises(ValueError, match="outside the trained recurrence horizon"):
+        _semantic_execution_depth(8, spec)
 
 
 def test_student_rollin_mix_is_deterministic_and_never_relabels() -> None:

@@ -139,6 +139,54 @@ def test_typed_state_decision_is_committed_as_next_step_input() -> None:
         == "frozen_deep_prefix_no_decoder_suffix"
     )
     assert receipt["transformer_answer_passes_per_state"] == 1
+    assert (
+        receipt["state_to_answer_bridge"]
+        == "trainable_cross_attention_before_frozen_coda"
+    )
+    assert receipt["terminal_decode_semantics"] == "first_terminal_state_preserved"
+
+
+def test_neural_answer_bridge_reads_state_without_rewriting_public_prefix() -> None:
+    controller = _controller()
+    candidate = mx.zeros((1, 12, 64), dtype=mx.float32)
+    committed = mx.zeros((1, 12, 64), dtype=mx.float32)
+    baseline = controller.attend_answer_to_state(
+        candidate,
+        committed,
+        state_slot_start=4,
+    )
+    changed = controller.attend_answer_to_state(
+        candidate,
+        committed.at[:, 5, :].add(1.0),
+        state_slot_start=4,
+    )
+    assert bool(mx.array_equal(baseline[:, :8, :], changed[:, :8, :]))
+    assert not bool(mx.array_equal(baseline[:, 8:, :], changed[:, 8:, :]))
+
+
+def test_terminal_typed_state_preserves_first_terminal_decode_state() -> None:
+    model = _model()
+    controller = _controller()
+    decode_states: list[object] = []
+    _final, _trajectory, _telemetry = unified_recurrent_hidden_states(
+        model,
+        TOKENS,
+        RecurrentDepthPlan(2, 6, iterations=3),
+        controller,
+        state_slot_start=4,
+        decode_state_trajectory=decode_states,
+        initial_state_teacher_values=(0, 0, 0, 0, 0),
+        state_teacher_values=(
+            (1, 2, 3, 4, 1),
+            (1, 2, 3, 4, 1),
+            (1, 2, 3, 4, 1),
+        ),
+        state_teacher_forcing_probability=1.0,
+    )
+    mx.eval(decode_states)
+    assert len(decode_states) == 3
+    assert bool(mx.array_equal(decode_states[0], decode_states[1]))
+    assert bool(mx.array_equal(decode_states[1], decode_states[2]))
 
 
 def test_state_processor_reads_problem_and_state_but_not_answer_suffix() -> None:

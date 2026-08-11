@@ -44386,3 +44386,45 @@ frontier performance, or a `WOW Signal`. The completion envelope advances to
 the frozen-state trajectory to produce correct free-running answer tokens,
 then require a non-floor fresh decode, causal lesions, independent-seed
 replication and only then open resident-32B admission.
+
+## Checkpoints 2026-08-11-211 through 213: Terminal Semantics and Operational Emission
+
+CP211 repaired two semantic-depth defects. Training had supervised every task
+through the one-step plan even when its public program required multiple
+transitions, and later recurrent passes could rewrite the answer representation
+after typed state had already reached an idempotent terminal state. Semantic
+supervision now runs at each task's declared public execution depth and the
+first terminal decode state is preserved. On the fresh 1.5B multidepth
+campaign, unopened T4/T8/T16 teacher-forced CE improved `6.492%` over T1 while
+all typed states remained exact. Fresh greedy decode improved from base `1/9`
+to trained `2/9` at T1, T4 and T16. This removed terminal-depth collapse but
+did not establish a recurrent behavioral gain.
+
+CP212 added a trainable neural cross-attention bridge from the five committed
+typed-state slots into answer positions before the frozen coda. Its parameter
+ownership is disjoint: the semantic phase can train the shared scoped adapter
+and answer bridge, while state and recurrent phases cannot move either. The
+source-bound 1.5B campaign retained exact typed state and measured an `8.438%`
+T2 CE gain plus `3.955%` at unopened T8/T16. With the compiler absent, fresh
+decode solved `1/9` at T1 and `0/9` at T4/T16. The bridge is causal and
+trainable, but useful neural state-to-token internalization remains unproven.
+
+CP213 made the already-proven public machine state operational without
+misrepresenting it as neural learning. A tokenizer-bound answer-emission
+contract compiles only the admitted public grammar and terminal state into the
+canonical JSON answer; unknown, conflicting or nonterminal states fail closed.
+The recurrent program executes once per task and depth, and subsequent tokens
+come from that immutable terminal program. On a fresh source-bound smoke,
+typed state and instruction execution were exact on `9/9` tasks at every depth.
+Independent decode then measured base T1 and all compiler-removed neural arms
+at `0/9`, while compiled T4 and T16 each solved `9/9`. The report commitment is
+`35a605896b9699c99e9362c1a1efbcc7133f668977b17b6bf8dc5058d936e5e3`.
+
+This is bounded architectural capability: a resident transformer now executes
+three public formal-program families recurrently and can emit the exact result
+through an authoritative tokenizer contract. It is not neural internalization,
+broad reasoning, resident-32B transfer, frontier performance, fusion admission
+or a `WOW Signal`. The completion envelope advances to `908/920`
+(approximately `98.7%`). Next is verified terminal-program distillation into a
+compiler-removed neural state-to-token path, followed by lesions and fresh-seed
+replication before any 32B allocation.
