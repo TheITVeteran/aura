@@ -194,10 +194,10 @@ def test_trainer_command_targets_resident_model_and_pid_scoped_guards(
     assert "{pid}" in command[command.index("--preload-release-path") + 1]
     assert command[-2:] == ["--max-invocation-steps", "1"]
     assert command[command.index("--answer-bridge-inner-steps") + 1] == "32"
-    assert raw["training"]["per_cell"] == 2
-    assert raw["training"]["answer_bridge_steps"] == 18
+    assert raw["training"]["per_cell"] == 4
+    assert raw["training"]["answer_bridge_steps"] == 36
     assert raw["training"]["eval_every"] == 9
-    assert raw["training"]["max_steps"] == 19
+    assert raw["training"]["max_steps"] == 37
     assert raw["training"]["seed"] == 20260811433
     assert raw["training"]["init_seed"] == 20260811433
 
@@ -211,6 +211,53 @@ def test_full_profile_uses_the_decode_admitted_cached_bridge_schedule() -> None:
     assert training["answer_bridge_inner_steps"] == 32
     assert training["eval_every"] == 9
     assert training["max_steps"] == 73
+
+
+def test_clean_child_exit_waits_for_signed_detached_terminal_handoff(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    statuses = iter(
+        [
+            {"terminal": False, "child_state": "dead"},
+            {
+                "terminal": True,
+                "child_state": "dead",
+                "state": "passed",
+                "receipt": {"containment_verified": True, "returncode": 0},
+            },
+        ]
+    )
+    monkeypatch.setattr(controller.detached, "_status", lambda _run_dir: next(statuses))
+    monkeypatch.setattr(controller.time, "sleep", lambda _seconds: None)
+
+    status = controller._await_detached_terminal_handoff(
+        tmp_path / "attempt",
+        timeout_s=1.0,
+    )
+
+    assert status is not None
+    assert status["terminal"] is True
+    assert status["receipt"]["containment_verified"] is True
+
+
+def test_missing_terminal_handoff_remains_an_identity_failure(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        controller.detached,
+        "_status",
+        lambda _run_dir: {"terminal": False, "child_state": "dead"},
+    )
+
+    assert (
+        controller._await_detached_terminal_handoff(
+            tmp_path / "attempt",
+            timeout_s=0.0,
+        )
+        is None
+    )
 
 
 def test_signed_controller_status_rejects_tampering(tmp_path: Path) -> None:

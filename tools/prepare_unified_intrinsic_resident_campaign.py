@@ -202,7 +202,11 @@ def _profile_training(profile: str) -> dict[str, Any]:
         "wired_limit_gb": 48.0,
     }
     if profile == "canary":
-        canary_per_cell = 2
+        # Two examples per cell twice reached 8/9 exact resident admission but
+        # did not generalize the register-value readout reliably. Four remains
+        # bounded while covering enough values to test transfer rather than
+        # one-shot memorization.
+        canary_per_cell = 4
         family_count = len(str(common["families"]).split(","))
         task_depth_count = len(str(common["task_depths"]).split(","))
         canary_bridge_steps = (

@@ -81,6 +81,7 @@ STARTUP_LETHAL_MB: Final = 54.0 * 1024.0
 STEADY_LETHAL_MB: Final = 48.0 * 1024.0
 PRELOAD_TIMEOUT_S: Final = 300.0
 HOST_LEASE_HANDOFF_TIMEOUT_S: Final = 60.0
+DETACHED_TERMINAL_HANDOFF_TIMEOUT_S: Final = 5.0
 TRAINING_LABEL_PREFIXES: Final = (
     "com.aura.unified-intrinsic.",
     "com.aura.resident-sft.",
@@ -1340,6 +1341,28 @@ def _target_is_live(evidence: Mapping[str, Any]) -> bool:
     )
 
 
+def _await_detached_terminal_handoff(
+    run_dir: Path,
+    *,
+    timeout_s: float = DETACHED_TERMINAL_HANDOFF_TIMEOUT_S,
+) -> dict[str, Any] | None:
+    """Allow a clean child exit to become a signed detached terminal receipt."""
+
+    if timeout_s < 0.0:
+        raise ValueError("detached terminal handoff timeout must not be negative")
+    deadline = time.monotonic() + timeout_s
+    while True:
+        try:
+            status = detached._status(run_dir)  # noqa: SLF001
+        except (detached.DetachedStepError, OSError, ValueError):
+            status = None
+        if isinstance(status, dict) and status.get("terminal") is True:
+            return dict(status)
+        if time.monotonic() >= deadline:
+            return None
+        time.sleep(0.1)
+
+
 def _monitor_attempt(
     config_path: Path,
     config: Mapping[str, Any],
@@ -1403,6 +1426,9 @@ def _monitor_attempt(
                     raise
             if release_evidence is not None:
                 if not _target_is_live(release_evidence):
+                    terminal = _await_detached_terminal_handoff(run_dir)
+                    if terminal is not None:
+                        return terminal, release_evidence
                     _stop_detached(run_dir, code="target_loss_containment_failed")
                     _fail("trainer_identity_lost")
                 if not _sentinel_is_live(release_evidence):

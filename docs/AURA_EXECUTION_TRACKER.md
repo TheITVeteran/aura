@@ -45293,3 +45293,51 @@ trainer/controller/evaluator/adjudicator surface passes `72/72`; canonical
 smoke passes `104/104`; Ruff and compilation are clean. The completion envelope
 remains `912/920` (approximately `99.1%`). Next is a fresh source-bound stronger
 canary, all-cell admission, and only then the frozen eight-arm decoded verdict.
+
+## Checkpoint 2026-08-11-250: Stronger Resident Canary Reaches Eight of Nine
+
+The source-bound CP250 resident-32B canary at immutable commit
+`b5188f9b8058beae408514296ba7686334690878` completed all 19 training steps in
+`22.008` minutes. The terminal checkpoint commitment is
+`877a56f0b9c678cb618848486ec489d0619b8bc66ea1a95356e7f70287293918`,
+training-receipt commitment is
+`602d1fb22d6b736d60f7a636fa669645f86830b8268497b9197d28358aec6514`
+and detached receipt commitment is
+`7916a66769585bf3362c318baf8b3f70c1e108c40c265dc6582b1f086eafd9db`.
+The detached child exited zero with verified containment, an empty process
+group and no surviving lineage.
+
+The repaired terminal recurrence task stayed near `19 GB` managed memory,
+well below the `48 GB` steady sentinel boundary that had terminated the prior
+long-prompt attempts. Its terminal held-out result strengthened to T4/T8/T16
+cross-entropy `1.502811` versus T1 `3.221999`, a `53.358%` relative reduction,
+while every typed state/action invariant remained exact. This proves the
+memory-cost-ordered recurrence schedule operationally, but favorable loss is
+not decoded-answer authority.
+
+Admission again failed honestly by one fresh token. It emitted `8/9` unseen
+family/depth cells exactly and matched `97/98` answer tokens. The sole failure
+was a depth-one register trace whose correct terminal object was
+`{"r0":23,"r1":28,"r2":21}`; the neural path emitted `26` for `r0` while
+retaining the other registers. Admission commitment is
+`d5dec3658bbf21bef697ccb5c7e4a6091673f531f9ca06ccdf7492063eeff1c3`.
+No admitted checkpoint or eight-arm evaluation exists, and no resident
+transfer, fusion, frontier or `WOW Signal` claim is authorized.
+
+The run exposed a controller race independent of the scientific rejection.
+After the clean child exit, the controller could inspect the child before the
+detached supervisor atomically published its terminal receipt and misreport
+the campaign as `trainer_identity_lost`. The controller now gives that exact
+handoff a bounded five-second receipt grace; an authenticated terminal receipt
+wins, while an absent receipt still triggers containment and fails closed.
+
+Two training examples per family/depth cell were not sufficient to make the
+register-value readout reliable across fresh seeds. The next frozen canary is
+predeclared at four examples per cell: 36 bridge feature passes, one terminal
+recurrence step and the same exact `9/9` unseen-cell admission threshold. The
+failed CP249 and CP250 holdouts remain evidence, not training inputs. The
+controller/profile surface passes `21/21` focused tests; canonical smoke passes
+`104/104`; Ruff and compilation are clean. The completion envelope remains
+`912/920` (approximately `99.1%`). Next is publish this repair, freeze CP251
+against a new seed, require exact admission, and only then run the eight-arm
+resident decoded canary.
