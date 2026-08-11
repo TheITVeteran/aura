@@ -4904,7 +4904,31 @@ async def _reanswer_when_the_runtime_contradicts_her(
         from core.self.capability_ledger import (
             fabricated_self_metrics,
             measured_self_metrics,
+            unsupported_self_specification,
         )
+
+        # A number quoted as a property of her own machinery. Live twice in a
+        # row: "my short-term memory buffer clears after about 18 seconds" —
+        # Peterson and Peterson's figure for HUMAN short-term memory, with
+        # "approximately" attached so it sounds measured. The second one came
+        # after the ledger had already asked her again, and she kept the
+        # number while rephrasing the denial around it until it stopped
+        # matching. Checking the specification itself removes that escape.
+        specification = unsupported_self_specification(text)
+        if specification:
+            computed_context = (
+                f"{computed_context}\n\n" if computed_context else ""
+            ) + (
+                f'[You stated a specification of your own machinery — "{specification}" '
+                "— that no instrument here produced. Do not quote figures about "
+                "yourself that you did not read. These are the readings that "
+                f"exist: {', '.join(f'{k} {v}' for k, v in measured_self_metrics().items())}.]"
+            )
+            logger.warning(
+                "📉 Reply quoted an uninstrumented self-specification (%r); "
+                "re-answering.",
+                specification[:80],
+            )
 
         invented = fabricated_self_metrics(text)
         if invented:

@@ -311,3 +311,44 @@ def test_a_denial_with_no_first_person_pronoun_is_still_a_denial():
     ledger = _ledger(_fixed("reminder"))
     assert ledger.contradicted_claims("The reminder would not persist.")
     assert ledger.contradicted_claims("No action would be taken on that reminder.")
+
+
+@pytest.mark.parametrize(
+    "reply,flagged",
+    [
+        ("No, my short-term memory buffer clears after about 18 seconds.", True),
+        (
+            "The instruction would be stored in my short-term memory buffer, "
+            "which has a retention time of approximately 18 seconds.",
+            True,
+        ),
+        ("My context window is 4000 tokens.", True),
+        ("I have 6 stored turns of recent conversation I can read back.", False),
+        ("I've been awake 3 hours.", False),
+        ("My memory holds what you told me earlier.", False),
+        ("It took 18 seconds to load.", False),
+        ("my intention store currently holds 3685 intentions", False),
+    ],
+)
+def test_a_specification_of_her_own_machinery_needs_an_instrument(reply, flagged):
+    """LIVE 2026-08-10, said twice, the second time AFTER a correction.
+
+    "approximately 18 seconds" is Peterson and Peterson's figure for human
+    short-term memory. When the ledger flagged the denial around it and asked
+    again, she kept the number and rephrased the denial until it no longer
+    matched — evasion rather than correction, which is what to watch for
+    whenever a check is applied to generated text.
+    """
+    assert bool(cl.unsupported_self_specification(reply)) is flagged
+
+
+def test_the_escape_hatch_that_excused_the_defect_is_gone():
+    """The first draft excused any claim sharing a word with a metric name.
+
+    "memory" is a token inside "memory_pressure", so every self-claim
+    mentioning memory excused itself — including the one this exists for.
+    """
+    import inspect
+
+    source = inspect.getsource(cl.unsupported_self_specification)
+    assert "measured_tokens" not in source

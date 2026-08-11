@@ -573,6 +573,57 @@ def fabricated_self_metrics(reply: str) -> list[str]:
     return labels
 
 
+#: A specification quoted about her own machinery: "my short-term memory buffer
+#: clears after about 18 seconds", "my context window is 4000 tokens".
+_SELF_SPECIFICATION_RE = re.compile(
+    r"\bmy\s+(?:[\w-]+\s+){0,3}"
+    r"(?:buffer|memory|retention|capacity|context|window|state|store|cache|"
+    r"loop|cycle|clock|lifespan)\b"
+    r"[^.!?]{0,80}?"
+    r"\b\d+(?:\.\d+)?\s*"
+    r"(?:seconds?|secs?|ms|milliseconds?|minutes?|mins?|hours?|days?|"
+    r"tokens?|characters?|chars?|kb|mb|gb|bytes?|turns?|messages?)\b",
+    re.IGNORECASE,
+)
+
+
+def unsupported_self_specification(reply: str) -> str:
+    """A number quoted as a property of her own machinery, or "".
+
+    LIVE DEFECT, 2026-08-10, twice in a row:
+
+        "my short-term memory buffer ... has a retention time of
+         approximately 18 seconds"
+        "No, my short-term memory buffer clears after about 18 seconds."
+
+    Eighteen seconds is Peterson and Peterson's figure for human short-term
+    memory. Nothing in this runtime has that property, and no instrument
+    produced the number — it came from a psychology textbook by way of the
+    training data, and arrived with "approximately" attached, which is what a
+    measurement sounds like.
+
+    The second one was said AFTER the capability ledger had flagged the first
+    and asked her again with the real reading. She kept the fabrication and
+    rephrased the surrounding denial until it no longer matched — which is the
+    thing to watch for whenever a check is applied to generated text: pressure
+    to evade rather than correct. So the specification itself is checked, not
+    the denial wrapped around it.
+    """
+    match = _SELF_SPECIFICATION_RE.search(str(reply or ""))
+    if not match:
+        return ""
+    # Deliberately no "but one of these words is also in a metric name"
+    # escape. The first draft had one, and "memory" is a token inside
+    # "memory_pressure", so every self-claim mentioning memory excused itself —
+    # including the eighteen-second one this function exists for.
+    #
+    # A number quoted as a property of her own machinery should come from an
+    # instrument whether or not it happens to be right. The correction path
+    # hands her the readings that do exist, so a true specification survives
+    # being asked again; an invented one does not.
+    return match.group(0).strip()
+
+
 def _probe_world_access() -> Availability:
     """Whether she can reach anything beyond this conversation.
 
@@ -768,6 +819,7 @@ def correction_context(claims: Iterable[ContradictedClaim]) -> str:
 __all__ = [
     "Availability",
     "fabricated_self_metrics",
+    "unsupported_self_specification",
     "measured_self_metrics",
     "CapabilityLedger",
     "ContradictedClaim",
