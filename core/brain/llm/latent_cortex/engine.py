@@ -56,6 +56,7 @@ from core.brain.llm.latent_cortex.governance import CheckpointInvariant
 from core.brain.llm.latent_cortex.latent_opt import LatentOptimizer, build_proxy_loss
 from core.brain.llm.latent_cortex.plasticity_sites import PLASTICITY_SITE_REGISTRY
 from core.brain.llm.latent_cortex.probe_cache import DecodeProbeCache
+from core.brain.llm.latent_cortex.loop_core import ComputeBudgetUnaffordable
 from core.brain.llm.latent_cortex.recurrence import WindowRunner, recurrence_step
 from core.brain.llm.latent_cortex.resource_accounting import (
     build_information_receipt,
@@ -2718,7 +2719,17 @@ class LatentCortexEngine:
                         if normalized_action_intervention is not None
                         else "vanilla_fallback_disabled"
                     )
-                    failure_reason = f"latent_phase_failed:{type(exc).__name__}:{exc}"
+                    # A refusal to spend is not a broken decode. Kept as its
+                    # own class so latent_owner_exhausted() can release the
+                    # resident model and the ordinary path can answer the turn,
+                    # instead of the person getting "I couldn't get to an
+                    # answer I'd stand behind" because an optional enhancement
+                    # was priced out.
+                    failure_reason = (
+                        f"latent_budget_declined:{type(exc).__name__}:{exc}"
+                        if isinstance(exc, ComputeBudgetUnaffordable)
+                        else f"latent_phase_failed:{type(exc).__name__}:{exc}"
+                    )
                 elif receipt.fast_weights_applied and receipt.fast_weights_erased is not True:
                     receipt.flag("fallback_refused_unproven_model_state")
                     failure_reason = "fast_weight_cleanup_unproven"

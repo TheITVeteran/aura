@@ -198,6 +198,18 @@ def latent_owner_exhausted(reason: str, receipt: dict[str, Any]) -> bool:
         return False
     if normalized.startswith("soft_cancel") or normalized in {"cancelled", "canceled"}:
         return False
+    # Declining to spend releases the owner, exactly like a soft cancel.
+    #
+    # LIVE, 2026-08-10: a desktop turn died on
+    # "compute budget cannot afford window [0:16) for 9 slots". The window was
+    # refused on an accounting precondition BEFORE any layer ran, so nothing was
+    # left mid-flight and the resident model was clean — but the episode had an
+    # episode_id and had consumed input tokens, which is all the fallthrough
+    # below looks at. It concluded the owner was spent, the ordinary generation
+    # was refused, and the person got "I couldn't get to an answer I'd stand
+    # behind" because an optional enhancement was priced out.
+    if normalized.startswith("latent_budget_declined:"):
+        return False
 
     input_tokens = receipt.get("input_token_count")
     consumed_input = type(input_tokens) is int and input_tokens > 0

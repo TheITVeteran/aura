@@ -33,6 +33,7 @@ from typing import TYPE_CHECKING, Any
 from core.brain.llm.latent_cortex.loop_core import (
     ABSOLUTE_POSITION_LIMIT,
     KV_BOUND_SCHEMA,
+    ComputeBudgetUnaffordable,
     LoopCoreError,
     alpha_for_step,
     assert_finite_state,
@@ -495,7 +496,11 @@ class WindowRunner:
                 f"total={total_tokens} limit={self._position_limit}"
             )
         if not self._budget.can_afford(tokens, layers):
-            raise RuntimeError(
+            # Typed, because the caller must tell "declined to spend" from
+            # "broke mid-decode". Nothing has run in this window yet, so the
+            # resident model is clean and the turn can still be answered by the
+            # ordinary path.
+            raise ComputeBudgetUnaffordable(
                 f"compute budget cannot afford window [{start}:{end}) for {tokens} slots"
             )
         # Reserve and account the whole atomic pass before execution. A layer

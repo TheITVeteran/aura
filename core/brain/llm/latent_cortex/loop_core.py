@@ -21,6 +21,30 @@ class LoopCoreError(RuntimeError):
     """The recurrent state violated a fail-closed numerical invariant."""
 
 
+class ComputeBudgetUnaffordable(RuntimeError):
+    """The episode declined to spend, which is not the same as breaking.
+
+    LIVE, 2026-08-10. A desktop chat turn died with
+
+        latent_phase_failed:RuntimeError:compute budget cannot afford
+        window [0:16) for 9 slots
+
+    and the person got "I couldn't get to an answer I'd stand behind."
+
+    The window was refused BEFORE any layer ran, on an accounting
+    precondition. Nothing about the model was left mid-flight. But the refusal
+    arrived as a bare RuntimeError, indistinguishable from a numerical
+    invariant blowing up inside a decode, and latent_owner_exhausted() — whose
+    real question is "could a second decode collide with a still-cleaning
+    worker?" — saw an episode that had reached a stage and consumed input
+    tokens, concluded the resident owner was spent, and refused the ordinary
+    generation that would have answered the turn.
+
+    So this is its own type: a decision not to spend releases the owner, and
+    the ordinary path can serve the answer.
+    """
+
+
 def canonical_sha256(value: Any) -> str:
     raw = json.dumps(
         value,
@@ -406,6 +430,7 @@ def validate_kv_bound_receipt(value: Any) -> dict[str, Any]:
 
 __all__ = [
     "ABSOLUTE_POSITION_LIMIT",
+    "ComputeBudgetUnaffordable",
     "KV_BOUND_SCHEMA",
     "LOOP_CORE_SCHEMA",
     "LoopCoreError",
