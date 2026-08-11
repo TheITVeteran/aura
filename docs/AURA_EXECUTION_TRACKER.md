@@ -44133,3 +44133,45 @@ resident-transformer unification gate identified by the code audit: one live
 forward combining intrinsic recurrence, extrapolating depth identity, protected
 writable memory, student-state correction, frozen readout, and calibrated
 halting, followed by a solver-lesioned train-shallow/test-deep comparison.
+
+## Checkpoint 2026-08-10-198: One Transformer Path Owns the Level-3 Mechanisms
+
+The call-graph audit confirmed that intrinsic recurrence, trajectory training,
+protected memory, depth conditioning, and halting existed in different
+execution architectures. CP198 introduces one identity-initialized controller
+around the real resident-transformer middle window. The same recurrent state
+now receives a bounded continuous depth representation, a trainable low-rank
+semantic correction, protected memory/control positions with learned write
+gates, and a learned halt probability. The T=1 path remains bit-equivalent to
+the base model. Depth uses a bounded rational basis rather than clamping to the
+last trained operator, so unseen deeper execution is defined without an
+unbounded extrapolation.
+
+The companion objective decodes every recurrent state through the same frozen
+coda and language head, preserves T=1 with an explicit anchor, penalizes
+semantic regressions between steps, and trains halting against the best
+answer-loss step. Training depths and held-out depths are disjoint and the
+held-out ladder must lie strictly above the training ladder. The operational
+trainer adapts only middle-window projections plus the unified controller; it
+hashes the coda/readout before and after the run, checkpoints model, controller,
+optimizer, cursor and history atomically, and admits resume only under an exact
+canonical campaign identity.
+
+Toy-transformer mechanism, objective, protected-memory and resume suites pass
+44 contracts. A real Qwen2.5-1.5B 4-bit smoke found and retired two issues that
+toy weights could not expose: packed quantized embeddings reported width 192
+instead of the residual width 1,536, and tuple/list JSON normalization made an
+identical fresh process reject its checkpoint. The repaired run restored at
+step 1 and advanced to step 2 with the same readout commitment
+`1599d3c7ce72469195f2e76b4cb984355feeb9806d63443209da31fd74caf0e3`.
+Its two-step CE (`T1=1.4202`, `T4=6.6417`) is a negative pre-training smoke,
+not capability evidence.
+
+This closes the missing single-forward infrastructure, not Level 3 itself. The
+controller has not yet shown a held-out depth gain, protected memory has not yet
+learned an open-domain write policy, no artifact is production-admitted, and no
+resident-32B or `WOW Signal` claim is available. The completion envelope
+advances to `894/920` (approximately `97.2%`). Next is a short 1.5B campaign
+that trains only shallow recurrence, inspects the unopened deeper ladder, and
+either supplies a positive causal diagnostic or localizes the next mechanism
+defect before any 32B allocation.
