@@ -194,8 +194,12 @@ def test_trainer_command_targets_resident_model_and_pid_scoped_guards(
     assert "{pid}" in command[command.index("--preload-release-path") + 1]
     assert command[-2:] == ["--max-invocation-steps", "1"]
     assert command[command.index("--answer-bridge-inner-steps") + 1] == "32"
-    assert raw["training"]["answer_bridge_steps"] == 9
-    assert raw["training"]["max_steps"] == 10
+    assert raw["training"]["per_cell"] == 2
+    assert raw["training"]["answer_bridge_steps"] == 18
+    assert raw["training"]["eval_every"] == 9
+    assert raw["training"]["max_steps"] == 19
+    assert raw["training"]["seed"] == 20260811433
+    assert raw["training"]["init_seed"] == 20260811433
 
 
 def test_full_profile_uses_the_decode_admitted_cached_bridge_schedule() -> None:

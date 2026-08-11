@@ -1248,6 +1248,17 @@ def _evaluate_answer_bridge_admission(
             )
             expected_values = tuple(int(value) for value in answer.tolist()[0])
             generated_values = tuple(int(value) for value in generated.tolist()[0])
+            mismatches = [
+                {
+                    "position": position,
+                    "expected_token_id": expected,
+                    "generated_token_id": observed,
+                }
+                for position, (observed, expected) in enumerate(
+                    zip(generated_values, expected_values, strict=True)
+                )
+                if observed != expected
+            ]
             rows.append(
                 {
                     "task_id": task.task_id,
@@ -1263,6 +1274,7 @@ def _evaluate_answer_bridge_admission(
                         )
                     ),
                     "token_count": len(expected_values),
+                    "mismatches": mismatches,
                     "expected_sha256": _sha256_tokens(answer),
                     "generated_sha256": _sha256_tokens(generated),
                 }
@@ -1271,7 +1283,7 @@ def _evaluate_answer_bridge_admission(
     matching = sum(row["matching_tokens"] for row in rows)
     token_count = sum(row["token_count"] for row in rows)
     body = {
-        "schema": "aura.unified_intrinsic.answer_bridge_admission.v2",
+        "schema": "aura.unified_intrinsic.answer_bridge_admission.v3",
         "depth": max(spec.train_depths),
         "cells": len(cells),
         "tasks": len(rows),

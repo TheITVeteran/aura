@@ -45257,3 +45257,39 @@ rule. The focused adjudicator/evaluator/launcher surface passes `25/25`; Ruff,
 compilation and diff hygiene are clean. Training continues independently under
 the immutable CP246 source capsule. No resident decode or gain claim is made,
 and the completion envelope remains `912/920` (approximately `99.1%`).
+
+## Checkpoint 2026-08-11-249: Resident Admission Refuses One Wrong Register
+
+The immutable CP246 resident-32B canary completed all ten planned steps. Its
+terminal checkpoint commitment is
+`0c50377d31f2952cc4162da3da94a522750b911ebbf52412243bba138d362050`,
+training receipt commitment is
+`d6a4b206cf6994a244a305a3233d8348c46b7d829e6c840e4caf17af00227335`
+and authenticated controller completion commitment is
+`33631145aad00ed15657e8d469cabb56a7666f44acd84e3a0883e4db64664e01`.
+The final invocation's detached receipt passed with an empty process group and
+lineage; its receipt commitment is
+`012e1952e9c27bcef2e517c8c3121c0473bee5932dbd5be94158cf99691703b9`.
+
+The terminal held-out ladder remained healthy: T4/T8/T16 cross-entropy was
+`1.796373` versus T1 `2.809394`, a `36.064%` relative reduction, while every
+typed state/action invariant remained exact. The autonomous admission still
+correctly refused promotion. It passed `8/9` unseen family/depth cells and
+`98.958%` of answer tokens, but the depth-one register trace emitted
+`{"r0":6,"r1":0,"r2":0}` instead of `{"r0":6,"r1":1,"r2":0}`. The
+recurrent state was correct; the neural digit pointer copied one wrong register
+token. There is therefore no admitted checkpoint, decoded resident-transfer
+claim, fusion authority, frontier result or `WOW Signal` from this run.
+
+The resident preflight now gives every family/depth cell two distinct bridge
+feature passes before admission rather than one, for 18 bridge steps plus one
+terminal recurrence step. Evaluation runs at complete nine-cell cycles instead
+of after every bridge update, retaining evidence while avoiding repeated
+resident forward sweeps. A fresh deterministic seed prevents the failed
+holdout from becoming an adaptive target. Admission v3 records exact mismatch
+positions and expected/generated token IDs after generation, so future failures
+are directly diagnosable without brute-forcing a hash. The affected resident
+trainer/controller/evaluator/adjudicator surface passes `72/72`; canonical
+smoke passes `104/104`; Ruff and compilation are clean. The completion envelope
+remains `912/920` (approximately `99.1%`). Next is a fresh source-bound stronger
+canary, all-cell admission, and only then the frozen eight-arm decoded verdict.

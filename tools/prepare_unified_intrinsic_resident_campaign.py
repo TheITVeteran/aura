@@ -193,8 +193,8 @@ def _profile_training(profile: str) -> dict[str, Any]:
         "checkpoint_every": 1,
         "checkpoint_group": 4,
         "grounding_batch_size": 32,
-        "seed": 20260811432,
-        "init_seed": 20260811432,
+        "seed": 20260811433,
+        "init_seed": 20260811433,
         "bridge": "assistant_answer",
         "memory_fraction": 0.48,
         "memory_limit_gb": 40.0,
@@ -202,16 +202,22 @@ def _profile_training(profile: str) -> dict[str, Any]:
         "wired_limit_gb": 48.0,
     }
     if profile == "canary":
+        canary_per_cell = 2
+        family_count = len(str(common["families"]).split(","))
+        task_depth_count = len(str(common["task_depths"]).split(","))
+        canary_bridge_steps = (
+            family_count * task_depth_count * canary_per_cell
+        )
         return {
             **common,
-            "per_cell": 1,
+            "per_cell": canary_per_cell,
             "holdout_per_cell": 1,
-            "max_steps": 10,
+            "max_steps": canary_bridge_steps + 1,
             "semantic_warmup_steps": 0,
             "state_warmup_steps": 0,
-            "answer_bridge_steps": 9,
+            "answer_bridge_steps": canary_bridge_steps,
             "answer_bridge_inner_steps": 32,
-            "eval_every": 1,
+            "eval_every": family_count * task_depth_count,
             "max_minutes": 240.0,
         }
     full_per_cell = 8

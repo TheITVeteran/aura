@@ -561,7 +561,7 @@ def test_answer_bridge_admission_requires_exact_autonomous_emission_per_cell(
 
     assert report["admitted"] is True
     assert report["exact_accuracy"] == 1.0
-    assert report["schema"] == "aura.unified_intrinsic.answer_bridge_admission.v2"
+    assert report["schema"] == "aura.unified_intrinsic.answer_bridge_admission.v3"
     assert report["cells"] == 9
     assert report["tasks"] == 9
     assert {
@@ -603,6 +603,15 @@ def test_answer_bridge_admission_requires_exact_autonomous_emission_per_cell(
     )
     assert rejected["admitted"] is False
     assert rejected["exact"] == 8
+    failed = [row for row in rejected["rows"] if not row["exact"]]
+    assert len(failed) == 1
+    assert failed[0]["mismatches"] == [
+        {
+            "position": 0,
+            "expected_token_id": 12,
+            "generated_token_id": 13,
+        }
+    ]
 
 
 def test_model_identity_hashes_weight_content_not_only_path(tmp_path: Path) -> None:
