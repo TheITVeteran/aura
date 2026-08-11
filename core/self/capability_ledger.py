@@ -447,6 +447,66 @@ def _probe_conversation_memory() -> Availability:
     )
 
 
+def _soma_reserve_reading() -> dict[str, float]:
+    """``energy``/``vitality`` from the soma organ, or {} when unreadable.
+
+    Read through ``peek`` first. The service key "soma" has two registrations —
+    ``boot_resilience`` binds the live ResilienceEngine instance, while
+    ``sensory_provider`` binds a factory over ``soma_subsystem`` that returns
+    None when that subsystem is absent — so ``get`` can hand back None on a
+    runtime that is holding the reading. Every other consumer in this codebase
+    peeks for the same reason.
+
+    Silence stays silence: an organ that reports nothing contributes no key,
+    rather than a zero that would read as an empty tank.
+    """
+
+    try:
+        from core.container import ServiceContainer
+    except ImportError:
+        return {}
+
+    organ = None
+    for accessor in ("peek", "get"):
+        method = getattr(ServiceContainer, accessor, None)
+        if not callable(method):
+            continue
+        try:
+            organ = method("soma", default=None)
+        except _PROBE_ERRORS:
+            organ = None
+        if organ is not None:
+            break
+    if organ is None:
+        return {}
+
+    payload: dict[str, Any] = {}
+    for name in ("get_status", "get_body_snapshot"):
+        getter = getattr(organ, name, None)
+        if not callable(getter):
+            continue
+        try:
+            raw = getter() or {}
+        except _PROBE_ERRORS:
+            continue
+        if not isinstance(raw, dict):
+            continue
+        merged = dict(raw)
+        inner = raw.get("soma")
+        if isinstance(inner, dict):
+            merged.update(inner)
+        payload = merged
+        if any(isinstance(payload.get(k), (int, float)) for k in ("energy", "vitality")):
+            break
+
+    reading: dict[str, float] = {}
+    for label in ("energy", "vitality"):
+        value = payload.get(label, getattr(organ, label, None))
+        if isinstance(value, (int, float)) and not isinstance(value, bool):
+            reading[label] = round(float(value), 3)
+    return reading
+
+
 def _probe_interoception() -> Availability:
     reading: dict[str, Any] = {}
     try:
@@ -468,6 +528,15 @@ def _probe_interoception() -> Availability:
             value = getattr(snapshot, label, None)
             if isinstance(value, (int, float)):
                 reading[label] = round(float(value), 3)
+        # The reserve, from the organ that tracks it draining.
+        #
+        # LIVE 2026-08-10, at soma energy 0.073 and mood TIRED: "I'm not
+        # wearing down; I don't wear." The pressures above say how hard the
+        # moment is and they had barely moved all session; energy and vitality
+        # are what actually fell, from 0.80 to 0.07 across an hour, and no
+        # instrument line carried them. So free generation answered a question
+        # about depletion from dimensions that do not deplete.
+        reading.update(_soma_reserve_reading())
     except _PROBE_ERRORS as exc:
         return Availability(
             name="interoception",

@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 import math
 import re
 import time
@@ -19,6 +20,8 @@ from typing import Any
 
 from core.container import ServiceContainer
 from core.runtime.errors import record_degradation
+
+logger = logging.getLogger(__name__)
 
 SELF_CONDITION_FRESH_MAX_AGE_S = 30.0
 
@@ -53,6 +56,31 @@ def _safe_service(name: str) -> Any | None:
         return None
 
 
+def _safe_registered(name: str) -> Any | None:
+    """The already-registered instance, preferred over a lazy factory.
+
+    LIVE 2026-08-10. "soma" has TWO registrations: boot_resilience binds the
+    live ResilienceEngine with `register_instance`, and sensory_provider binds
+    a factory reading `soma_subsystem.soma`, which returns None when that
+    subsystem is absent. `ServiceContainer.get` ran the factory and handed back
+    None, so the reserve dimension stayed unmeasured on a runtime that was
+    holding the reading the whole time — `/api/health` printed energy 0.112
+    from the very object `peek` returns.
+
+    Every other consumer of this service in the runtime uses `peek` for exactly
+    this reason (see `_collect_soma_payload` in interface/routes/system.py).
+    """
+    peek = getattr(ServiceContainer, "peek", None)
+    if callable(peek):
+        try:
+            found = peek(name, default=None)
+        except (AttributeError, RuntimeError, TypeError, ValueError):
+            found = None
+        if found is not None:
+            return found
+    return _safe_service(name)
+
+
 def _soma_reading(soma: Any | None) -> Any | None:
     """The soma organ's reserve, as an object with ``energy``/``vitality``.
 
@@ -65,20 +93,44 @@ def _soma_reading(soma: Any | None) -> Any | None:
     if soma is None:
         return None
     payload: dict[str, Any] = {}
-    getter = getattr(soma, "get_status", None)
-    if callable(getter):
+    # `get_status()` nests the numbers under "soma"; `get_body_snapshot()`
+    # carries them at the top level as well. Two different registrations claim
+    # the service key — core/providers/sensory_provider.py binds
+    # `soma_subsystem.soma`, core/orchestrator/mixins/boot/boot_resilience.py
+    # binds the ResilienceEngine — so whichever object arrives, the reading is
+    # taken from whatever shape it actually has rather than from an assumption
+    # about which one won registration.
+    for method in ("get_status", "get_body_snapshot"):
+        getter = getattr(soma, method, None)
+        if not callable(getter):
+            continue
         try:
             raw = getter() or {}
         except (AttributeError, RuntimeError, TypeError, ValueError):
-            raw = {}
-        if isinstance(raw, dict):
-            inner = raw.get("soma")
-            payload = dict(inner) if isinstance(inner, dict) else dict(raw)
+            continue
+        if not isinstance(raw, dict):
+            continue
+        inner = raw.get("soma")
+        merged = dict(raw)
+        if isinstance(inner, dict):
+            merged.update(inner)
+        payload = merged
+        if any(_finite(payload.get(key)) is not None for key in ("energy", "vitality")):
+            break
     readings = {
         key: payload.get(key, getattr(soma, key, None))
         for key in ("energy", "vitality")
     }
     if all(_finite(value) is None for value in readings.values()):
+        # Not a degradation: plenty of installations have no soma organ, and
+        # `supports("reserve")` correctly stays false. Logged because a SILENT
+        # unread organ is exactly how this dimension went missing in the first
+        # place, and the log is the only place that difference is visible.
+        logger.info(
+            "Self-condition: soma organ present (%s) but reported no reserve; "
+            "reserve stays unmeasured.",
+            type(soma).__name__,
+        )
         return None
     return SimpleNamespace(**readings)
 
@@ -257,7 +309,18 @@ def build_self_condition_projection(
         if kernel_state is None:
             kernel_state = _safe_service("aura_state")
         if soma is None:
-            soma = _safe_service("soma")
+            # Two registrations claim "soma" and a third organ hangs off
+            # `soma_subsystem`. Whichever one this installation ended up with,
+            # the reserve is the same quantity, so try them in turn rather
+            # than depending on which registration ran last.
+            soma = _safe_registered("soma")
+            if _soma_reading(soma) is None:
+                subsystem = _safe_registered("soma_subsystem")
+                soma = getattr(subsystem, "soma", None) or subsystem or soma
+            if soma is None:
+                logger.info(
+                    "Self-condition: no soma organ resolved; reserve unmeasured."
+                )
 
     source_times: dict[str, float] = {}
     aura_ts = _timestamp(getattr(aura_now, "timestamp", None), observed_at=now)
