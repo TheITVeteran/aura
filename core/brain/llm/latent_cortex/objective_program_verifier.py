@@ -24,6 +24,11 @@ from core.brain.llm.latent_cortex.neural_transition_tissue import (
     execute_neural_action_program,
     load_neural_transition_tissue,
 )
+from core.brain.llm.latent_cortex.systematic_neural_alu import (
+    SystematicNeuralALU,
+    execute_systematic_neural_program,
+    load_systematic_neural_alu,
+)
 from core.brain.llm.latent_cortex.typed_action_compiler import (
     compile_public_transition_program,
 )
@@ -628,31 +633,38 @@ def _compiled_transition_expected(
         program = compile_public_transition_program(objective)
     except ValueError:
         return None
-    try:
-        tissue = _resident_neural_transition_tissue()
-    except (FileNotFoundError, OSError, RuntimeError, ValueError):
-        return _certified_compiled_transition_expected(objective)
-    execution = execute_neural_action_program(program, tissue)
     if program.family == "boolean":
+        try:
+            tissue = _resident_neural_transition_tissue()
+        except (FileNotFoundError, OSError, RuntimeError, ValueError):
+            return _certified_compiled_transition_expected(objective)
+        execution = execute_neural_action_program(program, tissue)
         match = _BOOLEAN_OBJECTIVE_RE.match(objective)
         if match is None:
             raise RuntimeError("compiled Boolean objective lost parser agreement")
         family = "nested_boolean"
         expected = {"value": execution.terminal_state[1]}
         crosscheck, crosscheck_receipt = _boolean_expected(match)
+        engine = "neural_transition_tissue.v1"
     elif program.family == "modular":
+        try:
+            tissue = _resident_systematic_neural_alu()
+            execution = execute_systematic_neural_program(program, tissue)
+        except (FileNotFoundError, OSError, RuntimeError, ValueError):
+            return _certified_compiled_transition_expected(objective)
         match = _MODULAR_OBJECTIVE_RE.match(objective)
         if match is None:
             raise RuntimeError("compiled modular objective lost parser agreement")
         family = "modular_chain"
         expected = {"residue": execution.terminal_state[1]}
         crosscheck, crosscheck_receipt = _modular_expected(match)
+        engine = "systematic_neural_alu.v1"
     else:  # pragma: no cover - the compiler's family registry is closed
         raise RuntimeError("compiled transition family is unsupported")
     if crosscheck != expected:
         raise RuntimeError("neural recurrent execution and independent parser disagree")
     return family, expected, {
-        "engine": "neural_transition_tissue.v1",
+        "engine": engine,
         "teacher_available": False,
         "tissue_sha256": tissue.tissue_sha256,
         "compiler": program.public_receipt(),
@@ -665,6 +677,11 @@ def _compiled_transition_expected(
 @lru_cache(maxsize=1)
 def _resident_neural_transition_tissue() -> NeuralTransitionTissue:
     return load_neural_transition_tissue()
+
+
+@lru_cache(maxsize=1)
+def _resident_systematic_neural_alu() -> SystematicNeuralALU:
+    return load_systematic_neural_alu()
 
 
 def _certified_compiled_transition_expected(

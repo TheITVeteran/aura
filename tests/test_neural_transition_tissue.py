@@ -15,6 +15,7 @@ from core.brain.llm.latent_cortex.neural_transition_tissue import (  # noqa: E40
 )
 from core.brain.llm.latent_cortex.objective_program_verifier import (  # noqa: E402
     _resident_neural_transition_tissue,
+    _resident_systematic_neural_alu,
     solve_objective_program,
 )
 from core.brain.llm.latent_cortex.typed_action_compiler import (  # noqa: E402
@@ -175,6 +176,7 @@ def test_canonical_objective_producer_uses_teacher_removed_tissue(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     _resident_neural_transition_tissue.cache_clear()
+    _resident_systematic_neural_alu.cache_clear()
 
     def forbidden(*_args, **_kwargs):
         raise AssertionError("certified teacher reached canonical neural producer")
@@ -185,5 +187,10 @@ def test_canonical_objective_producer_uses_teacher_removed_tissue(
     assert solved is not None
     candidate, receipt = solved
     assert candidate.endswith(task.answer)
-    assert receipt["execution"]["engine"] == "neural_transition_tissue.v1"
+    expected_engine = (
+        "neural_transition_tissue.v1"
+        if generator is nested_boolean
+        else "systematic_neural_alu.v1"
+    )
+    assert receipt["execution"]["engine"] == expected_engine
     assert receipt["execution"]["teacher_available"] is False

@@ -1,0 +1,39 @@
+{
+  "claim_boundary": "systematic neural modular transition transfer and deep recurrent composition; symbolic action compilation remains and this is not resident-transformer Level 3, frontier reasoning, or a WOW Signal",
+  "development_moduli": [
+    19,
+    23
+  ],
+  "exact_operator_available": false,
+  "fresh_program_count": 560,
+  "fresh_program_exact_accuracy": 1.0,
+  "fresh_transition_count": 10160,
+  "frozen_primitive_count": 20103,
+  "frozen_primitive_exact_accuracy": 1.0,
+  "frozen_test_moduli": [
+    29,
+    31,
+    37,
+    41,
+    43
+  ],
+  "inference_modulo_operator_available": false,
+  "lookup_table_available": false,
+  "preregistration_sha256": "d065f125c2b0b2f17b5d565cfaa82f92d0b90c2b9db28ede7585a416f5f4b5f3",
+  "report_sha256": "2a42bcd73d66cb062166a9d59ad18f89b80bb1165a0f9679a0dcfa2d44c2e5ca",
+  "reset_state_changes": 487,
+  "reversed_action_changes": 406,
+  "schema": "aura.systematic_neural_alu_verification.v1",
+  "sham_matches": 8,
+  "t1_lesion_changes": 470,
+  "teacher_available": false,
+  "tissue_sha256": "16920810001731be57c5133155b33196a9728f0cacbf83a2329c81540297564b",
+  "train_moduli": [
+    5,
+    7,
+    11,
+    13,
+    17
+  ],
+  "verified": true
+}

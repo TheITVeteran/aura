@@ -127,7 +127,12 @@ def test_complete_engine_uses_certified_recurrence_for_declared_prompt(generator
     candidate, receipt = solved
     execution = receipt["execution"]
 
-    assert execution["engine"] == "neural_transition_tissue.v1"
+    expected_engine = (
+        "neural_transition_tissue.v1"
+        if generator is nested_boolean
+        else "systematic_neural_alu.v1"
+    )
+    assert execution["engine"] == expected_engine
     assert execution["teacher_available"] is False
     assert execution["student_rollin"]["student_rollin"] is True
     assert execution["student_rollin"]["transition_count"] == 8

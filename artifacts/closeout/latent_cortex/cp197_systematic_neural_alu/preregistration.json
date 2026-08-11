@@ -1,0 +1,55 @@
+{
+  "admission": {
+    "causal_controls_required": true,
+    "development_exact_accuracy": 1.0,
+    "frozen_primitive_exact_accuracy": 1.0,
+    "frozen_program_exact_accuracy": 1.0,
+    "teacher_removed_runtime": true,
+    "train_exact_accuracy": 1.0
+  },
+  "architecture": {
+    "candidate_count": 63,
+    "harmonic_count": 8,
+    "inference_modulo_operator_allowed": false,
+    "lookup_table_allowed": false,
+    "raw_features": [
+      "residue",
+      "operand",
+      "residue_times_operand",
+      "bias"
+    ]
+  },
+  "claim_boundary": "A pass establishes systematic neural modular transitions on unseen states, operands, and moduli with deep recurrent composition. It does not establish learned action parsing, open-domain reasoning, resident-transformer Level 3, frontier capability, or a WOW Signal.",
+  "development_moduli": [
+    19,
+    23
+  ],
+  "frozen_program_depths": [
+    1,
+    2,
+    4,
+    8,
+    16,
+    32,
+    64
+  ],
+  "frozen_test_moduli": [
+    29,
+    31,
+    37,
+    41,
+    43
+  ],
+  "frozen_test_seed_range": [
+    197000,
+    197015
+  ],
+  "schema": "aura.systematic_neural_alu_preregistration.v1",
+  "train_moduli": [
+    5,
+    7,
+    11,
+    13,
+    17
+  ]
+}

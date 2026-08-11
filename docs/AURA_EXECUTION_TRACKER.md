@@ -44094,3 +44094,42 @@ reasoning gain with depth. The completion envelope advances to `892/920`
 action selection plus step-conditioned, manifold-stable multi-step trajectory
 distillation into the recurrent transformer sites, trained shallow and tested
 at unseen depths with the readout frozen and every solver removed.
+
+## Checkpoint 2026-08-10-197: Systematic Neural Arithmetic Crosses Unseen Moduli
+
+CP196 proved teacher removal and deep composition but could still be explained
+as a finite learned transition table because training enumerated every supported
+primitive. CP197 replaces modular production with a separate systematic neural
+ALU. It learns three opcode-specific scalar/bilinear transition functions from
+all 1,959 one-step examples over moduli `5,7,11,13,17`, then freezes those
+coefficients and learns an eight-harmonic periodic candidate decoder. The
+runtime contains no modulo operator, exact transition executor, or state/action
+lookup table.
+
+The preregistration reserves moduli `29,31,37,41,43` and depths
+`1,2,4,8,16,32,64`; neither set is used for training or development. After the
+sealed artifact reached 100% exact accuracy on train moduli and development
+moduli `19,23`, the independent verifier opened the frozen split. It measured
+20,103/20,103 exact unseen primitive transitions and 560/560 exact fresh
+programs, totaling 10,160 recurrent student-roll-in transitions. T=1 lesions
+changed 470 outcomes, reversed action order changed 406, initial-state resets
+changed 487, and an untrained sham matched only 8/560. The artifact weight
+SHA-256 is
+`16920810001731be57c5133155b33196a9728f0cacbf83a2329c81540297564b`;
+the preregistration SHA-256 is
+`d065f125c2b0b2f17b5d565cfaa82f92d0b90c2b9db28ede7585a416f5f4b5f3`;
+the independent report commitment is
+`2a42bcd73d66cb062166a9d59ad18f89b80bb1165a0f9679a0dcfa2d44c2e5ca`.
+
+The canonical complete-engine route now uses the systematic tissue for modular
+programs through modulus 63 and retains CP196's exhaustive tissue for Boolean
+programs. Exact public math is an independent post-hoc verifier, not the answer
+producer. This closes the bounded lookup-table objection and establishes
+systematic neural transition transfer across unseen state spaces. It does not
+establish learned language-to-action selection, resident-transformer Level 3,
+open-domain reasoning gain, frontier capability, or a `WOW Signal`. The
+completion envelope advances to `893/920` (approximately `97.1%`). Next is the
+resident-transformer unification gate identified by the code audit: one live
+forward combining intrinsic recurrence, extrapolating depth identity, protected
+writable memory, student-state correction, frozen readout, and calibrated
+halting, followed by a solver-lesioned train-shallow/test-deep comparison.

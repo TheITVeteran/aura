@@ -1090,8 +1090,8 @@ def install_runtime_validation() -> dict[str, Any]:
         ValidationTest(
             name="neural_transition_tissue_enters_complete_engine",
             description=(
-                "a wrong incumbent is replaceable by teacher-removed neural recurrent "
-                "execution through the complete-engine producer"
+                "a wrong incumbent is replaceable by systematic teacher-removed "
+                "neural recurrence through the complete-engine producer"
             ),
             required_capability="",
             observation=Observation(
@@ -1303,19 +1303,22 @@ def install_runtime_validation() -> dict[str, Any]:
     suite.add_claim(
         Claim(
             statement=(
-                "For declared Boolean and bounded modular tasks, the complete engine "
-                "can replace a wrong decoded answer with a candidate computed by "
-                "teacher-removed neural recurrent student roll-in."
+                "For declared Boolean tasks and modular tasks through modulus 63, "
+                "the complete engine can replace a wrong decoded answer with a "
+                "candidate computed by teacher-removed neural recurrent student "
+                "roll-in."
             ),
             test="neural_transition_tissue_enters_complete_engine",
             owner="core/brain/llm/latent_cortex/objective_program_verifier.py",
             asserted_in="docs/AURA_EXECUTION_TRACKER.md",
             evidence=Evidence.MEASURED_SYNTHETIC,
             evidence_note=(
-                "The sealed tissue learned 3,842 primitive transitions and is causal in "
-                "the production answer-replacement route after its training teacher is "
-                "removed. Public action selection is still a strict symbolic compiler; "
-                "open-domain depth gain and resident-model execution remain unmeasured."
+                "The systematic modular tissue learned from 1,959 one-step examples "
+                "over five train moduli, then remained exact on 20,103 primitive "
+                "transitions and 560 recurrent programs through depth 64 over five "
+                "unseen moduli. Boolean production retains the exhaustive CP196 tissue. "
+                "Public action selection is still a strict symbolic compiler; open-domain "
+                "depth gain and resident-model execution remain unmeasured."
             ),
         )
     )
@@ -1582,7 +1585,7 @@ def _neural_complete_engine_contract_holds() -> bool:
     execution = receipt.get("execution", {})
     return bool(
         isinstance(execution, dict)
-        and execution.get("engine") == "neural_transition_tissue.v1"
+        and execution.get("engine") == "systematic_neural_alu.v1"
         and execution.get("teacher_available") is False
         and execution.get("student_rollin", {}).get("transition_count") == 8
         and candidate.endswith(task.answer)
