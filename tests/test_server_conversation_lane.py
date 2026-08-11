@@ -5536,7 +5536,14 @@ async def test_api_chat_desktop_surface_plans_with_cognitive_engine_before_execu
 
     assert response.status_code == 200
     assert b"desktop_objective_completed" in response.body
-    assert b"Desktop task completed 5/5 governed computer-use steps" in response.body
+    # The step count belongs to the log, not the reply. It is still in the
+    # result payload, where tooling reads it — the assertion is about the
+    # user-facing "response" field only.
+    import json as _json
+
+    _payload = _json.loads(response.body)
+    assert _payload["response"].startswith("Done")
+    assert "governed computer-use steps" not in _payload["response"]
     assert len(skill_calls) == 1
     assert skill_calls[0]["skill_name"] == "desktop_task"
     assert skill_calls[0]["params"]["objective"] == (
@@ -5574,10 +5581,14 @@ async def test_api_chat_desktop_surface_plans_with_cognitive_engine_before_execu
     assert "Timestamped Aura summary from CognitiveEngine." in skill_calls[0]["extra_context"]["cognitive_reply"]
     assert completed_exchanges
     assert completed_exchanges[-1][0][0] == "desktop-objective"
-    assert "Desktop task completed 5/5 governed computer-use steps" in completed_exchanges[-1][0][2]
+    # The logged exchange and the output receipt carry what the person was
+    # actually told, so they carry the same plain confirmation the reply does —
+    # not the executor's step count, which lives in the result payload.
+    assert completed_exchanges[-1][0][2].startswith("Done")
+    assert "governed computer-use steps" not in completed_exchanges[-1][0][2]
     assert "Aura self-summary. Timestamp" not in completed_exchanges[-1][0][2]
     assert output_receipts
-    assert "Desktop task completed 5/5 governed computer-use steps" in output_receipts[-1][0][0]
+    assert output_receipts[-1][0][0].startswith("Done")
 
 
 @pytest.mark.asyncio
@@ -5931,7 +5942,15 @@ async def test_api_chat_desktop_objective_requires_cognitive_planning(monkeypatc
     assert payload["status"] == "desktop_objective_completed"
     assert payload["conversation_lane"]["governed_action_result"] is True
     assert payload["conversation_lane"]["governed_action_status"] == "desktop_objective_completed"
-    assert "Desktop task completed 2/2 governed computer-use steps" in payload["response"]
+    # The reply confirms completion without quoting the planner's bookkeeping.
+    # "Desktop task completed 2/2 governed computer-use steps through
+    # heuristic_compat planning" is the executor's summary; it is evidence for
+    # the log and internal vocabulary in a sentence to a person. What the reply
+    # owes them is that it is done, and — when a receipt names one — what was
+    # changed.
+    assert payload["response"].startswith("Done")
+    assert "governed computer-use steps" not in payload["response"]
+    assert "heuristic_compat" not in payload["response"]
     assert skill_calls and skill_calls[0]["skill_name"] == "desktop_task"
     assert not cognitive_calls
     assert skill_calls[0]["extra_context"]["desktop_task_document_body"] == ""
@@ -6830,7 +6849,15 @@ async def test_api_chat_self_sufficient_desktop_objective_skips_cognition(
     payload = json.loads(response.body)
     assert response.status_code == 200
     assert payload["status"] == "desktop_objective_completed"
-    assert "Desktop task completed 2/2 governed computer-use steps" in payload["response"]
+    # The reply confirms completion without quoting the planner's bookkeeping.
+    # "Desktop task completed 2/2 governed computer-use steps through
+    # heuristic_compat planning" is the executor's summary; it is evidence for
+    # the log and internal vocabulary in a sentence to a person. What the reply
+    # owes them is that it is done, and — when a receipt names one — what was
+    # changed.
+    assert payload["response"].startswith("Done")
+    assert "governed computer-use steps" not in payload["response"]
+    assert "heuristic_compat" not in payload["response"]
     assert skill_calls and skill_calls[0]["skill_name"] == "desktop_task"
     assert skill_calls[0]["params"]["objective"] == objective
     assert skill_calls[0]["extra_context"]["desktop_task_document_body"] == ""
@@ -6936,7 +6963,10 @@ async def test_api_chat_desktop_no_reply_executes_self_summary_after_cognitive_a
     payload = json.loads(response.body)
     assert response.status_code == 200
     assert payload["status"] == "desktop_objective_completed"
-    assert "Desktop task completed 6/6 governed computer-use steps" in payload["response"]
+    # See the note above: the reply confirms completion in her own words and
+    # leaves the executor's step count to the log.
+    assert payload["response"].startswith("Done")
+    assert "governed computer-use steps" not in payload["response"]
     assert skill_calls and skill_calls[0]["skill_name"] == "desktop_task"
     assert skill_calls[0]["extra_context"]["desktop_task_document_body"] == ""
     assert skill_calls[0]["extra_context"]["allow_desktop_task_model_synthesis"] is False

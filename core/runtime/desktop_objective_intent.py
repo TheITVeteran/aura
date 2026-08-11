@@ -278,6 +278,39 @@ _NAMED_ON_SURFACE_RE = re.compile(
 )
 
 
+#: A clause reporting a request that was already made. The verbs inside it
+#: are history being described, not work being asked for.
+_REPORTED_REQUEST_SPAN_RE = re.compile(
+    r"\b(?:earlier|before|yesterday|previously|already|last\s+time|"
+    r"a\s+(?:moment|minute|while)\s+ago)?\s*"
+    r"(?:i|you|we)\s+(?:had\s+)?(?:asked|told|requested|wanted|said)\b"
+    # Stops at a new instruction rather than running to the sentence end.
+    # "I asked you to do that already, please actually write hello into
+    # ~/Documents/x.txt now" reports history AND makes a request, and a greedy
+    # span swallowed the request — refusing to act on an explicit retry is a
+    # worse failure than the litter this exists to prevent.
+    r"[^.?!]*?(?=(?:[,;—–-]*\s*\b(?:please|now|actually|go\s+ahead|just)\b)|[.?!]|$)",
+    re.IGNORECASE,
+)
+
+#: A question about what she DID, which is answered from memory rather than by
+#: doing it again. "what did you write to my Desktop earlier?" carries a write
+#: verb and a surface and is not a request to write anything.
+_PAST_ACTION_QUESTION_RE = re.compile(
+    r"\b(?:what|which|where|when|how\s+many)\b[^.?!]{0,80}?"
+    r"\b(?:did|have)\s+you\b|\bdo\s+you\s+remember\b|"
+    r"\bwhat\s+was\s+the\b",
+    re.IGNORECASE,
+)
+
+#: An instruction meant for right now, which outranks any recall framing around
+#: it.
+_PRESENT_INSTRUCTION_RE = re.compile(
+    r"\b(?:please|now|actually|go\s+ahead|do\s+it|again)\b",
+    re.IGNORECASE,
+)
+
+
 def _asks_about_a_concrete_path(text: str) -> bool:
     """True when the turn names a real file and does something with it.
 
@@ -309,6 +342,24 @@ def looks_like_desktop_objective(user_message: str) -> bool:
     if not text:
         return False
     sanitized_text = strip_negated_action_spans(text).lower()
+    # An action verb inside REPORTED history is not an instruction.
+    #
+    # LIVE, 2026-08-10: "Earlier today I asked you to count files in one of
+    # your own directories, and separately to write a haiku. Without
+    # guessing: what was the count, and what was the haiku about?" — a
+    # recall question — routed here and created
+    # ~/Desktop/Aura Desktop Task 1786465767/ with a summary file in it.
+    #
+    # Both verbs belong to requests she was being TOLD ABOUT rather than
+    # requests being made. Asking what she did is not asking her to do it
+    # again, and answering it by doing it again leaves litter on a Desktop.
+    sanitized_text = _REPORTED_REQUEST_SPAN_RE.sub(' ', sanitized_text)
+    # And a question about what she did is answered from memory, not by doing
+    # it again — unless the same turn also asks for it now.
+    if _PAST_ACTION_QUESTION_RE.search(sanitized_text) and not _PRESENT_INSTRUCTION_RE.search(
+        sanitized_text
+    ):
+        return False
     # Explicit web-search phrasing ("search the internet/web for X") is a
     # research request, not a desktop objective; classifying it as desktop
     # let the response contract suppress requires_search while desktop_task

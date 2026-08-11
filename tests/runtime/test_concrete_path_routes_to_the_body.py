@@ -119,3 +119,48 @@ def test_a_file_named_in_words_reaches_the_body(message: str) -> None:
 def test_mentioning_a_surface_is_not_naming_a_file(message: str) -> None:
     """The named FILE is the signal, not the word "desktop"."""
     assert looks_like_desktop_objective(message) is False
+
+
+# ── Asking what she did is not asking her to do it again ───────────────────
+
+@pytest.mark.parametrize(
+    "message",
+    [
+        "Earlier today I asked you to count files in one of your own directories, "
+        "and separately to write a haiku. Without guessing: what was the count, "
+        "and what was the haiku about?",
+        "what did you write to my Desktop earlier?",
+        "do you remember what you wrote to my Desktop?",
+        "you told me to save it to ~/Documents/notes.txt last time",
+    ],
+)
+def test_recall_questions_do_not_become_new_actions(message: str) -> None:
+    """LIVE, 2026-08-10. The first message here is a pure memory question. It
+    routed to the desktop lane and created
+
+        ~/Desktop/Aura Desktop Task 1786465767/aura_desktop_summary.txt
+
+    "count files" and "write a haiku" are both in it, and both belong to
+    requests she was being TOLD ABOUT. Answering a question about what she did
+    by doing it again leaves litter on someone's Desktop.
+    """
+    assert looks_like_desktop_objective(message) is False
+
+
+@pytest.mark.parametrize(
+    "message",
+    [
+        "I asked you to do that already, please actually write hello into "
+        "~/Documents/x.txt now",
+        "what did you write to my Desktop earlier? please do it again",
+        "you said you'd save it — now write it to ~/Documents/x.txt",
+    ],
+)
+def test_history_plus_a_present_request_still_acts(message: str) -> None:
+    """The dangerous direction, and the reason the span is bounded.
+
+    A greedy history span swallowed the real instruction that followed it.
+    Refusing an explicit retry is a worse failure than the litter this exists
+    to prevent — the person has already told her twice.
+    """
+    assert looks_like_desktop_objective(message) is True
