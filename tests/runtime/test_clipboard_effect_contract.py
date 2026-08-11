@@ -216,3 +216,9 @@ def test_the_capture_is_wired_into_the_snapshot() -> None:
 
     assert "contract.needs_clipboard" in source
     assert 'values["clipboard_excerpt"]' in source
+    # Through the manager that actually reads this machine's clipboard. The
+    # first version asked the host object for a get_clipboard method it does
+    # not have, so the excerpt stayed empty and the verifier reported
+    # "requested text was not on the clipboard" about a clipboard that had
+    # exactly the requested text on it.
+    assert "get_clipboard_manager" in source

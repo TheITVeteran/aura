@@ -929,19 +929,19 @@ class OSAutomationCompilerSkill(BaseSkill):  # type: ignore[misc]
                     errors.append(f"browser_url_snapshot_exception:{type(exc).__name__}")
 
         if contract.needs_clipboard:
-            read_clipboard = getattr(host, "get_clipboard", None)
-            if callable(read_clipboard):
-                try:
-                    clip_receipt = await read_clipboard()
-                    clip_text = str(getattr(clip_receipt, "result", "") or "")
-                    if bool(getattr(clip_receipt, "success", False)):
-                        values["clipboard_excerpt"] = clip_text[:1200]
-                    else:
-                        errors.append("clipboard_snapshot_unavailable")
-                except _OS_AUTOMATION_ERRORS as exc:
-                    errors.append(f"clipboard_snapshot_exception:{type(exc).__name__}")
-            else:
-                errors.append("clipboard_snapshot_unsupported")
+            # Through ClipboardManager, which is the thing that actually reads
+            # this machine's clipboard. The first version asked the host object
+            # for a get_clipboard method it does not have, so the getattr
+            # returned None, the excerpt stayed empty, and the verifier
+            # reported "requested text was not on the clipboard" about a
+            # clipboard that had exactly the requested text on it.
+            try:
+                from core.capabilities.clipboard_manager import get_clipboard_manager
+
+                clip_text = str(await get_clipboard_manager().get() or "")
+                values["clipboard_excerpt"] = clip_text[:1200]
+            except _OS_AUTOMATION_ERRORS as exc:
+                errors.append(f"clipboard_snapshot_exception:{type(exc).__name__}")
 
         if contract.needs_screen_text:
             read_screen = getattr(host, "get_screen_text", None)
