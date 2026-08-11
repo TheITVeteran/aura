@@ -84,3 +84,38 @@ def test_a_path_alone_is_not_enough() -> None:
 
     assert _asks_about_a_concrete_path("i keep my notes in ~/documents these days") is False
     assert _asks_about_a_concrete_path("list the files in ~/documents") is True
+
+
+# ── A path can be spelled out instead of typed ─────────────────────────────
+
+@pytest.mark.parametrize(
+    "message",
+    [
+        "Make me a file on my Desktop called aura_haiku.txt with a haiku you "
+        "wrote yourself about being restarted eleven times today.",
+        "save a note in my Documents called ideas.md",
+        "put a file on the desktop named todo.txt",
+    ],
+)
+def test_a_file_named_in_words_reaches_the_body(message: str) -> None:
+    """LIVE: the haiku request did not route, so nothing was written — and the
+    reply said "Haiku creation and file writing are both successful."
+
+    The planner could plan it perfectly (write_text_file to
+    ~/Desktop/aura_haiku.txt). It was never asked, because the path had no
+    slash in it. People name files two ways.
+    """
+    assert looks_like_desktop_objective(message) is True
+
+
+@pytest.mark.parametrize(
+    "message",
+    [
+        "I keep my photos on my desktop",
+        "there's a folder on my desktop somewhere",
+        "my documents are a mess",
+    ],
+)
+def test_mentioning_a_surface_is_not_naming_a_file(message: str) -> None:
+    """The named FILE is the signal, not the word "desktop"."""
+    assert looks_like_desktop_objective(message) is False

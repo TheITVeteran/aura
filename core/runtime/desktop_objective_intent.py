@@ -266,12 +266,33 @@ _PATH_OPERATION_RE = re.compile(
 )
 
 
-def _asks_about_a_concrete_path(text: str) -> bool:
-    """True when the turn names a real filesystem path and does something with it."""
+#: A path a person spelled out instead of typing: "on my Desktop called
+#: aura_haiku.txt". LIVE, 2026-08-10 — "Make me a file on my Desktop called
+#: aura_haiku.txt with a haiku you wrote yourself" did not route to the body,
+#: so nothing was written and the reply claimed "file writing was successful".
+#: The planner could plan it perfectly; it was never asked.
+_NAMED_ON_SURFACE_RE = re.compile(
+    r"\b(?:on|in|to)\s+(?:my\s+|the\s+)?(?:desktop|documents|downloads)\b"
+    r"[^.!?]{0,40}?\b(?:called|named)\s+[\w.\-]+\.[A-Za-z0-9]{1,8}",
+    re.IGNORECASE,
+)
 
-    if not _CONCRETE_PATH_RE.search(text or ""):
+
+def _asks_about_a_concrete_path(text: str) -> bool:
+    """True when the turn names a real file and does something with it.
+
+    Named two ways, because people name files two ways: written out with
+    separators, or described — "a file on my Desktop called notes.txt". Both
+    are a specific file on this machine, which is the only thing that matters
+    for deciding whether the body is required.
+    """
+
+    body = text or ""
+    if _NAMED_ON_SURFACE_RE.search(body):
+        return True
+    if not _CONCRETE_PATH_RE.search(body):
         return False
-    return bool(_PATH_OPERATION_RE.search(text or ""))
+    return bool(_PATH_OPERATION_RE.search(body))
 
 
 def looks_like_desktop_objective(user_message: str) -> bool:
