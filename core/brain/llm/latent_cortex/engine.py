@@ -1475,7 +1475,11 @@ class LatentCortexEngine:
         self._last_decode_contract_grace_tokens = contract_grace if contract_required else 0
         self._last_decode_contract_grace_used_tokens = 0
         if budget.exhausted:
-            return out, "budget_exhausted"
+            # Exhausted BEFORE sampling a single token. Distinct from
+            # running out mid-decode, which leaves real text behind: this
+            # produced nothing, so it stays a genuine failure rather than
+            # joining the bounded-stop terminations the product gate judges.
+            return out, "budget_exhausted_before_decode"
 
         penalty = float(self.config.decode_repetition_penalty)
         window = max(1, int(self.config.decode_repetition_window))
@@ -2849,6 +2853,18 @@ class LatentCortexEngine:
             # model-chosen tokens to the natural boundary — a complete
             # answer, receipted under its own termination kind.
             "token_limit_sentence_grace",
+            # Ran out of layer-app budget mid-decode, with tokens already
+            # sampled. The comment just below spells out why a wall-clock
+            # stop is accepted, and every word of it applies here: the
+            # product-quality gate judges whether the text stands as an
+            # answer, not which budget dimension ended sampling. Three
+            # dimensions bound a decode — tokens, wall clock, layer
+            # applications — and only two were listed, so the third killed
+            # live turns with "decode_incomplete:budget_exhausted" and the
+            # person got "I couldn't get to an answer I'd stand behind".
+            # Exhausting before the first token is a different termination
+            # and is deliberately NOT accepted.
+            "budget_exhausted",
             # Time pressure ended decoding at a sentence boundary (the
             # wall-clock analogue of the token-limit grace). A time-bounded
             # stop has the same epistemic status as a token-bounded one:
