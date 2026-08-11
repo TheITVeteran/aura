@@ -11,6 +11,7 @@ import os
 import sys
 from collections.abc import Iterator
 from contextlib import contextmanager
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -77,6 +78,49 @@ EVALUATION_SOURCE_FILES = (
     "tools/evaluate_unified_intrinsic_checkpoint.py",
     "tools/evaluate_unified_intrinsic_decoding.py",
 )
+
+
+@dataclass(frozen=True, slots=True)
+class EvaluationLayout:
+    """Frozen locations needed to evaluate either campaign layout."""
+
+    checkpoint_dir: Path
+    dataset_path: Path
+    tokenized_dataset_path: Path
+
+
+def _load_resident_campaign_config(path: Path) -> dict[str, Any]:
+    # Imported lazily so the legacy standalone evaluator remains lightweight.
+    from tools.run_unified_intrinsic_resident_campaign import _load_config
+
+    return _load_config(path)
+
+
+def _evaluation_layout(campaign_dir: Path) -> EvaluationLayout:
+    """Resolve legacy co-located or resident split-output campaign storage."""
+
+    root = campaign_dir.expanduser().resolve(strict=True)
+    config_path = root / "campaign.json"
+    if not config_path.exists():
+        return EvaluationLayout(
+            checkpoint_dir=root,
+            dataset_path=root / "dataset.json",
+            tokenized_dataset_path=root / TOKENIZED_DATASET_FILENAME,
+        )
+    config = _load_resident_campaign_config(config_path)
+    paths = config.get("paths")
+    if not isinstance(paths, dict):  # pragma: no cover - validated by _load_config
+        raise RuntimeError("resident campaign paths are unavailable")
+    configured_root = Path(str(paths["campaign_root"])).resolve(strict=True)
+    if configured_root != root:
+        raise RuntimeError("resident campaign root differs from evaluation root")
+    return EvaluationLayout(
+        checkpoint_dir=Path(str(paths["training_output"])).resolve(strict=True),
+        dataset_path=Path(str(paths["dataset"])).resolve(strict=True),
+        tokenized_dataset_path=Path(str(paths["tokenized_dataset"])).resolve(
+            strict=True
+        ),
+    )
 
 
 def _file_sha256(path: Path) -> str:
@@ -157,9 +201,10 @@ def _load_checkpoint(
     UnifiedIntrinsicTrainingSpec,
     dict[str, Any],
 ]:
+    layout = _evaluation_layout(campaign_dir)
     try:
         resolved = resolve_checkpoint_generation(
-            campaign_dir,
+            layout.checkpoint_dir,
             stem=stem,
             required=True,
         )
@@ -209,7 +254,9 @@ def _load_checkpoint(
         or not isinstance(dataset_identity, dict)
     ):
         raise RuntimeError("unified campaign dataset identity differs")
-    dataset_path = campaign_dir / dataset_name
+    dataset_path = layout.dataset_path
+    if dataset_path.name != dataset_name:
+        raise RuntimeError("unified campaign dataset path differs")
     try:
         dataset_size = dataset_path.stat().st_size
         dataset_sha256 = _file_sha256(dataset_path)
@@ -248,7 +295,7 @@ def _load_checkpoint(
         identity["bridge"],
     )
     observed_tokenized_identity = verify_tokenized_dataset(
-        campaign_dir / tokenized_name,
+        layout.tokenized_dataset_path,
         tokenizer,
         train_tasks,
         holdout_tasks,
@@ -390,7 +437,12 @@ def unified_evaluation_context(
     """Own the model lane and memory envelope for a complete evaluation."""
 
     campaign_dir = campaign_dir.expanduser().resolve(strict=True)
-    resolved = resolve_checkpoint_generation(campaign_dir, stem=stem, required=True)
+    layout = _evaluation_layout(campaign_dir)
+    resolved = resolve_checkpoint_generation(
+        layout.checkpoint_dir,
+        stem=stem,
+        required=True,
+    )
     if resolved is None:  # pragma: no cover - required=True is exhaustive
         raise RuntimeError("unified checkpoint is unavailable")
     identity = resolved.receipt.get("identity")
@@ -417,12 +469,12 @@ def unified_evaluation_context(
         owner_id=f"evaluate-unified-intrinsic:{campaign_dir.parent.name}",
         model_path=model_path,
         purpose="benchmark",
-        request_gb=memory_limit_gb,
         preemptible=False,
         allow_owner_eviction=False,
         metadata={
             "tool": "evaluate_unified_intrinsic_checkpoint",
             "operator_launched": True,
+            "memory_envelope_gb": memory_limit_gb,
         },
     ), mlx_memory_envelope(
         memory_gb=memory_limit_gb,
@@ -580,7 +632,12 @@ def _evaluate_loaded_checkpoint(
             / len(selected),
             "depth_wins": sum(row["depth_ce_gain"] > 0.0 for row in selected),
         }
-    resolved = resolve_checkpoint_generation(campaign_dir, stem=stem, required=True)
+    layout = _evaluation_layout(campaign_dir)
+    resolved = resolve_checkpoint_generation(
+        layout.checkpoint_dir,
+        stem=stem,
+        required=True,
+    )
     if resolved is None:  # pragma: no cover - required=True is exhaustive
         raise RuntimeError("unified checkpoint is unavailable")
     body = {

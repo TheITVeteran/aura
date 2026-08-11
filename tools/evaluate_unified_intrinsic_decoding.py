@@ -34,6 +34,7 @@ from core.learning.unified_intrinsic_recurrence import (  # noqa: E402
 )
 from tools.evaluate_unified_intrinsic_checkpoint import (  # noqa: E402
     _canonical_sha256,
+    _evaluation_layout,
     _evaluation_source_sha256s,
     _file_sha256,
     _fresh_tasks,
@@ -416,7 +417,12 @@ def _evaluate_decoding_loaded(
                 "accuracy": correct / len(selected),
                 "eos_stops": sum(row["stopped_on_eos"] for row in selected),
             }
-    resolved = resolve_checkpoint_generation(campaign_dir, stem=stem, required=True)
+    layout = _evaluation_layout(campaign_dir)
+    resolved = resolve_checkpoint_generation(
+        layout.checkpoint_dir,
+        stem=stem,
+        required=True,
+    )
     if resolved is None:  # pragma: no cover - required=True is exhaustive
         raise RuntimeError("unified checkpoint is unavailable")
     body = {

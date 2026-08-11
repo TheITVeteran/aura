@@ -44881,3 +44881,46 @@ performance or a `WOW Signal`. The completion envelope remains `912/920`
 (approximately `99.1%`). Next is a fresh CP238 canary proving terminal custody,
 then a frozen prompt-disjoint behavioral run comparing trained recurrence with
 the equal-compute untrained controller and mechanism lesions.
+
+## Checkpoint 2026-08-11-239: Terminal Custody and Resident Evaluation Layout
+
+The source-bound CP238 canary completed the exact resident 32B three-step
+profile through two bounded detached invocations. Its controller accepted the
+trainer's canonical terminal receipt, published authenticated state
+`completed`, stopped, and committed controller completion SHA-256
+`62208461d0e849bedde7e8191281d011549558dfa4b01e80e785069957270c1f`.
+The final checkpoint tensor remains
+`193a8bf6313be7b62cf4605b8f29fc883999e3ef7509fa0ac6c17bfde4707d99`;
+the authoritative checkpoint generation reports receipt SHA-256
+`35e0c487cb72acf56b5b35d3e92c5305cfa8f25398f128a30a84ff0d37efab66`,
+and its canonical terminal training receipt reports SHA-256
+`2c4ad5af175126a0c80680aec073c57d68cb5391997dd81fbf6d86117bb0f22d`.
+This closes the terminal-custody failure observed in CP237 without changing the
+training profile or its three-step scientific result.
+
+The next proof path exposed a separate storage-contract defect before model
+admission. Legacy experiments keep checkpoint, dataset and tokenized dataset
+in one directory; resident campaigns intentionally freeze inputs under
+`inputs/` and mutable generations under `training-output/`. The evaluators
+accepted only one directory, so neither possible argument could resolve all
+three artifacts. Evaluation now resolves a validated layout once: legacy
+campaigns retain co-located behavior, while resident campaigns load their
+canonical `campaign.json`, require its configured root to match the requested
+root and use the exact frozen input and output paths committed by that config.
+Every checkpoint resolution in both teacher-forced and decoded evaluators uses
+the resolved output directory.
+
+The MLX memory envelope and physical model-lane reservation are also separated.
+The former may remain 40 GB as a runtime ceiling; the latter is now derived by
+the benchmark estimator from the actual resident model instead of falsely
+claiming the entire envelope as present physical demand. The envelope remains
+recorded in lane metadata and the existing host-pressure veto remains intact.
+
+The affected evaluator, checkpoint and resident-controller surface passes
+`29/29` focused tests; repository smoke passes `104/104`; Ruff, compilation,
+diff hygiene and architectural layering are clean. No decoded behavioral gain,
+broad transfer, fusion, frontier performance or `WOW Signal` is claimed. The
+completion envelope remains `912/920` (approximately `99.1%`). Next is to
+freeze this evaluator identity into a fresh bounded canary, then execute the
+prompt-disjoint matched-compute behavioral falsifier from that immutable
+source.
