@@ -243,3 +243,67 @@ def _positions(haystack: str, needle: str) -> list[int]:
         found.append(start)
         start = haystack.find(needle, start + 1)
     return found
+
+
+# ── The shared present: a sense that never looked must say so ──────────────
+
+@pytest.mark.parametrize(
+    "message",
+    [
+        "Without me telling you anything: what am I doing right now, and am I alone?",
+        "am I alone?",
+        "whats playing on my screen right now",
+    ],
+)
+def test_questions_about_the_shared_present_are_recognised(message: str) -> None:
+    from core.introspection.self_evidence import asks_about_the_shared_present
+
+    assert asks_about_the_shared_present(message) is True
+
+
+@pytest.mark.parametrize("message", ["what is the capital of Peru", "explain recursion", ""])
+def test_other_questions_do_not_wake_the_senses(message: str) -> None:
+    from core.introspection.self_evidence import asks_about_the_shared_present
+
+    assert asks_about_the_shared_present(message) is False
+
+
+def test_a_never_sampled_sense_is_not_a_negative_reading() -> None:
+    """The live answer was "you seem to be alone", then "I cannot determine
+    if there are other people present" — one sentence apart."""
+    from core.introspection.self_evidence import _signal_reading
+
+    reading = _signal_reading("camera", {"vision": {"updated_at": 0.0, "face_count": 0}}, "vision")
+
+    assert reading.state is ReadingState.ABSENT_NEVER_SAMPLED
+    assert reading.present is False
+
+
+def test_a_sampled_sense_reads_normally() -> None:
+    from core.introspection.self_evidence import _signal_reading
+
+    reading = _signal_reading(
+        "camera", {"vision": {"updated_at": 1786440000.0, "face_count": 2}}, "vision"
+    )
+
+    assert reading.state is ReadingState.READ
+    assert reading.value["face_count"] == 2
+
+
+def test_missing_sense_service_still_names_every_channel() -> None:
+    """Omitting them would rebuild the defect one level up."""
+    from core.introspection.self_evidence import resolve_shared_present
+
+    bundle = resolve_shared_present()
+    channels = {r.channel for r in bundle.readings}
+
+    assert {"camera", "microphone", "typing"} <= channels
+
+
+def test_the_present_answer_never_asserts_solitude_without_a_camera_reading() -> None:
+    from core.introspection.self_evidence import shared_present_answer
+
+    answer = shared_present_answer("what am I doing right now, and am I alone?")
+
+    assert "alone" not in answer.lower().replace("anyone else is here", "")
+    assert "never produced a sample" in answer

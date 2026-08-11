@@ -51,9 +51,12 @@ __all__ = [
     "Reading",
     "ReadingState",
     "asks_about_own_operational_state",
+    "asks_about_the_shared_present",
     "render_self_health_answer",
     "resolve_self_health",
+    "resolve_shared_present",
     "self_health_answer",
+    "shared_present_answer",
 ]
 
 #: Something of hers that can be in a state, paired below with a word for being
@@ -346,3 +349,185 @@ def render_self_health_answer(bundle: EvidenceBundle) -> str:
     if not lines:
         return ""
     return "\n".join(lines)
+
+
+# ── The shared present: what is actually around her ────────────────────────
+#
+# "Without me telling you anything: what am I doing right now, and am I alone?"
+# came back as "You are looking at your screen, and you seem to be alone. My
+# vision sense failed me — I cannot ... determine if there are other people
+# present." An assertion and its own retraction, one sentence apart, because
+# nothing had been consulted and nothing said so.
+
+_PRESENT_SUBJECT_RE = re.compile(
+    r"\b(?:i|me|my|we|us)\b|\bright\s+now\b|\bcurrently\b|\bat\s+the\s+moment\b|"
+    r"\bscreen\b|\bwatching\b|\bplaying\b|\baround\s+(?:me|us)\b|\broom\b",
+    re.IGNORECASE,
+)
+_PRESENT_ENQUIRY_RE = re.compile(
+    r"\b(?:what|who|where|am\s+i|are\s+we|is\s+anyone|anybody|alone|doing|"
+    r"see|seeing|look(?:ing)?|watch(?:ing)?|listen(?:ing)?|hear|playing|on)\b",
+    re.IGNORECASE,
+)
+
+
+def asks_about_the_shared_present(text: Any) -> bool:
+    """True when the turn asks what is happening around the two of them."""
+
+    raw = str(text or "").strip()
+    if not raw:
+        return False
+    return bool(_PRESENT_SUBJECT_RE.search(raw) and _PRESENT_ENQUIRY_RE.search(raw))
+
+
+def _signal_reading(channel: str, signals: dict[str, Any], key: str) -> Reading:
+    """A sense's own status, with 'never sampled' kept distinct from 'quiet'.
+
+    updated_at == 0.0 is the whole point. On the live runtime both vision and
+    voice read 0.0 — not stale, NEVER — while the OS had held the built-in
+    microphone open for two hours. A channel that has never produced a sample
+    cannot report absence of a face; it can only report that it never looked.
+    """
+
+    block = signals.get(key)
+    if not isinstance(block, dict):
+        return Reading(
+            channel=channel,
+            state=ReadingState.ABSENT_UNAVAILABLE,
+            provenance=f"interaction_signals.{key}",
+            detail="sense not present in the signal status",
+        )
+    try:
+        updated_at = float(block.get("updated_at") or 0.0)
+    except (TypeError, ValueError):
+        updated_at = 0.0
+    if updated_at <= 0.0:
+        return Reading(
+            channel=channel,
+            state=ReadingState.ABSENT_NEVER_SAMPLED,
+            provenance=f"interaction_signals.{key}.updated_at",
+            detail="this sense has never produced a sample",
+        )
+    return Reading(
+        channel=channel,
+        state=ReadingState.READ,
+        value=dict(block),
+        provenance=f"interaction_signals.{key}",
+        at=updated_at,
+    )
+
+
+def _audio_playback_reading() -> Reading:
+    try:
+        from core.voice.audio_provenance import host_audio_sources
+
+        sources = host_audio_sources()
+    except (ImportError, RuntimeError, OSError, AttributeError, TypeError, ValueError) as exc:
+        return Reading(
+            channel="audio_playback",
+            state=ReadingState.ABSENT_UNAVAILABLE,
+            provenance="core.voice.audio_provenance",
+            detail=f"{type(exc).__name__}: {exc}",
+        )
+    if not getattr(sources, "readable", False):
+        return Reading(
+            channel="audio_playback",
+            state=ReadingState.ABSENT_UNAVAILABLE,
+            provenance="pmset -g assertions",
+            detail=str(getattr(sources, "evidence", "") or ""),
+        )
+    return Reading(
+        channel="audio_playback",
+        state=ReadingState.READ,
+        value={
+            "playing": bool(getattr(sources, "playing", False)),
+            "processes": list(getattr(sources, "processes", ()) or ()),
+        },
+        provenance="pmset -g assertions",
+    )
+
+
+def resolve_shared_present() -> EvidenceBundle:
+    """Consult every sense that bears on "what is happening here, right now"."""
+
+    readings: list[Reading] = []
+    try:
+        from core.container import ServiceContainer
+
+        engine = ServiceContainer.get("interaction_signals", default=None)
+        signals = engine.get_status() if engine is not None else None
+    except (ImportError, RuntimeError, AttributeError, TypeError, ValueError) as exc:
+        signals = None
+        readings.append(Reading(
+            channel="senses",
+            state=ReadingState.ABSENT_UNAVAILABLE,
+            provenance="ServiceContainer['interaction_signals']",
+            detail=f"{type(exc).__name__}: {exc}",
+        ))
+    if isinstance(signals, dict):
+        readings.append(_signal_reading("camera", signals, "vision"))
+        readings.append(_signal_reading("microphone", signals, "voice"))
+        readings.append(_signal_reading("typing", signals, "typing"))
+    else:
+        # Silently omitting them would recreate the defect one level up: a
+        # question about who is in the room, answered without any mention that
+        # the senses which would know were never consulted.
+        for channel in ("camera", "microphone", "typing"):
+            readings.append(Reading(
+                channel=channel,
+                state=ReadingState.ABSENT_UNAVAILABLE,
+                provenance="ServiceContainer['interaction_signals']",
+                detail="the interaction-signals sense is not running",
+            ))
+    readings.append(_audio_playback_reading())
+    return EvidenceBundle(demand="shared_present", readings=tuple(readings))
+
+
+def render_shared_present_answer(bundle: EvidenceBundle) -> str:
+    """State what each sense reports, and name the ones that never looked."""
+
+    lines: list[str] = []
+    for reading in bundle.readings:
+        if reading.channel == "camera":
+            if reading.present:
+                value = reading.value or {}
+                faces = value.get("face_count")
+                lines.append(
+                    f"Camera: {faces} face(s) in view."
+                    if isinstance(faces, int)
+                    else "Camera: reading available."
+                )
+            else:
+                lines.append(
+                    "Camera: no reading — it has never produced a sample, so I "
+                    "cannot tell whether anyone else is here."
+                )
+        elif reading.channel == "microphone":
+            if reading.present:
+                lines.append(f"Microphone: {(reading.value or {}).get('label') or 'reading available'}.")
+            else:
+                lines.append("Microphone: no reading — this sense has never sampled.")
+        elif reading.channel == "typing" and reading.present:
+            lines.append(f"Typing: {(reading.value or {}).get('label') or 'active'}.")
+        elif reading.channel == "audio_playback":
+            if reading.present:
+                value = reading.value or {}
+                if value.get("playing"):
+                    names = ", ".join(str(p) for p in value.get("processes") or ()) or "an unnamed app"
+                    lines.append(f"Audio is playing on this machine, held by {names}.")
+                else:
+                    lines.append("Nothing is holding an audio-playback assertion right now.")
+            else:
+                lines.append(f"Audio playback: not readable ({reading.detail}).")
+    return "\n".join(lines)
+
+
+def shared_present_answer(message: Any) -> str:
+    """What the senses actually report, or "" when this is not that turn."""
+
+    if not asks_about_the_shared_present(message):
+        return ""
+    bundle = resolve_shared_present()
+    if not bundle.readings:
+        return ""
+    return render_shared_present_answer(bundle)

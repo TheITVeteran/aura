@@ -20252,9 +20252,19 @@ def _self_health_answer_or_empty(message: object) -> str:
     """
 
     try:
-        from core.introspection.self_evidence import self_health_answer
+        from core.introspection.self_evidence import (
+            self_health_answer,
+            shared_present_answer,
+        )
 
-        return str(self_health_answer(message) or "").strip()
+        answer = str(self_health_answer(message) or "").strip()
+        if answer:
+            return answer
+        # "What am I doing right now, and am I alone?" is the same demand aimed
+        # at the senses instead of the telemetry: it must be answered from
+        # readings, and a sense that has never sampled must say so rather than
+        # let a guess stand in.
+        return str(shared_present_answer(message) or "").strip()
     except _CHAT_RECOVERABLE_ERRORS as exc:
         record_degradation('chat', exc)
         return ""
