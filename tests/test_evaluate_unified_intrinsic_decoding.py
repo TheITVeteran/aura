@@ -7,6 +7,7 @@ mx = pytest.importorskip("mlx.core")
 from tools.evaluate_unified_intrinsic_decoding import (  # noqa: E402
     _candidate_response,
     _force_next_token,
+    _paired_training_effects,
     evaluate_decoding,
 )
 
@@ -25,6 +26,41 @@ def test_candidate_response_reconstructs_exact_answer_envelope() -> None:
     )
     with pytest.raises(ValueError, match="exact answer bridge"):
         _candidate_response("Answer: ", "7")
+
+
+def test_paired_training_effects_reports_improvements_and_regressions() -> None:
+    candidates = [
+        {"task_id": "a", "arm": "untrained_t4", "correct": False},
+        {"task_id": "a", "arm": "trained_t4", "correct": True},
+        {"task_id": "b", "arm": "untrained_t4", "correct": True},
+        {"task_id": "b", "arm": "trained_t4", "correct": False},
+        {"task_id": "a", "arm": "untrained_t1", "correct": False},
+        {"task_id": "a", "arm": "trained_t1", "correct": True},
+        {"task_id": "b", "arm": "untrained_t1", "correct": False},
+        {"task_id": "b", "arm": "trained_t1", "correct": False},
+    ]
+    effects = _paired_training_effects(candidates, (4,))
+    assert effects["1"] == {
+        "tasks": 2,
+        "control_arm": "untrained_t1",
+        "trained_arm": "trained_t1",
+        "untrained_correct": 0,
+        "trained_correct": 1,
+        "net_correct_gain": 1,
+        "wrong_to_right": 1,
+        "right_to_wrong": 0,
+    }
+    assert effects["4"]["net_correct_gain"] == 0
+    assert effects["4"]["wrong_to_right"] == 1
+    assert effects["4"]["right_to_wrong"] == 1
+
+
+def test_paired_training_effects_refuses_an_incomplete_control() -> None:
+    with pytest.raises(RuntimeError, match="incomplete"):
+        _paired_training_effects(
+            [{"task_id": "a", "arm": "trained_t1", "correct": True}],
+            (),
+        )
 
 
 def test_decode_task_depths_are_unique_positive_integers(tmp_path) -> None:

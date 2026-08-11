@@ -44826,3 +44826,58 @@ frontier performance or `WOW Signal` is claimed. The completion envelope
 remains `912/920` (approximately `99.1%`). Next is to publish CP237, freeze a
 fresh immutable source-bound campaign, revalidate live headroom and run the
 bounded resident canary through its first durable checkpoint.
+
+## Checkpoint 2026-08-11-238: Resident Canary Evidence and Matched-Compute Proof
+
+The CP237 source-bound resident canary passed the model-admission boundary and
+trained the exact resident 32B checkpoint through all three requested steps.
+The first detached invocation published step 1, exited cleanly and left an
+empty process group. The second invocation resumed from that immutable
+checkpoint, published steps 2 and 3, and likewise exited cleanly. The final
+checkpoint tensor commitment is
+`193a8bf6313be7b62cf4605b8f29fc883999e3ef7509fa0ac6c17bfde4707d99`;
+its receipt commitment is
+`cd49072f2f104d764ea9939881a924a061f0d083f15525662bf6a56aab508ef7`.
+
+At step 3, teacher-forced held-out T8/T16 cross-entropy was `2.588147`
+versus T1 `3.159600`, an `18.086%` relative reduction. Initial state, terminal
+state, action, exact state values and exact action instructions remained
+`100%` across T1/T2/T4/T8/T16. The recurrence phase recorded nonzero gradient
+norms in the recurrent controller (`29.7402`), typed action transition
+(`141.1221`), typed action codebook (`50.5695`) and typed state codebook
+(`1.0777`), while the frozen transformer readout commitment remained unchanged.
+This is real resident training and resume evidence, but teacher-forced affinity
+is not decoded behavioral reasoning gain.
+
+The controller did not close the campaign successfully after training. The
+trainer signed a correct `complete=true`, `halt_reason=max_steps` receipt but
+serialized that compatibility document as pretty JSON. The controller requires
+canonical bytes before accepting a receipt as authoritative, so it ignored the
+completion document, computed zero remaining steps and launched an invalid
+`--max-invocation-steps 0` attempt. The resulting controller failure is retained
+as operational negative evidence rather than hidden behind the valid training
+metrics.
+
+Training completion receipts now use canonical ASCII JSON at their producer.
+The controller also refuses a max-step checkpoint with a missing or invalid
+terminal receipt before reserving an attempt or admitting the model, so a
+future representation or custody defect cannot turn into a zero-step retry.
+
+The frozen behavioral evaluator now includes an initialization-matched control:
+the exact deterministic pre-training controller is reconstructed, regrounded on
+the same frozen prelude manifold and verified against a committed initial
+controller hash. It executes every tested recurrence depth with the same model,
+grammar, pointer and compute shape as the trained controller. Reports account
+for paired wrong-to-right and right-to-wrong transitions instead of attributing
+all base-versus-recurrence differences to learning. Both evaluator programs are
+part of future campaign source identity and commit their own source hashes into
+every report; changing the yardstick after training invalidates the checkpoint.
+
+The affected evaluator, trainer and resident-controller surface passes `54/54`
+tests; Ruff, compilation and diff hygiene are clean. CP237 establishes that the
+source-bound resident model can load, train, checkpoint and resume on this host.
+It does not establish decoded reasoning gain, broad transfer, fusion, frontier
+performance or a `WOW Signal`. The completion envelope remains `912/920`
+(approximately `99.1%`). Next is a fresh CP238 canary proving terminal custody,
+then a frozen prompt-disjoint behavioral run comparing trained recurrence with
+the equal-compute untrained controller and mechanism lesions.

@@ -116,6 +116,8 @@ TRAINING_SOURCE_FILES = (
     "pyproject.toml",
     "requirements_lock.txt",
     "tools/resident_recurrent_sft_bootstrap_identity.py",
+    "tools/evaluate_unified_intrinsic_checkpoint.py",
+    "tools/evaluate_unified_intrinsic_decoding.py",
     "tools/train_intrinsic_recurrence.py",
     "tools/train_unified_intrinsic_recurrence.py",
     "tools/unified_intrinsic_checkpoint.py",
@@ -388,6 +390,17 @@ def _resolve_recurrent_window(
 def _atomic_json(path: Path, value: dict[str, Any]) -> None:
     encoded = json.dumps(value, indent=2, sort_keys=True) + "\n"
     atomic_write_text(path, encoded, encoding="utf-8", mode=0o600)
+
+
+def _atomic_canonical_json(path: Path, value: dict[str, Any]) -> None:
+    encoded = json.dumps(
+        value,
+        sort_keys=True,
+        separators=(",", ":"),
+        ensure_ascii=True,
+        allow_nan=False,
+    ) + "\n"
+    atomic_write_text(path, encoded, encoding="ascii", mode=0o600)
 
 
 def _await_resource_guard(
@@ -2327,6 +2340,7 @@ def main() -> int:
             prelude_end=spec.prelude_end,
             batch_size=args.grounding_batch_size,
         )
+        initial_controller_sha256 = controller.parameter_sha256()
         bundle = UnifiedTrainingBundle(model, controller)
         readout_sha256 = readout_fingerprint(model, spec.coda_start)
         identity = {
@@ -2378,6 +2392,7 @@ def main() -> int:
             ),
             "state_codebook_sha256": state_codebook_grounding["sha256"],
             "state_codebook_grounding": state_codebook_grounding,
+            "initial_controller_sha256": initial_controller_sha256,
             "literal_observation_contract": {
                 **literal_contract.to_dict(),
                 "contract_sha256": literal_contract.contract_sha256,
@@ -2867,7 +2882,7 @@ def main() -> int:
             ),
         }
         receipt = {**body, "receipt_sha256": _canonical_sha256(body)}
-        _atomic_json(out_dir / "training_receipt.json", receipt)
+        _atomic_canonical_json(out_dir / "training_receipt.json", receipt)
         print(f"[verdict] {receipt['verdict']}", flush=True)
     return 0
 

@@ -36,6 +36,7 @@ from tools.train_unified_intrinsic_recurrence import (  # noqa: E402
     UnifiedTrainingBundle,
     _answer_binding_loss,
     _answer_role_place_targets,
+    _atomic_canonical_json,
     _attach_window_adapters,
     _await_resource_guard,
     _canonical_sha256,
@@ -227,9 +228,17 @@ def test_campaign_identity_binds_curriculum_and_state_schema_sources() -> None:
     assert "core/learning/intrinsic_recurrence.py" in TRAINING_SOURCE_FILES
     assert "core/learning/protected_memory.py" in TRAINING_SOURCE_FILES
     assert "core/runtime/model_lane_control.py" in TRAINING_SOURCE_FILES
+    assert "tools/evaluate_unified_intrinsic_checkpoint.py" in TRAINING_SOURCE_FILES
+    assert "tools/evaluate_unified_intrinsic_decoding.py" in TRAINING_SOURCE_FILES
     assert "tools/train_intrinsic_recurrence.py" in TRAINING_SOURCE_FILES
     assert "tools/unified_intrinsic_resident_identity.py" in TRAINING_SOURCE_FILES
     assert "requirements_lock.txt" in TRAINING_SOURCE_FILES
+
+
+def test_training_receipt_writer_uses_canonical_json(tmp_path: Path) -> None:
+    target = tmp_path / "training_receipt.json"
+    _atomic_canonical_json(target, {"z": 2, "a": 1})
+    assert target.read_bytes() == b'{"a":1,"z":2}\n'
 
 
 def test_hidden_size_comes_from_residual_space_not_packed_embeddings() -> None:

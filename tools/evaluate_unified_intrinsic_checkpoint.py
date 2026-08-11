@@ -57,6 +57,7 @@ from tools.train_unified_intrinsic_recurrence import (  # noqa: E402
     _await_resource_guard,
     _canonical_sha256,
     _configure_window_tissue,
+    _ground_state_value_embeddings,
     _model_identity,
     _runtime_identity,
     _trainable,
@@ -72,6 +73,10 @@ from tools.unified_intrinsic_tokenization_contract import (  # noqa: E402
 )
 
 EVALUATION_SCHEMA = "aura.unified_intrinsic_independent_evaluation.v1"
+EVALUATION_SOURCE_FILES = (
+    "tools/evaluate_unified_intrinsic_checkpoint.py",
+    "tools/evaluate_unified_intrinsic_decoding.py",
+)
 
 
 def _file_sha256(path: Path) -> str:
@@ -82,11 +87,76 @@ def _file_sha256(path: Path) -> str:
     return digest.hexdigest()
 
 
+def _evaluation_source_sha256s() -> dict[str, str]:
+    return {
+        relative: _file_sha256(REPO_ROOT / relative)
+        for relative in EVALUATION_SOURCE_FILES
+    }
+
+
+def _controller_config(
+    model: Any,
+    identity: dict[str, Any],
+    literal_contract: LiteralObservationContract,
+    opcode_contract: OpcodeObservationContract,
+) -> UnifiedRecurrenceConfig:
+    return UnifiedRecurrenceConfig(
+        hidden_size=int(model.model.layers[0].input_layernorm.weight.shape[0]),
+        correction_rank=int(identity["controller_rank"]),
+        depth_basis_size=int(identity["depth_basis_size"]),
+        minimum_iterations=1,
+        initialization_seed=int(identity["init_seed"]),
+        literal_digit_token_ids=literal_contract.digit_token_ids,
+        opcode_token_patterns=opcode_contract.patterns,
+        opcode_context_patterns=opcode_contract.contexts,
+    )
+
+
+def _initial_controller(
+    model: Any,
+    tokenizer: Any,
+    spec: UnifiedIntrinsicTrainingSpec,
+    identity: dict[str, Any],
+    literal_contract: LiteralObservationContract,
+    opcode_contract: OpcodeObservationContract,
+) -> UnifiedRecurrentController:
+    """Reconstruct the exact pre-training controller for a matched-compute arm."""
+
+    controller = UnifiedRecurrentController(
+        _controller_config(model, identity, literal_contract, opcode_contract)
+    )
+    expected_grounding = identity.get("state_codebook_grounding")
+    if not isinstance(expected_grounding, dict):
+        raise RuntimeError("unified checkpoint state codebook grounding is absent")
+    observed_grounding = _ground_state_value_embeddings(
+        model,
+        tokenizer,
+        controller,
+        prelude_end=spec.prelude_end,
+        batch_size=int(expected_grounding.get("batch_size", 0)),
+    )
+    if observed_grounding != expected_grounding:
+        raise RuntimeError("unified checkpoint initial grounding differs")
+    expected_sha256 = identity.get("initial_controller_sha256")
+    if (
+        not isinstance(expected_sha256, str)
+        or controller.parameter_sha256() != expected_sha256
+    ):
+        raise RuntimeError("unified checkpoint initial controller differs")
+    return controller
+
+
 def _load_checkpoint(
     campaign_dir: Path,
     *,
     stem: str,
-) -> tuple[UnifiedTrainingBundle, Any, UnifiedIntrinsicTrainingSpec, dict[str, Any]]:
+) -> tuple[
+    UnifiedTrainingBundle,
+    UnifiedRecurrentController,
+    Any,
+    UnifiedIntrinsicTrainingSpec,
+    dict[str, Any],
+]:
     try:
         resolved = resolve_checkpoint_generation(
             campaign_dir,
@@ -268,16 +338,16 @@ def _load_checkpoint(
     )
     if wiring != identity["wiring"]:
         raise RuntimeError("unified checkpoint wiring differs")
+    initial_controller = _initial_controller(
+        model,
+        tokenizer,
+        spec,
+        identity,
+        literal_contract,
+        opcode_contract,
+    )
     controller = UnifiedRecurrentController(
-        UnifiedRecurrenceConfig(
-            hidden_size=int(model.model.layers[0].input_layernorm.weight.shape[0]),
-            correction_rank=int(identity["controller_rank"]),
-            minimum_iterations=1,
-            initialization_seed=int(identity["init_seed"]),
-            literal_digit_token_ids=literal_contract.digit_token_ids,
-            opcode_token_patterns=opcode_contract.patterns,
-            opcode_context_patterns=opcode_contract.contexts,
-        )
+        _controller_config(model, identity, literal_contract, opcode_contract)
     )
     bundle = UnifiedTrainingBundle(model, controller)
     tensors = mx.load(str(weights_path))
@@ -292,7 +362,7 @@ def _load_checkpoint(
     mx.eval(bundle.parameters())
     if readout_fingerprint(model, spec.coda_start) != identity["readout_sha256"]:
         raise RuntimeError("unified checkpoint readout differs")
-    return bundle, tokenizer, spec, identity
+    return bundle, initial_controller, tokenizer, spec, identity
 
 
 @contextmanager
@@ -309,6 +379,7 @@ def unified_evaluation_context(
 ) -> Iterator[
     tuple[
         UnifiedTrainingBundle,
+        UnifiedRecurrentController,
         Any,
         UnifiedIntrinsicTrainingSpec,
         dict[str, Any],
@@ -359,7 +430,7 @@ def unified_evaluation_context(
         wired_gb=wired_limit_gb,
         restore_limits_on_exit=False,
     ) as envelope:
-        bundle, tokenizer, spec, identity = _load_checkpoint(
+        bundle, initial_controller, tokenizer, spec, identity = _load_checkpoint(
             campaign_dir,
             stem=stem,
         )
@@ -372,7 +443,15 @@ def unified_evaluation_context(
                 steady_lethal_mb=float(resource_steady_lethal_mb),
                 timeout_s=120.0,
             )
-        yield bundle, tokenizer, spec, identity, envelope, resource_receipt
+        yield (
+            bundle,
+            initial_controller,
+            tokenizer,
+            spec,
+            identity,
+            envelope,
+            resource_receipt,
+        )
 
 
 def _sign_test_p_value(differences: list[float]) -> float | None:
@@ -508,6 +587,7 @@ def _evaluate_loaded_checkpoint(
         "schema": EVALUATION_SCHEMA,
         "campaign_identity_sha256": identity["identity_sha256"],
         "checkpoint_sha256": _file_sha256(resolved.weights_path),
+        "evaluation_source_sha256s": _evaluation_source_sha256s(),
         "evaluation_seed": evaluation_seed,
         "per_cell": per_cell,
         "task_count": len(rows),
@@ -554,7 +634,15 @@ def evaluate_checkpoint(
         resource_startup_lethal_mb=resource_startup_lethal_mb,
         resource_steady_lethal_mb=resource_steady_lethal_mb,
     ) as loaded:
-        bundle, tokenizer, spec, identity, envelope, resource_receipt = loaded
+        (
+            bundle,
+            _initial_controller_unused,
+            tokenizer,
+            spec,
+            identity,
+            envelope,
+            resource_receipt,
+        ) = loaded
         report = _evaluate_loaded_checkpoint(
             campaign_dir,
             bundle=bundle,

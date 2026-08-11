@@ -1559,6 +1559,25 @@ def _trailing_no_progress(config: Mapping[str, Any], completed_attempts: int) ->
     return count
 
 
+def _planned_invocation_steps(
+    config: Mapping[str, Any], checkpoint: Mapping[str, Any]
+) -> int | None:
+    if config["profile"] != "canary":
+        return None
+    step = int(checkpoint["step"])
+    if step == 0:
+        return 1
+    remaining = int(config["training"]["max_steps"]) - step
+    if remaining < 1:
+        _fail(
+            "terminal_receipt_unavailable_at_max_step",
+            checkpoint_step=step,
+            checkpoint_complete=checkpoint.get("complete"),
+            training_receipt=checkpoint.get("training_receipt"),
+        )
+    return remaining
+
+
 def _completion(
     config: Mapping[str, Any],
     package: Mapping[str, Any],
@@ -1623,15 +1642,7 @@ def run_controller(config_path: Path, *, launchd_supervised: bool) -> dict[str, 
                 if _trailing_no_progress(config, attempt - 1) >= max_no_progress:
                     _fail("consecutive_no_progress_limit_exhausted")
                 run_dir = Path(config["paths"]["detached_attempts"]) / f"attempt-{attempt:04d}"
-                invocation_steps = (
-                    1
-                    if config["profile"] == "canary" and checkpoint["step"] == 0
-                    else (
-                        int(config["training"]["max_steps"]) - int(checkpoint["step"])
-                        if config["profile"] == "canary"
-                        else None
-                    )
-                )
+                invocation_steps = _planned_invocation_steps(config, checkpoint)
                 if _reservation_path(run_dir).exists():
                     reservation = _load_reservation(
                         config,

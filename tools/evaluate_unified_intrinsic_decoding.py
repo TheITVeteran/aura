@@ -34,6 +34,7 @@ from core.learning.unified_intrinsic_recurrence import (  # noqa: E402
 )
 from tools.evaluate_unified_intrinsic_checkpoint import (  # noqa: E402
     _canonical_sha256,
+    _evaluation_source_sha256s,
     _file_sha256,
     _fresh_tasks,
     unified_evaluation_context,
@@ -96,10 +97,58 @@ def _force_next_token(logits: Any, token_id: int) -> Any:
     return mx.concatenate([logits[:, :-1, :], forced[:, None, :]], axis=1)
 
 
+def _paired_training_effects(
+    candidates: list[dict[str, Any]],
+    recurrence_depths: tuple[int, ...],
+) -> dict[str, dict[str, Any]]:
+    """Summarize trained versus initialization-matched recurrent execution."""
+
+    effects: dict[str, dict[str, Any]] = {}
+    for depth in (1, *recurrence_depths):
+        control_arm = f"untrained_t{depth}"
+        trained_arm = f"trained_t{depth}"
+        by_task: dict[str, dict[str, bool]] = {}
+        for row in candidates:
+            arm = row.get("arm")
+            if arm not in (control_arm, trained_arm):
+                continue
+            task_id = str(row["task_id"])
+            bucket = by_task.setdefault(task_id, {})
+            if arm in bucket:
+                raise RuntimeError("paired recurrent control contains a duplicate task arm")
+            bucket[str(arm)] = bool(row["correct"])
+        if not by_task or any(
+            set(result) != {control_arm, trained_arm} for result in by_task.values()
+        ):
+            raise RuntimeError("paired recurrent control is incomplete")
+        wrong_to_right = sum(
+            not result[control_arm] and result[trained_arm]
+            for result in by_task.values()
+        )
+        right_to_wrong = sum(
+            result[control_arm] and not result[trained_arm]
+            for result in by_task.values()
+        )
+        control_correct = sum(result[control_arm] for result in by_task.values())
+        trained_correct = sum(result[trained_arm] for result in by_task.values())
+        effects[str(depth)] = {
+            "tasks": len(by_task),
+            "control_arm": control_arm,
+            "trained_arm": trained_arm,
+            "untrained_correct": control_correct,
+            "trained_correct": trained_correct,
+            "net_correct_gain": trained_correct - control_correct,
+            "wrong_to_right": wrong_to_right,
+            "right_to_wrong": right_to_wrong,
+        }
+    return effects
+
+
 def _evaluate_decoding_loaded(
     campaign_dir: Path,
     *,
     bundle: Any,
+    initial_controller: Any,
     tokenizer: Any,
     spec: Any,
     identity: dict[str, Any],
@@ -174,6 +223,7 @@ def _evaluate_decoding_loaded(
             tokens: Any,
             plan: Any,
             *,
+            controller: Any = bundle.controller,
             grammar_enabled: bool = True,
             pointer_enabled: bool = True,
             state_slot_start: int = int(prompt.shape[-1]),
@@ -182,7 +232,7 @@ def _evaluate_decoding_loaded(
                 bundle.model,
                 tokens,
                 plan,
-                bundle.controller,
+                controller,
                 state_slot_start=state_slot_start,
                 answer_emission_contract=(
                     answer_contract if grammar_enabled else None
@@ -247,7 +297,22 @@ def _evaluate_decoding_loaded(
         lesion_depth = max(decoded_depths)
         arms: tuple[tuple[str, Callable[[Any], Any]], ...] = (
             ("base_t1", base_logits),
+            (
+                "untrained_t1",
+                lambda tokens: recurrent_logits(tokens, t1, controller=initial_controller),
+            ),
             ("trained_t1", lambda tokens: recurrent_logits(tokens, t1)),
+            *(
+                (
+                    f"untrained_t{depth}",
+                    lambda tokens, depth=depth: recurrent_logits(
+                        tokens,
+                        spec.plan_at(depth),
+                        controller=initial_controller,
+                    ),
+                )
+                for depth in decoded_depths
+            ),
             *(
                 (
                     f"trained_t{depth}",
@@ -358,6 +423,7 @@ def _evaluate_decoding_loaded(
         "schema": DECODE_EVALUATION_SCHEMA,
         "campaign_identity_sha256": identity["identity_sha256"],
         "checkpoint_sha256": _file_sha256(resolved.weights_path),
+        "evaluation_source_sha256s": _evaluation_source_sha256s(),
         "evaluation_seed": evaluation_seed,
         "per_cell": per_cell,
         "task_depths": list(depths),
@@ -366,6 +432,10 @@ def _evaluate_decoding_loaded(
         "lesion_depth": max(decoded_depths),
         "max_tokens": max_tokens,
         "arm_results": arm_results,
+        "paired_training_effects": _paired_training_effects(
+            candidates,
+            decoded_depths,
+        ),
         "depth_results": depth_results,
         "candidates": candidates,
         "claim_boundary": (
@@ -420,10 +490,19 @@ def evaluate_decoding(
         resource_startup_lethal_mb=resource_startup_lethal_mb,
         resource_steady_lethal_mb=resource_steady_lethal_mb,
     ) as loaded:
-        bundle, tokenizer, spec, identity, envelope, resource_receipt = loaded
+        (
+            bundle,
+            initial_controller,
+            tokenizer,
+            spec,
+            identity,
+            envelope,
+            resource_receipt,
+        ) = loaded
         report = _evaluate_decoding_loaded(
             campaign_dir,
             bundle=bundle,
+            initial_controller=initial_controller,
             tokenizer=tokenizer,
             spec=spec,
             identity=identity,

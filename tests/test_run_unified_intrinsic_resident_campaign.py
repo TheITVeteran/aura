@@ -269,6 +269,37 @@ def test_empty_checkpoint_output_is_step_zero(tmp_path: Path) -> None:
     }
 
 
+def test_canary_never_launches_zero_steps_at_terminal_checkpoint(
+    tmp_path: Path,
+) -> None:
+    path, _raw = _config(tmp_path)
+    config = controller._load_config(path)
+    checkpoint = {
+        "present": True,
+        "step": config["training"]["max_steps"],
+        "complete": False,
+        "training_receipt": {
+            "binding": "ignored_non_authoritative",
+            "reason": "artifact_not_canonical",
+        },
+    }
+
+    with pytest.raises(
+        controller.UnifiedResidentControllerError,
+        match="terminal_receipt_unavailable_at_max_step",
+    ):
+        controller._planned_invocation_steps(config, checkpoint)
+
+
+def test_canary_plans_first_and_remaining_invocation_steps(tmp_path: Path) -> None:
+    path, _raw = _config(tmp_path)
+    config = controller._load_config(path)
+    assert controller._planned_invocation_steps(config, {"step": 0}) == 1
+    assert controller._planned_invocation_steps(config, {"step": 1}) == (
+        config["training"]["max_steps"] - 1
+    )
+
+
 def test_first_checkpoint_crash_debris_is_retryable_but_never_authoritative(
     tmp_path: Path,
 ) -> None:
