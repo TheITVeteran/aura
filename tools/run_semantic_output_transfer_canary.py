@@ -22,6 +22,8 @@ import numpy as np
 REPO_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO_ROOT))
 
+from core.runtime.model_lane_control import standalone_model_lane  # noqa: E402
+
 
 def _sha256_file(path: Path) -> str:
     digest = hashlib.sha256()
@@ -210,8 +212,7 @@ def _parser() -> argparse.ArgumentParser:
     return parser
 
 
-def main() -> int:
-    args = _parser().parse_args()
+def _run_admitted(args: argparse.Namespace, model_path: Path) -> int:
     if min(args.train_per_cell, args.validation_per_cell, args.test_per_cell) < 1:
         raise ValueError("semantic transfer split sizes must be positive")
     if not 8 <= args.max_tokens <= 512:
@@ -231,7 +232,6 @@ def main() -> int:
     from core.runtime.atomic_writer import atomic_write_text, ensure_private_directory
 
     started = time.time()
-    model_path = Path(args.model).expanduser().resolve(strict=True)
     model, tokenizer = load(str(model_path))
     inner = model.model
     original_embedding = inner.embed_tokens
@@ -405,6 +405,20 @@ def main() -> int:
     atomic_write_text(out, json.dumps(payload, indent=2, sort_keys=True) + "\n")
     print(json.dumps(payload, indent=2, sort_keys=True), flush=True)
     return 0 if experiment["accepted"] else 2
+
+
+def main() -> int:
+    args = _parser().parse_args()
+    model_path = Path(args.model).expanduser().resolve(strict=True)
+    with standalone_model_lane(
+        owner_id=f"semantic-output-transfer:{args.out.name}",
+        model_path=str(model_path),
+        purpose="evaluation",
+        preemptible=False,
+        allow_owner_eviction=False,
+        metadata={"tool": Path(__file__).name},
+    ):
+        return _run_admitted(args, model_path)
 
 
 if __name__ == "__main__":

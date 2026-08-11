@@ -44706,3 +44706,29 @@ frontier performance or `WOW Signal` is claimed. The completion envelope
 remains `912/920` (approximately `99.1%`). Next is to prepare the exact
 published resident package, validate its identities while live Aura owns the
 lane, then run the source-bound 32B canary only after a verified lane handoff.
+
+## Checkpoint 2026-08-11-234: Complete Direct Model-Load Ownership
+
+CP234 closes the aggregate direct model-load ownership audit exposed during
+resident launch validation. Five research tools already held a real
+`standalone_model_lane` lease but were absent from the canonical inventory;
+their exact load counts, modules, purposes and guard sites are now registered.
+The certified-recurrence behavioral gate and semantic-output transfer canary
+were genuine gaps: both could load MLX directly without first acquiring lane
+ownership. Their complete model lifetime now runs inside a non-preemptible,
+non-evicting standalone lease, so a research invocation cannot silently evict
+or coexist with the live resident model.
+
+The repository audit now accounts for all `71` direct model-loading paths and
+all `87` discovered load references with zero findings. The aggregate atomic
+model-lane contract passes, including its transaction, external-owner,
+pressure-proof and ownership checks. Focused ownership and wrapper tests pass
+`21/21`. A separate CP195 historical behavioral-bundle replay test remains red
+on unmodified current `main` because its current task generator no longer
+reconstructs one frozen prompt commitment; that certificate drift is not
+reported as model-lane success and is the next bounded repair.
+
+No resident 32B run, reasoning gain, fusion, frontier performance or `WOW
+Signal` is claimed. The completion envelope remains `912/920` (approximately
+`99.1%`). The source-bound resident package remains valid and launch-blocked
+only by the currently occupied live model lane.

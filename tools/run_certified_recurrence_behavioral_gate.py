@@ -43,6 +43,7 @@ from core.brain.llm.latent_cortex.typed_transition_executor import (  # noqa: E4
     TypedTransitionInput,
 )
 from core.learning.recurrence_curriculum import modular_chain, nested_boolean  # noqa: E402
+from core.runtime.model_lane_control import standalone_model_lane  # noqa: E402
 
 SCHEMA: Final = "aura.certified_recurrence_behavioral_gate.v1"
 PREREG_SCHEMA: Final = "aura.certified_recurrence_behavioral_preregistration.v1"
@@ -459,7 +460,7 @@ def verify_behavioral_bundle(
     }
 
 
-def run(args: argparse.Namespace) -> dict[str, Any]:
+def _run_admitted(args: argparse.Namespace) -> dict[str, Any]:
     repo = Path(args.repo).expanduser().resolve(strict=True)
     model_path = Path(args.model).expanduser().resolve(strict=True)
     out_dir = Path(args.out).expanduser().resolve()
@@ -645,6 +646,19 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
         encoding="utf-8",
     )
     return report
+
+
+def run(args: argparse.Namespace) -> dict[str, Any]:
+    model_path = Path(args.model).expanduser().resolve(strict=True)
+    with standalone_model_lane(
+        owner_id=f"certified-recurrence-behavioral:{Path(args.out).name}",
+        model_path=str(model_path),
+        purpose="evaluation",
+        preemptible=False,
+        allow_owner_eviction=False,
+        metadata={"tool": Path(__file__).name},
+    ):
+        return _run_admitted(args)
 
 
 def _parse_csv_ints(value: str) -> tuple[int, ...]:

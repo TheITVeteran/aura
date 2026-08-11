@@ -485,6 +485,28 @@
     },
     {
       "expected_load_references": 1,
+      "guard_symbol": "standalone_model_lane",
+      "min_guard_sites": 1,
+      "modules": [
+        "mlx_lm"
+      ],
+      "ownership_mode": "standalone_process",
+      "path": "tools/run_certified_recurrence_behavioral_gate.py",
+      "purpose": "evaluation"
+    },
+    {
+      "expected_load_references": 2,
+      "guard_symbol": "standalone_model_lane",
+      "min_guard_sites": 1,
+      "modules": [
+        "mlx_lm"
+      ],
+      "ownership_mode": "standalone_process",
+      "path": "tools/run_episodic_delta_transplant_canary.py",
+      "purpose": "evaluation"
+    },
+    {
+      "expected_load_references": 1,
       "guard_symbol": "acquire_standalone_model_lane",
       "min_guard_sites": 1,
       "modules": [
@@ -522,6 +544,39 @@
         "mlx_lm"
       ],
       "ownership_mode": "standalone_process",
+      "path": "tools/run_native_transition_discriminator.py",
+      "purpose": "training"
+    },
+    {
+      "expected_load_references": 1,
+      "guard_symbol": "standalone_model_lane",
+      "min_guard_sites": 1,
+      "modules": [
+        "mlx_lm"
+      ],
+      "ownership_mode": "standalone_process",
+      "path": "tools/run_recurrent_state_information_probe.py",
+      "purpose": "evaluation"
+    },
+    {
+      "expected_load_references": 1,
+      "guard_symbol": "standalone_model_lane",
+      "min_guard_sites": 1,
+      "modules": [
+        "mlx_lm"
+      ],
+      "ownership_mode": "standalone_process",
+      "path": "tools/run_recurrent_transition_discriminator.py",
+      "purpose": "training"
+    },
+    {
+      "expected_load_references": 1,
+      "guard_symbol": "standalone_model_lane",
+      "min_guard_sites": 1,
+      "modules": [
+        "mlx_lm"
+      ],
+      "ownership_mode": "standalone_process",
       "path": "tools/run_recurrent_grpo_behavioral_canary.py",
       "purpose": "training"
     },
@@ -549,6 +604,17 @@
     },
     {
       "expected_load_references": 1,
+      "guard_symbol": "standalone_model_lane",
+      "min_guard_sites": 1,
+      "modules": [
+        "mlx_lm"
+      ],
+      "ownership_mode": "standalone_process",
+      "path": "tools/run_semantic_output_transfer_canary.py",
+      "purpose": "evaluation"
+    },
+    {
+      "expected_load_references": 1,
       "guard_symbol": "acquire_standalone_model_lane",
       "min_guard_sites": 1,
       "modules": [
@@ -557,6 +623,17 @@
       "ownership_mode": "standalone_process",
       "path": "tools/run_state_causality_semantic.py",
       "purpose": "evaluation"
+    },
+    {
+      "expected_load_references": 3,
+      "guard_symbol": "standalone_model_lane",
+      "min_guard_sites": 2,
+      "modules": [
+        "mlx_lm"
+      ],
+      "ownership_mode": "standalone_process",
+      "path": "tools/run_verified_trajectory_distillation_canary.py",
+      "purpose": "training"
     },
     {
       "expected_load_references": 1,

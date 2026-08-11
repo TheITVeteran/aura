@@ -5,11 +5,14 @@ from __future__ import annotations
 import json
 import subprocess
 import sys
+from contextlib import contextmanager
 from pathlib import Path
 from shutil import copytree
+from types import SimpleNamespace
 
 import pytest
 
+import tools.run_certified_recurrence_behavioral_gate as behavioral_gate
 from tools.run_certified_recurrence_behavioral_gate import (
     _load_journal,
     _score_row,
@@ -20,6 +23,39 @@ from tools.run_certified_recurrence_behavioral_gate import (
     execute_t1_lesion,
     verify_behavioral_bundle,
 )
+
+
+def test_run_holds_non_evicting_lane_for_complete_model_lifetime(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    model = tmp_path / "model"
+    model.mkdir()
+    observed: list[tuple[str, object]] = []
+
+    @contextmanager
+    def lane(**kwargs):
+        observed.append(("enter", kwargs))
+        yield
+        observed.append(("exit", None))
+
+    monkeypatch.setattr(behavioral_gate, "standalone_model_lane", lane)
+    monkeypatch.setattr(
+        behavioral_gate,
+        "_run_admitted",
+        lambda _args: observed.append(("run", None)) or {"ok": True},
+    )
+
+    result = behavioral_gate.run(
+        SimpleNamespace(model=str(model), out=str(tmp_path / "out"))
+    )
+
+    assert result == {"ok": True}
+    assert [name for name, _payload in observed] == ["enter", "run", "exit"]
+    kwargs = observed[0][1]
+    assert isinstance(kwargs, dict)
+    assert kwargs["allow_owner_eviction"] is False
+    assert kwargs["preemptible"] is False
 
 
 def test_public_preregistration_contains_no_private_answer_or_trace() -> None:
