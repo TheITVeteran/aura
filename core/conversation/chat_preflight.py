@@ -1280,8 +1280,42 @@ def _live_internals_summary() -> list[str]:
             stage="operational_self_context.recall",
         )
     lines.extend(_live_health_summary())
+    lines.extend(_sense_availability_summary())
     return lines
 
+
+
+def _sense_availability_summary() -> list[str]:
+    """Which senses have never produced a sample.
+
+    LIVE, 2026-08-10, twice. "What am I doing right now, and am I alone?" came
+    back as "you seem to be alone" followed one sentence later by "I cannot
+    determine if there are other people present"; after the senses were given a
+    typed absence, the same question came back as "You're typing... and you're
+    alone. The room is quiet."
+
+    The readings existed by then — resolve_shared_present() reports the camera
+    as never-sampled — but they were only consulted on the refusal path, and
+    that turn did not refuse. It generated, confidently, about a room it has no
+    sense of.
+
+    So the absence travels with the turn. This is a reading, not an
+    instruction: every line states what a channel reports, and the block is
+    empty when every sense is live.
+    """
+    try:
+        from core.introspection.self_evidence import resolve_shared_present
+
+        bundle = resolve_shared_present()
+    except (ImportError, RuntimeError, AttributeError, TypeError, ValueError):
+        return []
+    unread = [r for r in bundle.readings if not r.present]
+    if not unread:
+        return []
+    lines = ["Senses with no reading right now:"]
+    for reading in unread:
+        lines.append(f"  • {reading.channel}: {reading.detail or reading.state}")
+    return lines
 
 def _live_health_summary() -> list[str]:
     """Heartbeats, uptime, and the faults she is carrying right now.
