@@ -20242,6 +20242,24 @@ _STEP_BOOKKEEPING_RE = re.compile(
 )
 
 
+def _self_health_answer_or_empty(message: object) -> str:
+    """Her own live readings, when the turn asked for them and they read.
+
+    Isolated behind its own failure handling because it runs on the path that
+    already failed. A resolver that raises here would replace an honest refusal
+    with a stack trace, so anything it does wrong costs the empty string and
+    the caller keeps the refusal it already had.
+    """
+
+    try:
+        from core.introspection.self_evidence import self_health_answer
+
+        return str(self_health_answer(message) or "").strip()
+    except _CHAT_RECOVERABLE_ERRORS as exc:
+        record_degradation('chat', exc)
+        return ""
+
+
 def _is_step_bookkeeping_only(summary: str) -> bool:
     """True when a desktop summary reports step counts and nothing else.
 
@@ -23881,6 +23899,22 @@ async def _api_chat_turn(body: ChatRequest, request: Request):
                 "won't send you a thinner one and pass it off as the real thing. "
                 "Ask me again in a moment and I should have it."
             )
+            # Before giving up, ask whether the runtime already HOLDS the answer.
+            #
+            # Live 2026-08-10: asked which of her subsystems were degraded and
+            # whether any job had been failing repeatedly, she served the
+            # sentence above — while /api/health carried integrity=degraded and
+            # overt_action_cycle at failures=13 with its exact TypeError. The
+            # answer was structured, live, and hers. Nothing had fetched it.
+            #
+            # This is a reading, not a rescue: self_health_answer() returns text
+            # only when a channel actually produced a value, and the text is
+            # built from those values, so it cannot describe a health she does
+            # not have. When no channel reads, it returns "" and the honest
+            # refusal above stands.
+            evidenced_reply = _self_health_answer_or_empty(_semantic_user_message)
+            if evidenced_reply:
+                failure_reply = evidenced_reply
             if pending_exchange_id:
                 await _complete_logged_exchange(
                     pending_exchange_id,
@@ -25704,6 +25738,22 @@ async def _api_chat_turn(body: ChatRequest, request: Request):
                 "won't send you a thinner one and pass it off as the real thing. "
                 "Ask me again in a moment and I should have it."
             )
+            # Before giving up, ask whether the runtime already HOLDS the answer.
+            #
+            # Live 2026-08-10: asked which of her subsystems were degraded and
+            # whether any job had been failing repeatedly, she served the
+            # sentence above — while /api/health carried integrity=degraded and
+            # overt_action_cycle at failures=13 with its exact TypeError. The
+            # answer was structured, live, and hers. Nothing had fetched it.
+            #
+            # This is a reading, not a rescue: self_health_answer() returns text
+            # only when a channel actually produced a value, and the text is
+            # built from those values, so it cannot describe a health she does
+            # not have. When no channel reads, it returns "" and the honest
+            # refusal above stands.
+            evidenced_reply = _self_health_answer_or_empty(_semantic_user_message)
+            if evidenced_reply:
+                failure_reply = evidenced_reply
             # A refusal is the right answer when nothing better is known. When
             # the runtime has ALREADY worked the answer out, it is the worst of
             # the three options available.
@@ -26134,6 +26184,12 @@ async def _api_chat_turn(body: ChatRequest, request: Request):
                 "The full reasoning path didn't complete — worth retrying in a "
                 "moment, and the runtime logs carry the detail."
             )
+            # Same reading as the other two refusal sites. "The runtime logs
+            # carry the detail" is the sharpest form of the defect: it tells the
+            # person their answer exists somewhere she declined to look.
+            evidenced_reply = _self_health_answer_or_empty(_semantic_user_message)
+            if evidenced_reply:
+                failure_reply = evidenced_reply
             if pending_exchange_id:
                 await _complete_logged_exchange(
                     pending_exchange_id,
