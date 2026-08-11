@@ -10,6 +10,7 @@ changing the evaluator committed into the campaign's source capsule.
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import sys
 import time
@@ -63,6 +64,41 @@ def _read_document(path: Path) -> dict[str, Any]:
     if not isinstance(value, dict) or canonical_bytes(value) + b"\n" != raw:
         _fail(f"resident evaluation document is not canonical: {path}")
     return value
+
+
+def _read_report_document(path: Path) -> tuple[dict[str, Any], dict[str, Any]]:
+    """Read old pretty reports without weakening semantic report custody."""
+
+    def strict_object(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
+        value: dict[str, Any] = {}
+        for key, item in pairs:
+            if key in value:
+                raise ValueError(f"duplicate JSON key: {key}")
+            value[key] = item
+        return value
+
+    def reject_constant(value: str) -> None:
+        raise ValueError(f"non-finite JSON constant: {value}")
+
+    try:
+        raw = path.read_bytes()
+        value = json.loads(
+            raw,
+            object_pairs_hook=strict_object,
+            parse_constant=reject_constant,
+        )
+    except (OSError, UnicodeError, ValueError, TypeError, json.JSONDecodeError) as exc:
+        raise ResidentEvaluationLaunchError(
+            f"resident evaluation report is unreadable: {path}"
+        ) from exc
+    if not isinstance(value, dict):
+        _fail(f"resident evaluation report is not an object: {path}")
+    canonical = canonical_bytes(value) + b"\n"
+    return value, {
+        "file_sha256": hashlib.sha256(raw).hexdigest(),
+        "canonical_bytes": raw == canonical,
+        "size_bytes": len(raw),
+    }
 
 
 def _write_once(path: Path, value: Mapping[str, Any]) -> None:
@@ -457,8 +493,9 @@ def status(arguments: argparse.Namespace) -> dict[str, Any]:
     inspection = detached._status(run_dir)  # noqa: SLF001
     report_path = Path(plan["report"])
     report: dict[str, Any] | None = None
+    report_transport: dict[str, Any] | None = None
     if report_path.exists():
-        report = _read_document(report_path)
+        report, report_transport = _read_report_document(report_path)
         report_body = {key: value for key, value in report.items() if key != "report_sha256"}
         if report.get("report_sha256") != canonical_sha256(report_body):
             _fail("resident evaluation report hash is invalid")
@@ -490,6 +527,7 @@ def status(arguments: argparse.Namespace) -> dict[str, Any]:
         "plan_sha256": plan["plan_sha256"],
         "detached": inspection,
         "report": report,
+        "report_transport": report_transport,
     }
 
 

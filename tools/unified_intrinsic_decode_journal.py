@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import stat
 from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
@@ -27,6 +28,10 @@ class DecodeProgressError(RuntimeError):
     """A progress artifact is malformed or belongs to another experiment."""
 
 
+def _reject_nonfinite_json(value: str) -> None:
+    raise ValueError(f"non-finite JSON constant: {value}")
+
+
 def _sha256(value: Any) -> str:
     return hashlib.sha256(canonical_json_bytes(value)).hexdigest()
 
@@ -40,13 +45,26 @@ def _document(value: Mapping[str, Any], digest_key: str) -> dict[str, Any]:
 
 def _read_exact(path: Path, *, digest_key: str) -> dict[str, Any]:
     try:
+        metadata = path.lstat()
+        if stat.S_ISLNK(metadata.st_mode) or not stat.S_ISREG(metadata.st_mode):
+            raise DecodeProgressError(
+                f"decode progress artifact is not a regular file: {path}"
+            )
         raw = path.read_bytes()
-        value = json.loads(raw)
-    except (OSError, UnicodeError, json.JSONDecodeError) as exc:
+        value = json.loads(raw, parse_constant=_reject_nonfinite_json)
+    except DecodeProgressError:
+        raise
+    except (OSError, UnicodeError, ValueError, TypeError, json.JSONDecodeError) as exc:
         raise DecodeProgressError(f"decode progress artifact is unreadable: {path}") from exc
     if not isinstance(value, dict):
         raise DecodeProgressError(f"decode progress artifact is not an object: {path}")
-    if raw != canonical_json_bytes(value) + b"\n":
+    try:
+        canonical = canonical_json_bytes(value) + b"\n"
+    except (ValueError, TypeError) as exc:
+        raise DecodeProgressError(
+            f"decode progress artifact is not canonical: {path}"
+        ) from exc
+    if raw != canonical:
         raise DecodeProgressError(f"decode progress artifact is not canonical: {path}")
     body = {key: item for key, item in value.items() if key != digest_key}
     if value.get(digest_key) != _sha256(body):
@@ -66,7 +84,10 @@ class DecodeProgressJournal:
     """Write-once candidate journal bound to one decoded experiment."""
 
     def __init__(self, root: Path, experiment: Mapping[str, Any]) -> None:
-        self.root = ensure_private_directory(root.expanduser().absolute())
+        requested_root = root.expanduser().absolute()
+        if requested_root.is_symlink():
+            raise DecodeProgressError("decode progress root must not be a symlink")
+        self.root = ensure_private_directory(requested_root)
         experiment_body = dict(experiment)
         self.experiment_sha256 = _sha256(experiment_body)
         self.manifest = _document(

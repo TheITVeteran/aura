@@ -7,7 +7,6 @@ import argparse
 import hashlib
 import json
 import math
-import os
 import sys
 from collections.abc import Iterator
 from contextlib import contextmanager
@@ -22,6 +21,7 @@ if str(REPO_ROOT) not in sys.path:
 import mlx.core as mx  # noqa: E402
 from mlx.utils import tree_unflatten  # noqa: E402
 
+from core.brain.canonical_json import canonical_json_bytes  # noqa: E402
 from core.learning.intrinsic_recurrence_objective import (  # noqa: E402
     answer_cross_entropy,
 )
@@ -46,6 +46,7 @@ from core.learning.unified_intrinsic_recurrence import (  # noqa: E402
     UnifiedRecurrenceConfig,
     UnifiedRecurrentController,
 )
+from core.runtime.atomic_writer import atomic_write_bytes  # noqa: E402
 from core.runtime.mlx_memory_guard import host_pressure, mlx_memory_envelope  # noqa: E402
 from core.runtime.model_lane_control import standalone_model_lane  # noqa: E402
 from tools.resident_recurrent_sft_bootstrap_identity import (  # noqa: E402
@@ -818,11 +819,7 @@ def main() -> int:
     encoded = json.dumps(report, indent=2, sort_keys=True) + "\n"
     if args.report is not None:
         target = args.report.expanduser().resolve()
-        scratch = target.with_name(f".{target.name}.{os.getpid()}.tmp")
-        scratch.write_text(encoded, encoding="utf-8")
-        with scratch.open("rb") as handle:
-            os.fsync(handle.fileno())
-        os.replace(scratch, target)
+        atomic_write_bytes(target, canonical_json_bytes(report) + b"\n")
     print(encoded, end="")
     return 0
 

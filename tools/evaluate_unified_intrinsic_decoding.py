@@ -11,7 +11,6 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
-import os
 import sys
 from collections.abc import Callable
 from pathlib import Path
@@ -23,6 +22,7 @@ if str(REPO_ROOT) not in sys.path:
 
 import mlx.core as mx  # noqa: E402
 
+from core.brain.canonical_json import canonical_json_bytes  # noqa: E402
 from core.learning.recurrent_answer_emission import (  # noqa: E402
     tokenizer_answer_emission_contract,
 )
@@ -32,6 +32,7 @@ from core.learning.recurrent_opcode_grounding import (  # noqa: E402
 from core.learning.unified_intrinsic_recurrence import (  # noqa: E402
     unified_recurrent_logits,
 )
+from core.runtime.atomic_writer import atomic_write_bytes  # noqa: E402
 from tools.evaluate_unified_intrinsic_checkpoint import (  # noqa: E402
     _canonical_sha256,
     _evaluation_layout,
@@ -697,12 +698,7 @@ def main() -> int:
     encoded = json.dumps(report, indent=2, sort_keys=True) + "\n"
     if args.report is not None:
         target = args.report.expanduser().resolve()
-        target.parent.mkdir(parents=True, exist_ok=True)
-        scratch = target.with_name(f".{target.name}.{os.getpid()}.tmp")
-        scratch.write_text(encoded, encoding="utf-8")
-        with scratch.open("rb") as handle:
-            os.fsync(handle.fileno())
-        os.replace(scratch, target)
+        atomic_write_bytes(target, canonical_json_bytes(report) + b"\n")
     print(encoded, end="")
     return 0
 

@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
+import json
 from pathlib import Path
 
 import pytest
@@ -272,6 +274,45 @@ def test_status_rejects_forged_report_hash(
         match="report hash is invalid",
     ):
         launcher.status(arguments)
+
+
+def test_status_accepts_hash_valid_legacy_pretty_report_without_rewriting_it(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    arguments, _config, checkpoint = _terminal_fixture(tmp_path, monkeypatch)
+    plan = launcher.prepare(arguments)
+    detached_root = Path(plan["evaluation_root"]) / "detached"
+    detached_root.mkdir()
+    (detached_root / launcher.detached.PLAN_FILE).write_text("{}\n", encoding="ascii")
+    body = {
+        "schema": "aura.unified_intrinsic_decode_evaluation.v1",
+        "checkpoint_sha256": checkpoint["checkpoint_sha256"],
+        "evaluation_seed": plan["scientific"]["evaluation_seed"],
+        "per_cell": plan["scientific"]["per_cell"],
+        "max_tokens": plan["scientific"]["max_tokens"],
+        "task_depths": plan["scientific"]["task_depths"],
+        "recurrence_depths": plan["scientific"]["recurrence_depths"],
+    }
+    report = {**body, "report_sha256": launcher.canonical_sha256(body)}
+    pretty = (json.dumps(report, indent=2, sort_keys=True) + "\n").encode("ascii")
+    Path(plan["report"]).write_bytes(pretty)
+    monkeypatch.setattr(
+        launcher.detached,
+        "_status",
+        lambda _path: {"terminal": True, "receipt": {"passed": True}},
+    )
+
+    result = launcher.status(arguments)
+
+    assert result["state"] == "completed"
+    assert result["report"] == report
+    assert result["report_transport"] == {
+        "file_sha256": hashlib.sha256(pretty).hexdigest(),
+        "canonical_bytes": False,
+        "size_bytes": len(pretty),
+    }
+    assert Path(plan["report"]).read_bytes() == pretty
 
 
 def test_status_replays_stored_plan_without_rebuilding_current_source(

@@ -5831,3 +5831,29 @@ optimizer updates, reasoning gain, frontier gain, promotion, and `WOW Signal`
 remain false until measured. Host-isolated signing is not independent external
 administration. CP420S13 readiness is total checkpoint 704. The 704-920
 completion envelope is approximately 76.5%-100.0%, with an 88.3% midpoint.
+
+### 2026-08-11 - CP245 resident decode localizes the neural readout failure
+
+The frozen CP242 resident-32B diagnostic completed 24 decoded candidates under
+detached custody. Base, initialization-matched and trained neural arms each
+solved 1/3 fresh one-step tasks; trained recurrence produced no wrong-to-right
+transition at T1 or T4. The compiled T4 consumer of the same final typed state
+solved 3/3, while the grammar lesion solved 0/3 and pointer lesion 1/3. Correct
+typed values 12 and 17 were publicly emitted as 26 and 76. This isolates the
+current blocker to the learned role/place/digit answer bridge rather than the
+typed recurrent transition.
+
+Report semantic SHA-256 is
+`f1154e79e0a49ab890d1811946011fed1e5d49628023819e471213cc68b3c568`;
+the preserved pretty-JSON file SHA-256 is
+`3bc8dd5f4f16560c62c710103d3d66287172a17c94f1f9010d6dd3fa1c9af37c`;
+the passed detached receipt SHA-256 is
+`2ad887985c605699d7007e6b5a3ded87bda417981c91b0ed514a1282007df559`.
+Historical status now verifies that semantic commitment without rewriting the
+noncanonical transport; future evaluators write canonical durable bytes, and
+resumable candidate custody rejects non-finite and symlinked evidence.
+
+SPARK-069 through SPARK-072 remain open. No learned decoded gain, fusion,
+frontier result or `WOW Signal` is claimed. The completion envelope remains
+`912/920`. The next repair is the bridge itself plus an emitted-answer admission
+gate on the cheap checkpoint before another resident run.

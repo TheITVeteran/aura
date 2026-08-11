@@ -45107,3 +45107,44 @@ transfer, fusion, frontier performance or `WOW Signal` is claimed. The
 completion envelope remains `912/920` (approximately `99.1%`). The currently
 frozen CP242 diagnostic remains authoritative for its own result; this recovery
 revision applies to subsequently frozen evaluations and powered replication.
+
+## Checkpoint 2026-08-11-245: Resident Decode Localizes the Neural Readout Failure
+
+The frozen CP242 resident-32B decoded diagnostic completed all 24 requested
+task/arm candidates in `1,141.227` seconds. Its detached target exited zero,
+the process group and lineage are empty, and detached receipt SHA-256 is
+`2ad887985c605699d7007e6b5a3ded87bda417981c91b0ed514a1282007df559`.
+The report's semantic commitment is
+`f1154e79e0a49ab890d1811946011fed1e5d49628023819e471213cc68b3c568`;
+its preserved original file commitment is
+`3bc8dd5f4f16560c62c710103d3d66287172a17c94f1f9010d6dd3fa1c9af37c`.
+
+The result is negative for learned decoded gain and positive for localization.
+Base T1, initialization-matched T1/T4 and trained T1/T4 each solved `1/3` fresh
+one-step tasks. Training therefore produced `0` wrong-to-right and `0`
+right-to-wrong transitions at both tested depths. The compiled T4 arm, which
+consumes the same final neurally produced typed state through the public
+tokenizer-bound executor, solved `3/3`. Grammar lesion solved `0/3`; pointer
+lesion solved `1/3`. The two failing trained outputs make the boundary visible:
+the correct recurrent values `12` and `17` were emitted as `26` and `76`.
+The recurrent state machine reached the right answer, but its learned
+role/place/digit bridge did not transfer that state into the public token
+sequence. No powered replication, fusion, frontier result or `WOW Signal` is
+authorized by this diagnostic.
+
+The run also exposed a report-custody mismatch. The frozen evaluator committed
+a valid canonical semantic hash but serialized the report as pretty JSON,
+while status required canonical bytes. Status now parses historical reports
+with duplicate-key and non-finite-value refusal, verifies the internal semantic
+hash and frozen-plan fields, records the original file hash and canonical-byte
+status, and never rewrites the evidence. Future teacher-forced and decoded
+producers publish canonical bytes through the durable atomic writer. Decode
+progress custody now also rejects non-finite JSON, symlinked roots, symlinked
+records and non-regular evidence through its stable error boundary.
+
+The custody and journal surface passes `14/14` focused tests; Ruff, compilation
+and diff hygiene are clean. The Spark completion envelope remains `912/920`
+(approximately `99.1%`) because the behavioral gate did not pass. Next is to
+measure and repair the answer role/place/digit bridge on the cheap checkpoint,
+require free-decoded bridge accuracy for admission, and only then freeze a new
+resident canary.
