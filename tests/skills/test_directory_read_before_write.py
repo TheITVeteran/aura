@@ -393,3 +393,46 @@ def test_a_partial_task_still_reports_what_it_verified() -> None:
 
     assert "_desktop_deliverable_text(result)" in window
     assert "That much is verified" in window
+
+
+# ── A path is a name, not prose ────────────────────────────────────────────
+
+def test_a_path_containing_source_is_not_a_research_request() -> None:
+    """LIVE: the marker "source" matched inside "live-source".
+
+    "count how many .py files are in /Users/bryan/.aura/live-source/..." was
+    classified as a research-document objective, so completion required
+    research SOURCES, and a filesystem task that had fully succeeded reported
+    "semantic completion incomplete: requested_source_count_found".
+
+    Every marker in that classifier is a substring test over whatever the user
+    typed, so any objective naming a path with "source", "report", "news" or
+    "article" in it inherited a contract about citations.
+    """
+    assert DesktopTaskSkill._objective_requests_research_document(OBJECTIVE) is False
+
+
+@pytest.mark.parametrize(
+    "objective",
+    [
+        "Research the latest news on fusion and write a report with three sources "
+        "into ~/Documents/fusion.md",
+        "summarize three articles about otters into a document",
+        "look up two sources on tides and write them up",
+    ],
+)
+def test_genuine_research_requests_still_require_sources(objective: str) -> None:
+    """The direction that matters: this contract exists for a reason."""
+    assert DesktopTaskSkill._objective_requests_research_document(objective) is True
+
+
+@pytest.mark.parametrize(
+    "objective",
+    [
+        "write hello into ~/Documents/x.txt",
+        "list the files in ~/Documents/reports",
+        "read /Users/bryan/news-archive/index.txt and tell me the first line",
+    ],
+)
+def test_paths_with_research_words_in_them_stay_filesystem_tasks(objective: str) -> None:
+    assert DesktopTaskSkill._objective_requests_research_document(objective) is False

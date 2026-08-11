@@ -197,6 +197,12 @@ class DesktopTaskParams(BaseModel):
         return value
 
 
+#: Filesystem paths, removed before any prose classification runs over a
+#: request. Matching markers inside a path is how "live-source" made a
+#: directory listing into a research assignment.
+_PATHS_IN_TEXT_RE = re.compile(r"(?<![\w/])~?/[\w.\-]+(?:/[\w.\-]+)*/?")
+
+
 class DesktopTaskSkill(BaseSkill):
     name = "desktop_task"
     description = (
@@ -702,7 +708,22 @@ class DesktopTaskSkill(BaseSkill):
 
     @staticmethod
     def _objective_requests_research_document(objective: str) -> bool:
-        lowered = str(objective or "").lower()
+        # Classify the PROSE, not the paths in it.
+        #
+        # LIVE, 2026-08-10: "count how many .py files are in
+        # /Users/bryan/.aura/live-source/core/introspection, then write that
+        # number ... into ~/Documents/aura_probe_count.txt" was classified as a
+        # research-document objective, so completion required research SOURCES
+        # and the turn reported "semantic completion incomplete:
+        # requested_source_count_found" over a filesystem task that had
+        # succeeded.
+        #
+        # The marker was "source", matched inside "live-source". A path is a
+        # name, not prose, and every marker here is a substring test over
+        # whatever the user happened to type — so any objective naming a path
+        # with "report", "news", "article" or "source" in it inherits a
+        # contract about citations.
+        lowered = _PATHS_IN_TEXT_RE.sub(" ", str(objective or "")).lower()
         has_source_markers = any(
             marker in lowered
             for marker in (
