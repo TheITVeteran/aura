@@ -236,3 +236,49 @@ def test_token_matching_does_not_fire_on_shared_letters():
     measured_tokens = {"operational", "health"}
     assert "ion" in "operational"          # the trap
     assert "ion" not in measured_tokens    # the fix
+
+
+LIVE_WORLD_DENIAL = (
+    "I cannot measure anything external to myself. I have no way of knowing "
+    "what is happening in the world outside of this conversation, nor do I "
+    "possess any means by which to gather such information."
+)
+
+
+def test_a_setting_is_not_the_thing_being_denied():
+    """LIVE 2026-08-10: the ledger corrected a claim she had not made.
+
+    "...in the world outside of this conversation" was read as a denial of
+    conversation memory and answered with "[Correcting myself from my own
+    instruments: I have 5 stored turns of recent conversation I can read
+    back.]" — a correction of something she never said, produced by the very
+    mechanism built to stop false statements.
+    """
+    flagged = {
+        claim.availability.name
+        for claim in cl.get_capability_ledger().contradicted_claims(LIVE_WORLD_DENIAL)
+    }
+    assert "conversation_memory" not in flagged
+
+
+def test_the_real_false_claim_in_that_reply_is_caught():
+    """She said she cannot reach the world, with three ways to reach it."""
+    flagged = {
+        claim.availability.name
+        for claim in cl.get_capability_ledger().contradicted_claims(LIVE_WORLD_DENIAL)
+    }
+    assert "world_access" in flagged
+
+
+@pytest.mark.parametrize(
+    "sentence,expected",
+    [
+        ("I have no memory of that conversation.", True),
+        ("I can't recall our conversation.", True),
+        ("Nothing happened outside this conversation.", False),
+        ("I learned nothing during this conversation.", False),
+    ],
+)
+def test_locative_phrasing_does_not_make_a_denial(sentence, expected):
+    ledger = _ledger(_fixed("conversation"))
+    assert bool(ledger.contradicted_claims(sentence)) is expected

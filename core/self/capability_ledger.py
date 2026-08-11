@@ -213,6 +213,29 @@ def _negates_directly(sentence: str, subjects: tuple[str, ...]) -> bool:
     return False
 
 
+#: Prepositions that make the following noun a SETTING rather than the thing
+#: being denied.
+#:
+#: LIVE, 2026-08-10: "I have no way of knowing what is happening in the world
+#: outside of this conversation" was read as a denial of conversation memory,
+#: and answered with "[Correcting myself from my own instruments: I have 5
+#: stored turns of recent conversation I can read back.]" — a correction of
+#: something she had not claimed, which is the exact fault this ledger exists
+#: to prevent, produced by the ledger itself.
+_LOCATIVE_BEFORE_RE = r"(?:outside\s+of|outside|inside|in|within|during|beyond|throughout|across)\s+(?:this|that|the|our|his|her|their|my)?\s*"
+
+
+def _names_as_the_subject(text: str, subject: str) -> bool:
+    """True when ``subject`` is what a sentence is about, not where it happens."""
+    pattern = rf"\b{re.escape(subject)}\b"
+    for match in re.finditer(pattern, text):
+        preceding = text[: match.start()]
+        if re.search(rf"{_LOCATIVE_BEFORE_RE}$", preceding):
+            continue
+        return True
+    return False
+
+
 class CapabilityLedger:
     """Every capability that can answer for itself, in one place."""
 
@@ -243,7 +266,7 @@ class CapabilityLedger:
         found: list[LiveCapability] = []
         for capability in self._capabilities.values():
             for subject in capability.subjects:
-                if re.search(rf"\b{re.escape(subject)}\b", lowered):
+                if _names_as_the_subject(lowered, subject):
                     found.append(capability)
                     break
         return found
@@ -545,6 +568,41 @@ def fabricated_self_metrics(reply: str) -> list[str]:
     return labels
 
 
+def _probe_world_access() -> Availability:
+    """Whether she can reach anything beyond this conversation.
+
+    LIVE, 2026-08-10: "I cannot measure anything external to myself. I have no
+    way of knowing what is happening in the world outside of this
+    conversation, nor do I possess any means by which to gather such
+    information." Said while a web_search skill, a screen capture path, a
+    camera and mail/reddit adapters were all installed — one of which had
+    fetched a Reddit thread unprompted an hour earlier.
+    """
+    import importlib.util
+
+    reachable = [
+        name
+        for name, module in (
+            ("web search", "core.skills.web_search"),
+            ("screen capture", "core.perception.screen_blueprint"),
+            ("camera", "core.senses.sight"),
+        )
+        if importlib.util.find_spec(module) is not None
+    ]
+    return Availability(
+        name="world_access",
+        present=bool(reachable),
+        usable_now=bool(reachable),
+        summary=(
+            "I can reach beyond this conversation: " + ", ".join(reachable) + "."
+            if reachable
+            else "I have no path to anything outside this conversation."
+        ),
+        blocker="" if reachable else "no outward-facing skill is installed",
+        evidence={"reachable": reachable},
+    )
+
+
 def _default_ledger() -> CapabilityLedger:
     ledger = CapabilityLedger()
     ledger.register(
@@ -577,6 +635,13 @@ def _default_ledger() -> CapabilityLedger:
             "conversation_memory",
             ("memory", "remember", "recall", "conversation", "recollection"),
             _probe_conversation_memory,
+        )
+    )
+    ledger.register(
+        LiveCapability(
+            "world_access",
+            ("world", "internet", "web", "outside", "external", "news"),
+            _probe_world_access,
         )
     )
     ledger.register(
