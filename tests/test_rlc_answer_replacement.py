@@ -466,7 +466,8 @@ def test_certified_recurrent_program_replaces_wrong_complete_engine_candidates()
     )
 
     producer = private["objective_program_solution_receipt"]
-    assert producer["execution"]["engine"] == "certified_typed_recurrence.v1"
+    assert producer["execution"]["engine"] == "neural_transition_tissue.v1"
+    assert producer["execution"]["teacher_available"] is False
     assert producer["execution"]["student_rollin"]["transition_count"] == 8
     assert receipt["decision"] == "replace"
     assert receipt["selected_request_id"] == "objective-program"

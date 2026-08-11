@@ -44053,3 +44053,44 @@ gain, or frontier capability. The completion envelope advances to `891/920`
 frozen weights must compose unseen programs without consulting the exact
 executor during evaluation, followed by causal lesions and same-checkpoint
 behavioral controls.
+
+## Checkpoint 2026-08-10-196: Learned Transitions Survive Teacher Removal
+
+The generic recurrent MLP repeatedly failed modular arithmetic because a
+random continuous codebook gave it neither complete primitive coverage nor an
+appropriate exact-computation bias. It is replaced for the two declared
+finite-state families by differentiable transition tensors trained from all
+`3,842` certified primitives: 14 Boolean state/action pairs and 3,828 modular
+pairs over moduli `13,17,19,23`. The weights move from `5.49%` initial exact
+accuracy to `100%` after 32 deterministic full-batch Adam steps, then serialize
+to a `571 KB` safetensors artifact with hash-bound topology, source files,
+teacher receipts, training metrics, and loader invariants.
+
+The independent verifier loads the sealed artifact after training has ended
+and has no executable transition teacher. It recomputes all 3,842 primitive
+expectations from closed-form public math and executes 192 fresh programs at
+depths `1,2,4,8,16,32`, totaling 2,016 student-roll-in transitions; all are
+exact. The prior predicted state is the next step's input. T=1 lesions change
+117 outcomes, reversed action order changes 99, and an untrained sham matches
+only 50/192. The tissue artifact SHA-256 is
+`841e417a408d5015bb069c4bbbbc367f68be78d1174dbdc00a64d60cf30350e5`;
+the independent report commitment is
+`6bd3415706247fcf9f1f33ef0c1a23b2f9caa56e97a00cf3d9a4d4d72df756fa`.
+
+The canonical objective producer now loads this immutable tissue once per
+process and uses it for recurrent state transitions; the certified executable
+teacher is only an availability fallback when an installation lacks the
+sealed artifact. The public parser independently verifies the neural result
+before promotion. A contract forbids the certified teacher during canonical
+neural production and still proves correct depth-16 output.
+
+This closes a bounded Level-3 subproblem: learned weights retain exact
+transition behavior after their teacher is removed and compose unseen action
+sequences. It is not the full Level-3 or `WOW Signal` claim. A strict symbolic
+compiler still selects actions, the learned tissue covers two finite-state
+families, and no resident transformer has shown teacher-free monotonic language
+reasoning gain with depth. The completion envelope advances to `892/920`
+(approximately `97.0%`). Next is the deeper neural-cognition gate: learned
+action selection plus step-conditioned, manifold-stable multi-step trajectory
+distillation into the recurrent transformer sites, trained shallow and tested
+at unseen depths with the readout frozen and every solver removed.

@@ -127,7 +127,8 @@ def test_complete_engine_uses_certified_recurrence_for_declared_prompt(generator
     candidate, receipt = solved
     execution = receipt["execution"]
 
-    assert execution["engine"] == "certified_typed_recurrence.v1"
+    assert execution["engine"] == "neural_transition_tissue.v1"
+    assert execution["teacher_available"] is False
     assert execution["student_rollin"]["student_rollin"] is True
     assert execution["student_rollin"]["transition_count"] == 8
     assert execution["independent_crosscheck_match"] is True

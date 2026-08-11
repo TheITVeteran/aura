@@ -1,0 +1,14 @@
+{
+  "action_shuffle_changes": 99,
+  "claim_boundary": "bounded finite-state neural algorithm acquisition and recurrent composition; not open-domain, resident-32B, or frontier reasoning evidence",
+  "fresh_program_count": 192,
+  "fresh_transition_count": 2016,
+  "lesion_changes": 117,
+  "primitive_count": 3842,
+  "report_sha256": "6bd3415706247fcf9f1f33ef0c1a23b2f9caa56e97a00cf3d9a4d4d72df756fa",
+  "schema": "aura.neural_transition_independent_verification.v1",
+  "sham_matches": 50,
+  "teacher_available": false,
+  "tissue_sha256": "841e417a408d5015bb069c4bbbbc367f68be78d1174dbdc00a64d60cf30350e5",
+  "verified": true
+}

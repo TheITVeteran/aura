@@ -16,8 +16,14 @@ import math
 import re
 from dataclasses import dataclass
 from fractions import Fraction
+from functools import lru_cache
 from typing import Any
 
+from core.brain.llm.latent_cortex.neural_transition_tissue import (
+    NeuralTransitionTissue,
+    execute_neural_action_program,
+    load_neural_transition_tissue,
+)
 from core.brain.llm.latent_cortex.typed_action_compiler import (
     compile_public_transition_program,
 )
@@ -616,7 +622,55 @@ def _premise_audit_expected(
 def _compiled_transition_expected(
     objective: str,
 ) -> tuple[str, dict[str, Any], dict[str, Any]] | None:
-    """Run a declared typed program and independently cross-check its result."""
+    """Run learned neural tissue and independently verify its public result."""
+
+    try:
+        program = compile_public_transition_program(objective)
+    except ValueError:
+        return None
+    try:
+        tissue = _resident_neural_transition_tissue()
+    except (FileNotFoundError, OSError, RuntimeError, ValueError):
+        return _certified_compiled_transition_expected(objective)
+    execution = execute_neural_action_program(program, tissue)
+    if program.family == "boolean":
+        match = _BOOLEAN_OBJECTIVE_RE.match(objective)
+        if match is None:
+            raise RuntimeError("compiled Boolean objective lost parser agreement")
+        family = "nested_boolean"
+        expected = {"value": execution.terminal_state[1]}
+        crosscheck, crosscheck_receipt = _boolean_expected(match)
+    elif program.family == "modular":
+        match = _MODULAR_OBJECTIVE_RE.match(objective)
+        if match is None:
+            raise RuntimeError("compiled modular objective lost parser agreement")
+        family = "modular_chain"
+        expected = {"residue": execution.terminal_state[1]}
+        crosscheck, crosscheck_receipt = _modular_expected(match)
+    else:  # pragma: no cover - the compiler's family registry is closed
+        raise RuntimeError("compiled transition family is unsupported")
+    if crosscheck != expected:
+        raise RuntimeError("neural recurrent execution and independent parser disagree")
+    return family, expected, {
+        "engine": "neural_transition_tissue.v1",
+        "teacher_available": False,
+        "tissue_sha256": tissue.tissue_sha256,
+        "compiler": program.public_receipt(),
+        "student_rollin": execution.receipt(),
+        "independent_crosscheck": crosscheck_receipt,
+        "independent_crosscheck_match": True,
+    }
+
+
+@lru_cache(maxsize=1)
+def _resident_neural_transition_tissue() -> NeuralTransitionTissue:
+    return load_neural_transition_tissue()
+
+
+def _certified_compiled_transition_expected(
+    objective: str,
+) -> tuple[str, dict[str, Any], dict[str, Any]] | None:
+    """Availability fallback for installations missing the sealed neural artifact."""
 
     try:
         program = compile_public_transition_program(objective)
@@ -643,6 +697,7 @@ def _compiled_transition_expected(
         raise RuntimeError("certified recurrent execution and independent parser disagree")
     return family, expected, {
         "engine": "certified_typed_recurrence.v1",
+        "fallback_reason": "sealed_neural_transition_artifact_unavailable",
         "compiler": program.public_receipt(),
         "student_rollin": execution.receipt(),
         "independent_crosscheck": crosscheck_receipt,

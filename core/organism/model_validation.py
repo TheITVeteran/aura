@@ -1088,25 +1088,25 @@ def install_runtime_validation() -> dict[str, Any]:
     )
     suite.add_test(
         ValidationTest(
-            name="certified_transition_program_enters_complete_engine",
+            name="neural_transition_tissue_enters_complete_engine",
             description=(
-                "a wrong incumbent is replaceable by a public-only typed recurrent "
+                "a wrong incumbent is replaceable by teacher-removed neural recurrent "
                 "execution through the complete-engine producer"
             ),
             required_capability="",
             observation=Observation(
-                name="typed_recurrent_candidate_is_verified",
+                name="neural_recurrent_candidate_is_verified",
                 value=True,
                 source=(
                     "core/brain/llm/latent_cortex/objective_program_verifier.py "
                     "complete-engine contract tests"
                 ),
             ),
-            predict=lambda _m: _certified_complete_engine_contract_holds(),
+            predict=lambda _m: _neural_complete_engine_contract_holds(),
             score=lambda p, o: boolean_score(
                 bool(p),
                 expected=bool(o.value),
-                subject="certified recurrent complete-engine candidate",
+                subject="neural recurrent complete-engine candidate",
             ),
             owner="core/brain/llm/latent_cortex/objective_program_verifier.py",
         )
@@ -1305,16 +1305,17 @@ def install_runtime_validation() -> dict[str, Any]:
             statement=(
                 "For declared Boolean and bounded modular tasks, the complete engine "
                 "can replace a wrong decoded answer with a candidate computed by "
-                "certified typed recurrent student roll-in."
+                "teacher-removed neural recurrent student roll-in."
             ),
-            test="certified_transition_program_enters_complete_engine",
+            test="neural_transition_tissue_enters_complete_engine",
             owner="core/brain/llm/latent_cortex/objective_program_verifier.py",
             asserted_in="docs/AURA_EXECUTION_TRACKER.md",
             evidence=Evidence.MEASURED_SYNTHETIC,
             evidence_note=(
-                "The production answer-replacement route and typed execution chain are "
-                "contract-tested. Coverage remains limited to declared formal grammars; "
-                "open-domain gain and resident-model live execution remain unmeasured."
+                "The sealed tissue learned 3,842 primitive transitions and is causal in "
+                "the production answer-replacement route after its training teacher is "
+                "removed. Public action selection is still a strict symbolic compiler; "
+                "open-domain depth gain and resident-model execution remain unmeasured."
             ),
         )
     )
@@ -1565,7 +1566,7 @@ def _public_transition_compiler_contract_holds() -> bool:
     return True
 
 
-def _certified_complete_engine_contract_holds() -> bool:
+def _neural_complete_engine_contract_holds() -> bool:
     from core.brain.llm.latent_cortex.objective_program_verifier import (
         solve_objective_program,
         verify_objective_program,
@@ -1581,7 +1582,8 @@ def _certified_complete_engine_contract_holds() -> bool:
     execution = receipt.get("execution", {})
     return bool(
         isinstance(execution, dict)
-        and execution.get("engine") == "certified_typed_recurrence.v1"
+        and execution.get("engine") == "neural_transition_tissue.v1"
+        and execution.get("teacher_available") is False
         and execution.get("student_rollin", {}).get("transition_count") == 8
         and candidate.endswith(task.answer)
         and verdict is not None
