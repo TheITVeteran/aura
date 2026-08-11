@@ -729,7 +729,14 @@ class OSAutomationCompilerSkill(BaseSkill):  # type: ignore[misc]
             ),
             (
                 r"\bset\s+the\s+clipboard\s+to\b",
-                {EffectKind.TEXT_VISIBLE},
+                # CLIPBOARD_CONTAINS is the criterion that represents this
+                # exactly, and it did not exist when this guard was written —
+                # so a clipboard write could only be justified by TEXT_VISIBLE,
+                # a check about what is on SCREEN. LIVE, 2026-08-10: the script
+                # was blocked with "clipboard write is not represented by the
+                # effect contract" while the contract carried a
+                # clipboard_contains requirement for that exact text.
+                {EffectKind.CLIPBOARD_CONTAINS, EffectKind.TEXT_VISIBLE},
                 "clipboard write",
             ),
             (

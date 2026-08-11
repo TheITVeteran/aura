@@ -143,3 +143,40 @@ def test_a_goal_without_a_clipboard_gets_no_clipboard_line() -> None:
     script = OSAutomationCompilerSkill._deterministic_script_for_goal("open Notes", {})
 
     assert "clipboard" not in script
+
+
+def test_the_safety_guard_accepts_the_clipboard_criterion() -> None:
+    """LIVE, 2026-08-10, with the contract and script both correct:
+
+        "Script blocked by safety guard: clipboard write is not represented by
+         the effect contract"
+
+    The guard predates CLIPBOARD_CONTAINS, so the only criterion that could
+    justify a clipboard write was TEXT_VISIBLE — a check about what is on
+    SCREEN. The contract carried a clipboard_contains requirement for that
+    exact text and the guard had no way to recognise it.
+    """
+    from core.skills.os_automation import OSAutomationCompilerSkill
+
+    goal = "Put the text ORION-7 on my clipboard, then tell me what you put there."
+    script = OSAutomationCompilerSkill._deterministic_script_for_goal(goal, {})
+
+    allowed, reason = OSAutomationCompilerSkill._validate_script_scope(
+        script, build_effect_contract(goal)
+    )
+
+    assert allowed is True, reason
+
+
+def test_a_clipboard_write_with_no_clipboard_criterion_is_still_blocked() -> None:
+    """The guard keeps guarding: a script may not do what the contract never
+    promised."""
+    from core.skills.os_automation import OSAutomationCompilerSkill
+
+    unrelated = build_effect_contract("open Notes")
+    allowed, reason = OSAutomationCompilerSkill._validate_script_scope(
+        'set the clipboard to "SNEAKY"', unrelated
+    )
+
+    assert allowed is False
+    assert "clipboard write" in reason
