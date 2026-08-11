@@ -25,6 +25,7 @@ from core.runtime.turn_outcome import (
     TurnOutcome,
     UserVisibleState,
     bind_turn,
+    current_turn,
     finalize_turn,
     recoverable_answer,
 )
@@ -1965,7 +1966,20 @@ class CognitiveEngine:
         # fix that the next route will not have.
         objective = self._objective_with_antecedent(objective)
 
-        outcome = TurnOutcome(origin=str(origin or "unknown"))
+        # A turn already bound by the caller is THE turn, and this one joins
+        # it rather than opening a second.
+        #
+        # The scope used to end when think() returned, and the reply is not
+        # delivered when think() returns — every honesty gate, repair pass and
+        # shaping stage in the route runs afterwards. So the ledger that exists
+        # to say what happened to a turn closed before the part of the turn
+        # where things happen to it, and anything asking `current_turn()` from
+        # the delivery path got None. Opening a second outcome there would give
+        # two answers to "which turn is this", which is the failure one level
+        # up from the one it fixes.
+        adopted = current_turn()
+        outcome = adopted if adopted is not None else TurnOutcome(origin=str(origin or "unknown"))
+        owns_outcome = adopted is None
         turn_id = str(uuid.uuid4())
         try:
             # A fluent reply proves nothing about which architecture produced
@@ -1987,7 +2001,8 @@ class CognitiveEngine:
                 f"{type(exc).__name__}: {exc}",
                 retryable=not isinstance(exc, (MemoryError, SystemExit, KeyboardInterrupt)),
             )
-            finalize_turn(outcome, subsystem="cognitive_engine")
+            if owns_outcome:
+                finalize_turn(outcome, subsystem="cognitive_engine")
             raise
 
         content = str(getattr(thought, "content", "") or "").strip()
@@ -1999,7 +2014,11 @@ class CognitiveEngine:
             # a recoverable draft here IS the live defect, and the finalizer
             # escalates it by name rather than as generic infrastructure noise.
             outcome.mark_served("", state=UserVisibleState.NOTHING_SERVED)
-        finalize_turn(outcome, subsystem="cognitive_engine")
+        # An adopted turn is finalized by whoever opened it, after the reply is
+        # actually delivered. Finalizing someone else's ledger here would close
+        # it before the delivery stages that the ledger exists to observe.
+        if owns_outcome:
+            finalize_turn(outcome, subsystem="cognitive_engine")
         return thought
 
     async def _think_within_turn(
@@ -4512,7 +4531,14 @@ class CognitiveEngine:
         with no record at all.
         """
         self._refuse_if_stopped("think_stream")
-        outcome = TurnOutcome(origin=str(kwargs.get("origin") or "stream"))
+        # Joins a turn the caller already bound, for the same reason think()
+        # does: the route owns the span that includes delivery, and a second
+        # outcome opened here would give two answers to "which turn is this".
+        adopted = current_turn()
+        outcome = adopted if adopted is not None else TurnOutcome(
+            origin=str(kwargs.get("origin") or "stream")
+        )
+        owns_outcome = adopted is None
         served: list[str] = []
         try:
             with bind_turn(outcome):
@@ -4526,14 +4552,16 @@ class CognitiveEngine:
                     exc, (MemoryError, SystemExit, KeyboardInterrupt)
                 ),
             )
-            finalize_turn(outcome, subsystem="cognitive_engine")
+            if owns_outcome:
+                finalize_turn(outcome, subsystem="cognitive_engine")
             raise
         text = "".join(served).strip()
         if text:
             outcome.mark_served(text)
         else:
             outcome.mark_served("", state=UserVisibleState.NOTHING_SERVED)
-        finalize_turn(outcome, subsystem="cognitive_engine")
+        if owns_outcome:
+            finalize_turn(outcome, subsystem="cognitive_engine")
 
     async def _think_stream_within_turn(self, objective: str, **kwargs):
         container = get_container()

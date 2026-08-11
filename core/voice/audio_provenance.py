@@ -101,14 +101,24 @@ def host_audio_sources(*, force_refresh: bool = False) -> HostAudioSources:
             return sources
 
     try:
-        completed = subprocess.run(
+        # Through the gateway, like every other process this runtime starts.
+        # A raw subprocess.run here is invisible to the one component that
+        # knows what is running, which is how a read that looks harmless
+        # becomes an unaccounted fork on a path that samples every wake word.
+        from core.runtime.subprocess_gateway import get_subprocess_gateway
+
+        completed = get_subprocess_gateway().run(
             ["pmset", "-g", "assertions"],
-            capture_output=True,
-            text=True,
             timeout=2.0,
+            read_only=True,
             check=False,
+            source="voice.audio_provenance",
+            # pmset reads power-assertion state. It touches no accelerator, and
+            # saying so is what keeps the declaration meaningful for the calls
+            # that do.
+            accelerator_capability="none",
         )
-    except (OSError, subprocess.SubprocessError) as exc:
+    except (OSError, subprocess.SubprocessError, RuntimeError, ValueError) as exc:
         record_degradation(
             "voice.audio_provenance",
             exc,

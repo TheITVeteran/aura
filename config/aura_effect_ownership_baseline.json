@@ -1193,6 +1193,14 @@
       "scope": "<module>.IdentityCore.evolve"
     },
     {
+      "callee": "core.runtime.atomic_writer.ensure_private_directory",
+      "canonical_owner": false,
+      "category": "direct_atomic_file_write",
+      "count": 1,
+      "path": "core/identity/entity_key.py",
+      "scope": "<module>.EntityIdentity._persist"
+    },
+    {
       "callee": "core.runtime.atomic_writer.atomic_write_json",
       "canonical_owner": false,
       "category": "direct_atomic_file_write",
@@ -4039,6 +4047,22 @@
       "count": 1,
       "path": "core/grounding/semiotic_network.py",
       "scope": "<module>.SemioticNetwork.save"
+    },
+    {
+      "callee": "<file_write_gateway>.ensure_directory",
+      "canonical_owner": false,
+      "category": "file_write_gateway",
+      "count": 1,
+      "path": "core/identity/entity_key.py",
+      "scope": "<module>.EntityIdentity._persist"
+    },
+    {
+      "callee": "<file_write_gateway>.write_json",
+      "canonical_owner": false,
+      "category": "file_write_gateway",
+      "count": 1,
+      "path": "core/identity/entity_key.py",
+      "scope": "<module>.EntityIdentity._persist"
     },
     {
       "callee": "core.runtime.file_write_gateway.get_file_write_gateway().append_text",
@@ -16265,6 +16289,14 @@
       "scope": "<module>._run_cmd"
     },
     {
+      "callee": "core.runtime.subprocess_gateway.get_subprocess_gateway().run",
+      "canonical_owner": false,
+      "category": "subprocess_gateway",
+      "count": 1,
+      "path": "core/voice/audio_provenance.py",
+      "scope": "<module>.host_audio_sources"
+    },
+    {
       "callee": "core.runtime.subprocess_gateway.get_subprocess_gateway().spawn_async",
       "canonical_owner": false,
       "category": "subprocess_gateway",
@@ -16618,6 +16650,6 @@
     }
   ],
   "description": "Exact AST effect-ownership debt ratchet; refresh only after reviewed change",
-  "inventory_sha256": "50427d2481aeaf209745097d6ce0dbd0377a653eb46d15d6ff50f53b9052fba1",
+  "inventory_sha256": "67377fbd0d36675389a03623c5c565b44e3d90382baf95d85f9e46211b79d0a4",
   "schema_version": 1
 }

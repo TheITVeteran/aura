@@ -22903,6 +22903,67 @@ def _pre_gate_unavailable_response(gate: str) -> JSONResponse:
         },
         status_code=503,
     )
+@contextlib.contextmanager
+def _bound_http_turn(body: Any):
+    """Bind one TurnOutcome across the whole request, and finalize it here.
+
+    Yields None when the ledger cannot be bound, so the route is never taken
+    down by its own instrumentation — the caller checks for None rather than
+    assuming a turn.
+    """
+
+    # Setup is guarded separately from the body. A single try around both
+    # would catch the route's own exception and yield a second time, which
+    # turns any error in the turn into a broken generator — instrumentation
+    # deciding how the request fails.
+    try:
+        from core.runtime.turn_outcome import TurnOutcome, bind_turn
+
+        outcome = TurnOutcome(origin="user_chat")
+    except _CHAT_RECOVERABLE_ERRORS as exc:
+        record_degradation("chat.turn_outcome", exc, severity="warning")
+        yield None
+        return
+
+    try:
+        with bind_turn(outcome):
+            yield outcome
+    finally:
+        try:
+            from core.runtime.fact_custody import forget_custody
+            from core.runtime.turn_outcome import finalize_turn
+
+            finalize_turn(outcome, subsystem="chat")
+            # The custody set outlives the ContextVar by design (the health
+            # report reads recent turns), but the ledger for a turn nobody
+            # will ask about again is just retained text.
+            forget_custody(outcome.turn_id)
+        except _CHAT_RECOVERABLE_ERRORS as exc:
+            record_degradation("chat.turn_outcome", exc, severity="warning")
+
+
+def _mark_http_turn_served(outcome: Any, response: Any) -> None:
+    """Record what the person actually received, from the response itself."""
+
+    if outcome is None:
+        return
+    try:
+        payload = getattr(response, "body", None)
+        served = ""
+        if payload is not None:
+            data = json.loads(payload)
+            if isinstance(data, dict):
+                served = str(data.get("response") or "")
+        if served.strip():
+            outcome.mark_served(served)
+        else:
+            from core.runtime.turn_outcome import UserVisibleState
+
+            outcome.mark_served("", state=UserVisibleState.NOTHING_SERVED)
+    except (_CHAT_RECOVERABLE_ERRORS, json.JSONDecodeError) as exc:
+        record_degradation("chat.turn_outcome", exc, severity="info")
+
+
 def _apply_recorded_answer(user_message: object, response: Any) -> Any:
     """Attach a recorded answer to whatever this turn ended up returning.
 
@@ -22992,8 +23053,21 @@ async def api_chat(
     # failure the user waited forty seconds for is latency they experienced.
     turn_started = time.perf_counter()
     try:
-        with bind_failure_ledger():
-            return _apply_recorded_answer(body.message, await _api_chat_turn(body, request))
+        # One turn, spanning generation AND delivery.
+        #
+        # The ledger used to be opened inside cognitive_engine.think() and
+        # closed when it returned — before the honesty gates, the repair
+        # passes, the shaping stages and the terminal boundary, which is the
+        # entire stretch where a turn's answer gets lost. Anything asking
+        # `current_turn()` from the delivery path got None, so fact custody
+        # and the effect ledger were structurally unreachable exactly where
+        # they matter. think() now joins this turn instead of opening its own,
+        # and this owns the finalize because only here is it known what the
+        # person actually received.
+        with bind_failure_ledger(), _bound_http_turn(body) as _turn_outcome:
+            _served = _apply_recorded_answer(body.message, await _api_chat_turn(body, request))
+            _mark_http_turn_served(_turn_outcome, _served)
+            return _served
     finally:
         try:
             from core.observability.histograms import record as _record_histogram

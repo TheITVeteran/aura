@@ -296,10 +296,19 @@ class EntityIdentity:
         }
         try:
             from core.governance_context import local_internal_governed_scope
+            from core.runtime.atomic_writer import ensure_private_directory
             from core.runtime.file_write_gateway import get_file_write_gateway
 
             with local_internal_governed_scope("entity_identity_key"):
                 gateway = get_file_write_gateway()
+                # The containing directory is the boundary, not a chmod on the
+                # file afterwards. A raw `key_path.chmod(0o600)` was outside
+                # every write owner, and it tightened the key only AFTER it had
+                # already existed at the default mode — a window, and an
+                # unaccounted mutation. `ensure_private_directory` makes the
+                # directory 0o700 BEFORE the key is written, so there is no
+                # moment at which the file is reachable by another user.
+                ensure_private_directory(self._root)
                 gateway.ensure_directory(self._root, source="entity_identity")
                 gateway.write_json(
                     self.key_path,
@@ -307,10 +316,6 @@ class EntityIdentity:
                     source="entity_identity",
                     schema_version=_KEY_FILE_SCHEMA_VERSION,
                 )
-            try:
-                self.key_path.chmod(0o600)
-            except OSError as exc:
-                logger.debug("entity key permissions not tightened: %s", exc)
         except (ImportError, AttributeError, OSError, RuntimeError, TypeError, ValueError) as exc:
             record_degradation(
                 "entity_identity",
