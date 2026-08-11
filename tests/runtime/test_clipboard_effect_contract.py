@@ -180,3 +180,39 @@ def test_a_clipboard_write_with_no_clipboard_criterion_is_still_blocked() -> Non
 
     assert allowed is False
     assert "clipboard write" in reason
+
+
+def test_a_bare_identifier_payload_is_recognised() -> None:
+    """"put ORION-7 on my clipboard" names its payload without quoting it.
+
+    Requiring quotes or the literal word "text" produced NO acceptance
+    criterion, so the contract had nothing to verify and the snapshot never
+    read the clipboard back.
+    """
+    from core.runtime.os_automation_effects import _clipboard_payload
+
+    assert _clipboard_payload("put ORION-7 on my clipboard", "") == "ORION-7"
+
+
+def test_the_snapshot_reads_the_clipboard_when_the_contract_asks() -> None:
+    """LIVE, 2026-08-10: the script SET the clipboard, the text was really
+    there, and the check failed — nothing captured clipboard_excerpt, so the
+    verifier compared its expectation against an empty string and went looking
+    for a repair.
+
+    An effect that happened and cannot be observed is indistinguishable from
+    one that did not.
+    """
+    assert build_effect_contract("put ORION-7 on my clipboard").needs_clipboard is True
+    assert build_effect_contract("open Notes").needs_clipboard is False
+
+
+def test_the_capture_is_wired_into_the_snapshot() -> None:
+    import inspect
+
+    from core.skills import os_automation
+
+    source = inspect.getsource(os_automation)
+
+    assert "contract.needs_clipboard" in source
+    assert 'values["clipboard_excerpt"]' in source

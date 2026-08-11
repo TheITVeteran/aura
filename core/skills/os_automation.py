@@ -928,6 +928,21 @@ class OSAutomationCompilerSkill(BaseSkill):  # type: ignore[misc]
                 except _OS_AUTOMATION_ERRORS as exc:
                     errors.append(f"browser_url_snapshot_exception:{type(exc).__name__}")
 
+        if contract.needs_clipboard:
+            read_clipboard = getattr(host, "get_clipboard", None)
+            if callable(read_clipboard):
+                try:
+                    clip_receipt = await read_clipboard()
+                    clip_text = str(getattr(clip_receipt, "result", "") or "")
+                    if bool(getattr(clip_receipt, "success", False)):
+                        values["clipboard_excerpt"] = clip_text[:1200]
+                    else:
+                        errors.append("clipboard_snapshot_unavailable")
+                except _OS_AUTOMATION_ERRORS as exc:
+                    errors.append(f"clipboard_snapshot_exception:{type(exc).__name__}")
+            else:
+                errors.append("clipboard_snapshot_unsupported")
+
         if contract.needs_screen_text:
             read_screen = getattr(host, "get_screen_text", None)
             if callable(read_screen):

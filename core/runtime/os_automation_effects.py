@@ -308,6 +308,21 @@ class EffectContract:
         )
 
     @property
+    def needs_clipboard(self) -> bool:
+        """Whether the snapshot has to read the clipboard back.
+
+        LIVE, 2026-08-10: the deterministic script SET the clipboard, the text
+        was really there, and the check failed anyway — nothing had captured
+        clipboard_excerpt, so the verifier compared its expectation against an
+        empty string and went looking for a repair. An effect that happened and
+        cannot be observed is indistinguishable from one that did not.
+        """
+        return any(
+            requirement.kind is EffectKind.CLIPBOARD_CONTAINS
+            for requirement in self.requirements
+        )
+
+    @property
     def needs_screen_text(self) -> bool:
         return any(
             requirement.kind
@@ -438,8 +453,12 @@ _CLIPBOARD_GOAL_RE = re.compile(r"\b(?:clip\s?board|pasteboard)\b", re.IGNORECAS
 #: identifier — "put ORION-7 on my clipboard" names its own acceptance test.
 _CLIPBOARD_LITERAL_RE = re.compile(
     r"[\"'\u201c\u2018](?P<quoted>[^\"'\u201d\u2019]{1,200})[\"'\u201d\u2019]"
-    r"|\b(?:text|string|value|word)\s+(?P<named>[\w.\-/]{2,80})",
-    re.IGNORECASE,
+    r"|\b(?:text|string|value|word|token)\s+(?P<named>[\w.\-/]{2,80})"
+    # A bare identifier-shaped token. "put ORION-7 on my clipboard" names its
+    # payload without quoting it or saying the word "text", and requiring
+    # either produced NO acceptance criterion at all — so the contract had
+    # nothing to verify and the snapshot never read the clipboard back.
+    r"|\b(?P<bare>[A-Z0-9][A-Z0-9]*(?:[-_][A-Z0-9]+)+)\b",
 )
 
 
@@ -454,7 +473,9 @@ def _clipboard_payload(goal: str, text_payload: str) -> str:
     match = _CLIPBOARD_LITERAL_RE.search(goal or "")
     if match is None:
         return ""
-    return (match.group("quoted") or match.group("named") or "").strip()[:200]
+    return (
+        match.group("quoted") or match.group("named") or match.group("bare") or ""
+    ).strip()[:200]
 
 
 def build_effect_contract(
