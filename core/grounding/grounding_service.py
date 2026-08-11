@@ -317,9 +317,18 @@ class GroundingService:
 
             target_allowed = is_plastic_target_allowed(self.PLASTIC_MODULE_NAME)
         except (AttributeError, ImportError, RuntimeError, TypeError, ValueError) as exc:
-            _record_grounding_degradation(exc, action="plastic target allow-list lookup failed")
-            logger.debug("Grounding plastic target allow-list lookup failed: %s", exc)
-            target_allowed = True  # be lenient if Will isn't importable
+            # Fail CLOSED. "Be lenient if Will isn't importable" made an
+            # unreachable Will permit plastic modification of ANY target —
+            # the defence-in-depth allow-list disappearing silently, at the
+            # moment the primary check was also in doubt. Skipping one
+            # plasticity update costs a tick; applying it because the
+            # allow-list could not be read is the thing the list is for.
+            _record_grounding_degradation(
+                exc,
+                action="blocked a plastic update because the target allow-list was unreadable",
+            )
+            logger.warning("Grounding plastic target allow-list lookup failed: %s", exc)
+            target_allowed = False
 
         will_proceed = will_outcome == "proceed"
         update_allowed = will_proceed and decision.allowed and target_allowed

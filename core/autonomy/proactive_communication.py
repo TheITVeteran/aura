@@ -315,12 +315,19 @@ class ProactiveCommunicationManager:
 
             autonomous_admitted, _reason = autonomous_actions_admitted("proactive_comm")
         except (ImportError, AttributeError, RuntimeError, TypeError, ValueError) as exc:
+            # Fail CLOSED. This used to set `autonomous_admitted = True` — the
+            # gate becoming unavailable had exactly the same effect as the
+            # gate approving, which means an unreachable control is
+            # indistinguishable from a permissive one. The action here is
+            # Aura messaging her owner unprompted; not doing that for one
+            # cycle costs nothing, and doing it because the admission check
+            # could not be consulted is precisely what the check is for.
             _record_proactive_degradation(
                 exc,
-                action="preserved autonomous agency and continued through delivery governance",
+                action="withheld proactive delivery because the autonomy gate was unavailable",
                 extra={"stage": "runtime_action_gate"},
             )
-            autonomous_admitted = True
+            autonomous_admitted = False
         if not autonomous_admitted:
             return
 

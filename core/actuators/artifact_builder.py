@@ -115,10 +115,9 @@ def _write(path: Path, text: str) -> bool:
     try:
         from core.governance_context import local_internal_governed_scope
         from core.runtime.file_write_gateway import get_file_write_gateway
-
-        with local_internal_governed_scope("artifact_builder.write", domain="file_write"):
-            get_file_write_gateway().write_text(path, text, source="artifact_builder", durable=True)
-    except (ImportError, RuntimeError, AttributeError, TypeError, ValueError, OSError) as exc:
+    except ImportError as exc:
+        # The gateway is genuinely absent — this module is being used outside
+        # a runtime. That is the ONLY case the fallback is for.
         logger.debug("Governed write unavailable, using atomic fallback: %s", exc)
         try:
             from core.runtime.atomic_writer import atomic_write_text
@@ -126,6 +125,30 @@ def _write(path: Path, text: str) -> bool:
             atomic_write_text(path, text, encoding="utf-8", durable=True)
         except (OSError, ImportError, ValueError) as fexc:
             logger.warning("Artifact write failed for %s: %s", path, fexc)
+            return False
+    else:
+        # The gateway exists, so its answer is the answer. The previous
+        # version caught every exception from this block — including a
+        # governance REFUSAL — and then performed the same write directly
+        # through `atomic_write_text`. Any denial, taint check or scope
+        # violation was converted into an ungoverned write to the identical
+        # target, which is not a fallback but a bypass with a log line.
+        try:
+            with local_internal_governed_scope("artifact_builder.write", domain="file_write"):
+                get_file_write_gateway().write_text(
+                    path, text, source="artifact_builder", durable=True
+                )
+        except (RuntimeError, AttributeError, TypeError, ValueError, OSError) as exc:
+            from core.runtime.errors import record_degradation
+
+            record_degradation(
+                "artifact_builder",
+                exc,
+                severity="warning",
+                action="refused an artifact write because the governed write failed",
+                extra={"path": str(path)},
+            )
+            logger.warning("Governed artifact write refused for %s: %s", path, exc)
             return False
     # Receipt: the builder must not claim success from control flow alone.
     try:

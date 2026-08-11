@@ -105,7 +105,19 @@ class ProactiveAgency:
                     logger.debug("⏸️ [Proactive] background action not allowed; skipping '%s'.", goal[:50])
                     return None
             except (RuntimeError, AttributeError, TypeError) as exc:
-                record_degradation("proactive_agency", exc)
+                # Fail CLOSED. The exception was recorded and execution fell
+                # through to planning and pursuit, so the gate raising had
+                # exactly the same effect as the gate approving. A caller
+                # reading this code sees a check; what ran was no check at
+                # all whenever it mattered most.
+                record_degradation(
+                    "proactive_agency",
+                    exc,
+                    severity="warning",
+                    action="skipped a proactive pursuit because the background gate raised",
+                    extra={"goal": str(goal)[:120]},
+                )
+                return None
         planner = self._get_planner()
         if planner is None:
             return None

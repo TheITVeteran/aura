@@ -335,8 +335,20 @@ class ProactivePresence:
                 logger.debug("[ProactivePresence] Held by background policy: %s", reason)
                 return False
         except (AttributeError, RuntimeError) as exc:
-            record_degradation("proactive_presence", exc)
+            # Fail CLOSED. This recorded the failure and fell through to the
+            # rest of the checks, so a policy engine that could not be
+            # consulted permitted unsolicited speech — the idle window,
+            # memory ceiling, failure-pressure ceiling and user-anchor rule
+            # all silently not applying. Staying quiet for one cycle is the
+            # cost; speaking because the rule was unreachable is the defect.
+            record_degradation(
+                "proactive_presence",
+                exc,
+                severity="warning",
+                action="stayed silent because the background policy could not be evaluated",
+            )
             logger.debug("[ProactivePresence] Background policy check failed: %s", exc)
+            return False
 
         quiet_until = float(getattr(self.orchestrator, "_suppress_unsolicited_proactivity_until", 0.0) or 0.0)
         if quiet_until > now:
@@ -1012,8 +1024,17 @@ class ProactivePresence:
                     logger.debug("[ProactivePresence] Visible emission held by background policy: %s", reason)
                     return
             except (ImportError, AttributeError, RuntimeError) as exc:
-                record_degradation("proactive_presence", exc)
+                # Fail CLOSED, same reason as the admission probe above. This
+                # is the last gate before an unsolicited message appears on
+                # the owner's screen.
+                record_degradation(
+                    "proactive_presence",
+                    exc,
+                    severity="warning",
+                    action="withheld a visible emission because its policy check failed",
+                )
                 logger.debug("[ProactivePresence] Visible emission policy check failed: %s", exc)
+                return
 
         # Quality gate — reject anything that doesn't sound like natural speech
         if not self._is_valid_spontaneous_output(content):
