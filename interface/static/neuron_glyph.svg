@@ -40,7 +40,7 @@
     -->
     <filter id="bloom" x="-60%" y="-60%" width="220%" height="220%"
             color-interpolation-filters="sRGB">
-      <feGaussianBlur stdDeviation="0.7" result="raw"/>
+      <feGaussianBlur stdDeviation="0.45" result="raw"/>
       <feComponentTransfer in="raw" result="blur">
         <feFuncA type="linear" slope="0.55"/>
       </feComponentTransfer>

@@ -2914,6 +2914,33 @@ final class AuraLauncherDelegate: NSObject, NSApplicationDelegate,
 
             bubblePanel = panel
             bubbleWebView = webView
+            // Drag the bubble from ANY point on it, through the same
+            // recognizer the companion window uses.
+            //
+            // LIVE DEFECT, reported three sittings running — "i cant drag the
+            // bubble across the screen", then "i still cant drag across the
+            // screen", then "the native drag kinda works. it just only works
+            // in that upper right quadrant. Not the whole button".
+            //
+            // The page was doing the dragging: mousedown on the pill, then
+            // mousemove deltas posted back as {action:"move"}. That cannot
+            // work from a 56x56 web view — WebKit only synthesises mousemove
+            // for points inside the view, so the gesture died within about
+            // 28px — and whatever part of the glyph the ×/reply controls did
+            // not claim was the only surface that responded at all, which is
+            // the quadrant.
+            //
+            // TopStripPanGestureRecognizer already solved this for the
+            // companion window, and its own documentation names this window as
+            // the reason it takes a strip height of zero: "Zero drags from
+            // anywhere, which is what the bubble wants: it is all glyph." It
+            // was simply never installed here. One drag mechanism, in global
+            // screen coordinates, for both windows.
+            //
+            // Clicks survive because the recognizer does not delay the primary
+            // mouse button and a pan only begins once the pointer actually
+            // moves: × and the reply control keep taking plain clicks.
+            installWindowDrag(on: webView)
             observeBubbleMoves(panel)
         }
 

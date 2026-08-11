@@ -194,10 +194,9 @@
 
   glyph.addEventListener("click", (event) => {
     event.preventDefault();
-    // A drag that ends on the glyph must not also open the chat. Without this
-    // every successful drag would be followed by the window she was dragged
-    // out of the way of.
-    if (dragJustEnded()) return;
+    // Still the click path under the host: the drag recognizer does not delay
+    // the primary mouse button, and a pan only begins once the pointer moves.
+    // A tap therefore stays a tap.
     openChat();
   });
   say.addEventListener("click", openChat);
@@ -252,81 +251,34 @@
   });
 
   /*
-   * Dragging her somewhere else.
+   * Dragging her somewhere else is NOT handled here.
    *
-   * The stylesheet asked for this with `-webkit-app-region: drag`, which is an
-   * ELECTRON property. WKWebView does not implement it, so the declaration was
-   * inert and the bubble could not be moved at all — reported live 2026-08-10,
-   * "i cant drag the bubble across the screen". The comment beside it said
-   * "macOS moves the panel from here", describing a mechanism that was never
-   * present.
+   * Three attempts lived in this file and none of them could have worked. The
+   * stylesheet asked for `-webkit-app-region: drag`, an Electron property that
+   * WKWebView does not implement. Replacing it with mousedown plus mousemove
+   * deltas posted as {action:"move"} failed for a structural reason: this view
+   * is 56x56, WebKit only synthesises mousemove for points inside it, and the
+   * gesture therefore died about 28px in — "i still cant drag across the
+   * screen". Excluding the glyph from the handle left only the few pixels the
+   * ×/reply controls did not claim, which is the "upper right quadrant" that
+   * was the last report.
    *
-   * The host already understood the move: AuraLauncher has handled
-   * {action:"move", x, y} the whole time, and it clamps to the screen and
-   * reports the resting origin back so the position survives a restart. It
-   * had no caller. This is the caller.
+   * A window drag belongs to the window server, not to a page inside the
+   * window. AuraLauncher installs TopStripPanGestureRecognizer on this web
+   * view with a strip height of zero, meaning the whole surface drags, in
+   * global screen coordinates, with no bound to this view's size and no
+   * message per pixel. It is the same recognizer the companion window uses.
    *
-   * Screen coordinates come from the pointer rather than from the panel,
-   * because the page cannot read where its own window sits. The grab offset is
-   * captured once on mousedown so the bubble does not jump to centre itself
-   * under the cursor.
+   * Clicks are unaffected: the recognizer does not delay the primary mouse
+   * button and a pan only begins once the pointer moves, so × and the reply
+   * control keep taking plain clicks and a tap still opens the chat.
    */
-  let drag = null;
-  //: When the last drag finished, so the click it ends with can be swallowed.
-  let draggedAt = 0;
-
-  function dragJustEnded() {
-    return performance.now() - draggedAt < 250;
-  }
-
-  pill.addEventListener("mousedown", (event) => {
-    // Left button only.
-    if (event.button !== 0) return;
-    // × and the reply control are targets, not handles: they do one thing and
-    // must keep doing it.
-    if (event.target.closest("#close, #say")) return;
-    // The glyph is NOT excluded, and excluding it is why "i still cant drag
-    // across the screen" survived the fix that added dragging — reported live
-    // 2026-08-10, one sitting after "i cant drag the bubble across the
-    // screen".
-    //
-    // At rest the bubble IS the glyph: #pill.dormant is a 6px scrim around a
-    // 28px mark and nothing else. So the one element excluded from the drag
-    // was the entire surface a person can actually grab, and `drag` was never
-    // once assigned in the state she spends all her time in.
-    //
-    // A click and a drag are told apart by whether the pointer moved, which
-    // the threshold below already decides. That is the only thing that can
-    // tell them apart, because both begin identically.
-    drag = {
-      startX: event.screenX,
-      startY: event.screenY,
-      moved: false,
-    };
-  });
-
-  window.addEventListener("mousemove", (event) => {
-    if (!drag) return;
-    const dx = event.screenX - drag.startX;
-    const dy = event.screenY - drag.startY;
-    // A few pixels of slop, so a click with a shaky hand stays a click.
-    if (!drag.moved && Math.abs(dx) < 3 && Math.abs(dy) < 3) return;
-    drag.moved = true;
-    // Cocoa's origin is bottom-left and the browser's is top-left, so vertical
-    // motion inverts. Getting this wrong sends the bubble the wrong way, which
-    // is worse than not moving at all.
-    postToHost({ action: "move", dx: dx, dy: -dy, relative: true });
-    drag.startX = event.screenX;
-    drag.startY = event.screenY;
-  });
-
-  window.addEventListener("mouseup", () => {
-    if (drag && drag.moved) draggedAt = performance.now();
-    drag = null;
-  });
 
   function postToHost(payload) {
-    window.webkit?.messageHandlers?.auraBubble?.postMessage(payload);
+    const bridge = window.webkit?.messageHandlers?.auraBubble;
+    if (!bridge) return false;
+    bridge.postMessage(payload);
+    return true;
   }
 
   // Report where the person parked her, so the position survives a restart.

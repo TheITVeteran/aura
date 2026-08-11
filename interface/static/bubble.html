@@ -98,9 +98,24 @@ html, body {
   /* One size in every state. Growing the mark when she stops speaking is a
      tic: the eye reads a resize in the corner of the screen as something
      having happened, and nothing has. Snug in 6px of scrim, so the resting
-     bubble is 40px across. */
-  width: 28px; height: 28px;
-  flex: 0 0 28px;
+     bubble is 48px across.
+
+     36px, not 28px, and the reason is arithmetic rather than taste — reported
+     live 2026-08-10, "would still also like the icon to be a bit sharper".
+     The artwork is authored in a 50-unit viewBox, so at 28px each unit was
+     0.56 CSS px and, at 2x, 1.12 device px. Its three stroke weights (1.1,
+     1.5, 1.6) therefore landed at 1.23, 1.68 and 1.79 DEVICE pixels: every
+     line in the mark was under two pixels wide, so all of them were spread
+     across two or three pixels of antialiasing with no full-intensity core.
+     That is what "not sharp" looks like, and no amount of adjusting the glow
+     could have fixed it, because the glow is merged UNDER the source and the
+     edges were never the glow's doing.
+
+     At 36px a unit is 1.44 device px and the same three weights land at 1.58,
+     2.16 and 2.30 — each stroke now has a solid interior pixel with the
+     antialiasing confined to its edges. */
+  width: 36px; height: 36px;
+  flex: 0 0 36px;
   /* controls stay clickable; bubble.js excludes them from the drag */
   cursor: pointer;
   transition: filter 320ms ease, transform 160ms ease;
