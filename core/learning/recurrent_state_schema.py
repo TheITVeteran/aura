@@ -9,6 +9,7 @@ from typing import Any, Final
 
 RECURRENT_STATE_SCHEMA: Final = "aura.recurrent_state_target.v1"
 STATE_SLOT_NAMES: Final = ("pc", "value0", "value1", "value2", "done")
+STATE_SLOT_LOSS_WEIGHTS: Final = (1.0, 4.0, 4.0, 4.0, 1.0)
 STATE_CARDINALITY: Final = 33
 
 
@@ -147,6 +148,7 @@ __all__ = [
     "RECURRENT_STATE_SCHEMA",
     "STATE_CARDINALITY",
     "STATE_SLOT_NAMES",
+    "STATE_SLOT_LOSS_WEIGHTS",
     "RecurrentStateTargets",
     "state_targets_from_trace",
 ]

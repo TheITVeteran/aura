@@ -196,6 +196,7 @@ def evaluate_decoding(
                     "prompt_sha256": hashlib.sha256(task.prompt.encode()).hexdigest(),
                     "arm": arm,
                     "decoded": decoded,
+                    "expected": task.answer,
                     "token_ids": token_ids,
                     "stopped_on_eos": stopped,
                     "response_sha256": hashlib.sha256(response.encode()).hexdigest(),

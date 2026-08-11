@@ -12,10 +12,20 @@ pytest.importorskip("mlx_lm")
 from mlx.utils import tree_flatten  # noqa: E402
 from mlx_lm.models.qwen2 import Model, ModelArgs  # noqa: E402
 
-from core.learning.recurrence_curriculum import StructuredTransitionTrace  # noqa: E402
+from core.learning.recurrence_curriculum import (  # noqa: E402
+    StructuredTransitionProgram,
+    StructuredTransitionTrace,
+)
+from core.learning.recurrent_action_schema import (  # noqa: E402
+    action_targets_from_program,
+)
 from core.learning.unified_intrinsic_objective import (  # noqa: E402
     UnifiedIntrinsicTrainingSpec,
     readout_fingerprint,
+    structured_action_accuracy_breakdown,
+    structured_action_loss,
+    structured_initial_state_accuracy_breakdown,
+    structured_initial_state_loss,
     unified_answer_trajectory,
     unified_intrinsic_training_loss,
 )
@@ -195,6 +205,11 @@ def test_exact_state_teacher_shapes_recurrent_tissue_without_entering_prompt() -
         field_names=("pc", "value", "done"),
         states=((0, 0, 0), (1, 1, 0), (2, 0, 0), (3, 1, 1)),
     )
+    program = StructuredTransitionProgram(
+        state_trace=trace,
+        action_field_names=("opcode", "operand", "has_operand"),
+        actions=((0, 1, 1), (1, 0, 1), (2, 1, 1)),
+    )
 
     def objective(candidate: UnifiedRecurrentController):
         return unified_intrinsic_training_loss(
@@ -204,6 +219,7 @@ def test_exact_state_teacher_shapes_recurrent_tissue_without_entering_prompt() -
             candidate,
             _spec(),
             transition_trace=trace,
+            transition_program=program,
         )[0]
 
     loss, gradients = nn.value_and_grad(controller, objective)(controller)
@@ -212,6 +228,7 @@ def test_exact_state_teacher_shapes_recurrent_tissue_without_entering_prompt() -
     assert float(mx.max(mx.abs(flat["state_transition_output"]))) > 0.0
     assert float(mx.max(mx.abs(flat["state_transition_query"]))) > 0.0
     assert float(mx.max(mx.abs(flat["state_value_embeddings"]))) > 0.0
+    assert float(mx.max(mx.abs(flat["action_output"]))) > 0.0
     _loss, receipt = unified_intrinsic_training_loss(
         model,
         TOKENS,
@@ -219,6 +236,7 @@ def test_exact_state_teacher_shapes_recurrent_tissue_without_entering_prompt() -
         controller,
         _spec(),
         transition_trace=trace,
+        transition_program=program,
         state_teacher_forcing_probability=0.75,
     )
     assert receipt["state_supervision"]["available"] is True
@@ -230,9 +248,77 @@ def test_exact_state_teacher_shapes_recurrent_tissue_without_entering_prompt() -
     assert receipt["per_depth"]["T1"]["state_loss"] == 0.0
     assert receipt["per_depth"]["T2"]["state_loss"] == 0.0
     assert receipt["per_depth"]["T3"]["state_step_accuracy"]
+    assert receipt["per_depth"]["T3"]["initial_state_loss"] > 0.0
+    assert receipt["per_depth"]["T3"]["initial_state_accuracy"] is not None
+    assert receipt["per_depth"]["T3"]["action_loss"] > 0.0
+    assert receipt["per_depth"]["T3"]["action_accuracy"] is not None
     commitment = receipt["state_supervision"]["commitments"]["T3"]
     assert commitment["private_values_exposed"] is False
     assert "values" not in commitment
+    assert commitment["action"]["private_values_exposed"] is False
+
+
+def test_initial_state_loss_ignores_inactive_padding_slots() -> None:
+    from core.learning.recurrent_state_schema import state_targets_from_trace
+
+    trace = StructuredTransitionTrace(
+        family="boolean",
+        depth=1,
+        field_names=("pc", "value", "done"),
+        states=((0, 1, 0), (1, 0, 1)),
+    )
+    targets = state_targets_from_trace(trace, 1)
+    logits = mx.full((1, 5, 33), -20.0)
+    for slot, value in enumerate(targets.initial_values):
+        logits[0, slot, value] = 20.0
+    # Inactive slots are deliberately wrong; they must not inflate or reduce
+    # the scientific state score.
+    logits[0, 2, :] = -20.0
+    logits[0, 2, 17] = 20.0
+    logits[0, 3, :] = -20.0
+    logits[0, 3, 18] = 20.0
+    loss, accuracy = structured_initial_state_loss(logits, targets)
+    assert float(loss.item()) < 1e-6
+    assert accuracy == pytest.approx(1.0)
+    breakdown = structured_initial_state_accuracy_breakdown(logits, targets)
+    assert breakdown == {
+        "value_accuracy": 1.0,
+        "value_exact_accuracy": 1.0,
+        "control_accuracy": 1.0,
+    }
+
+
+def test_action_accuracy_excludes_post_completion_null_padding() -> None:
+    trace = StructuredTransitionTrace(
+        family="boolean",
+        depth=1,
+        field_names=("pc", "value", "done"),
+        states=((0, 1, 0), (1, 0, 1)),
+    )
+    program = StructuredTransitionProgram(
+        state_trace=trace,
+        action_field_names=("opcode", "operand", "has_operand"),
+        actions=((2, 1, 1),),
+    )
+    targets = action_targets_from_program(program, 4)
+    action_width = len(targets.values[0])
+    logits = [mx.full((1, action_width, 33), -20.0) for _ in range(4)]
+    for step in range(4):
+        for slot, value in enumerate(targets.values[step]):
+            logits[step][0, slot, value] = 20.0
+    # The one real operation is wrong while all post-completion null fields are
+    # right.  The scientific score must remain zero, not an inflated average.
+    for slot, active in enumerate(targets.masks[0]):
+        if not active:
+            continue
+        logits[0][0, slot, :] = -20.0
+        wrong = (targets.values[0][slot] + 1) % 32
+        logits[0][0, slot, wrong] = 20.0
+    _loss, accuracy, step_accuracy = structured_action_loss(logits, targets)
+    assert accuracy == pytest.approx(0.0)
+    assert step_accuracy == pytest.approx((0.0, 1.0, 1.0, 1.0))
+    action_breakdown = structured_action_accuracy_breakdown(logits, targets)
+    assert action_breakdown["instruction_exact_accuracy"] == pytest.approx(0.0)
 
 
 def test_training_receipt_keeps_heldout_depths_unopened() -> None:

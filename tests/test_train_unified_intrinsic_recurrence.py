@@ -101,6 +101,8 @@ def test_trainer_adapts_window_but_never_coda_or_readout() -> None:
 def test_campaign_identity_binds_curriculum_and_state_schema_sources() -> None:
     assert "core/learning/recurrence_curriculum.py" in TRAINING_SOURCE_FILES
     assert "core/learning/recurrent_state_schema.py" in TRAINING_SOURCE_FILES
+    assert "core/learning/recurrent_literal_grounding.py" in TRAINING_SOURCE_FILES
+    assert "core/learning/recurrent_opcode_grounding.py" in TRAINING_SOURCE_FILES
 
 
 def test_hidden_size_comes_from_residual_space_not_packed_embeddings() -> None:
@@ -130,6 +132,8 @@ def test_state_codebook_is_grounded_in_frozen_model_representations() -> None:
     assert len(digest) == 64
     assert controller.parameter_sha256() != before
     assert controller.state_value_embeddings.shape == (5, 33, 32)
+    assert controller.action_value_embeddings.shape == (8, 33, 32)
+    assert controller.literal_value_embeddings.shape == (33, 32)
 
 
 def test_model_identity_hashes_weight_content_not_only_path(tmp_path: Path) -> None:
@@ -169,8 +173,9 @@ def test_phase_partition_preserves_shared_t1_and_trains_depth_bridge() -> None:
     assert bool(mx.all(recurrent["controller.transport_bias"] == 1))
     assert _optimization_phase(39, 40) == "semantic_anchor"
     assert _optimization_phase(40, 40) == "recurrence"
-    assert _optimization_phase(40, 40, 20) == "state_transition"
-    assert _optimization_phase(59, 40, 20) == "state_transition"
+    assert _optimization_phase(19, 40, 20) == "state_transition"
+    assert _optimization_phase(20, 40, 20) == "semantic_anchor"
+    assert _optimization_phase(59, 40, 20) == "semantic_anchor"
     assert _optimization_phase(60, 40, 20) == "recurrence"
 
 
@@ -244,6 +249,9 @@ def test_gradient_trust_bound_does_not_starve_independent_mechanisms() -> None:
         "controller": {
             "state_transition_output": mx.array([0.0, 12.0]),
             "state_value_embeddings": mx.array([0.0, 8.0]),
+            "action_output": mx.array([0.0, 6.0]),
+            "opcode_copy_logit": mx.array(2.0),
+            "action_value_embeddings": mx.array([0.0, 7.0]),
             "transport_bias": mx.array([0.3, 0.4]),
         },
     }
@@ -255,6 +263,8 @@ def test_gradient_trust_bound_does_not_starve_independent_mechanisms() -> None:
         "scoped_transformer_bridge",
         "typed_state_transition",
         "typed_state_codebook",
+        "typed_action_transition",
+        "typed_action_codebook",
         "recurrent_controller",
     }
     assert float(mx.linalg.norm(flat["model.layer.lora_a"]).item()) == pytest.approx(
@@ -265,6 +275,15 @@ def test_gradient_trust_bound_does_not_starve_independent_mechanisms() -> None:
     ) == pytest.approx(1.0)
     assert float(
         mx.linalg.norm(flat["controller.state_value_embeddings"]).item()
+    ) == pytest.approx(1.0)
+    action_transition_norm = mx.sqrt(
+        mx.sum(flat["controller.action_output"] ** 2)
+        + mx.sum(flat["controller.opcode_copy_logit"] ** 2)
+    )
+    assert float(action_transition_norm.item()) == pytest.approx(1.0)
+    assert float(mx.abs(flat["controller.opcode_copy_logit"]).item()) > 0.0
+    assert float(
+        mx.linalg.norm(flat["controller.action_value_embeddings"]).item()
     ) == pytest.approx(1.0)
     assert float(
         mx.linalg.norm(flat["controller.transport_bias"]).item()

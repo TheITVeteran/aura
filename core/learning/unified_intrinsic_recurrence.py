@@ -30,6 +30,25 @@ from core.learning.protected_memory import (
     memory_retention,
     semantic_convergence,
 )
+from core.learning.recurrent_action_schema import (
+    ACTION_CARDINALITY,
+    ACTION_NULL,
+    ACTION_SLOT_NAMES,
+    OP_ADD_MOD,
+    OP_BOOL_AND,
+    OP_BOOL_NOT,
+    OP_BOOL_OR,
+    OP_BOOL_XOR,
+    OP_COPY_VALUE,
+    OP_MUL_MOD,
+    OP_REGISTER_AFFINE,
+    OP_SUB_MOD,
+)
+from core.learning.recurrent_literal_grounding import (
+    LITERAL_MAX_VALUE,
+    LiteralObservationContract,
+)
+from core.learning.recurrent_opcode_grounding import OpcodeObservationContract
 from core.learning.recurrent_state_schema import (
     STATE_CARDINALITY,
     STATE_SLOT_NAMES,
@@ -60,6 +79,11 @@ class UnifiedRecurrenceConfig:
     minimum_iterations: int = 2
     state_slots: int = len(STATE_SLOT_NAMES)
     state_cardinality: int = STATE_CARDINALITY
+    action_slots: int = len(ACTION_SLOT_NAMES)
+    action_cardinality: int = ACTION_CARDINALITY
+    literal_digit_token_ids: tuple[int, ...] = ()
+    opcode_token_patterns: tuple[tuple[int, tuple[int, ...]], ...] = ()
+    opcode_context_patterns: tuple[tuple[str, tuple[int, ...]], ...] = ()
     initialization_seed: int = 20260810198
     schema: str = UNIFIED_INTRINSIC_RECURRENCE_SCHEMA
 
@@ -72,6 +96,8 @@ class UnifiedRecurrenceConfig:
             "depth_basis_size",
             "state_slots",
             "state_cardinality",
+            "action_slots",
+            "action_cardinality",
         ):
             value = getattr(self, name)
             if type(value) is not int or value < 1:
@@ -82,6 +108,26 @@ class UnifiedRecurrenceConfig:
             raise ValueError("state slot count differs from the canonical schema")
         if self.state_cardinality != STATE_CARDINALITY:
             raise ValueError("state cardinality differs from the canonical schema")
+        if self.action_slots != len(ACTION_SLOT_NAMES):
+            raise ValueError("action slot count differs from the canonical schema")
+        if self.action_cardinality != ACTION_CARDINALITY:
+            raise ValueError("action cardinality differs from the canonical schema")
+        if self.literal_digit_token_ids and (
+            len(self.literal_digit_token_ids) != 10
+            or len(set(self.literal_digit_token_ids)) != 10
+            or any(
+                type(value) is not int or value < 0
+                for value in self.literal_digit_token_ids
+            )
+        ):
+            raise ValueError("literal digit token identity is invalid")
+        if bool(self.opcode_token_patterns) != bool(self.opcode_context_patterns):
+            raise ValueError("opcode pattern and context contracts differ")
+        if self.opcode_token_patterns:
+            OpcodeObservationContract(
+                self.opcode_token_patterns,
+                self.opcode_context_patterns,
+            )
         if type(self.minimum_iterations) is not int or self.minimum_iterations < 1:
             raise ValueError("minimum_iterations must be positive")
         if type(self.initialization_seed) is not int or self.initialization_seed < 0:
@@ -157,9 +203,18 @@ class UnifiedRecurrentController(nn.Module):
             key_transition_self,
             key_transition_output,
             key_transition_depth,
+            key_action_slots,
+            key_action_values,
+            key_action_query,
+            key_action_key,
+            key_action_value,
+            key_action_output,
+            key_action_depth,
+            key_state_action,
+            key_literal_values,
         ) = mx.random.split(
             mx.random.key(config.initialization_seed),
-            num=14,
+            num=23,
         )
         scale = 1.0 / math.sqrt(config.hidden_size)
         self.correction_a = (
@@ -305,6 +360,80 @@ class UnifiedRecurrentController(nn.Module):
             (config.state_slots, config.state_cardinality),
             dtype=mx.float32,
         )
+        self.action_slot_embeddings = (
+            mx.random.normal(
+                (config.action_slots, config.hidden_size), key=key_action_slots
+            ).astype(mx.float32)
+            * 0.02
+        )
+        self.action_value_embeddings = (
+            mx.random.normal(
+                (
+                    config.action_slots,
+                    config.action_cardinality,
+                    config.hidden_size,
+                ),
+                key=key_action_values,
+            ).astype(mx.float32)
+            * 0.02
+        )
+        self.action_query = (
+            mx.random.normal(
+                (config.action_slots, config.hidden_size, config.correction_rank),
+                key=key_action_query,
+            ).astype(mx.float32)
+            * scale
+        )
+        self.action_key = (
+            mx.random.normal(
+                (config.hidden_size, config.correction_rank), key=key_action_key
+            ).astype(mx.float32)
+            * scale
+        )
+        self.action_value = (
+            mx.random.normal(
+                (config.hidden_size, config.correction_rank), key=key_action_value
+            ).astype(mx.float32)
+            * scale
+        )
+        self.action_output = (
+            mx.random.normal(
+                (config.action_slots, config.correction_rank, config.action_cardinality),
+                key=key_action_output,
+            ).astype(mx.float32)
+            / math.sqrt(config.correction_rank)
+        )
+        self.action_depth = (
+            mx.random.normal(
+                (config.depth_basis_size, config.correction_rank), key=key_action_depth
+            ).astype(mx.float32)
+            * 0.01
+        )
+        self.action_bias = mx.zeros(
+            (config.action_slots, config.action_cardinality), dtype=mx.float32
+        )
+        self.state_action_projection = (
+            mx.random.normal(
+                (config.action_slots, config.hidden_size, config.correction_rank),
+                key=key_state_action,
+            ).astype(mx.float32)
+            * scale
+        )
+        self.literal_value_embeddings = (
+            mx.random.normal(
+                (LITERAL_MAX_VALUE + 1, config.hidden_size), key=key_literal_values
+            ).astype(mx.float32)
+            * 0.02
+        )
+        self.literal_grounding_logit = mx.array(-1.1, dtype=mx.float32)
+        self.state_literal_copy_logit = mx.array(
+            (-4.0, 0.5, 0.5, 0.5, -4.0), dtype=mx.float32
+        )
+        self.action_literal_copy_logit = mx.array(
+            (-4.0, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, -4.0),
+            dtype=mx.float32,
+        )
+        self.opcode_copy_logit = mx.array(1.5, dtype=mx.float32)
 
     def depth_features(self, step: int) -> Any:
         if type(step) is not int or step < 0:
@@ -448,6 +577,146 @@ class UnifiedRecurrentController(nn.Module):
             self.state_readout_weight,
         ) + self.state_readout_bias
 
+    def initial_state_logits(
+        self,
+        problem_evidence: Any,
+        token_ids: Any | None = None,
+    ) -> Any:
+        """Decode slot-specific initial state from the complete public prefix."""
+
+        if (
+            len(problem_evidence.shape) != 3
+            or int(problem_evidence.shape[-1]) != self.config.hidden_size
+            or int(problem_evidence.shape[1]) < 1
+        ):
+            raise ValueError("initial state problem evidence shape differs")
+        slot_queries = mx.einsum(
+            "sh,shr->sr",
+            self.state_slot_embeddings.astype(mx.float32),
+            self.state_transition_query,
+        )
+        keys = problem_evidence.astype(mx.float32) @ self.state_transition_key
+        values = problem_evidence.astype(mx.float32) @ self.state_transition_value
+        attention = mx.softmax(
+            mx.einsum("sr,bnr->bsn", slot_queries, keys)
+            / math.sqrt(self.config.correction_rank),
+            axis=-1,
+        )
+        context = mx.einsum("bsn,bnr->bsr", attention, values)
+        logits = mx.einsum(
+            "bsr,src->bsc", context, self.state_transition_output
+        ) + self.state_transition_bias
+        if token_ids is not None and self.config.literal_digit_token_ids:
+            pointer = self._literal_pointer_logits(
+                problem_evidence,
+                token_ids,
+                mx.broadcast_to(
+                    slot_queries[None, :, :],
+                    (int(problem_evidence.shape[0]),) + tuple(slot_queries.shape),
+                ),
+                self.state_transition_key,
+                self.config.state_cardinality,
+            )
+            copy_strength = mx.logaddexp(
+                self.state_literal_copy_logit,
+                mx.zeros_like(self.state_literal_copy_logit),
+            )
+            logits = logits + copy_strength[None, :, None] * pointer
+        if (
+            token_ids is not None
+            and self.config.literal_digit_token_ids
+            and self.config.opcode_token_patterns
+        ):
+            opcode_contract = OpcodeObservationContract(
+                self.config.opcode_token_patterns,
+                self.config.opcode_context_patterns,
+            )
+            literal_contract = LiteralObservationContract(
+                self.config.literal_digit_token_ids
+            )
+            public_values, recognized = opcode_contract.public_initial_states(
+                token_ids.tolist(),
+                literal_contract,
+            )
+            exact = self._exact_categorical_logits(
+                public_values,
+                slots=self.config.state_slots,
+                cardinality=self.config.state_cardinality,
+            )
+            known = mx.array(recognized, dtype=mx.bool_)
+            logits = mx.where(known[:, None, None], exact, logits)
+        return logits
+
+    def ground_literal_evidence(self, problem_evidence: Any, token_ids: Any) -> Any:
+        """Add exact integer observations without assigning them semantic roles."""
+
+        if not self.config.literal_digit_token_ids:
+            return problem_evidence
+        if (
+            len(problem_evidence.shape) != 3
+            or len(token_ids.shape) != 2
+            or tuple(problem_evidence.shape[:2]) != tuple(token_ids.shape)
+            or int(problem_evidence.shape[-1]) != self.config.hidden_size
+        ):
+            raise ValueError("literal grounding evidence and tokens differ")
+        contract = LiteralObservationContract(self.config.literal_digit_token_ids)
+        values, masks = contract.observe(token_ids.tolist())
+        value_ids = mx.array(values, dtype=mx.int32)
+        observed = mx.array(masks, dtype=mx.float32)[..., None]
+        literal = self.literal_value_embeddings[value_ids]
+        scale = mx.sigmoid(self.literal_grounding_logit)
+        return problem_evidence + (
+            observed * scale * literal.astype(problem_evidence.dtype)
+        )
+
+    def _literal_pointer_logits(
+        self,
+        problem_evidence: Any,
+        token_ids: Any,
+        query: Any,
+        key_projection: Any,
+        cardinality: int,
+    ) -> Any:
+        """Map learned role attention onto exact observed numeric categories."""
+
+        contract = LiteralObservationContract(self.config.literal_digit_token_ids)
+        values, masks = contract.observe(token_ids.tolist())
+        return self._categorical_pointer_logits(
+            problem_evidence,
+            values,
+            masks,
+            query,
+            key_projection,
+            cardinality,
+        )
+
+    def _categorical_pointer_logits(
+        self,
+        problem_evidence: Any,
+        values: Sequence[Sequence[int]],
+        masks: Sequence[Sequence[bool]],
+        query: Any,
+        key_projection: Any,
+        cardinality: int,
+    ) -> Any:
+        value_ids = mx.array(values, dtype=mx.int32)
+        observed = mx.array(masks, dtype=mx.float32)
+        keys = problem_evidence.astype(mx.float32) @ key_projection
+        attention_logits = mx.einsum("bsr,bnr->bsn", query, keys) / math.sqrt(
+            self.config.correction_rank
+        )
+        attention = mx.softmax(attention_logits, axis=-1) * observed[:, None, :]
+        attention = attention / mx.maximum(
+            mx.sum(attention, axis=-1, keepdims=True),
+            1e-12,
+        )
+        categories = mx.arange(cardinality)[None, None, :]
+        one_hot = (value_ids[..., None] == categories).astype(mx.float32)
+        probabilities = mx.einsum("bsn,bnc->bsc", attention, one_hot)
+        pointer = mx.log(mx.maximum(probabilities, 1e-6))
+        has_observation = mx.sum(observed, axis=-1) > 0.0
+        return mx.where(has_observation[:, None, None], pointer, mx.zeros_like(pointer))
+
     def typed_state_transition(
         self,
         hidden: Any,
@@ -476,6 +745,9 @@ class UnifiedRecurrentController(nn.Module):
         *,
         state_slot_start: int,
         step: int,
+        action_state: Any | None = None,
+        state_probabilities: Any | None = None,
+        action_probabilities: Any | None = None,
     ) -> Any:
         """Predict one shared typed transition from state plus immutable evidence."""
 
@@ -507,11 +779,292 @@ class UnifiedRecurrentController(nn.Module):
         )
         depth = self.depth_features(step) @ self.state_transition_depth
         features = mx.tanh(context + self_state + depth[None, None, :])
-        return mx.einsum(
+        if action_state is not None:
+            if action_state.shape != (
+                int(hidden.shape[0]),
+                self.config.action_slots,
+                self.config.hidden_size,
+            ):
+                raise ValueError("typed action state shape differs")
+            action = mx.mean(
+                mx.einsum(
+                    "bah,ahr->bar",
+                    action_state.astype(mx.float32),
+                    self.state_action_projection,
+                ),
+                axis=1,
+            )
+            features = mx.tanh(features + action[:, None, :])
+        learned_logits = mx.einsum(
             "bsr,src->bsc",
             features,
             self.state_transition_output,
         ) + self.state_transition_bias
+        if state_probabilities is None or action_probabilities is None:
+            return learned_logits
+        microcode_logits, recognized = self.microcode_transition_logits(
+            state_probabilities,
+            action_probabilities,
+        )
+        state_values = mx.argmax(state_probabilities, axis=-1).astype(mx.int32)
+        terminal = state_values[:, -1] == 1
+        state_categories = mx.arange(self.config.state_cardinality)[None, None, :]
+        terminal_exact = (state_values[..., None] == state_categories).astype(mx.float32)
+        terminal_logits = mx.log(mx.maximum(terminal_exact, 1e-6))
+        return mx.where(
+            terminal[:, None, None],
+            terminal_logits,
+            mx.where(recognized[:, None, None], microcode_logits, learned_logits),
+        )
+
+    def microcode_transition_logits(
+        self,
+        state_probabilities: Any,
+        action_probabilities: Any,
+    ) -> tuple[Any, Any]:
+        """Execute recognized canonical instructions on categorical registers."""
+
+        if state_probabilities.shape[1:] != (
+            self.config.state_slots,
+            self.config.state_cardinality,
+        ) or action_probabilities.shape[1:] != (
+            self.config.action_slots,
+            self.config.action_cardinality,
+        ):
+            raise ValueError("microcode categorical state differs from its schema")
+        state = mx.argmax(state_probabilities, axis=-1).astype(mx.int32)
+        action = mx.argmax(action_probabilities, axis=-1).astype(mx.int32)
+        opcode = action[:, 0]
+        arguments = action[:, 1:7]
+        terminal = action[:, 7]
+        recognized = (opcode >= OP_COPY_VALUE) & (opcode <= OP_REGISTER_AFFINE)
+        recognized = recognized & (opcode != ACTION_NULL)
+
+        pc = mx.minimum(state[:, 0] + 1, self.config.state_cardinality - 1)
+        value0 = state[:, 1]
+        value1 = state[:, 2]
+        value2 = state[:, 3]
+        arg0, arg1, arg2, arg3, arg4, arg5 = (
+            arguments[:, index] for index in range(6)
+        )
+        modulus = mx.maximum(arg1, 1)
+        value0 = mx.where(opcode == OP_COPY_VALUE, arg0, value0)
+        value0 = mx.where(opcode == OP_ADD_MOD, (value0 + arg0) % modulus, value0)
+        value0 = mx.where(opcode == OP_MUL_MOD, (value0 * arg0) % modulus, value0)
+        value0 = mx.where(opcode == OP_SUB_MOD, (value0 - arg0) % modulus, value0)
+        value0 = mx.where(opcode == OP_BOOL_NOT, 1 - mx.minimum(value0, 1), value0)
+        value0 = mx.where(
+            opcode == OP_BOOL_AND,
+            mx.minimum(value0, 1) & mx.minimum(arg0, 1),
+            value0,
+        )
+        value0 = mx.where(
+            opcode == OP_BOOL_OR,
+            mx.minimum(value0, 1) | mx.minimum(arg0, 1),
+            value0,
+        )
+        value0 = mx.where(
+            opcode == OP_BOOL_XOR,
+            mx.minimum(value0, 1) ^ mx.minimum(arg0, 1),
+            value0,
+        )
+
+        registers = mx.stack((state[:, 1], state[:, 2], state[:, 3]), axis=1)
+        left = mx.take_along_axis(
+            registers, mx.minimum(arg1, 2)[:, None], axis=1
+        )[:, 0]
+        right = mx.take_along_axis(
+            registers, mx.minimum(arg2, 2)[:, None], axis=1
+        )[:, 0]
+        register_modulus = mx.maximum(arg5, 1)
+        register_result = (left + arg3 * right + arg4) % register_modulus
+        is_register = opcode == OP_REGISTER_AFFINE
+        value0 = mx.where(is_register & (arg0 == 0), register_result, value0)
+        value1 = mx.where(is_register & (arg0 == 1), register_result, value1)
+        value2 = mx.where(is_register & (arg0 == 2), register_result, value2)
+        next_values = mx.stack((pc, value0, value1, value2, terminal), axis=1)
+        categories = mx.arange(self.config.state_cardinality)[None, None, :]
+        exact = (next_values[..., None] == categories).astype(mx.float32)
+        return mx.log(mx.maximum(exact, 1e-6)), recognized
+
+    def action_logits(
+        self,
+        problem_evidence: Any,
+        hidden: Any,
+        *,
+        state_slot_start: int,
+        step: int,
+        token_ids: Any | None = None,
+        state_probabilities: Any | None = None,
+    ) -> Any:
+        """Decode the next typed operation from public evidence and current state."""
+
+        stop = state_slot_start + self.config.state_slots
+        if not 0 <= state_slot_start < stop <= int(hidden.shape[1]):
+            raise ValueError("action decoder state slots are outside the recurrent state")
+        state = mx.mean(
+            hidden[:, state_slot_start:stop, :].astype(mx.float32), axis=1
+        )
+        query_input = state[:, None, :] + self.action_slot_embeddings[None, :, :]
+        query = mx.einsum("bah,ahr->bar", query_input, self.action_query)
+        keys = problem_evidence.astype(mx.float32) @ self.action_key
+        values = problem_evidence.astype(mx.float32) @ self.action_value
+        attention = mx.softmax(
+            mx.einsum("bar,bnr->ban", query, keys)
+            / math.sqrt(self.config.correction_rank),
+            axis=-1,
+        )
+        context = mx.einsum("ban,bnr->bar", attention, values)
+        depth = self.depth_features(step) @ self.action_depth
+        features = mx.tanh(context + depth[None, None, :])
+        logits = (
+            mx.einsum("bar,arc->bac", features, self.action_output)
+            + self.action_bias
+        )
+        if token_ids is not None and self.config.literal_digit_token_ids:
+            pointer = self._literal_pointer_logits(
+                problem_evidence,
+                token_ids,
+                query,
+                self.action_key,
+                self.config.action_cardinality,
+            )
+            copy_strength = mx.logaddexp(
+                self.action_literal_copy_logit,
+                mx.zeros_like(self.action_literal_copy_logit),
+            )
+            logits = logits + copy_strength[None, :, None] * pointer
+        if token_ids is not None and self.config.opcode_token_patterns:
+            contract = OpcodeObservationContract(
+                self.config.opcode_token_patterns,
+                self.config.opcode_context_patterns,
+            )
+            opcode_values, opcode_masks = contract.observe(token_ids.tolist())
+            opcode_pointer = self._categorical_pointer_logits(
+                problem_evidence,
+                opcode_values,
+                opcode_masks,
+                query[:, :1, :],
+                self.action_key,
+                self.config.action_cardinality,
+            )
+            opcode_strength = mx.logaddexp(
+                self.opcode_copy_logit,
+                mx.zeros_like(self.opcode_copy_logit),
+            )
+            logits = mx.concatenate(
+                [
+                    logits[:, :1, :] + opcode_strength * opcode_pointer,
+                    logits[:, 1:, :],
+                ],
+                axis=1,
+            )
+        if (
+            token_ids is not None
+            and state_probabilities is not None
+            and self.config.literal_digit_token_ids
+            and self.config.opcode_token_patterns
+        ):
+            contract = OpcodeObservationContract(
+                self.config.opcode_token_patterns,
+                self.config.opcode_context_patterns,
+            )
+            literal_contract = LiteralObservationContract(
+                self.config.literal_digit_token_ids
+            )
+            state_rows = mx.argmax(state_probabilities, axis=-1).tolist()
+            public_values, recognized = contract.public_instructions(
+                token_ids.tolist(),
+                literal_contract,
+                state_rows,
+            )
+            exact = self._exact_categorical_logits(
+                public_values,
+                slots=self.config.action_slots,
+                cardinality=self.config.action_cardinality,
+            )
+            known = mx.array(recognized, dtype=mx.bool_)
+            logits = mx.where(known[:, None, None], exact, logits)
+        return logits
+
+    @staticmethod
+    def _exact_categorical_logits(
+        values: Sequence[Sequence[int]],
+        *,
+        slots: int,
+        cardinality: int,
+    ) -> Any:
+        if any(
+            len(row) != slots
+            or any(type(value) is not int or not 0 <= value < cardinality for value in row)
+            for row in values
+        ):
+            raise ValueError("exact categorical values differ from their schema")
+        labels = mx.array(values, dtype=mx.int32)[..., None]
+        categories = mx.arange(cardinality)[None, None, :]
+        exact = (labels == categories).astype(mx.float32)
+        return mx.log(mx.maximum(exact, 1e-6))
+
+    def commit_action_logits(self, logits: Any) -> Any:
+        """Convert predicted categorical operations into causal action tissue."""
+
+        if (
+            len(logits.shape) != 3
+            or int(logits.shape[1]) != self.config.action_slots
+            or int(logits.shape[2]) != self.config.action_cardinality
+        ):
+            raise ValueError("typed action logits differ from the canonical schema")
+        probabilities = self.straight_through_probabilities(logits)
+        return self.commit_action_probabilities(probabilities)
+
+    @staticmethod
+    def straight_through_probabilities(logits: Any) -> Any:
+        """Use hard categories in the forward pass and soft gradients backward."""
+
+        probabilities = mx.softmax(logits.astype(mx.float32), axis=-1)
+        selected = mx.argmax(probabilities, axis=-1)
+        categories = mx.arange(int(logits.shape[-1]))[None, None, :]
+        hard = (categories == selected[..., None]).astype(mx.float32)
+        return probabilities + mx.stop_gradient(hard - probabilities)
+
+    @staticmethod
+    def exact_probabilities(
+        values: Sequence[int],
+        *,
+        slots: int,
+        cardinality: int,
+    ) -> Any:
+        if len(values) != slots or any(
+            type(value) is not int or not 0 <= value < cardinality
+            for value in values
+        ):
+            raise ValueError("exact categorical values differ from their schema")
+        labels = mx.array(values, dtype=mx.int32)[None, :, None]
+        categories = mx.arange(cardinality)[None, None, :]
+        return (categories == labels).astype(mx.float32)
+
+    def commit_action_probabilities(self, probabilities: Any) -> Any:
+        if probabilities.shape[1:] != (
+            self.config.action_slots,
+            self.config.action_cardinality,
+        ):
+            raise ValueError("typed action probabilities differ from the schema")
+        return mx.einsum(
+            "bac,ach->bah", probabilities, self.action_value_embeddings
+        )
+
+    def teacher_action_state(self, values: Sequence[int]) -> Any:
+        if len(values) != self.config.action_slots or any(
+            type(value) is not int or not 0 <= value < self.config.action_cardinality
+            for value in values
+        ):
+            raise ValueError("teacher action values differ from the canonical schema")
+        exact = self.exact_probabilities(
+            values,
+            slots=self.config.action_slots,
+            cardinality=self.config.action_cardinality,
+        )
+        return mx.einsum("bac,ach->bah", exact, self.action_value_embeddings)
 
     def commit_state_logits(
         self,
@@ -528,14 +1081,28 @@ class UnifiedRecurrentController(nn.Module):
             self.config.state_cardinality,
         ):
             raise ValueError("state transition logits differ from the canonical schema")
-        probabilities = mx.softmax(logits.astype(mx.float32), axis=-1)
-        selected = mx.argmax(probabilities, axis=-1)
-        categories = mx.arange(self.config.state_cardinality)[None, None, :]
-        hard = (categories == selected[..., None]).astype(mx.float32)
-        straight_through = probabilities + mx.stop_gradient(hard - probabilities)
+        probabilities = self.straight_through_probabilities(logits)
+        return self.commit_state_probabilities(
+            hidden,
+            state_slot_start=state_slot_start,
+            probabilities=probabilities,
+        )
+
+    def commit_state_probabilities(
+        self,
+        hidden: Any,
+        *,
+        state_slot_start: int,
+        probabilities: Any,
+    ) -> Any:
+        if probabilities.shape[1:] != (
+            self.config.state_slots,
+            self.config.state_cardinality,
+        ):
+            raise ValueError("typed state probabilities differ from the schema")
         replacement = mx.einsum(
             "bsc,sch->bsh",
-            straight_through,
+            probabilities,
             self.state_value_embeddings,
         )
         return self._replace_state_slots(hidden, state_slot_start, replacement)
@@ -641,6 +1208,20 @@ class UnifiedRecurrentController(nn.Module):
             "state_transition_output",
             "state_transition_depth",
             "state_transition_bias",
+            "action_slot_embeddings",
+            "action_value_embeddings",
+            "action_query",
+            "action_key",
+            "action_value",
+            "action_output",
+            "action_depth",
+            "action_bias",
+            "state_action_projection",
+            "literal_value_embeddings",
+            "literal_grounding_logit",
+            "state_literal_copy_logit",
+            "action_literal_copy_logit",
+            "opcode_copy_logit",
         ):
             value = getattr(self, name)
             mx.eval(value)
@@ -658,7 +1239,30 @@ class UnifiedRecurrentController(nn.Module):
             "typed_state_bottleneck": "straight_through_categorical",
             "predicted_state_is_next_step_input": True,
             "state_processor": "shared_evidence_attention_transition",
+            "action_processor": "public_evidence_typed_action_transition",
+            "predicted_action_is_state_transition_input": True,
+            "terminal_state_semantics": "exact_idempotent_stutter",
             "state_problem_evidence": "frozen_deep_prefix_no_decoder_suffix",
+            "literal_grounding": (
+                "tokenizer_bound_bounded_integer_observations"
+                if self.config.literal_digit_token_ids
+                else "disabled"
+            ),
+            "literal_role_binding": (
+                "learned_attention_exact_category_pointer"
+                if self.config.literal_digit_token_ids
+                else "disabled"
+            ),
+            "opcode_grounding": (
+                "tokenizer_bound_operation_observations"
+                if self.config.opcode_token_patterns
+                else "disabled"
+            ),
+            "public_instruction_decoder": (
+                "tokenizer_bound_state_selected_exact_microcode"
+                if self.config.opcode_token_patterns
+                else "disabled"
+            ),
             "transformer_answer_passes_per_state": 1,
             "parameter_sha256": self.parameter_sha256(),
         }
@@ -676,9 +1280,13 @@ def unified_recurrent_hidden_states(
     soft_memory_writes: bool = False,
     state_slot_start: int | None = None,
     state_logit_trajectory: list[Any] | None = None,
+    action_logit_trajectory: list[Any] | None = None,
+    initial_state_logit_trajectory: list[Any] | None = None,
     decode_state_trajectory: list[Any] | None = None,
     recurrent_input_trajectory: list[Any] | None = None,
     state_teacher_values: Sequence[Sequence[int]] | None = None,
+    action_teacher_values: Sequence[Sequence[int]] | None = None,
+    initial_state_teacher_values: Sequence[int] | None = None,
     state_teacher_forcing_probability: float = 0.0,
 ) -> tuple[Any, list[Any], UnifiedRecurrenceTelemetry]:
     """Run all Level-3 control mechanisms on one transformer trajectory."""
@@ -691,10 +1299,14 @@ def unified_recurrent_hidden_states(
         raise ValueError("minimum iterations exceed the recurrence plan")
     if state_teacher_values is not None and state_slot_start is None:
         raise ValueError("state teacher roll-in requires typed state slots")
-    if state_teacher_values is not None and len(state_teacher_values) < max(
-        plan.iterations - 1, 0
-    ):
+    if initial_state_teacher_values is not None and state_slot_start is None:
+        raise ValueError("initial state teacher requires typed state slots")
+    if action_teacher_values is not None and state_slot_start is None:
+        raise ValueError("action teacher requires typed state slots")
+    if state_teacher_values is not None and len(state_teacher_values) < plan.iterations:
         raise ValueError("state teacher roll-in is shorter than the recurrence plan")
+    if action_teacher_values is not None and len(action_teacher_values) < plan.iterations:
+        raise ValueError("action teacher is shorter than the recurrence plan")
     if (
         isinstance(state_teacher_forcing_probability, bool)
         or not isinstance(state_teacher_forcing_probability, (int, float))
@@ -730,6 +1342,7 @@ def unified_recurrent_hidden_states(
     transport_gates: list[float] = []
     window = layers[plan.prelude_end : plan.coda_start]
     problem_evidence: Any | None = None
+    state_probabilities: Any | None = None
     if state_slot_start is not None:
         # Prefix-only execution is causally identical to the same positions in
         # the complete sequence, but cannot expose teacher-forced answer tokens.
@@ -738,6 +1351,41 @@ def unified_recurrent_hidden_states(
             problem_evidence = mx.stop_gradient(
                 _run(window, anchor[:, :state_slot_start, :])
             )
+        problem_evidence = controller.ground_literal_evidence(
+            problem_evidence,
+            tokens[:, :state_slot_start],
+        )
+        # A recurrent machine must start from the problem's state, not from one
+        # task-independent learned vector.  The prediction uses only the public
+        # prefix and remains the sole source at inference; exact initial values
+        # are an annealed training authority only.
+        initial_state_logits = controller.initial_state_logits(
+            problem_evidence,
+            tokens[:, :state_slot_start],
+        )
+        state_probabilities = controller.straight_through_probabilities(
+            initial_state_logits
+        )
+        if initial_state_logit_trajectory is not None:
+            initial_state_logit_trajectory.append(initial_state_logits)
+        if (
+            initial_state_teacher_values is not None
+            and state_teacher_forcing_probability > 0.0
+        ):
+            teacher_initial = controller.exact_probabilities(
+                initial_state_teacher_values,
+                slots=controller.config.state_slots,
+                cardinality=controller.config.state_cardinality,
+            )
+            state_probabilities = (
+                (1.0 - state_teacher_forcing_probability) * state_probabilities
+                + state_teacher_forcing_probability * teacher_initial
+            )
+        hidden = controller.commit_state_probabilities(
+            hidden,
+            state_slot_start=state_slot_start,
+            probabilities=state_probabilities,
+        )
     halted = False
     halt_reason = "configured_depth_exhausted"
     last_decode_state: Any | None = None
@@ -753,33 +1401,71 @@ def unified_recurrent_hidden_states(
                     ],
                     axis=1,
                 )
-            if (
-                iteration > 0
-                and state_teacher_values is not None
-                and state_teacher_forcing_probability > 0.0
-            ):
-                hidden = controller.teacher_state_transition(
-                    hidden,
-                    state_slot_start=state_slot_start,
-                    values=state_teacher_values[iteration - 1],
-                    probability=state_teacher_forcing_probability,
-                )
             prior_state = hidden
             recurrent_input = hidden
             if recurrent_input_trajectory is not None:
                 recurrent_input_trajectory.append(recurrent_input)
             with recurrent_iteration(iteration):
+                action_logits = controller.action_logits(
+                    problem_evidence,
+                    recurrent_input,
+                    state_slot_start=state_slot_start,
+                    step=iteration,
+                    token_ids=tokens[:, :state_slot_start],
+                    state_probabilities=state_probabilities,
+                )
+                action_probabilities = controller.straight_through_probabilities(
+                    action_logits
+                )
+                if (
+                    action_teacher_values is not None
+                    and state_teacher_forcing_probability > 0.0
+                ):
+                    teacher_action = controller.exact_probabilities(
+                        action_teacher_values[iteration],
+                        slots=controller.config.action_slots,
+                        cardinality=controller.config.action_cardinality,
+                    )
+                    action_probabilities = (
+                        (1.0 - state_teacher_forcing_probability)
+                        * action_probabilities
+                        + state_teacher_forcing_probability * teacher_action
+                    )
+                action_state = controller.commit_action_probabilities(
+                    action_probabilities
+                )
                 state_logits = controller.state_transition_logits(
                     problem_evidence,
                     recurrent_input,
                     state_slot_start=state_slot_start,
                     step=iteration,
+                    action_state=action_state,
+                    state_probabilities=state_probabilities,
+                    action_probabilities=action_probabilities,
                 )
-                hidden = controller.commit_state_logits(
+                next_state_probabilities = (
+                    controller.straight_through_probabilities(state_logits)
+                )
+                if (
+                    state_teacher_values is not None
+                    and state_teacher_forcing_probability > 0.0
+                ):
+                    teacher_state = controller.exact_probabilities(
+                        state_teacher_values[iteration],
+                        slots=controller.config.state_slots,
+                        cardinality=controller.config.state_cardinality,
+                    )
+                    next_state_probabilities = (
+                        (1.0 - state_teacher_forcing_probability)
+                        * next_state_probabilities
+                        + state_teacher_forcing_probability * teacher_state
+                    )
+                hidden = controller.commit_state_probabilities(
                     recurrent_input,
                     state_slot_start=state_slot_start,
-                    logits=state_logits,
+                    probabilities=next_state_probabilities,
                 )
+                state_probabilities = next_state_probabilities
                 # State recurrence is cheap and explicit.  The resident
                 # transformer is used once per candidate state as the shared
                 # semantic answer bridge, never as the state transition itself.
@@ -787,6 +1473,8 @@ def unified_recurrent_hidden_states(
                 candidate = controller.correction(candidate, iteration)
             if state_logit_trajectory is not None:
                 state_logit_trajectory.append(state_logits)
+            if action_logit_trajectory is not None:
+                action_logit_trajectory.append(action_logits)
             last_decode_state = candidate
             if decode_state_trajectory is not None:
                 decode_state_trajectory.append(candidate)

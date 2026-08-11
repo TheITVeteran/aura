@@ -15,7 +15,14 @@ from mlx.utils import tree_flatten
 
 from core.learning.intrinsic_recurrence import RecurrentDepthPlan, _run
 from core.learning.protected_memory import MemoryLayout
+from core.learning.recurrent_action_schema import (
+    ACTION_SLOT_NAMES,
+    RecurrentActionTargets,
+    action_targets_from_program,
+)
 from core.learning.recurrent_state_schema import (
+    STATE_CARDINALITY,
+    STATE_SLOT_LOSS_WEIGHTS,
     RecurrentStateTargets,
     state_targets_from_trace,
 )
@@ -164,7 +171,11 @@ def unified_answer_and_recurrent_trajectory(
     decoder_input_tokens: Any | None = None,
     use_state_slots: bool = False,
     state_teacher_values: Sequence[Sequence[int]] | None = None,
+    action_teacher_values: Sequence[Sequence[int]] | None = None,
+    initial_state_teacher_values: Sequence[int] | None = None,
     state_teacher_forcing_probability: float = 0.0,
+    initial_state_logit_trajectory: list[Any] | None = None,
+    action_logit_trajectory: list[Any] | None = None,
 ) -> tuple[list[Any], list[Any], list[Any], list[Any]]:
     """Decode every recurrent state through one frozen coda and readout.
 
@@ -203,8 +214,14 @@ def unified_answer_and_recurrent_trajectory(
         soft_memory_writes=True,
         state_slot_start=state_slot_start,
         state_logit_trajectory=state_logits if use_state_slots else None,
+        action_logit_trajectory=action_logit_trajectory if use_state_slots else None,
+        initial_state_logit_trajectory=(
+            initial_state_logit_trajectory if use_state_slots else None
+        ),
         decode_state_trajectory=decode_states if use_state_slots else None,
         state_teacher_values=state_teacher_values,
+        action_teacher_values=action_teacher_values,
+        initial_state_teacher_values=initial_state_teacher_values,
         state_teacher_forcing_probability=state_teacher_forcing_probability,
     )
     answer_start = int(tokens.shape[-1]) + state_slots - 1
@@ -342,16 +359,194 @@ def structured_state_loss(
             raise ValueError("structured state supervision requires one task per batch")
         labels = mx.array(values, dtype=mx.int32)
         mask = mx.array(masks, dtype=mx.float32)
+        weights = mx.array(STATE_SLOT_LOSS_WEIGHTS, dtype=mx.float32) * mask
         per_slot = nn.losses.cross_entropy(
             logits[0],
             labels,
             reduction="none",
         )
-        losses.append(mx.sum(per_slot * mask) / mx.maximum(mx.sum(mask), 1.0))
+        losses.append(
+            mx.sum(per_slot * weights) / mx.maximum(mx.sum(weights), 1.0)
+        )
         predictions = mx.argmax(logits[0], axis=-1)
         correct = (predictions == labels).astype(mx.float32)
         accuracies.append(float((mx.sum(correct * mask) / mx.sum(mask)).item()))
     return mx.mean(mx.stack(losses)), sum(accuracies) / len(accuracies), tuple(accuracies)
+
+
+def structured_initial_state_loss(
+    logits: Any,
+    targets: RecurrentStateTargets,
+) -> tuple[Any, float]:
+    """Supervise the public-prefix state initializer with active slots only."""
+
+    if logits.shape != (1, len(targets.initial_values), STATE_CARDINALITY):
+        raise ValueError("initial state decision shape differs from the state schema")
+    labels = mx.array(targets.initial_values, dtype=mx.int32)
+    mask = mx.array(targets.initial_masks, dtype=mx.float32)
+    weights = mx.array(STATE_SLOT_LOSS_WEIGHTS, dtype=mx.float32) * mask
+    per_slot = nn.losses.cross_entropy(logits[0], labels, reduction="none")
+    loss = mx.sum(per_slot * weights) / mx.maximum(mx.sum(weights), 1.0)
+    predictions = mx.argmax(logits[0], axis=-1)
+    correct = (predictions == labels).astype(mx.float32)
+    accuracy = float((mx.sum(correct * mask) / mx.sum(mask)).item())
+    return loss, accuracy
+
+
+def structured_state_accuracy_breakdown(
+    logits: Sequence[Any],
+    targets: RecurrentStateTargets,
+) -> dict[str, float | None]:
+    """Separate computational value accuracy from control bookkeeping."""
+
+    if len(logits) != len(targets.values):
+        raise ValueError("state breakdown differs from recurrent trajectory")
+    value_correct = 0.0
+    value_total = 0.0
+    control_correct = 0.0
+    control_total = 0.0
+    value_exact = 0.0
+    value_exact_count = 0
+    for decision, labels_row, masks_row in zip(
+        logits,
+        targets.values,
+        targets.masks,
+        strict=True,
+    ):
+        labels = mx.array(labels_row, dtype=mx.int32)
+        masks = mx.array(masks_row, dtype=mx.float32)
+        predictions = mx.argmax(decision[0], axis=-1)
+        correct = (predictions == labels).astype(mx.float32)
+        value_mask = masks * mx.array((0.0, 1.0, 1.0, 1.0, 0.0))
+        control_mask = masks * mx.array((1.0, 0.0, 0.0, 0.0, 1.0))
+        value_correct += float(mx.sum(correct * value_mask).item())
+        value_total += float(mx.sum(value_mask).item())
+        control_correct += float(mx.sum(correct * control_mask).item())
+        control_total += float(mx.sum(control_mask).item())
+        if float(mx.sum(value_mask).item()) > 0.0:
+            value_exact += float(
+                (mx.sum(correct * value_mask) == mx.sum(value_mask)).item()
+            )
+            value_exact_count += 1
+    return {
+        "value_accuracy": value_correct / value_total if value_total else None,
+        "value_exact_accuracy": (
+            value_exact / value_exact_count if value_exact_count else None
+        ),
+        "control_accuracy": control_correct / control_total if control_total else None,
+    }
+
+
+def structured_initial_state_accuracy_breakdown(
+    logits: Any,
+    targets: RecurrentStateTargets,
+) -> dict[str, float | None]:
+    """Apply the same value/control split to the public-prefix initializer."""
+
+    return structured_state_accuracy_breakdown(
+        (logits,),
+        RecurrentStateTargets(
+            family=targets.family,
+            field_names=targets.field_names,
+            initial_values=targets.initial_values,
+            initial_masks=targets.initial_masks,
+            values=(targets.initial_values,),
+            masks=(targets.initial_masks,),
+            trace_sha256=targets.trace_sha256,
+        ),
+    )
+
+
+def structured_action_loss(
+    logits: Sequence[Any],
+    targets: RecurrentActionTargets,
+) -> tuple[Any, float, tuple[float, ...]]:
+    """Train all action slots while reporting accuracy only on active fields."""
+
+    if len(logits) != len(targets.values):
+        raise ValueError("action supervision differs from recurrent trajectory")
+    losses = []
+    accuracies: list[float] = []
+    active_correct_total = 0.0
+    active_field_total = 0.0
+    for decision, values, masks in zip(
+        logits,
+        targets.values,
+        targets.masks,
+        strict=True,
+    ):
+        if int(decision.shape[0]) != 1:
+            raise ValueError("structured action supervision requires one task per batch")
+        labels = mx.array(values, dtype=mx.int32)
+        per_slot = nn.losses.cross_entropy(decision[0], labels, reduction="none")
+        mask = mx.array(masks, dtype=mx.float32)
+        active_count = mx.sum(mask)
+        inactive = 1.0 - mask
+        inactive_count = mx.sum(inactive)
+        active_loss = mx.sum(per_slot * mask) / mx.maximum(active_count, 1.0)
+        null_loss = mx.sum(per_slot * inactive) / mx.maximum(inactive_count, 1.0)
+        # Active operation fields carry the computation. Null slots remain
+        # trained for post-completion stability but cannot dominate the parser.
+        losses.append(
+            mx.where(active_count > 0.0, active_loss + 0.1 * null_loss, null_loss)
+        )
+        predictions = mx.argmax(decision[0], axis=-1)
+        correct = (predictions == labels).astype(mx.float32)
+        active = float(mx.sum(mask).item())
+        active_correct = float(mx.sum(correct * mask).item())
+        if active > 0.0:
+            active_correct_total += active_correct
+            active_field_total += active
+        accuracies.append(
+            active_correct / active
+            if active > 0.0
+            else float(mx.all(predictions == labels).item())
+        )
+    active_accuracy = (
+        active_correct_total / active_field_total
+        if active_field_total > 0.0
+        else sum(accuracies) / len(accuracies)
+    )
+    return mx.mean(mx.stack(losses)), active_accuracy, tuple(accuracies)
+
+
+def structured_action_accuracy_breakdown(
+    logits: Sequence[Any],
+    targets: RecurrentActionTargets,
+) -> dict[str, Any]:
+    """Report executable whole-instruction accuracy and per-slot evidence."""
+
+    if len(logits) != len(targets.values):
+        raise ValueError("action breakdown differs from recurrent trajectory")
+    slot_correct = [0.0] * len(targets.values[0])
+    slot_total = [0.0] * len(targets.values[0])
+    exact = 0.0
+    exact_count = 0
+    for decision, values, masks in zip(
+        logits,
+        targets.values,
+        targets.masks,
+        strict=True,
+    ):
+        predictions = mx.argmax(decision[0], axis=-1)
+        labels = mx.array(values, dtype=mx.int32)
+        correct = (predictions == labels).astype(mx.float32)
+        active_indices = [index for index, active in enumerate(masks) if active]
+        if active_indices:
+            exact += float(mx.all(correct[mx.array(active_indices)] > 0.0).item())
+            exact_count += 1
+        for index in active_indices:
+            slot_correct[index] += float(correct[index].item())
+            slot_total[index] += 1.0
+    return {
+        "instruction_exact_accuracy": exact / exact_count if exact_count else None,
+        "slot_accuracy": {
+            ACTION_SLOT_NAMES[index]: (
+                slot_correct[index] / slot_total[index] if slot_total[index] else None
+            )
+            for index in range(len(ACTION_SLOT_NAMES))
+        },
+    }
 
 
 def _stutter_loss(states: Sequence[Any], targets: RecurrentStateTargets) -> Any:
@@ -379,6 +574,7 @@ def unified_intrinsic_training_loss(
     readout_sha256: str | None = None,
     decoder_input_tokens: Any | None = None,
     transition_trace: Any | None = None,
+    transition_program: Any | None = None,
     state_teacher_forcing_probability: float = 0.0,
 ) -> tuple[Any, dict[str, Any]]:
     """Train semantics at shallow depths while keeping readout immutable."""
@@ -400,6 +596,15 @@ def unified_intrinsic_training_loss(
             if transition_trace is not None
             else None
         )
+        action_targets = (
+            action_targets_from_program(transition_program, depth)
+            if transition_program is not None
+            else None
+        )
+        if action_targets is not None and depth_targets is None:
+            raise ValueError("action supervision requires state supervision")
+        initial_state_logits: list[Any] = []
+        action_logits: list[Any] = []
         recurrent_states, states, losses, state_logits = (
             unified_answer_and_recurrent_trajectory(
                 model,
@@ -413,11 +618,19 @@ def unified_intrinsic_training_loss(
                 state_teacher_values=(
                     depth_targets.values if depth_targets is not None else None
                 ),
+                action_teacher_values=(
+                    action_targets.values if action_targets is not None else None
+                ),
+                initial_state_teacher_values=(
+                    depth_targets.initial_values if depth_targets is not None else None
+                ),
                 state_teacher_forcing_probability=(
                     state_teacher_forcing_probability
                     if depth_targets is not None
                     else 0.0
                 ),
+                initial_state_logit_trajectory=initial_state_logits,
+                action_logit_trajectory=action_logits,
             )
         )
         final_losses.append(losses[-1])
@@ -431,6 +644,11 @@ def unified_intrinsic_training_loss(
             state_loss = mx.zeros(())
             state_accuracy = None
             state_step_accuracy: tuple[float, ...] = ()
+            initial_state_loss = mx.zeros(())
+            initial_state_accuracy = None
+            action_loss = mx.zeros(())
+            action_accuracy = None
+            action_step_accuracy: tuple[float, ...] = ()
             stuttering = mx.zeros(())
             halting = (
                 mx.zeros(())
@@ -446,9 +664,29 @@ def unified_intrinsic_training_loss(
                 state_slot_start=int(tokens.shape[-1]),
                 state_logits=state_logits,
             )
+            if len(initial_state_logits) != 1:
+                raise RuntimeError("typed recurrence emitted no initial state decision")
+            initial_state_loss, initial_state_accuracy = structured_initial_state_loss(
+                initial_state_logits[0],
+                targets,
+            )
+            if action_targets is None:
+                action_loss = mx.zeros(())
+                action_accuracy = None
+                action_step_accuracy = ()
+                state_loss = 0.5 * (state_loss + initial_state_loss)
+            else:
+                action_loss, action_accuracy, action_step_accuracy = (
+                    structured_action_loss(action_logits, action_targets)
+                )
+                state_loss = (state_loss + initial_state_loss + action_loss) / 3.0
             stuttering = _stutter_loss(recurrent_states, targets)
             halting = _supervised_halt_loss(controller, recurrent_states, targets)
             state_commitments[f"T{depth}"] = targets.commitment()
+            if action_targets is not None:
+                state_commitments[f"T{depth}"]["action"] = (
+                    action_targets.commitment()
+                )
         progression_terms.append(progression)
         if transition_trace is None or targets is not None:
             halt_terms.append(halting)
@@ -462,6 +700,11 @@ def unified_intrinsic_training_loss(
             "halt_loss": float(halting.item()),
             "state_loss": float(state_loss.item()),
             "state_accuracy": state_accuracy,
+            "initial_state_loss": float(initial_state_loss.item()),
+            "initial_state_accuracy": initial_state_accuracy,
+            "action_loss": float(action_loss.item()),
+            "action_accuracy": action_accuracy,
+            "action_step_accuracy": list(action_step_accuracy),
             "state_step_accuracy": list(state_step_accuracy),
             "stutter_loss": float(stuttering.item()),
         }
@@ -517,6 +760,11 @@ __all__ = [
     "UnifiedIntrinsicTrainingSpec",
     "readout_fingerprint",
     "structured_state_loss",
+    "structured_state_accuracy_breakdown",
+    "structured_initial_state_accuracy_breakdown",
+    "structured_initial_state_loss",
+    "structured_action_loss",
+    "structured_action_accuracy_breakdown",
     "unified_answer_and_recurrent_trajectory",
     "unified_answer_trajectory",
     "unified_intrinsic_training_loss",

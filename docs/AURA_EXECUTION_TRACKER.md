@@ -44329,3 +44329,60 @@ recurrent hidden state. The completion envelope advances to `904/920`
 (approximately `98.3%`). Next is structured transition-state supervision in
 the recurrent transformer, followed by the same non-floor decoded comparison;
 no resident-32B allocation is admissible before that 1.5B behavior gate passes.
+
+## Checkpoints 2026-08-11-209 through 210: Public Programs Become Stable Causal Recurrent State
+
+CP209 replaced descriptive state probes with five categorical machine-state
+slots that are inserted into the resident transformer's real recurrent
+sequence. A predicted state is committed as the next pass's input; private
+transition traces remain evaluator/training authorities and are never
+serialized into the public prompt. Initial-state, action, transition and
+terminal metrics are reported separately so inactive post-completion fields
+cannot inflate executable accuracy. The controller's T=1 semantic correction
+remains structurally bypassed and the frozen coda/readout contract is unchanged.
+
+Early CP210 diagnostics localized the next failure rather than hiding it. The
+initial bag-of-literals decoder reached useful field accuracy but produced
+`0/24` exact instructions. A tokenizer audit then found that standalone BPE
+markers did not match modular operators with leading spaces and that register
+arithmetic could be misclassified as addition. That run was stopped at step 10.
+The repaired observation contract is grammar-scoped, tokenizer-bound and part
+of campaign identity. It identifies only public executable spans, carries no
+private trace or answer, and independently reconstructed the intended opcode
+multisets on 160 generated tasks across four families, depths `1..4`, and ten
+seeds with zero mismatches.
+
+The same public contract now compiles graph, modular and register syntax into a
+canonical eight-field micro-instruction selected by the current categorical
+state. An exact typed ALU executes recognized instructions, while an unknown
+grammar retains the learned fallback. Initial registers are reconstructed only
+from public syntax. Completion has highest authority: once the exact `done` bit
+is set, later passes are idempotent even if the learned action head proposes a
+valid operation. A separate 120-case audit replayed every active instruction
+through depths `1..4` with zero mismatch.
+
+The fresh source/model-bound Qwen2.5-1.5B smoke used 24 prompt-disjoint
+holdouts. Initial state, active instruction, complete recurrent state, value
+exactness and control exactness were all `24/24` at each of
+`T1,T2,T4,T8,T16`. The immutable language readout remained
+`1599d3c7ce72469195f2e76b4cb984355feeb9806d63443209da31fd74caf0e3`.
+The checkpoint SHA-256 is
+`293f80ebf80772c8ae62133767e062317438b63f76640423da44b6d2107d7265`;
+the receipt commitment is
+`e3c445781f62fb04381649be57f3023be6a48b7a75449976199641862f26c84b`.
+An independent seed-`20260811123` evaluation accepted the bound source,
+checkpoint, tokenizer contracts and frozen readout, then found T16 lower CE
+than trained T1 on `23/24` fresh tasks (mean gain `0.080402`, sign-test
+`p=2.98e-6`; report commitment
+`b841a38bd56c31e57733f53c5bc33ae9465f700138f7a7ac2ab6671f182e28c7`).
+The one-update checkpoint remained worse than unmodified base T1, so this is
+depth-conditioned state/readout evidence, not an admitted semantic model.
+
+This proves public-only causal execution and arbitrary post-completion
+stability for the three admitted grammars. It does not yet prove emitted-answer
+correctness, broad language reasoning gain, resident-32B transfer, fusion,
+frontier performance, or a `WOW Signal`. The completion envelope advances to
+`906/920` (approximately `98.5%`). Next is the semantic readout bridge: train
+the frozen-state trajectory to produce correct free-running answer tokens,
+then require a non-floor fresh decode, causal lesions, independent-seed
+replication and only then open resident-32B admission.

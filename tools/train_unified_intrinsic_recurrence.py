@@ -24,6 +24,19 @@ import mlx.optimizers as optim  # noqa: E402
 from mlx.utils import tree_flatten, tree_unflatten  # noqa: E402
 
 from core.learning.intrinsic_recurrence import _run, checkpointed_window  # noqa: E402
+from core.learning.recurrent_action_schema import (  # noqa: E402
+    ACTION_SLOT_NAMES,
+    action_targets_from_program,
+    action_value_semantic_label,
+)
+from core.learning.recurrent_literal_grounding import (  # noqa: E402
+    LITERAL_MAX_VALUE,
+    LiteralObservationContract,
+    tokenizer_digit_token_ids,
+)
+from core.learning.recurrent_opcode_grounding import (  # noqa: E402
+    tokenizer_opcode_contract,
+)
 from core.learning.recurrent_state_schema import (  # noqa: E402
     STATE_SLOT_NAMES,
     state_targets_from_trace,
@@ -31,9 +44,13 @@ from core.learning.recurrent_state_schema import (  # noqa: E402
 from core.learning.unified_intrinsic_objective import (  # noqa: E402
     UnifiedIntrinsicTrainingSpec,
     readout_fingerprint,
+    structured_action_accuracy_breakdown,
+    structured_action_loss,
+    structured_initial_state_accuracy_breakdown,
+    structured_initial_state_loss,
+    structured_state_accuracy_breakdown,
     structured_state_loss,
     unified_answer_and_recurrent_trajectory,
-    unified_answer_trajectory,
     unified_intrinsic_training_loss,
 )
 from core.learning.unified_intrinsic_recurrence import (  # noqa: E402
@@ -48,6 +65,9 @@ TRAINING_SCHEMA = "aura.unified_intrinsic_training.v1"
 TRAINING_SOURCE_FILES = (
     "core/learning/depth_conditioned_lora.py",
     "core/learning/recurrence_curriculum.py",
+    "core/learning/recurrent_action_schema.py",
+    "core/learning/recurrent_literal_grounding.py",
+    "core/learning/recurrent_opcode_grounding.py",
     "core/learning/recurrent_state_schema.py",
     "core/learning/unified_intrinsic_objective.py",
     "core/learning/unified_intrinsic_recurrence.py",
@@ -187,29 +207,62 @@ def _ground_state_value_embeddings(
 ) -> str:
     """Initialize typed values on the frozen model's native prelude manifold."""
 
+    def frozen_label_hidden(label: str) -> Any:
+        try:
+            token_ids = tokenizer.encode(label, add_special_tokens=False)
+        except TypeError:
+            token_ids = tokenizer.encode(label)
+        if not token_ids:
+            raise RuntimeError("grounded semantic label encoded to no tokens")
+        tokens = mx.array([token_ids], dtype=mx.int32)
+        hidden = model.model.embed_tokens(tokens)
+        return _run(model.model.layers[:prelude_end], hidden)[0, -1, :].astype(
+            mx.float32
+        )
+
     rows = []
     for slot_name in STATE_SLOT_NAMES:
         values = []
         for value in range(controller.config.state_cardinality):
             label = f"Internal state {slot_name}={value}"
-            try:
-                token_ids = tokenizer.encode(label, add_special_tokens=False)
-            except TypeError:
-                token_ids = tokenizer.encode(label)
-            if not token_ids:
-                raise RuntimeError("state codebook label encoded to no tokens")
-            tokens = mx.array([token_ids], dtype=mx.int32)
-            hidden = model.model.embed_tokens(tokens)
-            hidden = _run(model.model.layers[:prelude_end], hidden)
-            values.append(hidden[0, -1, :].astype(mx.float32))
+            values.append(frozen_label_hidden(label))
         rows.append(mx.stack(values))
     grounded = mx.stack(rows)
     if grounded.shape != controller.state_value_embeddings.shape:
         raise RuntimeError("grounded state codebook shape differs from controller")
     controller.state_value_embeddings = grounded
-    mx.eval(controller.state_value_embeddings)
+    action_rows = []
+    for slot_name in ACTION_SLOT_NAMES:
+        values = []
+        for value in range(controller.config.action_cardinality):
+            values.append(
+                frozen_label_hidden(action_value_semantic_label(slot_name, value))
+            )
+        action_rows.append(mx.stack(values))
+    grounded_actions = mx.stack(action_rows)
+    if grounded_actions.shape != controller.action_value_embeddings.shape:
+        raise RuntimeError("grounded action codebook shape differs from controller")
+    controller.action_value_embeddings = grounded_actions
+    literal_values = []
+    for value in range(LITERAL_MAX_VALUE + 1):
+        literal_values.append(frozen_label_hidden(str(value)))
+    grounded_literals = mx.stack(literal_values)
+    if grounded_literals.shape != controller.literal_value_embeddings.shape:
+        raise RuntimeError("grounded literal codebook shape differs from controller")
+    controller.literal_value_embeddings = grounded_literals
+    mx.eval(
+        controller.state_value_embeddings,
+        controller.action_value_embeddings,
+        controller.literal_value_embeddings,
+        controller.state_slot_embeddings,
+        controller.action_slot_embeddings,
+    )
     digest = hashlib.sha256(
         bytes(memoryview(controller.state_value_embeddings.astype(mx.float32)))
+        + bytes(memoryview(controller.action_value_embeddings.astype(mx.float32)))
+        + bytes(memoryview(controller.literal_value_embeddings.astype(mx.float32)))
+        + bytes(memoryview(controller.state_slot_embeddings.astype(mx.float32)))
+        + bytes(memoryview(controller.action_slot_embeddings.astype(mx.float32)))
     ).hexdigest()
     return digest
 
@@ -225,10 +278,13 @@ def _optimization_phase(
         raise ValueError("semantic warmup steps must be non-negative")
     if type(state_warmup_steps) is not int or state_warmup_steps < 0:
         raise ValueError("state warmup steps must be non-negative")
-    if step < semantic_warmup_steps:
-        return "semantic_anchor"
-    if step < semantic_warmup_steps + state_warmup_steps:
+    # State parsing must exist before a semantic adapter is asked to decode a
+    # typed path.  Training the no-state decoder first produced an apparent CE
+    # gain while the actual T1 inference path collapsed to punctuation.
+    if step < state_warmup_steps:
         return "state_transition"
+    if step < state_warmup_steps + semantic_warmup_steps:
+        return "semantic_anchor"
     return "recurrence"
 
 
@@ -283,10 +339,39 @@ def _clip_gradient_norm(gradients: Any, max_norm: float) -> tuple[Any, Any]:
 def _gradient_ownership_group(name: str) -> str:
     if name.startswith("model."):
         return "scoped_transformer_bridge"
-    if name.startswith(("controller.state_transition_", "controller.state_readout_")):
+    if name.startswith(
+        ("controller.action_value_embeddings", "controller.action_slot_embeddings")
+    ):
+        return "typed_action_codebook"
+    if name.startswith(
+        (
+            "controller.action_query",
+            "controller.action_key",
+            "controller.action_value",
+            "controller.action_output",
+            "controller.action_depth",
+            "controller.action_bias",
+            "controller.action_literal_copy_logit",
+            "controller.opcode_copy_logit",
+            "controller.state_action_projection",
+        )
+    ):
+        return "typed_action_transition"
+    if name.startswith(
+        (
+            "controller.state_transition_",
+            "controller.state_readout_",
+            "controller.state_literal_copy_logit",
+        )
+    ):
         return "typed_state_transition"
     if name.startswith(
-        ("controller.state_value_embeddings", "controller.state_slot_embeddings")
+        (
+            "controller.state_value_embeddings",
+            "controller.state_slot_embeddings",
+            "controller.literal_value_embeddings",
+            "controller.literal_grounding_logit",
+        )
     ):
         return "typed_state_codebook"
     return "recurrent_controller"
@@ -585,10 +670,21 @@ def _evaluate(
     totals = {depth: 0.0 for depth in depths}
     state_totals = {depth: 0.0 for depth in depths}
     state_counts = {depth: 0 for depth in depths}
+    initial_state_totals = {depth: 0.0 for depth in depths}
+    state_value_totals = {depth: 0.0 for depth in depths}
+    state_control_totals = {depth: 0.0 for depth in depths}
+    initial_value_totals = {depth: 0.0 for depth in depths}
+    initial_control_totals = {depth: 0.0 for depth in depths}
+    state_value_exact_totals = {depth: 0.0 for depth in depths}
+    initial_value_exact_totals = {depth: 0.0 for depth in depths}
+    action_totals = {depth: 0.0 for depth in depths}
+    action_exact_totals = {depth: 0.0 for depth in depths}
     with recurrence_adapter_scope(start=None, stop=None):
         for task in tasks:
             prompt, answer = encode_example(tokenizer, task, bridge)
             for depth in depths:
+                initial_state_logits: list[Any] = []
+                action_logits: list[Any] = []
                 recurrent_states, _states, losses, state_logits = (
                     unified_answer_and_recurrent_trajectory(
                         bundle.model,
@@ -599,6 +695,8 @@ def _evaluate(
                         use_state_slots=(
                             getattr(task, "transition_trace", None) is not None
                         ),
+                        initial_state_logit_trajectory=initial_state_logits,
+                        action_logit_trajectory=action_logits,
                     )
                 )
                 totals[depth] += float(losses[-1].item())
@@ -613,7 +711,57 @@ def _evaluate(
                         state_slot_start=int(prompt.shape[-1]),
                         state_logits=state_logits,
                     )
+                    if len(initial_state_logits) != 1:
+                        raise RuntimeError(
+                            "evaluation emitted no initial state decision"
+                        )
+                    _initial_loss, initial_accuracy = structured_initial_state_loss(
+                        initial_state_logits[0],
+                        targets,
+                    )
+                    state_breakdown = structured_state_accuracy_breakdown(
+                        state_logits,
+                        targets,
+                    )
+                    initial_breakdown = structured_initial_state_accuracy_breakdown(
+                        initial_state_logits[0],
+                        targets,
+                    )
+                    program = getattr(task, "transition_program", None)
+                    if program is None:
+                        raise RuntimeError("evaluation task has no exact action program")
+                    action_targets = action_targets_from_program(program, depth)
+                    _action_loss, action_accuracy, _action_steps = (
+                        structured_action_loss(action_logits, action_targets)
+                    )
+                    action_breakdown = structured_action_accuracy_breakdown(
+                        action_logits,
+                        action_targets,
+                    )
                     state_totals[depth] += state_accuracy
+                    initial_state_totals[depth] += initial_accuracy
+                    state_value_totals[depth] += float(
+                        state_breakdown["value_accuracy"] or 0.0
+                    )
+                    state_control_totals[depth] += float(
+                        state_breakdown["control_accuracy"] or 0.0
+                    )
+                    initial_value_totals[depth] += float(
+                        initial_breakdown["value_accuracy"] or 0.0
+                    )
+                    initial_control_totals[depth] += float(
+                        initial_breakdown["control_accuracy"] or 0.0
+                    )
+                    state_value_exact_totals[depth] += float(
+                        state_breakdown["value_exact_accuracy"] or 0.0
+                    )
+                    initial_value_exact_totals[depth] += float(
+                        initial_breakdown["value_exact_accuracy"] or 0.0
+                    )
+                    action_totals[depth] += action_accuracy
+                    action_exact_totals[depth] += float(
+                        action_breakdown["instruction_exact_accuracy"] or 0.0
+                    )
                     state_counts[depth] += 1
             envelope.reclaim(force=True)
     count = len(tasks)
@@ -626,6 +774,64 @@ def _evaluate(
         )
         for depth in depths
     }
+    initial_state_accuracy = {
+        f"T{depth}": (
+            initial_state_totals[depth] / state_counts[depth]
+            if state_counts[depth]
+            else None
+        )
+        for depth in depths
+    }
+    action_accuracy = {
+        f"T{depth}": (
+            action_totals[depth] / state_counts[depth]
+            if state_counts[depth]
+            else None
+        )
+        for depth in depths
+    }
+    state_value_accuracy = {
+        f"T{depth}": state_value_totals[depth] / state_counts[depth]
+        if state_counts[depth]
+        else None
+        for depth in depths
+    }
+    state_control_accuracy = {
+        f"T{depth}": state_control_totals[depth] / state_counts[depth]
+        if state_counts[depth]
+        else None
+        for depth in depths
+    }
+    initial_value_accuracy = {
+        f"T{depth}": initial_value_totals[depth] / state_counts[depth]
+        if state_counts[depth]
+        else None
+        for depth in depths
+    }
+    initial_control_accuracy = {
+        f"T{depth}": initial_control_totals[depth] / state_counts[depth]
+        if state_counts[depth]
+        else None
+        for depth in depths
+    }
+    state_value_exact_accuracy = {
+        f"T{depth}": state_value_exact_totals[depth] / state_counts[depth]
+        if state_counts[depth]
+        else None
+        for depth in depths
+    }
+    initial_value_exact_accuracy = {
+        f"T{depth}": initial_value_exact_totals[depth] / state_counts[depth]
+        if state_counts[depth]
+        else None
+        for depth in depths
+    }
+    action_instruction_exact_accuracy = {
+        f"T{depth}": action_exact_totals[depth] / state_counts[depth]
+        if state_counts[depth]
+        else None
+        for depth in depths
+    }
     anchor = ce["T1"]
     trained_deeper = [
         ce[f"T{depth}"] for depth in spec.train_depths if depth != 1
@@ -636,6 +842,15 @@ def _evaluate(
         "examples": count,
         "ce": ce,
         "state_accuracy": state_accuracy,
+        "initial_state_accuracy": initial_state_accuracy,
+        "state_value_accuracy": state_value_accuracy,
+        "state_control_accuracy": state_control_accuracy,
+        "initial_value_accuracy": initial_value_accuracy,
+        "initial_control_accuracy": initial_control_accuracy,
+        "action_accuracy": action_accuracy,
+        "state_value_exact_accuracy": state_value_exact_accuracy,
+        "initial_value_exact_accuracy": initial_value_exact_accuracy,
+        "action_instruction_exact_accuracy": action_instruction_exact_accuracy,
         "best_depth": min(ce, key=ce.__getitem__),
         "best_deep_relative_gain": (
             (anchor - min(all_deeper)) / max(anchor, 1e-9)
@@ -847,6 +1062,16 @@ def main() -> int:
             "state-supervised curriculum contains tasks without exact traces: "
             + ",".join(missing_traces[:5])
         )
+    missing_programs = [
+        task.task_id
+        for task in train_tasks + holdout
+        if task.transition_program is None
+    ]
+    if missing_programs:
+        raise RuntimeError(
+            "action-supervised curriculum contains tasks without exact programs: "
+            + ",".join(missing_programs[:5])
+        )
 
     out_dir = args.out_dir.expanduser().resolve()
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -865,6 +1090,9 @@ def main() -> int:
         mx.random.seed(args.init_seed)
         model, tokenizer = load(args.model)
         model.freeze()
+        literal_digit_ids = tokenizer_digit_token_ids(tokenizer)
+        literal_contract = LiteralObservationContract(literal_digit_ids)
+        opcode_contract = tokenizer_opcode_contract(tokenizer)
         wiring = _attach_window_adapters(
             model,
             spec,
@@ -879,6 +1107,9 @@ def main() -> int:
                 correction_rank=args.controller_rank,
                 minimum_iterations=1,
                 initialization_seed=args.init_seed,
+                literal_digit_token_ids=literal_digit_ids,
+                opcode_token_patterns=opcode_contract.patterns,
+                opcode_context_patterns=opcode_contract.contexts,
             )
         )
         state_codebook_sha256 = _ground_state_value_embeddings(
@@ -918,8 +1149,18 @@ def main() -> int:
             "controller_rank": args.controller_rank,
             "state_weight": args.state_weight,
             "stutter_weight": args.stutter_weight,
-            "state_codebook": "frozen_prelude_semantic_labels",
+            "state_codebook": (
+                "frozen_prelude_state_action_and_tokenizer_literal_labels"
+            ),
             "state_codebook_sha256": state_codebook_sha256,
+            "literal_observation_contract": {
+                **literal_contract.to_dict(),
+                "contract_sha256": literal_contract.contract_sha256,
+            },
+            "opcode_observation_contract": {
+                **opcode_contract.to_dict(),
+                "contract_sha256": opcode_contract.contract_sha256,
+            },
             "depth_basis_size": args.depth_basis_size,
             "lora_targets": list(targets),
             "wiring": wiring,
@@ -967,21 +1208,6 @@ def main() -> int:
             recurrence_adapter_scope,
         )
 
-        def semantic_objective(
-            candidate: UnifiedTrainingBundle,
-            prompt: Any,
-            answer: Any,
-        ):
-            _states, losses = unified_answer_trajectory(
-                candidate.model,
-                prompt,
-                answer,
-                spec.plan_at(1),
-                candidate.controller,
-            )
-            return losses[-1]
-
-        semantic_loss_and_grad = nn.value_and_grad(bundle, semantic_objective)
         rollin_totals = {
             "examples": 0,
             "answer_tokens": 0,
@@ -1005,11 +1231,27 @@ def main() -> int:
                 prompt, answer = encode_example(tokenizer, task, bridge)
                 with recurrence_adapter_scope(start=None, stop=None):
                     if phase == "semantic_anchor":
-                        loss, gradients = semantic_loss_and_grad(
+                        def semantic_objective(
+                            candidate: UnifiedTrainingBundle,
+                            objective_prompt: Any,
+                            objective_answer: Any,
+                        ):
+                            _recurrent, _states, losses, _state_logits = (
+                                unified_answer_and_recurrent_trajectory(
+                                    candidate.model,
+                                    objective_prompt,
+                                    objective_answer,
+                                    spec.plan_at(1),
+                                    candidate.controller,
+                                    use_state_slots=True,
+                                )
+                            )
+                            return losses[-1]
+
+                        loss, gradients = nn.value_and_grad(
                             bundle,
-                            prompt,
-                            answer,
-                        )
+                            semantic_objective,
+                        )(bundle, prompt, answer)
                     else:
                         if phase == "state_transition":
                             effective = answer
@@ -1077,6 +1319,7 @@ def main() -> int:
                             objective_answer: Any,
                             objective_rollin: Any,
                             transition_trace: Any = task.transition_trace,
+                            transition_program: Any = task.transition_program,
                             state_teacher_forcing_probability: float = (
                                 state_teacher_probability
                             ),
@@ -1093,6 +1336,7 @@ def main() -> int:
                                 readout_sha256=readout_sha256,
                                 decoder_input_tokens=objective_rollin,
                                 transition_trace=transition_trace,
+                                transition_program=transition_program,
                                 state_teacher_forcing_probability=(
                                     state_teacher_forcing_probability
                                 ),

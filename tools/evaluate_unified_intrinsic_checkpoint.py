@@ -22,6 +22,14 @@ from mlx.utils import tree_unflatten  # noqa: E402
 from core.learning.intrinsic_recurrence_objective import (  # noqa: E402
     answer_cross_entropy,
 )
+from core.learning.recurrent_literal_grounding import (  # noqa: E402
+    LiteralObservationContract,
+    tokenizer_digit_token_ids,
+)
+from core.learning.recurrent_opcode_grounding import (  # noqa: E402
+    OpcodeObservationContract,
+    tokenizer_opcode_contract,
+)
 from core.learning.unified_intrinsic_objective import (  # noqa: E402
     UnifiedIntrinsicTrainingSpec,
     readout_fingerprint,
@@ -93,6 +101,47 @@ def _load_checkpoint(
     mx.random.seed(int(identity["init_seed"]))
     model, tokenizer = load(model_identity["canonical_path"])
     model.freeze()
+    literal_identity = identity.get("literal_observation_contract")
+    if not isinstance(literal_identity, dict):
+        raise RuntimeError("unified checkpoint literal contract is absent")
+    literal_contract = LiteralObservationContract(
+        tuple(literal_identity.get("digit_token_ids", ())),
+        max_value=literal_identity.get("max_value"),
+        schema=literal_identity.get("schema"),
+    )
+    if (
+        literal_contract.contract_sha256 != literal_identity.get("contract_sha256")
+        or literal_contract.digit_token_ids != tokenizer_digit_token_ids(tokenizer)
+    ):
+        raise RuntimeError("unified checkpoint literal contract differs")
+    opcode_identity = identity.get("opcode_observation_contract")
+    if not isinstance(opcode_identity, dict):
+        raise RuntimeError("unified checkpoint opcode contract is absent")
+    opcode_contract = OpcodeObservationContract(
+        tuple(
+            (
+                row.get("opcode"),
+                tuple(row.get("token_ids", ())),
+            )
+            for row in opcode_identity.get("patterns", ())
+            if isinstance(row, dict)
+        ),
+        tuple(
+            (
+                row.get("name"),
+                tuple(row.get("token_ids", ())),
+            )
+            for row in opcode_identity.get("contexts", ())
+            if isinstance(row, dict)
+        ),
+        schema=opcode_identity.get("schema"),
+    )
+    tokenizer_contract = tokenizer_opcode_contract(tokenizer)
+    if (
+        opcode_contract.contract_sha256 != opcode_identity.get("contract_sha256")
+        or opcode_contract != tokenizer_contract
+    ):
+        raise RuntimeError("unified checkpoint opcode contract differs")
     spec = UnifiedIntrinsicTrainingSpec(**identity["spec"])
     wiring = _attach_window_adapters(
         model,
@@ -109,6 +158,9 @@ def _load_checkpoint(
             correction_rank=int(identity["controller_rank"]),
             minimum_iterations=1,
             initialization_seed=int(identity["init_seed"]),
+            literal_digit_token_ids=literal_contract.digit_token_ids,
+            opcode_token_patterns=opcode_contract.patterns,
+            opcode_context_patterns=opcode_contract.contexts,
         )
     )
     bundle = UnifiedTrainingBundle(model, controller)
