@@ -601,6 +601,7 @@ class UnifiedRecurrentController(nn.Module):
         state_probabilities: Any | None = None,
         role_logit_trajectory: list[Any] | None = None,
         place_logit_trajectory: list[Any] | None = None,
+        binding_feature_trajectory: list[tuple[Any, Any, Any]] | None = None,
     ) -> Any:
         """Give answer positions a direct neural read path to typed registers."""
 
@@ -636,12 +637,55 @@ class UnifiedRecurrentController(nn.Module):
         gate = mx.sigmoid(answer @ self.answer_gate_query + self.answer_gate_logit)
         bridged = answer + gate * delta
 
+        role_logits, place_logits = self.answer_binding_logits(
+            answer,
+            state,
+            state_probabilities,
+        )
+        if binding_feature_trajectory is not None:
+            if state_probabilities is None:
+                raise ValueError("cached answer binding requires typed probabilities")
+            binding_feature_trajectory.append(
+                (
+                    mx.stop_gradient(answer),
+                    mx.stop_gradient(state),
+                    mx.stop_gradient(state_probabilities.astype(mx.float32)),
+                )
+            )
+        if role_logit_trajectory is not None:
+            role_logit_trajectory.append(role_logits)
+        if place_logit_trajectory is not None:
+            place_logit_trajectory.append(place_logits)
+        return mx.concatenate(
+            [candidate[:, :answer_start, :], bridged.astype(candidate.dtype)],
+            axis=1,
+        )
+
+    def answer_binding_logits(
+        self,
+        answer: Any,
+        state: Any,
+        state_probabilities: Any | None,
+    ) -> tuple[Any, Any]:
+        """Decode answer role and decimal place from reusable causal features."""
+
+        if (
+            len(answer.shape) != 3
+            or len(state.shape) != 3
+            or int(answer.shape[0]) != int(state.shape[0])
+            or int(answer.shape[-1]) != self.config.hidden_size
+            or state.shape[1:] != (
+                self.config.state_slots,
+                self.config.hidden_size,
+            )
+        ):
+            raise ValueError("answer binding feature layout differs")
         role_logits = answer @ self.answer_role_projection + self.answer_role_bias
         role_probabilities = mx.softmax(role_logits.astype(mx.float32), axis=-1)
         selected_state = mx.einsum(
             "bar,brh->bah",
             role_probabilities[..., 1:],
-            state,
+            state.astype(mx.float32),
         )
         width_logits = mx.zeros((*answer.shape[:2], 3), dtype=mx.float32)
         if state_probabilities is not None:
@@ -665,7 +709,7 @@ class UnifiedRecurrentController(nn.Module):
             )
             width_logits = width_features @ self.answer_place_width_projection
         # Prefix position identifies the output field, but it cannot reveal
-        # whether that field's value has one or two digits.  The selected typed
+        # whether that field's value has one or two digits. The selected typed
         # register makes digit width causally observable to the neural head.
         place_logits = (
             answer @ self.answer_place_projection
@@ -673,14 +717,7 @@ class UnifiedRecurrentController(nn.Module):
             + width_logits
             + self.answer_place_bias
         )
-        if role_logit_trajectory is not None:
-            role_logit_trajectory.append(role_logits)
-        if place_logit_trajectory is not None:
-            place_logit_trajectory.append(place_logits)
-        return mx.concatenate(
-            [candidate[:, :answer_start, :], bridged.astype(candidate.dtype)],
-            axis=1,
-        )
+        return role_logits, place_logits
 
     def apply_answer_digit_pointer(
         self,
@@ -1575,6 +1612,7 @@ def unified_recurrent_hidden_states(
     state_probability_trajectory: list[Any] | None = None,
     answer_role_logit_trajectory: list[Any] | None = None,
     answer_place_logit_trajectory: list[Any] | None = None,
+    answer_binding_feature_trajectory: list[tuple[Any, Any, Any]] | None = None,
     state_teacher_values: Sequence[Sequence[int]] | None = None,
     action_teacher_values: Sequence[Sequence[int]] | None = None,
     initial_state_teacher_values: Sequence[int] | None = None,
@@ -1776,6 +1814,7 @@ def unified_recurrent_hidden_states(
                     state_probabilities=state_probabilities,
                     role_logit_trajectory=answer_role_logit_trajectory,
                     place_logit_trajectory=answer_place_logit_trajectory,
+                    binding_feature_trajectory=answer_binding_feature_trajectory,
                 )
                 if prior_terminal_mask is not None:
                     # A completed program stutters semantically as well as in

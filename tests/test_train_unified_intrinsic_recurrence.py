@@ -11,6 +11,7 @@ from pathlib import Path
 import pytest
 
 mx = pytest.importorskip("mlx.core")
+nn = pytest.importorskip("mlx.nn")
 optim = pytest.importorskip("mlx.optimizers")
 pytest.importorskip("mlx_lm")
 
@@ -35,16 +36,19 @@ from tools.train_unified_intrinsic_recurrence import (  # noqa: E402
     TRAINING_SOURCE_FILES,
     UnifiedTrainingBundle,
     _answer_binding_loss,
+    _answer_bridge_task,
     _answer_role_place_targets,
     _atomic_canonical_json,
     _attach_window_adapters,
     _await_resource_guard,
+    _cached_answer_binding_loss,
     _canonical_sha256,
     _clip_gradient_groups,
     _clip_gradient_norm,
     _configure_window_tissue,
     _deterministic_student_mix,
     _evaluate,
+    _evaluate_answer_bridge_admission,
     _freeze_dataset,
     _generate_student_rollin,
     _ground_state_value_embeddings,
@@ -417,6 +421,166 @@ def test_answer_binding_targets_identify_register_roles_and_digit_places() -> No
     place_logits = mx.zeros((1, 10, 3))
     loss = _answer_binding_loss(role_logits, place_logits, roles, places)
     assert float(loss.item()) > 0.0
+
+
+def test_answer_bridge_schedule_covers_each_family_before_repeating() -> None:
+    tasks = [
+        type(
+            "Task",
+            (),
+            {
+                "family": family,
+                "depth": depth,
+                "task_id": f"{family}-{depth}",
+            },
+        )()
+        for family in ("modular", "khop", "register_trace")
+        for depth in (1, 2, 4)
+    ]
+    assert [
+        _answer_bridge_task(tasks, index).family for index in range(3)
+    ] == ["khop", "modular", "register_trace"]
+    assert {
+        (_answer_bridge_task(tasks, index).family, _answer_bridge_task(tasks, index).depth)
+        for index in range(9)
+    } == {
+        (family, depth)
+        for family in ("khop", "modular", "register_trace")
+        for depth in (1, 2, 4)
+    }
+
+
+def test_cached_answer_binding_loss_trains_without_model_execution() -> None:
+    bundle, _wiring = _bundle()
+    controller = bundle.controller
+    answer = mx.random.normal((1, 5, controller.config.hidden_size))
+    state = mx.random.normal(
+        (1, controller.config.state_slots, controller.config.hidden_size)
+    )
+    probabilities = controller.exact_probabilities(
+        tuple((3, 12, 7, 1, 0)[: controller.config.state_slots]),
+        slots=controller.config.state_slots,
+        cardinality=controller.config.state_cardinality,
+    )
+    targets = (
+        mx.array([[0, 2, 2, 0, 0]], dtype=mx.int32),
+        mx.array([[0, 1, 2, 0, 0]], dtype=mx.int32),
+    )
+    features = tuple(mx.stop_gradient(value) for value in (answer, state, probabilities))
+    optimizer = optim.Adam(learning_rate=0.01)
+    optimizer.init(bundle.trainable_parameters())
+    before = float(_cached_answer_binding_loss(bundle, features, targets).item())
+    for _ in range(20):
+        loss, gradients = nn.value_and_grad(bundle, _cached_answer_binding_loss)(
+            bundle,
+            features,
+            targets,
+        )
+        gradients = _phase_gradients(gradients, "answer_bridge")
+        optimizer.update(bundle, gradients)
+        mx.eval(bundle.parameters(), optimizer.state)
+    after = float(_cached_answer_binding_loss(bundle, features, targets).item())
+    assert after < before
+
+
+def test_answer_bridge_admission_requires_exact_autonomous_emission_per_cell(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    bundle, _wiring = _bundle()
+    spec = UnifiedIntrinsicTrainingSpec(2, 4, (1, 2), (4, 8))
+    tasks = [
+        type(
+            "Task",
+            (),
+            {
+                "family": family,
+                "task_id": f"{family}-{depth}",
+                "depth": depth,
+            },
+        )()
+        for family in ("khop", "modular", "register_trace")
+        for depth in (1, 2, 4)
+    ]
+    answers = {
+        family: mx.array([[index + 10, 63]], dtype=mx.int32)
+        for index, family in enumerate(("khop", "modular", "register_trace"))
+    }
+    monkeypatch.setattr(
+        "tools.train_unified_intrinsic_recurrence.encode_example",
+        lambda _tokenizer, task, _bridge: (mx.array([[1]]), answers[task.family]),
+    )
+    monkeypatch.setattr(
+        "tools.train_unified_intrinsic_recurrence._generate_student_rollin",
+        lambda _bundle, _prompt, answer, _plan, **_kwargs: answer,
+    )
+    tokenizer = type("Tokenizer", (), {"eos_token_id": 63})()
+    contract = RecurrentAnswerEmissionContract(
+        digit_token_ids=tuple(range(10, 20)),
+        eos_token_id=63,
+        family_markers=(("khop", (1,)), ("modular", (2,)), ("register_trace", (3,))),
+        syntax=(
+            ("close", (4,)),
+            ("khop", (5,)),
+            ("modular", (6,)),
+            ("register_head", (7,)),
+            ("register_mid_r1", (8,)),
+            ("register_mid_r2", (9,)),
+        ),
+    )
+
+    report = _evaluate_answer_bridge_admission(
+        bundle,
+        tokenizer,
+        tasks,
+        spec,
+        "",
+        contract,
+    )
+
+    assert report["admitted"] is True
+    assert report["exact_accuracy"] == 1.0
+    assert report["schema"] == "aura.unified_intrinsic.answer_bridge_admission.v2"
+    assert report["cells"] == 9
+    assert report["tasks"] == 9
+    assert {
+        (row["family"], row["task_depth"]) for row in report["rows"]
+    } == {
+        (family, depth)
+        for family in ("khop", "modular", "register_trace")
+        for depth in (1, 2, 4)
+    }
+
+    calls = 0
+
+    def corrupt_final_cell(
+        _bundle: UnifiedTrainingBundle,
+        _prompt: object,
+        answer: object,
+        _plan: object,
+        **_kwargs: object,
+    ) -> object:
+        nonlocal calls
+        calls += 1
+        if calls < 9:
+            return answer
+        values = answer.tolist()
+        values[0][0] = (int(values[0][0]) + 1) % 64
+        return mx.array(values, dtype=answer.dtype)
+
+    monkeypatch.setattr(
+        "tools.train_unified_intrinsic_recurrence._generate_student_rollin",
+        corrupt_final_cell,
+    )
+    rejected = _evaluate_answer_bridge_admission(
+        bundle,
+        tokenizer,
+        tasks,
+        spec,
+        "",
+        contract,
+    )
+    assert rejected["admitted"] is False
+    assert rejected["exact"] == 8
 
 
 def test_model_identity_hashes_weight_content_not_only_path(tmp_path: Path) -> None:

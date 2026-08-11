@@ -45148,3 +45148,63 @@ and diff hygiene are clean. The Spark completion envelope remains `912/920`
 measure and repair the answer role/place/digit bridge on the cheap checkpoint,
 require free-decoded bridge accuracy for admission, and only then freeze a new
 resident canary.
+
+## Checkpoint 2026-08-11-246: Decode-Admitted Neural Answer Bridge
+
+CP246 localizes CP245's failure to training frequency rather than model width or
+typed-state execution. The resident canary gave the answer bridge only two
+updates. The previously frozen CP230 1.5B evidence had required 72 bridge
+updates before its complete T4 path reached `36/36`. Repeating the same full
+transformer execution for every small role/place-head update was therefore both
+starved in the resident canary and unnecessarily expensive.
+
+The controller now exposes the answer-binding logits separately from the
+recurrent forward pass. One causal forward captures and detaches the answer,
+terminal-state and categorical-state features; bounded head-only optimizer
+updates can then reuse those fixed features without rerunning the transformer.
+Gradient ownership, global clipping, per-group pre-clip telemetry and optimizer
+publication remain identical to ordinary training. The deterministic bridge
+schedule covers each family first and then every family/task-depth cell before
+repeating, rather than depending on dataset order or repeatedly adapting the
+same cell.
+
+Admission is behavioral. A completed bridge campaign must greedily emit the
+exact public answer with the compiler absent on one unseen task from every
+family/depth cell. Missing a single cell rejects the checkpoint. Only a passing
+checkpoint is published under `checkpoint_answer_bridge_admitted`; resident
+evaluation defaults to that stem and depths 1/2/4. The canary and full resident
+profiles now use the empirically validated schedule of nine expensive feature
+passes, 32 bounded head updates per pass and one terminal recurrence update,
+replacing the old 72-pass bridge schedule.
+
+Two source-current Qwen2.5-1.5B runs validated the repair before resident
+allocation. The all-depth campaign completed ten steps in `3.327` minutes,
+retained exact typed execution, measured held-out T8/T16 cross-entropy
+`2.013299` versus T1 `2.857766` (`29.550%` relative reduction), and passed the
+v2 autonomous admission on all `9/9` unseen family/depth cells. Its checkpoint
+commitment is
+`67295b2fb99d402da81805c30d46beea7ffb8c8fa0541b64391fa15fb39c75cd`,
+training-receipt commitment is
+`fc9b57de6e09a71a616944120b4ed9e36901fa6d7a0382074eb82d0b87c216ba`
+and admission commitment is
+`00e5823e03c3acd763d58414bfcdebb2e04533ec2ba10f53b51379da429b8188`.
+
+A prompt-disjoint external decode on a third seed then evaluated 72 committed
+task/arm candidates across depths 1/2/4. Base solved `0/9`, the
+initialization-matched T4 controller solved `1/9`, trained T1 solved `3/9`, and
+the complete trained T4 path solved `9/9`. T4 produced eight wrong-to-right and
+zero right-to-wrong transitions against its matched untrained control. Removing
+the grammar shell solved `0/9`; removing the neural digit pointer solved `1/9`;
+the separate compiled ceiling solved `9/9`. Report semantic commitment is
+`fe5b32e2bdedaf95842c6c7e0f8e2520818f0c8d2e38b6e53b9172ad127f1d94`
+and experiment commitment is
+`10ff6a9556d80f854db4a04f386891182022b6407dd936c89a148eb99513ff6b`.
+
+The affected trainer, resident profile and evaluator-launcher surface passes
+`61/61` focused tests; Ruff and compilation are clean. This repairs and
+independently reproduces the neural state-to-token bridge on the cheap
+checkpoint. It is not resident-32B transfer, broad reasoning, fusion, frontier
+performance or a `WOW Signal`; the completion envelope remains `912/920`
+(approximately `99.1%`). Next is to publish CP246, freeze it into a fresh
+source-bound resident canary, require its all-cell admission and then run the
+prompt-disjoint resident matched-control/lesion decode.

@@ -193,6 +193,19 @@ def test_trainer_command_targets_resident_model_and_pid_scoped_guards(
     assert "{pid}" in command[command.index("--preload-ready-path") + 1]
     assert "{pid}" in command[command.index("--preload-release-path") + 1]
     assert command[-2:] == ["--max-invocation-steps", "1"]
+    assert command[command.index("--answer-bridge-inner-steps") + 1] == "32"
+    assert raw["training"]["answer_bridge_steps"] == 9
+    assert raw["training"]["max_steps"] == 10
+
+
+def test_full_profile_uses_the_decode_admitted_cached_bridge_schedule() -> None:
+    training = _profile_training("full")
+
+    assert training["per_cell"] == 8
+    assert training["holdout_per_cell"] == 3
+    assert training["answer_bridge_steps"] == 9
+    assert training["answer_bridge_inner_steps"] == 32
+    assert training["max_steps"] == 10
 
 
 def test_signed_controller_status_rejects_tampering(tmp_path: Path) -> None:

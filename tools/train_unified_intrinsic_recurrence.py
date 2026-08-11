@@ -63,6 +63,7 @@ from core.learning.unified_intrinsic_objective import (  # noqa: E402
 from core.learning.unified_intrinsic_recurrence import (  # noqa: E402
     UnifiedRecurrenceConfig,
     UnifiedRecurrentController,
+    unified_recurrent_hidden_states,
     unified_recurrent_logits,
 )
 from core.runtime.atomic_writer import (  # noqa: E402
@@ -881,6 +882,38 @@ def _clip_gradient_groups(
     return clipped, global_norm, group_norms
 
 
+def _apply_training_gradients(
+    bundle: UnifiedTrainingBundle,
+    optimizer: Any,
+    gradients: Any,
+    *,
+    phase: str,
+    max_norm: float,
+    totals: dict[str, Any],
+    loss: Any,
+) -> None:
+    """Apply one ownership-masked update and retain pre-clip diagnostics."""
+
+    gradients = _phase_gradients(gradients, phase)
+    gradients, gradient_norm, gradient_group_norms = _clip_gradient_groups(
+        gradients,
+        max_norm,
+    )
+    mx.eval(gradient_norm, *gradient_group_norms.values())
+    totals["max_preclip_gradient_norm"] = max(
+        float(totals["max_preclip_gradient_norm"]),
+        float(gradient_norm.item()),
+    )
+    prior_group_norms = totals["max_preclip_gradient_norms"]
+    for group, group_norm in gradient_group_norms.items():
+        prior_group_norms[group] = max(
+            float(prior_group_norms.get(group, 0.0)),
+            float(group_norm.item()),
+        )
+    optimizer.update(bundle, gradients)
+    mx.eval(bundle.parameters(), optimizer.state, loss)
+
+
 def _student_rollin_probability(
     step: int,
     *,
@@ -1083,6 +1116,61 @@ def _answer_binding_loss(
     return 0.5 * (role_loss + place_loss)
 
 
+def _answer_bridge_task(tasks: list[Any], bridge_index: int) -> Any:
+    """Cover every family, then every family/depth cell, before repetition."""
+
+    if type(bridge_index) is not int or bridge_index < 0 or not tasks:
+        raise ValueError("answer bridge task schedule is invalid")
+    cells = sorted({(str(task.family), int(task.depth)) for task in tasks})
+    first_by_family = [
+        min((cell for cell in cells if cell[0] == family), key=lambda cell: cell[1])
+        for family in sorted({family for family, _depth in cells})
+    ]
+    ordered_cells = first_by_family + [
+        cell for cell in cells if cell not in first_by_family
+    ]
+    cell = ordered_cells[bridge_index % len(ordered_cells)]
+    cell_tasks = [
+        task for task in tasks if (str(task.family), int(task.depth)) == cell
+    ]
+    cycle = bridge_index // len(ordered_cells)
+    return cell_tasks[cycle % len(cell_tasks)]
+
+
+def _cached_answer_binding_features(
+    bundle: UnifiedTrainingBundle,
+    prompt: Any,
+    answer_tokens: Any,
+    plan: Any,
+) -> tuple[Any, Any, Any]:
+    """Run the expensive tissue once and detach its causal binding features."""
+
+    full = mx.concatenate([prompt, answer_tokens], axis=1)
+    features: list[tuple[Any, Any, Any]] = []
+    unified_recurrent_hidden_states(
+        bundle.model,
+        full,
+        plan,
+        bundle.controller,
+        state_slot_start=int(prompt.shape[-1]),
+        answer_binding_feature_trajectory=features,
+    )
+    if not features:
+        raise RuntimeError("answer bridge emitted no reusable causal features")
+    selected = tuple(mx.stop_gradient(value) for value in features[-1])
+    mx.eval(*selected)
+    return selected
+
+
+def _cached_answer_binding_loss(
+    bundle: UnifiedTrainingBundle,
+    features: tuple[Any, Any, Any],
+    targets: tuple[Any, Any],
+) -> Any:
+    role_logits, place_logits = bundle.controller.answer_binding_logits(*features)
+    return _answer_binding_loss(role_logits, place_logits, *targets)
+
+
 def _generate_student_rollin(
     bundle: UnifiedTrainingBundle,
     prompt: Any,
@@ -1121,6 +1209,79 @@ def _generate_student_rollin(
             axis=1,
         )
     return mx.array([generated], dtype=answer_tokens.dtype)
+
+
+def _evaluate_answer_bridge_admission(
+    bundle: UnifiedTrainingBundle,
+    tokenizer: Any,
+    tasks: list[Any],
+    spec: UnifiedIntrinsicTrainingSpec,
+    bridge: str,
+    contract: RecurrentAnswerEmissionContract,
+) -> dict[str, Any]:
+    """Require exact emission on one unseen task from every family/depth cell."""
+
+    cells = {(str(task.family), int(task.depth)) for task in tasks}
+    selected = [
+        _answer_bridge_task(tasks, index)
+        for index in range(len(cells))
+    ]
+    selected_cells = {(str(task.family), int(task.depth)) for task in selected}
+    if selected_cells != cells:
+        raise RuntimeError("answer bridge admission did not cover every task cell")
+    rows: list[dict[str, Any]] = []
+    from core.brain.llm.latent_cortex.recurrence_adapter import (
+        recurrence_adapter_scope,
+    )
+
+    with recurrence_adapter_scope(start=None, stop=None):
+        for task in selected:
+            prompt, answer = encode_example(tokenizer, task, bridge)
+            generated = _generate_student_rollin(
+                bundle,
+                prompt,
+                answer,
+                spec.plan_at(max(spec.train_depths)),
+                eos_token_id=tokenizer.eos_token_id,
+                answer_emission_contract=contract,
+                state_slot_start=int(prompt.shape[-1]),
+            )
+            expected_values = tuple(int(value) for value in answer.tolist()[0])
+            generated_values = tuple(int(value) for value in generated.tolist()[0])
+            rows.append(
+                {
+                    "task_id": task.task_id,
+                    "family": task.family,
+                    "task_depth": task.depth,
+                    "exact": generated_values == expected_values,
+                    "matching_tokens": sum(
+                        observed == expected
+                        for observed, expected in zip(
+                            generated_values,
+                            expected_values,
+                            strict=True,
+                        )
+                    ),
+                    "token_count": len(expected_values),
+                    "expected_sha256": _sha256_tokens(answer),
+                    "generated_sha256": _sha256_tokens(generated),
+                }
+            )
+    exact = sum(row["exact"] for row in rows)
+    matching = sum(row["matching_tokens"] for row in rows)
+    token_count = sum(row["token_count"] for row in rows)
+    body = {
+        "schema": "aura.unified_intrinsic.answer_bridge_admission.v2",
+        "depth": max(spec.train_depths),
+        "cells": len(cells),
+        "tasks": len(rows),
+        "exact": exact,
+        "exact_accuracy": exact / len(rows),
+        "token_accuracy": matching / token_count,
+        "admitted": exact == len(rows),
+        "rows": rows,
+    }
+    return {**body, "admission_sha256": _canonical_sha256(body)}
 
 
 def _residual_hidden_size(model: Any) -> int:
@@ -1183,6 +1344,7 @@ def _initial_rollin_totals() -> dict[str, Any]:
         "max_preclip_gradient_norms": {},
         "last_probability": None,
         "last_state_teacher_forcing_probability": None,
+        "answer_bridge_inner_updates": 0,
     }
 
 
@@ -1879,6 +2041,15 @@ def main() -> int:
         help="isolated state-to-token adaptation steps after semantic warmup",
     )
     parser.add_argument(
+        "--answer-bridge-inner-steps",
+        type=int,
+        default=1,
+        help=(
+            "head-only optimizer updates per expensive bridge feature pass; "
+            "values above one use detached causal features"
+        ),
+    )
+    parser.add_argument(
         "--state-learning-rate",
         type=float,
         help="state-transition phase rate; defaults to recurrent learning rate",
@@ -2012,6 +2183,8 @@ def main() -> int:
         )
     if args.max_gradient_norm <= 0.0:
         raise ValueError("maximum gradient norm must be positive")
+    if args.answer_bridge_inner_steps < 1:
+        raise ValueError("answer bridge inner steps must be positive")
     if args.max_minutes <= 0.0:
         raise ValueError("maximum minutes must be positive")
     if any(
@@ -2361,6 +2534,7 @@ def main() -> int:
             "semantic_warmup_steps": args.semantic_warmup_steps,
             "state_warmup_steps": args.state_warmup_steps,
             "answer_bridge_steps": args.answer_bridge_steps,
+            "answer_bridge_inner_steps": args.answer_bridge_inner_steps,
             "max_steps": args.max_steps,
             "answer_bridge_rollin_probability": (
                 args.answer_bridge_rollin_probability
@@ -2502,10 +2676,48 @@ def main() -> int:
                     args.state_warmup_steps,
                     args.answer_bridge_steps,
                 )
-                task = train_tasks[step % len(train_tasks)]
+                if phase == "answer_bridge":
+                    bridge_start = (
+                        args.state_warmup_steps + args.semantic_warmup_steps
+                    )
+                    task = _answer_bridge_task(train_tasks, step - bridge_start)
+                else:
+                    task = train_tasks[step % len(train_tasks)]
                 prompt, answer = encode_example(tokenizer, task, bridge)
                 with recurrence_adapter_scope(start=None, stop=None):
-                    if phase in {"semantic_anchor", "answer_bridge"}:
+                    update_applied = False
+                    if phase == "answer_bridge" and args.answer_bridge_inner_steps > 1:
+                        semantic_depth = _semantic_execution_depth(task.depth, spec)
+                        binding_targets = _answer_role_place_targets(
+                            task.family,
+                            answer,
+                            answer_emission_contract,
+                        )
+                        features = _cached_answer_binding_features(
+                            bundle,
+                            prompt,
+                            answer,
+                            spec.plan_at(semantic_depth),
+                        )
+                        for _inner_step in range(args.answer_bridge_inner_steps):
+                            loss, gradients = nn.value_and_grad(
+                                bundle,
+                                _cached_answer_binding_loss,
+                            )(bundle, features, binding_targets)
+                            _apply_training_gradients(
+                                bundle,
+                                optimizer,
+                                gradients,
+                                phase=phase,
+                                max_norm=args.max_gradient_norm,
+                                totals=rollin_totals,
+                                loss=loss,
+                            )
+                        rollin_totals["answer_bridge_inner_updates"] += (
+                            args.answer_bridge_inner_steps
+                        )
+                        update_applied = True
+                    elif phase in {"semantic_anchor", "answer_bridge"}:
                         semantic_depth = _semantic_execution_depth(task.depth, spec)
                         effective = None
                         binding_targets = None
@@ -2688,26 +2900,16 @@ def main() -> int:
                             answer,
                             effective,
                         )
-                    gradients = _phase_gradients(gradients, phase)
-                    gradients, gradient_norm, gradient_group_norms = (
-                        _clip_gradient_groups(
+                    if not update_applied:
+                        _apply_training_gradients(
+                            bundle,
+                            optimizer,
                             gradients,
-                            args.max_gradient_norm,
+                            phase=phase,
+                            max_norm=args.max_gradient_norm,
+                            totals=rollin_totals,
+                            loss=loss,
                         )
-                    )
-                    mx.eval(gradient_norm, *gradient_group_norms.values())
-                    rollin_totals["max_preclip_gradient_norm"] = max(
-                        float(rollin_totals["max_preclip_gradient_norm"]),
-                        float(gradient_norm.item()),
-                    )
-                    prior_group_norms = rollin_totals["max_preclip_gradient_norms"]
-                    for group, group_norm in gradient_group_norms.items():
-                        prior_group_norms[group] = max(
-                            float(prior_group_norms.get(group, 0.0)),
-                            float(group_norm.item()),
-                        )
-                    optimizer.update(bundle, gradients)
-                    mx.eval(bundle.parameters(), optimizer.state, loss)
                 step += 1
                 next_phase = _optimization_phase(
                     step,
@@ -2835,6 +3037,35 @@ def main() -> int:
         if final_readout != readout_sha256:
             raise RuntimeError("unified training changed the frozen readout")
         final = history[-1] if history else None
+        answer_bridge_admission = (
+            _evaluate_answer_bridge_admission(
+                bundle,
+                tokenizer,
+                holdout,
+                spec,
+                bridge,
+                answer_emission_contract,
+            )
+            if args.answer_bridge_steps > 0 and step >= args.max_steps
+            else None
+        )
+        if answer_bridge_admission is not None and answer_bridge_admission["admitted"]:
+            _save_checkpoint(
+                out_dir,
+                bundle,
+                optimizer,
+                step=step,
+                history=history,
+                identity=identity,
+                stem="checkpoint_answer_bridge_admitted",
+                optimization_phase=_optimization_phase(
+                    step,
+                    args.semantic_warmup_steps,
+                    args.state_warmup_steps,
+                    args.answer_bridge_steps,
+                ),
+                training_state={"rollin_totals": rollin_totals},
+            )
         halt_reason = _training_halt_reason(
             step=step,
             max_steps=args.max_steps,
@@ -2873,8 +3104,12 @@ def main() -> int:
                 "receipt_sha256": checkpoint_receipt["receipt_sha256"],
             },
             "elapsed_minutes": round((time.time() - started) / 60.0, 3),
+            "answer_bridge_admission": answer_bridge_admission,
             "verdict": (
-                "heldout_depth_gain"
+                "answer_bridge_not_admitted"
+                if answer_bridge_admission is not None
+                and not answer_bridge_admission["admitted"]
+                else "heldout_depth_gain"
                 if final and final["heldout_depth_helps"]
                 else "trained_depth_gain_only"
                 if final and final["trained_depth_helps"]

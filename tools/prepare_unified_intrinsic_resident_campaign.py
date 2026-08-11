@@ -182,6 +182,7 @@ def _profile_training(profile: str) -> dict[str, Any]:
         "recurrent_learning_rate": 0.00005,
         "state_learning_rate": 0.00005,
         "answer_bridge_learning_rate": 0.0005,
+        "answer_bridge_inner_steps": 1,
         "answer_bridge_rollin_probability": 0.2,
         "answer_bridge_rollin_final_probability": 0.6,
         "student_rollin_probability": 0.0,
@@ -205,10 +206,11 @@ def _profile_training(profile: str) -> dict[str, Any]:
             **common,
             "per_cell": 1,
             "holdout_per_cell": 1,
-            "max_steps": 3,
+            "max_steps": 10,
             "semantic_warmup_steps": 0,
             "state_warmup_steps": 0,
-            "answer_bridge_steps": 2,
+            "answer_bridge_steps": 9,
+            "answer_bridge_inner_steps": 32,
             "eval_every": 1,
             "max_minutes": 240.0,
         }
@@ -216,10 +218,11 @@ def _profile_training(profile: str) -> dict[str, Any]:
         **common,
         "per_cell": 8,
         "holdout_per_cell": 3,
-        "max_steps": 73,
+        "max_steps": 10,
         "semantic_warmup_steps": 0,
         "state_warmup_steps": 0,
-        "answer_bridge_steps": 72,
+        "answer_bridge_steps": 9,
+        "answer_bridge_inner_steps": 32,
         "eval_every": 4,
         "max_minutes": 2880.0,
     }
@@ -244,6 +247,7 @@ def _training_cli(training: Mapping[str, Any]) -> list[str]:
         "recurrent_learning_rate": "--recurrent-learning-rate",
         "state_learning_rate": "--state-learning-rate",
         "answer_bridge_learning_rate": "--answer-bridge-learning-rate",
+        "answer_bridge_inner_steps": "--answer-bridge-inner-steps",
         "answer_bridge_rollin_probability": "--answer-bridge-rollin-probability",
         "answer_bridge_rollin_final_probability": (
             "--answer-bridge-rollin-final-probability"

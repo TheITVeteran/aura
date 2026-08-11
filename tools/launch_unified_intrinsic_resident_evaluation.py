@@ -548,14 +548,14 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("action", choices=("prepare", "launch", "status", "stop"))
     parser.add_argument("campaign", type=Path)
     parser.add_argument("--output", type=Path)
-    parser.add_argument("--stem", default="checkpoint_best_heldout")
+    parser.add_argument("--stem", default="checkpoint_answer_bridge_admitted")
     parser.add_argument("--per-cell", type=int, default=1)
     parser.add_argument("--evaluation-seed", type=int, default=20260811241)
     parser.add_argument("--max-tokens", type=int, default=32)
     parser.add_argument(
         "--task-depths",
         type=lambda value: _csv_positive_ints(value, minimum=1),
-        default=(1,),
+        default=(1, 2, 4),
     )
     parser.add_argument(
         "--recurrence-depths",

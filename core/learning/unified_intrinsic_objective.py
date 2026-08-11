@@ -193,6 +193,7 @@ def unified_answer_and_recurrent_trajectory(
     action_logit_trajectory: list[Any] | None = None,
     answer_role_logit_trajectory: list[Any] | None = None,
     answer_place_logit_trajectory: list[Any] | None = None,
+    answer_binding_feature_trajectory: list[tuple[Any, Any, Any]] | None = None,
 ) -> tuple[list[Any], list[Any], list[Any], list[Any]]:
     """Decode every recurrent state through one frozen coda and readout.
 
@@ -255,6 +256,9 @@ def unified_answer_and_recurrent_trajectory(
         ),
         answer_place_logit_trajectory=(
             place_logits if use_state_slots else None
+        ),
+        answer_binding_feature_trajectory=(
+            answer_binding_feature_trajectory if use_state_slots else None
         ),
         state_teacher_values=state_teacher_values,
         action_teacher_values=action_teacher_values,

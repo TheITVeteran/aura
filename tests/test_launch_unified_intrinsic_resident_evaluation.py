@@ -30,6 +30,15 @@ def _arguments(root: Path) -> argparse.Namespace:
     )
 
 
+def test_cli_defaults_to_admitted_checkpoint_and_all_trained_task_depths(
+    tmp_path: Path,
+) -> None:
+    arguments = launcher._parser().parse_args(["prepare", str(tmp_path)])
+
+    assert arguments.stem == "checkpoint_answer_bridge_admitted"
+    assert arguments.task_depths == (1, 2, 4)
+
+
 def _terminal_fixture(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
