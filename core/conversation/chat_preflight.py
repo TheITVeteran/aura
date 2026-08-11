@@ -211,6 +211,25 @@ _REF_PATTERNS = [
 ]
 
 
+#: Words that are never the identifier a question is really about. Deliberately
+#: small: over-filtering here costs a relevant window, and the ranking already
+#: prefers longer, more specific terms.
+_EXCERPT_STOPWORDS = frozenset(
+    {
+        "and", "are", "but", "can", "does", "file", "for", "from", "has",
+        "have", "the", "this", "that", "what", "when", "where", "which",
+        "with", "you", "your", "line", "lines", "read", "tell", "there",
+        "then", "they", "was", "were", "will", "would", "into", "its",
+        "not", "own", "quote", "source", "value", "happens", "called",
+    }
+)
+
+#: Lines of context kept on each side of a match. Small on purpose: the point
+#: is the region that answers the question, and a wide window spends the whole
+#: budget on the first hit.
+_EXCERPT_CONTEXT_LINES = 12
+
+
 def extract_file_references(message: str) -> list[str]:
     """Return file path strings mentioned in the user's message.
     Order-preserving, deduplicated, capped at MAX_FILES_PER_TURN.
@@ -270,11 +289,35 @@ def _resolve_safely(ref: str) -> Path | None:
 
 
 def load_referenced_files(
-    refs: list[str], remaining_budget: int = FILE_READ_BUDGET
+    refs: list[str],
+    remaining_budget: int = FILE_READ_BUDGET,
+    *,
+    query: str = "",
 ) -> list[tuple[str, str]]:
     """Read the referenced files (best-effort, defensive). Returns a list of
     ``(display_path, contents)`` tuples. Total content bounded by
     ``remaining_budget`` chars.
+
+    When a file does not fit its budget, the excerpt is chosen by RELEVANCE to
+    ``query`` rather than by position.
+
+    LIVE DEFECT, 2026-08-10. Asked "in your own source there is a file
+    core/soma/resilience_engine.py — read it and tell me what happens to the
+    depletion value when record_success is called; quote the line", she
+    answered with source code from an entirely different module, failed her own
+    reply gate on ``incomplete_code_response``, and shipped the draft anyway.
+
+    Everything upstream had worked. The path was extracted, the file was read,
+    and the log says "Chat preflight: loaded 1 referenced file(s) into
+    context." What she was handed was the first 5,461 characters of a 20,428
+    character file — and ``def record_success`` begins at character 5,815. The
+    excerpt stopped 354 characters short of the only region the question was
+    about, said "truncated", and she generated the rest.
+
+    Position is not relevance. A question naming ``record_success`` should be
+    answered from the part of the file containing ``record_success``, which is
+    how the whole class of "asked about anything past the first few KB of a
+    file" failures disappears rather than being re-diagnosed per file.
     """
     out: list[tuple[str, str]] = []
     for ref in refs:
@@ -287,6 +330,15 @@ def load_referenced_files(
         try:
             with resolved.open("r", encoding="utf-8", errors="replace") as handle:
                 text = handle.read(per_file_budget + 1)
+                if len(text) > per_file_budget:
+                    # Too big for one bite. Re-read as lines so the excerpt can
+                    # be chosen for what it contains.
+                    handle.seek(0)
+                    text = _relevant_excerpt(
+                        handle.readlines(),
+                        query=query,
+                        budget=per_file_budget,
+                    )
         except (OSError, RuntimeError, AttributeError, TypeError, ValueError) as e:
             _emit_chat_fault(
                 e,
@@ -297,11 +349,6 @@ def load_referenced_files(
             )
             logger.debug("file read failed for %s: %s", resolved, e)
             continue
-        if len(text) > per_file_budget:
-            text = (
-                text[:per_file_budget]
-                + "\n[... truncated; file continues beyond the per-turn read budget ...]\n"
-            )
         try:
             display_path = str(resolved.relative_to(PROJECT_ROOT))
         except ValueError:
@@ -311,14 +358,155 @@ def load_referenced_files(
     return out
 
 
-def build_file_context_block(refs: list[str]) -> str:
+def _excerpt_query_terms(query: str) -> list[str]:
+    """Identifier-ish words from the question, longest first.
+
+    Longest first because a question naming both ``record_success`` and
+    ``depletion`` is more specifically about the former, and the budget is
+    spent in that order.
+    """
+    terms = {
+        term.lower()
+        for term in re.findall(r"[A-Za-z_][A-Za-z0-9_]{2,}", str(query or ""))
+        if term.lower() not in _EXCERPT_STOPWORDS
+    }
+    return sorted(terms, key=lambda term: (-len(term), term))
+
+
+def _relevant_excerpt(lines: list[str], *, query: str, budget: int) -> str:
+    """Windows of `lines` around the query's terms, with the gaps declared.
+
+    Falls back to the head when the question names nothing findable, which is
+    the old behaviour and the right answer for "what does this file do".
+    Every omission is stated as a line range, so a region that was NOT
+    supplied is visibly absent rather than silently missing.
+    """
+    terms = _excerpt_query_terms(query)
+    lowered = [line.lower() for line in lines]
+    per_term: list[list[int]] = []
+    for term in terms:
+        matches = [index for index, line in enumerate(lowered) if term in line]
+        if matches:
+            per_term.append(matches)
+    if not per_term:
+        return _head_excerpt(lines, budget=budget)
+
+    keep: set[int] = set()
+    spent = 0
+
+    def _take(index: int) -> bool:
+        nonlocal spent
+        if not (0 <= index < len(lines)) or index in keep:
+            return True
+        cost = len(lines[index])
+        if spent + cost > budget:
+            return False
+        keep.add(index)
+        spent += cost
+        return True
+
+    # Round-robin, widening. Every term the question named gets a seat before
+    # any term gets a bigger one — otherwise the longest term's windows eat the
+    # whole budget and a second, equally-named subject is never shown.
+    #
+    # This is the difference between including `def record_success` and
+    # including the line inside it that actually answers the question: the
+    # first pass seats both `record_success` and `depletion`, and only then
+    # does either grow context.
+    for offset in range(0, _EXCERPT_CONTEXT_LINES + 1):
+        exhausted = True
+        for matches in per_term:
+            for hit in matches:
+                for index in (hit - offset, hit + offset):
+                    if _take(index):
+                        exhausted = False
+        if exhausted and spent >= budget:
+            break
+    if not keep:
+        # Matches existed but none of their lines fit the budget — the
+        # no-line-structure case again, and it must not return nothing.
+        return _head_excerpt(lines, budget=budget)
+
+    return _render_excerpt(lines, sorted(keep))
+
+
+def _head_excerpt(lines: list[str], *, budget: int) -> str:
+    keep: list[int] = []
+    spent = 0
+    for index, line in enumerate(lines):
+        if spent + len(line) > budget:
+            break
+        keep.append(index)
+        spent += len(line)
+    if not keep:
+        # No whole line fits. A minified bundle, a one-line JSON blob or a file
+        # with no newlines at all lands here, and returning nothing would drop
+        # the file silently — which is how the original head-prefix behaviour
+        # was strictly better than a line-based excerpt that gives up.
+        return _character_excerpt(lines, budget=budget)
+    return _render_excerpt(lines, keep)
+
+
+def _character_excerpt(lines: list[str], *, budget: int) -> str:
+    """Last resort for content with no usable line structure."""
+    joined = "".join(lines)
+    if len(joined) <= budget:
+        return joined
+    return (
+        joined[:budget]
+        + "\n[... truncated; the rest of this file is not included in this "
+        "excerpt ...]\n"
+    )
+
+
+def _render_excerpt(lines: list[str], keep: list[int]) -> str:
+    """Numbered lines with every omitted range named.
+
+    Line numbers make a quote checkable, and naming the gaps means "the part
+    you asked about is not here" is something the reader can see instead of
+    something they have to infer from a single trailing "truncated".
+    """
+    if not keep:
+        return ""
+    rendered: list[str] = []
+    previous: int | None = None
+    for index in keep:
+        if previous is not None and index != previous + 1:
+            skipped = index - previous - 1
+            rendered.append(
+                f"[... {skipped} line(s) omitted: lines "
+                f"{previous + 2}-{index} are not included in this excerpt ...]"
+            )
+        rendered.append(f"{index + 1}\t{lines[index].rstrip(chr(10))}")
+        previous = index
+    if keep[-1] < len(lines) - 1:
+        rendered.append(
+            f"[... lines {keep[-1] + 2}-{len(lines)} are not included in this "
+            "excerpt ...]"
+        )
+    if keep[0] > 0:
+        rendered.insert(
+            0, f"[... lines 1-{keep[0]} are not included in this excerpt ...]"
+        )
+    return "\n".join(rendered) + "\n"
+
+
+def build_file_context_block(refs: list[str], *, query: str = "") -> str:
     """Convenience: extract → load → format as a system-prompt-ready block.
     Returns empty string if no files were resolvable.
+
+    ``query`` is the user's message. It is what makes the excerpt relevant
+    rather than merely the beginning of the file — see load_referenced_files.
     """
-    files = load_referenced_files(refs)
+    files = load_referenced_files(refs, query=query)
     if not files:
         return ""
-    parts = ["[The user's message references files. Their contents are below.]\n"]
+    parts = [
+        "[The user's message references files. Their contents are below, as "
+        "numbered lines. Where a range is marked omitted it was NOT read: if "
+        "the answer would be in an omitted range, say so instead of "
+        "reconstructing it.]\n"
+    ]
     for display_path, content in files:
         parts.append(f"\n=== FILE: {display_path} ===\n{content}\n=== END {display_path} ===\n")
     return "\n".join(parts)

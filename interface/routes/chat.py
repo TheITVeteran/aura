@@ -22791,9 +22791,14 @@ async def _api_chat_turn(body: ChatRequest, request: Request):
             try:
                 _refs = extract_file_references(body.message)
                 if _refs:
+                    # The message is what makes the excerpt relevant. Without
+                    # it the loader can only return the head of the file, which
+                    # is how a question about record_success was answered from
+                    # the 5,461 characters that stop 354 characters before it.
                     _block = await _await_bounded_chat_blocking(
                         build_file_context_block,
                         _refs,
+                        query=body.message,
                         timeout_s=_CHAT_BLOCKING_PREFLIGHT_TIMEOUT_S,
                         operation_name="referenced_file_context",
                         completion_grace_s=_CHAT_BLOCKING_PREFLIGHT_TIMEOUT_S,
