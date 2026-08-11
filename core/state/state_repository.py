@@ -170,6 +170,37 @@ def get_state_shm_size_bytes() -> int:
     return 2 * 1024 * 1024
 
 
+def _sign_state_lineage(state: Any) -> None:
+    """Extend the entity's signed chain with this state's link to its parent.
+
+    The signature is attached to the state so a committed record carries the
+    evidence with it rather than requiring a side lookup, and the chain head
+    lives in the entity identity so a tampered historic link breaks every
+    signature after it.
+    """
+
+    try:
+        from core.identity.entity_key import entity_identity
+
+        continuity_hash = ""
+        if hasattr(state, "get_continuity_hash"):
+            continuity_hash = str(state.get_continuity_hash() or "")
+        link = entity_identity().sign_state_link(
+            state_id=str(getattr(state, "state_id", "") or ""),
+            version=int(getattr(state, "version", 0) or 0),
+            parent_state_id=str(getattr(state, "parent_state_id", "") or ""),
+            continuity_hash=continuity_hash,
+        )
+        state.lineage_signature = link.signature
+        state.lineage_entity_id = link.entity_id
+    except _STATE_BOUNDARY_ERRORS as exc:
+        _record_state_degradation(
+            exc,
+            action="committed state without a lineage signature",
+            severity="warning",
+        )
+
+
 class StateVersionConflictError(Exception):
     """Raised when a state commit is rejected due to version stagnation or backtrack."""
 
@@ -1174,6 +1205,18 @@ class StateRepository:
 
             new_state.transition_cause = cause
             new_state.updated_at = time.time()
+
+        # Sign this state's link to its parent with the durable entity key.
+        #
+        # Lineage was already strong — parent_state_id, monotonic version,
+        # serialized admission, a continuity hash over the non-volatile fields
+        # — and signed to nothing, because the identity anchor was itself a
+        # function of state_id. Signing here, after rebasing, means the
+        # signature covers the version and parent the commit actually used.
+        #
+        # Best-effort by construction: a signing failure must not refuse a
+        # state commit. It is recorded, and the chain shows the gap.
+        _sign_state_lineage(new_state)
 
         # Serialize only after version rebasing and transition metadata are final,
         # so the durable JSON agrees with the indexed database columns.

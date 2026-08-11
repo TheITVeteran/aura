@@ -982,6 +982,15 @@ class AuraState:
     transition_cause: Optional[str] = None  # What caused this state change
     transition_origin: str = "system"       # Which phase/agent caused it
 
+    # Signed lineage. The chain above was strong and anchored to nothing: the
+    # identity anchor was itself derived from state_id, which is a fresh uuid4
+    # per derived state. These carry the durable entity key's signature over
+    # (state, parent, continuity hash, previous signature), written at commit
+    # by core/state/state_repository.py. Empty on a state that has not been
+    # committed, and empty is honest — an unsigned state says so.
+    lineage_signature: str = ""
+    lineage_entity_id: str = ""
+
     @property
     def mood(self) -> str:
         return self.affect.dominant_emotion
