@@ -45208,3 +45208,35 @@ performance or a `WOW Signal`; the completion envelope remains `912/920`
 (approximately `99.1%`). Next is to publish CP246, freeze it into a fresh
 source-bound resident canary, require its all-cell admission and then run the
 prompt-disjoint resident matched-control/lesion decode.
+
+## Checkpoint 2026-08-11-247: Resident Transfer Has a Pre-Result Decision Rule
+
+The CP246 resident canary is running from immutable source commit
+`c4e3a799220f4f9b1b9dd18d3135ebcc23487f75`. Its first invocation completed
+one resident-32B answer-bridge step and durably published exact step-1 weights;
+the launchd controller then started the planned second invocation from that
+checkpoint for the remaining nine steps. The detached trainer, external memory
+sentinel and trainer-bound sleep inhibitor remained independently live. The
+first step retained exact typed-state execution at every measured depth and
+reported `11.54%` best trained-depth and `8.32%` held-out cross-entropy gains,
+but those training metrics are not decoded transfer evidence.
+
+Before the prompt-disjoint decode produced any result, CP247 froze an
+independent canary adjudicator. A positive verdict requires a non-ceiling
+initialization-matched T4 control, an exact compiled instrument, at least one
+paired wrong-to-right correction, zero right-to-wrong regressions, a positive
+net matched-control gain, T4 improvement over the same trained controller at
+T1, improvement over base decoding, and strict losses under both the grammar
+and neural digit-pointer lesions. A saturated control returns
+`inconclusive_control_ceiling`; a nonexact compiled arm returns
+`inconclusive_instrument`; every other missing causal requirement returns a
+negative bounded-transfer verdict. The adjudicator recomputes the report
+commitment, arm summaries and transition accounting rather than trusting their
+labels.
+
+The adjudicator and adjacent evaluator/launcher surface passes `24/24` focused
+tests; canonical smoke passes `104/104`; Ruff and compilation are clean. No decode report, resident-transfer
+claim, broad reasoning gain, fusion, frontier result or `WOW Signal` is claimed
+here. The completion envelope remains `912/920` (approximately `99.1%`). Next
+is terminal all-cell training admission, then the frozen 72-candidate resident
+decode and this already-committed decision rule.

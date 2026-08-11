@@ -5857,3 +5857,22 @@ SPARK-069 through SPARK-072 remain open. No learned decoded gain, fusion,
 frontier result or `WOW Signal` is claimed. The completion envelope remains
 `912/920`. The next repair is the bridge itself plus an emitted-answer admission
 gate on the cheap checkpoint before another resident run.
+
+### 2026-08-11 - CP247 resident transfer decision rule frozen before decode
+
+The source-bound CP246 resident canary completed and durably checkpointed its
+first 32B answer-bridge step, then resumed under the launchd controller for the
+remaining nine steps. Before any prompt-disjoint resident decode result existed,
+CP247 froze the bounded transfer rule: the matched T4 treatment must produce a
+positive wrong-to-right gain with zero regressions, beat its T1 path and base,
+and lose under both grammar and pointer lesions; the compiled instrument must
+remain exact and the untrained control must have headroom. Ceiling and broken
+instrument cases are inconclusive rather than silently promoted or called
+negative. Report commitments, summaries and paired counts are independently
+recomputed.
+
+The new adjudicator and adjacent evaluator/launcher contracts pass `24/24`;
+canonical smoke passes `104/104`.
+SPARK-069 through SPARK-072 remain open, the completion envelope remains
+`912/920`, and no transfer, fusion, frontier or `WOW Signal` claim is made
+before terminal admission and the frozen resident decode.

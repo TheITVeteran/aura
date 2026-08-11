@@ -1,0 +1,220 @@
+#!/usr/bin/env python3
+"""Adjudicate the frozen resident decoded-transfer canary.
+
+The decode evaluator emits observations, not a scientific conclusion.  This
+tool freezes the bounded canary decision rule independently of model execution
+and refuses to promote ceiling, incomplete, regressive, or lesion-insensitive
+results.
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import sys
+from collections.abc import Mapping, Sequence
+from pathlib import Path
+from typing import Any, Final, Never
+
+REPO_ROOT = Path(__file__).resolve().parent.parent
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
+
+from core.runtime.atomic_writer import atomic_write_bytes  # noqa: E402
+from tools import launch_unified_intrinsic_resident_evaluation as launcher  # noqa: E402
+from tools.unified_intrinsic_resident_identity import (  # noqa: E402
+    canonical_bytes,
+    canonical_sha256,
+)
+
+VERDICT_SCHEMA: Final = "aura.unified_intrinsic.resident_transfer_verdict.v1"
+SUPPORTED = "supported_bounded_resident_transfer"
+INCONCLUSIVE_CEILING = "inconclusive_control_ceiling"
+INCONCLUSIVE_INSTRUMENT = "inconclusive_instrument"
+REFUTED = "refuted_bounded_resident_transfer"
+
+
+class ResidentTransferAdjudicationError(RuntimeError):
+    """Stable failure boundary for malformed or incomplete evidence."""
+
+
+def _fail(message: str) -> Never:
+    raise ResidentTransferAdjudicationError(message)
+
+
+def _integer(value: Any, name: str, *, minimum: int = 0) -> int:
+    if type(value) is not int or value < minimum:
+        _fail(f"resident transfer {name} is invalid")
+    return value
+
+
+def _arm(report: Mapping[str, Any], name: str, tasks: int) -> dict[str, Any]:
+    arms = report.get("arm_results")
+    row = arms.get(name) if isinstance(arms, dict) else None
+    if not isinstance(row, dict):
+        _fail(f"resident transfer arm is missing: {name}")
+    correct = _integer(row.get("correct"), f"{name}.correct")
+    observed_tasks = _integer(row.get("tasks"), f"{name}.tasks", minimum=1)
+    accuracy = row.get("accuracy")
+    if (
+        observed_tasks != tasks
+        or correct > tasks
+        or isinstance(accuracy, bool)
+        or not isinstance(accuracy, (int, float))
+        or abs(float(accuracy) - correct / tasks) > 1e-12
+    ):
+        _fail(f"resident transfer arm summary differs: {name}")
+    return row
+
+
+def adjudicate_report(report: Mapping[str, Any]) -> dict[str, Any]:
+    """Return one bounded, machine-checkable resident-transfer verdict."""
+
+    if report.get("schema") != "aura.unified_intrinsic_decode_evaluation.v1":
+        _fail("resident transfer report schema differs")
+    report_body = {key: value for key, value in report.items() if key != "report_sha256"}
+    if report.get("report_sha256") != canonical_sha256(report_body):
+        _fail("resident transfer report commitment differs")
+
+    task_count = _integer(report.get("task_count"), "task_count", minimum=1)
+    task_depths = report.get("task_depths")
+    recurrence_depths = report.get("recurrence_depths")
+    if (
+        not isinstance(task_depths, list)
+        or not task_depths
+        or any(type(value) is not int or value < 1 for value in task_depths)
+        or not isinstance(recurrence_depths, list)
+        or len(recurrence_depths) != 1
+        or type(recurrence_depths[0]) is not int
+        or recurrence_depths[0] < 2
+    ):
+        _fail("resident transfer depth contract differs")
+    depth = recurrence_depths[0]
+    treatment_name = f"trained_t{depth}"
+    control_name = f"untrained_t{depth}"
+    grammar_name = f"grammar_lesion_t{depth}"
+    pointer_name = f"pointer_lesion_t{depth}"
+    compiled_name = f"compiled_t{depth}"
+
+    base = _arm(report, "base_t1", task_count)
+    trained_t1 = _arm(report, "trained_t1", task_count)
+    control = _arm(report, control_name, task_count)
+    treatment = _arm(report, treatment_name, task_count)
+    grammar = _arm(report, grammar_name, task_count)
+    pointer = _arm(report, pointer_name, task_count)
+    compiled = _arm(report, compiled_name, task_count)
+
+    effects = report.get("paired_training_effects")
+    effect = effects.get(str(depth)) if isinstance(effects, dict) else None
+    if not isinstance(effect, dict):
+        _fail("resident transfer paired effect is missing")
+    expected_effect = {
+        "tasks": task_count,
+        "control_arm": control_name,
+        "trained_arm": treatment_name,
+        "untrained_correct": control["correct"],
+        "trained_correct": treatment["correct"],
+    }
+    if any(effect.get(key) != value for key, value in expected_effect.items()):
+        _fail("resident transfer paired effect differs from arm summaries")
+    wrong_to_right = _integer(effect.get("wrong_to_right"), "wrong_to_right")
+    right_to_wrong = _integer(effect.get("right_to_wrong"), "right_to_wrong")
+    net_gain = _integer(
+        effect.get("net_correct_gain"),
+        "net_correct_gain",
+        minimum=-task_count,
+    )
+    if (
+        wrong_to_right > task_count
+        or right_to_wrong > task_count
+        or net_gain != wrong_to_right - right_to_wrong
+        or net_gain != treatment["correct"] - control["correct"]
+    ):
+        _fail("resident transfer transition accounting differs")
+
+    checks = {
+        "control_has_headroom": control["correct"] < task_count,
+        "compiled_instrument_exact": compiled["correct"] == task_count,
+        "wrong_to_right_present": wrong_to_right > 0,
+        "zero_right_to_wrong": right_to_wrong == 0,
+        "positive_matched_control_gain": net_gain > 0,
+        "recurrence_beats_trained_t1": treatment["correct"] > trained_t1["correct"],
+        "treatment_beats_base": treatment["correct"] > base["correct"],
+        "grammar_lesion_loses": treatment["correct"] > grammar["correct"],
+        "pointer_lesion_loses": treatment["correct"] > pointer["correct"],
+    }
+    if not checks["control_has_headroom"]:
+        verdict = INCONCLUSIVE_CEILING
+    elif not checks["compiled_instrument_exact"]:
+        verdict = INCONCLUSIVE_INSTRUMENT
+    elif all(checks.values()):
+        verdict = SUPPORTED
+    else:
+        verdict = REFUTED
+
+    body = {
+        "schema": VERDICT_SCHEMA,
+        "verdict": verdict,
+        "supported": verdict == SUPPORTED,
+        "report_sha256": report["report_sha256"],
+        "checkpoint_sha256": report.get("checkpoint_sha256"),
+        "evaluation_seed": report.get("evaluation_seed"),
+        "task_count": task_count,
+        "task_depths": list(task_depths),
+        "recurrence_depth": depth,
+        "arms": {
+            "base_t1": base["correct"],
+            "trained_t1": trained_t1["correct"],
+            control_name: control["correct"],
+            treatment_name: treatment["correct"],
+            grammar_name: grammar["correct"],
+            pointer_name: pointer["correct"],
+            compiled_name: compiled["correct"],
+        },
+        "paired_effect": dict(effect),
+        "checks": checks,
+        "claim_boundary": (
+            "A supported verdict proves bounded prompt-disjoint resident-32B "
+            "neural transfer on the typed recurrent task battery, relative to "
+            "an initialization-matched control and mechanism lesions. It does "
+            "not prove broad reasoning, frontier performance, production "
+            "fusion, or a WOW Signal."
+        ),
+    }
+    return {**body, "verdict_sha256": canonical_sha256(body)}
+
+
+def _completed_report(campaign: Path) -> dict[str, Any]:
+    arguments = argparse.Namespace(campaign=campaign, output=None)
+    plan = launcher._existing_plan(arguments)  # noqa: SLF001
+    if plan is None:
+        _fail("resident evaluation plan is unavailable")
+    status = launcher.status(arguments)
+    if status.get("state") != "completed" or not isinstance(status.get("report"), dict):
+        _fail("resident evaluation is not complete")
+    return dict(status["report"])
+
+
+def main(argv: Sequence[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("campaign", type=Path)
+    parser.add_argument("--output", type=Path)
+    arguments = parser.parse_args(argv)
+    try:
+        report = _completed_report(arguments.campaign.expanduser().resolve(strict=True))
+        verdict = adjudicate_report(report)
+        if arguments.output is not None:
+            atomic_write_bytes(
+                arguments.output.expanduser().resolve(),
+                canonical_bytes(verdict) + b"\n",
+                mode=0o400,
+            )
+    except (OSError, ValueError, ResidentTransferAdjudicationError) as exc:
+        print(f"resident transfer adjudication failed: {exc}", file=sys.stderr)
+        return 2
+    print(json.dumps(verdict, indent=2, sort_keys=True))
+    return 0 if verdict["supported"] else 1
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
