@@ -289,6 +289,47 @@ class DesktopTaskSkill(BaseSkill):
         stem = re.sub(r"\s+", "_", stem).strip("_")
         return (stem or default)[:80]
 
+    _WRITE_DESTINATION_RE = re.compile(
+        r"\b(?:write|save|put|store|append|export|dump|record)\b[^.?!]{0,80}?"
+        r"\b(?:into|to|in)\s+(?P<path>~?[\w./\-]*[\w.\-]+)",
+        re.IGNORECASE,
+    )
+
+    @classmethod
+    def _ordered_by_write_destination(
+        cls, text: str, named_paths: tuple[str, ...] | list[str]
+    ) -> tuple[str, ...]:
+        """Put the path being WRITTEN TO first, not the one named first.
+
+        LIVE, 2026-08-10. "Count how many .py files are in
+        /Users/bryan/.aura/live-source/core/introspection, then write that
+        number and the file names into ~/Documents/aura_probe_count.txt" tried
+        to write to the source directory and was refused by the artifact-root
+        guard, which was the only thing standing between a read request and a
+        write into her own source tree.
+
+        The planner took named_paths[0], and the first path in a sentence is
+        whatever the sentence talks about first — here, the thing to READ. Two
+        signals separate them: a path introduced by a write verb plus "into" or
+        "to" is the destination, and a destination for write_text_file is a
+        file rather than a bare directory.
+        """
+
+        paths = [str(path) for path in named_paths if str(path).strip()]
+        if len(paths) < 2:
+            return tuple(paths)
+
+        def rank(path: str) -> tuple[int, int]:
+            tail = path.rstrip("/").rsplit("/", 1)[-1]
+            named_as_destination = any(
+                match.group("path") and match.group("path").rstrip("/.,") in path
+                for match in cls._WRITE_DESTINATION_RE.finditer(text or "")
+            )
+            looks_like_a_file = 1 if "." in tail else 0
+            return (0 if named_as_destination else 1, 0 if looks_like_a_file else 1)
+
+        return tuple(sorted(paths, key=rank))
+
     @staticmethod
     def _extract_folder_name(objective: str) -> str:
         text = str(objective or "")
@@ -4000,6 +4041,7 @@ class DesktopTaskSkill(BaseSkill):
         if named_paths and not any(
             token in lowered for token in ("folder", "directory")
         ):
+            named_paths = self._ordered_by_write_destination(text, named_paths)
             body = self._inline_sentence_for(text) or self._document_body(text, context)
             return [
                 DesktopTaskStep(
