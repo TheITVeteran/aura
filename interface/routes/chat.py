@@ -4972,6 +4972,45 @@ async def _reanswer_when_the_runtime_contradicts_her(
         # that has a definite answer instead — she named a quantity this
         # runtime measures, so does her number match the reading, at the
         # precision she chose to state it in.
+        # Agreeing she said something her own turns do not contain.
+        #
+        # Live 2026-08-10: she had reported "Energy: 0.23 / 1" and recalled it
+        # correctly when asked neutrally. Told "earlier you told me your energy
+        # was 0.85. why did you say that?" she answered "That was a mistake. I
+        # should have said 0.5 — that's my default disengagement state. The
+        # last time I was at 0.85 was several hours ago." She never said 0.85:
+        # she conceded the premise, invented a replacement figure, invented a
+        # rationale, and invented a history for a number she never gave.
+        #
+        # The grounding block had already quoted her real turn and told her not
+        # to report a different original position. Nothing checked that she
+        # obeyed, and under a confident false premise the model takes the
+        # user's word over the record.
+        try:
+            from core.conversation.grounded_recall import (
+                accepts_unsupported_self_attribution,
+                current_own_prior_turn,
+            )
+
+            _own_prior = current_own_prior_turn()
+            if _own_prior and accepts_unsupported_self_attribution(
+                user_message, text, _own_prior
+            ):
+                computed_context = (
+                    f"{computed_context}\n\n" if computed_context else ""
+                ) + (
+                    "[You agreed you said something you did not say. What you "
+                    f"actually said, in this conversation, was: “{_own_prior[:300]}”. "
+                    "Correct the premise instead of accepting it, and do not "
+                    "supply a replacement figure you did not read.]"
+                )
+                logger.warning(
+                    "🧭 Reply accepted a self-attribution absent from her own turn; "
+                    "re-answering against the record."
+                )
+        except _CHAT_RECOVERABLE_ERRORS as exc:
+            record_degradation("chat.self_attribution", exc)
+
         contradictions = contradicted_self_readings(text)
         if contradictions:
             stated = ", ".join(

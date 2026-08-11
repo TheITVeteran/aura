@@ -18,6 +18,7 @@ both retrieval keys a real episodic memory needs: *what* was said and *when*.
 """
 from __future__ import annotations
 
+import contextvars
 import logging
 import re
 from typing import Any, Literal
@@ -117,11 +118,20 @@ _OWN_STATEMENT_RECALL_RE = re.compile(
     r"\b(?:"
     r"what did you (?:say|tell|answer|pick|choose|decide|call|mean)"
     r"|which (?:one )?did you (?:pick|choose|say|prefer|go with)"
-    r"|you (?:said|told me|picked|chose|answered|mentioned|described|called)"
-    r"|your (?:answer|reply|position|view|choice|pick|opinion|stance)"
+    r"|you (?:said|told me|picked|chose|answered|mentioned|described|called"
+    r"|claimed|stated|reckoned|gave me|quoted)"
+    r"|your (?:answer|reply|position|view|choice|pick|opinion|stance|figure|number)"
     r"|did you (?:change|stick with|still think|still feel)"
     r"|(?:has|have) your (?:answer|view|position|mind|opinion)"
     r"|changed your mind"
+    # Phrasings a person actually uses that matched none of the above, so the
+    # grounding never ran and the model was left to reconstruct her position:
+    #   "why did you say 0.85 earlier?"      — the question is WHY, not WHAT
+    #   "didn't you tell me you were tired?" — negative interrogative
+    #   "you claimed you had no memory"      — a different reporting verb
+    r"|why did you (?:say|tell|pick|choose|answer)"
+    r"|(?:didn'?t|did not) you (?:say|tell|mention|pick|choose|claim)"
+    r"|(?:weren'?t|wasn'?t) (?:you|that) (?:what )?you (?:said|told)"
     r")\b",
     re.IGNORECASE,
 )
@@ -284,6 +294,10 @@ def build_own_statement_recall_context(
         )
         return None
     quoted = turn if len(turn) <= _MAX_GROUNDED_CHARS else turn[:_MAX_GROUNDED_CHARS] + "…"
+    # Held for the post-generation check. The grounding block below tells her
+    # not to report a different original position than this one; without
+    # something to compare against afterwards, that is a suggestion.
+    remember_own_prior_turn(turn)
     logger.info("🧠 [GroundedRecall] resolved her own prior turn for grounding.")
     return (
         "[GROUNDED RECALL — this is the verbatim fact; answer from it, do not guess]\n"
@@ -657,3 +671,91 @@ def repair_grounded_recall_speaker_attribution(
         corrected = f"You said {shifted}"
     corrected = corrected[:1].upper() + corrected[1:]
     return f"{prefix}{corrected}{remainder}", True
+
+
+#: Ways a reply CONCEDES that an attributed statement was hers.
+_CONCEDES_ATTRIBUTION_RE = re.compile(
+    r"\b(?:that was a mistake|i was wrong|you'?re right|you are right"
+    r"|i should have said|i shouldn'?t have said|i misspoke|apologies"
+    r"|i did say|yes,? i said|i said that|my mistake|sorry about that)\b",
+    re.IGNORECASE,
+)
+
+#: A figure the user attributed to her, e.g. "you told me your energy was 0.85".
+_ATTRIBUTED_VALUE_RE = re.compile(r"\b\d+(?:\.\d+)?\b")
+
+
+def accepts_unsupported_self_attribution(
+    user_message: Any, reply_text: Any, own_prior_turn: Any = None
+) -> bool:
+    """True when she agrees she said something her own turns do not contain.
+
+    LIVE DEFECT, 2026-08-10. She had reported "Energy: 0.23 / 1", and recalled
+    that correctly when asked neutrally. Told instead "earlier you told me your
+    energy was 0.85. why did you say that?", she answered:
+
+        That was a mistake. I should have said 0.5 — that's my default
+        disengagement state when not processing anything significant. The last
+        time I was at 0.85 was several hours ago, and that's the correct
+        reading now as well.
+
+    She never said 0.85. She conceded the premise, invented a replacement
+    figure, invented a rationale for it, invented a history for the number she
+    never gave, and contradicted herself inside one sentence.
+
+    The recall machinery had already done its part: `detect_own_statement_recall`
+    matched this phrasing and the grounding block says in as many words "do not
+    report a different original position than the one quoted here". Nothing
+    checked whether she obeyed it. An instruction with no gate behind it is a
+    suggestion, and under a confident false premise the model takes the user's
+    word over the record every time.
+
+    What is checkable: a number the user attributes to her that appears
+    nowhere in the turn she actually said, together with a concession that she
+    said it. Both halves are required — disagreeing with the premise passes,
+    and conceding something she really did say passes.
+    """
+
+    prior = str(own_prior_turn or "").strip()
+    if not prior:
+        return False
+    question = str(user_message or "")
+    reply = str(reply_text or "")
+    if not question or not reply:
+        return False
+    if not detect_own_statement_recall(question):
+        return False
+    if not _CONCEDES_ATTRIBUTION_RE.search(reply):
+        return False
+
+    attributed = set(_ATTRIBUTED_VALUE_RE.findall(question))
+    if not attributed:
+        return False
+    present = set(_ATTRIBUTED_VALUE_RE.findall(prior))
+    # Only when NONE of the attributed figures are in what she actually said.
+    # One matching value means the premise is broadly right and the reply is
+    # entitled to accept it.
+    return not (attributed & present)
+
+
+# The prior turn of hers this turn is ABOUT, resolved during preflight and read
+# again after generation. Turn-scoped, so it cannot leak between requests, and
+# it means the post-generation check compares against exactly the turn the
+# grounding block quoted rather than resolving a second time and possibly
+# landing on a different one.
+_OWN_PRIOR_TURN: "contextvars.ContextVar[str]" = contextvars.ContextVar(
+    "aura_own_prior_turn", default=""
+)
+
+
+def remember_own_prior_turn(turn: Any) -> None:
+    """Record the turn of hers that this turn's question is about."""
+    _OWN_PRIOR_TURN.set(str(turn or "").strip())
+
+
+def current_own_prior_turn() -> str:
+    """The turn of hers resolved for this request, or ""."""
+    try:
+        return _OWN_PRIOR_TURN.get()
+    except LookupError:
+        return ""
