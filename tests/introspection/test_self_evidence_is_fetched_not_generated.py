@@ -514,3 +514,39 @@ def test_the_refusal_helper_covers_recall_as_well_as_health() -> None:
 
     assert "past_actions_answer" in source
     assert "self_health_answer" in source
+
+
+def test_recall_ranks_by_what_the_step_observed_not_by_recency_alone() -> None:
+    """LIVE: recall fired, read receipts instead of guessing, and returned the
+    wrong ones — a junk folder from an earlier mis-routed turn, because that
+    turn's CAUSE was a verbatim copy of the same question and it was newer.
+
+    Two turns can share a request. The evidence is what the step actually
+    observed, and that is the thing being asked about, so it outweighs the
+    cause.
+    """
+    from core.introspection.self_evidence import resolve_past_actions
+
+    bundle = resolve_past_actions(
+        query="what was the count of .py files in that directory?"
+    )
+    reading = next(r for r in bundle.readings if r.channel == "tool_receipts")
+    if not reading.present:
+        pytest.skip("no verified tool receipts on this machine")
+
+    evidence = " ".join(str(entry.get("evidence") or "") for entry in reading.value)
+    assert "count=" in evidence
+
+
+def test_the_discriminating_words_are_not_stopworded() -> None:
+    """"count", "files" and "directory" ARE the question — stripping them made
+    every receipt equally relevant."""
+    import inspect
+
+    from core.introspection import self_evidence
+
+    source = inspect.getsource(self_evidence.resolve_past_actions)
+    stopword_block = source[source.find("if word not in {") : source.find("}", source.find("if word not in {"))]
+
+    for discriminating in ('"count"', '"files"', '"directory"', '"file"'):
+        assert discriminating not in stopword_block

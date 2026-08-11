@@ -722,23 +722,37 @@ def resolve_past_actions(limit: int = 12, query: Any = "") -> EvidenceBundle:
             return 0.0
 
     actions.sort(key=_at, reverse=True)
+    # Only genuinely contentless words are dropped. The first version also
+    # stripped "count", "files" and "directory" — the exact words that
+    # discriminate — so a question about a count matched anything, and what
+    # came back was a junk folder from an earlier mis-routed turn whose CAUSE
+    # was a verbatim copy of the same question.
     terms = {
         word
         for word in re.findall(r"[a-z]{4,}", str(query or "").lower())
         if word not in {"what", "which", "when", "where", "have", "your", "yours",
                         "actually", "without", "guessing", "earlier", "today",
-                        "asked", "count", "file", "files", "directory", "about"}
+                        "asked", "about", "them", "this", "that", "with", "from",
+                        "were", "then", "into", "just", "give", "tell", "some"}
     }
-    if terms:
-        relevant = [
-            entry
-            for entry in actions
-            if terms & set(re.findall(r"[a-z]{4,}",
-                                      f"{entry.get('action')} {entry.get('cause')} "
-                                      f"{entry.get('evidence')}".lower()))
-        ]
-        if relevant:
-            actions = relevant
+    if terms and actions:
+        def _score(entry: dict[str, Any]) -> tuple[int, float]:
+            # Evidence outweighs cause. The cause is the request that produced
+            # the receipt, and two different turns can share a request; the
+            # evidence is what that step actually observed, which is the thing
+            # being asked about.
+            evidence_words = set(re.findall(r"[a-z]{4,}", str(entry.get("evidence") or "").lower()))
+            other_words = set(re.findall(
+                r"[a-z]{4,}", f"{entry.get('action')} {entry.get('cause')}".lower()
+            ))
+            return (
+                3 * len(terms & evidence_words) + len(terms & other_words),
+                _at(entry),
+            )
+
+        scored = sorted(actions, key=_score, reverse=True)
+        if _score(scored[0])[0] > 0:
+            actions = [entry for entry in scored if _score(entry)[0] > 0]
     actions = actions[: max(1, int(limit))]
     if not actions:
         return EvidenceBundle(
