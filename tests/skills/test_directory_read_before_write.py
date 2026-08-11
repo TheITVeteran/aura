@@ -39,8 +39,17 @@ import pytest
 from core.skills.computer_use import ComputerUseSkill
 from core.skills.desktop_task import DesktopTaskSkill, DesktopTaskStep
 
+# Derived from the checkout rather than hard-coded to one machine's home.
+# These paths are DATA — the absolute path a user typed, which the router
+# and the skill parser must extract — so the specific user name was never
+# part of any assertion, only part of why the enterprise gate's
+# hardcoded-path rule fired on this file.
+REPO_ROOT = Path(__file__).resolve().parents[2]
+_INTROSPECTION = str(REPO_ROOT / "core" / "introspection")
+_CLAUDE_MD = str(REPO_ROOT / "CLAUDE.md")
+
 OBJECTIVE = (
-    "Count how many .py files are in /Users/bryan/.aura/live-source/core/introspection, "
+    f"Count how many .py files are in {_INTROSPECTION}, "
     "then write that number and the file names into ~/Documents/aura_probe_count.txt."
 )
 
@@ -92,7 +101,7 @@ def test_her_own_source_tree_is_readable() -> None:
     """Reading her own code is the case that started this."""
     result = _skill()._list_directory(
         json.dumps({
-            "path": "/Users/bryan/.aura/live-source/core/introspection",
+            "path": _INTROSPECTION,
             "pattern": "*.py",
         })
     )
@@ -121,7 +130,7 @@ def test_a_symlink_out_of_the_roots_is_judged_by_where_it_lands() -> None:
 
 def test_a_file_is_not_a_directory() -> None:
     result = _skill()._list_directory(
-        json.dumps({"path": "/Users/bryan/.aura/live-source/CLAUDE.md"})
+        json.dumps({"path": _CLAUDE_MD})
     )
 
     assert result["ok"] is False
@@ -138,19 +147,19 @@ def test_the_request_plans_a_read_of_the_source_directory() -> None:
     assert step is not None
     assert step.action == "list_directory"
     target = json.loads(step.target)
-    assert target["path"] == "/Users/bryan/.aura/live-source/core/introspection"
+    assert target["path"] == _INTROSPECTION
     assert target["pattern"] == "*.py"
 
 
 def test_the_write_destination_is_never_read_as_the_source() -> None:
     """Confusing the two is what aimed a write at her own source tree."""
     step = DesktopTaskSkill._directory_read_step(
-        OBJECTIVE, skip="/Users/bryan/.aura/live-source/core/introspection"
+        OBJECTIVE, skip=_INTROSPECTION
     )
 
     if step is not None:
         assert json.loads(step.target)["path"] != (
-            "/Users/bryan/.aura/live-source/core/introspection"
+            _INTROSPECTION
         )
 
 
@@ -234,7 +243,7 @@ def test_the_objective_planner_plans_read_then_write() -> None:
 
     assert [step.action for step in steps] == ["list_directory", "write_text_file"]
     assert json.loads(steps[0].target)["path"] == (
-        "/Users/bryan/.aura/live-source/core/introspection"
+        _INTROSPECTION
     )
     assert json.loads(steps[1].target)["path"] == "~/Documents/aura_probe_count.txt"
 
@@ -249,7 +258,7 @@ def test_a_read_verifies_on_the_reading_itself() -> None:
     """
     step = DesktopTaskStep(
         action="list_directory",
-        target=json.dumps({"path": "/Users/bryan/.aura/live-source/core/introspection"}),
+        target=json.dumps({"path": _INTROSPECTION}),
         reason="r",
         expect="e",
         critical=True,
@@ -258,7 +267,7 @@ def test_a_read_verifies_on_the_reading_itself() -> None:
         step,
         {
             "ok": True,
-            "path": "/Users/bryan/.aura/live-source/core/introspection",
+            "path": _INTROSPECTION,
             "pattern": "*.py",
             "count": 9,
             "names": ["a.py"],

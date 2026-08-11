@@ -60,9 +60,9 @@ def test_her_own_captures_are_hers_to_clean_up(relative):
 @pytest.mark.parametrize(
     "path",
     [
-        "/Users/bryan/Documents/taxes.pdf",
-        "/Users/bryan/Pictures/wedding.png",
-        "/Users/bryan/Desktop/Monthly Expenses.xlsx",
+        "/Users/owner/Documents/taxes.pdf",
+        "/Users/owner/Pictures/wedding.png",
+        "/Users/owner/Desktop/Monthly Expenses.xlsx",
         "/etc/passwd",
     ],
 )
@@ -100,7 +100,7 @@ def test_the_modality_changes_only_for_her_own_captures():
     model = PermissionRiskModel()
 
     own = model._detect_modality("file_write", _summary(f"{_root()}/data/ephemeral/s.png"))
-    theirs = model._detect_modality("file_write", _summary("/Users/bryan/Documents/a.pdf"))
+    theirs = model._detect_modality("file_write", _summary("/Users/owner/Documents/a.pdf"))
 
     assert own == "file_write"
     assert theirs == "file_delete"
@@ -112,7 +112,7 @@ def test_cleaning_her_own_capture_is_approved_and_a_user_file_is_not():
     mine = model.check_permission(
         "file_write", _summary(f"{_root()}/data/ephemeral/s.png")
     )
-    yours = model.check_permission("file_write", _summary("/Users/bryan/Documents/a.pdf"))
+    yours = model.check_permission("file_write", _summary("/Users/owner/Documents/a.pdf"))
 
     assert mine.modality == "file_write"
     assert yours.approved is False

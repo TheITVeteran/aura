@@ -175,9 +175,9 @@ def test_done_reports_the_effect_not_the_step_count() -> None:
         "receipts": [{
             "action": "write_text_file",
             "ok": True,
-            "result": {"path": "/Users/bryan/Desktop/aura_haiku.txt"},
+            "result": {"path": "/Users/owner/Desktop/aura_haiku.txt"},
         }],
-    }) == "wrote /Users/bryan/Desktop/aura_haiku.txt."
+    }) == "wrote /Users/owner/Desktop/aura_haiku.txt."
 
 
 def test_several_effects_are_listed_in_order() -> None:

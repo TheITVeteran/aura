@@ -28,18 +28,28 @@ import pytest
 
 from core.runtime.desktop_objective_intent import looks_like_desktop_objective
 
+from pathlib import Path
+# Derived from the checkout rather than hard-coded to one machine's home.
+# These paths are DATA — the absolute path a user typed, which the router
+# and the skill parser must extract — so the specific user name was never
+# part of any assertion, only part of why the enterprise gate's
+# hardcoded-path rule fired on this file.
+REPO_ROOT = Path(__file__).resolve().parents[2]
+_INTROSPECTION = str(REPO_ROOT / "core" / "introspection")
+_CLAUDE_MD = str(REPO_ROOT / "CLAUDE.md")
+
 
 @pytest.mark.parametrize(
     "message",
     [
-        "Count how many .py files are in /Users/bryan/.aura/live-source/core/introspection, "
+        f"Count how many .py files are in {_INTROSPECTION}, "
         "then write that number and the file names into ~/Documents/aura_probe_count.txt. "
         "Tell me the number.",
-        "how many .py files are in /Users/bryan/.aura/live-source/core/introspection?",
+        f"how many .py files are in {_INTROSPECTION}?",
         "write hello into ~/Documents/x.txt",
         "list the contents of ~/Documents",
         "what's in /etc/hosts",
-        "read /Users/bryan/.aura/live-source/CLAUDE.md and summarise it",
+        f"read {_CLAUDE_MD} and summarise it",
     ],
 )
 def test_path_operations_reach_the_body(message: str) -> None:

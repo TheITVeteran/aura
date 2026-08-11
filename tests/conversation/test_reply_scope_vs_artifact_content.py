@@ -53,7 +53,7 @@ def test_the_live_turn_no_longer_demands_a_number() -> None:
     assert _asks(LIVE_MESSAGE) is False
     # The correct answer — the path — must survive the gate.
     assert (
-        numeric_answer_missing(LIVE_MESSAGE, "/Users/bryan/Documents/aura_selftest.md")
+        numeric_answer_missing(LIVE_MESSAGE, "/Users/owner/Documents/aura_selftest.md")
         is False
     )
 
