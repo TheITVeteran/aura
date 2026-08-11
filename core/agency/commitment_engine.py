@@ -100,6 +100,19 @@ class CommitmentEngine:
     def __init__(self):
         self._commitments: Dict[str, Commitment] = {}
         self._last_check: float = 0.0
+        # Lifetime tallies, persisted for operator forensics only. NOT a
+        # reliability source.
+        #
+        # On this instance they read fulfilled=423, broken=1142, across a ledger
+        # that had only ever held 501 rows. A lifetime broken count of more than
+        # twice the number of rows in existence is the arithmetic signature of
+        # the _load defect below: each boot re-read the same scaffold rows and
+        # counted each of them broken again. The counters cannot be repaired
+        # after the fact, because there is no way to know which increments were
+        # real. reliability_score therefore counts the stored rows the isolation
+        # predicate accepts as lived, and deliberately never falls back to
+        # these. Anything new that wants a trustworthiness figure wants
+        # reliability_score.
         self._fulfilled_count: int = 0
         self._broken_count: int = 0
         self._load()
@@ -243,6 +256,22 @@ class CommitmentEngine:
                     return True
             except (ImportError, RuntimeError, AttributeError):
                 pass
+        # A role scaffold is not a promise.
+        #
+        # LIVE, 2026-08-10: this ledger held 501 entries, 311 of them swarm
+        # prompts beginning "You are the Master Synthesizer. Review the original
+        # problem…", 277 marked broken, and exactly one genuine promise. Those
+        # entries fed reliability_score — a number she reports about her own
+        # trustworthiness — and get_context_block(), which injects active
+        # commitments back into her prompts, so scaffold preambles were being
+        # returned to her as things she had undertaken to do.
+        try:
+            from core.utils.scaffold_prompt_intent import looks_like_scaffold_prompt
+
+            if looks_like_scaffold_prompt(description):
+                return True
+        except (ImportError, RuntimeError, AttributeError, TypeError, ValueError):
+            pass
         try:
             from core.continuity import sanitize_continuity_summary
 
@@ -269,11 +298,39 @@ class CommitmentEngine:
 
     @property
     def reliability_score(self) -> float:
-        """0-1: ratio of fulfilled to (fulfilled + broken)."""
-        total = self._fulfilled_count + self._broken_count
-        if total == 0:
-            return 1.0
-        return self._fulfilled_count / total
+        """0-1: ratio of fulfilled to (fulfilled + broken), over REAL promises.
+
+        LIVE, 2026-08-10. This read two lifetime counters that every stored row
+        incremented, and 311 of the 501 stored rows were swarm scaffold prompts
+        beginning "You are the Master Synthesizer". 277 rows were broken. So the
+        number she would quote for her own reliability was computed almost
+        entirely over text nobody had promised — and it could only ever fall,
+        because a scaffold is never fulfilled.
+
+        Counted from the stored commitments instead, excluding the ones the
+        isolation predicate does not consider lived.
+        """
+        fulfilled = 0
+        broken = 0
+        for commitment in self._commitments.values():
+            if self._must_isolate_from_lived_commitments(
+                commitment.description, commitment.outcome
+            ):
+                continue
+            if commitment.status == CommitmentStatus.FULFILLED:
+                fulfilled += 1
+            elif commitment.status == CommitmentStatus.BROKEN:
+                broken += 1
+        total = fulfilled + broken
+        if total:
+            return fulfilled / total
+        # No lived commitment has resolved either way, so there is no evidence
+        # about reliability. The lifetime counters are deliberately NOT the
+        # fallback: they incremented once per stored row, and 500 of the 501
+        # rows on this runtime were prompts rather than promises, so they encode
+        # the very pollution this method now excludes. Reporting "no evidence"
+        # as 1.0 matches what this returned for an empty ledger before.
+        return 1.0
 
     # ── Events ────────────────────────────────────────────────────────────
 
@@ -373,17 +430,37 @@ class CommitmentEngine:
                         checkin_count=d.get("checkin_count", 0),
                         notes=d.get("notes", []),
                     )
-                    if commitment.status == CommitmentStatus.ACTIVE and (
-                        commitment.is_overdue()
-                        or self._must_isolate_from_lived_commitments(
+                    # Two different dispositions, fused into one branch until
+                    # 2026-08-10 — and the fusion is what built the 501-row
+                    # ledger this instance was found with.
+                    #
+                    # A row that is not a lived commitment at all (a swarm
+                    # scaffold, an internal prompt) is DROPPED. It is not a
+                    # promise, so it cannot be a broken one, and recording it as
+                    # broken is what produced 277 "failures" and a lifetime
+                    # broken_count that could only climb: every restart re-read
+                    # the same prompts, marked each one BROKEN, incremented the
+                    # counter, and saved that verdict back to disk as permanent
+                    # evidence against her. Dropping instead of demoting also
+                    # means the file heals itself on the next boot rather than
+                    # carrying the junk forever.
+                    if self._must_isolate_from_lived_commitments(
                         commitment.description,
                         commitment.outcome,
                         include_proof_context=False,
-                    )
                     ):
+                        logger.debug(
+                            "CommitmentEngine dropped non-lived ledger row '%s'.",
+                            str(commitment.description)[:60],
+                        )
+                        changed = True
+                        continue
+                    # An overdue promise, by contrast, IS a broken promise and
+                    # must count against her.
+                    if commitment.status == CommitmentStatus.ACTIVE and commitment.is_overdue():
                         commitment.status = CommitmentStatus.BROKEN
                         commitment.notes.append(
-                            "[Isolated] Expired or proof-derived commitment removed from live cognition."
+                            "[Expired] Deadline passed without fulfilment."
                         )
                         self._broken_count += 1
                         changed = True

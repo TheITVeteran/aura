@@ -21,6 +21,7 @@ from dataclasses import asdict, dataclass, field
 from typing import Any
 
 from core.runtime.errors import record_degradation
+from core.utils.scaffold_prompt_intent import SCAFFOLD_PREAMBLE_RE
 
 # Requires at least one letter, so "76ers", "401k" and "3d" are subjects
 # while bare numbers are not. The old pattern demanded a LEADING letter,
@@ -331,12 +332,15 @@ _SCAFFOLD_SUBJECT_LABEL_RE = re.compile(
 
 #: The opening of a prompt that is talking to Aura about her own role rather
 #: than about anything in the world.
-_SCAFFOLD_PREAMBLE_RE = re.compile(
-    r"^\s*(?:you\s+are\s+(?:the|a|an)\b|your\s+task\s+is\b|"
-    r"as\s+(?:the|a|an)\s+\w+\s+(?:agent|synthesizer|specialist|analyst)\b|"
-    r"act\s+as\b|review\s+the\s+original\s+problem\b)",
-    re.IGNORECASE,
-)
+#:
+#: One definition, shared with core/agency. This was a local copy until
+#: 2026-08-10, when her commitment ledger turned out to hold 501 rows of which
+#: 500 were these same scaffolds — the identical question ("is this text
+#: machinery or is it something she meant?") asked in a second subsystem, which
+#: had answered it in a third way: not at all. Two copies drift apart silently
+#: because each one is only ever exercised through its own layer, so the shared
+#: one lives in core/utils/scaffold_prompt_intent.py and both read it.
+_SCAFFOLD_PREAMBLE_RE = SCAFFOLD_PREAMBLE_RE
 
 
 def imagination_subject(text: Any, context: Any = None) -> str:

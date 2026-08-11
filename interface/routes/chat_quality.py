@@ -304,11 +304,37 @@ def _check_response_consistency(reply_text: str, user_message: str) -> tuple[boo
 
 
 # ── Commitment Extraction ─────────────────────────────────────
-_COMMITMENT_PATTERNS = re.compile(
+#: First-person undertakings — she is saying she will do this thing.
+#:
+#: Accepting a commitment someone else proposed is the commonest way to make
+#: one, and none of these matched it. Live 2026-08-10: asked to hold a deferred
+#: task and act on it unprompted, she answered "I accept the commitment and I am
+#: able to act on it without further prompting." Nothing was registered, nothing
+#: acted, and thirteen minutes later the file did not exist.
+_UNDERTAKING_PATTERNS = re.compile(
     r"(?:^|\. |\n)"
     r"(i'll |i will |let me |i'm going to |i won't forget |i promise |"
-    r"i'll remember |next step is |we should |i should )"
-    r"([^.!?\n]{10,120})",
+    r"i'll remember |"
+    r"i accept |i've noted |i have noted |noted[,.] |consider it done|"
+    r"will do|i'll take care of |i am able to act|i can do that|"
+    r"yes[,.]? i'll |yes[,.]? i will |on it[,.]? )"
+    r"([^.!?\n]{0,120})",
+    re.IGNORECASE | re.MULTILINE,
+)
+
+#: Deliberately NOT registered. "we should", "i should" and "next step is"
+#: propose a course of action; they do not undertake one, and a proposal that
+#: goes unactioned is not a broken promise.
+#:
+#: These three sat in the registration pattern for as long as it existed, which
+#: was harmless only because the function was dead code (it called a method that
+#: does not exist). Repairing the function makes them live, and every hedge in
+#: conversation — "we should check the logs first" — would become a user-facing
+#: commitment that breaks 24 hours later and marks down the reliability figure
+#: she reports about herself. That is precisely the flood this ledger was just
+#: cleaned of, refilled from a different tap.
+_PROPOSAL_PATTERNS = re.compile(
+    r"(?:^|\. |\n)(next step is |we should |i should )([^.!?\n]{0,120})",
     re.IGNORECASE | re.MULTILINE,
 )
 
@@ -318,25 +344,70 @@ def _extract_and_register_commitments(reply_text: str, user_message: str) -> Non
 
     This closes the open-loop tracking gap: when Aura says 'I'll remember X'
     or 'next step is Z', it actually gets tracked.
+
+    LIVE DEFECT, 2026-08-10. That docstring was the whole of it. The function
+    called ``ce.add_commitment(...)`` behind ``if not hasattr(ce,
+    "add_commitment"): return`` — and CommitmentEngine has no such method. Its
+    API is ``commit(description, outcome, deadline_hours, commitment_type)``. So
+    the guard was true on every call, the function returned immediately every
+    time, and not one commitment has ever been registered from a conversation.
+    The gap it claims to close was open the entire time, silently, because a
+    hasattr guard on a method that exists nowhere looks exactly like a
+    capability that is merely unavailable.
+
+    Found by asking her to hold a deferred task: "some time in the next few
+    minutes, without me asking again, write READY into a file." She answered "I
+    accept the commitment and I am able to act on it without further prompting."
+    Nothing was registered, nothing acted, and the file did not exist thirteen
+    minutes later.
     """
     if not reply_text or len(reply_text) < 20:
         return
     try:
-        matches = _COMMITMENT_PATTERNS.findall(reply_text)
+        matches = _UNDERTAKING_PATTERNS.findall(reply_text)
         if not matches:
             return
-        from core.agency.commitment_engine import get_commitment_engine
+        from core.agency.commitment_engine import (
+            CommitmentStatus,
+            CommitmentType,
+            get_commitment_engine,
+        )
+
         ce = get_commitment_engine()
-        if not hasattr(ce, "add_commitment"):
-            return
+        request = str(user_message or "").strip()
+        # Restating a promise is not making a second one. Without this, holding
+        # one open loop across a conversation ("I'll write that file" asked
+        # about three times) accrues three rows that must each be fulfilled
+        # separately, so two of them break and the reliability figure falls for
+        # a promise that was kept.
+        open_descriptions = {
+            " ".join(str(c.description or "").lower().split())
+            for c in ce._commitments.values()
+            if c.status == CommitmentStatus.ACTIVE
+        }
         for prefix, body in matches[:3]:  # cap at 3 per response
-            description = f"{prefix.strip()} {body.strip()}"
-            ce.add_commitment(
+            description = f"{prefix.strip()} {body.strip()}".strip()
+            if len(description) < 8:
+                continue
+            normalized = " ".join(description.lower().split())
+            if normalized in open_descriptions:
+                logger.debug("Commitment already open, not duplicating: %s", description[:60])
+                continue
+            open_descriptions.add(normalized)
+            # The engine requires an OUTCOME — what would count as this being
+            # done. For a promise made in conversation the only honest answer is
+            # the request it was made against, so that is what is recorded
+            # rather than a restatement of the promise.
+            ce.commit(
                 description=description,
-                source="auto_extracted",
-                context=user_message[:200] if user_message else "",
+                outcome=(
+                    f"The request this was promised against is satisfied: {request[:240]}"
+                    if request
+                    else "The promise made in this reply is satisfied."
+                ),
+                commitment_type=CommitmentType.USER_FACING,
             )
-            logger.debug("📝 Auto-extracted commitment: %s", description[:80])
+            logger.info("📝 Registered commitment from reply: %s", description[:80])
     except _CHAT_RECOVERABLE_ERRORS as exc:
         record_degradation('chat', exc)
         logger.debug("Commitment extraction skipped: %s", exc)

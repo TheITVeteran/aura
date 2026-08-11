@@ -952,7 +952,16 @@ def test_commitment_engine_quarantines_proof_fixture_on_load(
 
     engine = commitment_module.CommitmentEngine()
 
-    assert engine._commitments["proof"].status == commitment_module.CommitmentStatus.BROKEN
+    # The fixture is dropped, not demoted.
+    #
+    # This asserted `_commitments["proof"].status == BROKEN` until 2026-08-10 —
+    # the mechanism rather than the contract. Retaining the row as a broken
+    # promise is what filled the live ledger with 501 entries and a lifetime
+    # broken count of 1142: each boot re-read the same non-promises, recorded
+    # each one again as a failure, and saved that verdict back to disk. A proof
+    # fixture is not a promise, so it cannot be a broken one.
+    assert "proof" not in engine._commitments
+    assert engine._broken_count == 0
     assert [item.id for item in engine.get_active_commitments()] == ["lived"]
 
 
