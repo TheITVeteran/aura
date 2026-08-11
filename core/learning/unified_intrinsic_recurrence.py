@@ -11,6 +11,7 @@ from __future__ import annotations
 import hashlib
 import json
 import math
+from collections.abc import Sequence
 from dataclasses import asdict, dataclass
 from typing import Any, Final
 
@@ -28,6 +29,10 @@ from core.learning.protected_memory import (
     apply_protected_transition,
     memory_retention,
     semantic_convergence,
+)
+from core.learning.recurrent_state_schema import (
+    STATE_CARDINALITY,
+    STATE_SLOT_NAMES,
 )
 
 UNIFIED_INTRINSIC_RECURRENCE_SCHEMA: Final = "aura.unified_intrinsic_recurrence.v1"
@@ -53,18 +58,30 @@ class UnifiedRecurrenceConfig:
     memory_write_threshold: float = 0.5
     halt_threshold: float = 0.9
     minimum_iterations: int = 2
+    state_slots: int = len(STATE_SLOT_NAMES)
+    state_cardinality: int = STATE_CARDINALITY
     initialization_seed: int = 20260810198
     schema: str = UNIFIED_INTRINSIC_RECURRENCE_SCHEMA
 
     def __post_init__(self) -> None:
         if self.schema != UNIFIED_INTRINSIC_RECURRENCE_SCHEMA:
             raise ValueError("unified recurrence schema differs")
-        for name in ("hidden_size", "correction_rank", "depth_basis_size"):
+        for name in (
+            "hidden_size",
+            "correction_rank",
+            "depth_basis_size",
+            "state_slots",
+            "state_cardinality",
+        ):
             value = getattr(self, name)
             if type(value) is not int or value < 1:
                 raise ValueError(f"{name} must be a positive integer")
         if self.correction_rank > self.hidden_size:
             raise ValueError("correction rank exceeds hidden size")
+        if self.state_slots != len(STATE_SLOT_NAMES):
+            raise ValueError("state slot count differs from the canonical schema")
+        if self.state_cardinality != STATE_CARDINALITY:
+            raise ValueError("state cardinality differs from the canonical schema")
         if type(self.minimum_iterations) is not int or self.minimum_iterations < 1:
             raise ValueError("minimum_iterations must be positive")
         if type(self.initialization_seed) is not int or self.initialization_seed < 0:
@@ -125,9 +142,24 @@ class UnifiedRecurrentController(nn.Module):
     def __init__(self, config: UnifiedRecurrenceConfig) -> None:
         super().__init__()
         self.config = config
-        key_a, key_b, key_depth, key_memory, key_halt = mx.random.split(
+        (
+            key_a,
+            key_b,
+            key_depth,
+            key_memory,
+            key_halt,
+            key_state,
+            key_state_slots,
+            key_state_values,
+            key_transition_query,
+            key_transition_key,
+            key_transition_value,
+            key_transition_self,
+            key_transition_output,
+            key_transition_depth,
+        ) = mx.random.split(
             mx.random.key(config.initialization_seed),
-            num=5,
+            num=14,
         )
         scale = 1.0 / math.sqrt(config.hidden_size)
         self.correction_a = (
@@ -182,6 +214,97 @@ class UnifiedRecurrentController(nn.Module):
         )
         self.halt_motion_weight = mx.array(0.0, dtype=mx.float32)
         self.halt_bias = mx.array(-6.0, dtype=mx.float32)
+        self.state_readout_weight = (
+            mx.random.normal(
+                (
+                    config.state_slots,
+                    config.hidden_size,
+                    config.state_cardinality,
+                ),
+                key=key_state,
+            ).astype(mx.float32)
+            * scale
+        )
+        self.state_readout_bias = mx.zeros(
+            (config.state_slots, config.state_cardinality),
+            dtype=mx.float32,
+        )
+        self.state_slot_embeddings = (
+            mx.random.normal(
+                (config.state_slots, config.hidden_size),
+                key=key_state_slots,
+            ).astype(mx.float32)
+            * 0.02
+        )
+        self.state_value_embeddings = (
+            mx.random.normal(
+                (
+                    config.state_slots,
+                    config.state_cardinality,
+                    config.hidden_size,
+                ),
+                key=key_state_values,
+            ).astype(mx.float32)
+            * 0.02
+        )
+        self.state_transition_query = (
+            mx.random.normal(
+                (
+                    config.state_slots,
+                    config.hidden_size,
+                    config.correction_rank,
+                ),
+                key=key_transition_query,
+            ).astype(mx.float32)
+            * scale
+        )
+        self.state_transition_key = (
+            mx.random.normal(
+                (config.hidden_size, config.correction_rank),
+                key=key_transition_key,
+            ).astype(mx.float32)
+            * scale
+        )
+        self.state_transition_value = (
+            mx.random.normal(
+                (config.hidden_size, config.correction_rank),
+                key=key_transition_value,
+            ).astype(mx.float32)
+            * scale
+        )
+        self.state_transition_self = (
+            mx.random.normal(
+                (
+                    config.state_slots,
+                    config.hidden_size,
+                    config.correction_rank,
+                ),
+                key=key_transition_self,
+            ).astype(mx.float32)
+            * scale
+        )
+        self.state_transition_output = (
+            mx.random.normal(
+                (
+                    config.state_slots,
+                    config.correction_rank,
+                    config.state_cardinality,
+                ),
+                key=key_transition_output,
+            ).astype(mx.float32)
+            / math.sqrt(config.correction_rank)
+        )
+        self.state_transition_depth = (
+            mx.random.normal(
+                (config.depth_basis_size, config.correction_rank),
+                key=key_transition_depth,
+            ).astype(mx.float32)
+            * 0.01
+        )
+        self.state_transition_bias = mx.zeros(
+            (config.state_slots, config.state_cardinality),
+            dtype=mx.float32,
+        )
 
     def depth_features(self, step: int) -> Any:
         if type(step) is not int or step < 0:
@@ -275,6 +398,219 @@ class UnifiedRecurrentController(nn.Module):
         )
         return mx.sigmoid(logit)
 
+    def initial_state_slots(self, batch_size: int, dtype: Any) -> Any:
+        if type(batch_size) is not int or batch_size < 1:
+            raise ValueError("state slot batch size must be positive")
+        return mx.broadcast_to(
+            self.state_slot_embeddings.astype(dtype)[None, :, :],
+            (batch_size, self.config.state_slots, self.config.hidden_size),
+        )
+
+    def state_logits(
+        self,
+        hidden: Any,
+        *,
+        public_token_count: int | None = None,
+        state_slot_start: int | None = None,
+    ) -> Any:
+        """Decode typed state from causal slots, or a public-only diagnostic."""
+
+        if len(hidden.shape) != 3 or int(hidden.shape[-1]) != self.config.hidden_size:
+            raise ValueError("recurrent state readout hidden shape differs")
+        if (public_token_count is None) == (state_slot_start is None):
+            raise ValueError("exactly one recurrent state readout source is required")
+        if state_slot_start is not None:
+            if (
+                type(state_slot_start) is not int
+                or state_slot_start < 0
+                or state_slot_start + self.config.state_slots > int(hidden.shape[1])
+            ):
+                raise ValueError("state slot range is outside the recurrent state")
+            selected = hidden[
+                :,
+                state_slot_start : state_slot_start + self.config.state_slots,
+                :,
+            ].astype(mx.float32)
+            return mx.einsum(
+                "bsh,shc->bsc",
+                selected,
+                self.state_readout_weight,
+            ) + self.state_readout_bias
+        if (
+            type(public_token_count) is not int
+            or not 1 <= public_token_count <= int(hidden.shape[1])
+        ):
+            raise ValueError("public token count is outside the recurrent state")
+        public_summary = hidden[:, public_token_count - 1, :].astype(mx.float32)
+        return mx.einsum(
+            "bh,shc->bsc",
+            public_summary,
+            self.state_readout_weight,
+        ) + self.state_readout_bias
+
+    def typed_state_transition(
+        self,
+        hidden: Any,
+        *,
+        state_slot_start: int,
+    ) -> tuple[Any, Any]:
+        """Commit one explicit categorical state for the next recurrent step.
+
+        The straight-through categorical bottleneck makes the forward path
+        discrete while retaining gradients through the decision probabilities.
+        This prevents the auxiliary state head from merely describing a drifting
+        residual: the state it predicts is the state the next pass receives.
+        """
+
+        logits = self.state_logits(hidden, state_slot_start=state_slot_start)
+        return self.commit_state_logits(
+            hidden,
+            state_slot_start=state_slot_start,
+            logits=logits,
+        ), logits
+
+    def state_transition_logits(
+        self,
+        problem_evidence: Any,
+        hidden: Any,
+        *,
+        state_slot_start: int,
+        step: int,
+    ) -> Any:
+        """Predict one shared typed transition from state plus immutable evidence."""
+
+        if (
+            len(problem_evidence.shape) != 3
+            or int(problem_evidence.shape[0]) != int(hidden.shape[0])
+            or int(problem_evidence.shape[-1]) != self.config.hidden_size
+            or int(problem_evidence.shape[1]) < 1
+        ):
+            raise ValueError("state transition problem evidence shape differs")
+        stop = state_slot_start + self.config.state_slots
+        if not 0 <= state_slot_start < stop <= int(hidden.shape[1]):
+            raise ValueError("state transition slots are outside the recurrent state")
+        state = hidden[:, state_slot_start:stop, :].astype(mx.float32)
+        evidence = problem_evidence.astype(mx.float32)
+        query = mx.einsum("bsh,shr->bsr", state, self.state_transition_query)
+        keys = evidence @ self.state_transition_key
+        values = evidence @ self.state_transition_value
+        attention = mx.softmax(
+            mx.einsum("bsr,bnr->bsn", query, keys)
+            / math.sqrt(self.config.correction_rank),
+            axis=-1,
+        )
+        context = mx.einsum("bsn,bnr->bsr", attention, values)
+        self_state = mx.einsum(
+            "bsh,shr->bsr",
+            state,
+            self.state_transition_self,
+        )
+        depth = self.depth_features(step) @ self.state_transition_depth
+        features = mx.tanh(context + self_state + depth[None, None, :])
+        return mx.einsum(
+            "bsr,src->bsc",
+            features,
+            self.state_transition_output,
+        ) + self.state_transition_bias
+
+    def commit_state_logits(
+        self,
+        hidden: Any,
+        *,
+        state_slot_start: int,
+        logits: Any,
+    ) -> Any:
+        """Commit supplied transition logits through the categorical codebook."""
+
+        if logits.shape != (
+            int(hidden.shape[0]),
+            self.config.state_slots,
+            self.config.state_cardinality,
+        ):
+            raise ValueError("state transition logits differ from the canonical schema")
+        probabilities = mx.softmax(logits.astype(mx.float32), axis=-1)
+        selected = mx.argmax(probabilities, axis=-1)
+        categories = mx.arange(self.config.state_cardinality)[None, None, :]
+        hard = (categories == selected[..., None]).astype(mx.float32)
+        straight_through = probabilities + mx.stop_gradient(hard - probabilities)
+        replacement = mx.einsum(
+            "bsc,sch->bsh",
+            straight_through,
+            self.state_value_embeddings,
+        )
+        return self._replace_state_slots(hidden, state_slot_start, replacement)
+
+    def teacher_state_transition(
+        self,
+        hidden: Any,
+        *,
+        state_slot_start: int,
+        values: Sequence[int],
+        probability: float,
+    ) -> Any:
+        """Blend an exact prior state into training roll-in without prompt leakage."""
+
+        if (
+            isinstance(probability, bool)
+            or not isinstance(probability, (int, float))
+            or not 0.0 <= float(probability) <= 1.0
+        ):
+            raise ValueError("state teacher-forcing probability must be inside [0, 1]")
+        if len(values) != self.config.state_slots or any(
+            type(value) is not int or not 0 <= value < self.config.state_cardinality
+            for value in values
+        ):
+            raise ValueError("teacher state values differ from the canonical schema")
+        labels = mx.array(values, dtype=mx.int32)[None, :, None]
+        categories = mx.arange(self.config.state_cardinality)[None, None, :]
+        exact = (categories == labels).astype(mx.float32)
+        replacement = mx.einsum(
+            "bsc,sch->bsh",
+            exact,
+            self.state_value_embeddings,
+        )
+        teacher = self._replace_state_slots(hidden, state_slot_start, replacement)
+        if float(probability) == 1.0:
+            return teacher
+        start = state_slot_start
+        stop = start + self.config.state_slots
+        mixed = (
+            (1.0 - float(probability)) * hidden[:, start:stop, :]
+            + float(probability) * teacher[:, start:stop, :]
+        )
+        return mx.concatenate(
+            [hidden[:, :start, :], mixed, hidden[:, stop:, :]],
+            axis=1,
+        )
+
+    def _replace_state_slots(
+        self,
+        hidden: Any,
+        state_slot_start: int,
+        replacement: Any,
+    ) -> Any:
+        """Replace typed slots at matched residual scale without scale gradients."""
+
+        previous = hidden[
+            :,
+            state_slot_start : state_slot_start + self.config.state_slots,
+            :,
+        ]
+        scale = mx.stop_gradient(
+            _rms(previous.astype(mx.float32))
+            / _rms(replacement.astype(mx.float32))
+        )
+        replacement = replacement * scale.astype(replacement.dtype)
+        committed = mx.concatenate(
+            [
+                hidden[:, :state_slot_start, :],
+                replacement.astype(hidden.dtype),
+                hidden[:, state_slot_start + self.config.state_slots :, :],
+            ],
+            axis=1,
+        )
+        return committed
+
     def identity_initialized(self) -> bool:
         return bool(mx.all(self.correction_b == 0))
 
@@ -294,6 +630,17 @@ class UnifiedRecurrentController(nn.Module):
             "halt_state_weight",
             "halt_motion_weight",
             "halt_bias",
+            "state_readout_weight",
+            "state_readout_bias",
+            "state_slot_embeddings",
+            "state_value_embeddings",
+            "state_transition_query",
+            "state_transition_key",
+            "state_transition_value",
+            "state_transition_self",
+            "state_transition_output",
+            "state_transition_depth",
+            "state_transition_bias",
         ):
             value = getattr(self, name)
             mx.eval(value)
@@ -308,6 +655,11 @@ class UnifiedRecurrentController(nn.Module):
             "identity_initialized": self.identity_initialized(),
             "continuous_depth_basis": "bounded_rational_polynomial",
             "depth_extrapolation_defined": True,
+            "typed_state_bottleneck": "straight_through_categorical",
+            "predicted_state_is_next_step_input": True,
+            "state_processor": "shared_evidence_attention_transition",
+            "state_problem_evidence": "frozen_deep_prefix_no_decoder_suffix",
+            "transformer_answer_passes_per_state": 1,
             "parameter_sha256": self.parameter_sha256(),
         }
         return {**body, "receipt_sha256": _canonical_sha256(body)}
@@ -322,6 +674,12 @@ def unified_recurrent_hidden_states(
     memory_layout: MemoryLayout | None = None,
     adaptive_halt: bool = False,
     soft_memory_writes: bool = False,
+    state_slot_start: int | None = None,
+    state_logit_trajectory: list[Any] | None = None,
+    decode_state_trajectory: list[Any] | None = None,
+    recurrent_input_trajectory: list[Any] | None = None,
+    state_teacher_values: Sequence[Sequence[int]] | None = None,
+    state_teacher_forcing_probability: float = 0.0,
 ) -> tuple[Any, list[Any], UnifiedRecurrenceTelemetry]:
     """Run all Level-3 control mechanisms on one transformer trajectory."""
 
@@ -331,6 +689,18 @@ def unified_recurrent_hidden_states(
         raise TypeError("unified recurrence mode flags must be bools")
     if adaptive_halt and controller.config.minimum_iterations > plan.iterations:
         raise ValueError("minimum iterations exceed the recurrence plan")
+    if state_teacher_values is not None and state_slot_start is None:
+        raise ValueError("state teacher roll-in requires typed state slots")
+    if state_teacher_values is not None and len(state_teacher_values) < max(
+        plan.iterations - 1, 0
+    ):
+        raise ValueError("state teacher roll-in is shorter than the recurrence plan")
+    if (
+        isinstance(state_teacher_forcing_probability, bool)
+        or not isinstance(state_teacher_forcing_probability, (int, float))
+        or not 0.0 <= float(state_teacher_forcing_probability) <= 1.0
+    ):
+        raise ValueError("state teacher-forcing probability must be inside [0, 1]")
     inner = getattr(model, "model", None)
     layers = getattr(inner, "layers", None)
     if not layers or plan.coda_start > len(layers):
@@ -338,6 +708,17 @@ def unified_recurrent_hidden_states(
 
     hidden = inner.embed_tokens(tokens)
     hidden = _run(layers[: plan.prelude_end], hidden)
+    if state_slot_start is not None:
+        if (
+            type(state_slot_start) is not int
+            or not 0 <= state_slot_start <= int(hidden.shape[1])
+        ):
+            raise ValueError("state slot insertion is outside the token sequence")
+        slots = controller.initial_state_slots(int(hidden.shape[0]), hidden.dtype)
+        hidden = mx.concatenate(
+            [hidden[:, :state_slot_start, :], slots, hidden[:, state_slot_start:, :]],
+            axis=1,
+        )
     anchor = hidden
     anchor_rms = _rms(anchor) if plan.renormalize else None
     if memory_layout is not None and memory_layout.n_slots != int(hidden.shape[1]):
@@ -348,9 +729,84 @@ def unified_recurrent_hidden_states(
     memory_write_means: list[float] = []
     transport_gates: list[float] = []
     window = layers[plan.prelude_end : plan.coda_start]
+    problem_evidence: Any | None = None
+    if state_slot_start is not None:
+        # Prefix-only execution is causally identical to the same positions in
+        # the complete sequence, but cannot expose teacher-forced answer tokens.
+        # Detaching gives the state machine a stable deep evidence surface.
+        with recurrent_iteration(0):
+            problem_evidence = mx.stop_gradient(
+                _run(window, anchor[:, :state_slot_start, :])
+            )
     halted = False
     halt_reason = "configured_depth_exhausted"
+    last_decode_state: Any | None = None
     for iteration in range(plan.iterations):
+        if state_slot_start is not None:
+            state_stop = state_slot_start + controller.config.state_slots
+            if iteration > 0:
+                hidden = mx.concatenate(
+                    [
+                        anchor[:, :state_slot_start, :],
+                        hidden[:, state_slot_start:state_stop, :],
+                        anchor[:, state_stop:, :],
+                    ],
+                    axis=1,
+                )
+            if (
+                iteration > 0
+                and state_teacher_values is not None
+                and state_teacher_forcing_probability > 0.0
+            ):
+                hidden = controller.teacher_state_transition(
+                    hidden,
+                    state_slot_start=state_slot_start,
+                    values=state_teacher_values[iteration - 1],
+                    probability=state_teacher_forcing_probability,
+                )
+            prior_state = hidden
+            recurrent_input = hidden
+            if recurrent_input_trajectory is not None:
+                recurrent_input_trajectory.append(recurrent_input)
+            with recurrent_iteration(iteration):
+                state_logits = controller.state_transition_logits(
+                    problem_evidence,
+                    recurrent_input,
+                    state_slot_start=state_slot_start,
+                    step=iteration,
+                )
+                hidden = controller.commit_state_logits(
+                    recurrent_input,
+                    state_slot_start=state_slot_start,
+                    logits=state_logits,
+                )
+                # State recurrence is cheap and explicit.  The resident
+                # transformer is used once per candidate state as the shared
+                # semantic answer bridge, never as the state transition itself.
+                candidate = _run(window, hidden)
+                candidate = controller.correction(candidate, iteration)
+            if state_logit_trajectory is not None:
+                state_logit_trajectory.append(state_logits)
+            last_decode_state = candidate
+            if decode_state_trajectory is not None:
+                decode_state_trajectory.append(candidate)
+            probability = controller.halt_probability(prior_state, hidden)
+            transport_gate = mx.array(1.0, dtype=mx.float32)
+            mx.eval(hidden, candidate, probability, transport_gate)
+            halt_probabilities.append(float(probability.item()))
+            memory_write_means.append(0.0)
+            transport_gates.append(1.0)
+            trajectory.append(hidden)
+            if (
+                adaptive_halt
+                and iteration + 1 >= controller.config.minimum_iterations
+                and halt_probabilities[-1] >= controller.config.halt_threshold
+            ):
+                halted = True
+                halt_reason = "learned_threshold"
+                break
+            continue
+
         prior_state = hidden
         if iteration > 0:
             if plan.anchor_injection > 0.0:
@@ -364,6 +820,8 @@ def unified_recurrent_hidden_states(
             if plan.renormalize:
                 hidden = hidden * (anchor_rms / _rms(hidden)).astype(hidden.dtype)
         recurrent_input = hidden
+        if recurrent_input_trajectory is not None:
+            recurrent_input_trajectory.append(recurrent_input)
         with recurrent_iteration(iteration):
             candidate = _run(window, recurrent_input)
             candidate = controller.correction(candidate, iteration)
@@ -411,7 +869,8 @@ def unified_recurrent_hidden_states(
             halt_reason = "learned_threshold"
             break
 
-    final = _run(layers[plan.coda_start :], hidden)
+    final_source = last_decode_state if last_decode_state is not None else hidden
+    final = _run(layers[plan.coda_start :], final_source)
     final = inner.norm(final)
     retention = None
     residuals: tuple[float, ...] = ()

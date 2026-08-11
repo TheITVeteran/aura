@@ -15,6 +15,10 @@ from mlx.utils import tree_flatten
 
 from core.learning.intrinsic_recurrence import RecurrentDepthPlan, _run
 from core.learning.protected_memory import MemoryLayout
+from core.learning.recurrent_state_schema import (
+    RecurrentStateTargets,
+    state_targets_from_trace,
+)
 from core.learning.unified_intrinsic_recurrence import (
     UnifiedRecurrentController,
     unified_recurrent_hidden_states,
@@ -29,10 +33,13 @@ class UnifiedIntrinsicTrainingSpec:
     coda_start: int
     train_depths: tuple[int, ...] = (1, 2, 4)
     heldout_depths: tuple[int, ...] = (8, 16)
+    answer_weight: float = 1.0
     anchor_weight: float = 1.0
     trajectory_weight: float = 0.25
     progression_margin: float = 0.01
     halt_weight: float = 0.1
+    state_weight: float = 1.0
+    stutter_weight: float = 0.1
     anchor_injection: float = 0.0
     renormalize: bool = True
     schema: str = UNIFIED_INTRINSIC_OBJECTIVE_SCHEMA
@@ -53,10 +60,13 @@ class UnifiedIntrinsicTrainingSpec:
         if min(self.heldout_depths) <= max(self.train_depths):
             raise ValueError("heldout depths must extrapolate beyond training")
         for name in (
+            "answer_weight",
             "anchor_weight",
             "trajectory_weight",
             "progression_margin",
             "halt_weight",
+            "state_weight",
+            "stutter_weight",
         ):
             value = getattr(self, name)
             if (
@@ -143,7 +153,7 @@ def _answer_ce_from_hidden(
     )
 
 
-def unified_answer_trajectory(
+def unified_answer_and_recurrent_trajectory(
     model: Any,
     tokens: Any,
     answer_tokens: Any,
@@ -152,7 +162,10 @@ def unified_answer_trajectory(
     *,
     memory_layout: MemoryLayout | None = None,
     decoder_input_tokens: Any | None = None,
-) -> tuple[list[Any], list[Any]]:
+    use_state_slots: bool = False,
+    state_teacher_values: Sequence[Sequence[int]] | None = None,
+    state_teacher_forcing_probability: float = 0.0,
+) -> tuple[list[Any], list[Any], list[Any], list[Any]]:
     """Decode every recurrent state through one frozen coda and readout.
 
     Labels and decoder inputs are deliberately separate.  The default is exact
@@ -168,25 +181,70 @@ def unified_answer_trajectory(
     if decoder_inputs.shape != answer_tokens.shape:
         raise ValueError("decoder inputs must be answer-aligned")
     full = mx.concatenate([tokens, decoder_inputs], axis=1)
-    _final, trajectory, _telemetry = unified_recurrent_hidden_states(
+    state_slot_start = int(tokens.shape[-1]) if use_state_slots else None
+    state_slots = controller.config.state_slots if use_state_slots else 0
+    effective_memory_layout = memory_layout
+    if use_state_slots:
+        if memory_layout is not None:
+            raise ValueError("state slots own the protected-memory layout")
+        # These are machine-state registers, not immutable episodic memory.
+        # Their write authority is the typed categorical transition below; the
+        # generic sparse memory gate would make a changing program counter and
+        # register trace physically impossible to learn.
+        effective_memory_layout = None
+    state_logits: list[Any] = []
+    decode_states: list[Any] = []
+    _final, recurrent_states, _telemetry = unified_recurrent_hidden_states(
         model,
         full,
         plan,
         controller,
-        memory_layout=memory_layout,
+        memory_layout=effective_memory_layout,
         soft_memory_writes=True,
+        state_slot_start=state_slot_start,
+        state_logit_trajectory=state_logits if use_state_slots else None,
+        decode_state_trajectory=decode_states if use_state_slots else None,
+        state_teacher_values=state_teacher_values,
+        state_teacher_forcing_probability=state_teacher_forcing_probability,
     )
-    answer_start = int(full.shape[1]) - int(answer_tokens.shape[-1]) - 1
+    answer_start = int(tokens.shape[-1]) + state_slots - 1
     hidden_states: list[Any] = []
     losses: list[Any] = []
-    for state in trajectory:
+    output_states = decode_states if use_state_slots else recurrent_states
+    for state in output_states:
         hidden = _run(model.model.layers[plan.coda_start :], state)
         hidden = model.model.norm(hidden)
         hidden_states.append(hidden)
         losses.append(
             _answer_ce_from_hidden(model, hidden, answer_tokens, answer_start)
         )
-    return hidden_states, losses
+    return recurrent_states, hidden_states, losses, state_logits
+
+
+def unified_answer_trajectory(
+    model: Any,
+    tokens: Any,
+    answer_tokens: Any,
+    plan: RecurrentDepthPlan,
+    controller: UnifiedRecurrentController,
+    *,
+    memory_layout: MemoryLayout | None = None,
+    decoder_input_tokens: Any | None = None,
+    use_state_slots: bool = False,
+) -> tuple[list[Any], list[Any]]:
+    """Decode every recurrent state through the same frozen coda and readout."""
+
+    _recurrent, hidden, losses, _state_logits = unified_answer_and_recurrent_trajectory(
+        model,
+        tokens,
+        answer_tokens,
+        plan,
+        controller,
+        memory_layout=memory_layout,
+        decoder_input_tokens=decoder_input_tokens,
+        use_state_slots=use_state_slots,
+    )
+    return hidden, losses
 
 
 def _progression_loss(losses: Sequence[Any], margin: float) -> Any:
@@ -222,6 +280,94 @@ def _halt_loss(
     return mx.mean(mx.stack(terms))
 
 
+def _supervised_halt_loss(
+    controller: UnifiedRecurrentController,
+    states: Sequence[Any],
+    targets: RecurrentStateTargets,
+) -> Any:
+    """Train completion from the interpreter's done bit, not answer likelihood."""
+
+    if len(states) != len(targets.values):
+        raise ValueError("halt supervision differs from recurrent trajectory")
+    if len(states) < 2:
+        return mx.zeros(())
+    terms = []
+    for index in range(1, len(states)):
+        probability = controller.halt_probability(states[index - 1], states[index])
+        target = mx.array(float(targets.values[index][-1]), dtype=mx.float32)
+        terms.append(
+            -(target * mx.log(probability + 1e-6))
+            - (1.0 - target) * mx.log(1.0 - probability + 1e-6)
+        )
+    return mx.mean(mx.stack(terms))
+
+
+def structured_state_loss(
+    controller: UnifiedRecurrentController,
+    states: Sequence[Any],
+    targets: RecurrentStateTargets,
+    *,
+    public_token_count: int,
+    state_slot_start: int | None = None,
+    state_logits: Sequence[Any] | None = None,
+) -> tuple[Any, float, tuple[float, ...]]:
+    """Measure exact categorical machine state from public prompt activations."""
+
+    if len(states) != len(targets.values):
+        raise ValueError("state supervision differs from recurrent trajectory")
+    if state_logits is not None and len(state_logits) != len(states):
+        raise ValueError("state decision trajectory differs from recurrent trajectory")
+    losses = []
+    accuracies: list[float] = []
+    decisions = state_logits if state_logits is not None else (None,) * len(states)
+    for state, decision, values, masks in zip(
+        states,
+        decisions,
+        targets.values,
+        targets.masks,
+        strict=True,
+    ):
+        logits = (
+            decision
+            if decision is not None
+            else controller.state_logits(
+                state,
+                public_token_count=(
+                    public_token_count if state_slot_start is None else None
+                ),
+                state_slot_start=state_slot_start,
+            )
+        )
+        if int(logits.shape[0]) != 1:
+            raise ValueError("structured state supervision requires one task per batch")
+        labels = mx.array(values, dtype=mx.int32)
+        mask = mx.array(masks, dtype=mx.float32)
+        per_slot = nn.losses.cross_entropy(
+            logits[0],
+            labels,
+            reduction="none",
+        )
+        losses.append(mx.sum(per_slot * mask) / mx.maximum(mx.sum(mask), 1.0))
+        predictions = mx.argmax(logits[0], axis=-1)
+        correct = (predictions == labels).astype(mx.float32)
+        accuracies.append(float((mx.sum(correct * mask) / mx.sum(mask)).item()))
+    return mx.mean(mx.stack(losses)), sum(accuracies) / len(accuracies), tuple(accuracies)
+
+
+def _stutter_loss(states: Sequence[Any], targets: RecurrentStateTargets) -> Any:
+    """Make post-completion recurrence preserve the terminal hidden state."""
+
+    terms = []
+    for index in range(1, len(states)):
+        if not targets.values[index - 1][-1]:
+            continue
+        previous = mx.stop_gradient(states[index - 1].astype(mx.float32))
+        current = states[index].astype(mx.float32)
+        scale = mx.maximum(mx.mean(previous**2), 1e-6)
+        terms.append(mx.mean((current - previous) ** 2) / scale)
+    return mx.mean(mx.stack(terms)) if terms else mx.zeros(())
+
+
 def unified_intrinsic_training_loss(
     model: Any,
     tokens: Any,
@@ -232,6 +378,8 @@ def unified_intrinsic_training_loss(
     memory_layout: MemoryLayout | None = None,
     readout_sha256: str | None = None,
     decoder_input_tokens: Any | None = None,
+    transition_trace: Any | None = None,
+    state_teacher_forcing_probability: float = 0.0,
 ) -> tuple[Any, dict[str, Any]]:
     """Train semantics at shallow depths while keeping readout immutable."""
 
@@ -242,37 +390,96 @@ def unified_intrinsic_training_loss(
     final_losses: list[Any] = []
     progression_terms: list[Any] = []
     halt_terms: list[Any] = []
+    state_terms: list[Any] = []
+    stutter_terms: list[Any] = []
+    state_commitments: dict[str, dict[str, Any]] = {}
     per_depth: dict[str, dict[str, Any]] = {}
     for depth in spec.train_depths:
-        states, losses = unified_answer_trajectory(
-            model,
-            tokens,
-            answer_tokens,
-            spec.plan_at(depth),
-            controller,
-            memory_layout=memory_layout,
-            decoder_input_tokens=decoder_input_tokens,
+        depth_targets = (
+            state_targets_from_trace(transition_trace, depth)
+            if transition_trace is not None
+            else None
+        )
+        recurrent_states, states, losses, state_logits = (
+            unified_answer_and_recurrent_trajectory(
+                model,
+                tokens,
+                answer_tokens,
+                spec.plan_at(depth),
+                controller,
+                memory_layout=memory_layout,
+                decoder_input_tokens=decoder_input_tokens,
+                use_state_slots=transition_trace is not None,
+                state_teacher_values=(
+                    depth_targets.values if depth_targets is not None else None
+                ),
+                state_teacher_forcing_probability=(
+                    state_teacher_forcing_probability
+                    if depth_targets is not None
+                    else 0.0
+                ),
+            )
         )
         final_losses.append(losses[-1])
         progression = _progression_loss(losses, spec.progression_margin)
-        halting = _halt_loss(controller, states, losses)
+        targets = (
+            depth_targets
+            if depth_targets is not None and depth == max(spec.train_depths)
+            else None
+        )
+        if targets is None:
+            state_loss = mx.zeros(())
+            state_accuracy = None
+            state_step_accuracy: tuple[float, ...] = ()
+            stuttering = mx.zeros(())
+            halting = (
+                mx.zeros(())
+                if transition_trace is not None
+                else _halt_loss(controller, states, losses)
+            )
+        else:
+            state_loss, state_accuracy, state_step_accuracy = structured_state_loss(
+                controller,
+                recurrent_states,
+                targets,
+                public_token_count=int(tokens.shape[-1]),
+                state_slot_start=int(tokens.shape[-1]),
+                state_logits=state_logits,
+            )
+            stuttering = _stutter_loss(recurrent_states, targets)
+            halting = _supervised_halt_loss(controller, recurrent_states, targets)
+            state_commitments[f"T{depth}"] = targets.commitment()
         progression_terms.append(progression)
-        halt_terms.append(halting)
+        if transition_trace is None or targets is not None:
+            halt_terms.append(halting)
+        if targets is not None:
+            state_terms.append(state_loss)
+            stutter_terms.append(stuttering)
         per_depth[f"T{depth}"] = {
             "step_ce": [float(value.item()) for value in losses],
             "final_ce": float(losses[-1].item()),
             "progression_loss": float(progression.item()),
             "halt_loss": float(halting.item()),
+            "state_loss": float(state_loss.item()),
+            "state_accuracy": state_accuracy,
+            "state_step_accuracy": list(state_step_accuracy),
+            "stutter_loss": float(stuttering.item()),
         }
     anchor = final_losses[spec.train_depths.index(1)]
     final_mean = mx.mean(mx.stack(final_losses))
     progression_mean = mx.mean(mx.stack(progression_terms))
-    halt_mean = mx.mean(mx.stack(halt_terms))
+    halt_mean = mx.mean(mx.stack(halt_terms)) if halt_terms else mx.zeros(())
+    state_mean = mx.mean(mx.stack(state_terms)) if state_terms else mx.zeros(())
+    stutter_mean = (
+        mx.mean(mx.stack(stutter_terms)) if stutter_terms else mx.zeros(())
+    )
     total = (
-        final_mean
+        spec.answer_weight * final_mean
         + spec.anchor_weight * anchor
         + spec.trajectory_weight * progression_mean
         + spec.halt_weight * halt_mean
+        + spec.state_weight * state_mean
+        + spec.stutter_weight * stutter_mean
     )
     return total, {
         "schema": UNIFIED_INTRINSIC_OBJECTIVE_SCHEMA,
@@ -282,6 +489,16 @@ def unified_intrinsic_training_loss(
         "final_mean_ce": float(final_mean.item()),
         "progression_loss": float(progression_mean.item()),
         "halt_loss": float(halt_mean.item()),
+        "state_loss": float(state_mean.item()),
+        "stutter_loss": float(stutter_mean.item()),
+        "state_supervision": {
+            "available": transition_trace is not None,
+            "evaluator_only": True,
+            "serialized_into_model_input": False,
+            "commitments": state_commitments,
+            "teacher_forcing_probability": state_teacher_forcing_probability,
+            "teacher_available_at_inference": False,
+        },
         "total": float(total.item()),
         "readout_sha256": readout_sha256,
         "readout_frozen_by_training_contract": True,
@@ -299,6 +516,8 @@ __all__ = [
     "UNIFIED_INTRINSIC_OBJECTIVE_SCHEMA",
     "UnifiedIntrinsicTrainingSpec",
     "readout_fingerprint",
+    "structured_state_loss",
+    "unified_answer_and_recurrent_trajectory",
     "unified_answer_trajectory",
     "unified_intrinsic_training_loss",
 ]

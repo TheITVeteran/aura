@@ -149,24 +149,28 @@ def _fresh_tasks(
     from core.learning import recurrence_curriculum as curriculum
 
     families = tuple(identity["families"])
-    campaign_depth = int(identity["task_depth"])
-    depths = [campaign_depth]
+    campaign_depths = tuple(
+        int(value)
+        for value in identity.get("task_depths", (identity.get("task_depth"),))
+    )
+    if not campaign_depths or any(depth < 1 for depth in campaign_depths):
+        raise RuntimeError("unified campaign task depths are invalid")
     train = curriculum.task_battery(
         families,
-        depths,
+        campaign_depths,
         int(identity["per_cell"]),
         seed=int(identity["seed"]),
     )
     selected = curriculum.task_battery(
         families,
-        depths,
+        campaign_depths,
         int(identity["holdout_per_cell"]),
         seed=int(identity["seed"]) + 9_973,
     )
     excluded = {task.prompt for task in (*train, *selected)}
-    evaluation_depths = [
-        campaign_depth if task_depth is None else int(task_depth)
-    ]
+    evaluation_depths = (
+        campaign_depths if task_depth is None else (int(task_depth),)
+    )
     fresh = curriculum.task_battery(
         families,
         evaluation_depths,
@@ -210,6 +214,7 @@ def evaluate_checkpoint(
                 answer,
                 t1,
                 bundle.controller,
+                use_state_slots=True,
             )
             _states, deep_losses = unified_answer_trajectory(
                 bundle.model,
@@ -217,6 +222,7 @@ def evaluate_checkpoint(
                 answer,
                 deep_plan,
                 bundle.controller,
+                use_state_slots=True,
             )
         shallow = float(shallow_losses[-1].item())
         deep = float(deep_losses[-1].item())

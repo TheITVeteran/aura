@@ -111,7 +111,7 @@ def test_training_task_exposes_exact_grpo_contract():
     assert task.grader == "exact_json"
     assert task.metadata == {
         "source": "recurrence_curriculum",
-        "curriculum_version": "2026.07.18.1",
+        "curriculum_version": "2026.08.10.2",
         "generation_seed": 77,
     }
     assert task.grade(task.answer)["correct"] is True
@@ -292,6 +292,12 @@ def test_khop_answer_is_recomputable_from_prompt():
     for _ in range(depth):
         node = edges[node]
     assert _payload(task) == {"node": node}
+    assert task.transition_trace is not None
+    assert task.transition_trace.field_names == ("pc", "node", "done")
+    assert task.transition_trace.states[-1] == (task.depth, node, 1)
+    assert task.transition_program is not None
+    assert task.transition_program.action_field_names == ("next_node",)
+    assert len(task.transition_program.actions) == task.depth
 
 
 def test_boolean_answer_is_recomputable_from_prompt():
@@ -450,6 +456,19 @@ def test_register_trace_answer_is_recomputable_from_prompt():
             registers[left] + multiplier * registers[right] + offset
         ) % modulus
     assert _payload(task) == dict(zip(("r0", "r1", "r2"), registers, strict=True))
+    assert task.transition_trace is not None
+    assert task.transition_trace.field_names == ("pc", "r0", "r1", "r2", "done")
+    assert task.transition_trace.states[-1] == (task.depth, *registers, 1)
+    assert task.transition_program is not None
+    assert task.transition_program.action_field_names == (
+        "destination",
+        "left",
+        "right",
+        "multiplier",
+        "offset",
+        "modulus",
+    )
+    assert len(task.transition_program.actions) == task.depth
 
 
 def test_stack_trace_answer_is_recomputable_from_prompt():

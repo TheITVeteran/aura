@@ -25,13 +25,16 @@ from core.learning.unified_intrinsic_recurrence import (  # noqa: E402
     UnifiedRecurrentController,
 )
 from tools.train_unified_intrinsic_recurrence import (  # noqa: E402
+    TRAINING_SOURCE_FILES,
     UnifiedTrainingBundle,
     _attach_window_adapters,
     _canonical_sha256,
+    _clip_gradient_groups,
     _clip_gradient_norm,
     _deterministic_student_mix,
     _evaluate,
     _generate_student_rollin,
+    _ground_state_value_embeddings,
     _model_identity,
     _optimization_phase,
     _phase_gradients,
@@ -95,10 +98,38 @@ def test_trainer_adapts_window_but_never_coda_or_readout() -> None:
         assert wrapped is (2 <= index < 4)
 
 
+def test_campaign_identity_binds_curriculum_and_state_schema_sources() -> None:
+    assert "core/learning/recurrence_curriculum.py" in TRAINING_SOURCE_FILES
+    assert "core/learning/recurrent_state_schema.py" in TRAINING_SOURCE_FILES
+
+
 def test_hidden_size_comes_from_residual_space_not_packed_embeddings() -> None:
     model = _model()
     model.model.embed_tokens.weight = mx.zeros((64, 4))
     assert _residual_hidden_size(model) == 32
+
+
+def test_state_codebook_is_grounded_in_frozen_model_representations() -> None:
+    model = _model()
+    controller = UnifiedRecurrentController(
+        UnifiedRecurrenceConfig(hidden_size=32, correction_rank=4)
+    )
+    before = controller.parameter_sha256()
+
+    class Tokenizer:
+        def encode(self, text: str, add_special_tokens: bool = False) -> list[int]:
+            del add_special_tokens
+            return [1 + (sum(text.encode("ascii")) % 62)]
+
+    digest = _ground_state_value_embeddings(
+        model,
+        Tokenizer(),
+        controller,
+        prelude_end=2,
+    )
+    assert len(digest) == 64
+    assert controller.parameter_sha256() != before
+    assert controller.state_value_embeddings.shape == (5, 33, 32)
 
 
 def test_model_identity_hashes_weight_content_not_only_path(tmp_path: Path) -> None:
@@ -114,7 +145,7 @@ def test_model_identity_hashes_weight_content_not_only_path(tmp_path: Path) -> N
     assert first["identity_sha256"] != second["identity_sha256"]
 
 
-def test_two_phase_gradient_partition_keeps_anchor_stationary() -> None:
+def test_phase_partition_preserves_shared_t1_and_trains_depth_bridge() -> None:
     gradients = {
         "model": {
             "layer": {
@@ -125,15 +156,22 @@ def test_two_phase_gradient_partition_keeps_anchor_stationary() -> None:
         "controller": {"transport_bias": mx.ones(())},
     }
     semantic = dict(tree_flatten(_phase_gradients(gradients, "semantic_anchor")))
+    state = dict(tree_flatten(_phase_gradients(gradients, "state_transition")))
     recurrent = dict(tree_flatten(_phase_gradients(gradients, "recurrence")))
     assert bool(mx.all(semantic["model.layer.lora_a"] == 1))
     assert bool(mx.all(semantic["model.layer.continuous_depth_b.0"] == 0))
     assert bool(mx.all(semantic["controller.transport_bias"] == 0))
+    assert bool(mx.all(state["model.layer.lora_a"] == 0))
+    assert bool(mx.all(state["model.layer.continuous_depth_b.0"] == 1))
+    assert bool(mx.all(state["controller.transport_bias"] == 1))
     assert bool(mx.all(recurrent["model.layer.lora_a"] == 0))
     assert bool(mx.all(recurrent["model.layer.continuous_depth_b.0"] == 1))
     assert bool(mx.all(recurrent["controller.transport_bias"] == 1))
     assert _optimization_phase(39, 40) == "semantic_anchor"
     assert _optimization_phase(40, 40) == "recurrence"
+    assert _optimization_phase(40, 40, 20) == "state_transition"
+    assert _optimization_phase(59, 40, 20) == "state_transition"
+    assert _optimization_phase(60, 40, 20) == "recurrence"
 
 
 def test_student_rollin_mix_is_deterministic_and_never_relabels() -> None:
@@ -198,6 +236,39 @@ def test_student_rollin_schedule_and_gradient_trust_bound() -> None:
     assert float(before.item()) == pytest.approx(5.0)
     after = mx.sqrt(sum(mx.sum(value**2) for value in clipped.values()))
     assert float(after.item()) == pytest.approx(1.0)
+
+
+def test_gradient_trust_bound_does_not_starve_independent_mechanisms() -> None:
+    gradients = {
+        "model": {"layer": {"lora_a": mx.array([3.0, 4.0])}},
+        "controller": {
+            "state_transition_output": mx.array([0.0, 12.0]),
+            "state_value_embeddings": mx.array([0.0, 8.0]),
+            "transport_bias": mx.array([0.3, 0.4]),
+        },
+    }
+    clipped, global_before, groups = _clip_gradient_groups(gradients, 1.0)
+    flat = dict(tree_flatten(clipped))
+    mx.eval(clipped, global_before, *groups.values())
+    assert float(global_before.item()) > 15.0
+    assert set(groups) == {
+        "scoped_transformer_bridge",
+        "typed_state_transition",
+        "typed_state_codebook",
+        "recurrent_controller",
+    }
+    assert float(mx.linalg.norm(flat["model.layer.lora_a"]).item()) == pytest.approx(
+        1.0
+    )
+    assert float(
+        mx.linalg.norm(flat["controller.state_transition_output"]).item()
+    ) == pytest.approx(1.0)
+    assert float(
+        mx.linalg.norm(flat["controller.state_value_embeddings"]).item()
+    ) == pytest.approx(1.0)
+    assert float(
+        mx.linalg.norm(flat["controller.transport_bias"]).item()
+    ) == pytest.approx(0.5)
 
 
 def test_checkpoint_roundtrip_restores_exact_trainable_state(tmp_path: Path) -> None:
@@ -307,10 +378,10 @@ def test_evaluation_separates_trained_from_heldout_depth_gains(
     values = iter((1.0, 0.9, 1.2, 1.4))
 
     def fake_trajectory(*_args, **_kwargs):
-        return [], [mx.array(next(values))]
+        return [], [], [mx.array(next(values))], []
 
     monkeypatch.setattr(
-        "tools.train_unified_intrinsic_recurrence.unified_answer_trajectory",
+        "tools.train_unified_intrinsic_recurrence.unified_answer_and_recurrent_trajectory",
         fake_trajectory,
     )
     tokenizer = type("Tokenizer", (), {})()

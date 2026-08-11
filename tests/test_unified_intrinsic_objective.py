@@ -12,6 +12,7 @@ pytest.importorskip("mlx_lm")
 from mlx.utils import tree_flatten  # noqa: E402
 from mlx_lm.models.qwen2 import Model, ModelArgs  # noqa: E402
 
+from core.learning.recurrence_curriculum import StructuredTransitionTrace  # noqa: E402
 from core.learning.unified_intrinsic_objective import (  # noqa: E402
     UnifiedIntrinsicTrainingSpec,
     readout_fingerprint,
@@ -73,6 +74,23 @@ def test_depth_split_is_strict_and_extrapolating() -> None:
     assert min(spec.heldout_depths) > max(spec.train_depths)
     with pytest.raises(ValueError, match="disjoint"):
         UnifiedIntrinsicTrainingSpec(2, 4, (1, 2), (2, 4))
+
+
+def test_state_only_objective_removes_answer_and_anchor_gradients() -> None:
+    spec = UnifiedIntrinsicTrainingSpec(
+        2,
+        4,
+        (1, 2, 3),
+        (5, 8),
+        answer_weight=0.0,
+        anchor_weight=0.0,
+        trajectory_weight=0.0,
+        halt_weight=0.0,
+        state_weight=1.0,
+        stutter_weight=0.0,
+    )
+    assert spec.answer_weight == 0.0
+    assert spec.state_weight == 1.0
 
 
 def test_every_recurrent_state_is_decoded_through_the_same_readout() -> None:
@@ -166,6 +184,55 @@ def test_optimizer_moves_controller_but_not_frozen_readout() -> None:
 
     assert controller.parameter_sha256() != before_controller
     assert readout_fingerprint(model, spec.coda_start) == before_readout
+
+
+def test_exact_state_teacher_shapes_recurrent_tissue_without_entering_prompt() -> None:
+    model = _model()
+    controller = _controller()
+    trace = StructuredTransitionTrace(
+        family="boolean",
+        depth=3,
+        field_names=("pc", "value", "done"),
+        states=((0, 0, 0), (1, 1, 0), (2, 0, 0), (3, 1, 1)),
+    )
+
+    def objective(candidate: UnifiedRecurrentController):
+        return unified_intrinsic_training_loss(
+            model,
+            TOKENS,
+            ANSWERS,
+            candidate,
+            _spec(),
+            transition_trace=trace,
+        )[0]
+
+    loss, gradients = nn.value_and_grad(controller, objective)(controller)
+    flat = dict(tree_flatten(gradients))
+    mx.eval(loss, gradients)
+    assert float(mx.max(mx.abs(flat["state_transition_output"]))) > 0.0
+    assert float(mx.max(mx.abs(flat["state_transition_query"]))) > 0.0
+    assert float(mx.max(mx.abs(flat["state_value_embeddings"]))) > 0.0
+    _loss, receipt = unified_intrinsic_training_loss(
+        model,
+        TOKENS,
+        ANSWERS,
+        controller,
+        _spec(),
+        transition_trace=trace,
+        state_teacher_forcing_probability=0.75,
+    )
+    assert receipt["state_supervision"]["available"] is True
+    assert receipt["state_supervision"]["evaluator_only"] is True
+    assert receipt["state_supervision"]["serialized_into_model_input"] is False
+    assert receipt["state_supervision"]["teacher_forcing_probability"] == 0.75
+    assert receipt["state_supervision"]["teacher_available_at_inference"] is False
+    assert receipt["state_loss"] > 0.0
+    assert receipt["per_depth"]["T1"]["state_loss"] == 0.0
+    assert receipt["per_depth"]["T2"]["state_loss"] == 0.0
+    assert receipt["per_depth"]["T3"]["state_step_accuracy"]
+    commitment = receipt["state_supervision"]["commitments"]["T3"]
+    assert commitment["private_values_exposed"] is False
+    assert "values" not in commitment
 
 
 def test_training_receipt_keeps_heldout_depths_unopened() -> None:

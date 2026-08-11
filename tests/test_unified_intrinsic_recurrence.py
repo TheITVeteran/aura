@@ -84,6 +84,142 @@ def test_controller_initialization_seed_replays_and_varies() -> None:
     assert first.parameter_sha256() != other.parameter_sha256()
 
 
+def test_state_readout_uses_only_the_declared_public_prompt_position() -> None:
+    controller = _controller()
+    hidden = mx.zeros((1, 6, 64), dtype=mx.float32)
+    baseline = controller.state_logits(hidden, public_token_count=4)
+    private_changed = hidden.at[:, 4:, :].add(100.0)
+    unchanged = controller.state_logits(private_changed, public_token_count=4)
+    public_changed = hidden.at[:, 3, :].add(1.0)
+    changed = controller.state_logits(public_changed, public_token_count=4)
+    assert baseline.shape == (1, 5, 33)
+    assert bool(mx.array_equal(baseline, unchanged))
+    assert not bool(mx.array_equal(baseline, changed))
+
+
+def test_learned_state_slots_enter_the_real_recurrent_sequence() -> None:
+    model = _model()
+    controller = _controller()
+    _final, trajectory, _telemetry = unified_recurrent_hidden_states(
+        model,
+        TOKENS,
+        RecurrentDepthPlan(2, 6, iterations=2),
+        controller,
+        state_slot_start=4,
+    )
+    assert trajectory[0].shape[1] == TOKENS.shape[1] + controller.config.state_slots
+    logits = controller.state_logits(trajectory[-1], state_slot_start=4)
+    assert logits.shape == (1, 5, 33)
+
+
+def test_typed_state_decision_is_committed_as_next_step_input() -> None:
+    model = _model()
+    controller = _controller()
+    decisions: list[object] = []
+    decode_states: list[object] = []
+    _final, trajectory, telemetry = unified_recurrent_hidden_states(
+        model,
+        TOKENS,
+        RecurrentDepthPlan(2, 6, iterations=3),
+        controller,
+        state_slot_start=4,
+        state_logit_trajectory=decisions,
+        decode_state_trajectory=decode_states,
+    )
+    assert len(decisions) == len(decode_states) == len(trajectory) == 3
+    assert all(decision.shape == (1, 5, 33) for decision in decisions)
+    assert not bool(mx.array_equal(decode_states[-1], trajectory[-1]))
+    assert telemetry.receipt()["teacher_available"] is False
+    receipt = controller.receipt()
+    assert receipt["typed_state_bottleneck"] == "straight_through_categorical"
+    assert receipt["predicted_state_is_next_step_input"] is True
+    assert receipt["state_processor"] == "shared_evidence_attention_transition"
+    assert (
+        receipt["state_problem_evidence"]
+        == "frozen_deep_prefix_no_decoder_suffix"
+    )
+    assert receipt["transformer_answer_passes_per_state"] == 1
+
+
+def test_state_processor_reads_problem_and_state_but_not_answer_suffix() -> None:
+    controller = _controller()
+    evidence = mx.zeros((1, 4, 64), dtype=mx.float32)
+    hidden = mx.zeros((1, 12, 64), dtype=mx.float32).at[:, 4:9, :].add(1.0)
+    baseline = controller.state_transition_logits(
+        evidence,
+        hidden,
+        state_slot_start=4,
+        step=2,
+    )
+    changed_problem = controller.state_transition_logits(
+        evidence + 2.0,
+        hidden,
+        state_slot_start=4,
+        step=2,
+    )
+    changed_state = controller.state_transition_logits(
+        evidence,
+        hidden.at[:, 4:9, :].add(2.0),
+        state_slot_start=4,
+        step=2,
+    )
+    changed_answer_suffix = controller.state_transition_logits(
+        evidence,
+        hidden.at[:, 9:, :].add(100.0),
+        state_slot_start=4,
+        step=2,
+    )
+    assert baseline.shape == (1, 5, 33)
+    assert not bool(mx.array_equal(baseline, changed_problem))
+    assert not bool(mx.array_equal(baseline, changed_state))
+    assert bool(mx.array_equal(baseline, changed_answer_suffix))
+
+
+def test_exact_state_rollin_is_training_only_and_changes_typed_slots() -> None:
+    controller = _controller()
+    hidden = mx.ones((1, 9, 64), dtype=mx.float32)
+    teacher = controller.teacher_state_transition(
+        hidden,
+        state_slot_start=2,
+        values=(1, 2, 3, 4, 0),
+        probability=1.0,
+    )
+    assert bool(mx.array_equal(teacher[:, :2, :], hidden[:, :2, :]))
+    assert bool(mx.array_equal(teacher[:, 7:, :], hidden[:, 7:, :]))
+    assert not bool(mx.array_equal(teacher[:, 2:7, :], hidden[:, 2:7, :]))
+    with pytest.raises(ValueError, match="probability"):
+        controller.teacher_state_transition(
+            hidden,
+            state_slot_start=2,
+            values=(1, 2, 3, 4, 0),
+            probability=1.1,
+        )
+
+
+def test_typed_recurrence_preserves_public_input_lane_between_passes() -> None:
+    model = _model()
+    controller = _controller()
+    decode_states: list[object] = []
+    recurrent_inputs: list[object] = []
+    _final, committed, _telemetry = unified_recurrent_hidden_states(
+        model,
+        TOKENS,
+        RecurrentDepthPlan(2, 6, iterations=3),
+        controller,
+        state_slot_start=4,
+        decode_state_trajectory=decode_states,
+        recurrent_input_trajectory=recurrent_inputs,
+    )
+    assert len(committed) == len(decode_states) == len(recurrent_inputs) == 3
+    assert bool(mx.array_equal(recurrent_inputs[0][:, :4, :], recurrent_inputs[1][:, :4, :]))
+    assert bool(mx.array_equal(recurrent_inputs[1][:, :4, :], recurrent_inputs[2][:, :4, :]))
+    assert bool(mx.array_equal(recurrent_inputs[0][:, 9:, :], recurrent_inputs[1][:, 9:, :]))
+    assert bool(mx.array_equal(recurrent_inputs[1][:, 9:, :], recurrent_inputs[2][:, 9:, :]))
+    assert not bool(
+        mx.array_equal(committed[0][:, 4:9, :], committed[1][:, 4:9, :])
+    )
+
+
 def test_protected_memory_survives_while_semantic_lane_keeps_moving() -> None:
     model = _model()
     controller = _controller()
@@ -206,6 +342,8 @@ def test_adaptive_transport_starts_at_depth_prior_and_discriminates_state() -> N
 def test_invalid_unified_contracts_fail_closed() -> None:
     with pytest.raises(ValueError, match="correction rank"):
         UnifiedRecurrenceConfig(hidden_size=4, correction_rank=8)
+    with pytest.raises(ValueError, match="state slot"):
+        UnifiedRecurrenceConfig(hidden_size=8, correction_rank=4, state_slots=4)
     with pytest.raises(ValueError, match="minimum iterations"):
         unified_recurrent_hidden_states(
             _model(),

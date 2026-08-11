@@ -106,7 +106,10 @@ def evaluate_decoding(
             "decode recurrence depths must be unique non-anchor campaign depths"
         )
     bundle, tokenizer, spec, identity = _load_checkpoint(campaign_dir, stem=stem)
-    depths = task_depths or (int(identity["task_depth"]),)
+    depths = task_depths or tuple(
+        int(value)
+        for value in identity.get("task_depths", (identity.get("task_depth"),))
+    )
     decoded_depths = recurrence_depths or (max(spec.heldout_depths),)
     if (
         any(depth not in spec.depths for depth in decoded_depths)
@@ -140,12 +143,17 @@ def evaluate_decoding(
         def base_logits(tokens: Any) -> Any:
             return _logits(bundle.model(tokens))
 
-        def recurrent_logits(tokens: Any, plan: Any) -> Any:
+        def recurrent_logits(
+            tokens: Any,
+            plan: Any,
+            state_slot_start: int = int(prompt.shape[-1]),
+        ) -> Any:
             logits, _telemetry = unified_recurrent_logits(
                 bundle.model,
                 tokens,
                 plan,
                 bundle.controller,
+                state_slot_start=state_slot_start,
             )
             return logits
 

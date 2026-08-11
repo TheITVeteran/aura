@@ -10,6 +10,7 @@ import os
 import random
 import sys
 import time
+from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
@@ -22,10 +23,16 @@ import mlx.nn as nn  # noqa: E402
 import mlx.optimizers as optim  # noqa: E402
 from mlx.utils import tree_flatten, tree_unflatten  # noqa: E402
 
-from core.learning.intrinsic_recurrence import checkpointed_window  # noqa: E402
+from core.learning.intrinsic_recurrence import _run, checkpointed_window  # noqa: E402
+from core.learning.recurrent_state_schema import (  # noqa: E402
+    STATE_SLOT_NAMES,
+    state_targets_from_trace,
+)
 from core.learning.unified_intrinsic_objective import (  # noqa: E402
     UnifiedIntrinsicTrainingSpec,
     readout_fingerprint,
+    structured_state_loss,
+    unified_answer_and_recurrent_trajectory,
     unified_answer_trajectory,
     unified_intrinsic_training_loss,
 )
@@ -40,6 +47,8 @@ from tools.train_intrinsic_recurrence import encode_example  # noqa: E402
 TRAINING_SCHEMA = "aura.unified_intrinsic_training.v1"
 TRAINING_SOURCE_FILES = (
     "core/learning/depth_conditioned_lora.py",
+    "core/learning/recurrence_curriculum.py",
+    "core/learning/recurrent_state_schema.py",
     "core/learning/unified_intrinsic_objective.py",
     "core/learning/unified_intrinsic_recurrence.py",
     "tools/train_unified_intrinsic_recurrence.py",
@@ -159,6 +168,9 @@ def _attach_window_adapters(
         "continuous_depth_basis_size": depth_basis_size,
         "coda_adapted": False,
         "readout_adapted": False,
+        "ordinary_inference_requires_scope": True,
+        "recurrence_phase_trains_shared_state_bridge": False,
+        "state_bridge": "continuous_depth_residual_preserves_t1",
     }
 
 
@@ -166,18 +178,69 @@ def _trainable(bundle: UnifiedTrainingBundle) -> dict[str, Any]:
     return dict(tree_flatten(bundle.trainable_parameters()))
 
 
-def _optimization_phase(step: int, semantic_warmup_steps: int) -> str:
+def _ground_state_value_embeddings(
+    model: Any,
+    tokenizer: Any,
+    controller: UnifiedRecurrentController,
+    *,
+    prelude_end: int,
+) -> str:
+    """Initialize typed values on the frozen model's native prelude manifold."""
+
+    rows = []
+    for slot_name in STATE_SLOT_NAMES:
+        values = []
+        for value in range(controller.config.state_cardinality):
+            label = f"Internal state {slot_name}={value}"
+            try:
+                token_ids = tokenizer.encode(label, add_special_tokens=False)
+            except TypeError:
+                token_ids = tokenizer.encode(label)
+            if not token_ids:
+                raise RuntimeError("state codebook label encoded to no tokens")
+            tokens = mx.array([token_ids], dtype=mx.int32)
+            hidden = model.model.embed_tokens(tokens)
+            hidden = _run(model.model.layers[:prelude_end], hidden)
+            values.append(hidden[0, -1, :].astype(mx.float32))
+        rows.append(mx.stack(values))
+    grounded = mx.stack(rows)
+    if grounded.shape != controller.state_value_embeddings.shape:
+        raise RuntimeError("grounded state codebook shape differs from controller")
+    controller.state_value_embeddings = grounded
+    mx.eval(controller.state_value_embeddings)
+    digest = hashlib.sha256(
+        bytes(memoryview(controller.state_value_embeddings.astype(mx.float32)))
+    ).hexdigest()
+    return digest
+
+
+def _optimization_phase(
+    step: int,
+    semantic_warmup_steps: int,
+    state_warmup_steps: int = 0,
+) -> str:
     if type(step) is not int or step < 0:
         raise ValueError("optimization step must be non-negative")
     if type(semantic_warmup_steps) is not int or semantic_warmup_steps < 0:
         raise ValueError("semantic warmup steps must be non-negative")
-    return "semantic_anchor" if step < semantic_warmup_steps else "recurrence"
+    if type(state_warmup_steps) is not int or state_warmup_steps < 0:
+        raise ValueError("state warmup steps must be non-negative")
+    if step < semantic_warmup_steps:
+        return "semantic_anchor"
+    if step < semantic_warmup_steps + state_warmup_steps:
+        return "state_transition"
+    return "recurrence"
 
 
 def _phase_gradients(gradients: Any, phase: str) -> Any:
-    """Keep semantic and recurrent optimization physically disjoint."""
+    """Keep the T1 semantic anchor fixed while training residual recurrence.
 
-    if phase not in {"semantic_anchor", "recurrence"}:
+    Shared adapters learn the scoped T1 anchor.  Typed-state interpretation is
+    owned by the continuous depth residuals, so a joint update cannot erase a
+    useful shallow candidate or alter ordinary model inference.
+    """
+
+    if phase not in {"semantic_anchor", "state_transition", "recurrence"}:
         raise ValueError("unified optimization phase is invalid")
     masked = []
     for name, value in tree_flatten(gradients):
@@ -215,6 +278,65 @@ def _clip_gradient_norm(gradients: Any, max_norm: float) -> tuple[Any, Any]:
     return tree_unflatten(
         [(name, value * scale.astype(value.dtype)) for name, value in flattened]
     ), norm
+
+
+def _gradient_ownership_group(name: str) -> str:
+    if name.startswith("model."):
+        return "scoped_transformer_bridge"
+    if name.startswith(("controller.state_transition_", "controller.state_readout_")):
+        return "typed_state_transition"
+    if name.startswith(
+        ("controller.state_value_embeddings", "controller.state_slot_embeddings")
+    ):
+        return "typed_state_codebook"
+    return "recurrent_controller"
+
+
+def _clip_gradient_groups(
+    gradients: Any,
+    max_norm: float,
+) -> tuple[Any, Any, dict[str, Any]]:
+    """Clip independent mechanisms without letting one starve the others."""
+
+    if (
+        isinstance(max_norm, bool)
+        or not isinstance(max_norm, (int, float))
+        or not 0.0 < float(max_norm)
+    ):
+        raise ValueError("maximum gradient norm must be positive")
+    flattened = tree_flatten(gradients)
+    if not flattened:
+        raise ValueError("gradient tree must not be empty")
+    grouped: dict[str, list[Any]] = {}
+    for name, value in flattened:
+        grouped.setdefault(_gradient_ownership_group(name), []).append(value)
+    group_norms = {
+        group: mx.sqrt(
+            mx.sum(
+                mx.stack(
+                    [mx.sum(value.astype(mx.float32) ** 2) for value in values]
+                )
+            )
+        )
+        for group, values in grouped.items()
+    }
+    scales = {
+        group: mx.minimum(1.0, float(max_norm) / mx.maximum(norm, 1e-12))
+        for group, norm in group_norms.items()
+    }
+    clipped = tree_unflatten(
+        [
+            (
+                name,
+                value * scales[_gradient_ownership_group(name)].astype(value.dtype),
+            )
+            for name, value in flattened
+        ]
+    )
+    global_norm = mx.sqrt(
+        mx.sum(mx.stack([norm.astype(mx.float32) ** 2 for norm in group_norms.values()]))
+    )
+    return clipped, global_norm, group_norms
 
 
 def _student_rollin_probability(
@@ -294,6 +416,7 @@ def _generate_student_rollin(
     plan: Any,
     *,
     eos_token_id: int | None,
+    state_slot_start: int | None = None,
 ) -> Any:
     """Greedily materialize a fixed-length deep-policy decoder history."""
 
@@ -312,6 +435,7 @@ def _generate_student_rollin(
                 tokens,
                 plan,
                 bundle.controller,
+                state_slot_start=state_slot_start,
             )
             token = int(mx.argmax(logits[0, -1]).item())
             stopped = eos_token_id is not None and token == eos_token_id
@@ -391,6 +515,7 @@ def _restore_checkpoint(
     identity: dict[str, Any],
     *,
     semantic_warmup_steps: int = 0,
+    state_warmup_steps: int = 0,
 ) -> tuple[int, list[dict[str, Any]]]:
     receipt_path = out_dir / "checkpoint_latest.json"
     weights_path = out_dir / "checkpoint_latest.safetensors"
@@ -418,6 +543,7 @@ def _restore_checkpoint(
     expected_phase = _optimization_phase(
         int(receipt["step"]),
         semantic_warmup_steps,
+        state_warmup_steps,
     )
     if receipt.get("optimization_phase") != expected_phase:
         raise RuntimeError("unified recurrence checkpoint phase differs")
@@ -457,21 +583,49 @@ def _evaluate(
     )
 
     totals = {depth: 0.0 for depth in depths}
+    state_totals = {depth: 0.0 for depth in depths}
+    state_counts = {depth: 0 for depth in depths}
     with recurrence_adapter_scope(start=None, stop=None):
         for task in tasks:
             prompt, answer = encode_example(tokenizer, task, bridge)
             for depth in depths:
-                _states, losses = unified_answer_trajectory(
-                    bundle.model,
-                    prompt,
-                    answer,
-                    spec.plan_at(depth),
-                    bundle.controller,
+                recurrent_states, _states, losses, state_logits = (
+                    unified_answer_and_recurrent_trajectory(
+                        bundle.model,
+                        prompt,
+                        answer,
+                        spec.plan_at(depth),
+                        bundle.controller,
+                        use_state_slots=(
+                            getattr(task, "transition_trace", None) is not None
+                        ),
+                    )
                 )
                 totals[depth] += float(losses[-1].item())
+                trace = getattr(task, "transition_trace", None)
+                if trace is not None:
+                    targets = state_targets_from_trace(trace, depth)
+                    _state_loss, state_accuracy, _step_accuracy = structured_state_loss(
+                        bundle.controller,
+                        recurrent_states,
+                        targets,
+                        public_token_count=int(prompt.shape[-1]),
+                        state_slot_start=int(prompt.shape[-1]),
+                        state_logits=state_logits,
+                    )
+                    state_totals[depth] += state_accuracy
+                    state_counts[depth] += 1
             envelope.reclaim(force=True)
     count = len(tasks)
     ce = {f"T{depth}": totals[depth] / count for depth in depths}
+    state_accuracy = {
+        f"T{depth}": (
+            state_totals[depth] / state_counts[depth]
+            if state_counts[depth]
+            else None
+        )
+        for depth in depths
+    }
     anchor = ce["T1"]
     trained_deeper = [
         ce[f"T{depth}"] for depth in spec.train_depths if depth != 1
@@ -481,6 +635,7 @@ def _evaluate(
     return {
         "examples": count,
         "ce": ce,
+        "state_accuracy": state_accuracy,
         "best_depth": min(ce, key=ce.__getitem__),
         "best_deep_relative_gain": (
             (anchor - min(all_deeper)) / max(anchor, 1e-9)
@@ -506,11 +661,18 @@ def main() -> int:
     parser.add_argument("--train-depths", default="1,2,4")
     parser.add_argument("--heldout-depths", default="8,16")
     parser.add_argument("--families", default="khop,modular,register_trace")
-    parser.add_argument("--task-depth", type=int, default=8)
+    parser.add_argument(
+        "--task-depth",
+        type=int,
+        help="legacy single task depth; overrides --task-depths when supplied",
+    )
+    parser.add_argument("--task-depths", default="1,2,3,4")
     parser.add_argument("--per-cell", type=int, default=24)
     parser.add_argument("--holdout-per-cell", type=int, default=6)
     parser.add_argument("--lora-rank", type=int, default=8)
     parser.add_argument("--controller-rank", type=int, default=16)
+    parser.add_argument("--state-weight", type=float, default=2.0)
+    parser.add_argument("--stutter-weight", type=float, default=0.1)
     parser.add_argument("--depth-basis-size", type=int, default=4)
     parser.add_argument("--lora-targets", default="o_proj,v_proj")
     parser.add_argument("--learning-rate", type=float, default=1e-4)
@@ -521,6 +683,12 @@ def main() -> int:
     )
     parser.add_argument("--max-steps", type=int, default=120)
     parser.add_argument("--semantic-warmup-steps", type=int, default=0)
+    parser.add_argument("--state-warmup-steps", type=int, default=0)
+    parser.add_argument(
+        "--state-learning-rate",
+        type=float,
+        help="state-transition phase rate; defaults to recurrent learning rate",
+    )
     parser.add_argument(
         "--student-rollin-probability",
         type=float,
@@ -531,6 +699,18 @@ def main() -> int:
         "--student-rollin-final-probability",
         type=float,
         help="final generated-history fraction; defaults to the initial fraction",
+    )
+    parser.add_argument(
+        "--state-teacher-forcing-probability",
+        type=float,
+        default=1.0,
+        help="initial training-only exact-state roll-in probability",
+    )
+    parser.add_argument(
+        "--state-teacher-forcing-final-probability",
+        type=float,
+        default=0.25,
+        help="final exact-state roll-in probability; inference is always zero",
     )
     parser.add_argument(
         "--max-gradient-norm",
@@ -548,8 +728,12 @@ def main() -> int:
     parser.add_argument("--memory-fraction", type=float, default=0.48)
     parser.add_argument("--resume", action="store_true")
     args = parser.parse_args()
-    if not 0 <= args.semantic_warmup_steps < args.max_steps:
-        raise ValueError("semantic warmup must leave at least one recurrent step")
+    if not (
+        0 <= args.semantic_warmup_steps < args.max_steps
+        and args.state_warmup_steps >= 0
+        and args.semantic_warmup_steps + args.state_warmup_steps < args.max_steps
+    ):
+        raise ValueError("warmup phases must leave at least one recurrent step")
     rollin_final_probability = (
         args.student_rollin_probability
         if args.student_rollin_final_probability is None
@@ -561,6 +745,14 @@ def main() -> int:
         and args.student_rollin_probability <= rollin_final_probability
     ):
         raise ValueError("student roll-in probability must be inside [0, 1]")
+    if not (
+        0.0 <= args.state_teacher_forcing_final_probability
+        <= args.state_teacher_forcing_probability
+        <= 1.0
+    ):
+        raise ValueError(
+            "state teacher-forcing schedule must decrease inside [0, 1]"
+        )
     if args.max_gradient_norm <= 0.0:
         raise ValueError("maximum gradient norm must be positive")
     recurrent_learning_rate = (
@@ -568,8 +760,19 @@ def main() -> int:
         if args.recurrent_learning_rate is None
         else args.recurrent_learning_rate
     )
-    if args.learning_rate <= 0.0 or recurrent_learning_rate <= 0.0:
+    state_learning_rate = (
+        recurrent_learning_rate
+        if args.state_learning_rate is None
+        else args.state_learning_rate
+    )
+    if (
+        args.learning_rate <= 0.0
+        or recurrent_learning_rate <= 0.0
+        or state_learning_rate <= 0.0
+    ):
         raise ValueError("learning rates must be positive")
+    if args.state_weight <= 0.0 or args.stutter_weight < 0.0:
+        raise ValueError("state weight must be positive and stutter weight non-negative")
 
     from mlx_lm import load
 
@@ -585,7 +788,28 @@ def main() -> int:
         coda_start=args.coda_start,
         train_depths=train_depths,
         heldout_depths=heldout_depths,
+        state_weight=args.state_weight,
+        stutter_weight=args.stutter_weight,
     )
+    state_spec = replace(
+        spec,
+        answer_weight=0.0,
+        anchor_weight=0.0,
+        trajectory_weight=0.0,
+        halt_weight=0.0,
+        stutter_weight=0.0,
+    )
+    task_depths = (
+        (args.task_depth,)
+        if args.task_depth is not None
+        else tuple(int(value) for value in args.task_depths.split(","))
+    )
+    if (
+        not task_depths
+        or any(depth < 1 for depth in task_depths)
+        or max(task_depths) > max(spec.train_depths)
+    ):
+        raise ValueError("task depths must be positive and inside the trained recurrence horizon")
     families = tuple(
         value.strip() for value in args.families.split(",") if value.strip()
     )
@@ -598,14 +822,14 @@ def main() -> int:
     )
     train_tasks = curriculum.task_battery(
         families,
-        [args.task_depth],
+        task_depths,
         args.per_cell,
         seed=args.seed,
     )
     random.Random(args.seed).shuffle(train_tasks)
     holdout = curriculum.task_battery(
         families,
-        [args.task_depth],
+        task_depths,
         args.holdout_per_cell,
         seed=args.seed + 9_973,
     )
@@ -613,6 +837,16 @@ def main() -> int:
     holdout = [task for task in holdout if task.prompt not in train_prompts]
     if not holdout:
         raise RuntimeError("unified recurrence holdout is empty")
+    missing_traces = [
+        task.task_id
+        for task in train_tasks + holdout
+        if task.transition_trace is None
+    ]
+    if missing_traces:
+        raise RuntimeError(
+            "state-supervised curriculum contains tasks without exact traces: "
+            + ",".join(missing_traces[:5])
+        )
 
     out_dir = args.out_dir.expanduser().resolve()
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -647,6 +881,12 @@ def main() -> int:
                 initialization_seed=args.init_seed,
             )
         )
+        state_codebook_sha256 = _ground_state_value_embeddings(
+            model,
+            tokenizer,
+            controller,
+            prelude_end=spec.prelude_end,
+        )
         bundle = UnifiedTrainingBundle(model, controller)
         readout_sha256 = readout_fingerprint(model, spec.coda_start)
         identity = {
@@ -654,20 +894,32 @@ def main() -> int:
             "model": _model_identity(args.model),
             "spec": spec.to_dict(),
             "families": list(families),
-            "task_depth": args.task_depth,
+            "task_depths": list(task_depths),
             "per_cell": args.per_cell,
             "holdout_per_cell": args.holdout_per_cell,
             "seed": args.seed,
             "init_seed": args.init_seed,
             "semantic_warmup_steps": args.semantic_warmup_steps,
+            "state_warmup_steps": args.state_warmup_steps,
             "student_rollin_probability": args.student_rollin_probability,
             "student_rollin_final_probability": rollin_final_probability,
+            "state_teacher_forcing_probability": (
+                args.state_teacher_forcing_probability
+            ),
+            "state_teacher_forcing_final_probability": (
+                args.state_teacher_forcing_final_probability
+            ),
             "max_gradient_norm": args.max_gradient_norm,
             "semantic_learning_rate": args.learning_rate,
             "recurrent_learning_rate": recurrent_learning_rate,
+            "state_learning_rate": state_learning_rate,
             "bridge": args.bridge,
             "lora_rank": args.lora_rank,
             "controller_rank": args.controller_rank,
+            "state_weight": args.state_weight,
+            "stutter_weight": args.stutter_weight,
+            "state_codebook": "frozen_prelude_semantic_labels",
+            "state_codebook_sha256": state_codebook_sha256,
             "depth_basis_size": args.depth_basis_size,
             "lora_targets": list(targets),
             "wiring": wiring,
@@ -678,12 +930,20 @@ def main() -> int:
             },
         }
         identity["identity_sha256"] = _canonical_sha256(identity)
+        def phase_learning_rate(phase: str) -> float:
+            return {
+                "semantic_anchor": args.learning_rate,
+                "state_transition": state_learning_rate,
+                "recurrence": recurrent_learning_rate,
+            }[phase]
+
         optimizer = optim.Adam(
-            learning_rate=(
-                args.learning_rate
-                if _optimization_phase(0, args.semantic_warmup_steps)
-                == "semantic_anchor"
-                else recurrent_learning_rate
+            learning_rate=phase_learning_rate(
+                _optimization_phase(
+                    0,
+                    args.semantic_warmup_steps,
+                    args.state_warmup_steps,
+                )
             )
         )
         step, history = (
@@ -693,6 +953,7 @@ def main() -> int:
                 optimizer,
                 identity,
                 semantic_warmup_steps=args.semantic_warmup_steps,
+                state_warmup_steps=args.state_warmup_steps,
             )
             if args.resume
             else (0, [])
@@ -705,22 +966,6 @@ def main() -> int:
         from core.brain.llm.latent_cortex.recurrence_adapter import (
             recurrence_adapter_scope,
         )
-
-        def recurrent_objective(
-            candidate: UnifiedTrainingBundle,
-            prompt: Any,
-            answer: Any,
-            rollin: Any,
-        ):
-            return unified_intrinsic_training_loss(
-                candidate.model,
-                prompt,
-                answer,
-                candidate.controller,
-                spec,
-                readout_sha256=readout_sha256,
-                decoder_input_tokens=rollin,
-            )[0]
 
         def semantic_objective(
             candidate: UnifiedTrainingBundle,
@@ -736,7 +981,6 @@ def main() -> int:
             )
             return losses[-1]
 
-        recurrent_loss_and_grad = nn.value_and_grad(bundle, recurrent_objective)
         semantic_loss_and_grad = nn.value_and_grad(bundle, semantic_objective)
         rollin_totals = {
             "examples": 0,
@@ -746,11 +990,17 @@ def main() -> int:
             "last_generated_sha256": None,
             "last_effective_sha256": None,
             "max_preclip_gradient_norm": 0.0,
+            "max_preclip_gradient_norms": {},
             "last_probability": None,
+            "last_state_teacher_forcing_probability": None,
         }
         with checkpointed_window(model, group_size=args.checkpoint_group):
             while step < args.max_steps and time.time() < deadline:
-                phase = _optimization_phase(step, args.semantic_warmup_steps)
+                phase = _optimization_phase(
+                    step,
+                    args.semantic_warmup_steps,
+                    args.state_warmup_steps,
+                )
                 task = train_tasks[step % len(train_tasks)]
                 prompt, answer = encode_example(tokenizer, task, bridge)
                 with recurrence_adapter_scope(start=None, stop=None):
@@ -761,66 +1011,132 @@ def main() -> int:
                             answer,
                         )
                     else:
-                        rollin_probability = _student_rollin_probability(
-                            step,
-                            semantic_warmup_steps=args.semantic_warmup_steps,
-                            max_steps=args.max_steps,
-                            initial=args.student_rollin_probability,
-                            final=rollin_final_probability,
-                        )
-                        generated = _generate_student_rollin(
+                        if phase == "state_transition":
+                            effective = answer
+                            objective_spec = state_spec
+                            state_teacher_probability = 1.0
+                        else:
+                            recurrent_start = (
+                                args.semantic_warmup_steps + args.state_warmup_steps
+                            )
+                            rollin_probability = _student_rollin_probability(
+                                step,
+                                semantic_warmup_steps=recurrent_start,
+                                max_steps=args.max_steps,
+                                initial=args.student_rollin_probability,
+                                final=rollin_final_probability,
+                            )
+                            state_teacher_probability = _student_rollin_probability(
+                                step,
+                                semantic_warmup_steps=recurrent_start,
+                                max_steps=args.max_steps,
+                                initial=args.state_teacher_forcing_probability,
+                                final=args.state_teacher_forcing_final_probability,
+                            )
+                            generated = _generate_student_rollin(
+                                bundle,
+                                prompt,
+                                answer,
+                                spec.plan_at(max(spec.train_depths)),
+                                eos_token_id=tokenizer.eos_token_id,
+                                state_slot_start=int(prompt.shape[-1]),
+                            )
+                            effective, selected = _deterministic_student_mix(
+                                answer,
+                                generated,
+                                probability=rollin_probability,
+                                seed=args.seed * 1_000_003 + step,
+                            )
+                            answer_values = [
+                                int(value) for value in answer.tolist()[0]
+                            ]
+                            generated_values = [
+                                int(value) for value in generated.tolist()[0]
+                            ]
+                            rollin_totals["examples"] += 1
+                            rollin_totals["answer_tokens"] += len(answer_values)
+                            rollin_totals["generated_positions"] += len(selected)
+                            rollin_totals["generated_matches"] += sum(
+                                generated_values[index] == answer_values[index]
+                                for index in selected
+                            )
+                            rollin_totals["last_generated_sha256"] = (
+                                _sha256_tokens(generated)
+                            )
+                            rollin_totals["last_effective_sha256"] = (
+                                _sha256_tokens(effective)
+                            )
+                            rollin_totals["last_probability"] = rollin_probability
+                            objective_spec = spec
+                        rollin_totals[
+                            "last_state_teacher_forcing_probability"
+                        ] = state_teacher_probability
+                        def recurrent_objective(
+                            candidate: UnifiedTrainingBundle,
+                            objective_prompt: Any,
+                            objective_answer: Any,
+                            objective_rollin: Any,
+                            transition_trace: Any = task.transition_trace,
+                            state_teacher_forcing_probability: float = (
+                                state_teacher_probability
+                            ),
+                            training_spec: UnifiedIntrinsicTrainingSpec = (
+                                objective_spec
+                            ),
+                        ):
+                            return unified_intrinsic_training_loss(
+                                candidate.model,
+                                objective_prompt,
+                                objective_answer,
+                                candidate.controller,
+                                training_spec,
+                                readout_sha256=readout_sha256,
+                                decoder_input_tokens=objective_rollin,
+                                transition_trace=transition_trace,
+                                state_teacher_forcing_probability=(
+                                    state_teacher_forcing_probability
+                                ),
+                            )[0]
+
+                        loss, gradients = nn.value_and_grad(
                             bundle,
-                            prompt,
-                            answer,
-                            spec.plan_at(max(spec.train_depths)),
-                            eos_token_id=tokenizer.eos_token_id,
-                        )
-                        effective, selected = _deterministic_student_mix(
-                            answer,
-                            generated,
-                            probability=rollin_probability,
-                            seed=args.seed * 1_000_003 + step,
-                        )
-                        answer_values = [int(value) for value in answer.tolist()[0]]
-                        generated_values = [
-                            int(value) for value in generated.tolist()[0]
-                        ]
-                        rollin_totals["examples"] += 1
-                        rollin_totals["answer_tokens"] += len(answer_values)
-                        rollin_totals["generated_positions"] += len(selected)
-                        rollin_totals["generated_matches"] += sum(
-                            generated_values[index] == answer_values[index]
-                            for index in selected
-                        )
-                        rollin_totals["last_generated_sha256"] = _sha256_tokens(
-                            generated
-                        )
-                        rollin_totals["last_effective_sha256"] = _sha256_tokens(
-                            effective
-                        )
-                        rollin_totals["last_probability"] = rollin_probability
-                        loss, gradients = recurrent_loss_and_grad(
+                            recurrent_objective,
+                        )(
                             bundle,
                             prompt,
                             answer,
                             effective,
                         )
                     gradients = _phase_gradients(gradients, phase)
-                    gradients, gradient_norm = _clip_gradient_norm(
-                        gradients,
-                        args.max_gradient_norm,
+                    gradients, gradient_norm, gradient_group_norms = (
+                        _clip_gradient_groups(
+                            gradients,
+                            args.max_gradient_norm,
+                        )
                     )
-                    mx.eval(gradient_norm)
+                    mx.eval(gradient_norm, *gradient_group_norms.values())
                     rollin_totals["max_preclip_gradient_norm"] = max(
                         float(rollin_totals["max_preclip_gradient_norm"]),
                         float(gradient_norm.item()),
                     )
+                    prior_group_norms = rollin_totals["max_preclip_gradient_norms"]
+                    for group, group_norm in gradient_group_norms.items():
+                        prior_group_norms[group] = max(
+                            float(prior_group_norms.get(group, 0.0)),
+                            float(group_norm.item()),
+                        )
                     optimizer.update(bundle, gradients)
                     mx.eval(bundle.parameters(), optimizer.state, loss)
                 step += 1
-                next_phase = _optimization_phase(step, args.semantic_warmup_steps)
+                next_phase = _optimization_phase(
+                    step,
+                    args.semantic_warmup_steps,
+                    args.state_warmup_steps,
+                )
                 if next_phase != phase:
-                    optimizer = optim.Adam(learning_rate=recurrent_learning_rate)
+                    optimizer = optim.Adam(
+                        learning_rate=phase_learning_rate(next_phase)
+                    )
                 if step % 5 == 0:
                     print(
                         f"[step {step}] phase={phase} "
@@ -919,6 +1235,7 @@ def main() -> int:
             final_ladder["optimization_phase"] = _optimization_phase(
                 step,
                 args.semantic_warmup_steps,
+                args.state_warmup_steps,
             )
             final_ladder["full_depth_ladder"] = True
             history.append(final_ladder)
@@ -932,6 +1249,7 @@ def main() -> int:
                 optimization_phase=_optimization_phase(
                     step,
                     args.semantic_warmup_steps,
+                    args.state_warmup_steps,
                 ),
             )
         final_readout = readout_fingerprint(model, spec.coda_start)

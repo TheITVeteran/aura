@@ -19,7 +19,7 @@ from types import MappingProxyType
 from typing import Any, Never
 
 CURRICULUM_SCHEMA = "aura.recurrence_training_curriculum.v1"
-CURRICULUM_VERSION = "2026.07.18.1"
+CURRICULUM_VERSION = "2026.08.10.2"
 PROCESS_SUPERVISION_SCHEMA = "aura.recurrence_process_supervision.v1"
 STRUCTURED_TRANSITION_TRACE_SCHEMA = "aura.recurrence_structured_transition_trace.v1"
 STRUCTURED_TRANSITION_PROGRAM_SCHEMA = "aura.recurrence_structured_transition_program.v1"
@@ -423,12 +423,21 @@ def khop_reachability(depth: int, seed: int) -> RecurrenceTrainingTask:
     successor = {index: rng.randrange(n_nodes) for index in range(n_nodes)}
     start = rng.randrange(n_nodes)
     node = start
-    path = [str(node)]
+    path = [node]
     for _step in range(1, depth + 1):
         node = successor[node]
-        path.append(str(node))
+        path.append(node)
     edges = ", ".join(f"{left}->{right}" for left, right in sorted(successor.items()))
     answer = _json_answer({"node": node})
+    structured_trace = StructuredTransitionTrace(
+        family="khop",
+        depth=depth,
+        field_names=("pc", "node", "done"),
+        states=tuple(
+            (step, value, int(step == depth))
+            for step, value in enumerate(path)
+        ),
+    )
     return RecurrenceTrainingTask(
         prompt=(
             f"A functional directed graph has these edges: {edges}. Start at {start} "
@@ -439,7 +448,13 @@ def khop_reachability(depth: int, seed: int) -> RecurrenceTrainingTask:
         depth=depth,
         family="khop",
         seed=seed,
-        solution=_solution(answer, "path: " + "->".join(path)),
+        solution=_solution(answer, "path: " + "->".join(map(str, path))),
+        transition_trace=structured_trace,
+        transition_program=StructuredTransitionProgram(
+            state_trace=structured_trace,
+            action_field_names=("next_node",),
+            actions=tuple((value,) for value in path[1:]),
+        ),
     )
 
 
@@ -563,6 +578,8 @@ def register_trace(depth: int, seed: int) -> RecurrenceTrainingTask:
     registers = list(initial)
     operations: list[str] = []
     trace: list[str] = []
+    transition_states = [(0, *registers, 0)]
+    transition_actions: list[tuple[int, int, int, int, int, int]] = []
     for step in range(depth):
         destination = step % 3
         left = (step + 1) % 3
@@ -574,7 +591,19 @@ def register_trace(depth: int, seed: int) -> RecurrenceTrainingTask:
         ) % modulus
         operations.append(f"r{destination}=(r{left}+{multiplier}*r{right}+{offset}) mod {modulus}")
         trace.append("[" + ",".join(str(value) for value in registers) + "]")
+        transition_actions.append(
+            (destination, left, right, multiplier, offset, modulus)
+        )
+        transition_states.append(
+            (step + 1, *registers, int(step + 1 == depth))
+        )
     answer = _json_answer({"r0": registers[0], "r1": registers[1], "r2": registers[2]})
+    structured_trace = StructuredTransitionTrace(
+        family="register_trace",
+        depth=depth,
+        field_names=("pc", "r0", "r1", "r2", "done"),
+        states=tuple(transition_states),
+    )
     return RecurrenceTrainingTask(
         prompt=(
             f"Trace three registers from r0={initial[0]}, r1={initial[1]}, "
@@ -586,6 +615,19 @@ def register_trace(depth: int, seed: int) -> RecurrenceTrainingTask:
         family="register_trace",
         seed=seed,
         solution=_solution(answer, "register states: " + _checkpoint_trace(trace)),
+        transition_trace=structured_trace,
+        transition_program=StructuredTransitionProgram(
+            state_trace=structured_trace,
+            action_field_names=(
+                "destination",
+                "left",
+                "right",
+                "multiplier",
+                "offset",
+                "modulus",
+            ),
+            actions=tuple(transition_actions),
+        ),
     )
 
 

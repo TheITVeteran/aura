@@ -32,7 +32,7 @@ def test_default_curriculum_is_broad_and_hash_bound_to_exact_source_bytes():
 
 def test_frozen_curriculum_executes_captured_bytes_not_later_disk_contents():
     source = TASK_GENERATOR_SOURCE.read_bytes()
-    marker = b'CURRICULUM_VERSION = "2026.07.18.1"'
+    marker = b'CURRICULUM_VERSION = "2026.08.10.2"'
     replacement = b'CURRICULUM_VERSION = "2026.07.18.9"'
     assert marker in source and len(marker) == len(replacement)
     frozen = _execute_frozen_curriculum(
