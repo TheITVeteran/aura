@@ -314,8 +314,88 @@ def validate_critic_identity(
         or expected_source["dependency_audit"]["passed"] is not True
         or value["critic_function_sha256"] == expected_generator["function_sha256"]
     ):
-        raise ValueError("critic function identity is not independently proven")
+        raise ValueError(
+            "critic function identity is not independently proven: "
+            + _critic_identity_failure_detail(
+                value,
+                expected_source=expected_source,
+                expected_generator=expected_generator,
+                state=state if isinstance(state, dict) else {},
+            )
+        )
     return dict(value)
+
+
+def _critic_identity_failure_detail(
+    value: Mapping[str, Any],
+    *,
+    expected_source: Mapping[str, Any],
+    expected_generator: Mapping[str, Any],
+    state: Mapping[str, Any],
+) -> str:
+    """Name the condition that failed, not merely that one did.
+
+    LIVE DEFECT, 2026-08-10. Eleven distinct conditions shared one message —
+    "critic function identity is not independently proven" — and the caller
+    logged it verbatim. The live receipt therefore read
+    ``disjoint_critic_authority_unproven`` on every foreground turn with no way
+    to tell WHICH invariant was unmet, so the recurrent cortex ran without
+    critic authority indefinitely and the reason was never legible.
+
+    The actual cause here was a dependency audit failure: the critic's source
+    closure imports four internal modules it does not declare, and two of
+    those (neural_transition_tissue, systematic_neural_alu) import mlx.core and
+    mlx.nn at module scope — so the closure is not the
+    "deterministic_symbolic_parameterless" thing its own receipt claims. That
+    is a real architectural conflict, and it is only actionable if the failure
+    says so.
+    """
+    reasons: list[str] = []
+    audit = expected_source.get("dependency_audit")
+    if isinstance(audit, Mapping) and audit.get("passed") is not True:
+        detail: list[str] = []
+        forbidden = list(audit.get("forbidden_imports") or [])
+        undeclared = list(audit.get("undeclared_internal_imports") or [])
+        parse_errors = list(audit.get("parse_errors") or [])
+        if forbidden:
+            detail.append(f"forbidden_imports={forbidden}")
+        if undeclared:
+            detail.append(f"undeclared_internal_imports={undeclared}")
+        if parse_errors:
+            detail.append(f"parse_errors={parse_errors}")
+        reasons.append(
+            "dependency_audit_failed(" + "; ".join(detail or ["unspecified"]) + ")"
+        )
+    if value.get("function_identity_distinct") is not True:
+        reasons.append("function_identity_distinct=False")
+    if state.get("passed") is not True:
+        reasons.append("runtime_state_audit_failed")
+    if state.get("trainable_parameter_count") not in (0, None):
+        reasons.append(
+            f"critic_trainable_parameter_count={state.get('trainable_parameter_count')}"
+        )
+    if state.get("unexpected_state_fields"):
+        reasons.append(f"unexpected_state_fields={state.get('unexpected_state_fields')}")
+    if state.get("non_data_state"):
+        reasons.append(f"non_data_state={state.get('non_data_state')}")
+    if value.get("critic_function_sha256") == expected_generator.get("function_sha256"):
+        reasons.append("critic_and_generator_share_one_function_sha256")
+    if value.get("critic_function_sha256") != expected_source.get(
+        "source_closure_sha256"
+    ):
+        reasons.append("critic_function_sha256_does_not_match_source_closure")
+    if value.get("source_identity") != expected_source:
+        reasons.append("source_identity_differs_from_recomputed_closure")
+    if value.get("generator_identity") != expected_generator:
+        reasons.append("generator_identity_differs_from_worker_identity")
+    if (
+        value.get("weight_identity_relation")
+        != "zero_parameters_vs_resident_neural_parameters"
+    ):
+        reasons.append("weight_identity_relation_unexpected")
+    if value.get("implementation_kind") != "deterministic_symbolic_parameterless":
+        reasons.append("implementation_kind_unexpected")
+    return "; ".join(reasons) or "no individual condition reported a cause"
 
 
 def _wilson_interval(
