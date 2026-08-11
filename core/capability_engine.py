@@ -14,6 +14,7 @@ import sys
 import threading
 import time
 from collections.abc import Iterable
+from functools import lru_cache
 from pathlib import Path
 from typing import Any
 
@@ -24,6 +25,25 @@ from core.runtime.subprocess_gateway import get_subprocess_gateway
 from core.utils.task_tracker import get_task_tracker
 
 logger = logging.getLogger("core.capability_engine")
+
+#: The search family, which several call sites suppress together when the turn
+#: is asking ABOUT searching rather than asking to search.
+_SEARCH_SKILL_NAMES = frozenset({
+    "web_search",
+    "search_web",
+    "free_search",
+    "grounded_search",
+    "sovereign_browser",
+})
+
+#: What turns a bare skill name into an instruction to use it. Required before
+#: an ambiguous single-word name ("clock", "listen", "speak") counts as naming
+#: that skill, so ordinary prose does not summon tools.
+_SKILL_INVOCATION_CUE_RE = re.compile(
+    r"\b(?:use|using|via|with|run|call|invoke|trigger|execute|apply|through|"
+    r"start|open)\s+(?:the\s+|your\s+|my\s+)?(?:\w+\s+){0,2}$",
+    re.IGNORECASE,
+)
 
 _TOOL_AFFORDANCE_SCAN_BUDGET_SECONDS = 0.05
 _TOOL_AFFORDANCE_SCAN_LIMIT = 192
@@ -2032,6 +2052,68 @@ class CapabilityEngine(AuraBaseModule):
                 if pattern not in meta.trigger_patterns:
                     meta.trigger_patterns.append(pattern)
 
+    @staticmethod
+    @lru_cache(maxsize=1024)
+    def _skill_name_forms(name: str) -> tuple[tuple[str, bool], ...]:
+        """How a registered skill name gets written when someone names it.
+
+        Returns (form, distinctive) pairs. A distinctive form is one that does
+        not occur in ordinary prose by accident — an identifier spelling
+        ("search_web"), a run-together CamelCase name ("manageabilities"), or a
+        multi-word expansion ("query visual context"). A single common word
+        ("clock", "listen", "speak") is NOT distinctive and needs an invocation
+        cue in front of it, or every turn mentioning the time would summon the
+        clock skill.
+        """
+        raw = str(name or "").strip()
+        if len(raw) < 4:
+            return ()
+        spaced = re.sub(
+            r"[_\-]+", " ", re.sub(r"(?<=[a-z0-9])(?=[A-Z])", " ", raw)
+        ).strip().lower()
+        distinctive = "_" in raw or "-" in raw or len(spaced.split()) > 1
+        forms = {(raw.lower(), distinctive)}
+        if spaced and spaced != raw.lower():
+            forms.add((spaced, distinctive))
+        return tuple(sorted(forms))
+
+    @staticmethod
+    @lru_cache(maxsize=2048)
+    def _skill_name_pattern(form: str) -> re.Pattern[str]:
+        """Compiled once per name form — detect_intent runs on every turn."""
+        return re.compile(rf"(?<!\w){re.escape(form)}(?!\w)")
+
+    def _explicitly_named_skills(self, text: str) -> list[str]:
+        """Skills the turn names outright, rather than describing.
+
+        LIVE, 2026-08-10: 37 of 76 registered skills carry NO trigger patterns —
+        improve_own_code, grounded_search, local_reference_search,
+        knowledge_base, internal_sandbox, train_self, spawn_agent among them —
+        so intent detection could never select them by any phrasing. Naming one
+        outright did not work either, because matching was against trigger
+        phrases only and no skill's name was a trigger for itself. Half the
+        catalog was addressable only by whatever code held a hardcoded string.
+
+        Naming a tool is the least ambiguous request there is, so it is matched
+        here directly. The mention-vs-request guard still applies upstream: this
+        answers "which skill is named", not "is this turn asking for anything".
+        """
+        haystack = str(text or "")
+        if not haystack.strip():
+            return []
+        named: list[str] = []
+        for name, meta in self.skills.items():
+            if not meta.enabled:
+                continue
+            for form, distinctive in self._skill_name_forms(name):
+                match = self._skill_name_pattern(form).search(haystack)
+                if not match:
+                    continue
+                if distinctive or _SKILL_INVOCATION_CUE_RE.search(haystack[: match.start()]):
+                    named.append(name)
+                    break
+        return named
+
     def detect_intent(self, message: str) -> list[str]:
         """Aura's 'Cognitive Proprioception': Detects which skills match the user's intent."""
         triggered = []
@@ -2055,13 +2137,7 @@ class CapabilityEngine(AuraBaseModule):
             if not meta.enabled:
                 continue
             canonical_name = self.resolve_skill_name(name)
-            if skip_web_search and canonical_name in {
-                "web_search",
-                "search_web",
-                "free_search",
-                "grounded_search",
-                "sovereign_browser",
-            }:
+            if skip_web_search and canonical_name in _SEARCH_SKILL_NAMES:
                 continue
             if mentions_without_asking:
                 continue
@@ -2069,6 +2145,18 @@ class CapabilityEngine(AuraBaseModule):
                 if re.search(pattern, msg):
                     triggered.append(name)
                     break
+
+        # Naming a skill is a request for it. 37 of 76 registered skills have no
+        # trigger patterns at all, so without this they cannot be selected by
+        # intent under any phrasing — including the ones a person is most likely
+        # to ask for by name, like improve_own_code.
+        if not mentions_without_asking:
+            for name in self._explicitly_named_skills(msg):
+                if name in triggered:
+                    continue
+                if skip_web_search and self.resolve_skill_name(name) in _SEARCH_SKILL_NAMES:
+                    continue
+                triggered.append(name)
         if self._looks_like_reasoning_time_problem(msg):
             triggered = [
                 name
@@ -2178,13 +2266,7 @@ class CapabilityEngine(AuraBaseModule):
         objective_lower = normalize_memory_intent_text(objective_text)
         skip_web_search = self._looks_like_search_capability_question(objective_text)
         required = self.resolve_skill_name(required_skill) if required_skill else None
-        if skip_web_search and required in {
-            "web_search",
-            "search_web",
-            "free_search",
-            "grounded_search",
-            "sovereign_browser",
-        }:
+        if skip_web_search and required in _SEARCH_SKILL_NAMES:
             required = None
 
         matched = [

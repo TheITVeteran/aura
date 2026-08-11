@@ -3077,30 +3077,72 @@ def test_dialogue_policy_allows_conversation_memory_grounding_without_retry():
     assert recall.ok is True
 
 
-def test_dialogue_policy_repairs_memory_confirmation_without_model_retry():
+def test_dialogue_policy_regenerates_rather_than_prepending_a_provenance_claim():
+    """A missing stance must reach the retry, not be papered over.
+
+    This asserted the opposite until 2026-08-10 — `retried is False` and
+    `repaired.startswith("From my conversation memory,")`. That prefix came
+    from _ground_live_voice_surface, which has since been deleted, because:
+
+      * requires_memory_grounding does not mean a memory was retrieved. It is
+        raised when evidence is THIN — entity_memory_bridge's own comment reads
+        "Aura is about to talk about something she does not actually know" — so
+        the clause asserted retrieval exactly where retrieval was weakest. It
+        produced "From my conversation memory, a room with walls made of
+        memory" on an imagination turn, about a room she had just invented.
+      * it asserted provenance in her voice, where a reader cannot check it.
+      * it ran BEFORE the retry and could flip validation to ok, so a draft
+        that failed the contract was cosmetically patched and returned instead
+        of regenerated. The retry path was already wired and was being skipped.
+
+    So the contract is: the draft fails visibly, control flow reaches
+    regeneration, and what comes back is grounded because the model grounded
+    it — not because a clause was glued to the front.
+    """
+    from core.phases.dialogue_policy import (
+        enforce_dialogue_contract,
+        validate_dialogue_response,
+    )
+    from core.phases.response_contract import ResponseContract
+
+    contract = ResponseContract(requires_memory_grounding=True)
+    draft = 'Codeword "restart-87210" confirmed and stored.'
+
+    assert validate_dialogue_response(draft, contract).ok is False
+
+    async def retry_generate(repair_block: str) -> str:
+        assert repair_block, "the retry must be told what was wrong"
+        return 'I stored the codeword "restart-87210" and I can recall it on request.'
+
+    repaired, validation, retried = asyncio.run(
+        enforce_dialogue_contract(draft, contract, retry_generate=retry_generate)
+    )
+
+    assert retried is True
+    assert validation.ok is True
+    assert "restart-87210" in repaired
+    assert not repaired.startswith("From my conversation memory,")
+
+
+def test_dialogue_policy_surfaces_the_violation_when_no_retry_is_wired():
+    """With nowhere to regenerate, the caller gets the draft AND the failure.
+
+    The deleted prefix hid this case: it returned a patched string with
+    ok=True, so a caller with no retry wired could not tell a contract-passing
+    reply from one that had been dressed up to look like it.
+    """
     from core.phases.dialogue_policy import enforce_dialogue_contract
     from core.phases.response_contract import ResponseContract
 
     contract = ResponseContract(requires_memory_grounding=True)
-    retry_called = False
-
-    async def retry_generate(_repair_block: str) -> str:
-        nonlocal retry_called
-        retry_called = True
-        return "I should not need a second model turn to confirm a memory write."
+    draft = 'Codeword "restart-87210" confirmed and stored.'
 
     repaired, validation, retried = asyncio.run(
-        enforce_dialogue_contract(
-            'Codeword "restart-87210" confirmed and stored.',
-            contract,
-            retry_generate=retry_generate,
-        )
+        enforce_dialogue_contract(draft, contract)
     )
 
-    assert validation.ok is True
     assert retried is False
-    assert retry_called is False
-    assert repaired.startswith("From my conversation memory,")
+    assert validation.ok is False
     assert "restart-87210" in repaired
 
 
