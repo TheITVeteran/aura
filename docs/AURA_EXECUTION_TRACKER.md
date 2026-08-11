@@ -44428,3 +44428,36 @@ or a `WOW Signal`. The completion envelope advances to `908/920`
 (approximately `98.7%`). Next is verified terminal-program distillation into a
 compiler-removed neural state-to-token path, followed by lesions and fresh-seed
 replication before any 32B allocation.
+
+## Checkpoints 2026-08-11-214 through 215: Isolated Neural Readout and Failure Localization
+
+CP214 separated answer learning from the much larger scoped transformer
+adapter. The new phase order trains typed state, the semantic adapter, an
+isolated state-to-token bridge, and recurrence under disjoint gradient masks.
+The answer phase progressively replaces gold decoder history with the model's
+own generated history while retaining verified labels; generated tokens never
+become authority. A 37-step micro campaign moved generated-history agreement
+from `5.8%` to `30.5%`, preserved exact state at every depth, and produced one
+fresh compiler-removed T4/T16 success where base and trained T1 solved none.
+
+Scaling the same global-gate bridge to 144 isolated updates exposed a real
+failure rather than strengthening that result. Teacher-forced heldout CE showed
+an `11.3%` unopened-depth advantage, but fresh greedy decode regressed to `0/9`
+and repeated closing punctuation. The global bridge gate was injecting the same
+state-derived correction into value, syntax and EOS positions. Positive CE was
+therefore not accepted as behavioral evidence.
+
+CP215 made answer writes token-conditioned and norm-bounded. The bridge can now
+decline a state write at syntax/EOS positions and cannot inject a correction
+larger than the local residual scale. A fresh 73-step canary retained exact
+state, stopped on EOS on every neural candidate and solved `2/9`; T1, T4 and
+T16 were identical, while base solved `0/9` and compiled controls solved `9/9`.
+This fixes the collapse but proves that generic attention still does not bind
+output roles to the correct typed register/value. The decode commitment is
+`e18cb7c00b1fe95977006022d8cfdd6a43ddbf512067c58c2e56eeb029cfd1df`.
+
+No neural recurrent gain, resident-32B transfer, fusion admission, frontier
+performance or `WOW Signal` is claimed. The completion envelope advances to
+`909/920` (approximately `98.8%`). Next is a role- and digit-place-supervised
+neural transducer from terminal categorical state into the frozen language
+manifold, evaluated with that supervision and the compiled emitter removed.

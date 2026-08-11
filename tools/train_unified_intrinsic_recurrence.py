@@ -272,6 +272,7 @@ def _optimization_phase(
     step: int,
     semantic_warmup_steps: int,
     state_warmup_steps: int = 0,
+    answer_bridge_steps: int = 0,
 ) -> str:
     if type(step) is not int or step < 0:
         raise ValueError("optimization step must be non-negative")
@@ -279,6 +280,8 @@ def _optimization_phase(
         raise ValueError("semantic warmup steps must be non-negative")
     if type(state_warmup_steps) is not int or state_warmup_steps < 0:
         raise ValueError("state warmup steps must be non-negative")
+    if type(answer_bridge_steps) is not int or answer_bridge_steps < 0:
+        raise ValueError("answer bridge steps must be non-negative")
     # State parsing must exist before a semantic adapter is asked to decode a
     # typed path.  Training the no-state decoder first produced an apparent CE
     # gain while the actual T1 inference path collapsed to punctuation.
@@ -286,6 +289,8 @@ def _optimization_phase(
         return "state_transition"
     if step < state_warmup_steps + semantic_warmup_steps:
         return "semantic_anchor"
+    if step < state_warmup_steps + semantic_warmup_steps + answer_bridge_steps:
+        return "answer_bridge"
     return "recurrence"
 
 
@@ -308,7 +313,12 @@ def _phase_gradients(gradients: Any, phase: str) -> Any:
     useful shallow candidate or alter ordinary model inference.
     """
 
-    if phase not in {"semantic_anchor", "state_transition", "recurrence"}:
+    if phase not in {
+        "semantic_anchor",
+        "answer_bridge",
+        "state_transition",
+        "recurrence",
+    }:
         raise ValueError("unified optimization phase is invalid")
     masked = []
     for name, value in tree_flatten(gradients):
@@ -318,8 +328,12 @@ def _phase_gradients(gradients: Any, phase: str) -> Any:
             and (name.endswith(".lora_a") or name.endswith(".lora_b"))
         )
         neural_answer_bridge = name.startswith("controller.answer_")
-        semantic_parameter = shared_adapter or neural_answer_bridge
-        keep = semantic_parameter if phase == "semantic_anchor" else not semantic_parameter
+        if phase == "semantic_anchor":
+            keep = shared_adapter
+        elif phase == "answer_bridge":
+            keep = neural_answer_bridge
+        else:
+            keep = not (shared_adapter or neural_answer_bridge)
         masked.append((name, value if keep else mx.zeros_like(value)))
     return tree_unflatten(masked)
 
@@ -359,6 +373,7 @@ def _gradient_ownership_group(name: str) -> str:
             "controller.answer_key",
             "controller.answer_value",
             "controller.answer_output",
+            "controller.answer_gate_query",
             "controller.answer_gate_logit",
         )
     ):
@@ -518,6 +533,29 @@ def _deterministic_student_mix(
     return mx.array([effective], dtype=answer_tokens.dtype), tuple(selected)
 
 
+def _record_student_rollin(
+    totals: dict[str, Any],
+    answer_tokens: Any,
+    generated_tokens: Any,
+    effective_tokens: Any,
+    selected: tuple[int, ...],
+    probability: float,
+) -> None:
+    """Record generated-history exposure without treating it as authority."""
+
+    answer = [int(value) for value in answer_tokens.tolist()[0]]
+    generated = [int(value) for value in generated_tokens.tolist()[0]]
+    totals["examples"] += 1
+    totals["answer_tokens"] += len(answer)
+    totals["generated_positions"] += len(selected)
+    totals["generated_matches"] += sum(
+        generated[index] == answer[index] for index in selected
+    )
+    totals["last_generated_sha256"] = _sha256_tokens(generated_tokens)
+    totals["last_effective_sha256"] = _sha256_tokens(effective_tokens)
+    totals["last_probability"] = probability
+
+
 def _generate_student_rollin(
     bundle: UnifiedTrainingBundle,
     prompt: Any,
@@ -625,6 +663,7 @@ def _restore_checkpoint(
     *,
     semantic_warmup_steps: int = 0,
     state_warmup_steps: int = 0,
+    answer_bridge_steps: int = 0,
 ) -> tuple[int, list[dict[str, Any]]]:
     receipt_path = out_dir / "checkpoint_latest.json"
     weights_path = out_dir / "checkpoint_latest.safetensors"
@@ -653,6 +692,7 @@ def _restore_checkpoint(
         int(receipt["step"]),
         semantic_warmup_steps,
         state_warmup_steps,
+        answer_bridge_steps,
     )
     if receipt.get("optimization_phase") != expected_phase:
         raise RuntimeError("unified recurrence checkpoint phase differs")
@@ -924,9 +964,32 @@ def main() -> int:
     parser.add_argument("--semantic-warmup-steps", type=int, default=0)
     parser.add_argument("--state-warmup-steps", type=int, default=0)
     parser.add_argument(
+        "--answer-bridge-steps",
+        type=int,
+        default=0,
+        help="isolated state-to-token adaptation steps after semantic warmup",
+    )
+    parser.add_argument(
         "--state-learning-rate",
         type=float,
         help="state-transition phase rate; defaults to recurrent learning rate",
+    )
+    parser.add_argument(
+        "--answer-bridge-learning-rate",
+        type=float,
+        help="isolated state-to-token rate; defaults to --learning-rate",
+    )
+    parser.add_argument(
+        "--answer-bridge-rollin-probability",
+        type=float,
+        default=0.25,
+        help="initial generated-history fraction during answer-bridge adaptation",
+    )
+    parser.add_argument(
+        "--answer-bridge-rollin-final-probability",
+        type=float,
+        default=1.0,
+        help="final generated-history fraction during answer-bridge adaptation",
     )
     parser.add_argument(
         "--student-rollin-probability",
@@ -970,7 +1033,11 @@ def main() -> int:
     if not (
         0 <= args.semantic_warmup_steps < args.max_steps
         and args.state_warmup_steps >= 0
-        and args.semantic_warmup_steps + args.state_warmup_steps < args.max_steps
+        and args.answer_bridge_steps >= 0
+        and args.semantic_warmup_steps
+        + args.state_warmup_steps
+        + args.answer_bridge_steps
+        < args.max_steps
     ):
         raise ValueError("warmup phases must leave at least one recurrent step")
     rollin_final_probability = (
@@ -984,6 +1051,12 @@ def main() -> int:
         and args.student_rollin_probability <= rollin_final_probability
     ):
         raise ValueError("student roll-in probability must be inside [0, 1]")
+    if not (
+        0.0 <= args.answer_bridge_rollin_probability
+        <= args.answer_bridge_rollin_final_probability
+        <= 1.0
+    ):
+        raise ValueError("answer bridge roll-in probability must increase inside [0, 1]")
     if not (
         0.0 <= args.state_teacher_forcing_final_probability
         <= args.state_teacher_forcing_probability
@@ -1004,10 +1077,16 @@ def main() -> int:
         if args.state_learning_rate is None
         else args.state_learning_rate
     )
+    answer_bridge_learning_rate = (
+        args.learning_rate
+        if args.answer_bridge_learning_rate is None
+        else args.answer_bridge_learning_rate
+    )
     if (
         args.learning_rate <= 0.0
         or recurrent_learning_rate <= 0.0
         or state_learning_rate <= 0.0
+        or answer_bridge_learning_rate <= 0.0
     ):
         raise ValueError("learning rates must be positive")
     if args.state_weight <= 0.0 or args.stutter_weight < 0.0:
@@ -1156,7 +1235,14 @@ def main() -> int:
             "init_seed": args.init_seed,
             "semantic_warmup_steps": args.semantic_warmup_steps,
             "state_warmup_steps": args.state_warmup_steps,
+            "answer_bridge_steps": args.answer_bridge_steps,
             "max_steps": args.max_steps,
+            "answer_bridge_rollin_probability": (
+                args.answer_bridge_rollin_probability
+            ),
+            "answer_bridge_rollin_final_probability": (
+                args.answer_bridge_rollin_final_probability
+            ),
             "student_rollin_probability": args.student_rollin_probability,
             "student_rollin_final_probability": rollin_final_probability,
             "state_teacher_forcing_probability": (
@@ -1167,6 +1253,7 @@ def main() -> int:
             ),
             "max_gradient_norm": args.max_gradient_norm,
             "semantic_learning_rate": args.learning_rate,
+            "answer_bridge_learning_rate": answer_bridge_learning_rate,
             "recurrent_learning_rate": recurrent_learning_rate,
             "state_learning_rate": state_learning_rate,
             "bridge": args.bridge,
@@ -1199,6 +1286,7 @@ def main() -> int:
         def phase_learning_rate(phase: str) -> float:
             return {
                 "semantic_anchor": args.learning_rate,
+                "answer_bridge": answer_bridge_learning_rate,
                 "state_transition": state_learning_rate,
                 "recurrence": recurrent_learning_rate,
             }[phase]
@@ -1209,6 +1297,7 @@ def main() -> int:
                     0,
                     args.semantic_warmup_steps,
                     args.state_warmup_steps,
+                    args.answer_bridge_steps,
                 )
             )
         )
@@ -1220,6 +1309,7 @@ def main() -> int:
                 identity,
                 semantic_warmup_steps=args.semantic_warmup_steps,
                 state_warmup_steps=args.state_warmup_steps,
+                answer_bridge_steps=args.answer_bridge_steps,
             )
             if args.resume
             else (0, [])
@@ -1251,18 +1341,55 @@ def main() -> int:
                     step,
                     args.semantic_warmup_steps,
                     args.state_warmup_steps,
+                    args.answer_bridge_steps,
                 )
                 task = train_tasks[step % len(train_tasks)]
                 prompt, answer = encode_example(tokenizer, task, bridge)
                 with recurrence_adapter_scope(start=None, stop=None):
-                    if phase == "semantic_anchor":
+                    if phase in {"semantic_anchor", "answer_bridge"}:
                         semantic_depth = _semantic_execution_depth(task.depth, spec)
+                        effective = None
+                        if phase == "answer_bridge":
+                            bridge_start = (
+                                args.state_warmup_steps + args.semantic_warmup_steps
+                            )
+                            bridge_stop = bridge_start + args.answer_bridge_steps
+                            rollin_probability = _student_rollin_probability(
+                                step,
+                                semantic_warmup_steps=bridge_start,
+                                max_steps=bridge_stop,
+                                initial=args.answer_bridge_rollin_probability,
+                                final=args.answer_bridge_rollin_final_probability,
+                            )
+                            generated = _generate_student_rollin(
+                                bundle,
+                                prompt,
+                                answer,
+                                spec.plan_at(semantic_depth),
+                                eos_token_id=tokenizer.eos_token_id,
+                                state_slot_start=int(prompt.shape[-1]),
+                            )
+                            effective, selected = _deterministic_student_mix(
+                                answer,
+                                generated,
+                                probability=rollin_probability,
+                                seed=args.seed * 1_000_003 + step,
+                            )
+                            _record_student_rollin(
+                                rollin_totals,
+                                answer,
+                                generated,
+                                effective,
+                                selected,
+                                rollin_probability,
+                            )
 
                         def semantic_objective(
                             candidate: UnifiedTrainingBundle,
                             objective_prompt: Any,
                             objective_answer: Any,
                             objective_depth: int = semantic_depth,
+                            objective_rollin: Any | None = effective,
                         ):
                             _recurrent, _states, losses, _state_logits = (
                                 unified_answer_and_recurrent_trajectory(
@@ -1271,6 +1398,7 @@ def main() -> int:
                                     objective_answer,
                                     spec.plan_at(objective_depth),
                                     candidate.controller,
+                                    decoder_input_tokens=objective_rollin,
                                     use_state_slots=True,
                                 )
                             )
@@ -1287,7 +1415,9 @@ def main() -> int:
                             state_teacher_probability = 1.0
                         else:
                             recurrent_start = (
-                                args.semantic_warmup_steps + args.state_warmup_steps
+                                args.semantic_warmup_steps
+                                + args.state_warmup_steps
+                                + args.answer_bridge_steps
                             )
                             rollin_probability = _student_rollin_probability(
                                 step,
@@ -1317,26 +1447,14 @@ def main() -> int:
                                 probability=rollin_probability,
                                 seed=args.seed * 1_000_003 + step,
                             )
-                            answer_values = [
-                                int(value) for value in answer.tolist()[0]
-                            ]
-                            generated_values = [
-                                int(value) for value in generated.tolist()[0]
-                            ]
-                            rollin_totals["examples"] += 1
-                            rollin_totals["answer_tokens"] += len(answer_values)
-                            rollin_totals["generated_positions"] += len(selected)
-                            rollin_totals["generated_matches"] += sum(
-                                generated_values[index] == answer_values[index]
-                                for index in selected
+                            _record_student_rollin(
+                                rollin_totals,
+                                answer,
+                                generated,
+                                effective,
+                                selected,
+                                rollin_probability,
                             )
-                            rollin_totals["last_generated_sha256"] = (
-                                _sha256_tokens(generated)
-                            )
-                            rollin_totals["last_effective_sha256"] = (
-                                _sha256_tokens(effective)
-                            )
-                            rollin_totals["last_probability"] = rollin_probability
                             objective_spec = spec
                         rollin_totals[
                             "last_state_teacher_forcing_probability"
@@ -1404,6 +1522,7 @@ def main() -> int:
                     step,
                     args.semantic_warmup_steps,
                     args.state_warmup_steps,
+                    args.answer_bridge_steps,
                 )
                 if next_phase != phase:
                     optimizer = optim.Adam(
@@ -1508,6 +1627,7 @@ def main() -> int:
                 step,
                 args.semantic_warmup_steps,
                 args.state_warmup_steps,
+                args.answer_bridge_steps,
             )
             final_ladder["full_depth_ladder"] = True
             history.append(final_ladder)
@@ -1522,6 +1642,7 @@ def main() -> int:
                     step,
                     args.semantic_warmup_steps,
                     args.state_warmup_steps,
+                    args.answer_bridge_steps,
                 ),
             )
         final_readout = readout_fingerprint(model, spec.coda_start)

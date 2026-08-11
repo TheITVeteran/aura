@@ -141,7 +141,7 @@ def test_typed_state_decision_is_committed_as_next_step_input() -> None:
     assert receipt["transformer_answer_passes_per_state"] == 1
     assert (
         receipt["state_to_answer_bridge"]
-        == "trainable_cross_attention_before_frozen_coda"
+        == "token_conditioned_norm_bounded_cross_attention_before_frozen_coda"
     )
     assert receipt["terminal_decode_semantics"] == "first_terminal_state_preserved"
 
@@ -162,6 +162,7 @@ def test_neural_answer_bridge_reads_state_without_rewriting_public_prefix() -> N
     )
     assert bool(mx.array_equal(baseline[:, :8, :], changed[:, :8, :]))
     assert not bool(mx.array_equal(baseline[:, 8:, :], changed[:, 8:, :]))
+    assert controller.answer_gate_query.shape == (64, 1)
 
 
 def test_terminal_typed_state_preserves_first_terminal_decode_state() -> None:

@@ -164,12 +164,17 @@ def test_phase_partition_preserves_shared_t1_and_trains_depth_bridge() -> None:
         },
     }
     semantic = dict(tree_flatten(_phase_gradients(gradients, "semantic_anchor")))
+    answer_bridge = dict(tree_flatten(_phase_gradients(gradients, "answer_bridge")))
     state = dict(tree_flatten(_phase_gradients(gradients, "state_transition")))
     recurrent = dict(tree_flatten(_phase_gradients(gradients, "recurrence")))
     assert bool(mx.all(semantic["model.layer.lora_a"] == 1))
     assert bool(mx.all(semantic["model.layer.continuous_depth_b.0"] == 0))
-    assert bool(mx.all(semantic["controller.answer_output"] == 1))
+    assert bool(mx.all(semantic["controller.answer_output"] == 0))
     assert bool(mx.all(semantic["controller.transport_bias"] == 0))
+    assert bool(mx.all(answer_bridge["model.layer.lora_a"] == 0))
+    assert bool(mx.all(answer_bridge["model.layer.continuous_depth_b.0"] == 0))
+    assert bool(mx.all(answer_bridge["controller.answer_output"] == 1))
+    assert bool(mx.all(answer_bridge["controller.transport_bias"] == 0))
     assert bool(mx.all(state["model.layer.lora_a"] == 0))
     assert bool(mx.all(state["model.layer.continuous_depth_b.0"] == 1))
     assert bool(mx.all(state["controller.answer_output"] == 0))
@@ -184,6 +189,10 @@ def test_phase_partition_preserves_shared_t1_and_trains_depth_bridge() -> None:
     assert _optimization_phase(20, 40, 20) == "semantic_anchor"
     assert _optimization_phase(59, 40, 20) == "semantic_anchor"
     assert _optimization_phase(60, 40, 20) == "recurrence"
+    assert _optimization_phase(59, 40, 20, 30) == "semantic_anchor"
+    assert _optimization_phase(60, 40, 20, 30) == "answer_bridge"
+    assert _optimization_phase(89, 40, 20, 30) == "answer_bridge"
+    assert _optimization_phase(90, 40, 20, 30) == "recurrence"
 
 
 def test_semantic_supervision_runs_at_the_tasks_public_execution_depth() -> None:

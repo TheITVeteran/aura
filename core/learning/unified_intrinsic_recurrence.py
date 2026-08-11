@@ -457,6 +457,9 @@ class UnifiedRecurrentController(nn.Module):
             ).astype(mx.float32)
             / math.sqrt(config.correction_rank)
         )
+        self.answer_gate_query = mx.zeros(
+            (config.hidden_size, 1), dtype=mx.float32
+        )
         self.answer_gate_logit = mx.array(-2.0, dtype=mx.float32)
         self.literal_grounding_logit = mx.array(-1.1, dtype=mx.float32)
         self.state_literal_copy_logit = mx.array(
@@ -598,7 +601,15 @@ class UnifiedRecurrentController(nn.Module):
         )
         context = mx.einsum("bas,bsr->bar", attention, value)
         delta = context @ self.answer_output
-        gate = mx.sigmoid(self.answer_gate_logit)
+        # State is useful at value-bearing positions and harmful when a frozen
+        # language manifold is already emitting syntax or EOS. A global gate
+        # applied the same correction everywhere and eventually produced
+        # repeated braces under generated-history training. Keep the write
+        # token-conditioned and no larger than the local residual scale.
+        answer_rms = mx.sqrt(mx.mean(answer**2, axis=-1, keepdims=True) + 1e-6)
+        delta_rms = mx.sqrt(mx.mean(delta**2, axis=-1, keepdims=True) + 1e-6)
+        delta = delta * mx.minimum(1.0, answer_rms / delta_rms)
+        gate = mx.sigmoid(answer @ self.answer_gate_query + self.answer_gate_logit)
         bridged = answer + gate * delta
         return mx.concatenate(
             [candidate[:, :answer_start, :], bridged.astype(candidate.dtype)],
@@ -1335,7 +1346,9 @@ class UnifiedRecurrentController(nn.Module):
                 else "disabled"
             ),
             "transformer_answer_passes_per_state": 1,
-            "state_to_answer_bridge": "trainable_cross_attention_before_frozen_coda",
+            "state_to_answer_bridge": (
+                "token_conditioned_norm_bounded_cross_attention_before_frozen_coda"
+            ),
             "parameter_sha256": self.parameter_sha256(),
         }
         return {**body, "receipt_sha256": _canonical_sha256(body)}
