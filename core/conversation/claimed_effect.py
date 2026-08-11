@@ -37,6 +37,7 @@ from typing import Any
 
 __all__ = [
     "ClaimedWrite",
+    "find_unaddressed_write_claims",
     "find_unfulfilled_write_claims",
     "unfulfilled_write_correction",
 ]
@@ -113,10 +114,101 @@ def find_unfulfilled_write_claims(reply: Any) -> list[ClaimedWrite]:
     return unfulfilled
 
 
-def unfulfilled_write_correction(reply: Any) -> str:
+#: A claim of completion that names no path. "Haiku creation and file writing
+#: are both successful" reports a finished write without saying what was
+#: written, so the path has to come from the request instead.
+_UNADDRESSED_SUCCESS_RE = re.compile(
+    r"\b(?:file\s+(?:writing|creation)|writing\s+the\s+file|the\s+write)\b"
+    r"[^.!?]{0,60}?\b(?:success(?:ful|fully)?|complete[d]?|done|worked)\b"
+    r"|\b(?:i\s+(?:have\s+)?(?:created|made|written|saved)\s+(?:the|your|it))\b",
+    re.IGNORECASE,
+)
+
+
+def find_unaddressed_write_claims(reply: Any, request: Any) -> list[ClaimedWrite]:
+    """Completion claims that name no path, checked against the request's path.
+
+    LIVE, 2026-08-10: "Make me a file on my Desktop called aura_haiku.txt with
+    a haiku ..." was answered "Haiku creation and file writing are both
+    successful. Here's the haiku I would have written: ..." — a claim of
+    success, a conditional admitting it was never written, and no file on the
+    Desktop.
+
+    The path-based check could not see it, because the reply names no path. The
+    person named one, and a claim to have finished their request is a claim
+    about their file.
+    """
+
+    text = str(reply or "")
+    if not text.strip():
+        return []
+    # Per SENTENCE, not per reply. The live case put a definite claim first and
+    # a conditional second — "Haiku creation and file writing are both
+    # successful. Here's the haiku I would have written" — and a whole-text
+    # hypothetical check let the second sentence excuse the first. The two
+    # sentences contradict each other; the definite one is still a false claim.
+    claimed = False
+    for sentence in re.split(r"(?<=[.!?])\s+|\n+", text):
+        stripped = sentence.strip()
+        if not stripped or not _UNADDRESSED_SUCCESS_RE.search(stripped):
+            continue
+        if _HYPOTHETICAL_RE.search(stripped):
+            continue
+        claimed = True
+        break
+    if not claimed:
+        return []
+    missing: list[ClaimedWrite] = []
+    for raw_path in _requested_paths(request):
+        try:
+            resolved = _resolve(raw_path)
+            if resolved.exists():
+                continue
+        except (OSError, ValueError, RuntimeError):
+            continue
+        missing.append(
+            ClaimedWrite(
+                path=raw_path,
+                resolved=str(resolved),
+                exists=False,
+                sentence=text.strip()[:200],
+            )
+        )
+    return missing
+
+
+#: "on my Desktop called aura_haiku.txt" is a path a person spelled out in
+#: words. Both spellings have to resolve to the same file.
+_NAMED_ON_SURFACE_RE = re.compile(
+    r"\b(?:on|in|to)\s+(?:my\s+|the\s+)?(?P<surface>desktop|documents|downloads)\b"
+    r"[^.!?]{0,40}?\b(?:called|named)\s+(?P<name>[\w.\-]+\.[A-Za-z0-9]{1,8})",
+    re.IGNORECASE,
+)
+
+
+def _requested_paths(request: Any) -> list[str]:
+    text = str(request or "")
+    if not text.strip():
+        return []
+    paths = list(_PATH_RE.findall(text))
+    for match in _NAMED_ON_SURFACE_RE.finditer(text):
+        surface = match.group("surface").capitalize()
+        paths.append(f"~/{surface}/{match.group('name')}")
+    seen: set[str] = set()
+    ordered: list[str] = []
+    for path in paths:
+        if path not in seen:
+            seen.add(path)
+            ordered.append(path)
+    return ordered
+
+
+def unfulfilled_write_correction(reply: Any, request: Any = "") -> str:
     """A correction naming every claimed file that is not on disk, or ""."""
 
     missing = find_unfulfilled_write_claims(reply)
+    if not missing:
+        missing = find_unaddressed_write_claims(reply, request)
     if not missing:
         return ""
     if len(missing) == 1:

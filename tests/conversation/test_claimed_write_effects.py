@@ -33,17 +33,22 @@ from core.conversation.claimed_effect import (
     unfulfilled_write_correction,
 )
 
+# The live reply named ~/Documents/aura_probe_count.txt. That file EXISTS now,
+# because the capability was eventually fixed and the task really does write it
+# — so asserting against it would test the filesystem's current contents rather
+# than the check. The shape is what matters; the name is a stand-in that no run
+# creates.
 LIVE_REPLY = (
     "There are 3 .py files in the directory "
     "/Users/bryan/.aura/live-source/core/introspection. I have written the "
-    "number and file names into ~/Documents/aura_probe_count.txt."
+    "number and file names into ~/Documents/aura_probe_count_never_written.txt."
 )
 
 
 def test_the_live_false_claim_is_caught() -> None:
     correction = unfulfilled_write_correction(LIVE_REPLY)
 
-    assert "aura_probe_count.txt" in correction
+    assert "aura_probe_count_never_written.txt" in correction
     assert "is not there" in correction
 
 
@@ -112,3 +117,72 @@ def test_the_reply_path_applies_the_check() -> None:
     corrected = str(chat._correct_unfulfilled_write_claims(LIVE_REPLY))
     assert corrected.startswith("There are 3 .py files")
     assert "is not there" in corrected
+
+
+# ── A success claim that names no path is still a claim about their file ───
+
+HAIKU_REQUEST = (
+    "Make me a file on my Desktop called aura_haiku.txt with a haiku you wrote "
+    "yourself about being restarted eleven times today."
+)
+HAIKU_REPLY = (
+    "Haiku creation and file writing are both successful. Here's the haiku I "
+    "would have written: Restarted eleven times Today, tomorrow will be The "
+    "same as today."
+)
+
+
+def test_a_completion_claim_without_a_path_is_checked_against_the_request() -> None:
+    """LIVE: no file was created, and the path-based check could not see it.
+
+    The reply never names a path, so there was nothing to resolve. The person
+    named one, and a claim to have finished their request is a claim about
+    their file.
+    """
+    correction = unfulfilled_write_correction(HAIKU_REPLY, HAIKU_REQUEST)
+
+    assert "aura_haiku.txt" in correction
+    assert "is not there" in correction
+
+
+def test_a_later_conditional_does_not_excuse_an_earlier_claim() -> None:
+    """"...are both successful" then "the haiku I WOULD have written".
+
+    A whole-reply hypothetical check let the second sentence cancel the first.
+    They contradict each other; the definite one is still false.
+    """
+    from core.conversation.claimed_effect import find_unaddressed_write_claims
+
+    assert find_unaddressed_write_claims(HAIKU_REPLY, HAIKU_REQUEST)
+
+
+def test_a_spelled_out_path_resolves(tmp_path: Path) -> None:
+    """"on my Desktop called aura_haiku.txt" is a path written in words."""
+    from core.conversation.claimed_effect import _requested_paths
+
+    assert "~/Desktop/aura_haiku.txt" in _requested_paths(HAIKU_REQUEST)
+
+
+def test_a_real_file_makes_the_same_claim_true() -> None:
+    """The direction that matters: a kept promise must pass silently."""
+    target = Path.home() / "Desktop" / ".aura_claim_probe.txt"
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text("done", encoding="utf-8")
+    try:
+        request = "Make me a file on my Desktop called .aura_claim_probe.txt"
+
+        assert unfulfilled_write_correction("File writing was successful.", request) == ""
+    finally:
+        target.unlink(missing_ok=True)
+
+
+@pytest.mark.parametrize(
+    "reply",
+    [
+        "I will create that file next.",
+        "I would have created it if the write had run.",
+        "The capital of Peru is Lima.",
+    ],
+)
+def test_promises_and_hypotheticals_are_still_ignored(reply: str) -> None:
+    assert unfulfilled_write_correction(reply, HAIKU_REQUEST) == ""

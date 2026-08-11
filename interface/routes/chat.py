@@ -16884,7 +16884,7 @@ async def _stabilize_user_facing_reply(
     # not enforce.
     reply_text = _append_sensory_claim_correction(user_message, reply_text)
     reply_text = _flag_unstable_choice_commitment(user_message, reply_text)
-    reply_text = _correct_unfulfilled_write_claims(reply_text)
+    reply_text = _correct_unfulfilled_write_claims(reply_text, user_message)
     frame = _build_aura_expression_frame(user_message)
     contract = frame.get("contract")
     prompt_shape = analyze_prompt_shape(user_message)
@@ -20347,7 +20347,7 @@ def _named_gate_failure(assessment: object) -> str:
     return "reply_reliability_gate_failed:" + ",".join(reasons)
 
 
-def _correct_unfulfilled_write_claims(reply_text: object) -> object:
+def _correct_unfulfilled_write_claims(reply_text: object, user_message: object = "") -> object:
     """Contradict a claim to have written a file that is not on disk.
 
     LIVE, 2026-08-10: asked to count files in a directory and write the result
@@ -20365,7 +20365,7 @@ def _correct_unfulfilled_write_claims(reply_text: object) -> object:
     try:
         from core.conversation.claimed_effect import unfulfilled_write_correction
 
-        correction = str(unfulfilled_write_correction(reply_text) or "").strip()
+        correction = str(unfulfilled_write_correction(reply_text, user_message) or "").strip()
     except _CHAT_RECOVERABLE_ERRORS as exc:
         record_degradation('chat', exc)
         return reply_text
