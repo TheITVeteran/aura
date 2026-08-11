@@ -1635,10 +1635,32 @@ _LIMIT_WORD_COUNT_REQUEST_RE = re.compile(
     r"\s+words?\b",
     re.IGNORECASE,
 )
+#: The verbs a person uses to ASK FOR text, as opposed to asking to be
+#: answered. This read `answer|respond|reply|say|output`, which are the verbs
+#: for a question — and every verb for a REQUEST was missing, so "write 5
+#: sentences about waiting" and "give me three sentences on this" set no
+#: contract at all and the count was never checked.
+_PRODUCE_VERB_RE = (
+    r"(?:answer|respond|reply|say|output|write|give\s+me|give|draft|compose|"
+    r"make|produce|generate|send\s+me|show\s+me|list)"
+)
 _ACTION_SENTENCE_COUNT_REQUEST_RE = re.compile(
-    rf"\b(?:answer|respond|reply|say|output)\s+(?:directly\s+)?"
+    rf"\b{_PRODUCE_VERB_RE}\s+(?:me\s+)?(?:directly\s+)?"
     rf"(?:(?:in|with|using|exactly|only)\s+)?{_COUNT_TOKEN_RE}\s+"
     r"(?:short\s+|brief\s+|concise\s+|clear\s+|plain\s+|direct\s+)?sentences?\b",
+    re.IGNORECASE,
+)
+
+#: LIVE DEFECT, 2026-08-10. "write me four lines about what waiting feels like
+#: … no rhyme." came back as three sentences on one line, and nothing noticed:
+#: there was no line-count detector anywhere in the runtime, though
+#: `missing_requested_line_count` reads as though there were one. Asking for a
+#: number of LINES is one of the most common shapes there is — verse, lists,
+#: summaries — and it set no contract.
+_LINE_COUNT_REQUEST_RE = re.compile(
+    rf"\b(?:{_PRODUCE_VERB_RE}\s+)?(?:me\s+)?(?:exactly\s+|just\s+|only\s+)?"
+    rf"{_COUNT_TOKEN_RE}\s+"
+    r"(?:short\s+|brief\s+|concise\s+|clear\s+|plain\s+|separate\s+)?lines?\b",
     re.IGNORECASE,
 )
 _LIMIT_SENTENCE_COUNT_REQUEST_RE = re.compile(
@@ -2127,6 +2149,27 @@ def _requested_sentence_count(user_message: Any) -> int | None:
     if not candidates:
         return None
     return max(candidates, key=lambda item: (item[0], item[1]))[2]
+
+
+def _requested_line_count(user_message: Any) -> int | None:
+    """The number of LINES the turn explicitly asked for, or None."""
+    text = str(user_message or "")
+    candidates: list[tuple[int, int, int]] = []
+    for match in _LINE_COUNT_REQUEST_RE.finditer(text):
+        if not _constraint_match_is_actionable(text, match):
+            continue
+        requested = _count_token_to_int(match.groupdict().get("count"))
+        if requested is not None:
+            candidates.append((match.start(), match.end(), requested))
+    if not candidates:
+        return None
+    return max(candidates, key=lambda item: (item[0], item[1]))[2]
+
+
+def requested_line_count(user_message: Any) -> int | None:
+    """Return the explicit line-count contract requested by the user."""
+
+    return _requested_line_count(user_message)
 
 
 def requested_sentence_count(user_message: Any) -> int | None:
@@ -3373,6 +3416,21 @@ def _instruction_coverage_reasons(user_message: Any, reply_text: Any) -> list[st
     if requested_sentences is not None:
         if len(_split_sentences(reply)) != requested_sentences:
             reasons.append("missing_requested_sentence_count")
+
+    requested_lines = _requested_line_count(user)
+    if requested_lines and requested_lines > 1:
+        # Lenient on FORM, strict on COUNT. Someone asking for four lines
+        # wants four of something; whether they arrive as four newlines or
+        # four sentences in a paragraph is a formatting preference, and
+        # flagging prose that delivered the substance would be the
+        # length-floor mistake this file has made before. Delivering three
+        # when four were asked for is the actual failure.
+        delivered = max(
+            len([line for line in reply.splitlines() if line.strip()]),
+            len(_split_sentences(reply)),
+        )
+        if delivered < requested_lines:
+            reasons.append("missing_requested_line_count")
 
     if any(
         not _reply_contains_reference_value(reply, value)

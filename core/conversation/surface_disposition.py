@@ -456,6 +456,7 @@ SHORTFALL_REASONS: frozenset[str] = frozenset(
         # Requested-shape shortfalls
         "missing_requested_word_count",
         "missing_requested_sentence_count",
+        "missing_requested_line_count",
         "missing_requested_paragraph_count",
         "missing_requested_list_count",
         "missing_requested_followup_question",
