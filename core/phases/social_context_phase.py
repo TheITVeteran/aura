@@ -321,3 +321,44 @@ class SocialContextPhase(Phase):
                 action="kept local social cues without calibrated exact-agent register",
                 stage="theory_of_mind",
             )
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Declared semantics. See core/runtime/cognitive_contract.py.
+#
+# `writes` is MEASURED — tools/observe_phase_writes.py ran this phase against a
+# real AuraState and recorded which fields moved. It is not a reading of the
+# code, which is how a declaration ends up describing what the author believed.
+from core.runtime.cognitive_contract import (
+    BranchSpec,
+    CognitiveTransformContract,
+    register_contract,
+)
+
+register_contract(
+    CognitiveTransformContract(
+        name="SocialContextPhase",
+        version="1.0",
+        module=__name__,
+        purpose=(
+            "Establish who is being spoken to and how, and express it as "
+            "modifiers the rest of the tick can read."
+        ),
+        reads=("cognition.working_memory", "identity.relationships"),
+        writes=("cognition.modifiers",),
+        preconditions=("state carries a cognition block",),
+        branches=(
+            BranchSpec(
+                "known_interlocutor",
+                "the speaker resolves to a known relationship",
+                "apply that relationship's social modifiers",
+            ),
+            BranchSpec(
+                "unknown_interlocutor",
+                "no relationship resolves",
+                "apply default social modifiers",
+            ),
+        ),
+        calibration_source="writes measured by tools/observe_phase_writes.py",
+    )
+)

@@ -311,11 +311,17 @@ class _Transformation:
         self._criteria: dict[str, Any] = {}
         self._state_before_hash = state_fingerprint(state)
         # Digested for EVERY phase, contracted or not. An uncontracted phase
-        # still reports which watched fields it moved, which is how the next
-        # contract gets written from measurement instead of from reading the
-        # code and hoping — see ``write_profile``. The cost is a few short
-        # hashes per phase, which is why it can be unconditional.
-        self._before = observed_field_digest(state)
+        # still reports which fields it moved, which is how the next contract
+        # gets written from measurement instead of from reading the code and
+        # hoping — see ``write_profile``. The cost is a few short hashes per
+        # phase, which is why it can be unconditional.
+        #
+        # `discover` is on precisely when there is no contract. Without it the
+        # watch set is derived from the contracts alone, so a phase that
+        # declares nothing is compared only against fields OTHER phases
+        # declared — which reported nothing for almost every uncontracted
+        # phase and left the ratchet with no productive end at all.
+        self._before = observed_field_digest(state, discover=contract is None)
 
     def note_branch(self, branch: str, **criteria: Any) -> None:
         self._branch = str(branch or "")
@@ -338,7 +344,10 @@ class _Transformation:
         observed: tuple[str, ...] = ()
         undeclared: tuple[str, ...] = ()
         if not skipped:
-            after = observed_field_digest(state)
+            # Same watch set as `self._before`, or the diff compares two
+            # different surfaces and every path present in one but not the
+            # other reads as a change.
+            after = observed_field_digest(state, discover=contract is None)
             observed = diff_digests(self._before, after)
             if contract is not None:
                 declared_set = set(declared)

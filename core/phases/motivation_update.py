@@ -158,3 +158,45 @@ class MotivationUpdatePhase(Phase):
             return {"drive": "integrity", "goal": "Running a self-integrity scan", "urgency": 0.9}
             
         return None
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Declared semantics. See core/runtime/cognitive_contract.py.
+#
+# `writes` is MEASURED — tools/observe_phase_writes.py ran this phase against a
+# real AuraState and recorded which fields moved. It is not a reading of the
+# code, which is how a declaration ends up describing what the author believed.
+from core.runtime.cognitive_contract import (
+    BranchSpec,
+    CognitiveTransformContract,
+    register_contract,
+)
+
+register_contract(
+    CognitiveTransformContract(
+        name="MotivationPhase",
+        version="1.0",
+        module=__name__,
+        purpose=(
+            "Advance motivational budgets one tick and record when that "
+            "accounting last ran."
+        ),
+        reads=("motivation.budgets", "motivation.last_tick", "affect.arousal"),
+        writes=("motivation.budgets", "motivation.last_tick"),
+        preconditions=("state carries a motivation block",),
+        branches=(
+            BranchSpec(
+                "advanced",
+                "time has passed since motivation.last_tick",
+                "decay and replenish budgets for the elapsed interval",
+            ),
+            BranchSpec(
+                "same_tick",
+                "no time has elapsed",
+                "leave budgets unchanged",
+            ),
+        ),
+        invariants=("motivation.last_tick never moves backwards",),
+        calibration_source="writes measured by tools/observe_phase_writes.py",
+    )
+)

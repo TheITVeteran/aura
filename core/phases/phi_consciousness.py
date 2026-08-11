@@ -712,3 +712,45 @@ class PhiConsciousnessPhase(Phase):
         if phi < PHI_REACTIVE:  return "surface"
         if phi < PHI_DELIBERATE: return "engaged"
         return "deep"
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Declared semantics. See core/runtime/cognitive_contract.py.
+#
+# `writes` is MEASURED — tools/observe_phase_writes.py ran this phase against a
+# real AuraState and recorded which fields moved. It is not a reading of the
+# code, which is how a declaration ends up describing what the author believed.
+from core.runtime.cognitive_contract import (
+    BranchSpec,
+    CognitiveTransformContract,
+    register_contract,
+)
+
+register_contract(
+    CognitiveTransformContract(
+        name="PhiConsciousnessPhase",
+        version="1.0",
+        module=__name__,
+        purpose=(
+            "Estimate integrated information for the current state and publish "
+            "it, so downstream gates scale with measured integration."
+        ),
+        reads=("cognition.phenomenal_state", "affect.valence", "affect.arousal"),
+        writes=("phi", "response_modifiers", "transition_cause"),
+        preconditions=("state carries a cognition block",),
+        branches=(
+            BranchSpec(
+                "estimated",
+                "the state exposes enough structure to partition",
+                "write the estimate",
+            ),
+            BranchSpec(
+                "insufficient_structure",
+                "the state cannot be partitioned",
+                "leave phi unchanged rather than writing a fabricated zero",
+            ),
+        ),
+        invariants=("phi is never negative",),
+        calibration_source="writes measured by tools/observe_phase_writes.py",
+    )
+)

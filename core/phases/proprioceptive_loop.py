@@ -602,3 +602,50 @@ class ProprioceptiveLoop(BasePhase):
                 reason="Integrity Critical",
                 state=state,
             )
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Declared semantics. See core/runtime/cognitive_contract.py.
+#
+# `writes` is MEASURED — tools/observe_phase_writes.py ran this phase against a
+# real AuraState and recorded which fields moved. It is not a reading of the
+# code, which is how a declaration ends up describing what the author believed.
+from core.runtime.cognitive_contract import (
+    BranchSpec,
+    CognitiveTransformContract,
+    register_contract,
+)
+
+register_contract(
+    CognitiveTransformContract(
+        name="ProprioceptiveLoop",
+        version="1.0",
+        module=__name__,
+        purpose=(
+            "Sense the body Aura is running on — hardware, latency, pressure — "
+            "and record it as somatic state rather than as a log line."
+        ),
+        reads=("soma.hardware", "soma.latency"),
+        writes=(
+            "soma.hardware",
+            "soma.latency",
+            "soma.updated_at",
+            "transition_cause",
+        ),
+        preconditions=("state carries a soma block",),
+        branches=(
+            BranchSpec(
+                "sampled",
+                "host metrics are readable",
+                "write the measured hardware and latency",
+            ),
+            BranchSpec(
+                "unreadable",
+                "host metrics cannot be sampled",
+                "leave prior soma values and record the degradation",
+            ),
+        ),
+        invariants=("soma.updated_at advances whenever soma values change",),
+        calibration_source="writes measured by tools/observe_phase_writes.py",
+    )
+)

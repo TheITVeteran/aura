@@ -765,3 +765,47 @@ class CognitiveIntegrationPhase(Phase):
                 state=state,
             )
             logger.error("ALife extensions failed: %s", exc, exc_info=True)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Declared semantics. See core/runtime/cognitive_contract.py.
+#
+# `writes` is MEASURED — tools/observe_phase_writes.py ran this phase against a
+# real AuraState and recorded which fields moved. It is not a reading of the
+# code, which is how a declaration ends up describing what the author believed.
+from core.runtime.cognitive_contract import (
+    BranchSpec,
+    CognitiveTransformContract,
+    register_contract,
+)
+
+register_contract(
+    CognitiveTransformContract(
+        name="CognitiveIntegrationPhase",
+        version="1.0",
+        module=__name__,
+        purpose=(
+            "Run the learned cognitive systems — sentiment, anomaly, self-model, "
+            "RL, plasticity — and fold their outputs into shared state."
+        ),
+        reads=("cognition.working_memory", "affect.valence", "affect.arousal"),
+        writes=("transition_cause",),
+        preconditions=("state carries a cognition block",),
+        branches=(
+            BranchSpec(
+                "integrated",
+                "the learned subsystems are available",
+                "fold their outputs in and record the cause",
+            ),
+            BranchSpec(
+                "subsystems_unavailable",
+                "a learned subsystem cannot be reached",
+                "record the degradation and leave its contribution absent",
+            ),
+        ),
+        calibration_source=(
+            "writes measured by tools/observe_phase_writes.py; most of this "
+            "phase's effect lands in subsystem state rather than AuraState"
+        ),
+    )
+)

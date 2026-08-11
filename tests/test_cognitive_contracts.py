@@ -32,6 +32,7 @@ from core.runtime.cognitive_contract import (
     contract_coverage_report,
     contract_for,
     register_contract,
+    watched_fields,
 )
 from core.runtime.cognitive_provenance import (
     begin_transformation,
@@ -48,7 +49,11 @@ from core.runtime.pipeline_blueprint import (
 )
 
 #: The size of the baseline when the mechanism landed. It only shrinks.
-_BASELINE_CEILING = 28
+# Was 28 — one phase declared itself and twenty-eight did not. Ten more were
+# written from measurement (tools/observe_phase_writes.py runs the real phase
+# against a real AuraState and reports what it moved), so the ceiling moves
+# with them. It only ever moves down.
+_BASELINE_CEILING = 18
 
 
 class _Affect:
@@ -380,3 +385,155 @@ def test_kernel_measures_provenance_around_every_phase() -> None:
 
     tick_source = inspect.getsource(AuraKernel.tick)
     assert "open_tick" in tick_source
+
+
+# ── The bootstrap ──────────────────────────────────────────────────────────
+#
+# `watched_fields()` is derived FROM the contracts. That made discovery
+# circular: an uncontracted phase could only be seen touching fields some
+# already-written contract happened to name, so `write_profile` — documented
+# as "the productive end of the ratchet" — reported nearly nothing for the
+# phases it exists to describe. The method was right and could not run.
+
+
+def test_an_uncontracted_phase_is_watched_beyond_the_declared_fields() -> None:
+    from core.runtime.cognitive_contract import discovery_paths
+    from core.state.aura_state import AuraState
+
+    state = AuraState()
+    discovery = set(discovery_paths(state))
+    declared = set(watched_fields())
+
+    assert discovery - declared, (
+        "discovery adds nothing beyond the declared fields, so an uncontracted "
+        "phase can only be observed touching what other phases declared — the "
+        "ratchet has no productive end again"
+    )
+
+
+def test_discovery_sees_a_write_no_contract_declares() -> None:
+    """The concrete failure, reproduced.
+
+    A phase moving a field outside every contract must still show up, or its
+    contract can never be grounded in measurement.
+    """
+    from core.runtime.cognitive_contract import (
+        diff_digests,
+        discovery_paths,
+        observed_field_digest,
+    )
+    from core.state.aura_state import AuraState
+
+    state = AuraState()
+    undeclared = next(
+        (path for path in discovery_paths(state) if path not in set(watched_fields())),
+        "",
+    )
+    assert undeclared, "no undeclared path available to test with"
+
+    before = observed_field_digest(state, discover=True)
+    root, _, leaf = undeclared.partition(".")
+    target = getattr(state, root)
+    if leaf:
+        setattr(target, leaf, {"probe": "changed"})
+    else:
+        setattr(state, root, {"probe": "changed"})
+    after = observed_field_digest(state, discover=True)
+
+    assert undeclared in diff_digests(before, after)
+    assert undeclared not in diff_digests(
+        observed_field_digest(state, paths=tuple(watched_fields())),
+        observed_field_digest(state, paths=tuple(watched_fields())),
+    )
+
+
+def test_a_contracted_phase_narrows_back_to_its_declared_fields() -> None:
+    """Discovery is the bootstrap, not the steady state.
+
+    Widening enforcement for contracted phases would digest the whole state
+    surface on the foreground path for every phase, every tick.
+    """
+    from core.runtime.cognitive_contract import discovery_paths, observed_field_digest
+    from core.state.aura_state import AuraState
+
+    state = AuraState()
+
+    narrow = observed_field_digest(state, discover=False)
+    wide = observed_field_digest(state, discover=True)
+
+    assert len(wide) > len(narrow)
+    assert set(narrow) <= set(wide)
+    assert set(discovery_paths(state)) <= set(wide)
+
+
+def test_the_observation_tool_exists_and_names_its_own_limits() -> None:
+    """Contracts written from a probe must say the probe is a floor.
+
+    Phases whose interesting branch needs a model report only their no-model
+    path here, and a contract that presented that as the whole write set
+    would be the same overclaim in a new place.
+    """
+    from pathlib import Path
+
+    tool = Path(__file__).resolve().parents[1] / "tools" / "observe_phase_writes.py"
+
+    assert tool.exists()
+    body = tool.read_text("utf-8")
+    assert "floor, not a ceiling" in body
+
+
+def test_every_module_declaring_a_contract_is_in_the_registry() -> None:
+    """A contract that registers only by luck understates coverage.
+
+    `register_contract` runs at import time, so a declaration in a module
+    nobody imported is invisible — and `contract_coverage_report` would report
+    that phase as uncontracted, which reads as a measurement and is not one.
+    """
+    from pathlib import Path
+
+    from core.runtime.phase_contract_registry import CONTRACT_MODULES
+
+    root = Path(__file__).resolve().parents[1]
+    declaring: set[str] = set()
+    for path in (root / "core").rglob("*.py"):
+        if "__pycache__" in str(path):
+            continue
+        if path.name in {"cognitive_contract.py", "phase_contract_registry.py"}:
+            continue
+        body = path.read_text("utf-8", errors="ignore")
+        if "register_contract(" not in body:
+            continue
+        # MODULE-LEVEL only. A probe that registers a throwaway contract
+        # inside a function is not a declaration and must not be pulled into
+        # the import list — importing it would prove nothing and the list is
+        # supposed to name real phases.
+        try:
+            tree = ast.parse(body)
+        except SyntaxError:
+            continue
+        module_level = any(
+            isinstance(node, ast.Expr)
+            and isinstance(node.value, ast.Call)
+            and getattr(node.value.func, "id", "") == "register_contract"
+            for node in tree.body
+        )
+        if module_level:
+            declaring.add(
+                str(path.relative_to(root)).removesuffix(".py").replace("/", ".")
+            )
+
+    missing = sorted(declaring - set(CONTRACT_MODULES))
+    assert missing == [], (
+        f"{missing} declare a contract but are not in CONTRACT_MODULES, so it "
+        "registers only if something else happens to import them"
+    )
+
+
+def test_the_coverage_report_is_the_same_from_a_cold_registry() -> None:
+    """The number must not depend on the caller's import graph."""
+    report = contract_coverage_report()
+
+    assert report["unloadable_contract_modules"] == []
+    assert report["contracted_count"] >= 11, (
+        "coverage regressed below the contracts written from measurement"
+    )

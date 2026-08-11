@@ -43,17 +43,32 @@ annotation, and this codebase has been bitten repeatedly by exactly that shape
   ``thresholds_exhaustive`` to have no bare numeric comparison left in
   ``execute``.
 
-**Scope, stated exactly.** Observation is bounded by the union of every
-declared read and write across all contracts. A phase that mutates a field no
-contract mentions is invisible here, and that is a real limit rather than a
-hedge: closing it would mean digesting all of AuraState on every phase, which
-costs more foreground latency than the check is worth. What the bound does buy
-is the case that matters — cross-phase interference, where one phase writes a
-field another phase declared it reads.
+**Scope, stated exactly.** Enforcement is bounded by the union of every
+declared read and write across all contracts. That bound buys the case that
+matters — cross-phase interference, where one phase writes a field another
+phase declared it reads — without digesting all of AuraState on the
+foreground path.
+
+The bound had one unintended consequence, and it was the thing blocking the
+other twenty-eight phases. ``watched_fields()`` is derived FROM the
+contracts, so an uncontracted phase could only ever be seen touching fields
+some already-written contract happened to name. With a single contract
+registered that was eleven paths, and ``write_profile`` — documented as "the
+productive end of the ratchet", the tool whose whole purpose is to ground the
+NEXT contract in measurement — reported almost nothing for the phases it
+exists to describe. The method was right and structurally could not run.
+
+:func:`discovery_paths` closes that loop. A phase with no contract yet is
+observed against the enumerated state surface rather than against other
+phases' declarations, so its real write set can be measured and its contract
+written from what it did. The wider set is used only for uncontracted
+phases; once a contract exists, enforcement narrows back to the declared
+fields where the cost is justified.
 """
 
 from __future__ import annotations
 
+import dataclasses
 import hashlib
 import logging
 import time
@@ -70,6 +85,8 @@ __all__ = [
     "register_contract",
     "watched_fields",
     "contract_coverage_report",
+    "discovery_paths",
+    "reset_discovery_paths_for_test",
     "UNCONTRACTED_PHASES",
 ]
 
@@ -264,34 +281,24 @@ class TransformationReceipt:
 #: the list grows or if a name on it is not a real phase.
 UNCONTRACTED_PHASES: frozenset[str] = frozenset(
     {
-        "AffectUpdatePhase",
         "BondingPhase",
-        "CognitiveIntegrationPhase",
         "CognitiveRoutingPhase",
-        "ConsciousnessPhase",
         "ConversationalDynamicsPhase",
         "EternalGrowthEngine",
         "EternalMemoryPhase",
         "ExecutiveClosurePhase",
         "GodModeToolPhase",
-        "IdentityReflectionPhase",
         "InferencePhase",
         "LearningPhase",
-        "MemoryConsolidationPhase",
         "MemoryRetrievalPhase",
-        "MotivationPhase",
         "NativeMultimodalBridge",
         "PerfectEmotionPhase",
-        "PhiConsciousnessPhase",
-        "ProprioceptiveLoop",
         "RepairPhase",
         "ResponseGenerationPhase",
         "SelfReviewPhase",
         "SensoryIngestionPhase",
         "ShadowExecutionPhase",
-        "SocialContextPhase",
         "TrueEvolutionPhase",
-        "UnityBindingPhase",
     }
 )
 
@@ -323,7 +330,37 @@ def contract_for(phase_name: Any) -> CognitiveTransformContract | None:
 
 
 def all_contracts() -> dict[str, CognitiveTransformContract]:
+    """Every registered contract, with the registry guaranteed complete.
+
+    Contracts register at import time, so a caller that had not imported a
+    phase module saw a partial registry and concluded the phase was
+    uncontracted. That made the answer depend on import order — the same
+    result reading differently depending on who asked, which is worse than
+    no answer because it looks like a fact.
+    """
+    _ensure_registry_loaded()
     return dict(_CONTRACTS)
+
+
+_LOADING = False
+
+
+def _ensure_registry_loaded() -> None:
+    """Import the contract-declaring modules once, re-entrantly safe.
+
+    The imports trigger `register_contract`, which must not recurse back
+    into this.
+    """
+    global _LOADING
+    if _LOADING:
+        return
+    _LOADING = True
+    try:
+        from core.runtime.phase_contract_registry import ensure_contracts_loaded
+
+        ensure_contracts_loaded()
+    except ImportError:  # pragma: no cover - registry is part of the package
+        pass
 
 
 def watched_fields() -> tuple[str, ...]:
@@ -353,7 +390,14 @@ def contract_coverage_report() -> dict[str, Any]:
     to be about eleven.
     """
 
+    from core.runtime.phase_contract_registry import ensure_contracts_loaded
     from core.runtime.pipeline_blueprint import kernel_phase_attribute_order, phase_class_for_attribute
+
+    # Contracts register at import time, so the count used to depend on who
+    # had imported what. Two phases declared contracts that only appeared if
+    # something happened to pull their module in, which made this report
+    # understate coverage depending on the caller.
+    unloadable = ensure_contracts_loaded()
 
     pipeline = tuple(
         phase_class_for_attribute(attribute) for attribute in kernel_phase_attribute_order()
@@ -372,6 +416,7 @@ def contract_coverage_report() -> dict[str, Any]:
         "thresholds_exhaustive": exhaustive,
         "watched_fields": list(watched_fields()),
         "baseline_size": len(UNCONTRACTED_PHASES),
+        "unloadable_contract_modules": list(unloadable),
         "note": (
             "UNCONTRACTED_PHASES only shrinks. Contracts are written from "
             "cognitive_provenance.write_profile() observations rather than "
@@ -401,17 +446,117 @@ def _digest_value(value: Any) -> str:
     return hashlib.sha1(rendered[:4096].encode("utf-8", errors="ignore")).hexdigest()[:12]
 
 
-def observed_field_digest(state: Any, paths: tuple[str, ...] | None = None) -> dict[str, str]:
+#: Top-level state attributes worth descending into when discovering what an
+#: UNCONTRACTED phase touches. Bounded deliberately: this is the bootstrap
+#: surface, not a full object-graph walk on the foreground path.
+_DISCOVERY_ROOTS: tuple[str, ...] = (
+    "affect",
+    "cognition",
+    "identity",
+    "motivation",
+    "soma",
+    "world",
+    "health",
+    "vitality",
+    "response_modifiers",
+)
+
+#: Scalars that live directly on the state and are worth watching whole.
+_DISCOVERY_SCALARS: tuple[str, ...] = (
+    "phi",
+    "phi_estimate",
+    "free_energy",
+    "loop_cycle",
+    "transition_cause",
+)
+
+#: A root with more children than this is summarised by its own digest rather
+#: than enumerated, so one dict-shaped field cannot dominate every receipt.
+_DISCOVERY_FANOUT_LIMIT = 48
+
+_DISCOVERY_PATHS: tuple[str, ...] | None = None
+
+
+def discovery_paths(state: Any) -> tuple[str, ...]:
+    """The state surface to watch for a phase that declares nothing yet.
+
+    ``watched_fields()`` is derived FROM the contracts, which made the
+    bootstrap circular: an uncontracted phase's writes were only visible if
+    some already-written contract happened to name the same field. With one
+    contract registered, that was eleven paths — so ``write_profile`` reported
+    almost nothing for the twenty-eight phases it exists to describe, and the
+    "productive end of the ratchet" could not produce.
+
+    Enumerating the real state surface is what closes that loop: the phase is
+    observed against the fields it could plausibly touch, and the contract is
+    then written from what it DID rather than from reading the code and
+    hoping. That was always the stated method; this is what makes it possible.
+    """
+
+    global _DISCOVERY_PATHS
+    if _DISCOVERY_PATHS is not None:
+        return _DISCOVERY_PATHS
+    if state is None:
+        return ()
+
+    paths: list[str] = [*_DISCOVERY_SCALARS]
+    for root in _DISCOVERY_ROOTS:
+        node = getattr(state, root, None)
+        if node is None:
+            continue
+        children = _child_names(node)
+        if not children or len(children) > _DISCOVERY_FANOUT_LIMIT:
+            # Watch the container itself. A change anywhere inside still
+            # registers; it simply attributes to the root, which is honest
+            # about the resolution actually being offered.
+            paths.append(root)
+            continue
+        paths.extend(f"{root}.{child}" for child in children)
+    _DISCOVERY_PATHS = tuple(sorted(set(paths)))
+    return _DISCOVERY_PATHS
+
+
+def _child_names(node: Any) -> tuple[str, ...]:
+    if isinstance(node, Mapping):
+        return tuple(sorted(str(key) for key in node))
+    if dataclasses.is_dataclass(node):
+        return tuple(sorted(f.name for f in dataclasses.fields(node)))
+    slots = getattr(type(node), "__slots__", None)
+    if slots:
+        return tuple(sorted(str(name) for name in slots))
+    return ()
+
+
+def reset_discovery_paths_for_test() -> None:
+    global _DISCOVERY_PATHS
+    _DISCOVERY_PATHS = None
+
+
+def observed_field_digest(
+    state: Any,
+    paths: tuple[str, ...] | None = None,
+    *,
+    discover: bool = False,
+) -> dict[str, str]:
     """Digest the watched fields of a state, for before/after comparison.
 
     Values are hashed rather than kept. The point is to detect that a field
     changed, and retaining working memory or a full affect vector per phase per
     tick would cost more than the answer is worth.
+
+    ``discover`` widens the set to the enumerated state surface, for phases
+    that have no contract yet. Without it those phases report no writes at all
+    and no contract can be grounded in measurement.
     """
 
     if state is None:
         return {}
-    targets = paths if paths is not None else watched_fields()
+    if paths is not None:
+        targets: tuple[str, ...] = paths
+    elif discover:
+        targets = tuple(sorted(set(watched_fields()) | set(discovery_paths(state))))
+    else:
+        targets = watched_fields()
     digest: dict[str, str] = {}
     for path in targets:
         digest[path] = _digest_value(_resolve(state, path))

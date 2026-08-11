@@ -697,3 +697,67 @@ class AffectUpdatePhase(Phase):
             affect.emotions["joy"] = float(max(0, min(1, e.get("joy", 0) + 0.4)))
             affect.emotions["anticipation"] = float(max(0, min(1, e.get("anticipation", 0) + 0.3)))
             affect.emotions["fear"] = float(max(0, min(1, e.get("fear", 0) - 0.3)))
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Declared semantics. See core/runtime/cognitive_contract.py.
+#
+# `writes` is MEASURED — tools/observe_phase_writes.py ran this phase against a
+# real AuraState and recorded which fields moved. It is not a reading of the
+# code, which is how a declaration ends up describing what the author believed.
+from core.runtime.cognitive_contract import (
+    BranchSpec,
+    CognitiveTransformContract,
+    register_contract,
+)
+
+register_contract(
+    CognitiveTransformContract(
+        name="AffectUpdatePhase",
+        version="1.0",
+        module=__name__,
+        purpose=(
+            "Advance the affect vector one tick from appraisal, decay and "
+            "physiology, and publish the modifiers downstream phases read."
+        ),
+        reads=(
+            "affect.valence",
+            "affect.arousal",
+            "affect.curiosity",
+            "affect.emotions",
+            "cognition.working_memory",
+            "cognition.current_objective",
+        ),
+        writes=(
+            "affect.arousal",
+            "affect.curiosity",
+            "affect.emotions",
+            "affect.engagement",
+            "affect.physiology",
+            "affect.resonance",
+            "affect.valence",
+            "cognition.modifiers",
+        ),
+        preconditions=("state carries an affect vector",),
+        branches=(
+            BranchSpec(
+                "appraised",
+                "a turn is present to appraise",
+                "update emotions, valence and arousal from it",
+            ),
+            BranchSpec(
+                "decay_only",
+                "no new turn since the last tick",
+                "decay toward mood baselines without appraisal",
+            ),
+        ),
+        invariants=(
+            "valence stays within its declared range",
+            "arousal stays within its declared range",
+        ),
+        calibration_source=(
+            "writes measured by tools/observe_phase_writes.py; thresholds are "
+            "judgement calls not yet extracted to named constants"
+        ),
+    )
+)

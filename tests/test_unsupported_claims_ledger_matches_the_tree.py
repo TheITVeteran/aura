@@ -232,3 +232,63 @@ def test_every_entry_carries_a_status_and_a_remedy(ledger):
 def test_the_ledger_is_reachable_from_the_repo_root():
     assert LEDGER.exists()
     assert LEDGER.stat().st_size > 2000, "the ledger has been gutted"
+
+
+# ───────────────── 15: the friction graph is named for what it does
+
+
+def test_the_friction_graph_no_longer_claims_biology():
+    source = (ROOT / "core" / "brain" / "autopoiesis.py").read_text("utf-8")
+
+    for overclaim in ("Self-creating topology", "Spontaneous generation", "Cell death"):
+        assert overclaim not in source, (
+            f"{overclaim!r} is back; CLAIMS_NOT_SUPPORTED.md entry 15 says the "
+            "component is named for what it does"
+        )
+
+
+def test_the_friction_graph_still_has_the_reader_entry_15_credits():
+    """Entry 15 rests on the half-wired channel being closed."""
+    from core.brain.autopoiesis import ObjectiveFrictionGraph
+
+    graph = ObjectiveFrictionGraph()
+    graph.experience_friction("stuck", 0.45)
+    graph.experience_friction("stuck", 0.45)
+
+    assert graph.friction_for("stuck") > 0.0
+    assert graph.pressure_report()["top"]
+
+    engine = (ROOT / "core" / "brain" / "cognitive_engine.py").read_text("utf-8")
+    assert "is_under_pressure(" in engine, (
+        "cognitive_engine writes to the graph without reading it again"
+    )
+
+
+# ───────────────── 16: contract coverage is real and measured
+
+
+def test_contract_coverage_matches_what_entry_sixteen_claims(ledger):
+    from core.runtime.cognitive_contract import contract_coverage_report
+
+    report = contract_coverage_report()
+    entry = _entry(ledger, "## 16. Uniform Semantic Contracts Across the Phase Pipeline")
+
+    assert f"{report['contracted_count']} of\n  {report['pipeline_phases']}" in entry or (
+        str(report["contracted_count"]) in entry
+        and str(report["pipeline_phases"]) in entry
+    ), (
+        f"the ledger claims a coverage figure the runtime does not report "
+        f"({report['contracted_count']}/{report['pipeline_phases']})"
+    )
+    assert report["contracted_count"] >= 11, "coverage regressed below the entry's claim"
+
+
+def test_the_discovery_bootstrap_entry_sixteen_describes_still_works():
+    """Entry 16 says the ratchet has a productive end again. Check it."""
+    from core.runtime.cognitive_contract import discovery_paths, watched_fields
+    from core.state.aura_state import AuraState
+
+    assert set(discovery_paths(AuraState())) - set(watched_fields()), (
+        "discovery no longer widens beyond the declared fields, so "
+        "write_profile is back to reporting nothing for uncontracted phases"
+    )

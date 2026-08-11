@@ -517,3 +517,49 @@ class MemoryConsolidationPhase(BasePhase):
                 severity="warning",
                 extra={"stage": "dead_letter_queue"},
             )
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Declared semantics. See core/runtime/cognitive_contract.py.
+#
+# `writes` is MEASURED — tools/observe_phase_writes.py ran this phase against a
+# real AuraState and recorded which fields moved. It is not a reading of the
+# code, which is how a declaration ends up describing what the author believed.
+from core.runtime.cognitive_contract import (
+    BranchSpec,
+    CognitiveTransformContract,
+    register_contract,
+)
+
+register_contract(
+    CognitiveTransformContract(
+        name="MemoryConsolidationPhase",
+        version="1.0",
+        module=__name__,
+        purpose=(
+            "Move what the tick learned into durable memory, and say so in the "
+            "transition cause when it happens."
+        ),
+        reads=("cognition.working_memory", "cognition.last_response"),
+        writes=("transition_cause",),
+        preconditions=("state carries a cognition block",),
+        branches=(
+            BranchSpec(
+                "consolidated",
+                "there is unconsolidated working memory",
+                "write it through the memory service and record the cause",
+            ),
+            BranchSpec(
+                "nothing_to_consolidate",
+                "working memory holds nothing new",
+                "return state unchanged",
+            ),
+        ),
+        side_effects=("writes to the durable memory store",),
+        calibration_source=(
+            "writes measured by tools/observe_phase_writes.py on the no-model "
+            "path; consolidation itself lands outside AuraState, which is why "
+            "the declared write set is one field"
+        ),
+    )
+)

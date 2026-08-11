@@ -2785,8 +2785,27 @@ class CognitiveEngine:
             self.thoughts.append(thought)
             return thought
 
-        # Experience friction for unresolved objectives
-        self.autopoiesis.experience_friction(objective[:20], 0.45)
+        # Record the pressure, then READ it back. Until this, the graph had
+        # two writers and no reader anywhere in the codebase: it accumulated
+        # friction that could not influence any output, which makes the
+        # signal unmeasurable rather than merely unused.
+        friction_key = objective[:20]
+        self.autopoiesis.experience_friction(friction_key, 0.45)
+        if self.autopoiesis.is_under_pressure(friction_key):
+            logger.warning(
+                "Objective '%s' keeps failing to resolve (friction %.2f); "
+                "repeated failures on one kind of request are a defect signal, "
+                "not noise",
+                friction_key,
+                self.autopoiesis.friction_for(friction_key),
+            )
+            record_degradation(
+                "cognitive_engine",
+                RuntimeError(f"objective repeatedly unresolved: {friction_key}"),
+                severity="warning",
+                action="recorded sustained objective friction",
+                extra=self.autopoiesis.pressure_report(),
+            )
         self._learn_spiking_active_inference_outcome(
             context,
             outcome="no_assistant_response",

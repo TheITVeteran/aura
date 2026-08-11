@@ -249,3 +249,59 @@ and the runtime disagree, the runtime is right.
   model, plus a negative control confirming the tempering layer does not
   simply suppress every hard case into abstention. A pass rate with no null
   is not a verdict.
+
+## 15. Biological Self-Organisation in the Named "Organs"
+
+* **Status**: `strictly unsupported`
+* **Rationale**: Several components carry names grander than their algorithms,
+  and the gap was doing real damage rather than being a stylistic matter.
+
+  `core/brain/autopoiesis.py` called itself a "self-creating topology" that
+  performed "mitosis", "apoptosis" and "spontaneous generation of a new
+  pathway". It is a capped list of strings, each with two floats. Behind the
+  vocabulary sat three defects that the vocabulary made easy not to look at:
+  the pruning branch was **unreachable** (it fired on `friction < 0.0` while
+  friction could only accumulate, and both live call sites pass positive
+  values); "splitting into nuanced concepts" appended entries with a single
+  literal name, producing twenty entries with two distinct names in forty
+  observations; and **nothing read any of it** — two writers in
+  `cognitive_engine`, zero readers anywhere.
+
+  It is now named for what it does, its two real mechanisms work, and it has
+  a reader, so the signal can reach something. It is still a small
+  hand-written controller and is described as one.
+
+  The same caution applies more broadly and is not claimed away here: the
+  workspace/ignition competition is engineered scoring rather than a learned
+  recurrent network, and parts of the autopoietic machinery elsewhere are
+  rule-based adaptation. Those are legitimate research engineering. They are
+  not the biological processes their names evoke.
+
+## 16. Uniform Semantic Contracts Across the Phase Pipeline
+
+* **Status**: `not proven`
+* **Rationale**: `CognitiveTransformContract` lets a phase declare what it
+  reads, writes, branches on and guarantees, and the runtime checks the
+  declaration against measured behaviour rather than trusting it. When the
+  mechanism landed, **1 of 29 phases** declared a contract.
+
+  A structural problem was blocking the rest, and it was invisible because
+  the tool meant to reveal it was the thing that was broken.
+  `watched_fields()` is derived FROM the registered contracts, so an
+  uncontracted phase could only ever be observed touching fields some
+  already-written contract happened to name. `write_profile` — documented as
+  "the productive end of the ratchet", whose entire purpose is to ground the
+  next contract in measurement — therefore reported almost nothing for the
+  twenty-eight phases it existed to describe. The method was right and
+  structurally could not run.
+
+  `discovery_paths` closes that loop, `tools/observe_phase_writes.py` runs
+  each real phase against a real AuraState and reports what it moved, and ten
+  further contracts were written from those measurements. Coverage is **11 of
+  29**, and the watched-field set grew from 11 paths to 30.
+
+  **What would change this status**: contracts for the remaining eighteen
+  phases, written from measurement rather than from reading the code; and
+  more than one of them marked `thresholds_exhaustive`, since a contract that
+  declares its branches but not the constants deciding them still leaves the
+  criteria unreadable.

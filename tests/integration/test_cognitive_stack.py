@@ -26,7 +26,7 @@ async def test_stack():
     try:
         # 1. Import Modules
         logger.info("   [1/6] Importing Core Modules...")
-        from core.brain.autopoiesis import AutopoieticGraph
+        from core.cognitive.autopoiesis import get_autopoiesis_engine
         from core.brain.entropy import PhysicalEntropyInjector
         from core.cognition.cognitive_integration_layer import CognitiveIntegrationLayer
         from core.learning.continuous_learning import ContinuousLearningEngine
@@ -39,7 +39,10 @@ async def test_stack():
         # 2. Instantiate Independent Modules
         logger.info("   [2/6] Instantiating Engines...")
         ltc = ContinuousState()
-        autopoiesis = AutopoieticGraph()
+        # The wired engine, not the 73-line graph that used to live in
+        # core/brain/autopoiesis.py — that one was imported by this test
+        # and by nothing else in the runtime.
+        autopoiesis = get_autopoiesis_engine()
         entropy = PhysicalEntropyInjector()
         learning = ContinuousLearningEngine(db_path=":memory:") # Use in-memory DB for test
         memory = DualMemorySystem(base_dir=str(Path(tempfile.gettempdir()) / "aura_test_memory"))

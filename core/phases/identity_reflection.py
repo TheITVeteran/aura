@@ -107,3 +107,58 @@ class IdentityReflectionPhase(BasePhase):
             state.identity.last_evolution_timestamp = time.time()
 
         return state
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Declared semantics. See core/runtime/cognitive_contract.py.
+#
+# `writes` is MEASURED — tools/observe_phase_writes.py ran this phase against a
+# real AuraState and recorded which fields moved. It is not a reading of the
+# code, which is how a declaration ends up describing what the author believed.
+from core.runtime.cognitive_contract import (
+    BranchSpec,
+    CognitiveTransformContract,
+    register_contract,
+)
+
+register_contract(
+    CognitiveTransformContract(
+        name="IdentityReflectionPhase",
+        version="1.0",
+        module=__name__,
+        purpose=(
+            "Revisit the self-narrative when enough has happened to justify it, "
+            "and stamp when that last occurred."
+        ),
+        reads=(
+            "identity.narrative_version",
+            "identity.last_evolution_timestamp",
+            "cognition.working_memory",
+        ),
+        writes=(
+            "identity.last_evolution_timestamp",
+            "identity.narrative_version",
+            "response_modifiers",
+        ),
+        preconditions=("state carries an identity block",),
+        branches=(
+            BranchSpec(
+                "revised",
+                "enough new evidence since the last reflection",
+                "advance the narrative version and stamp the time",
+            ),
+            BranchSpec(
+                "unchanged",
+                "insufficient new evidence",
+                "leave the narrative and its version alone",
+            ),
+        ),
+        invariants=(
+            "narrative_version never decreases",
+        ),
+        calibration_source=(
+            "writes measured by tools/observe_phase_writes.py; the sufficiency "
+            "test is a judgement call not yet a named constant"
+        ),
+    )
+)

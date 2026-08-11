@@ -29,3 +29,57 @@ class UnityBindingPhase(BasePhase):
         )
         logger.debug("UnityBindingPhase: unity_score=%.3f level=%s", new_state.cognition.unity_state.unity_score if new_state.cognition.unity_state else -1.0, getattr(new_state.cognition.unity_state, "level", "unknown"))
         return new_state
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Declared semantics. See core/runtime/cognitive_contract.py.
+#
+# `writes` is MEASURED — tools/observe_phase_writes.py ran this phase against a
+# real AuraState and recorded which fields moved. It is not a reading of the
+# code, which is how a declaration ends up describing what the author believed.
+from core.runtime.cognitive_contract import (
+    BranchSpec,
+    CognitiveTransformContract,
+    register_contract,
+)
+
+register_contract(
+    CognitiveTransformContract(
+        name="UnityBindingPhase",
+        version="1.0",
+        module=__name__,
+        purpose=(
+            "Bind the tick's separate streams into one mind-moment and score "
+            "how fragmented that binding was."
+        ),
+        reads=(
+            "cognition.phenomenal_state",
+            "cognition.modifiers",
+            "affect.valence",
+            "affect.arousal",
+        ),
+        writes=(
+            "cognition.fragmentation_score",
+            "cognition.mind_moment",
+            "cognition.phenomenal_state",
+            "cognition.unity_state",
+            "response_modifiers",
+            "transition_cause",
+        ),
+        preconditions=("state carries a cognition block",),
+        branches=(
+            BranchSpec(
+                "bound",
+                "streams are present and mutually consistent",
+                "emit a mind-moment with a low fragmentation score",
+            ),
+            BranchSpec(
+                "fragmented",
+                "streams disagree or are partially missing",
+                "emit the moment and raise the fragmentation score",
+            ),
+        ),
+        invariants=("cognition.mind_moment is written whenever unity_state is",),
+        calibration_source="writes measured by tools/observe_phase_writes.py",
+    )
+)

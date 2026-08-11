@@ -44,3 +44,49 @@ class ConsciousnessPhase(BasePhase):
                 logger.debug("🧶 ConsciousnessPhase: Causal world cascades injected.")
         
         return new_state
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Declared semantics. See core/runtime/cognitive_contract.py.
+#
+# `writes` is MEASURED — tools/observe_phase_writes.py ran this phase against a
+# real AuraState and recorded which fields moved. It is not a reading of the
+# code, which is how a declaration ends up describing what the author believed.
+from core.runtime.cognitive_contract import (
+    BranchSpec,
+    CognitiveTransformContract,
+    register_contract,
+)
+
+register_contract(
+    CognitiveTransformContract(
+        name="ConsciousnessPhase",
+        version="1.0",
+        module=__name__,
+        purpose=(
+            "Assemble the phenomenal state for this tick — what it is like to "
+            "be in it — from affect, soma and the current objective."
+        ),
+        reads=(
+            "affect.valence",
+            "affect.arousal",
+            "soma.latency",
+            "cognition.current_objective",
+        ),
+        writes=("cognition.phenomenal_state", "transition_cause"),
+        preconditions=("state carries a cognition block",),
+        branches=(
+            BranchSpec(
+                "assembled",
+                "affect and soma are both readable",
+                "write a phenomenal state derived from them",
+            ),
+            BranchSpec(
+                "degraded",
+                "an input subsystem is unavailable",
+                "write a reduced phenomenal state naming what was missing",
+            ),
+        ),
+        calibration_source="writes measured by tools/observe_phase_writes.py",
+    )
+)
