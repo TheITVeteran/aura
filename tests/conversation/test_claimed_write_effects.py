@@ -121,9 +121,14 @@ def test_the_reply_path_applies_the_check() -> None:
 
 # ── A success claim that names no path is still a claim about their file ───
 
+# Not aura_haiku.txt: that file EXISTS on the Desktop now, because the
+# capability was fixed and the task really does write it. Asserting against a
+# path live runs create tests the filesystem's current contents rather than the
+# check — the second time that happened in this file, so the name here is one
+# nothing produces.
 HAIKU_REQUEST = (
-    "Make me a file on my Desktop called aura_haiku.txt with a haiku you wrote "
-    "yourself about being restarted eleven times today."
+    "Make me a file on my Desktop called aura_haiku_never_written.txt with a "
+    "haiku you wrote yourself about being restarted eleven times today."
 )
 HAIKU_REPLY = (
     "Haiku creation and file writing are both successful. Here's the haiku I "
@@ -141,7 +146,7 @@ def test_a_completion_claim_without_a_path_is_checked_against_the_request() -> N
     """
     correction = unfulfilled_write_correction(HAIKU_REPLY, HAIKU_REQUEST)
 
-    assert "aura_haiku.txt" in correction
+    assert "aura_haiku_never_written.txt" in correction
     assert "is not there" in correction
 
 
@@ -160,7 +165,7 @@ def test_a_spelled_out_path_resolves(tmp_path: Path) -> None:
     """"on my Desktop called aura_haiku.txt" is a path written in words."""
     from core.conversation.claimed_effect import _requested_paths
 
-    assert "~/Desktop/aura_haiku.txt" in _requested_paths(HAIKU_REQUEST)
+    assert "~/Desktop/aura_haiku_never_written.txt" in _requested_paths(HAIKU_REQUEST)
 
 
 def test_a_real_file_makes_the_same_claim_true() -> None:
