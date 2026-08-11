@@ -56,7 +56,9 @@ __all__ = [
     "resolve_self_health",
     "resolve_shared_present",
     "self_health_answer",
+    "sensory_claim_correction",
     "shared_present_answer",
+    "unsupported_sensory_claims",
 ]
 
 #: Something of hers that can be in a state, paired below with a word for being
@@ -531,3 +533,91 @@ def shared_present_answer(message: Any) -> str:
     if not bundle.readings:
         return ""
     return render_shared_present_answer(bundle)
+
+
+# ── Claims the senses cannot support ───────────────────────────────────────
+#
+# LIVE, 2026-08-10, with ground truth: Bryan said "going upstairs, computer will
+# stay down here", then asked "Am I still here, or did I walk away?" She said:
+#
+#   "You're still here. The room is silent, the light remains unchanged on your
+#    desk. If you had moved, there would be evidence — a disturbance in the air
+#    currents, or perhaps an echo of footsteps that I haven't detected."
+#
+# Wrong, and grounded in four senses she does not have: no camera reading, no
+# microphone reading, no light sensor, no air-current sensor. Carrying the typed
+# absence into the turn was not enough — evidence informs, it does not enforce.
+
+#: Claims about whether a person is present. Need a camera or microphone.
+_PRESENCE_CLAIM_RE = re.compile(
+    r"\b(?:you(?:'re| are)\s+(?:still\s+)?(?:here|there|alone|by\s+yourself)|"
+    r"you(?:'ve| have)\s+(?:not\s+)?(?:moved|left|walked\s+away)|"
+    r"still\s+(?:here|there)|no\s?(?:one|body)\s+else\s+is\s+(?:here|there|present)|"
+    r"there\s+(?:is|are)\s+no\s+(?:one|other\s+people))\b",
+    re.IGNORECASE,
+)
+#: Claims about ambient sound. Need a microphone.
+_AMBIENT_SOUND_CLAIM_RE = re.compile(
+    r"\b(?:the\s+)?(?:room|house|space)\s+(?:is|remains|stays)\s+"
+    r"(?:quiet|silent|still)\b|\bi\s+(?:can\s+)?hear\b|\bthe\s+silence\b|"
+    r"\becho\s+of\s+footsteps\b|\bair\s+currents?\b",
+    re.IGNORECASE,
+)
+#: Claims about the visible scene. Need a camera or a screen reading.
+_VISUAL_SCENE_CLAIM_RE = re.compile(
+    r"\bthe\s+light\b|\bon\s+your\s+desk\b|\bi\s+(?:can\s+)?see\s+(?:you|the\s+room)\b|"
+    r"\byour\s+(?:face|expression|posture)\b",
+    re.IGNORECASE,
+)
+
+_CLAIM_CHANNELS: tuple[tuple[Any, tuple[str, ...], str], ...] = (
+    (_PRESENCE_CLAIM_RE, ("camera", "microphone"), "whether anyone is there"),
+    (_AMBIENT_SOUND_CLAIM_RE, ("microphone",), "what the room sounds like"),
+    (_VISUAL_SCENE_CLAIM_RE, ("camera",), "what the room looks like"),
+)
+
+
+def unsupported_sensory_claims(reply: Any, bundle: EvidenceBundle) -> list[str]:
+    """Claims in this reply that no live channel can support.
+
+    A claim counts as unsupported when EVERY channel that could ground it came
+    back absent. One working sense is enough to make the claim answerable — the
+    gate exists to stop invention, not to stop her describing what she reads.
+    """
+
+    text = str(reply or "")
+    if not text.strip():
+        return []
+    states = {r.channel: r.present for r in bundle.readings}
+    unsupported: list[str] = []
+    for pattern, channels, subject in _CLAIM_CHANNELS:
+        if not pattern.search(text):
+            continue
+        if any(states.get(channel) for channel in channels):
+            continue
+        if not any(channel in states for channel in channels):
+            continue
+        unsupported.append(subject)
+    return unsupported
+
+
+def sensory_claim_correction(reply: Any, message: Any = "") -> str:
+    """A correction to append when the reply claims senses she has no reading from.
+
+    Returns "" when every claim is supported, which is the common case.
+    """
+
+    if not str(reply or "").strip():
+        return ""
+    bundle = resolve_shared_present()
+    unsupported = unsupported_sensory_claims(reply, bundle)
+    if not unsupported:
+        return ""
+    absent = sorted({r.channel for r in bundle.absent if r.channel in {"camera", "microphone"}})
+    senses = " or ".join(absent) if absent else "those senses"
+    subjects = ", ".join(unsupported)
+    return (
+        f"Correction, and I would rather be dull than wrong about this: I have no "
+        f"{senses} reading right now, so I cannot actually tell {subjects}. "
+        f"Take what I just said about it as a guess, not an observation."
+    )

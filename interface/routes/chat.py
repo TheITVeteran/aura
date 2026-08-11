@@ -16834,6 +16834,16 @@ async def _stabilize_user_facing_reply(
     desktop_cognitive_engine_required: bool = False,
     protected_foreground_lane: bool = False,
 ) -> str:
+    # A claim about the room, checked against the senses that would know.
+    #
+    # LIVE, 2026-08-10, with ground truth: Bryan said he was going upstairs,
+    # then asked "am I still here, or did I walk away?" She answered "You're
+    # still here. The room is silent, the light remains unchanged on your desk
+    # ... a disturbance in the air currents, or perhaps an echo of footsteps"
+    # — wrong, and grounded in four senses she does not have. Carrying the
+    # typed absence into the prompt was not enough: evidence informs, it does
+    # not enforce.
+    reply_text = _append_sensory_claim_correction(user_message, reply_text)
     frame = _build_aura_expression_frame(user_message)
     contract = frame.get("contract")
     prompt_shape = analyze_prompt_shape(user_message)
@@ -20240,6 +20250,25 @@ _STEP_BOOKKEEPING_RE = re.compile(
     r"governed[\w\s-]*steps?\b[^.]*\.?\s*$",
     re.IGNORECASE,
 )
+
+
+def _append_sensory_claim_correction(user_message: object, reply_text: object) -> object:
+    """Append a correction when a reply claims senses that have no reading.
+
+    Appended rather than suppressed: the rest of the answer is usually fine,
+    and deleting it would lose a good reply over one ungrounded sentence.
+    """
+
+    try:
+        from core.introspection.self_evidence import sensory_claim_correction
+
+        correction = str(sensory_claim_correction(reply_text, user_message) or "").strip()
+    except _CHAT_RECOVERABLE_ERRORS as exc:
+        record_degradation('chat', exc)
+        return reply_text
+    if not correction:
+        return reply_text
+    return f"{str(reply_text or '').rstrip()}\n\n{correction}"
 
 
 def _self_health_answer_or_empty(message: object) -> str:

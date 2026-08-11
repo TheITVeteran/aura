@@ -307,3 +307,89 @@ def test_the_present_answer_never_asserts_solitude_without_a_camera_reading() ->
 
     assert "alone" not in answer.lower().replace("anyone else is here", "")
     assert "never produced a sample" in answer
+
+
+# ── Enforcement: evidence informs, a gate enforces ─────────────────────────
+
+LIVE_FABRICATION = (
+    "You're still here. The room is silent, the light remains unchanged on your "
+    "desk. If you had moved, there would be evidence — a disturbance in the air "
+    "currents, or perhaps an echo of footsteps that I haven't detected."
+)
+
+
+def test_the_live_fabrication_is_caught() -> None:
+    """Ground truth: he had walked upstairs. She had no camera and no mic."""
+    from core.introspection.self_evidence import sensory_claim_correction
+
+    correction = sensory_claim_correction(LIVE_FABRICATION)
+
+    assert correction
+    assert "camera" in correction or "microphone" in correction
+    assert "guess" in correction.lower()
+
+
+@pytest.mark.parametrize(
+    "reply",
+    [
+        "The capital of Peru is Lima.",
+        "I wrote the file to ~/Documents and here is the path.",
+        "Cast iron pans should not be soaked for hours.",
+        "",
+    ],
+)
+def test_ordinary_replies_are_untouched(reply: str) -> None:
+    """The gate must be silent on everything that is not a sense claim."""
+    from core.introspection.self_evidence import sensory_claim_correction
+
+    assert sensory_claim_correction(reply) == ""
+
+
+def test_a_working_sense_makes_the_claim_supportable() -> None:
+    """One live channel is enough — this stops invention, not description."""
+    from core.introspection.self_evidence import unsupported_sensory_claims
+
+    bundle = EvidenceBundle(
+        demand="shared_present",
+        readings=(
+            Reading(
+                channel="camera",
+                state=ReadingState.READ,
+                value={"face_count": 1},
+                provenance="interaction_signals.vision",
+            ),
+        ),
+    )
+
+    assert unsupported_sensory_claims("You're still here.", bundle) == []
+
+
+def test_an_absent_sense_marks_the_claim_unsupported() -> None:
+    from core.introspection.self_evidence import unsupported_sensory_claims
+
+    bundle = EvidenceBundle(
+        demand="shared_present",
+        readings=(
+            Reading(
+                channel="camera",
+                state=ReadingState.ABSENT_NEVER_SAMPLED,
+                provenance="interaction_signals.vision.updated_at",
+            ),
+        ),
+    )
+
+    assert unsupported_sensory_claims("You're still here.", bundle)
+
+
+def test_the_reply_path_applies_the_correction() -> None:
+    """Without this the detector is a library nobody calls."""
+    import inspect
+
+    from interface.routes import chat
+
+    source = inspect.getsource(chat._stabilize_user_facing_reply)
+    assert "_append_sensory_claim_correction" in source
+
+    appended = chat._append_sensory_claim_correction("am I alone?", LIVE_FABRICATION)
+    assert str(appended).startswith("You're still here.")
+    assert "guess, not an observation" in str(appended)
