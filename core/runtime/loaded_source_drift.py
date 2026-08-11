@@ -45,11 +45,15 @@ from __future__ import annotations
 import dataclasses
 import importlib.util
 import marshal
+import os
 import struct
 import sys
 import threading
 from pathlib import Path
 from typing import Any, Iterable
+
+#: Path components that mean "not this project's source".
+_VENDOR_PARTS = frozenset({".venv", "venv", "site-packages", "dist-packages", "node_modules", ".git"})
 
 #: PEP 552 flag bit: the cache stores a source hash rather than mtime+size.
 _PYC_HASH_BASED = 0b1
@@ -219,24 +223,50 @@ def _loaded_project_modules(root: Path) -> Iterable[tuple[str, Path, Path | None
     for name, module in list(sys.modules.items()):
         if module is None:
             continue
+        # `__file__` and `__cached__` are not guaranteed to be strings. A
+        # torch operator namespace answers `getattr(module, "__cached__")` with
+        # a `_OpNamespace` — it forwards unknown attributes — and Path() then
+        # raises TypeError, which this loop did not catch, so ONE such module
+        # in sys.modules turned the whole scan into a 500. Measured live
+        # 2026-08-10 the first time the endpoint ran on the real process.
+        #
+        # An explicit isinstance is the fix rather than a wider except: a
+        # module whose path is not a string has no source path to compare, and
+        # guessing at one is how the wrong file gets blamed.
         file_name = getattr(module, "__file__", None)
-        if not file_name or not str(file_name).endswith(".py"):
+        if not isinstance(file_name, (str, os.PathLike)) or not str(file_name).endswith(".py"):
+            continue
+        # A RELATIVE `__file__` carries no identity. `torch.classes` and
+        # `torch.ops` report the bare strings "_classes.py" and "_ops.py";
+        # `.resolve()` then joins them to the current working directory, which
+        # is this repository, and two synthetic modules that have no source
+        # file anywhere appeared as project files missing from disk.
+        if not Path(file_name).is_absolute():
             continue
         try:
             source = Path(file_name).resolve()
-        except (OSError, ValueError):
+        except (OSError, ValueError, TypeError):
             continue
         try:
-            source.relative_to(root)
+            relative = source.relative_to(root)
         except ValueError:
+            continue
+        # The virtualenv lives INSIDE the project root here, so "under root"
+        # alone swept in every installed dependency — 792 modules scanned, and
+        # the only two reported stale were `torch.classes` and `torch.ops`,
+        # synthetic modules whose `__file__` points into site-packages. This
+        # instrument answers "am I running the code I just edited", and nobody
+        # edits their dependencies in place; scanning them only adds noise and
+        # cost to a question about this repository.
+        if _VENDOR_PARTS.intersection(relative.parts):
             continue
         cached = getattr(module, "__cached__", None)
         cache_path: Path | None = None
-        if cached:
+        if isinstance(cached, (str, os.PathLike)) and cached:
             try:
                 candidate = Path(cached)
                 cache_path = candidate if candidate.exists() else None
-            except (OSError, ValueError):
+            except (OSError, ValueError, TypeError):
                 cache_path = None
         yield name, source, cache_path
 
