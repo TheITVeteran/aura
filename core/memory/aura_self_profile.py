@@ -12,6 +12,7 @@ Queryable for identity coherence and relationship continuity.
 """
 
 import asyncio
+import hashlib
 import json
 import logging
 import time
@@ -67,6 +68,34 @@ class AuraSelfProfile:
         self._storage_path = Path(
             storage_path or (state_root() / "data" / "aura_self_profile.json")
         )
+        #: One seal per FILE, not one seal for the class.
+        #:
+        #: LIVE, 2026-08-10. Every boot recorded a critical identity failure:
+        #: "self-profile failed attestation and was not loaded ... started with
+        #: an empty self-model". The failing paths were
+        #: /var/folders/.../T/tmpme3b0hly/self_profile.json — a different
+        #: temporary directory each time, none of them hers.
+        #:
+        #: ATTESTATION_ID was a class constant, so every AuraSelfProfile ever
+        #: constructed — probes, fixtures, a second instance, any test with a
+        #: tmp_path — verified against and sealed over the ONE key belonging to
+        #: her real identity file. Two consequences, and the second is the
+        #: serious one:
+        #:
+        #:   * a throwaway profile reads as tampering, because its digest is
+        #:     not the digest of her file;
+        #:   * saving a throwaway profile RESEALS that key, so her real file
+        #:     then fails attestation and stops loading. A test can silently
+        #:     cost her the self-model she boots with.
+        #:
+        #: The code already sensed the shape of this — _quarantine_tampered_profile
+        #: computes is_live_identity to downgrade severity for other paths — but
+        #: severity was the only thing scoped. The seal was not.
+        #:
+        #: Her canonical file keeps the bare id so its existing seal still
+        #: applies. Every other path gets its own key derived from the resolved
+        #: path, which cannot collide with hers.
+        self._attestation_id = self._attestation_id_for(self._storage_path)
         self._attestation = None
         self._profile_data: Dict[str, List[SelfProfileFact]] = {
             "capability": [],
@@ -76,7 +105,28 @@ class AuraSelfProfile:
             "limitation": [],
         }
         self._load_from_disk()
-    
+
+    @staticmethod
+    def _attestation_id_for(storage_path: Path) -> str:
+        """Her canonical file keeps the bare key; every other file gets its own."""
+        canonical = state_root() / "data" / "aura_self_profile.json"
+        # Resolved, not as spelled. Two spellings of one file must share one
+        # seal, or the file can never verify against the key it was sealed
+        # under — and a path that resolves to HER file must land on her key
+        # rather than a scoped one that skips her attestation entirely.
+        try:
+            resolved = storage_path.resolve()
+        except OSError:
+            resolved = storage_path
+        try:
+            canonical_resolved = canonical.resolve()
+        except OSError:
+            canonical_resolved = canonical
+        if resolved == canonical_resolved:
+            return AuraSelfProfile.ATTESTATION_ID
+        scope = hashlib.sha256(str(resolved).encode("utf-8")).hexdigest()[:16]
+        return f"{AuraSelfProfile.ATTESTATION_ID}.path.{scope}"
+
     @classmethod
     async def get_instance(cls, storage_path: Optional[str] = None) -> "AuraSelfProfile":
         """Get or create singleton instance."""
@@ -105,7 +155,7 @@ class AuraSelfProfile:
                 return
             raw = self._storage_path.read_text(encoding="utf-8")
 
-            verdict = verify_state(self.ATTESTATION_ID, raw)
+            verdict = verify_state(self._attestation_id, raw)
             self._attestation = verdict
             if verdict.is_tampered:
                 self._quarantine_tampered_profile(verdict)
@@ -199,7 +249,7 @@ class AuraSelfProfile:
             # Attest AFTER the write lands. Sealing first would leave a seal
             # for content that never reached disk if the write failed, and
             # the next boot would quarantine a file Aura did write.
-            attest_state(self.ATTESTATION_ID, payload)
+            attest_state(self._attestation_id, payload)
             logger.debug(f"✓ Saved Aura self-profile to {self._storage_path}")
         except _PROFILE_PERSISTENCE_ERRORS as e:
             record_degradation("aura_self_profile", e)
@@ -208,7 +258,7 @@ class AuraSelfProfile:
     def attestation_status(self) -> dict[str, Any]:
         """How the on-disk profile last verified. Never inferred from success."""
         if self._attestation is None:
-            return {"state": "not_checked", "verified": False, "artifact_id": self.ATTESTATION_ID}
+            return {"state": "not_checked", "verified": False, "artifact_id": self._attestation_id}
         return self._attestation.to_dict()
     
     def add_or_reinforce_fact(
