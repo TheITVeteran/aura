@@ -1752,7 +1752,28 @@ end tell
                     return resolved
             except (OSError, ValueError):
                 continue
-        raise ValueError("Path is outside Aura's allowed desktop/document artifact roots.")
+        # Say WHERE it landed, not just that it was refused.
+        #
+        # LIVE, 2026-08-10. Asked to write ~/Desktop/Aura/aura_selftest.md, the
+        # refusal read "Path is outside Aura's allowed desktop/document artifact
+        # roots." That is true and it reads as a contradiction, because the path
+        # is visibly under ~/Desktop. ~/Desktop/Aura is a symlink to
+        # /Users/bryan/.aura/live-source, so the write would have landed inside
+        # her own source tree — the guard was exactly right and said nothing
+        # that would let anyone work that out.
+        #
+        # A refusal that cannot be acted on gets retried verbatim, which is how
+        # a correct guard turns into a loop.
+        roots = ", ".join(
+            str(root.expanduser()) for root in self._allowed_desktop_roots()
+        )
+        detail = f"{path} resolves to {resolved}"
+        if str(resolved) != str(path):
+            detail += " (a link or alias points outside the artifact roots)"
+        raise ValueError(
+            "Path is outside Aura's allowed desktop/document artifact roots: "
+            f"{detail}. Allowed roots: {roots}."
+        )
 
     @staticmethod
     def _target_json(target: str) -> dict[str, Any]:
