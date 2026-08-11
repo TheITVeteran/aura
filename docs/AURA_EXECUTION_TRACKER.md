@@ -45038,3 +45038,41 @@ frontier performance or `WOW Signal` is claimed. The completion envelope
 remains `912/920` (approximately `99.1%`). Because evaluator source is part of
 campaign identity, next is a fresh bounded canary frozen with this admission
 repair, followed by its prompt-disjoint decoded matched-compute diagnostic.
+
+## Checkpoint 2026-08-11-243: Immutable Evaluation Replay
+
+The fresh CP242 source-bound resident canary completed all three steps under
+the repaired signed-pressure handoff. Its authenticated controller completion
+commitment is
+`6609c6bd3cd3c683a37ee67fb0a5bd349427f0bf1818abf33e68dbbf6d0df434`.
+The terminal tensor commitment is
+`39776c77e9656b8bd29cc1913cf53137b103fd8220b5bcef569ee7d5422ffe9d`,
+the checkpoint receipt commitment is
+`ad90d584630e9b096ac9c27128f0817868080a50fe295d5c1c71c46aff95762f`,
+and the authoritative training receipt commitment is
+`635ea611351fbeb92e1b23487d752bf9a1e8a5ccb7e1d9cad657491a3b99ea42`.
+At terminal step three, held-out T8/T16 cross-entropy was `2.584433` versus
+T1 `3.154430`, an `18.070%` relative reduction. Exact typed state, value,
+control, action and instruction metrics remained `100%`; the recurrence step
+recorded nonzero gradients in the recurrent controller, typed action
+transition, typed action codebook and typed state codebook. This independently
+reproduces the CP240 mechanism evidence through the CP242 admission repair. It
+remains teacher-forced evidence, not decoded reasoning gain.
+
+Resident evaluation status and stop operations now replay the immutable plan
+already stored inside an evaluation root. They no longer rebuild that plan
+from today's launcher and arguments before inspecting historical evidence.
+The stored plan must retain its canonical hash and exact campaign/evaluation
+root bindings. Launch still builds and freezes the current requested plan, so
+this change does not permit an old plan to silently alter a new experiment.
+A regression makes any attempted status-time rebuild fail, and a process-level
+inspection of the preserved CP240 failed diagnostic now returns its original
+failed detached receipt and empty report instead of refusing it because the
+current evaluator command evolved.
+
+The launcher contract passes `6/6` focused tests; Ruff, compilation and diff
+hygiene are clean. No decoded behavioral gain, broad transfer, fusion,
+frontier performance or `WOW Signal` is claimed. The completion envelope
+remains `912/920` (approximately `99.1%`). Next is the bounded prompt-disjoint
+decoded diagnostic comparing trained recurrence against initialization-matched
+equal-compute controls and mechanism lesions.

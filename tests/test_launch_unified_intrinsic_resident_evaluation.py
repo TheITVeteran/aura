@@ -270,6 +270,32 @@ def test_status_rejects_forged_report_hash(
         launcher.status(arguments)
 
 
+def test_status_replays_stored_plan_without_rebuilding_current_source(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    arguments, _config, _checkpoint = _terminal_fixture(tmp_path, monkeypatch)
+    plan = launcher.prepare(arguments)
+    detached_root = Path(plan["evaluation_root"]) / "detached"
+    detached_root.mkdir()
+    (detached_root / launcher.detached.PLAN_FILE).write_text("{}\n", encoding="ascii")
+
+    def reject_rebuild(_arguments: argparse.Namespace) -> dict[str, object]:
+        raise AssertionError("status must inspect the immutable stored plan")
+
+    monkeypatch.setattr(launcher, "_build_plan", reject_rebuild)
+    monkeypatch.setattr(
+        launcher.detached,
+        "_status",
+        lambda _path: {"terminal": False, "receipt": None},
+    )
+
+    result = launcher.status(arguments)
+
+    assert result["state"] == "running"
+    assert result["plan_sha256"] == plan["plan_sha256"]
+
+
 def test_depth_parser_rejects_duplicate_and_shallow_recurrence() -> None:
     assert launcher._csv_positive_ints("1,2,4", minimum=1) == (1, 2, 4)
     with pytest.raises(argparse.ArgumentTypeError):

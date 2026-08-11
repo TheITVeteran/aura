@@ -104,8 +104,38 @@ def _terminal_campaign(config_path: Path) -> tuple[dict[str, Any], dict[str, Any
     return config, completion
 
 
+def _evaluation_root(arguments: argparse.Namespace) -> tuple[Path, Path]:
+    campaign_root = arguments.campaign.expanduser().resolve(strict=True)
+    evaluation_root = (
+        arguments.output.expanduser().absolute()
+        if arguments.output is not None
+        else campaign_root / "resident-evaluation"
+    )
+    if evaluation_root == campaign_root or not evaluation_root.is_relative_to(campaign_root):
+        _fail("resident evaluation output must be a strict campaign child")
+    return campaign_root, evaluation_root
+
+
+def _existing_plan(arguments: argparse.Namespace) -> dict[str, Any] | None:
+    campaign_root, evaluation_root = _evaluation_root(arguments)
+    path = evaluation_root / "evaluation-plan.json"
+    if not path.exists():
+        return None
+    plan = _read_document(path)
+    body = {key: value for key, value in plan.items() if key != "plan_sha256"}
+    if (
+        plan.get("schema") != PLAN_SCHEMA
+        or plan.get("plan_sha256") != canonical_sha256(body)
+        or plan.get("campaign_root") != str(campaign_root)
+        or plan.get("evaluation_root") != str(evaluation_root)
+    ):
+        _fail("stored resident evaluation plan is invalid")
+    return plan
+
+
 def _build_plan(arguments: argparse.Namespace) -> dict[str, Any]:
-    config_path = arguments.campaign.expanduser().resolve(strict=True) / "campaign.json"
+    requested_campaign_root, evaluation_root = _evaluation_root(arguments)
+    config_path = requested_campaign_root / "campaign.json"
     config, completion = _terminal_campaign(config_path)
     campaign_root = Path(config["paths"]["campaign_root"])
     source_root = Path(config["source"]["git"]["root"]).resolve(strict=True)
@@ -117,13 +147,8 @@ def _build_plan(arguments: argparse.Namespace) -> dict[str, Any]:
         if not path.is_file():
             _fail(f"resident evaluation executable input is unavailable: {path}")
 
-    evaluation_root = (
-        arguments.output.expanduser().absolute()
-        if arguments.output is not None
-        else campaign_root / "resident-evaluation"
-    )
-    if evaluation_root == campaign_root or not evaluation_root.is_relative_to(campaign_root):
-        _fail("resident evaluation output must be a strict campaign child")
+    if campaign_root != requested_campaign_root:
+        _fail("resident evaluation campaign root differs")
     ensure_private_directory(evaluation_root)
     report = evaluation_root / "decode-report.json"
     ready = evaluation_root / "preload-ready-{pid}.json"
@@ -381,7 +406,7 @@ def launch(arguments: argparse.Namespace) -> dict[str, Any]:
 
 
 def status(arguments: argparse.Namespace) -> dict[str, Any]:
-    plan = prepare(arguments)
+    plan = _existing_plan(arguments) or prepare(arguments)
     root = Path(plan["evaluation_root"])
     run_dir = root / "detached"
     if not (run_dir / detached.PLAN_FILE).exists():
@@ -423,7 +448,7 @@ def status(arguments: argparse.Namespace) -> dict[str, Any]:
 
 
 def stop(arguments: argparse.Namespace) -> dict[str, Any]:
-    plan = prepare(arguments)
+    plan = _existing_plan(arguments) or prepare(arguments)
     root = Path(plan["evaluation_root"])
     stopped: list[dict[str, Any]] = []
     for run_dir in sorted(root.glob("sentinel-*")):
