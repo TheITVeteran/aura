@@ -20485,6 +20485,55 @@ def _correct_unfulfilled_write_claims(reply_text: object, user_message: object =
     return f"{str(reply_text or '').rstrip()}\n\n{correction}"
 
 
+def _append_runtime_authored_why(user_message: object, reply_text: object) -> object:
+    """Answer "why did you do that" from the causal record, not from the model.
+
+    The provenance graph knows which phase moved which field, on which branch,
+    under which criteria, and which phases were suppressed. Asked why she did
+    something, Aura previously generated an account of her own reasoning —
+    produced by the machinery whose behaviour it purports to explain, after the
+    fact, with no access to what ran. Plausible and unfalsifiable.
+
+    This appends what was measured. It appends nothing when the graph is empty,
+    because the alternative to a real answer is not a nicer answer.
+    """
+
+    try:
+        from core.introspection.decision_provenance import (
+            asks_why_she_did_that,
+            runtime_authored_why,
+        )
+
+        if not asks_why_she_did_that(user_message):
+            return reply_text
+        account = str(runtime_authored_why(user_message) or "").strip()
+    except _CHAT_RECOVERABLE_ERRORS as exc:
+        record_degradation('chat', exc)
+        return reply_text
+    if not account:
+        return reply_text
+    combined = f"{str(reply_text or '').rstrip()}\n\n{account}".strip()
+    # Held, so the stages below cannot quietly drop the one part of the reply
+    # that is not a generation.
+    try:
+        from core.runtime.fact_custody import ValueKind, hold_fact
+        from core.runtime.turn_outcome import VerificationGrade
+
+        hold_fact(
+            subject="this_turn",
+            predicate="runtime_authored_account",
+            value=account.splitlines()[0][:80],
+            subject_cues=("runtime", "record", "branch"),
+            canonical_rendering=account,
+            established_by="chat.runtime_authored_why",
+            grade=VerificationGrade.OBSERVED,
+            kind=ValueKind.TEXT,
+        )
+    except _CHAT_RECOVERABLE_ERRORS as exc:
+        record_degradation('chat.fact_custody', exc, severity="warning")
+    return combined
+
+
 def _correct_unevidenced_action_claims(reply_text: object, user_message: object = "") -> object:
     """Contradict any reported completion on a turn where nothing verifiably ran.
 
@@ -27286,6 +27335,9 @@ async def _api_chat_turn(body: ChatRequest, request: Request):
         # A correction that a later stage can overwrite is not a correction.
         _final_reply = str(
             _append_past_action_record(_semantic_user_message, _final_reply) or _final_reply
+        )
+        _final_reply = str(
+            _append_runtime_authored_why(_semantic_user_message, _final_reply) or _final_reply
         )
         _append_turn_text_mutation(
             _live_turn_trace,

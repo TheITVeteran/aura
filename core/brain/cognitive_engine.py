@@ -168,6 +168,68 @@ def _record_legacy_pass(
         logger.debug("pass record dropped for %s", name, exc_info=True)
 
 
+# ── cognitive provenance on the pipeline that serves chat ────────────────────
+#
+# Four thin wrappers rather than four inline try/excepts in the phase loop.
+# Each one is allowed to fail and none of them may break a turn: a causal
+# record that can take the runtime down with it is worse than no record.
+
+
+def _open_provenance_tick(*, objective: str, priority: bool) -> Any:
+    try:
+        from core.runtime.cognitive_provenance import open_tick
+
+        return open_tick(objective=str(objective or ""), priority=bool(priority))
+    except Exception:  # noqa: BLE001 — provenance may never break a turn
+        logger.debug("provenance tick not opened", exc_info=True)
+        return None
+
+
+def _begin_provenance(phase_name: str, state: Any) -> Any:
+    try:
+        from core.runtime.cognitive_provenance import begin_transformation
+
+        return begin_transformation(phase_name, state)
+    except Exception:  # noqa: BLE001
+        logger.debug("provenance not started for %s", phase_name, exc_info=True)
+        return None
+
+
+def _complete_provenance(
+    transformation: Any, state: Any, *, error: str = "", objective: str = ""
+) -> None:
+    if transformation is None:
+        return
+    try:
+        transformation.complete(
+            state, error=error, inputs={"objective": str(objective or "")[:120]}
+        )
+    except Exception:  # noqa: BLE001
+        logger.debug("provenance receipt dropped", exc_info=True)
+
+
+def _skip_provenance(phase_name: str, state: Any, reason: str) -> None:
+    try:
+        from core.runtime.cognitive_provenance import begin_transformation
+
+        begin_transformation(phase_name, state).complete(
+            state, skipped=True, skip_reason=str(reason or "")
+        )
+    except Exception:  # noqa: BLE001
+        logger.debug("provenance skip not recorded for %s", phase_name, exc_info=True)
+
+
+def _close_provenance_tick(graph: Any) -> None:
+    if graph is None:
+        return
+    try:
+        from core.runtime.cognitive_provenance import close_tick
+
+        close_tick(graph)
+    except Exception:  # noqa: BLE001
+        logger.debug("provenance tick not closed", exc_info=True)
+
+
 def _bounded_float(value: Any, default: float = 0.0, *, lower: float = 0.0, upper: float = 1.0) -> float:
     try:
         parsed = float(value)
@@ -2337,9 +2399,21 @@ class CognitiveEngine:
             success = True
 
         if not success:
+            # Bound before the try, because the finally below reads it and the
+            # timeout context manager can fail on entry.
+            _provenance_tick = None
             try:
                 async with asyncio.timeout(cycle_timeout):
                     _begin_pass_run("legacy_pipeline")
+                    # The provenance graph had the same asymmetry the pass
+                    # instrumentation had, for the same reason: it was opened
+                    # in AuraKernel.tick, and chat drives THIS loop. So the
+                    # causal record that answers "why did she do that" existed
+                    # for the three turns a day the kernel runs and not for the
+                    # several hundred a person has. Same seam, same graph.
+                    _provenance_tick = _open_provenance_tick(
+                        objective=objective, priority=self._is_user_facing_origin(origin)
+                    )
                     for phase in self._phases:
                         phase_name = phase.__class__.__name__
                         # [PASS INSTRUMENTATION] AURA_PASS_BISECT_LIMIT and
@@ -2356,8 +2430,16 @@ class CognitiveEngine:
                             _record_legacy_pass(
                                 phase_name, ordinal, 0.0, skipped=True, reason=reason
                             )
+                            # A skipped phase is part of the causal record. A
+                            # graph that shows only what ran cannot answer why
+                            # something did NOT happen, which is half of what
+                            # "why did you do that" usually means.
+                            _skip_provenance(phase_name, temp_state, reason)
                             continue
                         started_at = time.perf_counter()
+                        # Measured around the phase, never reported by it.
+                        _transformation = _begin_provenance(phase_name, temp_state)
+                        _phase_error = ""
                         try:
                             # Pass through kwargs like is_background if phases support it
                             temp_state = await phase.execute(
@@ -2367,14 +2449,22 @@ class CognitiveEngine:
                                 **kwargs,
                             )
                         except BaseException as phase_exc:
+                            _phase_error = f"{type(phase_exc).__name__}: {phase_exc}"
                             _record_legacy_pass(
                                 phase_name,
                                 ordinal,
                                 time.perf_counter() - started_at,
                                 skipped=False,
-                                error=f"{type(phase_exc).__name__}: {phase_exc}",
+                                error=_phase_error,
                             )
                             raise
+                        finally:
+                            _complete_provenance(
+                                _transformation,
+                                temp_state,
+                                error=_phase_error,
+                                objective=objective,
+                            )
                         _record_legacy_pass(
                             phase_name,
                             ordinal,
@@ -2432,6 +2522,12 @@ class CognitiveEngine:
                     context=context,
                 )
             finally:
+                # Closed here rather than after the loop so a tick that timed
+                # out or crashed still lands in the ring. Those are the ticks
+                # somebody most wants to read afterwards, and the version that
+                # closed on the success path recorded only the turns that went
+                # well.
+                _close_provenance_tick(_provenance_tick)
                 try:
                     # vResilience: Avoid locals().get() for type stability
                     if not success and "backup_state" in locals():
