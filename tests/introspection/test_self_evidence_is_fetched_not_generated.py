@@ -393,3 +393,83 @@ def test_the_reply_path_applies_the_correction() -> None:
     appended = chat._append_sensory_claim_correction("am I alone?", LIVE_FABRICATION)
     assert str(appended).startswith("You're still here.")
     assert "guess, not an observation" in str(appended)
+
+
+# ── Her own actions, from the receipts that recorded them ──────────────────
+
+def test_recall_questions_are_recognised() -> None:
+    from core.introspection.self_evidence import asks_about_past_actions
+
+    assert asks_about_past_actions(
+        "Earlier today I asked you to count files in one of your own directories. "
+        "Without guessing: what was the count?"
+    ) is True
+    assert asks_about_past_actions("what did you write to my Desktop?") is True
+    assert asks_about_past_actions("do you remember the haiku?") is True
+
+
+@pytest.mark.parametrize(
+    "message",
+    ["what is the capital of Peru", "write hello into ~/Documents/x.txt", ""],
+)
+def test_other_turns_do_not_trigger_recall(message: str) -> None:
+    from core.introspection.self_evidence import asks_about_past_actions
+
+    assert asks_about_past_actions(message) is False
+
+
+def test_the_receipt_store_is_reloaded_before_it_is_queried() -> None:
+    """The hot index is per-process, and a restart empties it.
+
+    LIVE: query_by_kind("tool_execution") returned 0 while 15,722 receipts sat
+    on disk. Written durably, unreadable afterwards — so recall had nothing to
+    read and generated "seventeen" for a count of 9.
+    """
+    import inspect
+
+    from core.introspection import self_evidence
+
+    source = inspect.getsource(self_evidence.resolve_past_actions)
+
+    assert "reload_from_disk()" in source
+    assert source.find("reload_from_disk()") < source.find('query_by_kind("tool_execution")')
+
+
+def test_only_verified_effects_are_recalled() -> None:
+    """An unverified step is not something she did."""
+    import inspect
+
+    from core.introspection import self_evidence
+
+    source = inspect.getsource(self_evidence.resolve_past_actions)
+
+    assert 'evidence.get("effect_verified")' in source
+
+
+def test_the_record_is_ordered_newest_first() -> None:
+    """Recall that answers with the oldest thing it can find is not recall."""
+    import inspect
+
+    from core.introspection import self_evidence
+
+    source = inspect.getsource(self_evidence.resolve_past_actions)
+
+    assert "reverse=True" in source
+
+
+def test_a_reply_matching_the_record_is_left_alone() -> None:
+    from interface.routes import chat
+
+    question = (
+        "Earlier today I asked you to count the .py files in core/introspection. "
+        "Without guessing: what was the count?"
+    )
+    answered = "It was 9 files."
+
+    assert chat._append_past_action_record(question, answered) == answered
+
+
+def test_an_unrelated_turn_is_left_alone() -> None:
+    from interface.routes import chat
+
+    assert chat._append_past_action_record("what is the capital of Peru", "Lima.") == "Lima."

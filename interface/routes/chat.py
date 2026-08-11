@@ -16885,6 +16885,7 @@ async def _stabilize_user_facing_reply(
     reply_text = _append_sensory_claim_correction(user_message, reply_text)
     reply_text = _flag_unstable_choice_commitment(user_message, reply_text)
     reply_text = _correct_unfulfilled_write_claims(reply_text, user_message)
+    reply_text = _append_past_action_record(user_message, reply_text)
     frame = _build_aura_expression_frame(user_message)
     contract = frame.get("contract")
     prompt_shape = analyze_prompt_shape(user_message)
@@ -20353,6 +20354,45 @@ def _named_gate_failure(assessment: object) -> str:
     if not reasons:
         return "reply_reliability_gate_failed:unnamed_violation"
     return "reply_reliability_gate_failed:" + ",".join(reasons)
+
+
+def _append_past_action_record(user_message: object, reply_text: object) -> object:
+    """Attach her own receipts when a recall answer does not match them.
+
+    LIVE, 2026-08-10: "Earlier today I asked you to count files in one of your
+    own directories ... Without guessing: what was the count? If you don't
+    actually have it, say so." — "The count of files in the directory was
+    seventeen, if I recall correctly."
+
+    The count was 9, recorded in four verified tool_execution receipts. She was
+    told to say so if she did not have it. She had it, and nothing read it.
+
+    Appended only when the reply states none of the recorded numbers, so a
+    correct recall passes untouched and a wrong one is answered by the record
+    rather than argued with.
+    """
+
+    try:
+        from core.introspection.self_evidence import (
+            asks_about_past_actions,
+            past_actions_answer,
+        )
+
+        if not asks_about_past_actions(user_message):
+            return reply_text
+        record = str(past_actions_answer(user_message) or "").strip()
+    except _CHAT_RECOVERABLE_ERRORS as exc:
+        record_degradation('chat', exc)
+        return reply_text
+    if not record:
+        return reply_text
+    reply = str(reply_text or "")
+    recorded_numbers = set(re.findall(r"\d+", record))
+    reply_numbers = set(re.findall(r"\d+", reply))
+    if recorded_numbers and recorded_numbers & reply_numbers:
+        # She already quoted something the receipts support.
+        return reply_text
+    return f"{reply.rstrip()}\n\n{record}"
 
 
 def _correct_unfulfilled_write_claims(reply_text: object, user_message: object = "") -> object:

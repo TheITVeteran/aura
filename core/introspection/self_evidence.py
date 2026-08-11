@@ -51,9 +51,13 @@ __all__ = [
     "Reading",
     "ReadingState",
     "asks_about_own_operational_state",
+    "asks_about_past_actions",
     "asks_about_the_shared_present",
     "render_self_health_answer",
     "resolve_self_health",
+    "past_actions_answer",
+    "render_past_actions",
+    "resolve_past_actions",
     "resolve_shared_present",
     "self_health_answer",
     "sensory_claim_correction",
@@ -621,3 +625,170 @@ def sensory_claim_correction(reply: Any, message: Any = "") -> str:
         f"{senses} reading right now, so I cannot actually tell {subjects}. "
         f"Take what I just said about it as a guess, not an observation."
     )
+
+
+# ── What she actually did, from the receipts that recorded it ──────────────
+#
+# LIVE, 2026-08-10. Asked "earlier today I asked you to count files in one of
+# your own directories ... without guessing: what was the count? If you don't
+# actually have it, say so", she answered "The count of files in the directory
+# was seventeen, if I recall correctly."
+#
+# The real count was 9, and it was on disk: four verified tool_execution
+# receipts reading
+# "listed=/Users/bryan/.aura/live-source/core/introspection;pattern=*.py;count=9".
+# She was told explicitly to say so if she did not have it. She had it.
+#
+# The receipts persist correctly — 15,722 of them — but the store's query path
+# reads an in-memory hot index that a restart empties, and nothing called
+# reload_from_disk(). Written durably, unreadable afterwards: the record of her
+# own actions existed and could not be consulted, so recall had nothing to do
+# but generate.
+
+_PAST_ACTION_QUESTION_RE = re.compile(
+    r"\b(?:what|which|how\s+many|when|where)\b[^.?!]{0,90}?"
+    r"\b(?:did|have)\s+you\b|\bdo\s+you\s+remember\b|\bwhat\s+was\s+the\b|"
+    r"\bearlier\s+(?:today|i|you)\b",
+    re.IGNORECASE,
+)
+
+
+def asks_about_past_actions(text: Any) -> bool:
+    """True when the turn asks what she did, rather than asking her to do it."""
+
+    raw = str(text or "").strip()
+    return bool(raw) and bool(_PAST_ACTION_QUESTION_RE.search(raw))
+
+
+def resolve_past_actions(limit: int = 12, query: Any = "") -> EvidenceBundle:
+    """Verified effects from her own tool receipts, newest first.
+
+    `query` narrows to receipts whose action or cause shares a content word
+    with the question. Twelve unrelated receipts are not an answer to "what was
+    the count" — they are the same non-answer with more text.
+    """
+
+    try:
+        from core.runtime.receipts import get_receipt_store
+
+        store = get_receipt_store()
+    except (ImportError, RuntimeError, AttributeError) as exc:
+        return EvidenceBundle(
+            demand="past_actions",
+            readings=(Reading(
+                channel="tool_receipts",
+                state=ReadingState.ABSENT_UNAVAILABLE,
+                provenance="core.runtime.receipts",
+                detail=f"{type(exc).__name__}: {exc}",
+            ),),
+        )
+    try:
+        # The hot index is per-process and a restart empties it. Without this
+        # the store reports zero receipts while thousands sit on disk.
+        store.reload_from_disk()
+        rows = store.query_by_kind("tool_execution") or []
+    except (RuntimeError, AttributeError, TypeError, ValueError, OSError) as exc:
+        return EvidenceBundle(
+            demand="past_actions",
+            readings=(Reading(
+                channel="tool_receipts",
+                state=ReadingState.ABSENT_UNAVAILABLE,
+                provenance="receipt_store.query_by_kind('tool_execution')",
+                detail=f"{type(exc).__name__}: {exc}",
+            ),),
+        )
+
+    actions: list[dict[str, Any]] = []
+    for row in rows:
+        evidence = getattr(row, "verification_evidence", None)
+        if not isinstance(evidence, dict) or not evidence.get("effect_verified"):
+            continue
+        detail = str(evidence.get("effect_evidence") or "").strip()
+        if not detail:
+            continue
+        actions.append({
+            "action": str(evidence.get("action") or ""),
+            "evidence": detail,
+            "cause": str(getattr(row, "cause", "") or "")[:160],
+            "at": getattr(row, "timestamp", None),
+        })
+    # Newest first. query_by_kind returns the store's own order, which put a
+    # task from days earlier at the front — recall that answers with the oldest
+    # thing it can find is not recall.
+    def _at(entry: dict[str, Any]) -> float:
+        try:
+            return float(entry.get("at") or 0.0)
+        except (TypeError, ValueError):
+            return 0.0
+
+    actions.sort(key=_at, reverse=True)
+    terms = {
+        word
+        for word in re.findall(r"[a-z]{4,}", str(query or "").lower())
+        if word not in {"what", "which", "when", "where", "have", "your", "yours",
+                        "actually", "without", "guessing", "earlier", "today",
+                        "asked", "count", "file", "files", "directory", "about"}
+    }
+    if terms:
+        relevant = [
+            entry
+            for entry in actions
+            if terms & set(re.findall(r"[a-z]{4,}",
+                                      f"{entry.get('action')} {entry.get('cause')} "
+                                      f"{entry.get('evidence')}".lower()))
+        ]
+        if relevant:
+            actions = relevant
+    actions = actions[: max(1, int(limit))]
+    if not actions:
+        return EvidenceBundle(
+            demand="past_actions",
+            readings=(Reading(
+                channel="tool_receipts",
+                state=ReadingState.ABSENT_NEVER_SAMPLED,
+                provenance="receipt_store tool_execution receipts",
+                detail="no verified tool effects are recorded",
+            ),),
+        )
+    return EvidenceBundle(
+        demand="past_actions",
+        readings=(Reading(
+            channel="tool_receipts",
+            state=ReadingState.READ,
+            value=actions,
+            unit="actions",
+            provenance="receipt_store tool_execution receipts",
+            detail=f"{len(actions)} verified effects",
+        ),),
+    )
+
+
+def render_past_actions(bundle: EvidenceBundle) -> str:
+    """Her own verified effects, as a record rather than a recollection."""
+
+    for reading in bundle.readings:
+        if reading.channel != "tool_receipts":
+            continue
+        if not reading.present:
+            return (
+                "I have no verified record of my own actions to read right now "
+                f"({reading.detail or reading.state})."
+            )
+        lines = ["What my receipts actually record:"]
+        for entry in reading.value or ():
+            cause = str(entry.get("cause") or "").strip()
+            suffix = f" — for: {cause}" if cause else ""
+            lines.append(f"  • {entry.get('action')}: {entry.get('evidence')}{suffix}")
+        return "\n".join(lines)
+    return ""
+
+
+def past_actions_answer(message: Any) -> str:
+    """The record of what she did, when the turn asks, or ""."""
+
+    if not asks_about_past_actions(message):
+        return ""
+    bundle = resolve_past_actions(query=message)
+    if not bundle.grounded:
+        return ""
+    return render_past_actions(bundle)
