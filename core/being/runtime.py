@@ -3,7 +3,7 @@ from __future__ import annotations
 import logging
 import threading
 import time
-from dataclasses import asdict
+from dataclasses import asdict, replace
 from typing import Any
 
 from core.governance.recovery_authority import (
@@ -30,6 +30,8 @@ from .functional_soul import FunctionalSoul
 from .higher_order_monitor import HigherOrderMonitor
 from .interoceptive_model import InteroceptiveModel
 from .introspection_renderer import IntrospectionRenderer
+from .policy_coupler import ClosedLoopPolicyCoupler
+from .self_model_attractor import FunctionalIAttractor
 from .self_ownership import OwnershipTracker
 from .self_report_calibrator import SelfReportCalibrator
 from .semantic_stream import SemanticStream
@@ -165,6 +167,27 @@ class BeingRuntime:
         self._last_causal_valenced_workspace: Any | None = None
         self._last_unified_felt: Any | None = None
         self._lesion_controller_registered = False
+
+        # The functional "I" and the policy it couples into.
+        #
+        # Both classes were substantial, correct and unreachable: nothing in
+        # any production path constructed either one, so a controller that
+        # computes continuity, coherence, integrity, identity tension, agency
+        # readiness and first-person confidence — and maps them onto
+        # temperature, verification threshold, retrieval depth and tool risk —
+        # was doing none of that to anything. The attractor's own docstring
+        # names the condition it failed: "real only when ... policy changes
+        # downstream". A beautiful unused controller is not part of Aura's
+        # operational cognition, and describing it as though it were was the
+        # imprecision worth correcting.
+        #
+        # They live here because this is where the evidence they need already
+        # is: AuraNow, welfare, the causal self vector and the action policy
+        # all pass through one lock in _sample_locked.
+        self.self_attractor = FunctionalIAttractor()
+        self.policy_coupler = ClosedLoopPolicyCoupler(production_mode=True)
+        self._last_self_attractor_state: Any | None = None
+        self._last_closed_loop_policy: Any | None = None
 
     def start(self, *, hz: float = 20.0) -> None:
         if self._running:
@@ -824,6 +847,7 @@ class BeingRuntime:
             )
             self._last_causal_self_vector = causal_vector
             self._last_causal_valenced_workspace = causal_vector.causal_valenced_workspace
+            self._refresh_functional_i(now, causal_vector, action_policy=action_policy)
             return causal_vector
         except (ImportError, AttributeError, RuntimeError, TypeError, ValueError) as exc:
             record_degradation(
@@ -833,6 +857,93 @@ class BeingRuntime:
                 action="continued without causal valenced workspace vector for this sample",
             )
             return None
+
+    def _refresh_functional_i(
+        self,
+        now: AuraNow,
+        causal_vector: Any,
+        *,
+        action_policy: dict[str, Any] | None = None,
+    ) -> None:
+        """Update the functional "I" and the policy it constrains.
+
+        The attractor sets its own bar: it is real only when derived from live
+        evidence, injected back into the causal vector, and changing policy
+        downstream. Two of those three now happen here — the derivation and
+        the feedback — and the third happens where generation controls are
+        assembled, in core/brain/cognitive_engine.py, which reads
+        :meth:`closed_loop_policy`.
+
+        Runs inside ``_sample_locked``'s reentrant lock, with the same vector
+        and action policy the rest of the sample used, so the "I" cannot be
+        computed from one request's evidence and applied to another's.
+        """
+
+        try:
+            self_state = self.self_attractor.update(
+                now=now,
+                vector=causal_vector,
+                action_policy=action_policy,
+            )
+            self._last_self_attractor_state = self_state
+
+            # The feedback leg. Without it the attractor reads the vector and
+            # never touches it, which is a monitor rather than an attractor —
+            # continuity pressure, self integrity and trust debt are exactly
+            # the dimensions identity tension should move.
+            contributions = self.self_attractor.vector_contributions(self_state)
+            signals = getattr(causal_vector, "signals", None)
+            if isinstance(signals, dict):
+                for name, value in contributions.items():
+                    signal = signals.get(name)
+                    if signal is None:
+                        continue
+                    # ``replace`` rather than a mutation, and the source is
+                    # rewritten with it: a signal whose value came from the
+                    # attractor and whose provenance still named its original
+                    # sensor would be a false attribution in the one structure
+                    # that exists to carry attribution.
+                    # cautious_high: these three are continuity pressure, self
+                    # integrity and trust debt. An unusable value must not read
+                    # as "nothing is wrong" on any of them.
+                    adjusted = validated_unit(
+                        value, name=f"functional_i.{name}", cautious_high=True
+                    )
+                    signals[name] = replace(
+                        signal,
+                        value=float(adjusted),
+                        source=f"{signal.source}+functional_i_attractor",
+                        note=(
+                            f"{signal.note}; adjusted by identity tension "
+                            f"{self_state.identity_tension:.3f}"
+                        ).strip("; "),
+                    )
+
+            self._last_closed_loop_policy = self.policy_coupler.modulate(
+                vector=causal_vector,
+                self_state=self_state,
+                action_policy=action_policy,
+            )
+        except (AttributeError, RuntimeError, TypeError, ValueError, KeyError) as exc:
+            record_degradation(
+                "being_runtime",
+                exc,
+                severity="warning",
+                action="continued without a functional-I policy for this sample",
+            )
+
+    def self_attractor_state(self) -> Any | None:
+        """The latest functional-"I" state, or None before the first sample."""
+        return self._last_self_attractor_state
+
+    def closed_loop_policy(self) -> Any | None:
+        """The generation and action constraints the current "I" implies.
+
+        Read by the generation-control assembly. Returns None before the first
+        sample, and callers must treat that as "no constraint" rather than as
+        a permissive one — an absent self-model is not evidence of a calm one.
+        """
+        return self._last_closed_loop_policy
 
     def _build_self_state(self, state: Any | None, lesions: set[str]) -> SelfState:
         identity = getattr(state, "identity", None)

@@ -622,12 +622,72 @@ def _live_mind_generation_controls(
             "clean_user_surface_steering_alpha": 0.01,
         }
 
+    temperature, top_p, recurrent_loops = _apply_functional_i_constraint(
+        temperature, top_p, recurrent_loops
+    )
+
     return {
         "temperature": round(max(0.22, min(0.82, temperature)), 4),
         "top_p": round(max(0.72, min(0.94, top_p)), 4),
         "clean_user_surface_recurrent_loops": recurrent_loops,
         "clean_user_surface_steering_alpha": round(max(0.20, min(0.40, steering_alpha)), 4),
     }
+
+
+def _apply_functional_i_constraint(
+    temperature: float,
+    top_p: float,
+    recurrent_loops: int,
+) -> tuple[float, float, int]:
+    """Let the functional "I" tighten this turn's sampling, never loosen it.
+
+    FunctionalIAttractor and ClosedLoopPolicyCoupler compute continuity,
+    coherence, integrity, identity tension, agency readiness and first-person
+    confidence, and map them onto temperature, top-p, planning depth,
+    verification threshold, retrieval depth and tool risk. Neither class had a
+    production call path, so all of that was computed by nothing, for nothing —
+    and the attractor's own docstring says it is real only when "policy changes
+    downstream". This is that leg.
+
+    **Tighten only.** The coupler's caution term is the direction its outputs
+    mean something in: identity tension and trust debt lower temperature and
+    raise verification. Letting it RAISE temperature would mean a confident
+    self-model buys more randomness, which is not what any of its terms
+    measure, and it would make the self-model a licence rather than a brake.
+    ``min`` in both directions is the honest reading of what the coupler
+    computes.
+
+    An absent policy leaves the turn unchanged. Before the first BeingRuntime
+    sample there is no "I" to consult, and treating that silence as calm is
+    exactly the "absence of a check reported as a passed check" failure this
+    codebase has a standing finding for.
+    """
+
+    try:
+        from core.being.runtime import get_being_runtime
+
+        policy = get_being_runtime().closed_loop_policy()
+    except (ImportError, AttributeError, RuntimeError, TypeError, ValueError) as exc:
+        record_degradation(
+            "cognitive_engine",
+            exc,
+            severity="warning",
+            action="generated without functional-I sampling constraint for this turn",
+        )
+        return temperature, top_p, recurrent_loops
+    if policy is None:
+        return temperature, top_p, recurrent_loops
+
+    constrained_temperature = min(float(temperature), float(policy.temperature))
+    constrained_top_p = min(float(top_p), float(policy.top_p))
+    # A raised verification threshold is the coupler saying "check more before
+    # you speak". A second recurrent pass is what this lane has to spend on
+    # that, so the two are connected here rather than left as a number in a
+    # dataclass nobody reads.
+    constrained_loops = recurrent_loops
+    if float(policy.verification_threshold) >= 0.70:
+        constrained_loops = max(recurrent_loops, 2)
+    return constrained_temperature, constrained_top_p, constrained_loops
 
 
 def _live_mind_controls_bound(
