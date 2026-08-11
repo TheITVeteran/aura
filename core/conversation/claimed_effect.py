@@ -35,6 +35,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from core.epistemics.effect_registry import EFFECT_REGISTRY
+
 __all__ = [
     "ClaimedWrite",
     "find_unaddressed_write_claims",
@@ -241,72 +243,21 @@ def unfulfilled_write_correction(reply: Any, request: Any = "") -> str:
 
 #: What a claimed effect looks like, per effect kind. The key is the receipt
 #: action that would have recorded it.
-_CLAIMED_EFFECT_PATTERNS: tuple[tuple[str, Any, str], ...] = (
-    (
-        "create_folder",
-        re.compile(
-            r"\bi\s+(?:have\s+)?(?:created|made|added)\s+(?:a\s+|the\s+|your\s+)?"
-            r"(?:new\s+)?(?:folder|directory)\b",
-            re.IGNORECASE,
-        ),
-        "created a folder",
-    ),
-    (
-        # Stative forms of the file effects, for the same reason: "the file is
-        # on your Desktop now" asserts a completed write with no verb of hers
-        # in it.
-        "write_text_file",
-        re.compile(
-            r"\b(?:the\s+)?(?:file|note|document)\s+(?:is|was)\s+(?:now\s+)?"
-            r"(?:on|in|at|saved)\b",
-            re.IGNORECASE,
-        ),
-        "wrote a file",
-    ),
-    (
-        "open_app",
-        re.compile(
-            r"\bi\s+(?:have\s+)?(?:opened|launched|started)\s+"
-            r"(?!the\s+file\b)(?:the\s+|your\s+)?[A-Z][\w ]{1,24}\b"
-            r"|\bi\s+(?:have\s+)?(?:opened|launched)\s+(?:notes|chrome|safari|"
-            r"calculator|terminal|finder|mail|messages)\b",
-            re.IGNORECASE,
-        ),
-        "opened an application",
-    ),
-    (
-        "move_file",
-        re.compile(
-            r"\bi\s+(?:have\s+)?(?:moved|relocated)\s+(?:it|the\s+file|that)\b",
-            re.IGNORECASE,
-        ),
-        "moved a file",
-    ),
-    (
-        "set_clipboard",
-        re.compile(
-            r"\bi\s+(?:have\s+)?(?:copied|put|placed)\s+[^.!?]{0,40}?"
-            r"(?:to|on|into)\s+(?:the|your|my)?\s*clipboard\b"
-            # Stative completion. LIVE, 2026-08-10: "The text ORION-7 is now on
-            # your clipboard" — the same finished effect asserted without a
-            # first-person past-tense verb, so every pattern here missed it
-            # while the clipboard was empty.
-            r"|\b(?:is|are|was|were)\s+(?:now\s+)?(?:on|in)\s+(?:the|your|my)?"
-            r"\s*clipboard\b",
-            re.IGNORECASE,
-        ),
-        "put something on the clipboard",
-    ),
-    (
-        "list_directory",
-        re.compile(
-            r"\bi\s+(?:have\s+)?(?:read|listed|counted|checked)\s+"
-            r"(?:the\s+|that\s+|your\s+)?(?:directory|folder|files)\b",
-            re.IGNORECASE,
-        ),
-        "read a directory",
-    ),
+#:
+#: Derived from core/epistemics/effect_registry.py rather than written out
+#: here. Hand-maintained, this tuple covered 6 of the 23 actions Aura can
+#: actually perform — so opening a URL, running a command, changing a system
+#: setting, rendering a PDF, writing into an app and eight more could be
+#: claimed with nothing able to check the claim. The gap was not a missing
+#: phrasing; it was a second list that never learned what the first one knew.
+#: The registry fails a gate when a declared capability has no recogniser,
+#: which is the difference between a list that drifts and one that cannot.
+_CLAIMED_EFFECT_PATTERNS: tuple[tuple[str, Any, str], ...] = tuple(
+    (spec.action, spec.recognizer, spec.claim_description)
+    for spec in EFFECT_REGISTRY.values()
+    if spec.observable_action and spec.recognizer is not None
 )
+
 
 
 def unverified_effect_claims(reply: Any, receipts: Any) -> list[str]:

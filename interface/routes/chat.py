@@ -16898,6 +16898,10 @@ async def _stabilize_user_facing_reply(
     reply_text = _append_sensory_claim_correction(user_message, reply_text)
     reply_text = _flag_unstable_choice_commitment(user_message, reply_text)
     reply_text = _correct_unfulfilled_write_claims(reply_text, user_message)
+    # Runs after the path check so a reply that names a missing file is
+    # corrected by the specific instrument first; this one catches the
+    # completion claims that name no path and reach no lane with receipts.
+    reply_text = _correct_unevidenced_action_claims(reply_text, user_message)
     reply_text = _append_past_action_record(user_message, reply_text)
     frame = _build_aura_expression_frame(user_message)
     contract = frame.get("contract")
@@ -20473,6 +20477,49 @@ def _correct_unfulfilled_write_claims(reply_text: object, user_message: object =
         from core.conversation.claimed_effect import unfulfilled_write_correction
 
         correction = str(unfulfilled_write_correction(reply_text, user_message) or "").strip()
+    except _CHAT_RECOVERABLE_ERRORS as exc:
+        record_degradation('chat', exc)
+        return reply_text
+    if not correction:
+        return reply_text
+    return f"{str(reply_text or '').rstrip()}\n\n{correction}"
+
+
+def _correct_unevidenced_action_claims(reply_text: object, user_message: object = "") -> object:
+    """Contradict any reported completion on a turn where nothing verifiably ran.
+
+    The write check above sees a claimed PATH. The effect check on the desktop
+    lane sees a claimed ACTION from a finite list. Neither reaches the case
+    that produced both live failures on 2026-08-10: a reply on the
+    conversational lane, where no receipt list exists to consult, asserting
+    that something was finished.
+
+    This asks the turn's own effect ledger instead of a lane's local variable,
+    so it works wherever the reply was composed, and it recognises the claim by
+    what a completed action IS rather than by which effect it names — the
+    mental and speech-act verbs are excluded and everything else counts. So it
+    has no per-effect gap to widen: a capability added tomorrow is covered on
+    the day it ships.
+
+    Appended, never substituted. A reply that reasoned well and overstated one
+    clause should lose the clause, not the reasoning.
+    """
+
+    try:
+        from core.epistemics.turn_effects import (
+            request_expects_action,
+            turn_has_verified_effect,
+        )
+        from core.epistemics.unevidenced_action import unevidenced_action_correction
+
+        correction = str(
+            unevidenced_action_correction(
+                reply_text,
+                effects_observed=turn_has_verified_effect(),
+                action_requested=request_expects_action(user_message),
+            )
+            or ""
+        ).strip()
     except _CHAT_RECOVERABLE_ERRORS as exc:
         record_degradation('chat', exc)
         return reply_text

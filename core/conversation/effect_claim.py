@@ -41,6 +41,8 @@ from dataclasses import dataclass, field
 from enum import StrEnum
 from typing import Any
 
+from core.epistemics.effect_registry import EFFECT_REGISTRY
+
 __all__ = [
     "EffectClaim",
     "assertions_from_receipts",
@@ -64,22 +66,17 @@ class EffectTense(StrEnum):
 #: How each action reads in a sentence, and which receipt field names its
 #: object. Keyed by the action vocabulary, which is finite and declared — that
 #: is what makes this closable where language is not.
+#:
+#: Derived rather than written out, because the same 15 actions also need a
+#: RECOGNISER for the auditing side, and two hand-maintained lists of the same
+#: capability set is precisely the fragmentation this work was criticised for:
+#: the day one list gains an action and the other does not, Aura can narrate an
+#: effect nothing is able to audit. core/epistemics/effect_registry.py holds
+#: both halves per action and fails a gate when either is missing.
 _EFFECT_VOCABULARY: dict[str, tuple[str, tuple[str, ...]]] = {
-    "write_text_file": ("wrote", ("path",)),
-    "render_text_pdf": ("rendered", ("path",)),
-    "create_folder": ("created the folder", ("path",)),
-    "move_file": ("moved", ("destination", "path")),
-    "list_directory": ("read", ("path",)),
-    "open_app": ("opened", ("opened", "app")),
-    "open_url": ("opened", ("url",)),
-    "set_clipboard": ("put text on the clipboard", ()),
-    "write_in_app": ("wrote a document in", ("app",)),
-    "create_note": ("created a note in", ("app",)),
-    "system_control": ("changed a system setting", ()),
-    "move_aura_bubble": ("moved her bubble", ()),
-    "run_command": ("ran a command", ()),
-    "run_applescript": ("ran a script", ()),
-    "fetch_topic_image": ("fetched an image", ("path",)),
+    spec.action: (spec.render_phrase, spec.evidence_fields)
+    for spec in EFFECT_REGISTRY.values()
+    if spec.narrates_in_reply
 }
 
 

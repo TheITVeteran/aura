@@ -3574,6 +3574,22 @@ class DesktopTaskSkill(BaseSkill):
                 action="continued desktop task after durable step receipt emission failed",
                 severity="warning",
             )
+        # The turn's own effect ledger, so a guard on any other lane can ask
+        # whether anything verifiably happened. Every step receipt in this
+        # module reaches this method, which is why the hook lives here rather
+        # than beside the seven places receipts are appended: a lane added
+        # later inherits the ledger by emitting a receipt at all.
+        try:
+            from core.epistemics.turn_effects import record_verified_effects
+
+            record_verified_effects([receipt])
+        except (ImportError, AttributeError, RuntimeError, TypeError, ValueError) as exc:
+            record_degradation(
+                "desktop_task",
+                exc,
+                action="continued desktop task after turn effect ledger update failed",
+                severity="warning",
+            )
 
     @classmethod
     def _verify_step_effect(cls, step: DesktopTaskStep, result: dict[str, Any]) -> tuple[bool, str]:
