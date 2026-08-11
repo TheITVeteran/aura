@@ -26,6 +26,15 @@ _ACTION_VERBS = (
     "read", "check", "show", "display", "visit", "browse", "google",
     "navigate", "download", "save", "export", "copy", "paste", "move",
     "delete", "create", "make", "build", "send",
+    # LIVE, 2026-08-10: "Put the text ORION-7 on my clipboard" was not an
+    # action request here, while "copy that to my clipboard" was — so nothing
+    # ran and she reported the clipboard set when it was empty.
+    #
+    # This is the third module with its own verb enumeration for the same
+    # question, and the three disagreed. Until they are one list, the least
+    # that has to hold is that an everyday word for doing a thing is in all of
+    # them.
+    "put", "place", "set", "add", "rename", "empty", "clear",
 )
 
 _PERMISSION_PHRASES = (
@@ -81,7 +90,8 @@ _PERMISSION_RE = re.compile("|".join(_PERMISSION_PHRASES), re.IGNORECASE)
 
 _MESSAGE_INITIAL_IMPERATIVE_RE = re.compile(
     r"^(please\s+)?(open|run|click|type|write|execute|launch|search|show|visit|"
-    r"navigate|download|save|create|make|build|send|copy|paste|move|delete)\b",
+    r"navigate|download|save|create|make|build|send|copy|paste|move|delete|"
+    r"put|place|set|add|rename|empty|clear)\b",
     re.IGNORECASE,
 )
 

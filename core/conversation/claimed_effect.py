@@ -252,6 +252,18 @@ _CLAIMED_EFFECT_PATTERNS: tuple[tuple[str, Any, str], ...] = (
         "created a folder",
     ),
     (
+        # Stative forms of the file effects, for the same reason: "the file is
+        # on your Desktop now" asserts a completed write with no verb of hers
+        # in it.
+        "write_text_file",
+        re.compile(
+            r"\b(?:the\s+)?(?:file|note|document)\s+(?:is|was)\s+(?:now\s+)?"
+            r"(?:on|in|at|saved)\b",
+            re.IGNORECASE,
+        ),
+        "wrote a file",
+    ),
+    (
         "open_app",
         re.compile(
             r"\bi\s+(?:have\s+)?(?:opened|launched|started)\s+"
@@ -273,8 +285,14 @@ _CLAIMED_EFFECT_PATTERNS: tuple[tuple[str, Any, str], ...] = (
     (
         "set_clipboard",
         re.compile(
-            r"\bi\s+(?:have\s+)?(?:copied|put)\s+(?:it|that|the\s+text)\s+"
-            r"(?:to|on|into)\s+(?:the\s+)?clipboard\b",
+            r"\bi\s+(?:have\s+)?(?:copied|put|placed)\s+[^.!?]{0,40}?"
+            r"(?:to|on|into)\s+(?:the|your|my)?\s*clipboard\b"
+            # Stative completion. LIVE, 2026-08-10: "The text ORION-7 is now on
+            # your clipboard" — the same finished effect asserted without a
+            # first-person past-tense verb, so every pattern here missed it
+            # while the clipboard was empty.
+            r"|\b(?:is|are|was|were)\s+(?:now\s+)?(?:on|in)\s+(?:the|your|my)?"
+            r"\s*clipboard\b",
             re.IGNORECASE,
         ),
         "put something on the clipboard",

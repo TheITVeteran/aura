@@ -276,3 +276,49 @@ def test_the_desktop_lane_applies_the_effect_check() -> None:
 
     assert "unverified_effect_correction(" in source
     assert 'result.get("receipts")' in source
+
+
+# ── Stative claims assert the same completed effect ────────────────────────
+
+@pytest.mark.parametrize(
+    ("reply", "expected"),
+    [
+        ("The text ORION-7 is now on your clipboard.", "put something on the clipboard"),
+        ("The file is now on your Desktop.", "wrote a file"),
+        ("The note was saved.", "wrote a file"),
+    ],
+)
+def test_a_completed_effect_stated_without_a_verb_of_hers(reply, expected) -> None:
+    """LIVE, 2026-08-10: "Put the text ORION-7 on my clipboard" ran nothing and
+    she answered "The text ORION-7 is now on your clipboard." The clipboard was
+    empty.
+
+    Every pattern here was first-person past — "I put", "I wrote", "I created".
+    A stative present asserts exactly the same finished effect with none of
+    those words in it, and slipped past all of them.
+    """
+    from core.conversation.claimed_effect import unverified_effect_claims
+
+    assert expected in unverified_effect_claims(reply, [])
+
+
+def test_a_verified_receipt_still_makes_a_stative_claim_true() -> None:
+    from core.conversation.claimed_effect import unverified_effect_claims
+
+    assert unverified_effect_claims(
+        "The text is now on your clipboard.", [{"action": "set_clipboard", "ok": True}]
+    ) == []
+
+
+@pytest.mark.parametrize(
+    "reply",
+    [
+        "It would be on your clipboard if that had run.",
+        "The capital of Peru is Lima.",
+        "Your clipboard history is a separate app.",
+    ],
+)
+def test_stative_patterns_do_not_fire_on_prose(reply: str) -> None:
+    from core.conversation.claimed_effect import unverified_effect_correction
+
+    assert unverified_effect_correction(reply, []) == ""

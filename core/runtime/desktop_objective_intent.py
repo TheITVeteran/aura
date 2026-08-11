@@ -26,6 +26,12 @@ _CANONICAL_RESEARCH_TOOL_SPAN_RE = re.compile(
 _DESKTOP_OBJECTIVE_ACTION_TERMS = (
     "attach",
     "arrange",
+    # "paste" and "set" were here and "put" and "copy" were not, so
+    # "put the text on my clipboard" and "copy that to my clipboard" reached
+    # nothing while "paste it" reached the lane. The same everyday act, named
+    # the way people name it, fell outside an enumeration.
+    "copy",
+    "put",
     "browse",
     "click",
     "compose",
@@ -88,6 +94,13 @@ _DESKTOP_OBJECTIVE_SURFACE_TERMS = (
     "settings",
     "app",
     "application",
+    # LIVE, 2026-08-10: "Put the text ORION-7 on my clipboard" did not route,
+    # nothing ran, and she said "The text ORION-7 is now on your clipboard"
+    # while the clipboard was empty. set_clipboard and get_clipboard are
+    # declared desktop actions and the word never appeared in this module, so
+    # no clipboard request could reach the lane that performs them.
+    "clipboard",
+    "pasteboard",
     "browser",
     "chrome",
     "computer",

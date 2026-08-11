@@ -164,3 +164,39 @@ def test_history_plus_a_present_request_still_acts(message: str) -> None:
     to prevent — the person has already told her twice.
     """
     assert looks_like_desktop_objective(message) is True
+
+
+# ── The clipboard was unreachable by any phrasing ──────────────────────────
+
+@pytest.mark.parametrize(
+    "message",
+    [
+        "Put the text ORION-7 on my clipboard, then tell me what you put there.",
+        "copy that to my clipboard",
+        "put a file on the desktop named todo.txt",
+    ],
+)
+def test_clipboard_and_put_requests_reach_the_body(message: str) -> None:
+    """LIVE: "Put the text ORION-7 on my clipboard" routed nowhere, so nothing
+    ran, and she said "The text ORION-7 is now on your clipboard" while it was
+    empty.
+
+    Three separate enumerations had to agree and did not: "clipboard" was not a
+    surface in this module at all, and "put" was not an action verb here OR in
+    core/phases/action_intent.py — while "paste" and "copy" were. set_clipboard
+    and get_clipboard are declared desktop actions that no phrasing could
+    reach.
+    """
+    assert looks_like_desktop_objective(message) is True
+
+
+@pytest.mark.parametrize(
+    "message",
+    [
+        "I keep a clipboard manager installed",
+        "put simply, the answer is no",
+        "I put the kettle on",
+    ],
+)
+def test_the_same_words_in_prose_still_route_nowhere(message: str) -> None:
+    assert looks_like_desktop_objective(message) is False
