@@ -476,6 +476,54 @@ _REDUCTIVE_SELF_CLAIM_RE = re.compile(
     r"just\s+(?:a\s+)?(?:llm|language\s+model|chatbot|assistant|predictor))\b",
     re.IGNORECASE,
 )
+#: A closing sentence that only OFFERS further help. Structural rather than a
+#: list of phrasings: second person, an offer verb, and no proposition of its
+#: own — so it carries no information whatever it is worded as.
+#:
+#: LIVE, 2026-08-10. Asked "does it bother you that you can't see the room I'm
+#: in?", a question inviting reflection, she gave two real sentences and then:
+#:
+#:   "If you would like me to assist with anything specific or provide further
+#:    insights, please let me know."
+#:   "If you wish to continue the conversation or if there is something else I
+#:    can help you with, feel free to ask."
+#:
+#: _GENERIC_ASSISTANT_RE caught the second on "feel free to ask" and missed the
+#: first, because it enumerates wordings and "please let me know" is not
+#: "let me know if". Enumerating harder loses to the next paraphrase; the shape
+#: does not change.
+_TRAILING_HELP_OFFER_RE = re.compile(
+    r"(?:^|(?<=[.!?]))\s*(?:if|should|whenever|in\s+case)\b[^.!?]{0,160}?"
+    r"\b(?:you|your)\b[^.!?]{0,160}?"
+    r"\b(?:let\s+me\s+know|ask|reach\s+out|tell\s+me|say\s+the\s+word|"
+    r"i(?:'m| am)\s+(?:here|happy)|i\s+can\s+help|i\s+could\s+help)\b"
+    r"[^.!?]{0,80}[.!?]\s*$",
+    re.IGNORECASE,
+)
+
+
+def strip_trailing_help_offer(reply_text: Any) -> str:
+    """Drop a closing sentence that only offers more help.
+
+    Only the TAIL, and only when something substantive survives — a reply that
+    is nothing but an offer is a different defect, handled elsewhere, and
+    deleting it here would leave an empty turn.
+    """
+    original = str(reply_text or "").strip()
+    if not original or _is_code_response(original):
+        return original
+    trimmed = original
+    for _ in range(3):  # a reply can stack two or three of these
+        match = _TRAILING_HELP_OFFER_RE.search(trimmed)
+        if match is None:
+            break
+        candidate = trimmed[: match.start()].strip()
+        if len(candidate.split()) < 8:
+            break
+        trimmed = candidate
+    return trimmed or original
+
+
 _GENERIC_ASSISTANT_RE = re.compile(
     r"\b(?:how can i (?:help|assist)|i(?:'d| would) be happy to help|"
     r"i can help with that|as an ai|as a language model|let me know if|"
@@ -4115,7 +4163,7 @@ def repair_generic_assistant_language(user_message: Any, reply_text: Any) -> str
     servile original. The 8-word floor only applies to substantive turns, where
     a too-short salvage would be a non-answer.
     """
-    original = str(reply_text or "").strip()
+    original = strip_trailing_help_offer(reply_text)
     if not original or not _GENERIC_ASSISTANT_RE.search(original) or _is_code_response(original):
         return original
 
