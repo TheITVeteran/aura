@@ -151,6 +151,7 @@ def _build_plan(arguments: argparse.Namespace) -> dict[str, Any]:
         _fail("resident evaluation campaign root differs")
     ensure_private_directory(evaluation_root)
     report = evaluation_root / "decode-report.json"
+    progress_dir = evaluation_root / "decode-progress"
     ready = evaluation_root / "preload-ready-{pid}.json"
     release = evaluation_root / "preload-release-{pid}.json"
     resource_stage = evaluation_root / "resource-stage-{pid}.json"
@@ -187,6 +188,8 @@ def _build_plan(arguments: argparse.Namespace) -> dict[str, Any]:
         ",".join(str(value) for value in recurrence_depths),
         "--report",
         str(report),
+        "--progress-dir",
+        str(progress_dir),
         "--memory-limit-gb",
         str(arguments.memory_limit_gb),
         "--cache-limit-gb",
@@ -232,6 +235,7 @@ def _build_plan(arguments: argparse.Namespace) -> dict[str, Any]:
         "campaign_root": str(campaign_root),
         "evaluation_root": str(evaluation_root),
         "report": str(report),
+        "progress_dir": str(progress_dir),
         "ready": str(ready),
         "release": str(release),
         "resource_stage": str(resource_stage),
@@ -281,10 +285,46 @@ def _wait_for_target(run_dir: Path) -> dict[str, Any]:
     _fail("resident evaluator target identity timed out")
 
 
+def _evaluation_run_dirs(root: Path) -> list[Path]:
+    legacy = root / "detached"
+    attempts_root = root / "detached-attempts"
+    attempts = sorted(
+        path
+        for path in attempts_root.glob("attempt-*")
+        if path.is_dir() and not path.is_symlink()
+    )
+    result = ([legacy] if (legacy / detached.PLAN_FILE).exists() else []) + attempts
+    offset = 1 if result and result[0] == legacy else 0
+    for index, path in enumerate(result[offset:], start=offset + 1):
+        if path.name != f"attempt-{index:04d}":
+            _fail("resident evaluation attempt sequence is not contiguous")
+    return result
+
+
+def _next_attempt_run_dir(root: Path) -> tuple[int, Path]:
+    existing = _evaluation_run_dirs(root)
+    for run_dir in existing:
+        inspection = detached._status(run_dir)  # noqa: SLF001
+        if inspection.get("terminal") is not True:
+            _fail("resident evaluation already has a live or indeterminate attempt")
+        receipt = inspection.get("receipt")
+        if (
+            isinstance(receipt, dict)
+            and receipt.get("passed") is True
+            and (root / "decode-report.json").exists()
+        ):
+            _fail("resident evaluation is already complete")
+    attempt = len(existing) + 1
+    run_dir = root / "detached-attempts" / f"attempt-{attempt:04d}"
+    if run_dir.exists():
+        _fail("resident evaluation attempt allocation collided")
+    return attempt, run_dir
+
+
 def launch(arguments: argparse.Namespace) -> dict[str, Any]:
     plan = prepare(arguments)
     root = Path(plan["evaluation_root"])
-    run_dir = root / "detached"
+    attempt, run_dir = _next_attempt_run_dir(root)
     detached_result = _invoke_detached(
         [
             "launch",
@@ -306,7 +346,7 @@ def launch(arguments: argparse.Namespace) -> dict[str, Any]:
     )
     status = _wait_for_target(run_dir)
     target_pid, target_token, supervisor_pid = resident._target_identity(status)  # noqa: SLF001
-    sentinel_dir = root / f"sentinel-{target_pid}"
+    sentinel_dir = root / f"sentinel-{attempt:04d}-{target_pid}"
     sentinel_ring = sentinel_dir / "ring.jsonl"
     resource_stage = plan["resource_stage"].replace("{pid}", str(target_pid))
     _invoke_detached(
@@ -393,6 +433,8 @@ def launch(arguments: argparse.Namespace) -> dict[str, Any]:
     return {
         "schema": STATUS_SCHEMA,
         "state": "running",
+        "attempt": attempt,
+        "run_dir": str(run_dir),
         "plan_sha256": plan["plan_sha256"],
         "detached": detached_result,
         "target_pid": target_pid,
@@ -408,9 +450,10 @@ def launch(arguments: argparse.Namespace) -> dict[str, Any]:
 def status(arguments: argparse.Namespace) -> dict[str, Any]:
     plan = _existing_plan(arguments) or prepare(arguments)
     root = Path(plan["evaluation_root"])
-    run_dir = root / "detached"
-    if not (run_dir / detached.PLAN_FILE).exists():
+    run_dirs = _evaluation_run_dirs(root)
+    if not run_dirs:
         return {"schema": STATUS_SCHEMA, "state": "not_launched", "plan": plan}
+    run_dir = run_dirs[-1]
     inspection = detached._status(run_dir)  # noqa: SLF001
     report_path = Path(plan["report"])
     report: dict[str, Any] | None = None
@@ -441,6 +484,9 @@ def status(arguments: argparse.Namespace) -> dict[str, Any]:
     return {
         "schema": STATUS_SCHEMA,
         "state": state,
+        "attempt": len(run_dirs),
+        "run_dir": str(run_dir),
+        "attempt_count": len(run_dirs),
         "plan_sha256": plan["plan_sha256"],
         "detached": inspection,
         "report": report,
@@ -454,9 +500,8 @@ def stop(arguments: argparse.Namespace) -> dict[str, Any]:
     for run_dir in sorted(root.glob("sentinel-*")):
         if (run_dir / detached.PLAN_FILE).exists():
             stopped.append(detached._stop(run_dir))  # noqa: SLF001
-    main = root / "detached"
-    if (main / detached.PLAN_FILE).exists():
-        stopped.append(detached._stop(main))  # noqa: SLF001
+    for run_dir in reversed(_evaluation_run_dirs(root)):
+        stopped.append(detached._stop(run_dir))  # noqa: SLF001
     return {"schema": STATUS_SCHEMA, "state": "stop_requested", "results": stopped}
 
 

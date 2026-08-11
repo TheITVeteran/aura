@@ -44,6 +44,10 @@ from tools.train_intrinsic_recurrence import encode_example  # noqa: E402
 from tools.unified_intrinsic_checkpoint import (  # noqa: E402
     resolve_checkpoint_generation,
 )
+from tools.unified_intrinsic_decode_journal import (  # noqa: E402
+    DecodeProgressError,
+    DecodeProgressJournal,
+)
 
 DECODE_EVALUATION_SCHEMA = "aura.unified_intrinsic_decode_evaluation.v1"
 
@@ -145,6 +149,20 @@ def _paired_training_effects(
     return effects
 
 
+def _decoded_arm_names(decoded_depths: tuple[int, ...]) -> tuple[str, ...]:
+    lesion_depth = max(decoded_depths)
+    return (
+        "base_t1",
+        "untrained_t1",
+        "trained_t1",
+        *(f"untrained_t{depth}" for depth in decoded_depths),
+        *(f"trained_t{depth}" for depth in decoded_depths),
+        f"grammar_lesion_t{lesion_depth}",
+        f"pointer_lesion_t{lesion_depth}",
+        *(f"compiled_t{depth}" for depth in decoded_depths),
+    )
+
+
 def _evaluate_decoding_loaded(
     campaign_dir: Path,
     *,
@@ -160,6 +178,7 @@ def _evaluate_decoding_loaded(
     max_tokens: int,
     task_depths: tuple[int, ...] | None = None,
     recurrence_depths: tuple[int, ...] | None = None,
+    progress_dir: Path | None = None,
 ) -> dict[str, Any]:
     if task_depths is not None and (
         not task_depths
@@ -199,6 +218,48 @@ def _evaluate_decoding_loaded(
             task_depth=depth,
         )
     ]
+    layout = _evaluation_layout(campaign_dir)
+    resolved = resolve_checkpoint_generation(
+        layout.checkpoint_dir,
+        stem=stem,
+        required=True,
+    )
+    if resolved is None:  # pragma: no cover - required=True is exhaustive
+        raise RuntimeError("unified checkpoint is unavailable")
+    checkpoint_sha256 = _file_sha256(resolved.weights_path)
+    source_sha256s = _evaluation_source_sha256s()
+    arm_names = _decoded_arm_names(decoded_depths)
+    task_identities = [
+        {
+            "task_id": task.task_id,
+            "family": task.family,
+            "task_depth": task.depth,
+            "prompt_sha256": hashlib.sha256(task.prompt.encode()).hexdigest(),
+            "expected_sha256": hashlib.sha256(task.answer.encode()).hexdigest(),
+        }
+        for task in tasks
+    ]
+    experiment = {
+        "schema": "aura.unified_intrinsic.decode_experiment.v1",
+        "campaign_identity_sha256": identity["identity_sha256"],
+        "checkpoint_sha256": checkpoint_sha256,
+        "evaluation_source_sha256s": source_sha256s,
+        "stem": stem,
+        "per_cell": per_cell,
+        "evaluation_seed": evaluation_seed,
+        "max_tokens": max_tokens,
+        "task_depths": list(depths),
+        "recurrence_depths": list(decoded_depths),
+        "tasks": task_identities,
+        "arms": list(arm_names),
+    }
+    progress = (
+        DecodeProgressJournal(progress_dir, experiment)
+        if progress_dir is not None
+        else None
+    )
+    total_candidates = len(tasks) * len(arm_names)
+    resumed_candidates = 0
     bridge = {"assistant_answer": "\n\nFINAL_ANSWER: "}.get(
         identity["bridge"],
         identity["bridge"],
@@ -213,8 +274,10 @@ def _evaluate_decoding_loaded(
     )
 
     candidates: list[dict[str, Any]] = []
+    sequence = 0
     for task in tasks:
         prompt, _answer = encode_example(tokenizer, task, bridge)
+        prompt_sha256 = hashlib.sha256(task.prompt.encode()).hexdigest()
         compiled_cache: dict[int, tuple[tuple[int, ...], Any, int]] = {}
 
         def base_logits(tokens: Any) -> Any:
@@ -352,6 +415,36 @@ def _evaluate_decoding_loaded(
             ),
         )
         for arm, operation in arms:
+            if tuple(name for name, _operation in arms) != arm_names:
+                raise RuntimeError("decoded arm construction differs from experiment identity")
+            resumed = (
+                progress.load(
+                    sequence,
+                    task_id=task.task_id,
+                    arm=arm,
+                    prompt_sha256=prompt_sha256,
+                )
+                if progress is not None
+                else None
+            )
+            if resumed is not None:
+                if (
+                    resumed.get("family") != task.family
+                    or resumed.get("task_depth") != task.depth
+                    or resumed.get("expected") != task.answer
+                ):
+                    raise DecodeProgressError(
+                        "decode progress candidate task contract differs"
+                    )
+                candidates.append(resumed)
+                resumed_candidates += 1
+                sequence += 1
+                print(
+                    f"[decode] {sequence}/{total_candidates} "
+                    f"task={task.task_id} arm={arm} resumed=true",
+                    flush=True,
+                )
+                continue
             if arm == "base_t1":
                 decoded, token_ids, stopped = _greedy_decode(
                     tokenizer,
@@ -368,19 +461,26 @@ def _evaluate_decoding_loaded(
                         max_tokens=max_tokens,
                     )
             response = _candidate_response(bridge, decoded)
-            candidates.append(
-                {
-                    "task_id": task.task_id,
-                    "family": task.family,
-                    "task_depth": task.depth,
-                    "prompt_sha256": hashlib.sha256(task.prompt.encode()).hexdigest(),
-                    "arm": arm,
-                    "decoded": decoded,
-                    "expected": task.answer,
-                    "token_ids": token_ids,
-                    "stopped_on_eos": stopped,
-                    "response_sha256": hashlib.sha256(response.encode()).hexdigest(),
-                }
+            candidate = {
+                "task_id": task.task_id,
+                "family": task.family,
+                "task_depth": task.depth,
+                "prompt_sha256": prompt_sha256,
+                "arm": arm,
+                "decoded": decoded,
+                "expected": task.answer,
+                "token_ids": token_ids,
+                "stopped_on_eos": stopped,
+                "response_sha256": hashlib.sha256(response.encode()).hexdigest(),
+            }
+            if progress is not None:
+                progress.commit(sequence, candidate)
+            candidates.append(candidate)
+            sequence += 1
+            print(
+                f"[decode] {sequence}/{total_candidates} "
+                f"task={task.task_id} arm={arm} tokens={len(token_ids)}",
+                flush=True,
             )
         envelope.reclaim(force=True)
 
@@ -417,19 +517,11 @@ def _evaluate_decoding_loaded(
                 "accuracy": correct / len(selected),
                 "eos_stops": sum(row["stopped_on_eos"] for row in selected),
             }
-    layout = _evaluation_layout(campaign_dir)
-    resolved = resolve_checkpoint_generation(
-        layout.checkpoint_dir,
-        stem=stem,
-        required=True,
-    )
-    if resolved is None:  # pragma: no cover - required=True is exhaustive
-        raise RuntimeError("unified checkpoint is unavailable")
     body = {
         "schema": DECODE_EVALUATION_SCHEMA,
         "campaign_identity_sha256": identity["identity_sha256"],
-        "checkpoint_sha256": _file_sha256(resolved.weights_path),
-        "evaluation_source_sha256s": _evaluation_source_sha256s(),
+        "checkpoint_sha256": checkpoint_sha256,
+        "evaluation_source_sha256s": source_sha256s,
         "evaluation_seed": evaluation_seed,
         "per_cell": per_cell,
         "task_depths": list(depths),
@@ -444,6 +536,14 @@ def _evaluate_decoding_loaded(
         ),
         "depth_results": depth_results,
         "candidates": candidates,
+        "decode_progress": {
+            "enabled": progress is not None,
+            "experiment_sha256": (
+                progress.experiment_sha256 if progress is not None else None
+            ),
+            "candidates_committed": len(candidates),
+            "candidates_resumed": resumed_candidates,
+        },
         "claim_boundary": (
             "compiled arms measure public typed-state execution plus "
             "tokenizer-bound value emission; trained arms constrain only the "
@@ -475,6 +575,7 @@ def evaluate_decoding(
     preload_release_path: Path | None = None,
     preload_key_path: Path | None = None,
     preload_config_sha256: str | None = None,
+    progress_dir: Path | None = None,
 ) -> dict[str, Any]:
     if task_depths is not None and (
         not task_depths
@@ -527,6 +628,7 @@ def evaluate_decoding(
             max_tokens=max_tokens,
             task_depths=task_depths,
             recurrence_depths=recurrence_depths,
+            progress_dir=progress_dir,
         )
         body = {
             **{key: value for key, value in report.items() if key != "report_sha256"},
@@ -562,6 +664,7 @@ def main() -> int:
     parser.add_argument("--preload-release-path", type=Path)
     parser.add_argument("--preload-key-path", type=Path)
     parser.add_argument("--preload-config-sha256")
+    parser.add_argument("--progress-dir", type=Path)
     args = parser.parse_args()
     report = evaluate_decoding(
         args.campaign.expanduser().resolve(strict=True),
@@ -589,6 +692,7 @@ def main() -> int:
         preload_release_path=args.preload_release_path,
         preload_key_path=args.preload_key_path,
         preload_config_sha256=args.preload_config_sha256,
+        progress_dir=args.progress_dir,
     )
     encoded = json.dumps(report, indent=2, sort_keys=True) + "\n"
     if args.report is not None:

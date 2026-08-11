@@ -131,6 +131,8 @@ def test_prepare_binds_terminal_checkpoint_and_frozen_evaluator(
         "--preload-config-sha256",
         plan["evaluation_identity_sha256"],
     ]
+    progress_index = plan["evaluator_command"].index("--progress-dir")
+    assert plan["evaluator_command"][progress_index + 1] == plan["progress_dir"]
     assert plan["claims_not_supported"] == [
         "broad_reasoning_gain",
         "frontier_performance",
@@ -235,6 +237,8 @@ def test_launch_requires_sentinel_and_pressure_evidence_before_release(
 
     assert len(invocations) == 2
     assert result["state"] == "running"
+    assert result["attempt"] == 1
+    assert "detached-attempts/attempt-0001" in result["run_dir"]
     assert release_calls[0]["expected_target_pid"] == 33
     assert release_calls[0]["sentinel_pid"] == 44
     assert release_calls[0]["host_pressure"] == {
@@ -294,6 +298,36 @@ def test_status_replays_stored_plan_without_rebuilding_current_source(
 
     assert result["state"] == "running"
     assert result["plan_sha256"] == plan["plan_sha256"]
+
+
+def test_status_uses_latest_immutable_attempt(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    arguments, _config, _checkpoint = _terminal_fixture(tmp_path, monkeypatch)
+    plan = launcher.prepare(arguments)
+    attempts = Path(plan["evaluation_root"]) / "detached-attempts"
+    first = attempts / "attempt-0001"
+    second = attempts / "attempt-0002"
+    for path in (first, second):
+        path.mkdir(parents=True)
+        (path / launcher.detached.PLAN_FILE).write_text("{}\n", encoding="ascii")
+
+    monkeypatch.setattr(
+        launcher.detached,
+        "_status",
+        lambda path: {
+            "terminal": path == first,
+            "receipt": {"passed": False} if path == first else None,
+        },
+    )
+
+    result = launcher.status(arguments)
+
+    assert result["state"] == "running"
+    assert result["attempt"] == 2
+    assert result["attempt_count"] == 2
+    assert result["run_dir"] == str(second)
 
 
 def test_depth_parser_rejects_duplicate_and_shallow_recurrence() -> None:

@@ -6,10 +6,27 @@ mx = pytest.importorskip("mlx.core")
 
 from tools.evaluate_unified_intrinsic_decoding import (  # noqa: E402
     _candidate_response,
+    _decoded_arm_names,
     _force_next_token,
     _paired_training_effects,
     evaluate_decoding,
 )
+
+
+def test_decoded_arm_identity_covers_controls_treatment_and_lesions() -> None:
+    assert _decoded_arm_names((4, 8)) == (
+        "base_t1",
+        "untrained_t1",
+        "trained_t1",
+        "untrained_t4",
+        "untrained_t8",
+        "trained_t4",
+        "trained_t8",
+        "grammar_lesion_t8",
+        "pointer_lesion_t8",
+        "compiled_t4",
+        "compiled_t8",
+    )
 
 
 def test_force_next_token_replaces_only_the_last_logit_row() -> None:

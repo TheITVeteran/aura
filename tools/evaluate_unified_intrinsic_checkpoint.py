@@ -78,6 +78,7 @@ EVALUATION_SCHEMA = "aura.unified_intrinsic_independent_evaluation.v1"
 EVALUATION_SOURCE_FILES = (
     "tools/evaluate_unified_intrinsic_checkpoint.py",
     "tools/evaluate_unified_intrinsic_decoding.py",
+    "tools/unified_intrinsic_decode_journal.py",
 )
 
 

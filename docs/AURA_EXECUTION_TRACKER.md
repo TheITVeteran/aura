@@ -45076,3 +45076,34 @@ frontier performance or `WOW Signal` is claimed. The completion envelope
 remains `912/920` (approximately `99.1%`). Next is the bounded prompt-disjoint
 decoded diagnostic comparing trained recurrence against initialization-matched
 equal-compute controls and mechanism lesions.
+
+## Checkpoint 2026-08-11-244: Resumable Decode Evidence
+
+Resident decoded evaluation no longer keeps every completed candidate only in
+process memory. Before grading, each task/arm output is committed exactly once
+to a private candidate file under a canonical experiment manifest. That
+identity binds the campaign, terminal checkpoint, evaluator source hashes,
+seed, task and recurrence depths, token budget, complete prompt-disjoint task
+set and complete arm set. Replay accepts only a hash-valid record at the exact
+sequence for the same task, prompt and arm; cross-seed, cross-source,
+cross-checkpoint, reordered, altered or partially rebound records fail closed.
+Expected answers remain unavailable to generation and are used only for the
+same post-generation grading step as before.
+
+The evaluator emits one flushed progress line after every committed or replayed
+candidate and includes committed/resumed counts plus the experiment commitment
+in its final report. Its frozen source inventory now includes the journal
+implementation itself. The launcher gives every invocation an immutable,
+contiguous attempt directory, refuses a second live/indeterminate attempt and
+refuses to rerun an already successful report. A failed terminal attempt may
+start the next numbered attempt against the same frozen plan and candidate
+journal. Status reads the latest attempt while retaining compatibility with
+the earlier one-directory evidence layout; stop contains every attempt and
+sentinel.
+
+The journal, evaluator and launcher surface passes `17/17` focused tests; Ruff,
+compilation and diff hygiene are clean. No decoded behavioral gain, broad
+transfer, fusion, frontier performance or `WOW Signal` is claimed. The
+completion envelope remains `912/920` (approximately `99.1%`). The currently
+frozen CP242 diagnostic remains authoritative for its own result; this recovery
+revision applies to subsequently frozen evaluations and powered replication.
