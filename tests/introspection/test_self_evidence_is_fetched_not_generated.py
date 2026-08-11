@@ -473,3 +473,44 @@ def test_an_unrelated_turn_is_left_alone() -> None:
     from interface.routes import chat
 
     assert chat._append_past_action_record("what is the capital of Peru", "Lima.") == "Lima."
+
+
+def test_the_last_resort_consults_the_record_before_apologising() -> None:
+    """LIVE, 2026-08-10, after the recall path was built and restarted onto:
+
+        "Earlier today I asked you to count the .py files in one of your own
+         directories. Without guessing: what was the count? If you don't
+         actually have it, say so."
+        → "I couldn't get a clear enough answer together ... What reached me
+           was: Without guessing: what was the count."
+
+    Generation and every recovery came back empty, so the turn reached the
+    last-resort composer — while four verified receipts recorded count=9. The
+    recall path existed by then and ran after generation, which is too late on
+    a turn where generation produced nothing.
+
+    The last resort is exactly where a stored answer matters most, because by
+    definition nothing else produced one.
+    """
+    import inspect
+
+    from interface.routes import chat
+
+    source = inspect.getsource(chat)
+    marker = "_record_last_resort_self_rejection(user_message, composed)"
+    assert marker in source
+    window = source[max(0, source.find(marker) - 1600) : source.find(marker)]
+
+    assert "_self_health_answer_or_empty(user_message)" in window
+    assert "return evidenced" in window
+
+
+def test_the_refusal_helper_covers_recall_as_well_as_health() -> None:
+    import inspect
+
+    from interface.routes import chat
+
+    source = inspect.getsource(chat._self_health_answer_or_empty)
+
+    assert "past_actions_answer" in source
+    assert "self_health_answer" in source

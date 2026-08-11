@@ -14281,6 +14281,19 @@ def _build_degraded_live_reply(
             f"I understood you to be asking about "
             f"{anchor.removeprefix('your question about ')}."
         )
+    # Before composing an apology, ask whether the runtime already holds the
+    # answer.
+    #
+    # LIVE, 2026-08-10: "Earlier today I asked you to count the .py files in one
+    # of your own directories. Without guessing: what was the count? If you
+    # don't actually have it, say so." reached this composer — generation and
+    # every recovery empty — while four verified receipts recorded count=9. The
+    # last resort is exactly where a stored answer matters most, because by
+    # definition nothing else produced one.
+    evidenced = _self_health_answer_or_empty(user_message)
+    if evidenced:
+        _record_last_resort_self_rejection(user_message, evidenced)
+        return evidenced
     composed = _apply_aura_voice_shaping(
         f"{state_clause}, and I'd rather say that than hand you something thin. "
         f"{understood} "
@@ -20512,6 +20525,14 @@ def _self_health_answer_or_empty(message: object) -> str:
         answer = str(self_health_answer(message) or "").strip()
         if answer:
             return answer
+        # What she DID is a reading too. LIVE, 2026-08-10: "what was the count?
+        # If you don't actually have it, say so" reached the last-resort
+        # composer while four verified receipts recorded count=9.
+        from core.introspection.self_evidence import past_actions_answer
+
+        recorded = str(past_actions_answer(message) or "").strip()
+        if recorded:
+            return recorded
         # "What am I doing right now, and am I alone?" is the same demand aimed
         # at the senses instead of the telemetry: it must be answered from
         # readings, and a sense that has never sampled must say so rather than
