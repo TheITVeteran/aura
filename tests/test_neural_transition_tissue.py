@@ -13,10 +13,10 @@ from core.brain.llm.latent_cortex.neural_transition_tissue import (  # noqa: E40
     execute_neural_action_program,
     load_neural_transition_tissue,
 )
-from core.brain.llm.latent_cortex.objective_program_verifier import (  # noqa: E402
+from core.brain.llm.latent_cortex.neural_objective_producer import (  # noqa: E402
     _resident_neural_transition_tissue,
     _resident_systematic_neural_alu,
-    solve_objective_program,
+    solve_objective_program_neural as solve_objective_program,
 )
 from core.brain.llm.latent_cortex.typed_action_compiler import (  # noqa: E402
     compile_public_transition_program,

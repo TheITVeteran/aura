@@ -57,6 +57,13 @@ _ALLOWED_INTERNAL_IMPORTS = {
     "core.brain.llm.latent_cortex.response_contracts",
     "core.brain.llm.latent_cortex.test_time_training",
     "core.brain.llm.latent_cortex.teaching_events",
+    # The typed compiler and its executor are pure Python — no mlx, no torch —
+    # and they are what the critic's certified transition engine runs on. They
+    # were undeclared, so the audit failed on them alongside the two genuinely
+    # neural modules and made the whole closure look irredeemable. They are not
+    # the generator; they are the deterministic machine the grader uses.
+    "core.brain.llm.latent_cortex.typed_action_compiler",
+    "core.brain.llm.latent_cortex.typed_program_executor",
     "core.brain.llm.latent_cortex.verifier_gain_search",
 }
 _FORBIDDEN_IMPORT_ROOTS = {

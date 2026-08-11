@@ -8,8 +8,10 @@ import json
 import pytest
 
 from core.brain.llm.latent_cortex.objective_program_verifier import (
-    solve_objective_program,
     verify_objective_program,
+)
+from core.brain.llm.latent_cortex.neural_objective_producer import (  # noqa: E402
+    solve_objective_program_neural as solve_objective_program,
 )
 from core.brain.llm.latent_cortex.typed_action_compiler import (
     compile_boolean_expression,

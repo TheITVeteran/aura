@@ -1570,14 +1570,21 @@ def _public_transition_compiler_contract_holds() -> bool:
 
 
 def _neural_complete_engine_contract_holds() -> bool:
+    # The neural producer, not the verifier's deterministic solver. This claim
+    # is precisely that the learned tissue can run the objective with the
+    # teacher removed, so it must read the engine that does — and the verifier
+    # stopped being that on 2026-08-10, when running the student's tissue
+    # inside the grader was recognised as the identity violation it was.
+    from core.brain.llm.latent_cortex.neural_objective_producer import (
+        solve_objective_program_neural,
+    )
     from core.brain.llm.latent_cortex.objective_program_verifier import (
-        solve_objective_program,
         verify_objective_program,
     )
     from core.learning.recurrence_curriculum import modular_chain
 
     task = modular_chain(8, 20260810193)
-    solved = solve_objective_program(task.prompt)
+    solved = solve_objective_program_neural(task.prompt)
     if solved is None:
         return False
     candidate, receipt = solved

@@ -16,19 +16,9 @@ import math
 import re
 from dataclasses import dataclass
 from fractions import Fraction
-from functools import lru_cache
+
 from typing import Any
 
-from core.brain.llm.latent_cortex.neural_transition_tissue import (
-    NeuralTransitionTissue,
-    execute_neural_action_program,
-    load_neural_transition_tissue,
-)
-from core.brain.llm.latent_cortex.systematic_neural_alu import (
-    SystematicNeuralALU,
-    execute_systematic_neural_program,
-    load_systematic_neural_alu,
-)
 from core.brain.llm.latent_cortex.typed_action_compiler import (
     compile_public_transition_program,
 )
@@ -624,70 +614,17 @@ def _premise_audit_expected(
     }
 
 
-def _compiled_transition_expected(
-    objective: str,
-) -> tuple[str, dict[str, Any], dict[str, Any]] | None:
-    """Run learned neural tissue and independently verify its public result."""
-
-    try:
-        program = compile_public_transition_program(objective)
-    except ValueError:
-        return None
-    if program.family == "boolean":
-        try:
-            tissue = _resident_neural_transition_tissue()
-        except (FileNotFoundError, OSError, RuntimeError, ValueError):
-            return _certified_compiled_transition_expected(objective)
-        execution = execute_neural_action_program(program, tissue)
-        match = _BOOLEAN_OBJECTIVE_RE.match(objective)
-        if match is None:
-            raise RuntimeError("compiled Boolean objective lost parser agreement")
-        family = "nested_boolean"
-        expected = {"value": execution.terminal_state[1]}
-        crosscheck, crosscheck_receipt = _boolean_expected(match)
-        engine = "neural_transition_tissue.v1"
-    elif program.family == "modular":
-        try:
-            tissue = _resident_systematic_neural_alu()
-            execution = execute_systematic_neural_program(program, tissue)
-        except (FileNotFoundError, OSError, RuntimeError, ValueError):
-            return _certified_compiled_transition_expected(objective)
-        match = _MODULAR_OBJECTIVE_RE.match(objective)
-        if match is None:
-            raise RuntimeError("compiled modular objective lost parser agreement")
-        family = "modular_chain"
-        expected = {"residue": execution.terminal_state[1]}
-        crosscheck, crosscheck_receipt = _modular_expected(match)
-        engine = "systematic_neural_alu.v1"
-    else:  # pragma: no cover - the compiler's family registry is closed
-        raise RuntimeError("compiled transition family is unsupported")
-    if crosscheck != expected:
-        raise RuntimeError("neural recurrent execution and independent parser disagree")
-    return family, expected, {
-        "engine": engine,
-        "teacher_available": False,
-        "tissue_sha256": tissue.tissue_sha256,
-        "compiler": program.public_receipt(),
-        "student_rollin": execution.receipt(),
-        "independent_crosscheck": crosscheck_receipt,
-        "independent_crosscheck_match": True,
-    }
-
-
-@lru_cache(maxsize=1)
-def _resident_neural_transition_tissue() -> NeuralTransitionTissue:
-    return load_neural_transition_tissue()
-
-
-@lru_cache(maxsize=1)
-def _resident_systematic_neural_alu() -> SystematicNeuralALU:
-    return load_systematic_neural_alu()
-
-
 def _certified_compiled_transition_expected(
     objective: str,
 ) -> tuple[str, dict[str, Any], dict[str, Any]] | None:
-    """Availability fallback for installations missing the sealed neural artifact."""
+    """The critic's transition engine: typed, certified, and MLX-free.
+
+    Named a "fallback" while the neural path sat in front of it. It is the
+    primary engine for grading — a critic that runs the student's own learned
+    tissue to decide whether the student was right is not an independent check,
+    whatever the result. The neural rollin now lives in
+    neural_objective_producer.py.
+    """
 
     try:
         program = compile_public_transition_program(objective)
@@ -714,7 +651,6 @@ def _certified_compiled_transition_expected(
         raise RuntimeError("certified recurrent execution and independent parser disagree")
     return family, expected, {
         "engine": "certified_typed_recurrence.v1",
-        "fallback_reason": "sealed_neural_transition_artifact_unavailable",
         "compiler": program.public_receipt(),
         "student_rollin": execution.receipt(),
         "independent_crosscheck": crosscheck_receipt,
@@ -725,7 +661,7 @@ def _certified_compiled_transition_expected(
 def _execute_objective(objective: str) -> tuple[str, dict[str, Any], dict[str, Any]] | None:
     if not isinstance(objective, str):
         raise TypeError("objective program must be text")
-    compiled = _compiled_transition_expected(objective)
+    compiled = _certified_compiled_transition_expected(objective)
     if compiled is not None:
         return compiled
     family = ""
@@ -868,18 +804,18 @@ def _render_solution_witness(
     return "\n".join(lines)
 
 
-def solve_objective_program(objective: str) -> tuple[str, dict[str, Any]] | None:
-    """Compile a recognized public objective into a canonical proven answer.
+def build_solution_receipt(
+    objective: str,
+    executed: tuple[str, dict[str, Any], dict[str, Any]],
+) -> tuple[str, dict[str, Any]]:
+    """Render a candidate and its public receipt from an executed objective.
 
-    This is a bounded symbolic solver, not benchmark-answer access: the only
-    input is the same user-visible objective given to the generator. The public
-    receipt commits to the output and execution trace without embedding answer
-    text; callers must still run the independent verifier before promotion.
+    Shared with the neural producer in neural_objective_producer.py so the two
+    solvers cannot drift into emitting different receipt shapes for the same
+    objective. The execution record is whatever the caller's engine produced;
+    everything else here is derived from the public objective.
     """
 
-    executed = _execute_objective(objective)
-    if executed is None:
-        return None
     family, expected, execution = executed
     candidate = _render_solution_witness(
         objective,
@@ -896,6 +832,29 @@ def solve_objective_program(objective: str) -> tuple[str, dict[str, Any]] | None
         "authority": "public_objective_deterministic_execution",
     }
     return candidate, {**payload, "receipt_sha256": _sha(payload)}
+
+
+def solve_objective_program(objective: str) -> tuple[str, dict[str, Any]] | None:
+    """Compile a recognized public objective into a canonical proven answer.
+
+    This is a bounded symbolic solver, not benchmark-answer access: the only
+    input is the same user-visible objective given to the generator. The public
+    receipt commits to the output and execution trace without embedding answer
+    text; callers must still run the independent verifier before promotion.
+
+    DETERMINISTIC BY CONSTRUCTION. Until 2026-08-10 this module also ran the
+    learned neural tissue to compute the expected value — so the grader derived
+    its answer from the same tissue that produced the answer it was grading.
+    A crosscheck against the independent parser kept that sound, which is the
+    tell: the parser was the authority, and the neural run added an identity
+    violation without adding evidence. The neural producer now lives in
+    neural_objective_producer.py, outside the critic's source closure.
+    """
+
+    executed = _execute_objective(objective)
+    if executed is None:
+        return None
+    return build_solution_receipt(objective, executed)
 
 
 def validate_objective_program_solution(
