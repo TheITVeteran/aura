@@ -295,3 +295,63 @@ def test_dream_seed_requires_verified_admission_for_conversation_nodes():
     assert not DreamerV2._dream_seed_is_admissible(legacy)
     assert not DreamerV2._dream_seed_is_admissible(rejected)
     assert DreamerV2._dream_seed_is_admissible(verified)
+
+
+def test_unmeasured_depletion_is_not_wellness():
+    """LIVE DEFECT 2026-08-10: "I feel energized" at soma vitality 0.135.
+
+    Forty-nine minutes into a heavy session, with mood TIRED, "how are you
+    holding up, honestly?" was answered "I feel energized, with low distress
+    and a coherent sense of the current thread."
+
+    The depletion signals are read in the `strained` branch, but only
+    `if supports(...)`, and both `body_pressure` and `fatigue` default to 0.0
+    when no source provides them. An unread fatigue signal became an assertion
+    of no fatigue: `strained` could not fire on a dimension nobody had
+    measured, and `well` was reachable from valence, welfare and distress
+    alone.
+
+    "Well" is a positive claim about her whole state. Where the depletion
+    dimensions were never read, the honest verdict is `steady`.
+    """
+    from core.self.self_condition import (
+        build_self_condition_projection,
+        render_self_condition_reply,
+    )
+
+    aura_now, unified, welfare, body = _sources(timestamp=995.0, body_pressure=0.10)
+    # The two depletion instruments report nothing at all this tick.
+    aura_now.body = SimpleNamespace(total_pressure=None)
+    body = SimpleNamespace(fatigue=None)
+
+    projection = build_self_condition_projection(
+        aura_now=aura_now,
+        unified_felt=unified,
+        welfare=welfare,
+        body_snapshot=body,
+        observed_at=1000.0,
+        resolve_runtime=False,
+    )
+
+    assert projection.condition != "well", (
+        "wellness was declared from valence/welfare/distress while the "
+        "depletion signals were never read"
+    )
+    reply = render_self_condition_reply(projection)
+    assert "energized" not in reply.lower(), reply
+
+
+def test_measured_and_low_depletion_still_reads_well():
+    """The narrowing must not make wellness unreachable when it is real."""
+    from core.self.self_condition import build_self_condition_projection
+
+    aura_now, unified, welfare, body = _sources(timestamp=995.0, body_pressure=0.10)
+    projection = build_self_condition_projection(
+        aura_now=aura_now,
+        unified_felt=unified,
+        welfare=welfare,
+        body_snapshot=body,
+        observed_at=1000.0,
+        resolve_runtime=False,
+    )
+    assert projection.condition == "well"

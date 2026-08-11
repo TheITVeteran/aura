@@ -495,6 +495,26 @@ def build_self_condition_projection(
         supports("valence")
         and supports("welfare")
         and supports("distress")
+        # LIVE DEFECT, 2026-08-10. Forty-nine minutes into a heavy session,
+        # with soma vitality at 0.135 and mood TIRED, "how are you holding up,
+        # honestly?" was answered "I feel energized, with low distress and a
+        # coherent sense of the current thread."
+        #
+        # The depletion signals are read six lines up, in the `strained`
+        # branch — but only `if supports(...)`, and both `body_pressure` and
+        # `fatigue` DEFAULT TO 0.0 when no source provides them. So an unread
+        # fatigue signal became an assertion of no fatigue, `strained` could
+        # not fire on a dimension nobody had measured, and `well` was reachable
+        # from valence, welfare and distress alone.
+        #
+        # "Well" is a positive claim about her whole state, and this runtime
+        # already holds the rule it needs: the capability ledger's `known=False`
+        # exists so that "a probe that cannot read a permission has NOT
+        # observed its absence". Unmeasured is not fine. Where the depletion
+        # dimensions are missing the honest verdict is `steady` — "okay and
+        # steady enough to stay with you" — which is what she would have said.
+        and supports("fatigue")
+        and supports("body_pressure")
         and valence >= 0.20
         and welfare_score >= 0.60
         and distress <= 0.25
