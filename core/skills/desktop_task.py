@@ -289,6 +289,44 @@ class DesktopTaskSkill(BaseSkill):
         stem = re.sub(r"\s+", "_", stem).strip("_")
         return (stem or default)[:80]
 
+    _DIRECTORY_QUESTION_RE = re.compile(
+        r"\b(?:how\s+many|count|list|names?\s+of|which)\b[^.?!]{0,80}?"
+        r"\bfiles?\b|\bfiles?\b[^.?!]{0,40}?\bin\b",
+        re.IGNORECASE,
+    )
+    _SUFFIX_RE = re.compile(r"\B(\.[A-Za-z0-9]{1,6})\s+files?\b", re.IGNORECASE)
+
+    @classmethod
+    def _directory_read_step(cls, text: str, *, skip: str) -> "DesktopTaskStep | None":
+        """A read of the directory the request asks about, if it asks about one.
+
+        `skip` is the write destination, which must never be mistaken for the
+        thing to read — that confusion is what aimed a write at her own source
+        tree.
+        """
+
+        if not cls._DIRECTORY_QUESTION_RE.search(text or ""):
+            return None
+        from core.runtime.os_automation_effects import extract_target_paths
+
+        candidates = [
+            path
+            for path in extract_target_paths(text) or ()
+            if str(path) != str(skip)
+        ]
+        if not candidates:
+            return None
+        source = candidates[0]
+        suffix = cls._SUFFIX_RE.search(text or "")
+        pattern = f"*{suffix.group(1)}" if suffix else "*"
+        return DesktopTaskStep(
+            action="list_directory",
+            target=json.dumps({"path": source, "pattern": pattern}),
+            reason="The request asks about the contents of a directory.",
+            expect=f"{source} is read and its {pattern} entries counted.",
+            critical=True,
+        )
+
     _WRITE_DESTINATION_RE = re.compile(
         r"\b(?:write|save|put|store|append|export|dump|record)\b[^.?!]{0,80}?"
         r"\b(?:into|to|in)\s+(?P<path>~?[\w./\-]*[\w.\-]+)",
@@ -3391,9 +3429,31 @@ class DesktopTaskSkill(BaseSkill):
         step: DesktopTaskStep,
         receipts: list[dict[str, Any]],
     ) -> tuple[bool, DesktopTaskStep, str]:
-        ok, target, error = cls._resolve_step_references(step.target, receipts)
+        # Resolve INSIDE the parsed target, not inside its JSON text.
+        #
+        # Substituting into the raw string corrupts the JSON whenever the
+        # replacement contains a quote — a list of filenames from a directory
+        # read is the ordinary case, and it produced a target that no longer
+        # parsed. Parsing first, resolving within the structure, and
+        # re-serialising means the encoder does the quoting.
+        raw_target: Any = step.target
+        target_was_json = False
+        if isinstance(raw_target, str):
+            stripped = raw_target.strip()
+            if stripped.startswith(("{", "[")):
+                try:
+                    raw_target = json.loads(stripped)
+                    target_was_json = True
+                except (TypeError, ValueError):
+                    raw_target = step.target
+        ok, target, error = cls._resolve_step_references(raw_target, receipts)
         if not ok:
             return False, step, error
+        if target_was_json:
+            target = json.dumps(target, ensure_ascii=False)
+            if target == step.target:
+                return True, step, ""
+            return True, step.model_copy(update={"target": target}), ""
         if isinstance(target, list):
             target = json.dumps(target, ensure_ascii=False)
         elif not isinstance(target, (str, dict)):
@@ -4042,6 +4102,38 @@ class DesktopTaskSkill(BaseSkill):
             token in lowered for token in ("folder", "directory")
         ):
             named_paths = self._ordered_by_write_destination(text, named_paths)
+            # If the request also asks a question ABOUT a directory, look
+            # before writing. Without a read step the body is composed from
+            # nothing: asked to count the .py files in a directory holding 9
+            # and write the result, she wrote "Number of .py files: 0 / (No
+            # files found)" into the correct destination — a true receipt for
+            # a measurement nobody took.
+            read_step = self._directory_read_step(text, skip=named_paths[0])
+            if read_step is not None:
+                # Content comes from the read via the existing step-reference
+                # tokens, so the number written is the number observed. Composing
+                # the body here instead would reintroduce the whole defect: a
+                # correct destination holding a measurement nobody took.
+                read_target = json.loads(read_step.target)
+                return [
+                    read_step,
+                    DesktopTaskStep(
+                        action="write_text_file",
+                        target=json.dumps({
+                            "path": named_paths[0],
+                            "content": (
+                                f"Files matching {read_target.get('pattern', '*')} in "
+                                f"{read_target.get('path', '')}\n\n"
+                                "Count: {{last.result.count}}\n\n"
+                                "Names: {{last.result.names}}\n"
+                            ),
+                            "overwrite": True,
+                        }),
+                        reason="Record what the directory read actually found.",
+                        expect=f"{named_paths[0]} exists on disk with the observed listing.",
+                        critical=True,
+                    ),
+                ]
             body = self._inline_sentence_for(text) or self._document_body(text, context)
             return [
                 DesktopTaskStep(

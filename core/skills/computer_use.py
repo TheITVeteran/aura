@@ -106,7 +106,7 @@ class ComputerUseParams(BaseModel):
             "click|type|hotkey|scroll|inspect_screen|read_screen_text|read_menu_clock|open_app|open_url|"
             "dismiss_popup|inspect_browser_page|"
             "run_command|set_clipboard|get_clipboard|wait|run_applescript|write_text_file|"
-            "render_text_pdf|move_file|create_folder|fetch_topic_image|system_control|"
+            "render_text_pdf|move_file|create_folder|list_directory|fetch_topic_image|system_control|"
             "move_aura_bubble"
         ),
     )
@@ -1737,6 +1737,93 @@ end tell
             Path.home() / "Documents",
             Path.cwd() / "artifacts" / "live_runtime",
         ]
+
+    def _allowed_readable_roots(self) -> list[Path]:
+        """Where she may LOOK. A superset of where she may write.
+
+        Reading and writing are different risk classes and had one allowlist
+        between them. Asked to count the .py files in her own
+        core/introspection directory, the plan was refused by the WRITE guard —
+        correctly, since it had aimed a write there, but the read was never
+        possible either, so a question about her own source could only ever be
+        answered by guessing. She guessed 3; there were 9.
+
+        Her own source tree is added because source proprioception is a
+        capability she is meant to have. Nothing else is: this is not the
+        filesystem, it is the three artifact roots plus the repository she
+        runs from.
+        """
+        roots = list(self._allowed_desktop_roots())
+        try:
+            roots.append(Path(__file__).resolve().parents[2])
+        except (OSError, IndexError):
+            pass
+        return roots
+
+    def _resolve_readable_path(self, raw_path: Any, *, must_exist: bool = True) -> Path:
+        """Resolve a path she is permitted to read, or refuse with the reason.
+
+        Same symlink defence as the write guard: the check is against the
+        RESOLVED path, so ~/Desktop/Aura pointing into the source tree is
+        judged by where it lands rather than how it is spelled.
+        """
+        if not raw_path:
+            raise ValueError("Path is required.")
+        path = Path(str(raw_path)).expanduser()
+        if not path.is_absolute():
+            path = Path.home() / "Documents" / path
+        resolved = path.resolve(strict=must_exist)
+        for root in self._allowed_readable_roots():
+            allowed = root.expanduser().resolve(strict=False)
+            try:
+                if os.path.commonpath([str(allowed), str(resolved)]) == str(allowed):
+                    return resolved
+            except (OSError, ValueError):
+                continue
+        roots = ", ".join(str(root.expanduser()) for root in self._allowed_readable_roots())
+        detail = f"{path} resolves to {resolved}"
+        if str(resolved) != str(path):
+            detail += " (a link or alias points outside the readable roots)"
+        raise ValueError(
+            f"Path is outside Aura's readable roots: {detail}. Readable roots: {roots}."
+        )
+
+    def _list_directory(self, target: str) -> dict[str, Any]:
+        """Names and count of the files in a directory she may read.
+
+        The count is a MEASUREMENT, which is the whole point: asked how many
+        .py files were in a directory, she answered 3 for a directory holding
+        9, listed three filenames that do not exist, and reported writing a
+        file that was never created. Nothing had looked.
+        """
+        payload = self._target_json(target)
+        try:
+            path = self._resolve_readable_path(payload.get("path"))
+        except ValueError as exc:
+            return {"ok": False, "action": "list_directory", "error": str(exc)}
+        if not path.is_dir():
+            return {
+                "ok": False,
+                "action": "list_directory",
+                "error": f"Not a directory: {path}",
+            }
+        pattern = str(payload.get("pattern") or "*").strip() or "*"
+        try:
+            names = sorted(
+                entry.name for entry in path.glob(pattern) if entry.is_file()
+            )
+        except (OSError, ValueError) as exc:
+            return {"ok": False, "action": "list_directory", "error": str(exc)}
+        return {
+            "ok": True,
+            "action": "list_directory",
+            "path": str(path),
+            "pattern": pattern,
+            "names": names,
+            "count": len(names),
+            "effect_verified": True,
+            "verification": f"Read {len(names)} entries matching {pattern} in {path}.",
+        }
 
     def _resolve_allowed_desktop_path(self, raw_path: Any, *, must_exist: bool = False) -> Path:
         if not raw_path:
@@ -3854,6 +3941,8 @@ end tell
 
             elif action == "create_folder":
                 return await asyncio.to_thread(self._create_folder, params.target)
+            elif action == "list_directory":
+                return await asyncio.to_thread(self._list_directory, params.target)
             elif action == "fetch_topic_image":
                 return await asyncio.to_thread(self._fetch_topic_image, params.target)
 

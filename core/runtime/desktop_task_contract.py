@@ -29,6 +29,13 @@ DESKTOP_TASK_ALLOWED_ACTIONS: tuple[str, ...] = (
     "render_text_pdf",
     "move_file",
     "create_folder",
+    # Reading a directory she is permitted to read. The write actions above had
+    # no read counterpart, so a question about the contents of a real path
+    # could only be answered by generation: asked to count the .py files in a
+    # directory holding 9, she answered 3, named three files that do not
+    # exist, and reported writing a file that was never created. Nothing had
+    # looked, because nothing could.
+    "list_directory",
     "fetch_topic_image",
     "system_control",
     # The main window and companion bubble are one Aura surface. This action
