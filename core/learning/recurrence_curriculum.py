@@ -404,8 +404,16 @@ def _terminal_contract(*keys: str) -> str:
     )
 
 
-def _rng(family: str, depth: int, seed: int) -> random.Random:
-    material = f"{CURRICULUM_VERSION}:{family}:{depth}:{seed}"
+def _rng(
+    family: str,
+    depth: int,
+    seed: int,
+    *,
+    curriculum_version: str = CURRICULUM_VERSION,
+) -> random.Random:
+    if not curriculum_version or curriculum_version != curriculum_version.strip():
+        raise ValueError("curriculum version is invalid")
+    material = f"{curriculum_version}:{family}:{depth}:{seed}"
     return random.Random(int.from_bytes(hashlib.sha256(material.encode("ascii")).digest()))
 
 
@@ -458,9 +466,14 @@ def khop_reachability(depth: int, seed: int) -> RecurrenceTrainingTask:
     )
 
 
-def nested_boolean(depth: int, seed: int) -> RecurrenceTrainingTask:
+def nested_boolean(
+    depth: int,
+    seed: int,
+    *,
+    curriculum_version: str = CURRICULUM_VERSION,
+) -> RecurrenceTrainingTask:
     _validate_coordinates(depth, seed)
-    rng = _rng("boolean", depth, seed)
+    rng = _rng("boolean", depth, seed, curriculum_version=curriculum_version)
     value = rng.random() < 0.5
     expression = "1" if value else "0"
     trace: list[str] = []
@@ -518,9 +531,14 @@ def nested_boolean(depth: int, seed: int) -> RecurrenceTrainingTask:
     )
 
 
-def modular_chain(depth: int, seed: int) -> RecurrenceTrainingTask:
+def modular_chain(
+    depth: int,
+    seed: int,
+    *,
+    curriculum_version: str = CURRICULUM_VERSION,
+) -> RecurrenceTrainingTask:
     _validate_coordinates(depth, seed)
-    rng = _rng("modular", depth, seed)
+    rng = _rng("modular", depth, seed, curriculum_version=curriculum_version)
     modulus = rng.choice((13, 17, 19, 23))
     initial = rng.randrange(modulus)
     value = initial

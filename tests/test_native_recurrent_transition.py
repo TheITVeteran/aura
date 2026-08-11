@@ -31,6 +31,7 @@ from core.learning.recurrent_transition_supervision import (  # noqa: E402
 
 
 def _core() -> RecurrentTransitionCore:
+    mx.random.seed(20260810184)
     core = RecurrentTransitionCore(
         RecurrentTransitionCoreConfig(
             hidden_size=32,
@@ -118,15 +119,18 @@ def test_typed_action_is_a_causal_operand_of_the_state_update():
     core = _core()
     state, context = _inputs()
     first = nested_boolean(2, 17).transition_program
-    second = nested_boolean(2, 18).transition_program
-    assert first is not None and second is not None
+    assert first is not None
     first_action = _action(first)
-    second_action = _action(second)
     typed_state = _typed_state(first)
-    if bool(mx.array_equal(first_action, second_action)):
-        second = nested_boolean(2, 19).transition_program
+    second_action = None
+    for seed in range(18, 65):
+        second = nested_boolean(2, seed).transition_program
         assert second is not None
-        second_action = _action(second)
+        candidate = _action(second)
+        if not bool(mx.array_equal(first_action, candidate)):
+            second_action = candidate
+            break
+    assert second_action is not None
     assert not bool(mx.array_equal(first_action, second_action))
 
     core.delta_up.weight = mx.ones_like(core.delta_up.weight) * 0.01

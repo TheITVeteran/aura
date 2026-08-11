@@ -91,9 +91,10 @@ class RecurrentTransitionCore(nn.Module):
 
         self.delta_up.weight = mx.zeros_like(self.delta_up.weight)
         self.write_gate.weight = mx.zeros_like(self.write_gate.weight)
-        self.write_gate.bias = mx.full_like(
-            self.write_gate.bias,
+        self.write_gate.bias = mx.full(
+            self.write_gate.bias.shape,
             float(config.gate_bias),
+            dtype=self.write_gate.bias.dtype,
         )
 
     def __call__(

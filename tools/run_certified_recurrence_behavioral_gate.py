@@ -11,6 +11,7 @@ remains present, it cannot establish neural-only RLC or frontier-level gain.
 from __future__ import annotations
 
 import argparse
+import ast
 import hashlib
 import json
 import math
@@ -55,6 +56,8 @@ GENERATORS: Final = {
     "modular": modular_chain,
 }
 _TASK_ID = re.compile(r"\Arecurrence-(boolean|modular)-d([1-9][0-9]*)-s([0-9]+)\Z")
+_SOURCE_COMMIT = re.compile(r"\A[0-9a-f]{40}\Z")
+_CURRICULUM_SOURCE = "core/learning/recurrence_curriculum.py"
 
 
 def _sha(value: Any) -> str:
@@ -80,6 +83,37 @@ def _git(repo: Path, *args: str) -> str:
         text=True,
         stderr=subprocess.STDOUT,
     ).strip()
+
+
+def _curriculum_version_at_source_commit(source_commit: str) -> str:
+    """Read the task RNG identity from the exact source committed by the campaign."""
+
+    if _SOURCE_COMMIT.fullmatch(source_commit) is None:
+        raise RuntimeError("behavioral source commit identity is invalid")
+    try:
+        resolved = _git(REPO_ROOT, "rev-parse", "--verify", f"{source_commit}^{{commit}}")
+        source = _git(REPO_ROOT, "show", f"{source_commit}:{_CURRICULUM_SOURCE}")
+    except subprocess.CalledProcessError as exc:
+        raise RuntimeError("behavioral source commit is unavailable") from exc
+    if resolved != source_commit:
+        raise RuntimeError("behavioral source commit resolution differs")
+    try:
+        module = ast.parse(source, filename=f"{source_commit}:{_CURRICULUM_SOURCE}")
+    except SyntaxError as exc:
+        raise RuntimeError("behavioral curriculum source is invalid") from exc
+    versions = []
+    for node in module.body:
+        if not isinstance(node, (ast.Assign, ast.AnnAssign)):
+            continue
+        targets = node.targets if isinstance(node, ast.Assign) else (node.target,)
+        if not any(isinstance(target, ast.Name) and target.id == "CURRICULUM_VERSION" for target in targets):
+            continue
+        value = node.value
+        if isinstance(value, ast.Constant) and isinstance(value.value, str):
+            versions.append(value.value)
+    if len(versions) != 1 or not versions[0] or versions[0] != versions[0].strip():
+        raise RuntimeError("behavioral curriculum version identity is invalid")
+    return versions[0]
 
 
 def build_tasks(
@@ -404,6 +438,8 @@ def verify_behavioral_bundle(
         or report.get("claim_boundary") != prereg.get("claim_boundary")
     ):
         raise RuntimeError("behavioral bundle commitments differ")
+    source_commit = str(prereg.get("source_commit") or "")
+    curriculum_version = _curriculum_version_at_source_commit(source_commit)
     tasks = []
     for row in prereg.get("tasks", []):
         if not isinstance(row, dict):
@@ -412,7 +448,11 @@ def verify_behavioral_bundle(
         if match is None:
             raise RuntimeError("behavioral task id is invalid")
         family, depth_text, seed_text = match.groups()
-        task = GENERATORS[family](int(depth_text), int(seed_text))
+        task = GENERATORS[family](
+            int(depth_text),
+            int(seed_text),
+            curriculum_version=curriculum_version,
+        )
         if (
             row
             != {

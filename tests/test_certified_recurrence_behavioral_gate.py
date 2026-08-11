@@ -14,6 +14,7 @@ import pytest
 
 import tools.run_certified_recurrence_behavioral_gate as behavioral_gate
 from tools.run_certified_recurrence_behavioral_gate import (
+    _curriculum_version_at_source_commit,
     _load_journal,
     _score_row,
     build_public_preregistration,
@@ -182,3 +183,24 @@ def test_checked_in_replication_replays_and_tamper_fails(tmp_path: Path) -> None
     )
     with pytest.raises(RuntimeError, match="commitment differs"):
         verify_behavioral_bundle(tampered, verify_model_identity=False)
+
+
+def test_historical_replay_binds_task_rng_to_committed_curriculum() -> None:
+    source_commit = "e4bbc29d2ee22bb86c8f5a6d48b16d36a132e0a4"
+    assert _curriculum_version_at_source_commit(source_commit) == "2026.07.18.1"
+
+    task = behavioral_gate.GENERATORS["boolean"](
+        1,
+        195001,
+        curriculum_version="2026.07.18.1",
+    )
+    assert behavioral_gate._text_sha(task.prompt) == (
+        "5bc7a8bcad020299acd7c04fdd59af71f9c2ac5ebf0791cb097c2da29713d0d2"
+    )
+
+
+def test_historical_replay_rejects_unavailable_source_identity() -> None:
+    with pytest.raises(RuntimeError, match="source commit is unavailable"):
+        _curriculum_version_at_source_commit("f" * 40)
+    with pytest.raises(RuntimeError, match="source commit identity is invalid"):
+        _curriculum_version_at_source_commit("not-a-commit")

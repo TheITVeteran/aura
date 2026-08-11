@@ -44732,3 +44732,31 @@ No resident 32B run, reasoning gain, fusion, frontier performance or `WOW
 Signal` is claimed. The completion envelope remains `912/920` (approximately
 `99.1%`). The source-bound resident package remains valid and launch-blocked
 only by the currently occupied live model lane.
+
+## Checkpoint 2026-08-11-235: Frozen Behavioral Replay and Native-Core Admission
+
+CP235 restores the CP195 behavioral certificate as a reproducible historical
+artifact instead of regenerating its task population with today's curriculum.
+The verifier now resolves the exact committed source, parses the historical
+`CURRICULUM_VERSION` from that source with Python's AST, and supplies that
+identity to version-seeded task generation. Invalid, unavailable or ambiguous
+source identities fail closed. The checked-in 96-task, 384-observation bundle
+replays again, while its existing observation-tamper contract still rejects a
+modified journal.
+
+The broader pre-launch surface exposed a separate resident blocker that had
+been hidden behind the replay failure: the native recurrent transition core
+used `mx.full_like`, which is absent from the installed MLX runtime. Gate-bias
+initialization now uses the supported shape- and dtype-preserving `mx.full`
+operation. The core can initialize on the actual host, and its exact-transition
+training test now owns a deterministic MLX initialization seed so suite order
+cannot silently change the measured optimization contract. The original loss
+reduction threshold remains unchanged.
+
+The complete affected recurrence/compiler surface passes `88/88` tests; the
+frozen behavioral gate passes `9/9`; repository smoke passes `104/104`; Ruff,
+compilation and architectural layering are clean. No resident 32B result,
+reasoning gain, fusion, frontier performance or `WOW Signal` is claimed. The
+completion envelope remains `912/920` (approximately `99.1%`). The exact
+resident canary package is prepared; next is a controlled model-lane handoff
+and the source-bound resident 32B canary.
