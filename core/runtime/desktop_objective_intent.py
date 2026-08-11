@@ -9,6 +9,7 @@ from core.runtime.skill_task_bridge import (
 from core.utils.intent_normalization import normalize_memory_intent_text
 from core.utils.occluded_view_intent import asks_about_occluded_view
 from core.utils.own_source_intent import asks_for_own_source
+from core.utils.screen_judgement_intent import asks_for_screen_judgement
 
 _WEB_SEARCH_REQUEST_SPAN_RE = re.compile(
     r"\b(?:search|google|look\s*up|research)\b[^.?!]{0,48}?"
@@ -110,6 +111,19 @@ _DESKTOP_OBJECTIVE_SURFACE_TERMS = (
     "website",
     "window",
     "word",
+    # Plurals and the bulk quantifiers a person actually uses. Every surface
+    # above was singular only, so "minimize the window" reached the desktop
+    # lane and "minimize all windows" did not — the same request, declined for
+    # its grammatical number. Found 2026-08-10.
+    "apps",
+    "applications",
+    "documents",
+    "files",
+    "folders",
+    "tabs",
+    "windows",
+    "everything",
+    "all of them",
 )
 
 _DIRECT_DESKTOP_ACTION_RE = re.compile(
@@ -284,6 +298,21 @@ def looks_like_desktop_objective(user_message: str) -> bool:
     # window, how much of it shows, and saying plainly what it cannot read
     # while it is covered. Measured live 2026-08-04.
     if asks_about_occluded_view(user_message):
+        return False
+    # An opinion about the screen is not an action on it. "of everything you can
+    # see open right now, which window would you close first if you were me, and
+    # why that one? I want your actual judgement, not a list" matched the screen
+    # observation branch below, went to the desktop lane, and came back
+    # "os_automation refused to act because the objective has no complete
+    # observable acceptance contract. Completed 0/1 steps." os_automation was
+    # right — nothing was asked to happen. Nobody asked her to close a window;
+    # they asked which one she WOULD close. Measured live 2026-08-10.
+    #
+    # Her agency rules already said it — "Hypotheticals, quoted requests,
+    # negated actions, and recalled evidence are not execution requests merely
+    # because they name a tool" — but only in the identity contract, where the
+    # router could not act on it.
+    if asks_for_screen_judgement(user_message):
         return False
     # Screen observation ("read my screen", "what's on my screen") needs the
     # desktop body even though it carries no action+surface verb pair.
