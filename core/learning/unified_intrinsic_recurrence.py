@@ -53,6 +53,7 @@ class UnifiedRecurrenceConfig:
     memory_write_threshold: float = 0.5
     halt_threshold: float = 0.9
     minimum_iterations: int = 2
+    initialization_seed: int = 20260810198
     schema: str = UNIFIED_INTRINSIC_RECURRENCE_SCHEMA
 
     def __post_init__(self) -> None:
@@ -66,6 +67,8 @@ class UnifiedRecurrenceConfig:
             raise ValueError("correction rank exceeds hidden size")
         if type(self.minimum_iterations) is not int or self.minimum_iterations < 1:
             raise ValueError("minimum_iterations must be positive")
+        if type(self.initialization_seed) is not int or self.initialization_seed < 0:
+            raise ValueError("initialization_seed must be non-negative")
         for name in ("memory_write_threshold", "halt_threshold"):
             value = getattr(self, name)
             if (
@@ -123,7 +126,7 @@ class UnifiedRecurrentController(nn.Module):
         super().__init__()
         self.config = config
         key_a, key_b, key_depth, key_memory, key_halt = mx.random.split(
-            mx.random.key(20260810198),
+            mx.random.key(config.initialization_seed),
             num=5,
         )
         scale = 1.0 / math.sqrt(config.hidden_size)
@@ -154,10 +157,25 @@ class UnifiedRecurrentController(nn.Module):
             (config.depth_basis_size,),
             dtype=mx.float32,
         )
+        # Zero initialization preserves the CP203 depth-only operator exactly.
+        # Training can then learn to accept a useful recurrent proposal for one
+        # token/task while rejecting destructive motion for another.
+        self.transport_state_weight = mx.zeros(
+            (config.hidden_size,),
+            dtype=mx.float32,
+        )
+        self.transport_motion_weight = mx.zeros(
+            (config.hidden_size,),
+            dtype=mx.float32,
+        )
         # Re-entry starts conservative. Step zero bypasses this gate exactly,
         # retaining base-forward parity; later steps learn how much of the new
         # window state can be admitted without leaving the coda's manifold.
         self.transport_bias = mx.array(-0.5, dtype=mx.float32)
+        # p stays inside (0.5, 1.0). The cumulative displacement of unseen
+        # passes therefore grows sublinearly instead of linearly with depth,
+        # while gradients can still relax the schedule toward sqrt decay.
+        self.transport_decay_logit = mx.array(4.0, dtype=mx.float32)
         self.halt_state_weight = (
             mx.random.normal((config.hidden_size,), key=key_halt).astype(mx.float32)
             * scale
@@ -175,6 +193,13 @@ class UnifiedRecurrentController(nn.Module):
         )
 
     def correction(self, hidden: Any, step: int) -> Any:
+        if type(step) is not int or step < 0:
+            raise ValueError("correction step must be a non-negative integer")
+        # T=1 is the semantic anchor.  Recurrent control tissue must earn an
+        # improvement through additional passes, never by silently rewriting
+        # the baseline against which those passes are compared.
+        if step == 0:
+            return hidden
         features = self.depth_features(step)
         scale = 1.0 + features @ self.depth_scale
         low_rank = (hidden.astype(mx.float32) @ self.correction_a) * scale
@@ -186,23 +211,52 @@ class UnifiedRecurrentController(nn.Module):
         logits = disagreement @ self.memory_write_weight + self.memory_write_bias
         return mx.sigmoid(logits)[..., None]
 
-    def transport_gate(self, step: int) -> Any:
+    def transport_gate(
+        self,
+        step: int,
+        previous: Any | None = None,
+        candidate: Any | None = None,
+    ) -> Any:
         if type(step) is not int or step < 0:
             raise ValueError("transport step must be a non-negative integer")
+        if (previous is None) != (candidate is None):
+            raise ValueError("transport state and candidate must be supplied together")
         if step == 0:
             return mx.array(1.0, dtype=mx.float32)
-        return mx.sigmoid(
+        logit = (
             self.transport_bias
             + self.depth_features(step) @ self.transport_depth_weight
         )
+        if previous is not None and candidate is not None:
+            if previous.shape != candidate.shape:
+                raise ValueError("transport state and candidate shapes differ")
+            previous_wide = previous.astype(mx.float32)
+            motion = candidate.astype(mx.float32) - previous_wide
+            previous_features = previous_wide / _rms(previous_wide)
+            motion_features = motion / _rms(motion)
+            feature_scale = 1.0 / math.sqrt(self.config.hidden_size)
+            logit = logit + feature_scale * (
+                previous_features @ self.transport_state_weight
+                + motion_features @ self.transport_motion_weight
+            )
+        base = mx.sigmoid(logit)
+        exponent = self.transport_decay_exponent()
+        gate = base / mx.power(
+            mx.array(float(step), dtype=mx.float32),
+            exponent,
+        )
+        return gate[..., None] if previous is not None else gate
+
+    def transport_decay_exponent(self) -> Any:
+        return 0.5 + 0.5 * mx.sigmoid(self.transport_decay_logit)
 
     def transport(self, previous: Any, candidate: Any, step: int) -> tuple[Any, Any]:
-        gate = self.transport_gate(step)
         if step == 0:
-            return candidate, gate
+            return candidate, self.transport_gate(step)
         matched = candidate * (_rms(previous) / _rms(candidate)).astype(
             candidate.dtype
         )
+        gate = self.transport_gate(step, previous, matched)
         transported = previous + gate.astype(previous.dtype) * (matched - previous)
         return transported, gate
 
@@ -233,7 +287,10 @@ class UnifiedRecurrentController(nn.Module):
             "memory_write_weight",
             "memory_write_bias",
             "transport_depth_weight",
+            "transport_state_weight",
+            "transport_motion_weight",
             "transport_bias",
+            "transport_decay_logit",
             "halt_state_weight",
             "halt_motion_weight",
             "halt_bias",
@@ -343,7 +400,7 @@ def unified_recurrent_hidden_states(
         probability = controller.halt_probability(prior_state, hidden)
         mx.eval(hidden, probability, transport_gate)
         halt_probabilities.append(float(probability.item()))
-        transport_gates.append(float(transport_gate.item()))
+        transport_gates.append(float(mx.mean(transport_gate).item()))
         trajectory.append(hidden)
         if (
             adaptive_halt

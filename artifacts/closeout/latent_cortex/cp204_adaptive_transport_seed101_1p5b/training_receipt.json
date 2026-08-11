@@ -1,0 +1,188 @@
+{
+  "elapsed_minutes": 1.333,
+  "final": {
+    "best_deep_relative_gain": 0.1536241478803199,
+    "best_depth": "T8",
+    "best_heldout_relative_gain": 0.1536241478803199,
+    "ce": {
+      "T1": 0.5601424525181452,
+      "T2": 0.5518909767270088,
+      "T4": 0.49164647857348126,
+      "T8": 0.4740910455584526
+    },
+    "examples": 6,
+    "heldout_depth_helps": true,
+    "step": 20,
+    "trained_depth_helps": true
+  },
+  "history": [
+    {
+      "best_deep_relative_gain": -0.08843483391550547,
+      "best_depth": "T1",
+      "best_heldout_relative_gain": -0.29843729914233597,
+      "ce": {
+        "T1": 0.9346873064835867,
+        "T2": 1.0173462231953938,
+        "T4": 1.1096010307470958,
+        "T8": 1.213632861773173
+      },
+      "examples": 6,
+      "heldout_depth_helps": false,
+      "step": 5,
+      "trained_depth_helps": false
+    },
+    {
+      "best_deep_relative_gain": 0.25626172720676593,
+      "best_depth": "T2",
+      "best_heldout_relative_gain": -0.02619531985955152,
+      "ce": {
+        "T1": 1.0783731639385223,
+        "T2": 0.8020273943742117,
+        "T4": 0.8475856383641561,
+        "T8": 1.1066214938958485
+      },
+      "examples": 6,
+      "heldout_depth_helps": false,
+      "step": 10,
+      "trained_depth_helps": true
+    },
+    {
+      "best_deep_relative_gain": 0.01881616515814879,
+      "best_depth": "T2",
+      "best_heldout_relative_gain": -0.20020774829355953,
+      "ce": {
+        "T1": 0.4327720080812772,
+        "T2": 0.4246288985013962,
+        "T4": 0.4253209928671519,
+        "T8": 0.5194163173437119
+      },
+      "examples": 6,
+      "heldout_depth_helps": false,
+      "step": 15,
+      "trained_depth_helps": true
+    },
+    {
+      "best_deep_relative_gain": 0.1536241478803199,
+      "best_depth": "T8",
+      "best_heldout_relative_gain": 0.1536241478803199,
+      "ce": {
+        "T1": 0.5601424525181452,
+        "T2": 0.5518909767270088,
+        "T4": 0.49164647857348126,
+        "T8": 0.4740910455584526
+      },
+      "examples": 6,
+      "heldout_depth_helps": true,
+      "step": 20,
+      "trained_depth_helps": true
+    }
+  ],
+  "identity": {
+    "bridge": "assistant_answer",
+    "controller_rank": 8,
+    "depth_basis_size": 4,
+    "families": [
+      "khop",
+      "modular",
+      "register_trace"
+    ],
+    "holdout_per_cell": 2,
+    "identity_sha256": "1a06676ede13adecaecd540e500746bc540b3801db57197204fd6c43663d6532",
+    "init_seed": 101,
+    "lora_rank": 4,
+    "lora_targets": [
+      "o_proj",
+      "v_proj"
+    ],
+    "model": {
+      "canonical_path": "/Users/bryan/.cache/huggingface/hub/models--mlx-community--Qwen2.5-1.5B-Instruct-4bit/snapshots/8b403126fc14f14cfc99bb4cfa72ecbc129ea677",
+      "config_sha256": "636d3e2a15e8914b8cf82b05cc2288a811f9bd93c3bf1afc00cab701a70b47c0",
+      "identity_sha256": "1a708fe453b57fd5f677010c05ef24ec77d2a3bee529ee50752e9e8cde267dfb",
+      "weights": [
+        {
+          "name": "model.safetensors",
+          "sha256": "0979f33d1bc58afcf696d13f57977644e7b11a6f0eec3e631d8e9463d18c0717",
+          "size": 868628559
+        }
+      ]
+    },
+    "per_cell": 4,
+    "readout_sha256": "1599d3c7ce72469195f2e76b4cb984355feeb9806d63443209da31fd74caf0e3",
+    "schema": "aura.unified_intrinsic_training.v1",
+    "seed": 20260810198,
+    "source_sha256s": {
+      "core/learning/depth_conditioned_lora.py": "92bdfcb49fed43335a7cfe8268704b5d75784db736f38c90686072ad8a139269",
+      "core/learning/unified_intrinsic_objective.py": "f1e1ec8dce770ad7fff81ec2470411ee6a2a9afc3434e29f578bfe097f759198",
+      "core/learning/unified_intrinsic_recurrence.py": "272753ee076455e7ec165fcba65cbc2b6d56e4142fed14f1d74b07263bc19b20",
+      "tools/train_unified_intrinsic_recurrence.py": "c8ffd8474919c29c21915ca4ed314729f23bdace1ee01f98d1da2773558ff318"
+    },
+    "spec": {
+      "anchor_injection": 0.0,
+      "anchor_weight": 1.0,
+      "coda_start": 21,
+      "halt_weight": 0.1,
+      "heldout_depths": [
+        8
+      ],
+      "prelude_end": 7,
+      "progression_margin": 0.01,
+      "renormalize": true,
+      "schema": "aura.unified_intrinsic_objective.v1",
+      "train_depths": [
+        1,
+        2,
+        4
+      ],
+      "trajectory_weight": 0.25
+    },
+    "task_depth": 4,
+    "wiring": {
+      "adapted_projection_count": 28,
+      "adapted_sites": [
+        "model.layers.10.self_attn.o_proj",
+        "model.layers.10.self_attn.v_proj",
+        "model.layers.11.self_attn.o_proj",
+        "model.layers.11.self_attn.v_proj",
+        "model.layers.12.self_attn.o_proj",
+        "model.layers.12.self_attn.v_proj",
+        "model.layers.13.self_attn.o_proj",
+        "model.layers.13.self_attn.v_proj",
+        "model.layers.14.self_attn.o_proj",
+        "model.layers.14.self_attn.v_proj",
+        "model.layers.15.self_attn.o_proj",
+        "model.layers.15.self_attn.v_proj",
+        "model.layers.16.self_attn.o_proj",
+        "model.layers.16.self_attn.v_proj",
+        "model.layers.17.self_attn.o_proj",
+        "model.layers.17.self_attn.v_proj",
+        "model.layers.18.self_attn.o_proj",
+        "model.layers.18.self_attn.v_proj",
+        "model.layers.19.self_attn.o_proj",
+        "model.layers.19.self_attn.v_proj",
+        "model.layers.20.self_attn.o_proj",
+        "model.layers.20.self_attn.v_proj",
+        "model.layers.7.self_attn.o_proj",
+        "model.layers.7.self_attn.v_proj",
+        "model.layers.8.self_attn.o_proj",
+        "model.layers.8.self_attn.v_proj",
+        "model.layers.9.self_attn.o_proj",
+        "model.layers.9.self_attn.v_proj"
+      ],
+      "coda_adapted": false,
+      "continuous_depth_basis_size": 4,
+      "continuous_depth_operator_count": 28,
+      "readout_adapted": false,
+      "window": [
+        7,
+        21
+      ]
+    }
+  },
+  "readout_frozen": true,
+  "readout_sha256_after": "1599d3c7ce72469195f2e76b4cb984355feeb9806d63443209da31fd74caf0e3",
+  "readout_sha256_before": "1599d3c7ce72469195f2e76b4cb984355feeb9806d63443209da31fd74caf0e3",
+  "receipt_sha256": "c5e8c872b9c390b47938ca87aa442e0963d4062566f64be36e972ef58984a3c8",
+  "schema": "aura.unified_intrinsic_training.v1",
+  "steps": 20,
+  "verdict": "heldout_depth_gain"
+}

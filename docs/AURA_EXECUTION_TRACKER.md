@@ -44218,3 +44218,75 @@ constant residual gate still accumulates enough drift to lose at unseen T8.
 The completion envelope advances to `897/920` (approximately `97.5%`). Next is
 a decaying, learnable integration schedule whose cumulative state displacement
 is controlled across unseen depth, followed by the same frozen comparison.
+
+## Checkpoints 2026-08-10-202 through 205: Fresh Evaluation Rejects Selection-Set Gains
+
+CP202 replaced the constant residual admission rate with a learned power-law
+schedule whose exponent remains strictly inside `(0.5,1.0)`. The first
+six-example selection set reported a 14.29% T8 gain. A source/model-bound
+repeat reported only 3.43%, and deterministic initialization seeds `101`,
+`102`, and `103` produced final selection-set T8 gains of `15.53%`, `2.73%`,
+and `-4.37%`. This established initialization sensitivity and made the former
+single-run result ineligible for promotion.
+
+CP203 introduced an independent checkpoint evaluator. It verifies the complete
+model-weight contents, source hashes, campaign identity, checkpoint tensor
+inventory, immutable coda/readout, and prompt non-overlap before opening 24 new
+tasks per seed. Across 72 fresh tasks, T8 lost to trained T1 on 45 and won on
+27, with mean CE change `-0.033447` in the gain direction. Register traces were
+the dominant failure (`1/24` wins, mean `-0.136796`). At the same time, the
+trained T1 tissue beat the unmodified checkpoint on all `72/72` tasks with mean
+CE gain `1.126950`. The training learned useful semantics; recurrence was the
+destructive component.
+
+CP204 made transport token- and state-conditioned through normalized current
+state and proposed-motion features, while zero initialization preserved the
+CP203 operator exactly. Under the original small comparison it reduced the
+fresh T8 regression from `-13.12%` to `-8.62%` but still lost `19/24` tasks.
+CP205 expanded training to 72 tasks and selection to 24. After one complete
+curriculum pass its unopened T8 remained 12.28% worse than T1. The source-bound
+run was stopped at its durable step-90 checkpoint rather than spending the
+remaining budget on a disproven objective.
+
+These checkpoints advance the completion envelope to `901/920` (approximately
+`97.9%`). They do not establish decoded accuracy, general reasoning gain,
+resident-32B transfer, frontier performance, fusion admission, or a `WOW
+Signal`. They localize the next defect: joint optimization improves the shared
+T1 adapter while recurrent tissue chases a moving baseline.
+
+## Checkpoint 2026-08-10-206: Stationary-Anchor Recurrence Produces a Fresh CE Gain
+
+The trainer now has physically disjoint optimization phases. A complete
+semantic phase trains only the shared window adapters at T1. The optimizer is
+then reset, shared-adapter gradients become exact zeros, and only continuous
+depth operators plus the recurrent controller may move. Iteration-zero
+controller correction is structurally bypassed, so arbitrary recurrent
+controller weights cannot rewrite T1. Negative checkpoints cannot receive a
+`best` filename, campaign resume verifies the phase boundary, and emitted
+answers have a separate greedy behavioral evaluator.
+
+On Qwen2.5-1.5B, CP206 used 72 semantic-anchor updates followed by 144
+recurrence-only updates. T1 remained bit-stationary at CE `0.4648545024` through
+every recurrent evaluation. The best frozen checkpoint was step 120: T4
+improved 8.995% and unopened T8 improved 5.376% on the 24-example selection
+set. Independent evaluation on 24 new prompt-disjoint tasks measured a 6.905%
+mean T8 CE gain over the stationary trained T1 anchor, while all `24/24` tasks
+also beat unmodified base T1. The fresh effect was heterogeneous: 12 tasks won
+and 12 lost; khop and register-trace means improved while modular mean
+regressed.
+
+The first fresh greedy decode diagnostic was correctly classified as a floor:
+base T1, trained T1, and trained T8 each solved `0/3`. T8 changed every emitted
+answer but converted none to exact correctness. The checkpoint SHA-256 is
+`8454015a03b9712a8544f50b0bb686686b071f985b97f7d45182ccaddf400f01`;
+the independent CE report commitment is
+`133bdc60eb8b0671875ca1d3ca922b82986fdc9889a782801a38a7e11d7fc240`;
+the decoded report commitment is
+`a2cad7fb8d2de8076bcf5465f5c4844ac0673531bd9d5ffaafe24c95f6e27cb7`.
+
+This is the first fresh positive resident-transformer recurrence signal with a
+stationary same-checkpoint anchor. It is a teacher-forced semantic mechanism
+result, not a behavioral reasoning gain. The completion envelope advances to
+`902/920` (approximately `98.0%`). Next is a calibrated non-floor decode band,
+sequence-level recurrence specialization against emitted correctness, causal
+operator lesions, independent-seed replication, and only then a 32B allocation.

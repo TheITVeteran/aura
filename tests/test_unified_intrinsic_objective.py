@@ -112,6 +112,9 @@ def test_optimizer_moves_controller_but_not_frozen_readout() -> None:
     assert float(mx.max(mx.abs(flat["correction_b"]))) > 0.0
     assert float(mx.max(mx.abs(flat["halt_state_weight"]))) > 0.0
     assert float(mx.abs(flat["transport_bias"])) > 0.0
+    assert float(mx.abs(flat["transport_decay_logit"])) > 0.0
+    assert float(mx.max(mx.abs(flat["transport_state_weight"]))) > 0.0
+    assert float(mx.max(mx.abs(flat["transport_motion_weight"]))) > 0.0
     optimizer = optim.Adam(learning_rate=0.01)
     optimizer.update(controller, gradients)
     mx.eval(controller.parameters(), optimizer.state)

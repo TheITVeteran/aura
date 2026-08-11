@@ -1,0 +1,169 @@
+{
+  "checkpoint_sha256": "a46760846008d3d1b43f218763a3f480a87991b425b4dc0d90bf24ff411ca44d",
+  "history": [
+    {
+      "best_deep_relative_gain": -0.0017431292750800843,
+      "best_depth": "T1",
+      "best_heldout_relative_gain": -0.2525586248576248,
+      "ce": {
+        "T1": 0.46171865798532963,
+        "T2": 0.46252349329491454,
+        "T4": 0.4913186306754748,
+        "T8": 0.5783296873172125
+      },
+      "examples": 24,
+      "heldout_depth_helps": false,
+      "step": 20,
+      "trained_depth_helps": false
+    },
+    {
+      "best_deep_relative_gain": -0.020692310896939906,
+      "best_depth": "T1",
+      "best_heldout_relative_gain": -0.4237814411567816,
+      "ce": {
+        "T1": 0.4096814238776763,
+        "T2": 0.4181586792692542,
+        "T4": 0.44401642804344493,
+        "T8": 0.5832968081037203
+      },
+      "examples": 24,
+      "heldout_depth_helps": false,
+      "step": 40,
+      "trained_depth_helps": false
+    },
+    {
+      "best_deep_relative_gain": -0.012106921109377968,
+      "best_depth": "T1",
+      "best_heldout_relative_gain": -0.09808541962218831,
+      "ce": {
+        "T1": 0.41373648680746555,
+        "T2": 0.41874556181331474,
+        "T4": 0.4322100232044856,
+        "T8": 0.4543180037289858
+      },
+      "examples": 24,
+      "heldout_depth_helps": false,
+      "step": 60,
+      "trained_depth_helps": false
+    },
+    {
+      "best_deep_relative_gain": -0.008361083232677992,
+      "best_depth": "T1",
+      "best_heldout_relative_gain": -0.12276490879416838,
+      "ce": {
+        "T1": 0.42987377010285854,
+        "T2": 0.4334679804742336,
+        "T4": 0.4447253967324893,
+        "T8": 0.4826471842825413
+      },
+      "examples": 24,
+      "heldout_depth_helps": false,
+      "step": 80,
+      "trained_depth_helps": false
+    }
+  ],
+  "identity": {
+    "bridge": "assistant_answer",
+    "controller_rank": 8,
+    "depth_basis_size": 4,
+    "families": [
+      "khop",
+      "modular",
+      "register_trace"
+    ],
+    "holdout_per_cell": 8,
+    "identity_sha256": "559981a8da06d602fb2e74caa695143b8485309e3af2107812004c1fa2a35bdb",
+    "init_seed": 101,
+    "lora_rank": 4,
+    "lora_targets": [
+      "o_proj",
+      "v_proj"
+    ],
+    "model": {
+      "canonical_path": "/Users/bryan/.cache/huggingface/hub/models--mlx-community--Qwen2.5-1.5B-Instruct-4bit/snapshots/8b403126fc14f14cfc99bb4cfa72ecbc129ea677",
+      "config_sha256": "636d3e2a15e8914b8cf82b05cc2288a811f9bd93c3bf1afc00cab701a70b47c0",
+      "identity_sha256": "1a708fe453b57fd5f677010c05ef24ec77d2a3bee529ee50752e9e8cde267dfb",
+      "weights": [
+        {
+          "name": "model.safetensors",
+          "sha256": "0979f33d1bc58afcf696d13f57977644e7b11a6f0eec3e631d8e9463d18c0717",
+          "size": 868628559
+        }
+      ]
+    },
+    "per_cell": 24,
+    "readout_sha256": "1599d3c7ce72469195f2e76b4cb984355feeb9806d63443209da31fd74caf0e3",
+    "schema": "aura.unified_intrinsic_training.v1",
+    "seed": 20260810198,
+    "source_sha256s": {
+      "core/learning/depth_conditioned_lora.py": "92bdfcb49fed43335a7cfe8268704b5d75784db736f38c90686072ad8a139269",
+      "core/learning/unified_intrinsic_objective.py": "f1e1ec8dce770ad7fff81ec2470411ee6a2a9afc3434e29f578bfe097f759198",
+      "core/learning/unified_intrinsic_recurrence.py": "272753ee076455e7ec165fcba65cbc2b6d56e4142fed14f1d74b07263bc19b20",
+      "tools/train_unified_intrinsic_recurrence.py": "c8ffd8474919c29c21915ca4ed314729f23bdace1ee01f98d1da2773558ff318"
+    },
+    "spec": {
+      "anchor_injection": 0.0,
+      "anchor_weight": 1.0,
+      "coda_start": 21,
+      "halt_weight": 0.1,
+      "heldout_depths": [
+        8
+      ],
+      "prelude_end": 7,
+      "progression_margin": 0.01,
+      "renormalize": true,
+      "schema": "aura.unified_intrinsic_objective.v1",
+      "train_depths": [
+        1,
+        2,
+        4
+      ],
+      "trajectory_weight": 0.25
+    },
+    "task_depth": 4,
+    "wiring": {
+      "adapted_projection_count": 28,
+      "adapted_sites": [
+        "model.layers.10.self_attn.o_proj",
+        "model.layers.10.self_attn.v_proj",
+        "model.layers.11.self_attn.o_proj",
+        "model.layers.11.self_attn.v_proj",
+        "model.layers.12.self_attn.o_proj",
+        "model.layers.12.self_attn.v_proj",
+        "model.layers.13.self_attn.o_proj",
+        "model.layers.13.self_attn.v_proj",
+        "model.layers.14.self_attn.o_proj",
+        "model.layers.14.self_attn.v_proj",
+        "model.layers.15.self_attn.o_proj",
+        "model.layers.15.self_attn.v_proj",
+        "model.layers.16.self_attn.o_proj",
+        "model.layers.16.self_attn.v_proj",
+        "model.layers.17.self_attn.o_proj",
+        "model.layers.17.self_attn.v_proj",
+        "model.layers.18.self_attn.o_proj",
+        "model.layers.18.self_attn.v_proj",
+        "model.layers.19.self_attn.o_proj",
+        "model.layers.19.self_attn.v_proj",
+        "model.layers.20.self_attn.o_proj",
+        "model.layers.20.self_attn.v_proj",
+        "model.layers.7.self_attn.o_proj",
+        "model.layers.7.self_attn.v_proj",
+        "model.layers.8.self_attn.o_proj",
+        "model.layers.8.self_attn.v_proj",
+        "model.layers.9.self_attn.o_proj",
+        "model.layers.9.self_attn.v_proj"
+      ],
+      "coda_adapted": false,
+      "continuous_depth_basis_size": 4,
+      "continuous_depth_operator_count": 28,
+      "readout_adapted": false,
+      "window": [
+        7,
+        21
+      ]
+    }
+  },
+  "receipt_sha256": "2982a3cd3486d70b03a614b7ce6622cc01cdae49f42f1a9e7bd645d5737e79c3",
+  "schema": "aura.unified_intrinsic_training.v1",
+  "step": 90
+}

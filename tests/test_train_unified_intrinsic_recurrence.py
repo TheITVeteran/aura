@@ -10,6 +10,7 @@ mx = pytest.importorskip("mlx.core")
 optim = pytest.importorskip("mlx.optimizers")
 pytest.importorskip("mlx_lm")
 
+from mlx.utils import tree_flatten  # noqa: E402
 from mlx_lm.models.qwen2 import Model, ModelArgs  # noqa: E402
 
 from core.brain.llm.latent_cortex.recurrence_adapter import (  # noqa: E402
@@ -27,6 +28,9 @@ from tools.train_unified_intrinsic_recurrence import (  # noqa: E402
     _attach_window_adapters,
     _canonical_sha256,
     _evaluate,
+    _model_identity,
+    _optimization_phase,
+    _phase_gradients,
     _residual_hidden_size,
     _restore_checkpoint,
     _save_checkpoint,
@@ -90,6 +94,41 @@ def test_hidden_size_comes_from_residual_space_not_packed_embeddings() -> None:
     model = _model()
     model.model.embed_tokens.weight = mx.zeros((64, 4))
     assert _residual_hidden_size(model) == 32
+
+
+def test_model_identity_hashes_weight_content_not_only_path(tmp_path: Path) -> None:
+    (tmp_path / "config.json").write_text('{"hidden_size": 4}\n')
+    weights = tmp_path / "model.safetensors"
+    weights.write_bytes(b"first")
+    first = _model_identity(str(tmp_path))
+    weights.write_bytes(b"other")
+    second = _model_identity(str(tmp_path))
+    assert first["canonical_path"] == second["canonical_path"]
+    assert first["weights"][0]["size"] == second["weights"][0]["size"]
+    assert first["weights"][0]["sha256"] != second["weights"][0]["sha256"]
+    assert first["identity_sha256"] != second["identity_sha256"]
+
+
+def test_two_phase_gradient_partition_keeps_anchor_stationary() -> None:
+    gradients = {
+        "model": {
+            "layer": {
+                "lora_a": mx.ones((2, 2)),
+                "continuous_depth_b": [mx.ones((2, 2))],
+            }
+        },
+        "controller": {"transport_bias": mx.ones(())},
+    }
+    semantic = dict(tree_flatten(_phase_gradients(gradients, "semantic_anchor")))
+    recurrent = dict(tree_flatten(_phase_gradients(gradients, "recurrence")))
+    assert bool(mx.all(semantic["model.layer.lora_a"] == 1))
+    assert bool(mx.all(semantic["model.layer.continuous_depth_b.0"] == 0))
+    assert bool(mx.all(semantic["controller.transport_bias"] == 0))
+    assert bool(mx.all(recurrent["model.layer.lora_a"] == 0))
+    assert bool(mx.all(recurrent["model.layer.continuous_depth_b.0"] == 1))
+    assert bool(mx.all(recurrent["controller.transport_bias"] == 1))
+    assert _optimization_phase(39, 40) == "semantic_anchor"
+    assert _optimization_phase(40, 40) == "recurrence"
 
 
 def test_checkpoint_roundtrip_restores_exact_trainable_state(tmp_path: Path) -> None:

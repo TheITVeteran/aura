@@ -1,0 +1,238 @@
+{
+  "arm_results": {
+    "base_t1": {
+      "accuracy": 0.0,
+      "correct": 0,
+      "eos_stops": 3,
+      "tasks": 3
+    },
+    "trained_t1": {
+      "accuracy": 0.0,
+      "correct": 0,
+      "eos_stops": 3,
+      "tasks": 3
+    },
+    "trained_t8": {
+      "accuracy": 0.0,
+      "correct": 0,
+      "eos_stops": 3,
+      "tasks": 3
+    }
+  },
+  "campaign_identity_sha256": "b1f6d1f49df5059d50364edff991667fa1c2a608508b0345bdfb105a0a84ff0f",
+  "candidates": [
+    {
+      "arm": "base_t1",
+      "correct": false,
+      "decoded": "0",
+      "family": "khop",
+      "grade_reason": "unparseable",
+      "prompt_sha256": "9b25debe950a8982cdfa6aca8dcdc6f25d48c3a038b8e00c25742f05813ff163",
+      "response_sha256": "125f6c74c47290c891140fa8658aea50cf544ae78da1336dc2f47e94d7ff2d00",
+      "stopped_on_eos": true,
+      "task_id": "recurrence-khop-d4-s5559103335230023205",
+      "token_ids": [
+        15
+      ]
+    },
+    {
+      "arm": "trained_t1",
+      "correct": false,
+      "decoded": "{\"node\":6}",
+      "family": "khop",
+      "grade_reason": null,
+      "prompt_sha256": "9b25debe950a8982cdfa6aca8dcdc6f25d48c3a038b8e00c25742f05813ff163",
+      "response_sha256": "8e32c34c5942ad40b0c7a71f3fdb6cbca777011968d7e723384a60337daa416c",
+      "stopped_on_eos": true,
+      "task_id": "recurrence-khop-d4-s5559103335230023205",
+      "token_ids": [
+        4913,
+        3509,
+        788,
+        21,
+        92
+      ]
+    },
+    {
+      "arm": "trained_t8",
+      "correct": false,
+      "decoded": "{\"node\":5}",
+      "family": "khop",
+      "grade_reason": null,
+      "prompt_sha256": "9b25debe950a8982cdfa6aca8dcdc6f25d48c3a038b8e00c25742f05813ff163",
+      "response_sha256": "5ac2c92910b97181d173c798dbe1d38caf8805a13535dfca4ceac2c1a4aa71e0",
+      "stopped_on_eos": true,
+      "task_id": "recurrence-khop-d4-s5559103335230023205",
+      "token_ids": [
+        4913,
+        3509,
+        788,
+        20,
+        92
+      ]
+    },
+    {
+      "arm": "base_t1",
+      "correct": false,
+      "decoded": "3",
+      "family": "modular",
+      "grade_reason": "unparseable",
+      "prompt_sha256": "4ce905e6a282f0f6411ea1161b79101b2cccb25ed9520c4f446acafbc90de5f7",
+      "response_sha256": "98eec83cf1b091f39d835a5eb4aa250c2b4984a9a3a870dd31bebcb4c99c5672",
+      "stopped_on_eos": true,
+      "task_id": "recurrence-modular-d4-s2921202114285057355",
+      "token_ids": [
+        18
+      ]
+    },
+    {
+      "arm": "trained_t1",
+      "correct": false,
+      "decoded": "{\"residue\":10}",
+      "family": "modular",
+      "grade_reason": null,
+      "prompt_sha256": "4ce905e6a282f0f6411ea1161b79101b2cccb25ed9520c4f446acafbc90de5f7",
+      "response_sha256": "bd322f5b45b129b00eee2372400df7bc35b46c685632a8b7ccf1e25274921824",
+      "stopped_on_eos": true,
+      "task_id": "recurrence-modular-d4-s2921202114285057355",
+      "token_ids": [
+        4913,
+        416,
+        60607,
+        788,
+        16,
+        15,
+        92
+      ]
+    },
+    {
+      "arm": "trained_t8",
+      "correct": false,
+      "decoded": "{\"residue\":8}",
+      "family": "modular",
+      "grade_reason": null,
+      "prompt_sha256": "4ce905e6a282f0f6411ea1161b79101b2cccb25ed9520c4f446acafbc90de5f7",
+      "response_sha256": "ade1b1487b8890ff677ec27e17d6cfc4c3415db06323f0e13ccec218c1f4cc61",
+      "stopped_on_eos": true,
+      "task_id": "recurrence-modular-d4-s2921202114285057355",
+      "token_ids": [
+        4913,
+        416,
+        60607,
+        788,
+        23,
+        92
+      ]
+    },
+    {
+      "arm": "base_t1",
+      "correct": false,
+      "decoded": " {\"r0\": 20, \"r1\": 23, \"r2\": 28}",
+      "family": "register_trace",
+      "grade_reason": null,
+      "prompt_sha256": "872354823d4b259f7fd74df18c608f7f382ec381c95a65897c9e0d23c7e2a1b3",
+      "response_sha256": "d31bc5085f259ae24375a28f42473d3843c28f97be165ed581302b3f89c12199",
+      "stopped_on_eos": true,
+      "task_id": "recurrence-register_trace-d4-s1906501180864012912",
+      "token_ids": [
+        5212,
+        81,
+        15,
+        788,
+        220,
+        17,
+        15,
+        11,
+        330,
+        81,
+        16,
+        788,
+        220,
+        17,
+        18,
+        11,
+        330,
+        81,
+        17,
+        788,
+        220,
+        17,
+        23,
+        92
+      ]
+    },
+    {
+      "arm": "trained_t1",
+      "correct": false,
+      "decoded": "{\"r0\":22,\"r1\":22,\"r2\":22}",
+      "family": "register_trace",
+      "grade_reason": null,
+      "prompt_sha256": "872354823d4b259f7fd74df18c608f7f382ec381c95a65897c9e0d23c7e2a1b3",
+      "response_sha256": "e62d4d9570ff05d38cc8588008371b556164198750c6d161ebdb4e2b0b8d7bc0",
+      "stopped_on_eos": true,
+      "task_id": "recurrence-register_trace-d4-s1906501180864012912",
+      "token_ids": [
+        4913,
+        81,
+        15,
+        788,
+        17,
+        17,
+        1335,
+        81,
+        16,
+        788,
+        17,
+        17,
+        1335,
+        81,
+        17,
+        788,
+        17,
+        17,
+        92
+      ]
+    },
+    {
+      "arm": "trained_t8",
+      "correct": false,
+      "decoded": "{\"r0\":19,\"r1\":28,\"r2\":22}",
+      "family": "register_trace",
+      "grade_reason": null,
+      "prompt_sha256": "872354823d4b259f7fd74df18c608f7f382ec381c95a65897c9e0d23c7e2a1b3",
+      "response_sha256": "de1e0e13f20dd6c2a0e292e44a57ffe40e3ea87433aa9a150d174a2e3a6880dc",
+      "stopped_on_eos": true,
+      "task_id": "recurrence-register_trace-d4-s1906501180864012912",
+      "token_ids": [
+        4913,
+        81,
+        15,
+        788,
+        16,
+        24,
+        1335,
+        81,
+        16,
+        788,
+        17,
+        23,
+        1335,
+        81,
+        17,
+        788,
+        17,
+        17,
+        92
+      ]
+    }
+  ],
+  "checkpoint_sha256": "8454015a03b9712a8544f50b0bb686686b071f985b97f7d45182ccaddf400f01",
+  "claim_boundary": "greedy exact-answer diagnostic on fresh synthetic formal tasks; not a preregistered broad reasoning, resident-32B, or WOW result",
+  "evaluation_seed": 20260810204,
+  "heldout_depth": 8,
+  "max_tokens": 32,
+  "per_cell": 1,
+  "report_sha256": "a2cad7fb8d2de8076bcf5465f5c4844ac0673531bd9d5ffaafe24c95f6e27cb7",
+  "schema": "aura.unified_intrinsic_decode_evaluation.v1",
+  "task_count": 3
+}

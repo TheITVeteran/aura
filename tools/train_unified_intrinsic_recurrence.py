@@ -64,6 +64,38 @@ def _canonical_sha256(value: Any) -> str:
     ).hexdigest()
 
 
+def _file_sha256(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(8 * 1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def _model_identity(model_path: str) -> dict[str, Any]:
+    directory = Path(model_path).expanduser().resolve(strict=True)
+    config = directory / "config.json"
+    weights = sorted(directory.glob("*.safetensors"))
+    if not config.is_file() or not weights:
+        raise ValueError("model checkpoint identity is incomplete")
+    rows = []
+    for path in weights:
+        resolved = path.resolve(strict=True)
+        rows.append(
+            {
+                "name": path.name,
+                "size": resolved.stat().st_size,
+                "sha256": _file_sha256(resolved),
+            }
+        )
+    body = {
+        "canonical_path": str(directory),
+        "config_sha256": _file_sha256(config.resolve(strict=True)),
+        "weights": rows,
+    }
+    return {**body, "identity_sha256": _canonical_sha256(body)}
+
+
 def _atomic_json(path: Path, value: dict[str, Any]) -> None:
     encoded = json.dumps(value, indent=2, sort_keys=True) + "\n"
     scratch = path.with_name(f".{path.name}.{os.getpid()}.tmp")
@@ -133,6 +165,31 @@ def _trainable(bundle: UnifiedTrainingBundle) -> dict[str, Any]:
     return dict(tree_flatten(bundle.trainable_parameters()))
 
 
+def _optimization_phase(step: int, semantic_warmup_steps: int) -> str:
+    if type(step) is not int or step < 0:
+        raise ValueError("optimization step must be non-negative")
+    if type(semantic_warmup_steps) is not int or semantic_warmup_steps < 0:
+        raise ValueError("semantic warmup steps must be non-negative")
+    return "semantic_anchor" if step < semantic_warmup_steps else "recurrence"
+
+
+def _phase_gradients(gradients: Any, phase: str) -> Any:
+    """Keep semantic and recurrent optimization physically disjoint."""
+
+    if phase not in {"semantic_anchor", "recurrence"}:
+        raise ValueError("unified optimization phase is invalid")
+    masked = []
+    for name, value in tree_flatten(gradients):
+        shared_adapter = (
+            name.startswith("model.")
+            and "continuous_depth_" not in name
+            and (name.endswith(".lora_a") or name.endswith(".lora_b"))
+        )
+        keep = shared_adapter if phase == "semantic_anchor" else not shared_adapter
+        masked.append((name, value if keep else mx.zeros_like(value)))
+    return tree_unflatten(masked)
+
+
 def _residual_hidden_size(model: Any) -> int:
     """Infer model width from an unquantized residual-space parameter.
 
@@ -161,6 +218,7 @@ def _save_checkpoint(
     history: list[dict[str, Any]],
     identity: dict[str, Any],
     stem: str = "checkpoint_latest",
+    optimization_phase: str = "recurrence",
 ) -> None:
     if not stem.startswith("checkpoint_") or not stem.replace("_", "").isalnum():
         raise ValueError("unified recurrence checkpoint stem is invalid")
@@ -180,6 +238,7 @@ def _save_checkpoint(
     body = {
         "schema": TRAINING_SCHEMA,
         "step": step,
+        "optimization_phase": optimization_phase,
         "history": history,
         "identity": identity,
         "checkpoint_sha256": hashlib.sha256(
@@ -197,6 +256,8 @@ def _restore_checkpoint(
     bundle: UnifiedTrainingBundle,
     optimizer: Any,
     identity: dict[str, Any],
+    *,
+    semantic_warmup_steps: int = 0,
 ) -> tuple[int, list[dict[str, Any]]]:
     receipt_path = out_dir / "checkpoint_latest.json"
     weights_path = out_dir / "checkpoint_latest.safetensors"
@@ -221,6 +282,12 @@ def _restore_checkpoint(
         != hashlib.sha256(weights_path.read_bytes()).hexdigest()
     ):
         raise RuntimeError("unified recurrence checkpoint identity differs")
+    expected_phase = _optimization_phase(
+        int(receipt["step"]),
+        semantic_warmup_steps,
+    )
+    if receipt.get("optimization_phase") != expected_phase:
+        raise RuntimeError("unified recurrence checkpoint phase differs")
     tensors = mx.load(str(weights_path))
     bundle_values = {
         name.removeprefix("bundle."): value
@@ -315,15 +382,19 @@ def main() -> int:
     parser.add_argument("--lora-targets", default="o_proj,v_proj")
     parser.add_argument("--learning-rate", type=float, default=1e-4)
     parser.add_argument("--max-steps", type=int, default=120)
+    parser.add_argument("--semantic-warmup-steps", type=int, default=0)
     parser.add_argument("--max-minutes", type=float, default=90.0)
     parser.add_argument("--eval-every", type=int, default=20)
     parser.add_argument("--checkpoint-every", type=int, default=10)
     parser.add_argument("--checkpoint-group", type=int, default=4)
     parser.add_argument("--seed", type=int, default=20260810198)
+    parser.add_argument("--init-seed", type=int, default=20260810198)
     parser.add_argument("--bridge", default="assistant_answer")
     parser.add_argument("--memory-fraction", type=float, default=0.48)
     parser.add_argument("--resume", action="store_true")
     args = parser.parse_args()
+    if not 0 <= args.semantic_warmup_steps < args.max_steps:
+        raise ValueError("semantic warmup must leave at least one recurrent step")
 
     from mlx_lm import load
 
@@ -382,6 +453,7 @@ def main() -> int:
             "operator_launched": True,
         },
     ), mlx_memory_envelope(fraction=args.memory_fraction) as envelope:
+        mx.random.seed(args.init_seed)
         model, tokenizer = load(args.model)
         model.freeze()
         wiring = _attach_window_adapters(
@@ -397,17 +469,27 @@ def main() -> int:
                 hidden_size=hidden_size,
                 correction_rank=args.controller_rank,
                 minimum_iterations=1,
+                initialization_seed=args.init_seed,
             )
         )
         bundle = UnifiedTrainingBundle(model, controller)
         readout_sha256 = readout_fingerprint(model, spec.coda_start)
         identity = {
             "schema": TRAINING_SCHEMA,
-            "model": args.model,
+            "model": _model_identity(args.model),
             "spec": spec.to_dict(),
             "families": list(families),
             "task_depth": args.task_depth,
+            "per_cell": args.per_cell,
+            "holdout_per_cell": args.holdout_per_cell,
             "seed": args.seed,
+            "init_seed": args.init_seed,
+            "semantic_warmup_steps": args.semantic_warmup_steps,
+            "bridge": args.bridge,
+            "lora_rank": args.lora_rank,
+            "controller_rank": args.controller_rank,
+            "depth_basis_size": args.depth_basis_size,
+            "lora_targets": list(targets),
             "wiring": wiring,
             "readout_sha256": readout_sha256,
             "source_sha256s": {
@@ -418,7 +500,13 @@ def main() -> int:
         identity["identity_sha256"] = _canonical_sha256(identity)
         optimizer = optim.Adam(learning_rate=args.learning_rate)
         step, history = (
-            _restore_checkpoint(out_dir, bundle, optimizer, identity)
+            _restore_checkpoint(
+                out_dir,
+                bundle,
+                optimizer,
+                identity,
+                semantic_warmup_steps=args.semantic_warmup_steps,
+            )
             if args.resume
             else (0, [])
         )
@@ -431,7 +519,11 @@ def main() -> int:
             recurrence_adapter_scope,
         )
 
-        def objective(candidate: UnifiedTrainingBundle, prompt: Any, answer: Any):
+        def recurrent_objective(
+            candidate: UnifiedTrainingBundle,
+            prompt: Any,
+            answer: Any,
+        ):
             return unified_intrinsic_training_loss(
                 candidate.model,
                 prompt,
@@ -441,19 +533,45 @@ def main() -> int:
                 readout_sha256=readout_sha256,
             )[0]
 
-        loss_and_grad = nn.value_and_grad(bundle, objective)
+        def semantic_objective(
+            candidate: UnifiedTrainingBundle,
+            prompt: Any,
+            answer: Any,
+        ):
+            _states, losses = unified_answer_trajectory(
+                candidate.model,
+                prompt,
+                answer,
+                spec.plan_at(1),
+                candidate.controller,
+            )
+            return losses[-1]
+
+        recurrent_loss_and_grad = nn.value_and_grad(bundle, recurrent_objective)
+        semantic_loss_and_grad = nn.value_and_grad(bundle, semantic_objective)
         with checkpointed_window(model, group_size=args.checkpoint_group):
             while step < args.max_steps and time.time() < deadline:
+                phase = _optimization_phase(step, args.semantic_warmup_steps)
                 task = train_tasks[step % len(train_tasks)]
                 prompt, answer = encode_example(tokenizer, task, bridge)
                 with recurrence_adapter_scope(start=None, stop=None):
-                    loss, gradients = loss_and_grad(bundle, prompt, answer)
+                    operation = (
+                        semantic_loss_and_grad
+                        if phase == "semantic_anchor"
+                        else recurrent_loss_and_grad
+                    )
+                    loss, gradients = operation(bundle, prompt, answer)
+                    gradients = _phase_gradients(gradients, phase)
                     optimizer.update(bundle, gradients)
                     mx.eval(bundle.parameters(), optimizer.state, loss)
                 step += 1
+                next_phase = _optimization_phase(step, args.semantic_warmup_steps)
+                if next_phase != phase:
+                    optimizer = optim.Adam(learning_rate=args.learning_rate)
                 if step % 5 == 0:
                     print(
-                        f"[step {step}] loss={float(loss.item()):.5f} "
+                        f"[step {step}] phase={phase} "
+                        f"loss={float(loss.item()):.5f} "
                         f"elapsed_min={(time.time() - started) / 60.0:.1f}",
                         flush=True,
                     )
@@ -468,12 +586,15 @@ def main() -> int:
                         envelope=envelope,
                     )
                     report["step"] = step
+                    report["optimization_phase"] = next_phase
                     history.append(report)
                     print(f"[eval {step}] {report}", flush=True)
                     prior = history[:-1]
-                    if not prior or report["best_heldout_relative_gain"] > max(
-                        row.get("best_heldout_relative_gain", float("-inf"))
-                        for row in prior
+                    if report["heldout_depth_helps"] and (
+                        not prior or report["best_heldout_relative_gain"] > max(
+                            row.get("best_heldout_relative_gain", float("-inf"))
+                            for row in prior
+                        )
                     ):
                         _save_checkpoint(
                             out_dir,
@@ -483,10 +604,13 @@ def main() -> int:
                             history=history,
                             identity=identity,
                             stem="checkpoint_best_heldout",
+                            optimization_phase=next_phase,
                         )
-                    if not prior or report["best_deep_relative_gain"] > max(
-                        row.get("best_deep_relative_gain", float("-inf"))
-                        for row in prior
+                    if report["trained_depth_helps"] and (
+                        not prior or report["best_deep_relative_gain"] > max(
+                            row.get("best_deep_relative_gain", float("-inf"))
+                            for row in prior
+                        )
                     ):
                         _save_checkpoint(
                             out_dir,
@@ -496,6 +620,7 @@ def main() -> int:
                             history=history,
                             identity=identity,
                             stem="checkpoint_best_trained",
+                            optimization_phase=next_phase,
                         )
                 if step % args.checkpoint_every == 0 or step == args.max_steps:
                     _save_checkpoint(
@@ -505,6 +630,7 @@ def main() -> int:
                         step=step,
                         history=history,
                         identity=identity,
+                        optimization_phase=next_phase,
                     )
                 envelope.reclaim(force=True)
 
@@ -524,6 +650,10 @@ def main() -> int:
                 envelope=envelope,
             )
             final_ladder["step"] = step
+            final_ladder["optimization_phase"] = _optimization_phase(
+                step,
+                args.semantic_warmup_steps,
+            )
             final_ladder["full_depth_ladder"] = True
             history.append(final_ladder)
             _save_checkpoint(
@@ -533,6 +663,10 @@ def main() -> int:
                 step=step,
                 history=history,
                 identity=identity,
+                optimization_phase=_optimization_phase(
+                    step,
+                    args.semantic_warmup_steps,
+                ),
             )
         final_readout = readout_fingerprint(model, spec.coda_start)
         if final_readout != readout_sha256:

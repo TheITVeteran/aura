@@ -73,6 +73,17 @@ def test_continuous_depth_basis_is_defined_and_distinct_beyond_train_depth() -> 
     assert bool(mx.all(at_thousand >= 0.0))
 
 
+def test_controller_initialization_seed_replays_and_varies() -> None:
+    config = UnifiedRecurrenceConfig(hidden_size=64, initialization_seed=7)
+    first = UnifiedRecurrentController(config)
+    replay = UnifiedRecurrentController(config)
+    other = UnifiedRecurrentController(
+        UnifiedRecurrenceConfig(hidden_size=64, initialization_seed=8)
+    )
+    assert first.parameter_sha256() == replay.parameter_sha256()
+    assert first.parameter_sha256() != other.parameter_sha256()
+
+
 def test_protected_memory_survives_while_semantic_lane_keeps_moving() -> None:
     model = _model()
     controller = _controller()
@@ -146,6 +157,17 @@ def test_trained_correction_changes_the_real_answer_path() -> None:
     assert telemetry.receipt()["solver_available"] is False
 
 
+def test_controller_cannot_rewrite_the_t1_semantic_anchor() -> None:
+    model = _model()
+    controller = _controller()
+    plan = RecurrentDepthPlan(2, 6, iterations=1)
+    baseline, _ = unified_recurrent_logits(model, TOKENS, plan, controller)
+    controller.correction_b = mx.ones_like(controller.correction_b) * 10.0
+    controller.depth_scale = mx.ones_like(controller.depth_scale) * 10.0
+    changed, _ = unified_recurrent_logits(model, TOKENS, plan, controller)
+    assert bool(mx.array_equal(baseline, changed))
+
+
 def test_bounded_transport_preserves_t1_and_controls_deep_reentry() -> None:
     controller = _controller()
     previous = mx.ones((1, 4, 64))
@@ -154,9 +176,31 @@ def test_bounded_transport_preserves_t1_and_controls_deep_reentry() -> None:
     deep, deep_gate = controller.transport(previous, candidate, 8)
     assert bool(mx.array_equal(first, candidate))
     assert float(first_gate.item()) == 1.0
-    assert 0.0 < float(deep_gate.item()) < 1.0
+    assert 0.0 < float(mx.mean(deep_gate).item()) < 1.0
     assert float(mx.mean(mx.abs(deep))) < float(mx.mean(mx.abs(candidate)))
     assert float(mx.mean(mx.abs(deep))) >= float(mx.mean(mx.abs(previous)))
+    assert float(controller.transport_gate(8).item()) < float(
+        controller.transport_gate(1).item()
+    )
+    exponent = float(controller.transport_decay_exponent().item())
+    assert 0.5 < exponent < 1.0
+
+
+def test_adaptive_transport_starts_at_depth_prior_and_discriminates_state() -> None:
+    controller = _controller()
+    previous = mx.ones((1, 3, 64), dtype=mx.float32)
+    candidate = previous + 0.25
+    prior = controller.transport_gate(2)
+    initial = controller.transport_gate(2, previous, candidate)
+    assert initial.shape == (1, 3, 1)
+    assert bool(mx.allclose(initial, prior))
+
+    controller.transport_state_weight = mx.ones((64,), dtype=mx.float32)
+    accepted = controller.transport_gate(2, previous, candidate)
+    rejected = controller.transport_gate(2, -previous, -candidate)
+    assert bool(mx.all(accepted > initial))
+    assert bool(mx.all(rejected < initial))
+    assert bool(mx.all(accepted > 0.0)) and bool(mx.all(accepted < 1.0))
 
 
 def test_invalid_unified_contracts_fail_closed() -> None:
@@ -177,4 +221,12 @@ def test_invalid_unified_contracts_fail_closed() -> None:
             RecurrentDepthPlan(2, 6, iterations=3),
             _controller(),
             memory_layout=MemoryLayout(n_slots=5, memory_slots=(0,)),
+        )
+    with pytest.raises(ValueError, match="supplied together"):
+        _controller().transport_gate(1, mx.zeros((1, 1, 64)))
+    with pytest.raises(ValueError, match="shapes differ"):
+        _controller().transport_gate(
+            1,
+            mx.zeros((1, 1, 64)),
+            mx.zeros((1, 2, 64)),
         )
