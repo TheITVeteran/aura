@@ -505,6 +505,15 @@ def estimate_model_job_footprint_gb(model_path: str, *, purpose: str) -> float:
         base_gb = 4.0
 
     normalized = str(purpose or "serve").strip().lower()
+    if normalized == "train_frozen_controller":
+        # Frozen-controller training retains a full inference graph but creates no
+        # optimizer state or gradients for model projections.  The 2x checkpoint
+        # envelope remains above the measured 33.04 GiB peak of the resident 32B
+        # recurrence campaign (17.18 GiB checkpoint) without applying the broader
+        # 2.25x adapter/full-training estimate to a different workload class.
+        if artifact_gb > 0.0:
+            return max(artifact_gb + 4.0, artifact_gb * 2.0)
+        return max(base_gb + 4.0, base_gb * 1.6)
     if normalized in {"train", "compound"}:
         return max(base_gb + 4.0, base_gb * 1.8)
     if normalized == "fuse":

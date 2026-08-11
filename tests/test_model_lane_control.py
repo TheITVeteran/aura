@@ -27,6 +27,7 @@ from core.runtime.model_lane_control import (
     acquire_synchronous_in_process_model_lane,
     compensate_registered_model_owner,
     discover_external_model_processes,
+    estimate_model_job_footprint_gb,
     evict_managed_process_owner,
     evict_registered_model_owner,
     infer_model_process_claim,
@@ -37,6 +38,29 @@ from core.runtime.model_lane_control import (
 from core.runtime.receipts import ReceiptStore
 
 pytestmark = pytest.mark.unit
+
+
+def test_frozen_controller_training_uses_its_measured_workload_class(
+    tmp_path: Path,
+) -> None:
+    model = tmp_path / "quantized-model"
+    model.mkdir()
+    weights = model / "weights.safetensors"
+    with weights.open("wb") as stream:
+        stream.truncate(8 * 1024**3)
+
+    frozen_controller_gb = estimate_model_job_footprint_gb(
+        str(model),
+        purpose="train_frozen_controller",
+    )
+    broader_training_gb = estimate_model_job_footprint_gb(
+        str(model),
+        purpose="train",
+    )
+
+    assert frozen_controller_gb == pytest.approx(16.0)
+    assert broader_training_gb == pytest.approx(18.0)
+    assert frozen_controller_gb < broader_training_gb
 
 
 class AliveTable:

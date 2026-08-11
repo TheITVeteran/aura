@@ -44790,3 +44790,39 @@ architectural layering are clean. No resident training result, reasoning gain,
 fusion, frontier performance or `WOW Signal` is claimed. The completion
 envelope remains `912/920` (approximately `99.1%`). Next is to freeze CP236
 into a fresh immutable capsule and relaunch the bounded resident 32B canary.
+
+## Checkpoint 2026-08-11-237: Trainable-Tissue Memory Admission
+
+The source-bound CP236 resident canary reached its authenticated preload
+release twice, then failed before loading the model. Both detached attempts
+were contained with empty process groups and no durable training progress.
+They measured `35.13` and `35.48` GB of physical headroom against a generic
+`38.65` GB training request, after which the controller stopped at its
+consecutive no-progress limit. These attempts remain negative launch evidence;
+they are not represented as partial resident training.
+
+The request was derived by applying the broad adapter/full-training envelope
+to a different workload. In `controller_only` mode every transformer
+projection, coda and readout tensor remains frozen; only the portable recurrent
+controller owns optimizer state. The trainer also retains activation
+checkpointing. Historical external-sentinel telemetry for the same resident
+32B checkpoint measured a `33.04` GB peak during the broader recurrent adapter
+campaign. Its complete 37,205-observation journal is committed by SHA-256
+`aa94b5bb2ba5a8a73e2fdbe41bbe5061079a17e41d94984967b63786ee990897`.
+
+Model-lane admission now gives frozen-controller training an explicit workload
+class. It reserves the greater of checkpoint bytes plus 4 GB or twice the
+checkpoint bytes: `34.35` GB for this 17.18 GB quantized model, retaining about
+1.31 GB above the measured broader-training peak. Scoped-LoRA and other
+training continue to use the unchanged `38.65` GB estimate. The trainer derives
+the class from its immutable `window_tissue_mode` and records that mode in lane
+metadata; an unknown mode remains an error rather than falling through to a
+smaller estimate.
+
+The complete model-lane and unified-trainer surfaces pass `89/89` tests;
+repository smoke passes `104/104`; Ruff, compilation and architectural
+layering are clean. No resident training result, reasoning gain, fusion,
+frontier performance or `WOW Signal` is claimed. The completion envelope
+remains `912/920` (approximately `99.1%`). Next is to publish CP237, freeze a
+fresh immutable source-bound campaign, revalidate live headroom and run the
+bounded resident canary through its first durable checkpoint.

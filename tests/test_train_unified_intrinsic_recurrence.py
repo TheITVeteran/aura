@@ -52,6 +52,7 @@ from tools.train_unified_intrinsic_recurrence import (  # noqa: E402
     _load_frozen_dataset,
     _load_latest_checkpoint,
     _model_identity,
+    _model_lane_purpose,
     _optimization_phase,
     _phase_gradients,
     _residual_hidden_size,
@@ -157,6 +158,13 @@ def test_controller_only_tissue_leaves_every_model_projection_frozen() -> None:
     assert all(name.startswith("controller.") for name in trainable)
     for layer in model.model.layers:
         assert not isinstance(layer.self_attn.o_proj, ScopedLoRALinear)
+
+
+def test_model_lane_envelope_tracks_the_trainable_tissue_class() -> None:
+    assert _model_lane_purpose("controller_only") == "train_frozen_controller"
+    assert _model_lane_purpose("scoped_lora") == "train"
+    with pytest.raises(ValueError, match="window tissue mode"):
+        _model_lane_purpose("unknown")
 
 
 def test_invocation_boundary_is_operational_and_resumable() -> None:

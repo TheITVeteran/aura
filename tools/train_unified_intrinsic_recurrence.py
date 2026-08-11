@@ -538,6 +538,16 @@ def _configure_window_tissue(
     }
 
 
+def _model_lane_purpose(window_tissue_mode: str) -> str:
+    """Select the physical-memory envelope that matches the trainable tissue."""
+
+    if window_tissue_mode == "controller_only":
+        return "train_frozen_controller"
+    if window_tissue_mode == "scoped_lora":
+        return "train"
+    raise ValueError("unified recurrence window tissue mode is invalid")
+
+
 def _trainable(bundle: UnifiedTrainingBundle) -> dict[str, Any]:
     return dict(tree_flatten(bundle.trainable_parameters()))
 
@@ -2239,13 +2249,14 @@ def main() -> int:
     with standalone_model_lane(
         owner_id=f"train-unified-intrinsic:{out_dir.name}",
         model_path=args.model,
-        purpose="train",
+        purpose=_model_lane_purpose(args.window_tissue_mode),
         preemptible=False,
         require_exclusive=args.exclusive_model_lane,
         allow_owner_eviction=False,
         metadata={
             "tool": "train_unified_intrinsic_recurrence",
             "operator_launched": True,
+            "window_tissue_mode": args.window_tissue_mode,
         },
     ), mlx_memory_envelope(
         fraction=args.memory_fraction,
