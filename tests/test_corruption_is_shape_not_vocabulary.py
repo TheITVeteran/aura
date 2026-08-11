@@ -147,3 +147,58 @@ def test_the_false_positive_rate_on_real_english_stays_tiny():
     # Was 1.96% before the `y` fix. The bound is deliberately close to the
     # measured 0.14% so a regression cannot hide inside a generous margin.
     assert rate < 0.005, f"{rate:.4%} of real English words called malformed"
+
+
+class TestCitingASourceIsNotCorruption:
+    """A URL is not prose, and judging it as prose destroyed the reply.
+
+    LIVE, found 2026-08-11 while chasing a desktop-search lane failure. This
+    gate is FATAL — a positive verdict throws the entire reply away — and
+    "https" does not look like a word. One cited source was enough to trip the
+    20% malformed ratio on a short reply, and two were enough to trip the
+    absolute bound on a reply of any length:
+
+        "See https://example.org/a for the details."   → corrupted, destroyed
+
+    Aura is asked to cite her sources. Citing them made her answers
+    undeliverable, and the failure surfaced as a lane status rather than as
+    anything a reader would connect to a URL.
+
+    The gate judges lexical corruption in natural language. A URL, a path, an
+    address and a code span are well-formed identifiers of a kind that simply
+    is not natural language, so they are removed before the arithmetic rather
+    than counted as evidence against the sentence around them.
+    """
+
+    def _corrupt(self, text):
+        from core.phases.dialogue_policy import contains_corrupted_language
+
+        return contains_corrupted_language(text)
+
+    def test_one_cited_source_does_not_destroy_a_short_reply(self):
+        assert not self._corrupt("See https://example.org/a for the details.")
+
+    def test_two_cited_sources_do_not_destroy_a_reply(self):
+        assert not self._corrupt(
+            "I checked two sources: https://example.org/tardigrades and "
+            "https://en.wikipedia.org/wiki/Tardigrade — both agree."
+        )
+
+    def test_paths_addresses_and_code_spans_are_not_prose(self):
+        for text in (
+            "The fix is in core/runtime/fact_custody.py, line 40.",
+            "Email dev@example.org about the outage.",
+            "Run `pytest -q tests/test_fact_custody.py` and it passes.",
+            "Her logs are at ~/.aura/logs/desktop-launch.log.",
+        ):
+            assert not self._corrupt(text), text
+
+    def test_real_corruption_is_still_caught_next_to_a_url(self):
+        """Stripping the URL must not strip the evidence."""
+
+        assert self._corrupt(
+            "See https://example.org/a — the xublcate thlought is brolen."
+        )
+
+    def test_steering_collapse_is_still_caught(self):
+        assert self._corrupt("Do product of multiple exponent term xublcate reflexion")

@@ -1210,7 +1210,16 @@ def test_bounded_incomplete_decode_retains_raw_policy_trace(tiny_model, monkeypa
         **kwargs,
     ):
         trace = [11, 17]
-        receipt.decode_termination = "budget_exhausted"
+        # `budget_exhausted` used to stand here. It is now an ACCEPTED
+        # termination — eb528ff95 added it after it killed live turns with
+        # "decode_incomplete:budget_exhausted", on the reasoning that three
+        # dimensions bound a decode and the product-quality gate judges the
+        # TEXT rather than which meter ran out. Exhausting before the first
+        # token is the case that is still genuinely incomplete, and it is what
+        # this test needs: the property under test is that an incomplete
+        # decode keeps its raw policy trace, not which termination is
+        # incomplete.
+        receipt.decode_termination = "budget_exhausted_before_decode"
         receipt.decode_generated_tokens = len(trace)
         kwargs["token_logprobs_out"].extend([-0.2, -0.3])
         return trace, receipt, {}
@@ -1223,10 +1232,54 @@ def test_bounded_incomplete_decode_retains_raw_policy_trace(tiny_model, monkeypa
     )
 
     assert result.ok is False
-    assert result.reason == "decode_incomplete:budget_exhausted"
+    assert result.reason == "decode_incomplete:budget_exhausted_before_decode"
     assert result.text == "11,17"
     assert result.tokens == [11, 17]
     assert result.decode_token_logprobs == [-0.2, -0.3]
+
+
+def test_budget_exhausted_mid_decode_is_a_complete_answer(tiny_model, monkeypatch):
+    """The deliberate half of the change above, pinned so it cannot regress.
+
+    A decode that ran out of layer-application budget with tokens already
+    sampled is judged by whether the text stands as an answer, not by which of
+    the three budget dimensions ended sampling. Without this test, the only
+    thing recording that decision was the test that contradicted it.
+    """
+
+    class Tokenizer:
+        @staticmethod
+        def decode(tokens):
+            return ",".join(str(token) for token in tokens)
+
+    engine = LatentCortexEngine(
+        tiny_model,
+        tokenizer=Tokenizer(),
+        config=_config(allow_vanilla_fallback=False),
+    )
+
+    def bounded_episode(
+        _tokens,
+        _budget,
+        _verifier,
+        _domain,
+        receipt,
+        _decode_max_tokens,
+        **kwargs,
+    ):
+        trace = [11, 17]
+        receipt.decode_termination = "budget_exhausted"
+        receipt.decode_generated_tokens = len(trace)
+        kwargs["token_logprobs_out"].extend([-0.2, -0.3])
+        return trace, receipt, {}
+
+    monkeypatch.setattr(engine, "_latent_episode", bounded_episode)
+
+    result = engine.reason(token_ids=PROMPT_TOKENS, capture_decode_logprobs=True)
+
+    assert result.ok is True
+    assert not result.reason.startswith("decode_incomplete:")
+    assert result.text == "11,17"
 
 
 def test_budget_binds_and_is_reported(tiny_model):

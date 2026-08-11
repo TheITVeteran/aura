@@ -175,9 +175,39 @@ def _looks_like_a_word(token: str) -> bool:
     return not _IMPOSSIBLE_RUN_RE.search(body)
 
 
+#: Spans that are not prose and must not be judged as prose. A URL, a path, an
+#: address and a code span are all well-formed identifiers of a kind that is
+#: simply not natural language, and their components — "https", "wikipedia",
+#: "aura", a slug — are not evidence of anything about the sentence around
+#: them.
+#:
+#: This is a FATAL gate: a positive verdict destroys the whole reply. And
+#: "https" does not look like a word, so ONE cited source was enough to trip
+#: the 20% ratio on a short reply and two were enough to trip the absolute
+#: bound on any reply. Measured: "See https://example.org/a for the details."
+#: was classified as corrupted output and thrown away. Aura is asked to cite
+#: her sources; citing them made her answers undeliverable.
+_NON_PROSE_SPAN_RE = re.compile(
+    r"```.*?```"                       # fenced code
+    r"|`[^`]*`"                        # inline code
+    r"|\b[a-zA-Z][a-zA-Z0-9+.-]*://\S+"  # any scheme://…
+    r"|\bwww\.\S+"                     # bare www hosts
+    r"|\b[\w.+-]+@[\w-]+\.[\w.-]+\b"   # email addresses
+    r"|(?:^|(?<=\s))~?/[^\s,;]+"       # absolute and home-relative paths
+    r"|\b\w+\.(?:py|js|ts|json|md|txt|yaml|yml|toml|log|sh|swift)\b",  # filenames
+    re.DOTALL | re.IGNORECASE,
+)
+
+
+def _prose_only(text: str) -> str:
+    """The parts of a reply that are natural language, and nothing else."""
+
+    return _NON_PROSE_SPAN_RE.sub(" ", str(text or ""))
+
+
 def contains_corrupted_language(text: str) -> bool:
     """Detect visibly corrupted lexical output before it reaches a user."""
-    body = str(text or "")
+    body = _prose_only(text)
     tokens = _WORD_TOKEN.findall(body)
     if not tokens:
         return False
