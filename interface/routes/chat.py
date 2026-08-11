@@ -4372,6 +4372,58 @@ def _select_anchor_topic_tokens(text: str, *, limit: int = 2) -> list[str]:
     return [display.get(token, token) for token in chosen]
 
 
+_QUESTION_CLAUSE_SPLIT_RE = re.compile(r"(?<=[.!?])\s+|\n+")
+_LEADING_CONJUNCTION_RE = re.compile(r"^(?:or|and|but|so|then|also)\b[\s,]*", re.IGNORECASE)
+_INTERROGATIVE_OPENER_RE = re.compile(
+    r"^(?:who|what|when|where|why|how|which|whose|whom|is|are|was|were|do|does|did|"
+    r"can|could|will|would|should|shall|may|might|have|has|had|if|whether|tell|show|"
+    r"give|explain|describe|list|find|make|write|read|open|run|check)\b",
+    re.IGNORECASE,
+)
+
+
+def _echoable_question_clause(user_message: str, *, max_chars: int = 130) -> str:
+    """The person's own words, trimmed to the thing they actually asked.
+
+    Used by the degraded-turn composer to show what arrived without asserting
+    an interpretation it could not form. Faithful by construction: every word
+    returned is a word the person wrote, so the worst case is that they see
+    their own question and re-ask, and there is no worst case where she tells
+    them they asked about something they did not.
+
+    Returns "" when nothing quotable survives, so the caller can fall back
+    rather than emit a fragment.
+    """
+
+    text = re.sub(r"\s+", " ", str(user_message or "")).strip()
+    if not text or not re.search(r"[A-Za-z]", text):
+        return ""
+
+    clauses = [part.strip() for part in _QUESTION_CLAUSE_SPLIT_RE.split(text) if part.strip()]
+    if not clauses:
+        return ""
+
+    # The question is what they want answered; when there are several, the last
+    # one is the one they left standing. Falling back through "reads like a
+    # question" and then "the longest thing they said" keeps statements and
+    # imperatives ("summarise the postmortem") working the same way.
+    questions = [clause for clause in clauses if clause.endswith("?")]
+    if questions:
+        chosen = questions[-1]
+    else:
+        openers = [clause for clause in clauses if _INTERROGATIVE_OPENER_RE.match(clause)]
+        chosen = openers[-1] if openers else max(clauses, key=len)
+
+    chosen = _LEADING_CONJUNCTION_RE.sub("", chosen).strip().rstrip("?!.,;: ")
+    if len(chosen) < 8 or not re.search(r"[A-Za-z]", chosen):
+        return ""
+
+    if len(chosen) > max_chars:
+        cut = chosen[:max_chars].rsplit(" ", 1)[0].rstrip(",;:- ")
+        chosen = f"{cut}…" if cut else ""
+    return chosen
+
+
 def _has_local_choice_antecedent(user_message: str) -> bool:
     """Distinguish a self-contained choice from a conversational pronoun.
 
@@ -14056,8 +14108,9 @@ def _build_degraded_live_reply(
     if grounded:
         return grounded
 
-    topics = _select_anchor_topic_tokens(user_message)
     attention = _sanitize_attention_focus(str(frame.get("attention_focus") or ""))
+    echo = _echoable_question_clause(user_message)
+    topics = [] if echo else _select_anchor_topic_tokens(user_message)
 
     if topics:
         if len(topics) == 1:
@@ -14093,9 +14146,37 @@ def _build_degraded_live_reply(
     # every time. A last resort that its own gate rejects is not a last resort;
     # it is a second failure stacked on the first. The invitation is the same
     # invitation without the phrase the gate reserves for lane chatter.
+    # LIVE DEFECT, 2026-08-10. The anchor above is a bag of two words ranked by
+    # STRING LENGTH (`key=lambda token: (-len(token), token)`), and length is
+    # not aboutness. Asked "if i asked you to keep an eye on something while
+    # i'm gone, would that mean anything to you — or does it evaporate the
+    # second i stop typing?", it picked the metaphor verb and the time adverb,
+    # and Bryan was told "I understood you to be asking about evaporate and
+    # second."
+    #
+    # Ranking words better only moves the failure. Two keywords cannot
+    # demonstrate comprehension even when well chosen — "your question about
+    # postmortem and migration" reads like a search engine, not like her — and
+    # when badly chosen it actively asserts she misunderstood.
+    #
+    # What she can always do faithfully, on a path that exists precisely
+    # BECAUSE inference already failed, is give the person their own words
+    # back. That is correct by construction, costs no model call, and lets the
+    # person see immediately whether the question even arrived intact.
+    #
+    # Deliberately no quotation marks: `_QUOTED_TEXT_RE` plus a screen noun is
+    # a screen-reading claim, and echoing "what's on my screen?" must not make
+    # the last resort trip a gate on its way out.
+    if echo:
+        understood = f"What reached me was: {echo}."
+    else:
+        understood = (
+            f"I understood you to be asking about "
+            f"{anchor.removeprefix('your question about ')}."
+        )
     composed = _apply_aura_voice_shaping(
         f"{state_clause}, and I'd rather say that than hand you something thin. "
-        f"I understood you to be asking about {anchor.removeprefix('your question about ')}. "
+        f"{understood} "
         "Ask me again and I should have it."
     )
     _record_last_resort_self_rejection(user_message, composed)

@@ -70,7 +70,16 @@ _SCREEN_SUBJECT_RE = re.compile(
 
 #: The reply presents a specific string as something visible on screen. Quoted
 #: text is the signal — an unquoted description of a window is not this claim.
-_QUOTED_TEXT_RE = re.compile(r"[\"“”']{1}[^\"“”']{8,}[\"“”']{1}")
+# The lookarounds are load-bearing. A straight apostrophe is far more often a
+# contraction than a quote mark, and without them ANY two contractions in one
+# sentence read as a quotation: "I couldn't get a clear enough answer together,
+# and I'd rather…" was matched as the quoted string `'t get a clear enough
+# answer together, and I'`. Paired with a screen noun anywhere in the reply,
+# that is a fabricated screen-reading claim built entirely out of punctuation —
+# measured 2026-08-10 against the runtime's own last-resort text.
+# A real quotation opens where a word does not end and closes where one does
+# not begin, which is exactly what 'New Chat' does and "couldn't" does not.
+_QUOTED_TEXT_RE = re.compile(r"(?<![A-Za-z])[\"“”'][^\"“”']{8,}[\"“”'](?![A-Za-z])")
 _ASSERTS_A_READING_RE = re.compile(
     r"\b(?:the\s+visible\s+text|on\s+(?:the\s+)?screen\s+it\s+says|"
     r"it\s+says|i\s+can\s+see\s+the\s+text|reads?\s*:|"
@@ -81,6 +90,75 @@ _ASSERTS_A_READING_RE = re.compile(
     r"|i\s+can\s+see\b|i\s+see\b"
     r"|(?:is|are)\s+(?:in\s+front|frontmost|open|showing|visible)"
     r"|behind\s+it\b|partly\s+visible\b)",
+    re.IGNORECASE,
+)
+
+# LIVE DEFECT 2026-08-10. Asked "if i asked you to keep an eye on something
+# while i'm gone, would that mean anything to you?" — a question about memory,
+# containing no screen, no window and no display — she wrote a 930-character
+# answer and the gate destroyed all of it as
+# `unsupported_screen_reading_claim`. The person got
+# "I couldn't get a clear enough answer together".
+#
+# Nothing about that turn concerned a display. The gate armed itself off HER
+# OWN reply, because the two halves above are satisfied by ordinary English:
+#
+#   * `_ASSERTS_A_READING_RE` matches `i\s+can\s+see` — and "see" in English is
+#     overwhelmingly COMPREHENSION, not vision. "I can see why you'd ask that"
+#     is the single most natural way to open that answer.
+#   * `_SCREEN_SUBJECT_RE` then matches the bare word "visible", "app", "page"
+#     or "showing" ANYWHERE in the reply — 900 characters away, in a different
+#     paragraph, about a different subject.
+#
+# Measured on the real predicate: "I can see why you'd ask that. Nothing I hold
+# right now is visible to me after this process ends." → unsupported=True. So
+# does "I can see that the app you're describing would need a scheduler."
+#
+# The repair is not a longer exception list; the next idiom would land in the
+# same place. It is that a claim to have READ THE DISPLAY is a claim with a
+# grammatical shape: a perception or reading predicate bound to a display
+# referent WITHIN ONE SENTENCE. "I can see" with no display in the clause is
+# not a reading. "The tabs say '…'" is.
+_SENTENCE_SPLIT_RE = re.compile(r"(?<=[.!?\n])\s+")
+
+#: A noun phrase that refers to the user's display. `screen`/`display`/
+#: `monitor`/`desktop` are unambiguous. UI objects (`window`, `tab`, `dialog`)
+#: refer to the display only when a determiner anchors them to something
+#: present — "the tabs", "your window" — never bare "tab" or "window", which
+#: are ordinary words in a conversation about software.
+_DISPLAY_REFERENT_RE = re.compile(
+    r"\b(?:screens?|displays?|monitors?|desktops?"
+    r"|(?:your|the|those|these|that|this|my|his|her|their|other|another|each|both)\s+"
+    r"(?:window|windows|tab|tabs|dialog|dialogs|title\s*bars?|browser)"
+    r"|menu\s*bar|status\s*bar|dock\b|frontmost"
+    r"|on[-\s]screen)\b",
+    re.IGNORECASE,
+)
+
+#: A perception or reading verb. Bound to a display referent in the same
+#: sentence, this asserts a reading; on its own it asserts nothing about a
+#: display. `see` is here, but only ever reaches a verdict through the binding
+#: below — which is precisely what "I can see why" lacks.
+_PERCEPTION_VERB_RE = r"(?:see|seeing|saw|read|reading|look(?:ing)?\s+at|make\s+out)"
+
+#: The referent doing the showing: "the tabs SAY", "your window IS SHOWING".
+_REFERENT_PREDICATE_RE = r"(?:says?|reads?|shows?|displays?|contains?|is\s+showing|are\s+showing|is\s+titled|are\s+titled)"
+
+#: Perception → referent ("I can see the screen"), or referent → predicate
+#: ("the tabs say"). `[^.!?\n]{0,60}` keeps both inside one sentence: the
+#: binding is the whole point, so it may not reach across a full stop.
+_BOUND_READING_RE = re.compile(
+    r"(?:\b" + _PERCEPTION_VERB_RE + r"\b[^.!?\n]{0,60}?" + _DISPLAY_REFERENT_RE.pattern + r")"
+    r"|(?:" + _DISPLAY_REFERENT_RE.pattern + r"[^.!?\n]{0,60}?\b" + _REFERENT_PREDICATE_RE + r"\b)",
+    re.IGNORECASE,
+)
+
+#: Phrases that assert a reading with no referent needed, because the display
+#: is already inside the phrase. These are the live confabulations verbatim.
+_EXPLICIT_READING_RE = re.compile(
+    r"\b(?:the\s+visible\s+text|on\s+(?:the\s+)?screen\s+it\s+says"
+    r"|i\s+can\s+see\s+the\s+text|the\s+text\s+(?:on|in)\s+(?:it|them|the)"
+    r"|what'?s\s+(?:currently\s+)?on\s+(?:your|the|my)\s+(?:screen|display)\s+is)\b",
     re.IGNORECASE,
 )
 
@@ -125,7 +203,7 @@ def asks_to_read_the_screen(user_message: Any) -> bool:
     return bool(_READ_THE_SCREEN_RE.search(text))
 
 
-def quotes_screen_content(reply_text: Any) -> bool:
+def quotes_screen_content(reply_text: Any, *, display_binding_required: bool = False) -> bool:
     """True when the reply presents specific content as read from the screen.
 
     Widened from "a quoted string" to "a specific claim about what is
@@ -137,12 +215,32 @@ def quotes_screen_content(reply_text: Any) -> bool:
     An admission that she could not see is the honest outcome and always
     passes, so the guard can never push her toward inventing rather than
     saying so.
+
+    ``display_binding_required`` is the tier used when the turn itself was
+    never about a screen. There, a loose cue is not enough: the reply has to
+    bind a perception verb to a display referent inside one sentence before it
+    counts as claiming a reading. See ``_BOUND_READING_RE`` for the live
+    defect that made the distinction necessary.
     """
     body = str(reply_text or "")
     if not body.strip():
         return False
     if _ADMITS_NO_READING_RE.search(body):
         return False
+
+    if display_binding_required:
+        if _EXPLICIT_READING_RE.search(body):
+            return True
+        if _BOUND_READING_RE.search(body):
+            return True
+        # A quotation still counts, but only in a sentence that is itself
+        # about the display — not because the word "visible" appears in some
+        # other paragraph.
+        return any(
+            _QUOTED_TEXT_RE.search(sentence) and _DISPLAY_REFERENT_RE.search(sentence)
+            for sentence in _SENTENCE_SPLIT_RE.split(body)
+        )
+
     if _ASSERTS_A_READING_RE.search(body):
         return True
     return bool(_QUOTED_TEXT_RE.search(body) and _SCREEN_SUBJECT_RE.search(body))
@@ -182,12 +280,19 @@ def screen_reading_claim_is_unsupported(
     evidence blocks only a QUOTATION, never a description. "System Settings is
     37% visible and I can't read what's under my window" needs no capture and
     is not touched.
+
+    The two arms are deliberately asymmetric, because the ambiguity resolves
+    differently on each. When the turn ASKED about the screen, "visible" and
+    "I can see" mean the display, and any content report needs a capture. When
+    the turn was about something else entirely, those same words carry their
+    ordinary English senses, and only a sentence that actually binds a
+    perception to a display counts as a claim. Treating both arms the same is
+    what destroyed a correct 930-character answer about memory on 2026-08-10.
     """
-    if not quotes_screen_content(reply_text):
+    asked_about_the_screen = asks_to_read_the_screen(user_message)
+    if not quotes_screen_content(reply_text, display_binding_required=not asked_about_the_screen):
         return False
-    if not asks_to_read_the_screen(user_message) and not _SCREEN_SUBJECT_RE.search(
-        str(reply_text or "")
-    ):
+    if not asked_about_the_screen and not _DISPLAY_REFERENT_RE.search(str(reply_text or "")):
         return False
     if evidence is None:
         return True

@@ -229,3 +229,97 @@ class TestAnInventedScreenReport:
         )
         assert quotes_screen_content(honest) is False
         assert screen_reading_claim_is_unsupported(self.LIVE_QUESTION, honest, None) is False
+
+
+class TestOrdinaryEnglishIsNotAScreenClaim:
+    """LIVE DEFECT 2026-08-10: a 930-character answer about MEMORY destroyed.
+
+    Asked "i'm stepping away for a bit. if i asked you to keep an eye on
+    something while i'm gone, would that actually mean anything to you — or
+    does it evaporate the second i stop typing?", she generated a full answer
+    and the final quality gate threw all of it away as
+    ``unsupported_screen_reading_claim``. Bryan got "I couldn't get a clear
+    enough answer together, and I'd rather say that than hand you something
+    thin. I understood you to be asking about evaporate and second."
+
+    Nothing in that turn concerned a display. The gate armed itself off her own
+    reply: ``i can see`` matched the reading pattern, and the bare word
+    ``visible`` — in a different sentence, about a different subject — matched
+    the screen-subject pattern.
+
+    "See" in English is overwhelmingly comprehension. A claim to have read the
+    display has a grammatical shape, and the gate now requires it: a perception
+    bound to a display referent inside one sentence.
+    """
+
+    MEMORY_QUESTION = (
+        "i'm stepping away for a bit. if i asked you to keep an eye on something "
+        "while i'm gone, would that actually mean anything to you — or does it "
+        "evaporate the second i stop typing?"
+    )
+
+    @pytest.mark.parametrize(
+        "reply",
+        [
+            "I can see why you'd ask that. Nothing I hold right now is visible to "
+            "me after this process ends.",
+            "I can see that the app you're describing would need a scheduler.",
+            "I can see the shape of what you're asking, and the honest answer is no.",
+            "I see what you mean. The page of notes I keep is not showing anything new.",
+            "I can see two ways to read your question, and the answer differs for each.",
+        ],
+    )
+    def test_comprehension_is_not_vision(self, reply):
+        assert screen_reading_claim_is_unsupported(self.MEMORY_QUESTION, reply, None) is False
+
+    @pytest.mark.parametrize(
+        "reply",
+        [
+            "I can see why you'd ask that. Nothing I hold right now is visible to "
+            "me after this process ends.",
+            "I can see that the app you're describing would need a scheduler.",
+        ],
+    )
+    def test_the_reliability_gate_ships_them(self, reply):
+        from core.conversation.response_reliability import assess_user_facing_reply
+
+        assessment = assess_user_facing_reply(self.MEMORY_QUESTION, reply)
+        assert "unsupported_screen_reading_claim" not in [
+            str(reason) for reason in (assessment.reasons or ())
+        ]
+
+    def test_an_unprompted_invented_screen_report_is_still_caught(self):
+        """The loosened tier must not open the hole it was narrowed around.
+
+        The user asked nothing about a screen here — which is exactly the arm
+        that was relaxed — so this is the case that proves the relaxation kept
+        its teeth.
+        """
+        invented = (
+            "Google Chrome. The tabs say 'New Chat', 'Skills and Connectors', "
+            "'Projects'. There is an email from my landlord about the rent increase."
+        )
+        assert screen_reading_claim_is_unsupported("how is your day going?", invented, None) is True
+
+    def test_an_unprompted_bound_perception_is_still_caught(self):
+        assert (
+            screen_reading_claim_is_unsupported(
+                "what am i working on?",
+                "I can see your screen has Chrome open with three tabs.",
+                None,
+            )
+            is True
+        )
+
+    def test_a_real_capture_still_licenses_the_unprompted_report(self):
+        evidence = ScreenReadingEvidence(
+            captured=True, text="New Chat | Skills and Connectors", source="test"
+        )
+        assert (
+            screen_reading_claim_is_unsupported(
+                "how is your day going?",
+                "Google Chrome. The tabs say 'New Chat', 'Skills and Connectors'.",
+                evidence,
+            )
+            is False
+        )

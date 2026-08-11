@@ -10,9 +10,10 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 
+from core.phases import dialogue_policy
 from core.phases.dialogue_policy import (
-    _ground_live_voice_surface,
     _lowercase_continuation_start,
+    repair_dialogue_surface,
 )
 
 
@@ -57,24 +58,42 @@ class TestContinuationCase:
         )
 
 
-class TestGroundedSurfaceReadsAsOneSentence:
-    def test_the_live_defect_is_gone(self):
-        grounded = _ground_live_voice_surface(
-            "Forgetting is a mercy. It's not about erasing history.",
-            _memory_contract(),
-        )
-        assert grounded.startswith("From my conversation memory,"), (
-            "the grounding marker itself is a contract other tests pin"
-        )
-        assert "memory, Forgetting" not in grounded, (
-            "a capital mid-sentence after the grounding comma is the bug"
-        )
-        assert "memory, forgetting is a mercy" in grounded
+class TestTheGroundingPrefixIsNotSynthesisedAtAll:
+    """The mechanism this file was written against was removed, deliberately.
 
-    def test_a_name_after_the_comma_is_left_alone(self):
-        grounded = _ground_live_voice_surface(
-            "Bryan asked me to keep that number.", _memory_contract()
+    `_ground_live_voice_surface` glued "From my conversation memory, " onto the
+    front of a reply to satisfy a contract that actually requires a first-person
+    STANCE. It asserted retrieval exactly where retrieval was weakest — the flag
+    it keyed on is raised when evidence is THIN — and it ran before the retry,
+    so a draft that failed the contract was cosmetically patched instead of
+    regenerated.
+
+    This file kept importing the deleted symbol, so it failed to COLLECT: the
+    grammar tests below stopped running, and every other test sharing its chunk
+    went with it. The import is now the module, and the class that tested the
+    removed behaviour tests the removal instead — the decision is a contract,
+    so it gets a guard rather than a deletion.
+    """
+
+    def test_the_symbol_is_gone(self):
+        assert not hasattr(dialogue_policy, "_ground_live_voice_surface"), (
+            "reintroducing this puts provenance back into her voice, where a "
+            "reader cannot check it, and re-skips the regeneration retry"
         )
-        assert "memory, Bryan asked" in grounded, (
-            "conservative case: never lower-case a person's name"
-        )
+
+    def test_the_surface_repair_never_prepends_a_provenance_clause(self):
+        for draft in (
+            "Forgetting is a mercy. It's not about erasing history.",
+            "Bryan asked me to keep that number.",
+            "A room with walls made of memory.",
+        ):
+            repaired = repair_dialogue_surface(draft, _memory_contract())
+            lowered = repaired.lower()
+            assert not lowered.startswith("from my conversation memory"), repaired
+            assert not lowered.startswith("from my live runtime state"), repaired
+
+    def test_a_thin_evidence_contract_does_not_manufacture_grounding(self):
+        """The flag means evidence is THIN; the surface must not claim retrieval."""
+        draft = "The code you gave me earlier was 7213."
+        repaired = repair_dialogue_surface(draft, _memory_contract())
+        assert "conversation memory," not in repaired.lower(), repaired

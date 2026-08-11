@@ -31,6 +31,7 @@ caught by ``admission_defects`` below.
 from __future__ import annotations
 
 import hashlib
+import re
 from collections import OrderedDict
 from dataclasses import dataclass
 from enum import Enum
@@ -123,6 +124,38 @@ _ANSWER_CLAIMS = (
 )
 
 
+_WORD_RE = re.compile(r"[a-z0-9']+")
+
+#: Three consecutive words carried over from the turn is not coincidence; one
+#: or two ("the file", "you can") happen by chance in any English sentence.
+_ECHO_RUN_TOKENS = 3
+
+
+def _verbatim_echo_spans(user_message: str, reply_text: str) -> list[str]:
+    """Runs of the person's own words, in order, that the reply gives back.
+
+    Contiguity is what makes this evidence. A reply that reuses scattered
+    vocabulary from the turn has demonstrated nothing; a reply carrying an
+    unbroken run of what they wrote has demonstrably received it.
+    """
+
+    said = _WORD_RE.findall(str(user_message or "").lower())
+    back = _WORD_RE.findall(str(reply_text or "").lower())
+    if len(said) < _ECHO_RUN_TOKENS or len(back) < _ECHO_RUN_TOKENS:
+        return []
+
+    said_runs = {
+        " ".join(said[i : i + _ECHO_RUN_TOKENS])
+        for i in range(len(said) - _ECHO_RUN_TOKENS + 1)
+    }
+    spans: list[str] = []
+    for i in range(len(back) - _ECHO_RUN_TOKENS + 1):
+        run = " ".join(back[i : i + _ECHO_RUN_TOKENS])
+        if run in said_runs:
+            spans.append(run)
+    return spans
+
+
 def admission_defects(user_message: str, reply_text: str) -> AdmissionCheck:
     """Check an honest-failure reply against what makes it honest.
 
@@ -140,14 +173,33 @@ def admission_defects(user_message: str, reply_text: str) -> AdmissionCheck:
         defects.append("empty_admission")
         return AdmissionCheck(False, tuple(defects))
 
-    if any(claim in lowered for claim in _ANSWER_CLAIMS):
+    echoed = _verbatim_echo_spans(user_message, text)
+
+    # Quoting the person cannot be asserting a finding. Without this, an
+    # admission that echoes "tell me what the answer is" back to them is
+    # accused of claiming an answer it explicitly said it did not have.
+    claim_surface = lowered
+    for span in echoed:
+        claim_surface = claim_surface.replace(span, " ")
+    if any(claim in claim_surface for claim in _ANSWER_CLAIMS):
         defects.append("admission_claims_an_answer")
 
     # Naming the subject back is what makes the admission useful — it lets the
     # person see whether the turn was even parsed correctly. A turn that named
     # no subject cannot be echoed, so it is not required to be.
-    if str(user_message or "").strip() and "understood you to be asking" not in lowered:
-        if "i understood" not in lowered and "you asked" not in lowered:
+    #
+    # This was three literal phrases ("understood you to be asking", "i
+    # understood", "you asked"), which made it a lexical gate deciding a
+    # semantic property: on 2026-08-10 the degraded composer began showing the
+    # person their own question back — the strongest possible evidence that the
+    # turn was parsed — and was marked `admission_names_nothing_understood` for
+    # not using one of the three approved openers. Giving their words back IS
+    # naming the subject, and it is better evidence than the phrase.
+    if str(user_message or "").strip() and not echoed:
+        if not any(
+            marker in lowered
+            for marker in ("understood you to be asking", "i understood", "you asked")
+        ):
             defects.append("admission_names_nothing_understood")
 
     return AdmissionCheck(not defects, tuple(defects))
