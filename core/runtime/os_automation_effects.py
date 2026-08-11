@@ -32,6 +32,12 @@ class EffectKind(StrEnum):
     FILE_EXISTS = "file_exists"
     FILE_NONEMPTY = "file_nonempty"
     FILE_CONTAINS = "file_contains"
+    # LIVE, 2026-08-10: "Put the text ORION-7 on my clipboard" was refused with
+    # "the objective has no complete observable acceptance contract" — because
+    # no clipboard effect kind existed, so a clipboard goal could never carry a
+    # strong required check and was unverifiable by construction. The
+    # observation already read the clipboard; nothing could ask about it.
+    CLIPBOARD_CONTAINS = "clipboard_contains"
 
 
 _APP_ALIASES = {
@@ -87,7 +93,14 @@ _UNVERIFIED_CONTROL_OPERATIONS = (
         "software installation is outside the desktop automation authority",
     ),
     (
-        re.compile(r"\b(?:copy|move|rename)\b", re.IGNORECASE),
+        # Not when the destination is the clipboard. "copy 'hello' to my
+        # clipboard" mutates no filesystem and has an exact postcondition —
+        # the text is on the clipboard — but the bare verb read as a file
+        # copy and made the objective permanently unverifiable.
+        re.compile(
+            r"\b(?:copy|move|rename)\b(?![^.?!]{0,60}\b(?:clip\s?board|pasteboard)\b)",
+            re.IGNORECASE,
+        ),
         "filesystem mutation lacks source, destination, and artifact verification",
     ),
     (
@@ -419,6 +432,31 @@ def extract_target_paths(goal: str) -> tuple[str, ...]:
     return tuple(dict.fromkeys(paths))
 
 
+
+_CLIPBOARD_GOAL_RE = re.compile(r"\b(?:clip\s?board|pasteboard)\b", re.IGNORECASE)
+#: The literal a person put in quotes, or an unquoted token that reads like an
+#: identifier — "put ORION-7 on my clipboard" names its own acceptance test.
+_CLIPBOARD_LITERAL_RE = re.compile(
+    r"[\"'\u201c\u2018](?P<quoted>[^\"'\u201d\u2019]{1,200})[\"'\u201d\u2019]"
+    r"|\b(?:text|string|value|word)\s+(?P<named>[\w.\-/]{2,80})",
+    re.IGNORECASE,
+)
+
+
+def _clipboard_payload(goal: str, text_payload: str) -> str:
+    """The exact text a clipboard objective asks to be there afterwards."""
+
+    if not _CLIPBOARD_GOAL_RE.search(goal or ""):
+        return ""
+    explicit = " ".join(str(text_payload or "").split())
+    if explicit:
+        return explicit[:200]
+    match = _CLIPBOARD_LITERAL_RE.search(goal or "")
+    if match is None:
+        return ""
+    return (match.group("quoted") or match.group("named") or "").strip()[:200]
+
+
 def build_effect_contract(
     goal: str,
     *,
@@ -546,6 +584,16 @@ def build_effect_contract(
             EffectKind.FILE_CONTAINS,
             f"{target_paths[0]}::{witness_for_file}",
             f"{target_paths[0]} contains the requested text.",
+        )
+
+    # A clipboard objective names the text it wants there, so the acceptance
+    # criterion is exact: that text is on the clipboard afterwards.
+    clipboard_payload = _clipboard_payload(normalized_goal, text_payload)
+    if clipboard_payload:
+        add(
+            EffectKind.CLIPBOARD_CONTAINS,
+            clipboard_payload,
+            f"The clipboard contains {clipboard_payload[:80]} after the action.",
         )
 
     calculation_result = _calculation_result(normalized_goal)
@@ -758,6 +806,14 @@ def _evaluate_requirement(
                 f"expected window region {expected!r}; window={observed or 'unknown'}; "
                 f"desktop={_format_frame(after.desktop_frame) or 'unknown'}"
             )
+        )
+    elif kind == EffectKind.CLIPBOARD_CONTAINS:
+        observed = _bounded_text(after.clipboard_excerpt, 260)
+        passed = _contains_normalized(after.clipboard_excerpt, expected)
+        detail = (
+            f"clipboard_contains={expected[:120]}"
+            if passed
+            else "requested text was not on the clipboard after the action"
         )
     elif kind == EffectKind.TEXT_VISIBLE:
         visible_text = "\n".join(
