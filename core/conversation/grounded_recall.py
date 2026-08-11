@@ -244,6 +244,48 @@ def _history_own_exchanges(history: Any, exclude_norm: str) -> list[tuple[str, s
     return exchanges
 
 
+def _transcript_own_exchanges(exclude_norm: str) -> list[tuple[str, str]]:
+    """Her turns from the durable transcript, paired with what prompted them.
+
+    LIVE DEFECT, 2026-08-10. "why did you say your energy was 0.91 earlier?"
+    logged "own-statement recall detected but no matching prior turn of hers
+    found — cannot ground, letting model answer", and the model answered
+    ungrounded. Her actual turn — "Energy: 0.23 / 1" — shares the content word
+    "energy" and would have resolved immediately. It had simply aged out of
+    working memory, which is the only place `_history_own_exchanges` looks.
+
+    The USER side of this module already falls back to the durable transcript
+    when working memory comes up short (`_transcript_user_turns`). Her side did
+    not, so her own words were the ones that expired first — the same asymmetry
+    this module was extended to close, one level further down.
+    """
+
+    try:
+        from core.conversation.unified_transcript import UnifiedTranscript
+
+        entries = list(getattr(UnifiedTranscript.get_instance(), "_entries", []) or [])
+    except (ImportError, AttributeError, RuntimeError) as exc:
+        logger.debug("Grounded recall: transcript unavailable for own turns: %s", exc)
+        return []
+
+    exchanges: list[tuple[str, str]] = []
+    prompt = ""
+    for entry in entries:
+        role = str(getattr(entry, "role", "") or "")
+        content = str(getattr(entry, "content", "") or "").strip()
+        if not content:
+            continue
+        if role == "user":
+            prompt = content
+            continue
+        if role not in {"assistant", "aura"}:
+            continue
+        if content.lower() != exclude_norm and not states_no_position(content):
+            exchanges.append((prompt, content))
+        prompt = ""
+    return exchanges
+
+
 def resolve_own_prior_turn(user_message: str, history: Any = None) -> str | None:
     """Her own earlier turn that the question is actually about, or None.
 
@@ -258,7 +300,17 @@ def resolve_own_prior_turn(user_message: str, history: Any = None) -> str | None
     asked = _content_words(user_message)
     if not asked:
         return None
-    exchanges = _history_own_exchanges(history, str(user_message or "").strip().lower())
+    exclude_norm = str(user_message or "").strip().lower()
+    exchanges = _history_own_exchanges(history, exclude_norm)
+    # Working memory is a window; the transcript is the record. Her turn is
+    # frequently older than the window, which is exactly when someone asks
+    # what she said earlier.
+    seen_turns = {turn for _prompt, turn in exchanges}
+    exchanges.extend(
+        exchange
+        for exchange in _transcript_own_exchanges(exclude_norm)
+        if exchange[1] not in seen_turns
+    )
     if not exchanges:
         return None
 

@@ -93,3 +93,55 @@ def test_the_holder_is_turn_scoped():
     assert current_own_prior_turn() == PRIOR
     remember_own_prior_turn("")
     assert current_own_prior_turn() == ""
+
+
+class TestHerOwnTurnsOutliveWorkingMemory:
+    """LIVE 2026-08-10: "cannot ground, letting model answer".
+
+    "why did you say your energy was 0.91 earlier?" detected own-statement
+    recall correctly and then found no prior turn, because
+    `_history_own_exchanges` reads only working memory and her actual turn —
+    "Energy: 0.23 / 1" — had aged out of the window. It shares the content
+    word "energy" and would have resolved instantly.
+
+    The USER side of this module already falls back to the durable transcript
+    when working memory is short. Her side did not, so her own words were the
+    ones that expired first.
+    """
+
+    def test_a_turn_outside_working_memory_still_resolves(self, monkeypatch):
+        from core.conversation import grounded_recall as gr
+
+        monkeypatch.setattr(gr, "_history_own_exchanges", lambda *a, **k: [])
+        monkeypatch.setattr(
+            gr,
+            "_transcript_own_exchanges",
+            lambda _exclude: [
+                ("what are your vitals?", "Energy: 0.23 / 1"),
+                ("how are you?", "I'm steady enough."),
+            ],
+        )
+        assert gr.resolve_own_prior_turn("why did you say your energy was 0.91 earlier?") == (
+            "Energy: 0.23 / 1"
+        )
+
+    def test_working_memory_still_wins_when_it_has_the_turn(self, monkeypatch):
+        from core.conversation import grounded_recall as gr
+
+        monkeypatch.setattr(
+            gr, "_history_own_exchanges", lambda *a, **k: [("vitals?", "Energy: 0.23 / 1")]
+        )
+        monkeypatch.setattr(gr, "_transcript_own_exchanges", lambda _e: [])
+        assert gr.resolve_own_prior_turn("what did you say your energy was?") == (
+            "Energy: 0.23 / 1"
+        )
+
+    def test_no_overlap_still_means_no_verdict(self, monkeypatch):
+        """A confident quote of the wrong turn is worse than an admission."""
+        from core.conversation import grounded_recall as gr
+
+        monkeypatch.setattr(gr, "_history_own_exchanges", lambda *a, **k: [])
+        monkeypatch.setattr(
+            gr, "_transcript_own_exchanges", lambda _e: [("hi", "I'm steady enough.")]
+        )
+        assert gr.resolve_own_prior_turn("what did you say about photosynthesis?") is None
