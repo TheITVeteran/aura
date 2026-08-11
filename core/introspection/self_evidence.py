@@ -857,11 +857,76 @@ def concise_past_action_answer(message: Any) -> str:
                 # Only a field the question actually asked about, so "bytes"
                 # and "sha256" never answer a question about a count.
                 if key in asked and value:
-                    return (
+                    answer = (
                         f"From my own receipts, the {key} was {value} — that is "
                         f"the recorded value, not a recollection."
                     )
+                    _take_custody_of_recorded_value(
+                        key=key,
+                        value=value,
+                        entry=entry,
+                        asked=asked,
+                        rendering=answer,
+                    )
+                    return answer
     return ""
+
+
+def _take_custody_of_recorded_value(
+    *,
+    key: str,
+    value: str,
+    entry: Any,
+    asked: set[str],
+    rendering: str,
+) -> None:
+    """Hand the recorded value to the turn's custody set before returning it.
+
+    Returning the sentence is not the same as the person receiving it. On
+    2026-08-10 this exact value was correct here and wrong by the time it was
+    spoken: one stage read the record as off-topic and stripped it, and a later
+    repair replaced the reply with a denial that the read had happened.
+
+    Custody is taken HERE because this is where the evidence is. A stage
+    further down could re-derive the number, but a re-derivation is a second
+    opinion, and the failure was never that the number was hard to compute.
+    """
+
+    try:
+        from core.runtime.fact_custody import ValueKind, hold_fact
+        from core.runtime.turn_outcome import VerificationGrade
+
+        detail = str((entry or {}).get("evidence") or "")
+        action = str((entry or {}).get("action") or "").strip()
+        # Cues are what a sentence about this fact would have to mention: the
+        # field name always, plus the words the question and the receipt agree
+        # on. Both sides, so a cue cannot come from the receipt alone and match
+        # a sentence about something else entirely.
+        shared = asked & {word for word in re.findall(r"[a-z]{3,}", f"{action} {detail}".lower())}
+        numeric = bool(re.fullmatch(r"\d[\d,]*", value.strip()))
+        hold_fact(
+            subject=action or "past_action",
+            predicate=key,
+            value=value,
+            subject_cues=(key, *sorted(shared)[:6]),
+            canonical_rendering=rendering,
+            established_by="self_evidence.concise_past_action_answer",
+            # The bundle only reaches here for receipts whose effect was
+            # independently verified — resolve_past_actions drops the rest —
+            # so this is OBSERVED, the grade that is allowed to correct text.
+            grade=VerificationGrade.OBSERVED,
+            kind=ValueKind.NUMBER if numeric else ValueKind.TEXT,
+            evidence=(detail[:160],),
+        )
+    except (ImportError, AttributeError, RuntimeError, TypeError, ValueError) as exc:
+        from core.runtime.errors import record_degradation
+
+        record_degradation(
+            "self_evidence.fact_custody",
+            exc,
+            severity="warning",
+            action="a recorded value was answered without custody across the reply path",
+        )
 
 
 def reading_as_assertion(reading: Reading) -> Any:

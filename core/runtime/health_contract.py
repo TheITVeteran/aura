@@ -1403,6 +1403,21 @@ def _runtime_integrity_block() -> dict[str, Any]:
     except Exception as exc:  # noqa: BLE001 - each health add-on is isolated
         block["self_model_error"] = repr(exc)
     try:
+        # Which stages lose facts the turn already established. A break here
+        # is not a bad answer — it is a composition defect, and it names the
+        # stage responsible, which is the part that was previously impossible
+        # to recover after the fact.
+        from core.runtime.fact_custody import custody_report
+
+        custody = custody_report()
+        block["fact_custody"] = {
+            "turns_tracked": custody["turns_tracked"],
+            "turns_with_breaks": custody["turns_with_breaks"],
+            "stages_that_broke_custody": custody["stages_that_broke_custody"],
+        }
+    except Exception as exc:  # noqa: BLE001 - each health add-on is isolated
+        block["fact_custody_error"] = repr(exc)
+    try:
         from core.fsw.assertions import assertions_report
         from core.fsw.command_dispatch import command_report
         from core.fsw.health_checker import health_checker_report

@@ -27379,6 +27379,34 @@ async def _api_chat_turn(body: ChatRequest, request: Request):
                 _final_reply = _grounded.text or _final_reply
         except _CHAT_RECOVERABLE_ERRORS as _exc:
             record_degradation("chat.grounded_claim_guard", _exc)
+
+        # Custody, last. Every stage above rewrote this text; each was checked
+        # against what the turn established, and this is where a fact the
+        # pipeline lost is put back.
+        #
+        # It runs after the grounding guard on purpose. Grounding answers "is
+        # this sentence true of the world" by measuring again. Custody answers
+        # a different question — "did what we already measured survive the
+        # journey" — and the 2026-08-10 failure was entirely the second one:
+        # nothing about the count was unmeasured, and five stages still ended
+        # up delivering a number nobody read.
+        try:
+            from core.runtime.fact_custody import restore_held_facts
+
+            _custody = restore_held_facts(_final_reply)
+            if _custody.changed:
+                _append_turn_text_mutation(
+                    _live_turn_trace,
+                    stage="chat.fact_custody",
+                    method="held_fact_restored_at_terminal_boundary",
+                    reasons=list(_custody.reasons()),
+                    before=_final_reply,
+                    after=_custody.text,
+                    deterministic=True,
+                )
+                _final_reply = _custody.text or _final_reply
+        except _CHAT_RECOVERABLE_ERRORS as _exc:
+            record_degradation("chat.fact_custody", _exc)
         _bind_public_latent_output_quality(
             _live_turn_trace,
             user_message=_semantic_user_message,

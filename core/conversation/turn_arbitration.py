@@ -36,7 +36,23 @@ import time
 from dataclasses import dataclass, field
 from enum import IntEnum
 
-_RECOVERABLE = (RuntimeError, AttributeError, TypeError, ValueError, KeyError)
+_RECOVERABLE = (RuntimeError, AttributeError, TypeError, ValueError, KeyError, ImportError)
+
+
+def _record_custody_degradation(exc: BaseException) -> None:
+    """Report a custody-check failure without importing errors at module load."""
+
+    try:
+        from core.runtime.errors import record_degradation
+
+        record_degradation(
+            "turn_arbitration.fact_custody",
+            exc,
+            severity="warning",
+            action="a text mutation went unchecked against the turn's held facts",
+        )
+    except _RECOVERABLE:  # pragma: no cover - the reporter itself is missing
+        pass
 
 
 class LanePrecedence(IntEnum):
@@ -133,6 +149,20 @@ class TurnLedger:
         # remembering fifty times over. Keep the most recent.
         if len(self.suppressions) > _MAX_SUPPRESSIONS:
             del self.suppressions[:-_MAX_SUPPRESSIONS]
+        # Sizes say a gate took 900 characters. They cannot say it took the
+        # ANSWER. Every stage that rewrites outgoing text arrives here, which
+        # makes this the one place a held fact can be checked across all of
+        # them at once — and the only place where the stage responsible is
+        # still known. A new gate written next year is covered on the day it
+        # is written rather than the day someone remembers to instrument it.
+        try:
+            from core.runtime.fact_custody import inspect_mutation
+
+            inspect_mutation(str(gate), text, str(after or ""))
+        except _RECOVERABLE as exc:
+            # Custody is an observer of this seam, never a gate on it. A ledger
+            # that can refuse a turn is a ledger that can lose one.
+            _record_custody_degradation(exc)
 
     def record_served(self, lane: str) -> None:
         self.served_lane = str(lane)

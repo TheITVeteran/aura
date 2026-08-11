@@ -200,6 +200,24 @@ _DANGLING_GERUND_TAIL_RE = re.compile(
     r"(?:double[- ]?)?[a-z][a-z-]{2,}ing\s*$",
     re.IGNORECASE,
 )
+#: A reply that stops on a function word stopped mid-sentence, and it does so
+#: at any length. This is a closed grammatical class — conjunctions,
+#: prepositions, determiners, auxiliaries — not a list of phrasings, so it
+#: generalises to sentences nobody has seen yet.
+#:
+#: It exists because the length floor below made length the deciding factor
+#: for structural incompleteness. "Because chlorophyll and" is 23 characters:
+#: one short of the floor, so nothing looked at it, and a fragment ending on a
+#: conjunction was assessed ok. The floor is right for its actual purpose —
+#: not demanding a full stop from "Yes." — and wrong as a gate on grammar.
+_DANGLING_FUNCTION_WORD_TAIL_RE = re.compile(
+    r"\b(?:and|but|or|nor|so|yet|because|although|though|whereas|while|since|"
+    r"unless|until|if|than|that|which|whose|the|an?|of|to|into|onto|upon|with|"
+    r"within|from|by|about|over|under|between|among|through|across|toward|"
+    r"towards|is|are|was|were|be|been|being|has|have|had|will|would|can|could|"
+    r"shall|should|may|might|must|does|did)\s*$",
+    re.IGNORECASE,
+)
 _ALLOWED_SHORT_TAIL_WORDS = {
     "am",
     "as",
@@ -796,9 +814,16 @@ _EXPANSION_REQUEST_MARKERS = (
     "for what reason",
     "what reason",
 )
+#: A deflection padded with a second clause is still a deflection. This used
+#: to be anchored to the end of the string, so "I already am." was caught and
+#: "I already am. That's my default state." — the same refusal to expand, with
+#: a restatement stapled on — was not. What makes it a deflection is how the
+#: reply OPENS against an expansion request; what follows cannot un-deflect it.
 _EXPANSION_DEFLECTION_RE = re.compile(
     r"^\s*(?:i already am|that'?s all|curiosity|because curiosity|"
-    r"because i want to know|because i want to|i don'?t know)\s*[.!?]*\s*$",
+    r"because i want to know|because i want to|i don'?t know)\s*[.!?]*"
+    r"(?:\s+(?:that'?s|this is|it'?s)\s+(?:just\s+)?(?:my|the)\s+"
+    r"(?:default|usual|normal|natural)\s+\w+\s*[.!?]*)?\s*$",
     re.IGNORECASE,
 )
 _STATUS_CHECK_MARKERS = (
@@ -6499,7 +6524,21 @@ def _has_stale_diagnostic_floor_leak(user_message: Any, reply_text: Any) -> bool
         "likely break is between the backend generator and the live surface",
         "replay the same prompt through the live chat api",
     )
-    if not any(signature in raw_norm for signature in diagnostic_signatures):
+    # Terms of art from Aura's own test harness. Matching whole sentences left
+    # the vocabulary itself unguarded: "live parity holds" is three words of
+    # internal diagnostic language, matches none of the sentences above, and
+    # was served as the answer to a question about patching a Python function.
+    # No reply to a person legitimately contains these, so the term is the
+    # right granularity and the sentence was not.
+    diagnostic_terms = (
+        "live parity",
+        "parity harness",
+        "headless generator",
+        "backend generator",
+    )
+    if not any(signature in raw_norm for signature in diagnostic_signatures) and not any(
+        term in raw_norm for term in diagnostic_terms
+    ):
         return False
     if is_reliability_concern(user_message) or live_chat_diagnostic_floor(user_message):
         return False
@@ -6775,8 +6814,80 @@ def _has_internal_task_prompt_leak(reply_text: Any) -> bool:
     return bool(_INTERNAL_TASK_PROMPT_RE.search(str(reply_text or "")))
 
 
+#: Words that carry no information about a topic. Deliberately generous: a
+#: token missing from here only makes the zero-information check LESS likely to
+#: fire, so the failure mode of an incomplete list is silence, not a rejected
+#: correct answer.
+_INFORMATION_FREE_WORDS = frozenset(
+    """
+    a an and are as at be been being but by can could did do does for from had
+    has have how i if in into is it its me my no not of on or our so that the
+    their them then there these they this those to too us was we were what when
+    where which who whom whose why will with would you your yes yeah ok okay
+    sure just really very much some any all more most first also am does don't
+    because since though although while unless until nor than about after
+    before over under out off again here now still only even both each every
+    other own same such another want wanted
+    """.split()
+)
+
+#: A reply that OPENS on one of these is answering, not restating — the word is
+#: the answer. Without this, "No." to a yes/no question reads as contributing
+#: nothing, because a polarity word necessarily carries no topical content.
+_POLARITY_OPENERS = frozenset(
+    "yes no yeah yep nope never always correct incorrect right wrong true false"
+    " none neither nothing".split()
+)
+
+
+def _adds_nothing_to_the_question(user_message: Any, reply_text: Any) -> bool:
+    """Whether the reply asserts anything the question did not already contain.
+
+    Two live non-answers have this shape and no other property in common:
+    "what?" answered with "what?", and "…what would you check first before
+    patching it?" answered with "Check it." Neither is short in a way that
+    matters — "50847899" is shorter than both and is a complete answer — and
+    neither is off-topic. They are circular: every content word in the reply
+    came from the question, so nothing was added.
+
+    This is what the deleted word-count floors were groping at and never named.
+    A floor makes length the test and destroys correct terse answers; this
+    makes *information* the test, which is the property that was actually
+    missing. A single new content word — a number, a name, a noun the question
+    did not use — is enough to pass, because a single new content word is a
+    contribution and the gate has no business grading it further.
+    """
+
+    reply = str(reply_text or "")
+    asked = str(user_message or "")
+    reply_words = [word.lower() for word in re.findall(r"[A-Za-z0-9']+", reply)]
+    if not reply_words:
+        return False
+    if reply_words[0] in _POLARITY_OPENERS:
+        return False
+    # Numerals and code are answers by construction; they are never a
+    # restatement of the question even when the question contains the digits.
+    if any(any(char.isdigit() for char in word) for word in reply_words):
+        return False
+    if "`" in reply or "\n" in reply.strip():
+        return False
+    asked_words = {word.lower() for word in re.findall(r"[A-Za-z0-9']+", asked)}
+    contributed = [
+        word
+        for word in reply_words
+        if word not in _INFORMATION_FREE_WORDS and word not in asked_words
+    ]
+    return not contributed
+
+
 def _has_truncated_tail(reply_text: Any) -> bool:
     body = str(reply_text or "").strip()
+    # Grammar first, length second. A sentence left hanging on a conjunction
+    # is cut whether it is 23 characters or 230, and the floor below is about
+    # not demanding punctuation from a legitimately terse reply — a different
+    # question that was silently answering this one.
+    if len(body.split()) >= 2 and _DANGLING_FUNCTION_WORD_TAIL_RE.search(body):
+        return True
     if len(body) < 24:
         return False
     straight_quote_positions = [
@@ -7979,6 +8090,20 @@ def _assess_user_facing_reply(
         if not (_word_count(raw) >= 3 and any(w in raw.lower() for w in ("thinking", "working", "processing", "online"))):
             reasons.append("too_thin_for_confusion_repair")
 
+    # Information, not length. Checked here rather than inside the substantive
+    # branch above because the circular reply is not a property of one kind of
+    # turn: "what?" answered with "what?" is a confusion-repair turn, and
+    # "Check it." to a debugging question is a substantive one. Both give the
+    # question back.
+    if (
+        not exact_reply
+        and not strict_answer_tag_reply
+        and not memory_pin_confirmation
+        and (_requires_substantive_reply(user_message) or is_confusion_repair_turn(user_message))
+        and _adds_nothing_to_the_question(user_message, raw)
+    ):
+        reasons.append("adds_nothing_beyond_the_question")
+
     # A memory-pin request needs the pinned content echoed back — a generic
     # "okay, I'll remember it" is not a valid write receipt. This is a content
     # contract (independent of length), so it must be checked explicitly rather
@@ -8127,6 +8252,10 @@ def _assess_user_facing_reply(
         "too_thin_for_operational_status_turn",
         "too_short_for_user_turn",
         "no_content_in_user_turn",
+        # Retryable, not hard: a circular reply means this generation added
+        # nothing, and the next one usually does. Throwing the turn away would
+        # be answering "you said nothing" with nothing.
+        "adds_nothing_beyond_the_question",
         "too_thin_for_user_turn",
         "too_thin_for_open_ended_turn",
         "off_topic_self_reflection_reply",

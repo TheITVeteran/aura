@@ -298,7 +298,11 @@ def test_reliability_gate_rejects_bare_what_echo():
     assessment = assess_user_facing_reply("what?", "what?")
 
     assert assessment.retryable
-    assert "too_thin_for_confusion_repair" in assessment.reasons
+    # The word-count floors this used to name were removed on 2026-08-10:
+    # they destroyed "50847899", a correct answer, for being one word. The
+    # case is still a non-answer, and it is now rejected on the property
+    # that was actually wrong with it rather than on its length.
+    assert "adds_nothing_beyond_the_question" in assessment.reasons
 
 
 def test_reliability_gate_rejects_unsupported_pitch_continuation_for_status_check():
@@ -1208,7 +1212,11 @@ def test_short_exact_reply_leak_is_rejected_for_substantive_prompt():
     )
 
     assert assessment.retryable
-    assert "too_thin_for_user_turn" in assessment.reasons
+    # The word-count floors this used to name were removed on 2026-08-10:
+    # they destroyed "50847899", a correct answer, for being one word. The
+    # case is still a non-answer, and it is now rejected on the property
+    # that was actually wrong with it rather than on its length.
+    assert "stale_diagnostic_floor_leak" in assessment.reasons
 
 
 def test_explicit_brevity_request_allows_short_direct_reply():
@@ -1372,7 +1380,11 @@ def test_short_non_brevity_user_turn_still_rejects_thin_reply():
     )
 
     assert assessment.retryable
-    assert "too_thin_for_user_turn" in assessment.reasons
+    # The word-count floors this used to name were removed on 2026-08-10:
+    # they destroyed "50847899", a correct answer, for being one word. The
+    # case is still a non-answer, and it is now rejected on the property
+    # that was actually wrong with it rather than on its length.
+    assert "adds_nothing_beyond_the_question" in assessment.reasons
 
 
 def test_identity_memory_future_question_rejects_half_answer():
@@ -1506,7 +1518,9 @@ def test_expansion_requests_reject_thin_deflections():
     assert reason_assessment.retryable
     assert "too_thin_for_expansion_request" in reason_assessment.reasons
     assert why_assessment.retryable
-    assert "too_thin_for_open_ended_turn" in why_assessment.reasons
+    # Was too_thin_for_open_ended_turn, a word-count floor. "Because I just do."
+    # is not too short — it is circular, which is a property length cannot see.
+    assert "adds_nothing_beyond_the_question" in why_assessment.reasons
 
 
 def test_expansion_requests_accept_substantive_direct_answers():
