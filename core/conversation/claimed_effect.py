@@ -38,6 +38,8 @@ from typing import Any
 __all__ = [
     "ClaimedWrite",
     "find_unaddressed_write_claims",
+    "unverified_effect_claims",
+    "unverified_effect_correction",
     "find_unfulfilled_write_claims",
     "unfulfilled_write_correction",
 ]
@@ -222,4 +224,118 @@ def unfulfilled_write_correction(reply: Any, request: Any = "") -> str:
     return (
         f"Correction: none of these exist — {names}. I reported writing them and "
         f"did not, so treat nothing in this reply that depended on them as done."
+    )
+
+
+# ── Every effect she can claim, not only writes ────────────────────────────
+#
+# The checks above understand one verb: writing a file. "I opened Notes", "I
+# created that folder", "I moved it to your Desktop" and "I put it on the
+# clipboard" are all claims about the world that nothing verified, so the
+# honesty guarantee stopped exactly where the file API stopped.
+#
+# The receipts already record every governed effect with its own evidence
+# string — folder_path=..., opened=..., path=...;bytes=... — so the general
+# form is: name the effect a reply claims, and ask whether a verified receipt
+# recorded one like it in this turn.
+
+#: What a claimed effect looks like, per effect kind. The key is the receipt
+#: action that would have recorded it.
+_CLAIMED_EFFECT_PATTERNS: tuple[tuple[str, Any, str], ...] = (
+    (
+        "create_folder",
+        re.compile(
+            r"\bi\s+(?:have\s+)?(?:created|made|added)\s+(?:a\s+|the\s+|your\s+)?"
+            r"(?:new\s+)?(?:folder|directory)\b",
+            re.IGNORECASE,
+        ),
+        "created a folder",
+    ),
+    (
+        "open_app",
+        re.compile(
+            r"\bi\s+(?:have\s+)?(?:opened|launched|started)\s+"
+            r"(?!the\s+file\b)(?:the\s+|your\s+)?[A-Z][\w ]{1,24}\b"
+            r"|\bi\s+(?:have\s+)?(?:opened|launched)\s+(?:notes|chrome|safari|"
+            r"calculator|terminal|finder|mail|messages)\b",
+            re.IGNORECASE,
+        ),
+        "opened an application",
+    ),
+    (
+        "move_file",
+        re.compile(
+            r"\bi\s+(?:have\s+)?(?:moved|relocated)\s+(?:it|the\s+file|that)\b",
+            re.IGNORECASE,
+        ),
+        "moved a file",
+    ),
+    (
+        "set_clipboard",
+        re.compile(
+            r"\bi\s+(?:have\s+)?(?:copied|put)\s+(?:it|that|the\s+text)\s+"
+            r"(?:to|on|into)\s+(?:the\s+)?clipboard\b",
+            re.IGNORECASE,
+        ),
+        "put something on the clipboard",
+    ),
+    (
+        "list_directory",
+        re.compile(
+            r"\bi\s+(?:have\s+)?(?:read|listed|counted|checked)\s+"
+            r"(?:the\s+|that\s+|your\s+)?(?:directory|folder|files)\b",
+            re.IGNORECASE,
+        ),
+        "read a directory",
+    ),
+)
+
+
+def unverified_effect_claims(reply: Any, receipts: Any) -> list[str]:
+    """Effects the reply claims that no verified receipt in this turn recorded.
+
+    `receipts` is the step-receipt list a desktop task returns. An empty list
+    means nothing ran, which makes EVERY effect claim unverified — that is the
+    case the file check already covered, generalised to the rest of them.
+    """
+
+    text = str(reply or "")
+    if not text.strip():
+        return []
+    verified_actions = set()
+    if isinstance(receipts, list):
+        for receipt in receipts:
+            if isinstance(receipt, dict) and receipt.get("ok"):
+                action = str(receipt.get("action") or "").strip()
+                if action:
+                    verified_actions.add(action)
+    unverified: list[str] = []
+    for action, pattern, description in _CLAIMED_EFFECT_PATTERNS:
+        if action in verified_actions:
+            continue
+        for sentence in re.split(r"(?<=[.!?])\s+|\n+", text):
+            stripped = sentence.strip()
+            if not stripped or _HYPOTHETICAL_RE.search(stripped):
+                continue
+            if pattern.search(stripped):
+                unverified.append(description)
+                break
+    return unverified
+
+
+def unverified_effect_correction(reply: Any, receipts: Any) -> str:
+    """A correction naming every claimed effect with no receipt behind it."""
+
+    claims = unverified_effect_claims(reply, receipts)
+    if not claims:
+        return ""
+    if len(claims) == 1:
+        return (
+            f"Correction: I said I {claims[0]} and there is no verified receipt "
+            f"for it in this turn, so treat that part as not done."
+        )
+    listed = ", ".join(claims[:-1]) + f", and {claims[-1]}"
+    return (
+        f"Correction: I said I {listed}, and none of those have a verified "
+        f"receipt in this turn. Treat them as not done."
     )

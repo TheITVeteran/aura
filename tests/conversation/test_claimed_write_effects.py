@@ -191,3 +191,88 @@ def test_a_real_file_makes_the_same_claim_true() -> None:
 )
 def test_promises_and_hypotheticals_are_still_ignored(reply: str) -> None:
     assert unfulfilled_write_correction(reply, HAIKU_REQUEST) == ""
+
+
+# ── Every effect she can claim, not only writes ────────────────────────────
+#
+# The write check verifies one verb against the filesystem. "I opened Notes",
+# "I created that folder", "I moved it to your Desktop", "I put it on the
+# clipboard" are claims about the world too, and nothing verified any of them —
+# the honesty guarantee stopped exactly where the file API stopped.
+
+@pytest.mark.parametrize(
+    ("reply", "expected"),
+    [
+        ("I created a folder for you on the Desktop.", "created a folder"),
+        ("I opened Notes and typed it in.", "opened an application"),
+        ("I moved it to your Desktop.", "moved a file"),
+        ("I copied it to the clipboard.", "put something on the clipboard"),
+        ("I read the directory and counted them.", "read a directory"),
+    ],
+)
+def test_every_effect_kind_is_checked(reply: str, expected: str) -> None:
+    from core.conversation.claimed_effect import unverified_effect_claims
+
+    assert expected in unverified_effect_claims(reply, [])
+
+
+@pytest.mark.parametrize(
+    ("reply", "action"),
+    [
+        ("I created a folder for you.", "create_folder"),
+        ("I opened Notes.", "open_app"),
+        ("I moved it to your Desktop.", "move_file"),
+        ("I read the directory.", "list_directory"),
+    ],
+)
+def test_a_verified_receipt_makes_the_claim_true(reply: str, action: str) -> None:
+    """The direction that matters — a real effect must pass silently."""
+    from core.conversation.claimed_effect import unverified_effect_claims
+
+    assert unverified_effect_claims(reply, [{"action": action, "ok": True}]) == []
+
+
+def test_an_unverified_receipt_does_not_support_the_claim() -> None:
+    from core.conversation.claimed_effect import unverified_effect_claims
+
+    assert unverified_effect_claims(
+        "I created a folder for you.", [{"action": "create_folder", "ok": False}]
+    ) == ["created a folder"]
+
+
+@pytest.mark.parametrize(
+    "reply",
+    [
+        "I would have opened Notes if you had asked.",
+        "I will create that folder next.",
+        "The capital of Peru is Lima.",
+        "",
+    ],
+)
+def test_hypotheticals_promises_and_prose_are_ignored(reply: str) -> None:
+    from core.conversation.claimed_effect import unverified_effect_correction
+
+    assert unverified_effect_correction(reply, []) == ""
+
+
+def test_several_unverified_effects_are_named_together() -> None:
+    from core.conversation.claimed_effect import unverified_effect_correction
+
+    correction = unverified_effect_correction(
+        "I opened Notes and I created a folder for you.", []
+    )
+
+    assert "created a folder" in correction
+    assert "opened an application" in correction
+
+
+def test_the_desktop_lane_applies_the_effect_check() -> None:
+    """Without the wire it is a library nobody calls."""
+    import inspect
+
+    from interface.routes import chat
+
+    source = inspect.getsource(chat._execute_desktop_objective_from_chat)
+
+    assert "unverified_effect_correction(" in source
+    assert 'result.get("receipts")' in source

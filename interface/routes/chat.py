@@ -20309,6 +20309,26 @@ async def _execute_desktop_objective_from_chat(
                 f"That much is verified. The rest did not complete: {error} "
                 f"({completed}/{requested} steps)."
             )
+    # Every effect the reply claims, checked against the receipts of this turn.
+    #
+    # The file check verifies writes against the filesystem. "I opened Notes",
+    # "I created that folder", "I moved it to your Desktop" and "I put it on
+    # the clipboard" are claims about the world too, and nothing verified any
+    # of them — the honesty guarantee stopped exactly where the file API
+    # stopped. The receipts already record every governed effect, so the
+    # general form is to name the effect a reply claims and ask whether one
+    # like it verified.
+    try:
+        from core.conversation.claimed_effect import unverified_effect_correction
+
+        effect_correction = str(
+            unverified_effect_correction(response, result.get("receipts")) or ""
+        ).strip()
+    except _CHAT_RECOVERABLE_ERRORS as exc:
+        record_degradation('chat', exc)
+        effect_correction = ""
+    if effect_correction:
+        response = f"{str(response or '').rstrip()}\n\n{effect_correction}"
     return {
         "ok": bool(result.get("ok")),
         "status": status,
