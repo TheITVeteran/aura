@@ -14340,6 +14340,40 @@ _IDENTITY_REQUEST_RE = re.compile(
 )
 
 
+#: Words that can trail "what are you" without changing the question.
+_IDENTITY_TAIL_RE = re.compile(
+    r"^(?:[\s,]*(?:really|exactly|actually|then|anyway|though|now|even)\b)*"
+    r"[\s?!.,;:'\"-]*$",
+    re.IGNORECASE,
+)
+
+
+def _asks_only_who_you_are(text: str) -> bool:
+    """True when "what/who are you" IS the question, not the start of one.
+
+    LIVE DEFECT, 2026-08-10: "what are you actually able to measure about
+    yourself? give me the real readings, and be honest if something isn't
+    instrumented." was answered with her autobiography — "I'm Aura. I'm a
+    local continuity-bearing cognitive-agent runtime..." — word for word the
+    same paragraph she had given hours earlier to "what's your name and what
+    are you running on?".
+
+    The detector matched the OPENING of a longer question. Its guard was a
+    list of verbs that may not follow ("talking", "doing", "saying"...), which
+    is an enumeration and was therefore one verb short: nothing excluded
+    "able". A question about her instruments became a question about her
+    identity, and a template answered it.
+
+    Structure settles this where a word list cannot. "What are you?" ends
+    there. "What are you able to measure" carries its own predicate, and
+    whatever follows is the real question.
+    """
+    for match in re.finditer(r"\b(?:what|who)\s+are\s+you\b", text, re.IGNORECASE):
+        if _IDENTITY_TAIL_RE.match(text[match.end():]):
+            return True
+    return False
+
+
 def _is_identity_request(user_message: str) -> bool:
     text = _normalize_user_message(user_message)
     if not text:
@@ -14356,11 +14390,11 @@ def _is_identity_request(user_message: str) -> bool:
         "introduce yourself",
     }:
         return True
-    return bool(
-        _IDENTITY_REQUEST_RE.search(text)
-        or re.search(r"\btell\s+me\s+(?:who|what)\s+you\s+are\b", text)
-        or re.search(r"\bintroduce\s+yourself\b", text)
-    )
+    if re.search(r"\btell\s+me\s+(?:who|what)\s+you\s+are\b", text) or re.search(
+        r"\bintroduce\s+yourself\b", text
+    ):
+        return True
+    return _asks_only_who_you_are(text)
 
 
 def _identity_request_asks_future_memory(user_message: str) -> bool:
