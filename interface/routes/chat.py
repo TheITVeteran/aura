@@ -16844,6 +16844,7 @@ async def _stabilize_user_facing_reply(
     # typed absence into the prompt was not enough: evidence informs, it does
     # not enforce.
     reply_text = _append_sensory_claim_correction(user_message, reply_text)
+    reply_text = _flag_unstable_choice_commitment(user_message, reply_text)
     frame = _build_aura_expression_frame(user_message)
     contract = frame.get("contract")
     prompt_shape = analyze_prompt_shape(user_message)
@@ -20250,6 +20251,39 @@ _STEP_BOOKKEEPING_RE = re.compile(
     r"governed[\w\s-]*steps?\b[^.]*\.?\s*$",
     re.IGNORECASE,
 )
+
+
+def _flag_unstable_choice_commitment(user_message: object, reply_text: object) -> object:
+    """Refuse to serve a forced-choice answer that picks both options.
+
+    LIVE, 2026-08-10: asked to pick one and commit with no hedging, she opened
+    with "losing the ability to form new memories would be worse", argued for
+    four sentences that it would be catastrophic, then closed with "to
+    summarize: I prefer losing my ability to form new memories". The summary
+    named the opposite of what the reasoning selected.
+
+    Appended rather than suppressed, for the same reason as the sensory
+    correction: the reasoning in between is usually the good part, and the
+    honest move is to say the commitment did not hold rather than to quietly
+    serve one half of it as though it were settled.
+    """
+
+    try:
+        from core.conversation.choice_consistency import find_choice_contradiction
+
+        contradiction = find_choice_contradiction(user_message, reply_text)
+    except _CHAT_RECOVERABLE_ERRORS as exc:
+        record_degradation('chat', exc)
+        return reply_text
+    if contradiction is None:
+        return reply_text
+    note = (
+        "I have to flag that: I just argued for one of those and then committed "
+        "to the other, so treat the choice as unsettled rather than as my answer. "
+        f"I called {contradiction.first_option!r} the one I would take, then said "
+        f"{contradiction.second_option!r}."
+    )
+    return f"{str(reply_text or '').rstrip()}\n\n{note}"
 
 
 def _append_sensory_claim_correction(user_message: object, reply_text: object) -> object:
