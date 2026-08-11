@@ -278,7 +278,8 @@ def test_answer_digit_pointer_preserves_role_across_two_digit_value() -> None:
     roles = roles.at[:, 0, 2].add(200.0)
     roles = roles.at[:, 1, 3].add(200.0)
     places = mx.full((1, 2, 3), -100.0)
-    places = places.at[:, :, 2].add(200.0)
+    places = places.at[:, 0, 2].add(200.0)
+    places = places.at[:, 1, 0].add(200.0)
     state = controller.exact_probabilities(
         (0, 17, 24, 0, 1),
         slots=5,
@@ -310,6 +311,27 @@ def test_answer_digit_pointer_closes_one_digit_value_after_first_token() -> None
     pointed = controller.apply_answer_digit_pointer(logits, roles, places, state)
 
     assert mx.argmax(pointed[0], axis=-1).tolist() == [17, 0]
+
+
+def test_answer_digit_pointer_does_not_treat_one_digit_mass_as_leading_zero() -> None:
+    controller = UnifiedRecurrentController(
+        UnifiedRecurrenceConfig(
+            hidden_size=64,
+            correction_rank=8,
+            literal_digit_token_ids=tuple(range(10, 20)),
+        )
+    )
+    logits = mx.zeros((1, 1, 32), dtype=mx.float32)
+    roles = mx.full((1, 1, 6), -100.0)
+    roles = roles.at[:, :, 3].add(104.0).at[:, :, 4].add(100.0)
+    places = mx.full((1, 1, 3), -100.0).at[:, :, 2].add(200.0)
+    state = controller.exact_probabilities(
+        (0, 20, 4, 13, 1), slots=5, cardinality=33
+    )
+
+    pointed = controller.apply_answer_digit_pointer(logits, roles, places, state)
+
+    assert int(mx.argmax(pointed[0, 0]).item()) == 14
 
 
 def test_terminal_answer_grammar_forces_only_syntax_around_neural_digits() -> None:

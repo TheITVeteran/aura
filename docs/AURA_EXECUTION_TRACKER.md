@@ -44555,3 +44555,49 @@ transfer, fusion admission, frontier performance or `WOW Signal` is claimed.
 The completion envelope advances to `911/920` (approximately `99.0%`). Next is
 the larger prompt-disjoint replication with the same frozen full and lesion
 arms, followed by independent-seed confirmation before resident-32B admission.
+
+## Checkpoints 2026-08-11-228 through 231: Replicated Causal Recurrent Execution
+
+CP228 expanded the frozen CP227 comparison to 36 fresh prompt-disjoint tasks.
+The complete T4 path solved `33/36` versus `13/36` for the same trained tissue
+at T1 and `5/36` with its digit pointer lesioned. Paired full-versus-T1 results
+were 21 wins, one loss and 14 ties (exact two-sided sign-test
+`p=1.096725e-5`); full versus the pointer lesion was 28 wins, zero losses and
+eight ties (`p=7.45058e-9`). The three complete-path failures localized two
+independent implementation defects rather than being hidden by aggregate
+accuracy.
+
+CP229 removed one-digit registers from the tens lookup. Previously their mass
+was treated as a leading zero and could overwhelm the selected two-digit
+register under small learned role leakage. CP230 then made the ones token an
+authoritative continuation whenever exact typed state establishes a two-digit
+value. The continuation retains the original learned register role even when
+the frozen language prior locally classifies the second value token as syntax.
+Focused regressions cover both defects. A fresh 18-task run after those repairs
+solved `18/18` at T4 versus `9/18` at T1 and `3/18` with the pointer lesioned.
+
+CP231 repeated the complete six-arm experiment on a second fresh 36-task seed
+from the same frozen source-bound checkpoint. Base decoding solved `1/36`, the
+same trained tissue at T1 solved `12/36`, and complete recurrent T4 solved
+`36/36`. T4 preserved all 12 T1 successes and converted the other 24, with no
+regressions (exact two-sided paired sign-test `p=1.192093e-7`). Removing the
+neural digit pointer collapsed performance to `3/36`: 33 full-path wins, zero
+losses and three ties (`p=2.328306e-10`). Removing only the tokenizer-bound
+grammar shell retained `33/36`; its three reliability saves were not
+significant on this sample (`p=0.25`). The compiled public-state ceiling was
+`36/36` and remained a separate positive-control arm.
+
+The authoritative checkpoint commitment is
+`a34d77e5f5cb2500726c35ba08fbed9303aad02ef6193dd093f4f8230dd567a1`.
+The CP231 report commitment is
+`7d41cae42bcd226f631179209220fce579d1fce270746ec42814ada86d36bde5`,
+and its campaign-identity commitment is
+`d92baccc879a56e91deadac97846e9caf4c73a1b5138d06f66c0ba2d509aa881`.
+These replications admit the bounded 1.5B mechanism to resident-transfer
+planning: recurrent neural execution, through learned typed state and its
+neural pointer, causally improves exact answer emission over the same one-step
+tissue on the tested executable families. They do not establish broad language
+reasoning, resident-32B transfer, fusion, frontier performance or a `WOW
+Signal`. The completion envelope advances to `912/920` (approximately
+`99.1%`). Next is a source-bound resident-32B transfer canary with equal-compute
+and lesion controls; broad held-out reasoning remains a separate required gate.

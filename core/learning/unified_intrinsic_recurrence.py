@@ -719,9 +719,10 @@ class UnifiedRecurrentController(nn.Module):
         ones = ((value_indices[:, None] % 10) == digit_indices[None, :]).astype(
             mx.float32
         )
-        tens = ((value_indices[:, None] // 10) == digit_indices[None, :]).astype(
-            mx.float32
-        )
+        tens = (
+            ((value_indices[:, None] // 10) == digit_indices[None, :])
+            * (value_indices[:, None] >= 10)
+        ).astype(mx.float32)
         digit_probabilities_by_position: list[Any] = []
         confidences: list[Any] = []
         previous_role = mx.concatenate(
@@ -743,10 +744,15 @@ class UnifiedRecurrentController(nn.Module):
         for position in range(int(raw_roles.shape[1])):
             raw_role = raw_roles[:, position, :]
             raw_place = raw_places[:, position, :]
-            digit_mass = (
+            learned_digit_mass = (
                 mx.sum(raw_place[:, 1:], axis=-1, keepdims=True)
                 * (1.0 - previous_value_complete)
             )
+            # Once exact typed state establishes a two-digit value, its ones
+            # token is mandatory. The frozen language prior often calls that
+            # position syntax after seeing the tens token; allowing that local
+            # guess to disengage the pointer produced plausible but wrong 19s.
+            digit_mass = mx.maximum(learned_digit_mass, previous_two_digit_start)
             previous_role_mass = mx.sum(
                 previous_role[:, 1:], axis=-1, keepdims=True
             )
@@ -754,7 +760,7 @@ class UnifiedRecurrentController(nn.Module):
             # digit.  Letting an independently classified role replace it made
             # multi-register answers read the ones digit from another slot.
             continuation = (
-                digit_mass * previous_role_mass * previous_two_digit_start
+                previous_role_mass * previous_two_digit_start
             )
             role = (1.0 - continuation) * raw_role + continuation * previous_role
             role_mass = mx.sum(role[:, 1:], axis=-1, keepdims=True)
