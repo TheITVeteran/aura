@@ -61,19 +61,35 @@ def test_summaries_about_the_world_are_never_suppressed(summary: str) -> None:
     assert _is_step_bookkeeping_only(summary) is False
 
 
-def test_bookkeeping_only_result_defers_to_cognition() -> None:
-    """No observation, no deliverable, only a step count ⇒ hand off the turn."""
+def test_bookkeeping_only_result_defers_only_when_nothing_happened() -> None:
+    """Deferral is for an empty-handed lane, not for a completed action.
+
+    The first version of this asserted a bare ``response = ""`` whenever the
+    summary was step bookkeeping, and that regressed a real case the same day:
+    a desktop task that COMPLETED and verified its effects, with no text
+    deliverable to quote ("open Notes and write a note saying Hello"), produced
+    an empty reply — and an empty reply is falsy at the caller, so a
+    receipt-verified action fell through to cognition as though nothing had
+    happened. It cost a foreground model pass and put the turn back into the
+    lane whose failures this branch exists to avoid.
+
+    So the contract is conditional: verified effects get a plain confirmation
+    carrying the receipt; only an unverified, empty-handed lane defers.
+    """
     import inspect
 
     from interface.routes import chat
 
-    source = inspect.getsource(chat)
-    marker = "_is_step_bookkeeping_only(summary)"
+    source = inspect.getsource(chat._execute_desktop_objective_from_chat)
+    marker = "elif _is_step_bookkeeping_only(summary):"
     assert marker in source
-    branch = source[source.find(marker) : source.find(marker) + 1400]
-    # The branch must return no reply so cognition answers the real question,
-    # exactly as the perception branch above it already does.
+    branch = source[source.find(marker) : source.find(marker) + 2400]
+
+    assert "verified_effects" in branch
+    # Still defers when the effects were not proven.
     assert 'response = ""' in branch
+    # And confirms plainly when they were, rather than saying nothing.
+    assert "Done" in branch
 
 
 # ── 2. An unread screen must not read as a blank screen ────────────────────

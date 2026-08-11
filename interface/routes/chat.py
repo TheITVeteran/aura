@@ -20168,6 +20168,9 @@ async def _execute_desktop_objective_from_chat(
             # paragraph either. They asked for the paragraph.
             produced = _desktop_deliverable_text(result)
             step_note = f"Completed {completed}/{requested} governed desktop steps."
+            # Whether the effects were actually proven, so a completed action is
+            # never dropped for lack of a quotable deliverable.
+            verified_effects, _verification_reason = _verified_desktop_task_result(result)
             if produced:
                 response = (
                     f"{summary or 'Done.'} Here is what I wrote:\n\n{produced}"
@@ -20180,13 +20183,33 @@ async def _execute_desktop_objective_from_chat(
                 # desktop steps." — the step count TWICE, in the branch whose
                 # own comment says to report what was produced instead of it.
                 #
-                # The lane ran something and came back with no observation and
-                # no deliverable. It therefore has no answer to give, and the
-                # bookkeeping is not one. Same reasoning already written for
-                # specific perception questions above: returning no reply here
-                # loses nothing, because the turn continues into cognition,
-                # which has the receipt and the question.
-                response = ""
+                # The bookkeeping is still not an answer. But deferring by
+                # returning "" was too blunt and regressed a real case the same
+                # day: a desktop task that COMPLETED and verified its effects,
+                # with no text deliverable to quote ("open Notes and write a
+                # note saying Hello"), produced an empty reply — and an empty
+                # reply is falsy at the caller, so a successful, receipt-verified
+                # action fell through to cognition as though nothing had
+                # happened. That both wasted a foreground model pass and put the
+                # turn back into the lane whose failures this branch exists to
+                # avoid.
+                #
+                # So: defer only when there is genuinely nothing to report.
+                # When the effects were verified, say plainly that the thing was
+                # done — once, in her own voice, without the step count.
+                if verified_effects:
+                    # Lead with the plain fact, and keep the executor's summary
+                    # behind it as the evidence that it happened. When there is
+                    # no text deliverable to quote, "it is done" IS the answer,
+                    # and the receipt line is what makes it checkable rather
+                    # than a claim.
+                    response = (
+                        f"Done — {summary}"
+                        if summary
+                        else "Done — the desktop steps completed and their effects verified."
+                    )
+                else:
+                    response = ""
             else:
                 response = (
                     f"{summary or 'I completed the requested desktop task through governed desktop control.'} "

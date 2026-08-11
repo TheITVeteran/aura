@@ -434,10 +434,36 @@ def test_live_chat_governed_capabilities_precede_generic_desktop_objectives():
     """AI-to-AI requests also look like desktop objectives; governed skills win."""
     from interface.routes import chat as chat_routes
 
-    source = inspect.getsource(chat_routes.api_chat)
-    governed_idx = source.index("governed_capability_response = await _execute_governed_capability_request_from_chat")
-    desktop_idx = source.index("desktop_objective_response = await _execute_narrow_desktop_objective_before_cognition()")
-    assert governed_idx < desktop_idx
+    # The turn body moved out of api_chat into _api_chat_turn, and this test
+    # kept inspecting api_chat — so it failed with "substring not found" rather
+    # than on the ordering it exists to protect. Find the function that holds
+    # the two calls instead of naming one, so the next refactor cannot strand it
+    # the same way.
+    governed_call = (
+        "governed_capability_response = await "
+        "_execute_governed_capability_request_from_chat"
+    )
+    desktop_call = (
+        "desktop_objective_response = await "
+        "_execute_narrow_desktop_objective_before_cognition()"
+    )
+    candidates = [
+        inspect.getsource(candidate)
+        for candidate in (
+            getattr(chat_routes, name)
+            for name in ("_api_chat_turn", "api_chat")
+            if hasattr(chat_routes, name)
+        )
+    ]
+    holders = [
+        text for text in candidates if governed_call in text and desktop_call in text
+    ]
+    assert holders, (
+        "neither api_chat nor _api_chat_turn contains both the governed-capability "
+        "and desktop-objective calls; this ordering guarantee has moved again"
+    )
+    source = holders[0]
+    assert source.index(governed_call) < source.index(desktop_call)
 
     request = (
         "Open ChatGPT in my browser and have a real conversation about sentience. "
