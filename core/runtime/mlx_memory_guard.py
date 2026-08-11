@@ -24,6 +24,7 @@ machine to death: a failed run is recoverable, a wedged host is not.
 from __future__ import annotations
 
 import logging
+import re
 from collections.abc import Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass
@@ -40,6 +41,40 @@ DEFAULT_FRACTION = 0.5
 MIN_LIMIT_BYTES = 2 * 1024**3
 # Reclaim cadence for generation loops. Cheap relative to a forward pass.
 DEFAULT_RECLAIM_EVERY = 16
+_SWAP_USED = re.compile(r"\bused\s*=\s*([0-9]+(?:\.[0-9]+)?)\s*([MG])\b", re.IGNORECASE)
+
+
+def _parse_swap_used_gb(output: str) -> float | None:
+    """Parse the labeled used field; vm.swapusage prints total first."""
+
+    match = _SWAP_USED.search(output)
+    if match is None:
+        return None
+    value = float(match.group(1))
+    return value if match.group(2).upper() == "G" else value / 1024.0
+
+
+def _pressure_reasons(
+    *,
+    host_gb: float,
+    reclaimable_gb: float,
+    compressed_gb: float,
+    swap_used_gb: float | None,
+) -> tuple[str, ...]:
+    """Classify present pressure; allocated swap is corroboration, not history."""
+
+    reasons = []
+    if compressed_gb > 0.25 * host_gb:
+        reasons.append("compressor_high")
+    if reclaimable_gb < 0.08 * host_gb:
+        reasons.append("reclaimable_critical")
+    if (
+        swap_used_gb is not None
+        and swap_used_gb > 2.0
+        and reclaimable_gb < 0.15 * host_gb
+    ):
+        reasons.append("swap_correlated_scarcity")
+    return tuple(reasons)
 
 
 def _synchronize_and_reclaim() -> None:
@@ -118,7 +153,7 @@ def host_pressure() -> dict[str, Any]:
     compressed = gb("Pages occupied by compressor")
     host = host_memory_bytes() / 1024**3
     reclaimable = free + inactive + speculative + purgeable
-    swap_used = 0.0
+    swap_used: float | None = None
     try:
         swap = get_subprocess_gateway().run(
             ["sysctl", "-n", "vm.swapusage"],
@@ -128,12 +163,15 @@ def host_pressure() -> dict[str, Any]:
             source="mlx_memory_guard.host_pressure.swapusage",
             accelerator_capability="none",
         ).stdout
-        for token in swap.replace("=", " ").split():
-            if token.endswith("M") and token[:-1].replace(".", "").isdigit():
-                swap_used = float(token[:-1]) / 1024.0
-                break
+        swap_used = _parse_swap_used_gb(swap)
     except (OSError, RuntimeError, ValueError):
         pass
+    reasons = _pressure_reasons(
+        host_gb=host,
+        reclaimable_gb=reclaimable,
+        compressed_gb=compressed,
+        swap_used_gb=swap_used,
+    )
     return {
         "available": True,
         "host_gb": round(host, 2),
@@ -141,11 +179,10 @@ def host_pressure() -> dict[str, Any]:
         "reclaimable_gb": round(reclaimable, 2),
         "available_fraction": round(reclaimable / max(host, 1e-9), 3),
         "compressed_gb": round(compressed, 2),
-        "swap_used_gb": round(swap_used, 2),
-        # The signals that actually preceded the jetsam kill.
-        "under_pressure": bool(
-            compressed > 0.25 * host or swap_used > 2.0 or reclaimable < 0.08 * host
-        ),
+        "swap_available": swap_used is not None,
+        "swap_used_gb": None if swap_used is None else round(swap_used, 2),
+        "pressure_reasons": list(reasons),
+        "under_pressure": bool(reasons),
     }
 
 

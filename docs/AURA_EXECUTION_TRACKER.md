@@ -44760,3 +44760,33 @@ reasoning gain, fusion, frontier performance or `WOW Signal` is claimed. The
 completion envelope remains `912/920` (approximately `99.1%`). The exact
 resident canary package is prepared; next is a controlled model-lane handoff
 and the source-bound resident 32B canary.
+
+## Checkpoint 2026-08-11-236: Present-Tense Resident Memory Admission
+
+The first CP235 resident canary attempt never loaded the model. Its detached
+controller failed closed during preload because `host_pressure()` reported
+`under_pressure=true` despite approximately 40 GB reclaimable memory and low
+compressor occupancy. The attempt is retained as negative launch evidence; no
+training progress or model result is attributed to it.
+
+The failure had two causes. The `vm.swapusage` parser selected the first
+megabyte value, which is total swap, instead of the labeled `used` field. More
+fundamentally, any allocated swap above 2 GB was treated as current pressure.
+On macOS, allocated swap is historical and may remain after RAM pressure has
+ended. The same project already rejects that interpretation in the runtime
+memory watchdog; resident admission had drifted from that invariant.
+
+Swap parsing is now label-aware and unit-aware. The pressure verdict reports
+explicit reasons and uses swap only as corroboration when reclaimable RAM is
+also scarce. Critical reclaimable memory and high compressor occupancy remain
+independent hard vetoes, and unavailable measurements remain fail closed at
+the campaign boundary. On the repaired live sample the sensor reports about
+37 GB reclaimable, 2.19 GB compressed, 1.83 GB actually used swap, no pressure
+reasons and `under_pressure=false`.
+
+The affected memory, preload, resident identity and launch-custody surface
+passes `58/58` tests; repository smoke passes `104/104`; Ruff, compilation and
+architectural layering are clean. No resident training result, reasoning gain,
+fusion, frontier performance or `WOW Signal` is claimed. The completion
+envelope remains `912/920` (approximately `99.1%`). Next is to freeze CP236
+into a fresh immutable capsule and relaunch the bounded resident 32B canary.

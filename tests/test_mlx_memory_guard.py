@@ -17,6 +17,8 @@ from core.runtime.mlx_memory_guard import (  # noqa: E402
     DEFAULT_FRACTION,
     MLX_MEMORY_GUARD_SCHEMA,
     MemoryEnvelope,
+    _parse_swap_used_gb,
+    _pressure_reasons,
     host_memory_bytes,
     mlx_memory_envelope,
 )
@@ -156,14 +158,56 @@ def test_host_pressure_reports_reclaimable_not_just_free():
     assert isinstance(report["under_pressure"], bool)
 
 
-def test_pressure_verdict_keys_on_swap_and_compression():
-    """The verdict must not fire merely because free memory looks small."""
+def test_pressure_verdict_reports_explicit_current_reasons():
+    """The verdict must not fire from free-memory or swap history alone."""
     from core.runtime.mlx_memory_guard import host_pressure
 
     report = host_pressure()
     if not report.get("available"):
         pytest.skip("vm_stat unavailable on this platform")
-    if report["swap_used_gb"] < 2.0 and report["compressed_gb"] < 0.25 * report[
-        "host_gb"
-    ] and report["reclaimable_gb"] >= 0.08 * report["host_gb"]:
+    assert report["under_pressure"] is bool(report["pressure_reasons"])
+    if report["compressed_gb"] < 0.25 * report["host_gb"] and report[
+        "reclaimable_gb"
+    ] >= 0.15 * report["host_gb"]:
         assert report["under_pressure"] is False
+
+
+def test_swap_parser_reads_used_instead_of_the_preceding_total() -> None:
+    output = "total = 3072.00M  used = 1881.69M  free = 1190.31M  (encrypted)"
+    assert _parse_swap_used_gb(output) == pytest.approx(1881.69 / 1024.0)
+    assert _parse_swap_used_gb("total = 8.00G used = 3.25G free = 4.75G") == 3.25
+    assert _parse_swap_used_gb("unavailable") is None
+
+
+def test_allocated_swap_does_not_latch_pressure_on_a_healthy_host() -> None:
+    assert _pressure_reasons(
+        host_gb=64.0,
+        reclaimable_gb=40.0,
+        compressed_gb=4.3,
+        swap_used_gb=17.9,
+    ) == ()
+
+
+@pytest.mark.parametrize(
+    ("reclaimable_gb", "compressed_gb", "swap_used_gb", "expected"),
+    [
+        (4.0, 4.0, 0.0, {"reclaimable_critical"}),
+        (20.0, 17.0, 0.0, {"compressor_high"}),
+        (8.0, 4.0, 3.0, {"swap_correlated_scarcity"}),
+        (4.0, 17.0, 3.0, {"compressor_high", "reclaimable_critical", "swap_correlated_scarcity"}),
+    ],
+)
+def test_present_pressure_signals_still_fail_closed(
+    reclaimable_gb: float,
+    compressed_gb: float,
+    swap_used_gb: float,
+    expected: set[str],
+) -> None:
+    assert set(
+        _pressure_reasons(
+            host_gb=64.0,
+            reclaimable_gb=reclaimable_gb,
+            compressed_gb=compressed_gb,
+            swap_used_gb=swap_used_gb,
+        )
+    ) == expected
