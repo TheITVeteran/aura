@@ -48,8 +48,14 @@ from core.runtime.model_lane_control import standalone_model_lane  # noqa: E402
 
 SCHEMA: Final = "aura.certified_recurrence_behavioral_gate.v1"
 PREREG_SCHEMA: Final = "aura.certified_recurrence_behavioral_preregistration.v1"
-DEFAULT_MODEL: Final = (
-    "/Users/bryan/.aura/live-source/models/Qwen2.5-1.5B-Instruct-4bit"
+#: Resolved from the repository root rather than hard-coded to one machine's
+#: home directory. The absolute form made this gate runnable only on the
+#: developer's laptop, and a certification gate that cannot run elsewhere
+#: certifies nothing anyone else can reproduce.
+DEFAULT_MODEL: Final = str(
+    Path(os.environ.get("AURA_RECURRENCE_GATE_MODEL", ""))
+    if os.environ.get("AURA_RECURRENCE_GATE_MODEL")
+    else REPO_ROOT / "models" / "Qwen2.5-1.5B-Instruct-4bit"
 )
 GENERATORS: Final = {
     "boolean": nested_boolean,
