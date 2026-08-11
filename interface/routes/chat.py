@@ -20389,6 +20389,17 @@ def _named_gate_failure(assessment: object) -> str:
     return "reply_reliability_gate_failed:" + ",".join(reasons)
 
 
+#: A reply asserting she did not do the thing. When receipts say otherwise, the
+#: record has to arrive before the denial rather than after it.
+_DENIES_THE_ACTION_RE = re.compile(
+    r"\b(?:i\s+(?:did\s?n[o']?t|never|have\s+not|haven[\u2019']t)\s+"
+    r"(?:actually\s+)?(?:do|did|run|ran|execute|perform|count|read|write|wrote)"
+    r"|i\s+don[\u2019']?t\s+have\s+(?:that|the|it)"
+    r"|no\s+record\s+of\s+(?:that|it))\b",
+    re.IGNORECASE,
+)
+
+
 def _append_past_action_record(user_message: object, reply_text: object) -> object:
     """Attach her own receipts when a recall answer does not match them.
 
@@ -20429,6 +20440,17 @@ def _append_past_action_record(user_message: object, reply_text: object) -> obje
     if recorded_numbers and recorded_numbers & reply_numbers:
         # She already quoted something the receipts support.
         return reply_text
+    # When the reply DENIES doing the thing the receipts record, the correction
+    # leads. Trailing it produced "I didn't actually execute the file counting
+    # command earlier ... From my own receipts, the count was 9" — the true
+    # part arriving after the false one, as a footnote to it.
+    #
+    # Leading also rescues a truncated reply: that same turn was cut off at "If
+    # you", and an answer appended to a severed sentence reads as debris.
+    denies = _DENIES_THE_ACTION_RE.search(reply) is not None
+    truncated = bool(reply.strip()) and reply.strip()[-1] not in ".!?\"')]}"
+    if denies or truncated:
+        return f"{record}\n\n{reply.strip()}"
     return f"{reply.rstrip()}\n\n{record}"
 
 

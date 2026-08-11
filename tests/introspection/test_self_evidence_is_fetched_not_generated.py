@@ -660,3 +660,60 @@ def test_the_wrapper_survives_a_response_with_no_body() -> None:
 
     sentinel = object()
     assert chat._apply_recorded_answer("anything", sentinel) is sentinel
+
+
+def test_the_record_leads_when_the_reply_denies_the_action() -> None:
+    """LIVE, once the record finally arrived:
+
+        "I don't have that count. I didn't actually execute the file counting
+         command earlier ... If you
+
+         From my own receipts, the count was 9."
+
+    True, and arriving as a footnote to the false part. When receipts
+    contradict a denial, the record goes first.
+    """
+    from interface.routes import chat
+
+    question = (
+        "Earlier today I asked you to count the .py files in one of your own "
+        "directories. Without guessing: what was the count?"
+    )
+    denial = "I don't have that count. I didn't actually execute the file counting command earlier."
+    out = str(chat._append_past_action_record(question, denial))
+    if out == denial:
+        pytest.skip("no verified tool receipts on this machine")
+
+    assert out.startswith("From my own receipts")
+
+
+def test_the_record_leads_when_the_reply_was_cut_off() -> None:
+    """An answer appended to a severed sentence reads as debris."""
+    from interface.routes import chat
+
+    question = (
+        "Earlier today I asked you to count the .py files in one of your own "
+        "directories. Without guessing: what was the count?"
+    )
+    truncated = "I was going to say that the number I remember is roughly. If you"
+    out = str(chat._append_past_action_record(question, truncated))
+    if out == truncated:
+        pytest.skip("no verified tool receipts on this machine")
+
+    assert out.startswith("From my own receipts")
+
+
+def test_an_ordinary_wrong_answer_still_gets_the_record_after_it() -> None:
+    """Leading is for denials and debris, not for every correction."""
+    from interface.routes import chat
+
+    question = (
+        "Earlier today I asked you to count the .py files in one of your own "
+        "directories. Without guessing: what was the count?"
+    )
+    wrong = "I believe it was around twenty files."
+    out = str(chat._append_past_action_record(question, wrong))
+    if out == wrong:
+        pytest.skip("no verified tool receipts on this machine")
+
+    assert out.startswith(wrong)
