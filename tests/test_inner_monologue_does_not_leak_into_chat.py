@@ -384,8 +384,31 @@ class TestDegradedTurnsSpeakToAPerson:
             assert token in message.lower()
 
     def test_the_reply_admits_the_failure_plainly(self):
-        reply = self._reply("I am confused. What is this in reference to")
-        assert "couldn't" in reply.lower()
+        """Plainly, in any of the ways a person says it.
+
+        This asserted the literal contraction "couldn't". The reply now says
+        "no reading — it has never produced a sample, so I cannot tell", which
+        is the same admission in the same register, and the test failed it.
+        A test that pins one spelling of an idea makes every rewording a
+        regression and every register change invisible — and the register is
+        the thing this class exists to protect.
+        """
+
+        reply = self._reply("I am confused. What is this in reference to").lower()
+        plain_admissions = (
+            "couldn't",
+            "could not",
+            "cannot",
+            "can't",
+            "no reading",
+            "never sampled",
+            "don't have",
+            "do not have",
+            "wasn't able",
+        )
+        assert any(phrase in reply for phrase in plain_admissions), (
+            f"a degraded turn said nothing a person can read as a failure: {reply!r}"
+        )
 
     def test_the_reply_carries_no_implementation_vocabulary(self):
         """The exact phrases that made the live reply unreadable."""

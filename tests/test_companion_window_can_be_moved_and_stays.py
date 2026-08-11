@@ -34,29 +34,66 @@ def test_no_surface_relies_on_the_electron_drag_property():
         assert not declarations, f"{name} still declares -webkit-app-region"
 
 
-def test_the_glyph_is_draggable_because_at_rest_it_is_the_whole_bubble():
-    """The one element excluded from the drag was the entire grabbable surface.
+def test_the_bubble_drags_from_anywhere_on_its_surface():
+    """The guarantee moved to the window server; the test follows it there.
 
-    ``#pill.dormant`` is a 6px scrim around a 28px mark and nothing else, so
-    excluding ``#glyph`` meant ``drag`` was never assigned in the state the
-    bubble spends all its time in.
+    Both of the tests that used to live here read bubble.js for a JS drag
+    recognizer — a mousedown handler, a `drag` object, a `dragJustEnded`
+    suppression window. That implementation is gone, and deliberately: a 56x56
+    WKWebView only receives mousemove for points inside itself, so a JS drag
+    died about 28px in no matter how it was written. The pan recognizer on the
+    host owns it now, in global screen coordinates.
+
+    A test pinned to a deleted mechanism fails without anything being wrong,
+    which is the same amount of information as not existing — and worse,
+    because it trains the reader to ignore it.
     """
-    mousedown = BUBBLE_JS.split('pill.addEventListener("mousedown"', 1)[1].split("});", 1)[0]
 
-    assert "closest(" in mousedown, "the handler must still protect real controls"
-    # × and the reply control stay targets.
-    assert "#close" in mousedown and "#say" in mousedown
-    # The glyph must not be among them.
-    assert "#glyph" not in mousedown, "the glyph is excluded from the drag again"
+    assert "installWindowDrag(on: webView, topStrip:" in LAUNCHER
+    assert "final class TopStripPanGestureRecognizer: NSPanGestureRecognizer" in LAUNCHER
+    # topStrip 0 means the whole surface drags. The bubble is all glyph, which
+    # is exactly what the old JS could not express: excluding #glyph from the
+    # handle left only the pixels the controls did not claim.
+    # Two installs, and the difference between them is the whole point: the
+    # bubble takes the default topStrip of 0 (drag from anywhere, it is all
+    # glyph) and the companion takes a strip so dragging across the transcript
+    # still selects text.
+    assert "installWindowDrag(on: webView)\n" in LAUNCHER, (
+        "the bubble no longer drags from its whole surface"
+    )
+    assert "installWindowDrag(on: webView, topStrip: 37)" in LAUNCHER, (
+        "the companion no longer reserves a strip, so its transcript is a handle"
+    )
 
 
-def test_a_drag_that_ends_on_the_glyph_does_not_also_open_the_chat():
-    """Otherwise every move is followed by the window it was moved aside for."""
-    assert "dragJustEnded" in BUBBLE_JS
-    click_handler = BUBBLE_JS.split('glyph.addEventListener("click"', 1)[1].split("});", 1)[0]
-    assert "dragJustEnded()" in click_handler
-    # And the suppression window must actually be armed when a drag ends.
-    assert re.search(r"drag\.moved\s*\)\s*draggedAt\s*=", BUBBLE_JS)
+def test_a_drag_does_not_also_open_the_chat():
+    """A pan and a click are different gestures, decided by the recognizer.
+
+    `delaysPrimaryMouseButtonEvents = false` is what keeps a plain tap opening
+    the chat. The separation in the other direction — a drag not ALSO counting
+    as a tap — is the pan recognizer claiming the gesture once the pointer
+    moves, which is AppKit's behaviour rather than something this page can
+    assert about itself. What is checkable here is that the page holds no
+    competing drag of its own: two recognizers for one gesture is how a move
+    ends with the window it was moved aside for.
+    """
+
+    assert "delaysPrimaryMouseButtonEvents = false" in LAUNCHER
+
+    # Code only. The prose above these lines quotes the removed approach
+    # verbatim, including `{action:"move"}`, and a check that reads comments
+    # cannot tell an explanation of a mistake from the mistake.
+    code = re.sub(r"/\*.*?\*/", "", BUBBLE_JS, flags=re.DOTALL)
+    code = re.sub(r"^\s*//.*$", "", code, flags=re.MULTILINE)
+    for gesture in ('addEventListener("mousemove"', 'addEventListener("mousedown"'):
+        assert gesture not in code, (
+            f"bubble.js is recognising drags again ({gesture}) alongside the "
+            "host recognizer; two recognizers for one gesture is how a move "
+            "ends with the window it was moved aside for"
+        )
+    # `forwardMove` stays: that is the HOST commanding a position, which is how
+    # a remembered position is restored. It is not a drag the page recognised.
+    assert "function forwardMove(" in code
 
 
 def test_the_bubble_has_exactly_one_move_mechanism():

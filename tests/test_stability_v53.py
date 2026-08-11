@@ -454,21 +454,51 @@ class TestChatHandlerResilience:
             "Timeout handler must return 200, not 503/504"
 
     def test_exception_returns_200(self):
-        """v53 fix: any exception should return 200 with error message."""
+        """v53 fix: any exception should return 200 with error message.
+
+        Checked against the handler's structure, not against the words it
+        happens to say. This used to grep for two literal sentences; both were
+        refactored into `_grounded_chat_failure_reply()` and the test began
+        failing while the behaviour it protects was entirely intact — a test
+        pinned to prose fails when the prose moves and stays silent when the
+        status code changes, which is backwards for both.
+        """
         import ast
         with open(os.path.join(os.path.dirname(os.path.dirname(__file__)), "interface", "routes", "chat.py")) as f:
             source = f.read()
-        # The generic exception handler should return 200
-        lines = source.split("\n")
-        found_generic_200 = False
-        for i, line in enumerate(lines):
-            if "I lost my train of thought" in line or "The chat path failed before a coherent answer formed" in line:
-                # Check nearby lines for status_code=200
-                nearby = "\n".join(lines[max(0,i-5):i+5])
-                if "status_code=200" in nearby or "status_code = 200" in nearby:
-                    found_generic_200 = True
-                    break
-        assert found_generic_200, "Generic exception handler must return 200"
+
+        def _status_codes_returned(handler: ast.ExceptHandler) -> set:
+            codes = set()
+            for node in ast.walk(handler):
+                if not isinstance(node, ast.Return) or not isinstance(node.value, ast.Call):
+                    continue
+                for keyword in node.value.keywords:
+                    if keyword.arg == "status_code" and isinstance(
+                        keyword.value, ast.Constant
+                    ):
+                        codes.add(keyword.value.value)
+            return codes
+
+        # The turn-death floor: the last-resort `except Exception` in the chat
+        # turn. Any reply it produces reaches a person, so it must arrive as a
+        # reply rather than as a transport failure the surface renders as a
+        # dead turn.
+        floors = [
+            handler
+            for node in ast.walk(ast.parse(source))
+            if isinstance(node, ast.Try)
+            for handler in node.handlers
+            if isinstance(handler.type, ast.Name)
+            and handler.type.id == "Exception"
+            and "turn-death floor" in (ast.get_source_segment(source, handler) or "")
+            and _status_codes_returned(handler)
+        ]
+        assert floors, "no generic exception handler in the chat turn returns a response"
+        for handler in floors:
+            assert _status_codes_returned(handler) == {200}, (
+                "the generic exception handler returns a non-200 status; a "
+                f"turn-death floor must reach the person: {_status_codes_returned(handler)}"
+            )
 
     def test_soft_deadline_is_reasonable(self):
         """v53 fix: soft deadline should not be 8 seconds."""

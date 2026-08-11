@@ -424,3 +424,39 @@ def test_a_receipt_outside_a_turn_does_not_vouch_for_a_later_turn() -> None:
         return turn_tool_receipts()
 
     assert contextvars.copy_context().run(never_began_a_turn) == ()
+
+
+def test_a_receipt_recorded_in_a_child_context_cannot_reach_the_parent_turn() -> None:
+    """The order-dependence this file kept hitting, as a direct assertion.
+
+    A ContextVar copy shares the value's REFERENCE. While the receipts were a
+    list, a receipt recorded inside a copied context — a task, a thread hop, a
+    `copy_context().run` — appended to the parent turn's own list. So one
+    turn's background work could put an `ok: True` into a different turn's
+    evidence, which is the same fail-open that made a `[]` default wrong, one
+    level further in.
+
+    Rebinding an immutable value cannot escape the context that rebound it,
+    and that is what this holds.
+    """
+
+    import contextvars
+
+    from core.conversation.surface_disposition import (
+        begin_turn_tool_receipts,
+        record_tool_receipt,
+        turn_tool_receipts,
+    )
+
+    begin_turn_tool_receipts()
+
+    def a_child_context_records_something() -> tuple:
+        record_tool_receipt("background_work", ok=True)
+        return turn_tool_receipts()
+
+    inside = contextvars.copy_context().run(a_child_context_records_something)
+    assert len(inside) == 1, "the child context should see its own receipt"
+    assert turn_tool_receipts() == (), (
+        "a receipt recorded in a child context reached back into the parent "
+        "turn, so one turn's work can vouch for another's claims"
+    )

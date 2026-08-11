@@ -126,14 +126,19 @@ def clear_preserved_draft() -> None:
 # every completed-action claim in every later turn that had not begun its own
 # list, which is the exact fail-open this whole mechanism exists to prevent,
 # and it handed the autonomous loops the reach the comment above denies them.
-_TURN_TOOL_RECEIPTS: contextvars.ContextVar[list[dict[str, Any]] | None] = (
+#
+# And the value is a tuple, not a list, for the same reason one level in: a
+# copied context shares the reference, so appending to a list reached back
+# into the parent turn. Immutable value plus rebinding is what actually makes
+# a ContextVar isolate.
+_TURN_TOOL_RECEIPTS: contextvars.ContextVar[tuple[dict[str, Any], ...] | None] = (
     contextvars.ContextVar("aura_turn_tool_receipts", default=None)
 )
 
 
 def begin_turn_tool_receipts() -> None:
     """Start a turn having executed nothing."""
-    _TURN_TOOL_RECEIPTS.set([])
+    _TURN_TOOL_RECEIPTS.set(())
 
 
 def record_tool_receipt(tool_name: Any, *, ok: bool) -> None:
@@ -141,6 +146,16 @@ def record_tool_receipt(tool_name: Any, *, ok: bool) -> None:
 
     Outside a turn there is nothing to record against, and inventing a list
     here would be writing into whatever context happens to be current.
+
+    The value is a TUPLE and this rebinds it, rather than a list this appends
+    to. A ContextVar copy shares the *reference*, so a mutable value defeats
+    the isolation the ContextVar exists to provide: a receipt recorded inside
+    a copied context — a task, a thread pool hop, a `copy_context().run` —
+    reached back and appended to the parent turn's list. An `ok: True` from
+    one turn's background work could therefore vouch for a completed-action
+    claim in a different turn, which is the same fail-open that made the
+    default `[]` wrong, one level further in. Rebinding cannot escape the
+    context that did it.
     """
     name = str(tool_name or "").strip()
     if not name:
@@ -149,12 +164,12 @@ def record_tool_receipt(tool_name: Any, *, ok: bool) -> None:
         receipts = _TURN_TOOL_RECEIPTS.get()
     except LookupError:
         return
-    if not isinstance(receipts, list):
+    if not isinstance(receipts, tuple):
         return
     # Bounded: a turn that fires hundreds of tools does not need all of them
     # to answer the only question asked here — did anything run?
     if len(receipts) < 64:
-        receipts.append({"tool": name, "ok": bool(ok)})
+        _TURN_TOOL_RECEIPTS.set((*receipts, {"tool": name, "ok": bool(ok)}))
 
 
 def turn_tool_receipts() -> tuple[dict[str, Any], ...]:
@@ -163,7 +178,7 @@ def turn_tool_receipts() -> tuple[dict[str, Any], ...]:
         receipts = _TURN_TOOL_RECEIPTS.get()
     except LookupError:
         return ()
-    return tuple(receipts) if isinstance(receipts, list) else ()
+    return receipts if isinstance(receipts, tuple) else ()
 
 
 # The bare model's own answer, before any of this runs.
