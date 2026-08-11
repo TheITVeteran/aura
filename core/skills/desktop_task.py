@@ -5595,7 +5595,8 @@ class DesktopTaskSkill(BaseSkill):
         planner = "explicit_steps" if steps else ""
         if not steps:
             plan_error = self._declared_plan_validation_error(task_context)
-            if plan_error:
+            steps, planner = self._steps_with_provenance_from_context(task_context)
+            if plan_error and not steps:
                 return {
                     "ok": False,
                     "status": "invalid_desktop_task_plan",
@@ -5606,7 +5607,21 @@ class DesktopTaskSkill(BaseSkill):
                     "receipts": [],
                     "failures": [],
                 }
-            steps, planner = self._steps_with_provenance_from_context(task_context)
+            if plan_error:
+                # A malformed declared plan is a reason to plan differently, not
+                # a reason to do nothing.
+                #
+                # LIVE, 2026-08-10: the model proposed a step naming an action
+                # that does not exist, and the turn died with "Structured
+                # desktop plan contains an invalid or unsupported step.
+                # Completed 0/0 steps." A working heuristic plan for the same
+                # objective was sitting right behind that return, and the
+                # person got nothing.
+                record_degradation(
+                    "desktop_task",
+                    ValueError(plan_error),
+                    action=f"planned the objective heuristically instead ({planner})",
+                )
         requires_structured_plan = bool(task_context.get("desktop_execution_contract")) and not bool(
             task_context.get("allow_heuristic_desktop_plan")
         )

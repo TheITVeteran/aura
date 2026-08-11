@@ -226,3 +226,30 @@ def test_an_unverified_read_does_not_get_written_up_as_fact() -> None:
 
     assert ok is False
     assert "did not verify" in error
+
+
+# ── A bad declared plan must not be a dead turn ────────────────────────────
+
+def test_an_invalid_declared_plan_falls_back_to_heuristic_planning() -> None:
+    """LIVE: the model named an action that does not exist and the turn died.
+
+        "Structured desktop plan contains an invalid or unsupported step.
+         Completed 0/0 steps."
+
+    A working heuristic plan for the same objective was sitting directly behind
+    that return. A malformed declared plan is a reason to plan differently, not
+    a reason to do nothing.
+    """
+    import inspect
+
+    source = inspect.getsource(DesktopTaskSkill)
+    marker = "plan_error = self._declared_plan_validation_error(task_context)"
+    assert marker in source
+    window = source[source.find(marker) : source.find(marker) + 1400]
+
+    # The heuristic plan is computed BEFORE deciding to give up ...
+    assert window.find("_steps_with_provenance_from_context") < window.find(
+        '"status": "invalid_desktop_task_plan"'
+    )
+    # ... and giving up now requires that it produced nothing either.
+    assert "if plan_error and not steps:" in window
