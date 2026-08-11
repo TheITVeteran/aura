@@ -593,3 +593,27 @@ def test_a_correct_recall_is_not_corrected() -> None:
     )
 
     assert chat._append_past_action_record(question, "It was 9 files.") == "It was 9 files."
+
+
+def test_the_recorded_answer_is_applied_after_every_repair() -> None:
+    """LIVE, three attempts, three different ways of losing it.
+
+    Applied inside _stabilize_user_facing_reply the correction worked
+    in-process and never reached the person: once the full record was stripped
+    as off-topic, and once the entire reply was replaced by a later repair
+    saying "I didn't actually count the .py files" — also false, and not
+    fixable by correcting an earlier draft.
+
+    A correction a later stage can overwrite is not a correction, so it is
+    applied to the final reply, after every repair and shaping pass.
+    """
+    import inspect
+
+    from interface.routes import chat
+
+    source = inspect.getsource(chat._api_chat_turn)
+    marker = "_final_reply = _strip_user_visible_context_leaks(reply_text)"
+    assert marker in source
+    window = source[source.find(marker) : source.find(marker) + 1400]
+
+    assert "_append_past_action_record(_semantic_user_message, _final_reply)" in window

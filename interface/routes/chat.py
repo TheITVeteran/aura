@@ -27176,6 +27176,20 @@ async def _api_chat_turn(body: ChatRequest, request: Request):
         # the thread.
         _pre_context_strip_reply = reply_text
         _final_reply = _strip_user_visible_context_leaks(reply_text) or "…"
+        # The recorded answer is applied HERE, after every repair, regeneration
+        # and shaping pass, because everywhere earlier it was discarded.
+        #
+        # LIVE, 2026-08-10, three attempts. Applied inside
+        # _stabilize_user_facing_reply it worked in-process and never reached
+        # the person: on one turn the full record was stripped as off-topic,
+        # and on the next the whole reply was replaced by a later repair that
+        # said "I didn't actually count the .py files" — which is also false,
+        # and which no amount of correcting an earlier draft can fix.
+        #
+        # A correction that a later stage can overwrite is not a correction.
+        _final_reply = str(
+            _append_past_action_record(_semantic_user_message, _final_reply) or _final_reply
+        )
         _append_turn_text_mutation(
             _live_turn_trace,
             stage="chat.final_context_leak_strip",
