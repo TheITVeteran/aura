@@ -5876,3 +5876,13 @@ canonical smoke passes `104/104`.
 SPARK-069 through SPARK-072 remain open, the completion envelope remains
 `912/920`, and no transfer, fusion, frontier or `WOW Signal` claim is made
 before terminal admission and the frozen resident decode.
+
+### 2026-08-11 - CP248 candidate-level resident verdict reconstruction
+
+CP247 initially compared committed arm summaries without independently
+reconstructing them from their candidate rows. CP248 now requires one complete
+eight-arm matrix per task, rejects duplicate or missing cells, recomputes every
+correct count, and pairs the matched T4 candidates itself to derive
+wrong-to-right and right-to-wrong transitions. The affected surface passes
+`25/25`. The resident training run is still active under its immutable CP246
+source, so no decoded transfer or downstream claim is made.

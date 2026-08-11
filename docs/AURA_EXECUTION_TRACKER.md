@@ -45240,3 +45240,20 @@ claim, broad reasoning gain, fusion, frontier result or `WOW Signal` is claimed
 here. The completion envelope remains `912/920` (approximately `99.1%`). Next
 is terminal all-cell training admission, then the frozen 72-candidate resident
 decode and this already-committed decision rule.
+
+## Checkpoint 2026-08-11-248: Verdicts Are Rebuilt From Candidate Evidence
+
+Review of CP247 found that its first implementation recomputed relationships
+among the evaluator's arm summaries but did not derive those summaries from
+the individual candidate records. A self-consistent but incorrect summary
+could therefore survive the verdict gate.
+
+The adjudicator now requires the exact eight-arm matrix for every task, rejects
+duplicate or missing task/arm cells, reconstructs every arm's correct count
+from candidate booleans, and independently derives T4 wrong-to-right and
+right-to-wrong transitions by pairing the matched controller arms per task.
+Only those reconstructed observations reach the already-frozen CP247 decision
+rule. The focused adjudicator/evaluator/launcher surface passes `25/25`; Ruff,
+compilation and diff hygiene are clean. Training continues independently under
+the immutable CP246 source capsule. No resident decode or gain claim is made,
+and the completion envelope remains `912/920` (approximately `99.1%`).

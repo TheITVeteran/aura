@@ -37,6 +37,33 @@ def _report(
             "eos_stops": tasks,
         }
 
+    arm_correct = {
+        "base_t1": base,
+        "untrained_t1": control,
+        "trained_t1": trained_t1,
+        "untrained_t4": control,
+        "trained_t4": treatment,
+        "grammar_lesion_t4": grammar,
+        "pointer_lesion_t4": pointer,
+        "compiled_t4": compiled,
+    }
+    candidates = []
+    control_successes = set(range(control))
+    treatment_successes = set(range(control))
+    treatment_successes.difference_update(range(right_to_wrong))
+    treatment_successes.update(range(control, control + wrong_to_right))
+    for task in range(tasks):
+        for name, correct_count in arm_correct.items():
+            if name == "untrained_t4":
+                correct = task in control_successes
+            elif name == "trained_t4":
+                correct = task in treatment_successes
+            else:
+                correct = task < correct_count
+            candidates.append(
+                {"task_id": f"task-{task}", "arm": name, "correct": correct}
+            )
+
     body = {
         "schema": "aura.unified_intrinsic_decode_evaluation.v1",
         "checkpoint_sha256": "a" * 64,
@@ -46,6 +73,7 @@ def _report(
         "recurrence_depths": [4],
         "arm_results": {
             "base_t1": arm(base),
+            "untrained_t1": arm(control),
             "trained_t1": arm(trained_t1),
             "untrained_t4": arm(control),
             "trained_t4": arm(treatment),
@@ -53,6 +81,7 @@ def _report(
             "pointer_lesion_t4": arm(pointer),
             "compiled_t4": arm(compiled),
         },
+        "candidates": candidates,
         "paired_training_effects": {
             "4": {
                 "tasks": tasks,
@@ -126,4 +155,20 @@ def test_report_commitment_and_transition_accounting_are_recomputed() -> None:
     body = {key: value for key, value in changed.items() if key != "report_sha256"}
     changed["report_sha256"] = canonical_sha256(body)
     with pytest.raises(ResidentTransferAdjudicationError, match="accounting"):
+        adjudicate_report(changed)
+
+
+def test_candidate_matrix_must_reconstruct_summaries_and_pairs() -> None:
+    changed = _report()
+    changed["candidates"][0]["correct"] = not changed["candidates"][0]["correct"]
+    body = {key: value for key, value in changed.items() if key != "report_sha256"}
+    changed["report_sha256"] = canonical_sha256(body)
+    with pytest.raises(ResidentTransferAdjudicationError, match="candidates"):
+        adjudicate_report(changed)
+
+    changed = _report()
+    changed["candidates"].append(copy.deepcopy(changed["candidates"][0]))
+    body = {key: value for key, value in changed.items() if key != "report_sha256"}
+    changed["report_sha256"] = canonical_sha256(body)
+    with pytest.raises(ResidentTransferAdjudicationError, match="candidate count"):
         adjudicate_report(changed)

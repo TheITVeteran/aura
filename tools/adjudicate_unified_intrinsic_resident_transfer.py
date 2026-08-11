@@ -67,6 +67,38 @@ def _arm(report: Mapping[str, Any], name: str, tasks: int) -> dict[str, Any]:
     return row
 
 
+def _candidate_matrix(
+    report: Mapping[str, Any],
+    *,
+    arm_names: set[str],
+    task_count: int,
+) -> dict[str, dict[str, bool]]:
+    candidates = report.get("candidates")
+    if not isinstance(candidates, list) or len(candidates) != task_count * len(arm_names):
+        _fail("resident transfer candidate count differs")
+    matrix: dict[str, dict[str, bool]] = {}
+    for row in candidates:
+        if not isinstance(row, dict):
+            _fail("resident transfer candidate is invalid")
+        task_id = row.get("task_id")
+        arm = row.get("arm")
+        correct = row.get("correct")
+        if (
+            not isinstance(task_id, str)
+            or not task_id
+            or arm not in arm_names
+            or type(correct) is not bool
+        ):
+            _fail("resident transfer candidate identity differs")
+        task = matrix.setdefault(task_id, {})
+        if arm in task:
+            _fail("resident transfer candidate arm is duplicated")
+        task[arm] = correct
+    if len(matrix) != task_count or any(set(row) != arm_names for row in matrix.values()):
+        _fail("resident transfer candidate matrix is incomplete")
+    return matrix
+
+
 def adjudicate_report(report: Mapping[str, Any]) -> dict[str, Any]:
     """Return one bounded, machine-checkable resident-transfer verdict."""
 
@@ -96,6 +128,22 @@ def adjudicate_report(report: Mapping[str, Any]) -> dict[str, Any]:
     pointer_name = f"pointer_lesion_t{depth}"
     compiled_name = f"compiled_t{depth}"
 
+    arm_names = {
+        "base_t1",
+        "untrained_t1",
+        "trained_t1",
+        control_name,
+        treatment_name,
+        grammar_name,
+        pointer_name,
+        compiled_name,
+    }
+    matrix = _candidate_matrix(
+        report,
+        arm_names=arm_names,
+        task_count=task_count,
+    )
+
     base = _arm(report, "base_t1", task_count)
     trained_t1 = _arm(report, "trained_t1", task_count)
     control = _arm(report, control_name, task_count)
@@ -103,6 +151,21 @@ def adjudicate_report(report: Mapping[str, Any]) -> dict[str, Any]:
     grammar = _arm(report, grammar_name, task_count)
     pointer = _arm(report, pointer_name, task_count)
     compiled = _arm(report, compiled_name, task_count)
+    summarized = {
+        "base_t1": base,
+        "untrained_t1": _arm(report, "untrained_t1", task_count),
+        "trained_t1": trained_t1,
+        control_name: control,
+        treatment_name: treatment,
+        grammar_name: grammar,
+        pointer_name: pointer,
+        compiled_name: compiled,
+    }
+    if any(
+        sum(row[arm] for row in matrix.values()) != summary["correct"]
+        for arm, summary in summarized.items()
+    ):
+        _fail("resident transfer arm summary differs from candidates")
 
     effects = report.get("paired_training_effects")
     effect = effects.get(str(depth)) if isinstance(effects, dict) else None
@@ -131,6 +194,17 @@ def adjudicate_report(report: Mapping[str, Any]) -> dict[str, Any]:
         or net_gain != treatment["correct"] - control["correct"]
     ):
         _fail("resident transfer transition accounting differs")
+    reconstructed_wrong_to_right = sum(
+        not row[control_name] and row[treatment_name] for row in matrix.values()
+    )
+    reconstructed_right_to_wrong = sum(
+        row[control_name] and not row[treatment_name] for row in matrix.values()
+    )
+    if (
+        wrong_to_right != reconstructed_wrong_to_right
+        or right_to_wrong != reconstructed_right_to_wrong
+    ):
+        _fail("resident transfer transitions differ from candidates")
 
     checks = {
         "control_has_headroom": control["correct"] < task_count,
