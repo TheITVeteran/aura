@@ -40,7 +40,9 @@ def _config(campaign: Path) -> dict:
         "campaign_id": "resident-full",
         "config_sha256": "c" * 64,
         "paths": {"campaign_root": str(campaign)},
-        "source": {"git": {"commit": "d" * 40, "root": str(campaign)}},
+        "source": {
+            "git": {"commit": "d" * 40, "root": str(replication.REPO_ROOT)}
+        },
         "runtime": {
             "interpreter": {
                 "executable": str(executable),
@@ -95,6 +97,9 @@ def _report(seed: int, *, task_prefix: str | None = None) -> dict:
         "task_count": tasks,
         "task_depths": [1, 2, 4],
         "recurrence_depths": [4],
+        "evaluation_source_sha256s": replication.launcher._evaluator_source_sha256s(  # noqa: SLF001
+            replication.REPO_ROOT
+        ),
         "arm_results": {arm: summary(correct) for arm, correct in arm_correct.items()},
         "candidates": candidates,
         "paired_training_effects": {
@@ -145,7 +150,10 @@ def _installed_plan(campaign: Path) -> dict:
         "campaign_root": str(campaign),
         "campaign_config_sha256": "c" * 64,
         "source_commit": "d" * 40,
-        "evaluator_source_root": str(campaign),
+        "evaluator_source_root": str(replication.REPO_ROOT),
+        "evaluator_source_sha256s": replication.launcher._evaluator_source_sha256s(  # noqa: SLF001
+            replication.REPO_ROOT
+        ),
         "checkpoint_contract": "exact_terminal_answer_bridge_admitted_checkpoint",
         "seeds": list(SEEDS),
         "per_cell": 1,
@@ -194,12 +202,40 @@ def test_prepare_freezes_powered_plan_and_is_idempotent(
     assert first == second
     assert first["total_tasks"] == 27
     assert first["total_candidates"] == 216
+    assert first["evaluator_source_sha256s"] == (
+        replication.launcher._evaluator_source_sha256s(replication.REPO_ROOT)  # noqa: SLF001
+    )
     assert first["plan_sha256"] == canonical_sha256(
         {key: value for key, value in first.items() if key != "plan_sha256"}
     )
     assert (
         campaign / "resident-replication" / "replication-plan.json"
     ).stat().st_mode & 0o777 == 0o400
+
+
+def test_replication_plan_rejects_evaluator_drift_across_seeds(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    campaign = tmp_path / "campaign"
+    campaign.mkdir()
+    evaluator_root = tmp_path / "evaluator"
+    (evaluator_root / "tools").mkdir(parents=True)
+    for relative in replication.launcher.EVALUATION_SOURCE_FILES:
+        path = evaluator_root / relative
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(f"# {relative}\n", encoding="ascii")
+    config = _config(campaign)
+    monkeypatch.setattr(replication, "_campaign", lambda _args: (campaign, config))
+    arguments = _arguments(campaign, evaluator_source_root=evaluator_root)
+    replication.prepare(arguments)
+    (evaluator_root / replication.launcher.EVALUATION_SOURCE_FILES[0]).write_text(
+        "# changed after preregistration\n",
+        encoding="ascii",
+    )
+
+    with pytest.raises(replication.ResidentReplicationError, match="source differs"):
+        replication._load_plan(arguments)  # noqa: SLF001
 
 
 def _install_adjudication(

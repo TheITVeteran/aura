@@ -38,7 +38,7 @@ from tools.unified_intrinsic_resident_identity import (  # noqa: E402
     canonical_sha256,
 )
 
-PLAN_SCHEMA: Final = "aura.unified_intrinsic.resident_replication_plan.v2"
+PLAN_SCHEMA: Final = "aura.unified_intrinsic.resident_replication_plan.v3"
 VERDICT_SCHEMA: Final = "aura.unified_intrinsic.resident_replication_verdict.v1"
 CONTROLLER_STATUS_SCHEMA: Final = "aura.unified_intrinsic.resident_replication_controller_status.v1"
 LAUNCH_INTENT_SCHEMA: Final = "aura.unified_intrinsic.resident_replication_launch_intent.v1"
@@ -477,16 +477,20 @@ def prepare(arguments: argparse.Namespace) -> dict[str, Any]:
         }
         for seed in seeds
     ]
+    evaluator_source_root = (
+        arguments.evaluator_source_root.expanduser().resolve(strict=True)
+        if arguments.evaluator_source_root is not None
+        else Path(config["source"]["git"]["root"]).resolve(strict=True)
+    )
     body = {
         "schema": PLAN_SCHEMA,
         "campaign_id": config["campaign_id"],
         "campaign_root": str(campaign),
         "campaign_config_sha256": config["config_sha256"],
         "source_commit": config["source"]["git"]["commit"],
-        "evaluator_source_root": (
-            str(arguments.evaluator_source_root.expanduser().resolve(strict=True))
-            if arguments.evaluator_source_root is not None
-            else config["source"]["git"]["root"]
+        "evaluator_source_root": str(evaluator_source_root),
+        "evaluator_source_sha256s": launcher._evaluator_source_sha256s(  # noqa: SLF001
+            evaluator_source_root
         ),
         "checkpoint_contract": "exact_terminal_answer_bridge_admitted_checkpoint",
         "seeds": list(seeds),
@@ -541,6 +545,20 @@ def _load_plan(arguments: argparse.Namespace) -> tuple[Path, dict[str, Any], dic
         or plan.get("source_commit") != config["source"]["git"]["commit"]
     ):
         _fail("replication plan identity differs")
+    evaluator_source_root = Path(str(plan.get("evaluator_source_root") or ""))
+    try:
+        observed_evaluator_source = launcher._evaluator_source_sha256s(  # noqa: SLF001
+            evaluator_source_root
+        )
+    except launcher.ResidentEvaluationLaunchError as exc:
+        raise ResidentReplicationError(
+            "replication evaluator source is unavailable"
+        ) from exc
+    if (
+        not evaluator_source_root.is_absolute()
+        or observed_evaluator_source != plan.get("evaluator_source_sha256s")
+    ):
+        _fail("replication evaluator source differs")
     return campaign, config, plan
 
 
@@ -662,6 +680,8 @@ def adjudicate(arguments: argparse.Namespace) -> dict[str, Any]:
             or report.get("task_depths") != plan["task_depths"]
             or report.get("recurrence_depths") != plan["recurrence_depths"]
             or report.get("task_count") != plan["task_count_per_seed"]
+            or report.get("evaluation_source_sha256s")
+            != plan["evaluator_source_sha256s"]
         ):
             _fail(f"replication report identity differs: seed={evaluation['seed']}")
         try:

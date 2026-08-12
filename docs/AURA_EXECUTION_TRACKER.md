@@ -45929,6 +45929,20 @@ is frozen and its authenticated controller is waiting for strict terminal
 admission. No decoded gain, replication, serving authority, fusion authority,
 frontier result or `WOW Signal` is claimed.
 
+## Checkpoint 2026-08-12-281: One Evaluator Identity Governs Every Seed
+
+The powered replication preregistration now commits the complete evaluator
+source digest map before any seed starts. The controller rechecks those bytes
+whenever it reopens the plan, and adjudication requires every per-seed report
+to carry that same map. A source change between seeds is therefore an explicit
+infrastructure failure, not an unreported experiment change.
+
+Validation is green: `35/35` focused evaluator, launcher and replication tests,
+focused Ruff and `104/104` canonical smoke passed, including direct post-plan
+source-drift rejection. No task, prompt, arm, model, seed, sample count or
+decision threshold changed. Next is a fresh v3 plan and detached resident
+launch from the exact CP275 training source plus the CP280 evaluator overlay.
+
 ## Checkpoint 2026-08-12-272: Restart and Rollback Are Executable Evidence
 
 The live shadow canary previously forced package discovery through an
