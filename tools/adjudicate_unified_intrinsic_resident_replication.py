@@ -39,7 +39,7 @@ from tools.unified_intrinsic_resident_identity import (  # noqa: E402
 )
 
 PLAN_SCHEMA: Final = "aura.unified_intrinsic.resident_replication_plan.v3"
-VERDICT_SCHEMA: Final = "aura.unified_intrinsic.resident_replication_verdict.v1"
+VERDICT_SCHEMA: Final = "aura.unified_intrinsic.resident_replication_verdict.v2"
 CONTROLLER_STATUS_SCHEMA: Final = "aura.unified_intrinsic.resident_replication_controller_status.v1"
 LAUNCH_INTENT_SCHEMA: Final = "aura.unified_intrinsic.resident_replication_launch_intent.v1"
 LAUNCH_RECEIPT_SCHEMA: Final = "aura.unified_intrinsic.resident_replication_launchd.v1"
@@ -53,8 +53,16 @@ class ResidentReplicationError(RuntimeError):
     """Replication evidence is incomplete, malformed or inconsistent."""
 
 
+class ResidentReplicationIncompleteError(ResidentReplicationError):
+    """Replication is incomplete and no preregistered conclusion is yet forced."""
+
+
 def _fail(message: str) -> Never:
     raise ResidentReplicationError(message)
+
+
+def _incomplete(message: str) -> Never:
+    raise ResidentReplicationIncompleteError(message)
 
 
 def _csv_unique_ints(value: str) -> tuple[int, ...]:
@@ -617,8 +625,11 @@ def launch_next(arguments: argparse.Namespace) -> dict[str, Any]:
     campaign, _config, plan = _load_plan(arguments)
     observed = status(arguments)
     for index, row in enumerate(observed["evaluations"]):
-        if row["state"] == "failed":
-            _fail(f"replication evaluation failed: seed={row['seed']}")
+        if row["state"] in {"failed", "stopped"}:
+            _fail(
+                "replication evaluation terminated before completion: "
+                f"seed={row['seed']} state={row['state']}"
+            )
         if row["state"] == "running":
             return {"state": "running", "seed": row["seed"], "status": row["detail"]}
         if row["state"] == "pending":
@@ -630,6 +641,11 @@ def launch_next(arguments: argparse.Namespace) -> dict[str, Any]:
                 "seed": evaluation["seed"],
                 "launch": launcher.launch(launch_arguments),
             }
+        if row["state"] != "completed":
+            _fail(
+                "replication evaluation state is unsupported: "
+                f"seed={row['seed']} state={row['state']}"
+            )
     return {"state": "completed", "status": observed}
 
 
@@ -641,13 +657,27 @@ def _arm(report: Mapping[str, Any], name: str) -> int:
     return int(row["correct"])
 
 
-def adjudicate(arguments: argparse.Namespace) -> dict[str, Any]:
-    campaign, config, plan = _load_plan(arguments)
+def _write_verdict(arguments: argparse.Namespace, verdict: Mapping[str, Any]) -> None:
+    if arguments.verdict_output is None:
+        return
+    path = arguments.verdict_output.expanduser().absolute()
+    payload = canonical_bytes(dict(verdict)) + b"\n"
+    if not atomic_write_bytes_if_absent(path, payload, mode=0o400):
+        if _read_canonical(path) != verdict:
+            _fail("replication verdict already differs")
+
+
+def _collect_evidence(
+    campaign: Path,
+    plan: Mapping[str, Any],
+    checkpoint_sha256: str,
+) -> dict[str, Any]:
     completion = launcher._read_document(campaign / "completion-receipt.json")  # noqa: SLF001
     checkpoint = completion.get("checkpoint")
     if not isinstance(checkpoint, dict) or checkpoint.get("complete") is not True:
         _fail("replication terminal checkpoint is unavailable")
-    checkpoint_sha256 = checkpoint.get("checkpoint_sha256")
+    if checkpoint.get("checkpoint_sha256") != checkpoint_sha256:
+        _fail("replication terminal checkpoint identity differs")
     depth = int(plan["recurrence_depths"][0])
     names = {
         "base": "base_t1",
@@ -666,11 +696,27 @@ def adjudicate(arguments: argparse.Namespace) -> dict[str, Any]:
     prompt_sha256s: set[str] = set()
     every_seed_positive = True
     instruments_exact = True
+    evaluation_states: list[dict[str, Any]] = []
     for evaluation in plan["evaluations"]:
-        evaluation_status = launcher.status(_evaluation_arguments(campaign, plan, evaluation))
+        output = Path(str(evaluation["output"]))
+        if (output / "evaluation-plan.json").exists():
+            evaluation_status = launcher.status(
+                _evaluation_arguments(campaign, plan, evaluation)
+            )
+        else:
+            evaluation_status = {"state": "pending"}
+        state = str(evaluation_status.get("state") or "unknown")
+        evaluation_states.append({"seed": evaluation["seed"], "state": state})
         report = evaluation_status.get("report")
-        if evaluation_status.get("state") != "completed" or not isinstance(report, dict):
-            _fail(f"replication evaluation is incomplete: seed={evaluation['seed']}")
+        if state != "completed":
+            if report is not None:
+                _fail(
+                    "non-completed replication evaluation exposed a report: "
+                    f"seed={evaluation['seed']} state={state}"
+                )
+            continue
+        if not isinstance(report, dict):
+            _fail(f"completed replication report is unavailable: seed={evaluation['seed']}")
         report_body = {key: value for key, value in report.items() if key != "report_sha256"}
         if (
             report.get("report_sha256") != canonical_sha256(report_body)
@@ -738,34 +784,109 @@ def adjudicate(arguments: argparse.Namespace) -> dict[str, Any]:
                 "net_correct_gain": net,
             }
         )
-    total_tasks = int(plan["total_tasks"])
+    return {
+        "totals": totals,
+        "wrong_to_right": wrong_to_right,
+        "right_to_wrong": right_to_wrong,
+        "reports": reports,
+        "every_seed_positive": every_seed_positive,
+        "instruments_exact": instruments_exact,
+        "evaluation_states": evaluation_states,
+    }
+
+
+def adjudicate(arguments: argparse.Namespace) -> dict[str, Any]:
+    campaign, config, plan = _load_plan(arguments)
+    completion = launcher._read_document(campaign / "completion-receipt.json")  # noqa: SLF001
+    checkpoint = completion.get("checkpoint")
+    if not isinstance(checkpoint, dict) or checkpoint.get("complete") is not True:
+        _fail("replication terminal checkpoint is unavailable")
+    checkpoint_sha256 = checkpoint.get("checkpoint_sha256")
+    if not isinstance(checkpoint_sha256, str):
+        _fail("replication terminal checkpoint identity is unavailable")
+    evidence = _collect_evidence(campaign, plan, checkpoint_sha256)
+    reports = evidence["reports"]
+    if not reports:
+        _incomplete("replication has no completed evaluation evidence")
+    totals = evidence["totals"]
+    wrong_to_right = int(evidence["wrong_to_right"])
+    right_to_wrong = int(evidence["right_to_wrong"])
+    observed_tasks = len(reports) * int(plan["task_count_per_seed"])
+    planned_tasks = int(plan["total_tasks"])
+    all_present = len(reports) == len(plan["seeds"])
+    decision_rule = plan.get("decision_rule")
+    if not isinstance(decision_rule, Mapping):
+        _fail("replication decision rule is unavailable")
+    irreversible_failures: list[str] = []
+    if (
+        decision_rule.get("each_seed_positive_matched_control_gain") is True
+        and evidence["every_seed_positive"] is not True
+    ):
+        irreversible_failures.append("every_seed_positive_matched_control_gain")
+    if (
+        decision_rule.get("zero_pooled_right_to_wrong") is True
+        and right_to_wrong > 0
+    ):
+        irreversible_failures.append("zero_right_to_wrong")
+    if (
+        decision_rule.get("compiled_exact_every_seed") is True
+        and evidence["instruments_exact"] is not True
+    ):
+        irreversible_failures.append("compiled_instrument_exact")
+    if not all_present and not irreversible_failures:
+        _incomplete(
+            "replication is incomplete and no preregistered support condition "
+            "has been irreversibly refuted"
+        )
+
     tail = exact_paired_binomial_tail(wrong_to_right, right_to_wrong)
     pvalue = Fraction(tail.numerator, tail.denominator)
-    alpha = Fraction(1, 100)
-    effect = Fraction(totals["treatment"] - totals["control"], total_tasks)
-    minimum_effect = Fraction(1, 5)
+    alpha = Fraction(
+        int(decision_rule["alpha_numerator"]),
+        int(decision_rule["alpha_denominator"]),
+    )
+    effect = Fraction(totals["treatment"] - totals["control"], observed_tasks)
+    minimum_effect = Fraction(
+        int(decision_rule["minimum_pooled_effect_numerator"]),
+        int(decision_rule["minimum_pooled_effect_denominator"]),
+    )
     checks = {
-        "all_evaluations_present": len(reports) == len(plan["seeds"]),
-        "compiled_instrument_exact": instruments_exact,
-        "every_seed_positive_matched_control_gain": every_seed_positive,
+        "all_evaluations_present": all_present,
+        "compiled_instrument_exact": evidence["instruments_exact"],
+        "every_seed_positive_matched_control_gain": evidence["every_seed_positive"],
         "zero_right_to_wrong": right_to_wrong == 0,
-        "pooled_exact_p_at_most_one_percent": pvalue <= alpha,
-        "pooled_effect_at_least_twenty_percent": effect >= minimum_effect,
-        "treatment_beats_base": totals["treatment"] > totals["base"],
-        "recurrence_beats_trained_t1": totals["treatment"] > totals["trained_t1"],
-        "grammar_lesion_loses": totals["treatment"] > totals["grammar"],
-        "pointer_lesion_loses": totals["treatment"] > totals["pointer"],
+        "pooled_exact_p_at_most_one_percent": pvalue <= alpha if all_present else None,
+        "pooled_effect_at_least_twenty_percent": effect >= minimum_effect
+        if all_present
+        else None,
+        "treatment_beats_base": totals["treatment"] > totals["base"]
+        if all_present
+        else None,
+        "recurrence_beats_trained_t1": totals["treatment"] > totals["trained_t1"]
+        if all_present
+        else None,
+        "grammar_lesion_loses": totals["treatment"] > totals["grammar"]
+        if all_present
+        else None,
+        "pointer_lesion_loses": totals["treatment"] > totals["pointer"]
+        if all_present
+        else None,
     }
-    supported = all(checks.values())
+    supported = all_present and all(value is True for value in checks.values())
     body = {
         "schema": VERDICT_SCHEMA,
         "verdict": SUPPORTED if supported else REFUTED,
         "supported": supported,
+        "adjudication_scope": "complete" if all_present else "decisive_early_refutation",
         "plan_sha256": plan["plan_sha256"],
         "campaign_config_sha256": config["config_sha256"],
         "checkpoint_sha256": checkpoint_sha256,
         "reports": reports,
-        "total_tasks": total_tasks,
+        "evaluation_states": evidence["evaluation_states"],
+        "evaluations_observed": len(reports),
+        "evaluations_planned": len(plan["seeds"]),
+        "total_tasks": observed_tasks,
+        "planned_total_tasks": planned_tasks,
         "arms": totals,
         "paired_effect": {
             "wrong_to_right": wrong_to_right,
@@ -777,15 +898,19 @@ def adjudicate(arguments: argparse.Namespace) -> dict[str, Any]:
             "one_sided_exact_p_denominator": pvalue.denominator,
         },
         "checks": checks,
+        "irreversible_failures": irreversible_failures,
         "claim_boundary": plan["claim_boundary"],
+        "adjudication_boundary": (
+            "An early refutation proves only that the exact preregistered "
+            "conjunctive support rule cannot be satisfied after the observed "
+            "completed evaluations. Undecidable aggregate checks remain null; "
+            "this is not a powered effect estimate."
+            if not all_present
+            else "All preregistered evaluations were present and adjudicated."
+        ),
     }
     verdict = {**body, "verdict_sha256": canonical_sha256(body)}
-    if arguments.verdict_output is not None:
-        atomic_write_bytes(
-            arguments.verdict_output.expanduser().absolute(),
-            canonical_bytes(verdict) + b"\n",
-            mode=0o400,
-        )
+    _write_verdict(arguments, verdict)
     return verdict
 
 
@@ -868,31 +993,40 @@ def run(arguments: argparse.Namespace) -> dict[str, Any]:
                 {**training, "launchd": launchd},
             )
             observed = status(arguments)
-            if observed["complete"] is True:
+            if observed["complete"] is True or any(
+                row["state"] == "completed" for row in observed["evaluations"]
+            ):
                 verdict_arguments = argparse.Namespace(**vars(arguments))
                 verdict_arguments.verdict_output = (
                     _replication_root(arguments, campaign) / "replication-verdict.json"
                 )
-                verdict = adjudicate(verdict_arguments)
-                final_state = "completed" if verdict["supported"] else "refuted"
-                controller = _publish_controller_status(
-                    arguments,
-                    campaign,
-                    config,
-                    plan,
-                    final_state,
-                    {
-                        **training,
-                        "verdict": verdict["verdict"],
-                        "verdict_sha256": verdict["verdict_sha256"],
-                    },
-                )
-                return {
-                    "state": final_state,
-                    "supported": verdict["supported"],
-                    "verdict": verdict,
-                    "controller": controller,
-                }
+                try:
+                    verdict = adjudicate(verdict_arguments)
+                except ResidentReplicationIncompleteError:
+                    verdict = None
+                if verdict is not None:
+                    final_state = "completed" if verdict["supported"] else "refuted"
+                    controller = _publish_controller_status(
+                        arguments,
+                        campaign,
+                        config,
+                        plan,
+                        final_state,
+                        {
+                            **training,
+                            "verdict": verdict["verdict"],
+                            "verdict_sha256": verdict["verdict_sha256"],
+                            "adjudication_scope": verdict.get(
+                                "adjudication_scope", "complete"
+                            ),
+                        },
+                    )
+                    return {
+                        "state": final_state,
+                        "supported": verdict["supported"],
+                        "verdict": verdict,
+                        "controller": controller,
+                    }
 
             next_result = launch_next(arguments)
             _publish_controller_status(

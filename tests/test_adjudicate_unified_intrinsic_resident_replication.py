@@ -256,6 +256,10 @@ def _install_adjudication(
         "_read_document",
         lambda _path: {"checkpoint": {"complete": True, "checkpoint_sha256": "a" * 64}},
     )
+    for seed in reports:
+        output = campaign / "resident-replication" / f"seed-{seed}"
+        output.mkdir(parents=True, exist_ok=True)
+        (output / "evaluation-plan.json").write_text("{}\n", encoding="ascii")
 
     def fake_status(arguments: argparse.Namespace) -> dict:
         return {"state": "completed", "report": reports[arguments.evaluation_seed]}
@@ -305,6 +309,89 @@ def test_valid_negative_seed_produces_refutation_not_infrastructure_failure(
     assert verdict["verdict"] == replication.REFUTED
     assert verdict["supported"] is False
     assert verdict["checks"]["every_seed_positive_matched_control_gain"] is False
+
+
+def test_adjudicate_seals_decisive_early_refutation_without_inventing_aggregate(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    report = _neutralize_treatment(_report(SEEDS[0]))
+    _install_adjudication(tmp_path, monkeypatch, {SEEDS[0]: report})
+    verdict_path = tmp_path / "resident-replication" / "replication-verdict.json"
+    arguments = _arguments(tmp_path, verdict_output=verdict_path)
+
+    verdict = replication.adjudicate(arguments)
+    reopened = replication.adjudicate(arguments)
+
+    assert reopened == verdict
+    assert verdict["verdict"] == replication.REFUTED
+    assert verdict["adjudication_scope"] == "decisive_early_refutation"
+    assert verdict["evaluations_observed"] == 1
+    assert verdict["evaluations_planned"] == 3
+    assert verdict["total_tasks"] == 9
+    assert verdict["planned_total_tasks"] == 27
+    assert verdict["irreversible_failures"] == [
+        "every_seed_positive_matched_control_gain"
+    ]
+    assert verdict["checks"]["all_evaluations_present"] is False
+    assert verdict["checks"]["pooled_exact_p_at_most_one_percent"] is None
+    assert verdict_path.stat().st_mode & 0o777 == 0o400
+
+
+def test_adjudicate_refuses_early_conclusion_when_support_remains_possible(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _install_adjudication(tmp_path, monkeypatch, {SEEDS[0]: _report(SEEDS[0])})
+
+    with pytest.raises(
+        replication.ResidentReplicationIncompleteError,
+        match="no preregistered support condition",
+    ):
+        replication.adjudicate(_arguments(tmp_path))
+
+
+def test_adjudicate_rejects_mutating_an_existing_verdict(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    report = _neutralize_treatment(_report(SEEDS[0]))
+    _install_adjudication(tmp_path, monkeypatch, {SEEDS[0]: report})
+    verdict_path = tmp_path / "resident-replication" / "replication-verdict.json"
+    verdict_path.parent.mkdir(parents=True, exist_ok=True)
+    verdict_path.write_bytes(canonical_bytes({"different": True}) + b"\n")
+
+    with pytest.raises(replication.ResidentReplicationError, match="already differs"):
+        replication.adjudicate(
+            _arguments(tmp_path, verdict_output=verdict_path)
+        )
+
+
+def test_launch_next_rejects_stopped_or_unknown_evaluator_state(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    plan_body = _installed_plan(tmp_path)
+    plan = {**plan_body, "plan_sha256": canonical_sha256(plan_body)}
+    monkeypatch.setattr(
+        replication,
+        "_load_plan",
+        lambda _args: (tmp_path, _config(tmp_path), plan),
+    )
+    monkeypatch.setattr(
+        replication,
+        "status",
+        lambda _args: {
+            "evaluations": [
+                {"seed": SEEDS[0], "state": "completed", "detail": {}},
+                {"seed": SEEDS[1], "state": "stopped", "detail": {}},
+                {"seed": SEEDS[2], "state": "pending", "detail": None},
+            ]
+        },
+    )
+
+    with pytest.raises(replication.ResidentReplicationError, match="terminated"):
+        replication.launch_next(_arguments(tmp_path))
 
 
 def test_adjudicate_contains_malformed_single_seed_evidence(
@@ -385,6 +472,69 @@ def test_run_adjudicates_and_publishes_terminal_controller_state(
     assert published[0][1]["answer_bridge_admitted"] is True
     assert published[-1][0] == "completed"
     assert published[-1][1]["verdict_sha256"] == "f" * 64
+
+
+def test_run_publishes_decisive_refutation_before_remaining_seeds(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    plan_body = _installed_plan(tmp_path)
+    plan = {**plan_body, "plan_sha256": canonical_sha256(plan_body)}
+    config = _config(tmp_path)
+    monkeypatch.setattr(
+        replication,
+        "_load_plan",
+        lambda _args: (tmp_path, config, plan),
+    )
+    monkeypatch.setattr(
+        replication,
+        "_campaign_is_terminal",
+        lambda _campaign, _config: (
+            True,
+            {"completion_sha256": "e" * 64, "answer_bridge_admitted": True},
+        ),
+    )
+    monkeypatch.setattr(
+        replication,
+        "_verify_launchd_supervision",
+        lambda *_args: {"target": "gui/501/test"},
+    )
+    monkeypatch.setattr(
+        replication,
+        "status",
+        lambda _args: {
+            "complete": False,
+            "evaluations": [
+                {"seed": SEEDS[0], "state": "completed"},
+                {"seed": SEEDS[1], "state": "pending"},
+                {"seed": SEEDS[2], "state": "pending"},
+            ],
+        },
+    )
+    expected = {
+        "verdict": replication.REFUTED,
+        "supported": False,
+        "verdict_sha256": "f" * 64,
+        "adjudication_scope": "decisive_early_refutation",
+    }
+    monkeypatch.setattr(replication, "adjudicate", lambda _args: expected)
+    monkeypatch.setattr(
+        replication,
+        "launch_next",
+        lambda _args: pytest.fail("decisive refutation launched another seed"),
+    )
+    published: list[str] = []
+    monkeypatch.setattr(
+        replication,
+        "_publish_controller_status",
+        lambda *_args: published.append(str(_args[4])) or {"state": str(_args[4])},
+    )
+
+    result = replication.run(_arguments(tmp_path))
+
+    assert result["state"] == "refuted"
+    assert result["supported"] is False
+    assert published == ["admitted", "refuted"]
 
 
 def test_run_stops_cleanly_when_terminal_training_never_earned_admission(

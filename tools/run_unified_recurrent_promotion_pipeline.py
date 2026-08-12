@@ -169,6 +169,22 @@ def _replication_arguments(config: Mapping[str, Any]) -> argparse.Namespace:
     )
 
 
+def _adjudicate_available_replication(
+    config: Mapping[str, Any],
+) -> dict[str, Any] | None:
+    arguments = _replication_arguments(config)
+    verdict_path = Path(str(config["replication_root"])) / "replication-verdict.json"
+    arguments.verdict_output = verdict_path
+    try:
+        verdict = replication.adjudicate(arguments)
+    except replication.ResidentReplicationIncompleteError:
+        return None
+    stored = _read_canonical(verdict_path)
+    if stored != verdict:
+        _fail("promotion stored and recomputed replication verdicts differ")
+    return verdict
+
+
 def _key(config: Mapping[str, Any]) -> bytes:
     campaign_config = resident._load_config(  # noqa: SLF001
         Path(str(config["campaign"])) / "campaign.json"
@@ -1472,9 +1488,28 @@ def run(arguments: argparse.Namespace) -> dict[str, Any]:
             observed = replication.status(_replication_arguments(config))
             controller = observed.get("controller") or {}
             state = str(controller.get("state") or observed.get("state") or "unknown")
-            if state not in {"completed", "refuted"}:
+            evaluations = observed.get("evaluations")
+            evaluation_rows = evaluations if isinstance(evaluations, list) else []
+            has_completed_evidence = observed.get("complete") is True or any(
+                isinstance(row, Mapping) and row.get("state") == "completed"
+                for row in evaluation_rows
+            )
+            verdict = (
+                _adjudicate_available_replication(config)
+                if state in {"completed", "refuted"} or has_completed_evidence
+                else None
+            )
+            if verdict is None:
                 if state in {"failed", "not_admitted"}:
                     _fail(f"replication terminated before adjudication: {state}")
+                failed_evaluations = [
+                    row
+                    for row in evaluation_rows
+                    if isinstance(row, Mapping)
+                    and row.get("state") in {"failed", "stopped"}
+                ]
+                if failed_evaluations:
+                    _fail("replication evaluator terminated before adjudication")
                 _publish_status(
                     config,
                     "waiting_for_replication",
@@ -1484,11 +1519,6 @@ def run(arguments: argparse.Namespace) -> dict[str, Any]:
                 time.sleep(float(arguments.poll_interval))
                 continue
 
-            verdict_path = Path(str(config["replication_root"])) / "replication-verdict.json"
-            stored_verdict = _read_canonical(verdict_path)
-            verdict = replication.adjudicate(_replication_arguments(config))
-            if stored_verdict != verdict:
-                _fail("promotion stored and recomputed replication verdicts differ")
             if verdict.get("plan_sha256") != config.get("replication_plan_sha256"):
                 _fail("promotion replication plan identity differs")
             if verdict.get("supported") is not True:

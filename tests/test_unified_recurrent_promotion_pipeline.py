@@ -227,6 +227,108 @@ def test_refuted_replication_never_calls_a_promotion_stage(
     assert inhibitor.terminated is True
 
 
+def test_promotion_independently_seals_early_refutation_from_live_evidence(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    config = _config(tmp_path)
+    inhibitor = _Inhibitor()
+    verdict = {
+        "supported": False,
+        "verdict": "refuted_powered_resident_replication",
+        "verdict_sha256": "v" * 64,
+        "plan_sha256": config["replication_plan_sha256"],
+        "checkpoint_sha256": "k" * 64,
+        "adjudication_scope": "decisive_early_refutation",
+    }
+    states: list[str] = []
+    monkeypatch.setattr(pipeline, "_load_config", lambda _path: config)
+    monkeypatch.setattr(pipeline, "_start_sleep_inhibitor", lambda: inhibitor)
+    monkeypatch.setattr(pipeline, "_verify_supervision", lambda *_args: {"ok": True})
+    monkeypatch.setattr(
+        pipeline.replication,
+        "status",
+        lambda _args: {
+            "complete": False,
+            "controller": {"state": "running"},
+            "evaluations": [
+                {"seed": 1, "state": "completed"},
+                {"seed": 2, "state": "failed"},
+                {"seed": 3, "state": "pending"},
+            ],
+        },
+    )
+
+    def adjudicate(arguments: argparse.Namespace) -> dict:
+        assert arguments.verdict_output == (
+            Path(config["replication_root"]) / "replication-verdict.json"
+        )
+        _write_verdict(config, verdict)
+        return verdict
+
+    monkeypatch.setattr(pipeline.replication, "adjudicate", adjudicate)
+    monkeypatch.setattr(
+        pipeline,
+        "_publish_status",
+        lambda _config, state, _details, **_kwargs: states.append(state) or {"state": state},
+    )
+    monkeypatch.setattr(
+        pipeline,
+        "_run_bounded_stage",
+        lambda *_args, **_kwargs: pytest.fail("early refutation called a stage"),
+    )
+
+    result = pipeline.run(_run_arguments(tmp_path))
+
+    assert result["state"] == "refuted"
+    assert states == ["refuted"]
+    assert inhibitor.terminated is True
+
+
+def test_promotion_waits_without_adjudicating_before_evidence_exists(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    config = _config(tmp_path)
+    inhibitor = _Inhibitor()
+    monotonic = iter((0.0, 0.0, 31.0))
+    monkeypatch.setattr(pipeline, "_load_config", lambda _path: config)
+    monkeypatch.setattr(pipeline, "_start_sleep_inhibitor", lambda: inhibitor)
+    monkeypatch.setattr(pipeline, "_verify_supervision", lambda *_args: {"ok": True})
+    monkeypatch.setattr(
+        pipeline.replication,
+        "status",
+        lambda _args: {
+            "complete": False,
+            "controller": {"state": "waiting_for_training"},
+            "evaluations": [{"seed": 1, "state": "pending"}],
+        },
+    )
+    monkeypatch.setattr(
+        pipeline.replication,
+        "adjudicate",
+        lambda _args: pytest.fail("adjudication ran without completed evidence"),
+    )
+    monkeypatch.setattr(
+        pipeline,
+        "time",
+        SimpleNamespace(monotonic=lambda: next(monotonic), sleep=lambda _seconds: None),
+    )
+    monkeypatch.setattr(
+        pipeline,
+        "_publish_status",
+        lambda *_args, **_kwargs: {"state": "waiting_for_replication"},
+    )
+
+    with pytest.raises(
+        pipeline.UnifiedRecurrentPromotionError,
+        match="timed out",
+    ):
+        pipeline.run(_run_arguments(tmp_path))
+
+    assert inhibitor.terminated is True
+
+
 def test_supported_replication_runs_every_gate_in_order(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

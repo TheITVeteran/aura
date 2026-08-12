@@ -46338,3 +46338,44 @@ The CP281 powered
 replication remains detached and unchanged. No verdict, retained authority,
 broad reasoning, fusion, frontier result or `WOW Signal` is claimed. The
 completion envelope remains `913/920` (approximately `99.2%`).
+
+## Checkpoint 2026-08-12-287: Powered Failure Stops When Its Verdict Is Forced
+
+The powered resident replication no longer spends remaining seeds after a
+preregistered conjunctive support condition has become mathematically
+impossible. Adjudication validates every available completed report against
+the frozen checkpoint, evaluator source, task and prompt identities and its
+single-seed verdict before recognizing only three monotonic failures: a seed
+without positive matched-control gain, any right-to-wrong regression, or a
+compiled instrument that is not exact. Undecidable pooled statistics and
+aggregate arm comparisons remain explicit `null` values. The resulting v2
+verdict distinguishes a complete adjudication from a decisive early
+refutation, records observed and planned sample counts and evaluation states,
+and is immutable once written.
+
+The controller now adjudicates as soon as any seed completes and will not
+launch another seed after support is irreversibly refuted. Stopped, failed and
+unknown evaluator states cannot be mistaken for successful exhaustion. The
+promotion controller independently recomputes available evidence even when a
+replication controller heartbeat is stale; a negative verdict exits before
+materialization, lifecycle proof or authority publication.
+
+The exact CP281 campaign sealed
+`fdf6bef143ef6ccc50c5b5d58f2e3fc858c5c0ecf7df5b4b183aa7c77ad1ad70`
+from seed `20260811261`: trained depth four and its initialization-matched
+control both scored `27/27`, for zero wrong-to-right changes, zero
+right-to-wrong changes and zero net gain. Compiled execution was `27/27`;
+grammar and pointer lesions scored `15/27` and `6/27`. This proves the tested
+mechanism depends on those recurrent structures, but refutes the frozen claim
+that trained tissue beats its matched architecture on every seed. It is not a
+powered effect estimate, broad reasoning gain, frontier result, fusion
+authorization or `WOW Signal`.
+
+Validation is green under Aura's Python 3.12 runtime: `47/47` focused
+replication and promotion controller tests pass, including immutable early
+verdicts, non-decisive partial evidence, stopped evaluators and independent
+promotion refusal. Canonical smoke passes `104/104`; compilation, governance
+ownership, layering, Ruff and diff hygiene pass. The completion envelope
+advances to `914/920` (approximately `99.3%`). Next is using the matched-control
+localization to revise the trained controller rather than repeating a campaign
+whose support rule is already false.
