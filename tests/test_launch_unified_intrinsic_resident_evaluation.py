@@ -16,6 +16,7 @@ def _arguments(root: Path) -> argparse.Namespace:
         action="prepare",
         campaign=root,
         output=None,
+        evaluator_source_root=None,
         stem="checkpoint_answer_bridge_admitted",
         per_cell=1,
         evaluation_seed=241,
@@ -58,7 +59,9 @@ def _terminal_fixture(
     python.parent.mkdir(parents=True)
     for path in (
         python,
+        source / "tools/evaluate_unified_intrinsic_checkpoint.py",
         source / "tools/evaluate_unified_intrinsic_decoding.py",
+        source / "tools/unified_intrinsic_decode_journal.py",
         source / "tools/unified_intrinsic_preload_barrier.py",
         source / "tools/memory_sentinel.py",
     ):
@@ -190,6 +193,13 @@ def test_prepare_binds_terminal_checkpoint_and_frozen_evaluator(
         "exact": 1,
     }
     assert plan["command"][0] == config["runtime"]["interpreter"]["executable"]
+    assert plan["scientific"]["evaluator_source_root"] == config["source"]["git"]["root"]
+    assert plan["scientific"]["evaluation_source_sha256s"] == {
+        relative: launcher._file_sha256(  # noqa: SLF001
+            Path(config["source"]["git"]["root"]) / relative
+        )
+        for relative in launcher.EVALUATION_SOURCE_FILES
+    }
     assert plan["evaluator_command"][1].startswith(
         str(Path(config["source"]["git"]["root"]))
     )
@@ -214,6 +224,35 @@ def test_prepare_binds_terminal_checkpoint_and_frozen_evaluator(
     stored = Path(plan["evaluation_root"]) / "evaluation-plan.json"
     assert stored.stat().st_mode & 0o777 == 0o400
     assert launcher._read_document(stored) == plan
+
+
+def test_prepare_binds_repaired_evaluator_source_root(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    arguments, config, _checkpoint = _terminal_fixture(tmp_path, monkeypatch)
+    repaired = tmp_path / "repaired-capsule"
+    (repaired / "tools").mkdir(parents=True)
+    training_source = Path(config["source"]["git"]["root"])
+    for name in (
+        "evaluate_unified_intrinsic_checkpoint.py",
+        "evaluate_unified_intrinsic_decoding.py",
+        "unified_intrinsic_decode_journal.py",
+        "unified_intrinsic_preload_barrier.py",
+        "memory_sentinel.py",
+    ):
+        (repaired / "tools" / name).write_bytes(
+            (training_source / "tools" / name).read_bytes()
+        )
+    arguments.evaluator_source_root = repaired
+
+    plan = launcher.prepare(arguments)
+
+    assert plan["scientific"]["evaluator_source_root"] == str(repaired)
+    assert plan["scientific"]["training_source_root"] == str(training_source)
+    assert plan["evaluator_command"][1] == str(
+        repaired / "tools/evaluate_unified_intrinsic_decoding.py"
+    )
 
 
 def test_prepare_rejects_completion_for_a_different_checkpoint(
@@ -441,8 +480,11 @@ def test_status_accepts_hash_valid_legacy_pretty_report_without_rewriting_it(
         "per_cell": plan["scientific"]["per_cell"],
         "max_tokens": plan["scientific"]["max_tokens"],
         "task_depths": plan["scientific"]["task_depths"],
-        "recurrence_depths": plan["scientific"]["recurrence_depths"],
-    }
+            "recurrence_depths": plan["scientific"]["recurrence_depths"],
+            "evaluation_source_sha256s": plan["scientific"][
+                "evaluation_source_sha256s"
+            ],
+        }
     report = {**body, "report_sha256": launcher.canonical_sha256(body)}
     pretty = (json.dumps(report, indent=2, sort_keys=True) + "\n").encode("ascii")
     Path(plan["report"]).write_bytes(pretty)

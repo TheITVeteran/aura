@@ -42,11 +42,16 @@ from tools.unified_intrinsic_resident_identity import (  # noqa: E402
     canonical_sha256,
 )
 
-PLAN_SCHEMA: Final = "aura.unified_intrinsic.resident_evaluation_plan.v1"
+PLAN_SCHEMA: Final = "aura.unified_intrinsic.resident_evaluation_plan.v2"
 STATUS_SCHEMA: Final = "aura.unified_intrinsic.resident_evaluation_status.v1"
 DEFAULT_STARTUP_LETHAL_MB: Final = 54.0 * 1024.0
 DEFAULT_STEADY_LETHAL_MB: Final = 48.0 * 1024.0
 PRELOAD_TIMEOUT_S: Final = 300.0
+EVALUATION_SOURCE_FILES: Final = (
+    "tools/evaluate_unified_intrinsic_checkpoint.py",
+    "tools/evaluate_unified_intrinsic_decoding.py",
+    "tools/unified_intrinsic_decode_journal.py",
+)
 
 
 class ResidentEvaluationLaunchError(RuntimeError):
@@ -112,6 +117,26 @@ def _write_once(path: Path, value: Mapping[str, Any]) -> None:
         current = _read_document(path)
         if current != dict(value):
             _fail(f"resident evaluation artifact already differs: {path}")
+
+
+def _file_sha256(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(8 * 1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def _evaluator_source_sha256s(source_root: Path) -> dict[str, str]:
+    try:
+        return {
+            relative: _file_sha256((source_root / relative).resolve(strict=True))
+            for relative in EVALUATION_SOURCE_FILES
+        }
+    except OSError as exc:
+        raise ResidentEvaluationLaunchError(
+            "resident evaluation source is unavailable"
+        ) from exc
 
 
 def _csv_positive_ints(value: str, *, minimum: int) -> tuple[int, ...]:
@@ -269,7 +294,12 @@ def _build_plan(arguments: argparse.Namespace) -> dict[str, Any]:
         stem=arguments.stem,
     )
     campaign_root = Path(config["paths"]["campaign_root"])
-    source_root = Path(config["source"]["git"]["root"]).resolve(strict=True)
+    training_source_root = Path(config["source"]["git"]["root"]).resolve(strict=True)
+    source_root = (
+        arguments.evaluator_source_root.expanduser().resolve(strict=True)
+        if arguments.evaluator_source_root is not None
+        else training_source_root
+    )
     python = Path(config["runtime"]["interpreter"]["executable"])
     evaluator = source_root / "tools/evaluate_unified_intrinsic_decoding.py"
     barrier = source_root / "tools/unified_intrinsic_preload_barrier.py"
@@ -294,6 +324,9 @@ def _build_plan(arguments: argparse.Namespace) -> dict[str, Any]:
         "checkpoint_sha256": selected_checkpoint["checkpoint_sha256"],
         "checkpoint": selected_checkpoint,
         "evaluator": str(evaluator),
+        "evaluator_source_root": str(source_root),
+        "training_source_root": str(training_source_root),
+        "evaluation_source_sha256s": _evaluator_source_sha256s(source_root),
         "stem": arguments.stem,
         "per_cell": arguments.per_cell,
         "evaluation_seed": arguments.evaluation_seed,
@@ -455,6 +488,11 @@ def _next_attempt_run_dir(root: Path) -> tuple[int, Path]:
 
 def launch(arguments: argparse.Namespace) -> dict[str, Any]:
     plan = prepare(arguments)
+    evaluator_source_root = Path(plan["scientific"]["evaluator_source_root"])
+    if _evaluator_source_sha256s(evaluator_source_root) != plan["scientific"].get(
+        "evaluation_source_sha256s"
+    ):
+        _fail("resident evaluation source differs from its frozen plan")
     config, completion = _terminal_campaign(Path(plan["campaign_root"]) / "campaign.json")
     selected = _selected_checkpoint(config, completion, stem=str(plan["scientific"]["stem"]))
     if selected != plan["scientific"].get("checkpoint"):
@@ -607,6 +645,8 @@ def status(arguments: argparse.Namespace) -> dict[str, Any]:
             or report.get("max_tokens") != scientific["max_tokens"]
             or report.get("task_depths") != scientific["task_depths"]
             or report.get("recurrence_depths") != scientific["recurrence_depths"]
+            or report.get("evaluation_source_sha256s")
+            != scientific["evaluation_source_sha256s"]
         ):
             _fail("resident evaluation report differs from its frozen plan")
     receipt = inspection.get("receipt")
@@ -648,6 +688,7 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("action", choices=("prepare", "launch", "status", "stop"))
     parser.add_argument("campaign", type=Path)
     parser.add_argument("--output", type=Path)
+    parser.add_argument("--evaluator-source-root", type=Path)
     parser.add_argument("--stem", default="checkpoint_answer_bridge_admitted")
     parser.add_argument("--per-cell", type=int, default=1)
     parser.add_argument("--evaluation-seed", type=int, default=20260811241)

@@ -18,6 +18,7 @@ def _arguments(campaign: Path, **overrides: object) -> argparse.Namespace:
     values: dict[str, object] = {
         "campaign": campaign,
         "output": None,
+        "evaluator_source_root": None,
         "verdict_output": None,
         "seeds": SEEDS,
         "per_cell": 1,
@@ -39,7 +40,7 @@ def _config(campaign: Path) -> dict:
         "campaign_id": "resident-full",
         "config_sha256": "c" * 64,
         "paths": {"campaign_root": str(campaign)},
-        "source": {"git": {"commit": "d" * 40}},
+        "source": {"git": {"commit": "d" * 40, "root": str(campaign)}},
         "runtime": {
             "interpreter": {
                 "executable": str(executable),
@@ -144,6 +145,7 @@ def _installed_plan(campaign: Path) -> dict:
         "campaign_root": str(campaign),
         "campaign_config_sha256": "c" * 64,
         "source_commit": "d" * 40,
+        "evaluator_source_root": str(campaign),
         "checkpoint_contract": "exact_terminal_answer_bridge_admitted_checkpoint",
         "seeds": list(SEEDS),
         "per_cell": 1,

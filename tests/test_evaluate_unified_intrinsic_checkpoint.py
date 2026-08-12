@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import argparse
+from types import SimpleNamespace
+
 import pytest
 
 from tools import evaluate_unified_intrinsic_checkpoint as evaluator
@@ -22,6 +25,7 @@ def test_evaluation_layout_supports_legacy_colocation(tmp_path) -> None:
     assert layout.checkpoint_dir == root
     assert layout.dataset_path == root / "dataset.json"
     assert layout.tokenized_dataset_path == root / "tokenized_dataset.json"
+    assert layout.bootstrap_output_dir is None
 
 
 def test_evaluation_layout_uses_resident_frozen_paths(tmp_path, monkeypatch) -> None:
@@ -34,6 +38,8 @@ def test_evaluation_layout_uses_resident_frozen_paths(tmp_path, monkeypatch) -> 
     tokenized = inputs / "tokenized_dataset.json"
     dataset.write_text("{}", encoding="ascii")
     tokenized.write_text("{}", encoding="ascii")
+    bootstrap = inputs / "bootstrap-output"
+    bootstrap.mkdir()
     (root / "campaign.json").write_text("{}", encoding="ascii")
     monkeypatch.setattr(
         evaluator,
@@ -44,6 +50,7 @@ def test_evaluation_layout_uses_resident_frozen_paths(tmp_path, monkeypatch) -> 
                 "training_output": str(output),
                 "dataset": str(dataset),
                 "tokenized_dataset": str(tokenized),
+                "bootstrap_output": str(bootstrap),
             }
         },
     )
@@ -51,6 +58,172 @@ def test_evaluation_layout_uses_resident_frozen_paths(tmp_path, monkeypatch) -> 
     assert layout.checkpoint_dir == output
     assert layout.dataset_path == dataset
     assert layout.tokenized_dataset_path == tokenized
+    assert layout.bootstrap_output_dir == bootstrap
+
+
+def test_random_initial_controller_refuses_bootstrapped_identity() -> None:
+    with pytest.raises(RuntimeError, match="requires its committed parent"):
+        evaluator._initial_controller(  # noqa: SLF001
+            object(),
+            object(),
+            object(),
+            {"bootstrap": {}},
+            object(),
+            object(),
+        )
+
+
+def test_bootstrap_initial_controller_loads_exact_committed_parent(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    bootstrap_output = tmp_path / "bootstrap"
+    bootstrap_output.mkdir()
+    weights = bootstrap_output / "parent.safetensors"
+    weights.write_bytes(b"parent-controller")
+    compatibility = {
+        field: f"value-{field}"
+        for field in (
+            "model",
+            "runtime",
+            "tokenizer",
+            "spec",
+            "window_geometry",
+            "families",
+            "task_depths",
+            "init_seed",
+            "bridge",
+            "lora_rank",
+            "controller_rank",
+            "state_weight",
+            "stutter_weight",
+            "state_codebook_sha256",
+            "state_codebook_grounding",
+            "literal_observation_contract",
+            "opcode_observation_contract",
+            "answer_emission_contract",
+            "depth_basis_size",
+            "lora_targets",
+            "readout_sha256",
+        )
+    }
+    compatibility["window_tissue_mode"] = "controller_only"
+    parent_identity_body = dict(compatibility)
+    parent_identity = {
+        **parent_identity_body,
+        "identity_sha256": evaluator._canonical_sha256(parent_identity_body),  # noqa: SLF001
+    }
+    receipt_body = {
+        "step": 34,
+        "checkpoint_sha256": evaluator._file_sha256(weights),  # noqa: SLF001
+        "identity": parent_identity,
+    }
+    receipt = {
+        **receipt_body,
+        "receipt_sha256": evaluator._canonical_sha256(receipt_body),  # noqa: SLF001
+    }
+    identity = {
+        **compatibility,
+        "initial_controller_sha256": "controller-sha",
+        "bootstrap": {
+            "schema": "aura.unified_intrinsic.bootstrap_tissue.v1",
+            "stem": "checkpoint_latest",
+            "parent_step": 34,
+            "parent_checkpoint_sha256": receipt["checkpoint_sha256"],
+            "parent_receipt_sha256": receipt["receipt_sha256"],
+            "parent_identity_sha256": parent_identity["identity_sha256"],
+        },
+    }
+
+    class FakeController:
+        def __init__(self, _config) -> None:
+            self.loaded = False
+
+        def parameter_sha256(self) -> str:
+            return "controller-sha" if self.loaded else "random-sha"
+
+    class FakeBundle:
+        def __init__(self, _model, controller) -> None:
+            self.controller = controller
+
+        def update(self, values) -> None:
+            assert values == {"controller.x": "parent-value"}
+            self.controller.loaded = True
+
+        def parameters(self):
+            return {"controller": self.controller}
+
+    monkeypatch.setattr(
+        evaluator,
+        "resolve_checkpoint_generation",
+        lambda *_args, **_kwargs: SimpleNamespace(
+            receipt=receipt,
+            weights_path=weights,
+        ),
+    )
+    monkeypatch.setattr(evaluator, "UnifiedRecurrentController", FakeController)
+    monkeypatch.setattr(evaluator, "UnifiedTrainingBundle", FakeBundle)
+    monkeypatch.setattr(evaluator, "_controller_config", lambda *_args: object())
+    monkeypatch.setattr(
+        evaluator,
+        "_trainable",
+        lambda _bundle: {"controller.x": "random-value"},
+    )
+    monkeypatch.setattr(
+        evaluator,
+        "tree_unflatten",
+        lambda rows: dict(rows),
+    )
+    monkeypatch.setattr(
+        evaluator.mx,
+        "load",
+        lambda _path: {"bundle.controller.x": "parent-value"},
+    )
+    monkeypatch.setattr(evaluator.mx, "eval", lambda *_args: None)
+    layout = evaluator.EvaluationLayout(
+        checkpoint_dir=tmp_path,
+        dataset_path=tmp_path / "dataset.json",
+        tokenized_dataset_path=tmp_path / "tokenized.json",
+        bootstrap_output_dir=bootstrap_output,
+    )
+
+    controller = evaluator._bootstrap_initial_controller(  # noqa: SLF001
+        layout,
+        object(),
+        identity,
+        argparse.Namespace(digit_token_ids=()),
+        argparse.Namespace(patterns=(), contexts=()),
+    )
+
+    assert controller is not None
+    assert controller.loaded is True
+
+
+def test_bootstrap_initial_controller_rejects_parent_commitment_drift(
+    tmp_path,
+) -> None:
+    layout = evaluator.EvaluationLayout(
+        checkpoint_dir=tmp_path,
+        dataset_path=tmp_path / "dataset.json",
+        tokenized_dataset_path=tmp_path / "tokenized.json",
+        bootstrap_output_dir=None,
+    )
+    identity = {
+        "bootstrap": {
+            "schema": "aura.unified_intrinsic.bootstrap_tissue.v1",
+            "stem": "checkpoint_latest",
+        },
+        "window_tissue_mode": "controller_only",
+    }
+
+    with pytest.raises(RuntimeError, match="bootstrap output is unavailable"):
+        evaluator._bootstrap_initial_controller(  # noqa: SLF001
+            layout,
+            object(),
+            identity,
+            object(),
+            object(),
+        )
 
 
 def test_evaluation_without_external_guard_uses_live_pressure(monkeypatch) -> None:

@@ -46103,3 +46103,53 @@ envelope remains `913/920` (approximately `99.2%`) because terminal admission,
 powered replication, package lifecycle proof, broader-domain evidence and final
 soak remain open. No decoded gain, fusion, frontier result or `WOW Signal` is
 claimed.
+
+## Checkpoint 2026-08-12-278: Terminal Admission Is Reopened From Its Evidence
+
+The resident replication launcher no longer infers admission from a training
+receipt verdict label. It verifies the terminal answer-bridge admission object
+that the trainer actually emitted, including its canonical digest, exact task
+count, held-out count, terminal step, checkpoint digest and training-receipt
+digest. The frozen plan now names the admitted checkpoint and its evidence.
+
+Validation is green: the focused trainer, launcher and adjudication suite, Ruff
+and canonical smoke passed. This repaired launch admission only; it did not
+score a resident candidate or make a capability claim.
+
+## Checkpoint 2026-08-12-279: Replication Authenticates Before Model Launch
+
+The detached replication controller now publishes an authenticated admitted
+state before model-lane or sentinel setup. Launchd installation no longer
+mistakes slow resident-model preparation for a dead controller and spawns
+duplicate evaluator lineages. PID, process-start token, sequence, plan identity
+and heartbeat are HMAC-bound before the installer returns authority.
+
+Validation is green: `24/24` focused controller and launcher tests, Ruff and
+compilation passed. Pre-scoring launch attempts exposed rather than hid a
+runtime-file identity drift; no scientific candidate was consumed.
+
+## Checkpoint 2026-08-12-280: Matched Control Is Exact Bootstrapped Tissue
+
+The evaluator previously reconstructed a random grounded controller even when
+a child campaign explicitly inherited its step-zero tissue from a parent
+checkpoint. CP275 therefore failed before scoring because its true initial
+controller could never equal that invented control. The evaluator now reopens
+the exact parent generation named by the child identity, verifies parent step,
+checkpoint, receipt and identity commitments, requires topology and grounding
+equivalence, checks the complete tensor inventory and accepts the control only
+when its independently reconstructed hash equals the child's committed
+`initial_controller_sha256`.
+
+Evaluation repairs are separated from immutable training source. V2 evaluation
+and replication plans can name a dedicated evaluator source root; every
+evaluator source file is hash-pinned into the scientific identity, rechecked at
+launch and required to match the final report. Non-evaluator training runtime
+files must still match CP275 exactly. This repairs a verifier defect without
+rewriting training history or silently substituting current `main`.
+
+Validation is green: `34/34` focused evaluator, launcher and replication tests,
+focused Ruff and `104/104` canonical smoke passed. The powered three-seed task,
+prompt, arm and decision identities remain unchanged. Next is freezing an
+old-source-compatible evaluator capsule, proving pre-score loading of both exact
+controllers and relaunching the unconsumed battery. No decoded gain, fusion,
+frontier result or `WOW Signal` is claimed.

@@ -90,6 +90,7 @@ class EvaluationLayout:
     checkpoint_dir: Path
     dataset_path: Path
     tokenized_dataset_path: Path
+    bootstrap_output_dir: Path | None
 
 
 def _load_resident_campaign_config(path: Path) -> dict[str, Any]:
@@ -109,6 +110,7 @@ def _evaluation_layout(campaign_dir: Path) -> EvaluationLayout:
             checkpoint_dir=root,
             dataset_path=root / "dataset.json",
             tokenized_dataset_path=root / TOKENIZED_DATASET_FILENAME,
+            bootstrap_output_dir=None,
         )
     config = _load_resident_campaign_config(config_path)
     paths = config.get("paths")
@@ -122,6 +124,11 @@ def _evaluation_layout(campaign_dir: Path) -> EvaluationLayout:
         dataset_path=Path(str(paths["dataset"])).resolve(strict=True),
         tokenized_dataset_path=Path(str(paths["tokenized_dataset"])).resolve(
             strict=True
+        ),
+        bootstrap_output_dir=(
+            Path(str(paths["bootstrap_output"])).resolve(strict=True)
+            if paths.get("bootstrap_output") is not None
+            else None
         ),
     )
 
@@ -209,6 +216,11 @@ def _initial_controller(
 ) -> UnifiedRecurrentController:
     """Reconstruct the exact pre-training controller for a matched-compute arm."""
 
+    bootstrap = identity.get("bootstrap")
+    if bootstrap is not None:
+        raise RuntimeError(
+            "bootstrapped unified tissue requires its committed parent checkpoint"
+        )
     controller = UnifiedRecurrentController(
         _controller_config(model, identity, literal_contract, opcode_contract)
     )
@@ -230,6 +242,132 @@ def _initial_controller(
         or controller.parameter_sha256() != expected_sha256
     ):
         raise RuntimeError("unified checkpoint initial controller differs")
+    return controller
+
+
+def _bootstrap_initial_controller(
+    layout: EvaluationLayout,
+    model: Any,
+    identity: dict[str, Any],
+    literal_contract: LiteralObservationContract,
+    opcode_contract: OpcodeObservationContract,
+) -> UnifiedRecurrentController | None:
+    """Load the exact tissue inherited at step zero of a child campaign."""
+
+    bootstrap = identity.get("bootstrap")
+    if bootstrap is None:
+        return None
+    if (
+        not isinstance(bootstrap, dict)
+        or bootstrap.get("schema") != "aura.unified_intrinsic.bootstrap_tissue.v1"
+    ):
+        raise RuntimeError("unified checkpoint bootstrap identity differs")
+    if identity.get("window_tissue_mode") != "controller_only":
+        raise RuntimeError(
+            "matched bootstrap reconstruction supports controller-only tissue"
+        )
+    if layout.bootstrap_output_dir is None:
+        raise RuntimeError("unified checkpoint bootstrap output is unavailable")
+    stem = bootstrap.get("stem")
+    if not isinstance(stem, str) or not stem:
+        raise RuntimeError("unified checkpoint bootstrap stem differs")
+    try:
+        resolved = resolve_checkpoint_generation(
+            layout.bootstrap_output_dir,
+            stem=stem,
+            required=True,
+        )
+    except UnifiedCheckpointError as exc:
+        raise RuntimeError("unified checkpoint bootstrap parent is invalid") from exc
+    if resolved is None:  # pragma: no cover - required=True is exhaustive
+        raise RuntimeError("unified checkpoint bootstrap parent is unavailable")
+    receipt = resolved.receipt
+    parent_identity = receipt.get("identity")
+    receipt_body = {key: value for key, value in receipt.items() if key != "receipt_sha256"}
+    parent_identity_body = (
+        {
+            key: value
+            for key, value in parent_identity.items()
+            if key != "identity_sha256"
+        }
+        if isinstance(parent_identity, dict)
+        else {}
+    )
+    commitments = {
+        "parent_step": receipt.get("step"),
+        "parent_checkpoint_sha256": receipt.get("checkpoint_sha256"),
+        "parent_receipt_sha256": receipt.get("receipt_sha256"),
+        "parent_identity_sha256": (
+            parent_identity.get("identity_sha256")
+            if isinstance(parent_identity, dict)
+            else None
+        ),
+    }
+    if (
+        not isinstance(parent_identity, dict)
+        or any(bootstrap.get(key) != value for key, value in commitments.items())
+        or receipt.get("receipt_sha256") != _canonical_sha256(receipt_body)
+        or receipt.get("checkpoint_sha256") != _file_sha256(resolved.weights_path)
+        or parent_identity.get("identity_sha256")
+        != _canonical_sha256(parent_identity_body)
+    ):
+        raise RuntimeError("unified checkpoint bootstrap commitment differs")
+
+    compatibility_fields = (
+        "model",
+        "runtime",
+        "tokenizer",
+        "spec",
+        "window_geometry",
+        "families",
+        "task_depths",
+        "init_seed",
+        "bridge",
+        "window_tissue_mode",
+        "lora_rank",
+        "controller_rank",
+        "state_weight",
+        "stutter_weight",
+        "state_codebook_sha256",
+        "state_codebook_grounding",
+        "literal_observation_contract",
+        "opcode_observation_contract",
+        "answer_emission_contract",
+        "depth_basis_size",
+        "lora_targets",
+        "readout_sha256",
+    )
+    mismatches = [
+        field
+        for field in compatibility_fields
+        if _canonical_sha256(parent_identity.get(field))
+        != _canonical_sha256(identity.get(field))
+    ]
+    if mismatches:
+        raise RuntimeError(
+            "unified checkpoint bootstrap topology differs: " + ",".join(mismatches)
+        )
+
+    controller = UnifiedRecurrentController(
+        _controller_config(model, identity, literal_contract, opcode_contract)
+    )
+    parent_bundle = UnifiedTrainingBundle(model, controller)
+    tensors = mx.load(str(resolved.weights_path))
+    trainable = {
+        name.removeprefix("bundle."): value
+        for name, value in tensors.items()
+        if name.startswith("bundle.")
+    }
+    if set(trainable) != set(_trainable(parent_bundle)):
+        raise RuntimeError("unified checkpoint bootstrap tensor inventory differs")
+    parent_bundle.update(tree_unflatten(list(trainable.items())))
+    mx.eval(parent_bundle.parameters())
+    expected_sha256 = identity.get("initial_controller_sha256")
+    if (
+        not isinstance(expected_sha256, str)
+        or controller.parameter_sha256() != expected_sha256
+    ):
+        raise RuntimeError("unified checkpoint bootstrap controller differs")
     return controller
 
 
@@ -271,11 +409,12 @@ def _load_checkpoint(
     if identity.get("identity_sha256") != _canonical_sha256(identity_body):
         raise RuntimeError("unified campaign identity differs")
     source_sha256s = identity.get("source_sha256s")
+    training_runtime_files = set(TRAINING_SOURCE_FILES) - set(EVALUATION_SOURCE_FILES)
     if not isinstance(source_sha256s, dict) or set(source_sha256s) != set(
         TRAINING_SOURCE_FILES
     ) or any(
         source_sha256s[relative] != _file_sha256(REPO_ROOT / relative)
-        for relative in TRAINING_SOURCE_FILES
+        for relative in training_runtime_files
     ):
         raise RuntimeError("unified campaign source differs")
     model_identity = identity.get("model")
@@ -428,7 +567,13 @@ def _load_checkpoint(
     )
     if wiring != identity["wiring"]:
         raise RuntimeError("unified checkpoint wiring differs")
-    initial_controller = _initial_controller(
+    initial_controller = _bootstrap_initial_controller(
+        layout,
+        model,
+        identity,
+        literal_contract,
+        opcode_contract,
+    ) or _initial_controller(
         model,
         tokenizer,
         spec,

@@ -38,7 +38,7 @@ from tools.unified_intrinsic_resident_identity import (  # noqa: E402
     canonical_sha256,
 )
 
-PLAN_SCHEMA: Final = "aura.unified_intrinsic.resident_replication_plan.v1"
+PLAN_SCHEMA: Final = "aura.unified_intrinsic.resident_replication_plan.v2"
 VERDICT_SCHEMA: Final = "aura.unified_intrinsic.resident_replication_verdict.v1"
 CONTROLLER_STATUS_SCHEMA: Final = "aura.unified_intrinsic.resident_replication_controller_status.v1"
 LAUNCH_INTENT_SCHEMA: Final = "aura.unified_intrinsic.resident_replication_launch_intent.v1"
@@ -483,6 +483,11 @@ def prepare(arguments: argparse.Namespace) -> dict[str, Any]:
         "campaign_root": str(campaign),
         "campaign_config_sha256": config["config_sha256"],
         "source_commit": config["source"]["git"]["commit"],
+        "evaluator_source_root": (
+            str(arguments.evaluator_source_root.expanduser().resolve(strict=True))
+            if arguments.evaluator_source_root is not None
+            else config["source"]["git"]["root"]
+        ),
         "checkpoint_contract": "exact_terminal_answer_bridge_admitted_checkpoint",
         "seeds": list(seeds),
         "per_cell": arguments.per_cell,
@@ -546,6 +551,7 @@ def _evaluation_arguments(
         action="status",
         campaign=campaign,
         output=Path(str(row["output"])),
+        evaluator_source_root=Path(str(plan["evaluator_source_root"])),
         stem="checkpoint_answer_bridge_admitted",
         per_cell=int(plan["per_cell"]),
         evaluation_seed=int(row["seed"]),
@@ -908,6 +914,7 @@ def _parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("campaign", type=Path)
     parser.add_argument("--output", type=Path)
+    parser.add_argument("--evaluator-source-root", type=Path)
     parser.add_argument("--verdict-output", type=Path)
     parser.add_argument(
         "--seeds",
