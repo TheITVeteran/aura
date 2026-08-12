@@ -45995,3 +45995,35 @@ replication, serving authority, fusion authority, frontier result or
 exact step-34 tissue, a bounded terminal completion under the unchanged
 sentinel ceiling, and only then the frozen three-seed decoded-answer
 adjudication.
+
+## Checkpoint 2026-08-12-274: Source Repair Preserves Exact Training State
+
+The first CP273 recovery preparation correctly imported the step-34 controller,
+but the existing bootstrap contract deliberately starts a new optimizer,
+history and step-zero lineage. Using it for a two-step source repair would have
+retrained rather than resumed the original experiment. That launch was stopped
+before it wrote any checkpoint or acquired durable scientific authority.
+
+A dedicated unified-recurrence source-migration command now reopens the exact
+immutable parent generation, requires the target campaign to name that parent,
+reconstructs and hashes the controller independently from its tensor inventory,
+and computes every training-source digest in the new immutable capsule. Only an
+exact explicit source-change set is accepted. It then copies the combined
+controller and Adam tensor payload byte-for-byte, preserves history and
+roll-in/cursor state, rebinds only the source, campaign and bootstrap identities,
+publishes a fresh authoritative checkpoint generation, and reopens the result
+before writing a create-once migration receipt. Both intent and completion bind
+the migration tool digest; the completion additionally binds the target source
+commit and complete source manifest. Extra, missing or unapproved source
+changes fail closed.
+
+Validation is green: `50/50` focused migration, objective and trainer tests
+pass. The migration suite reconstructs the controller digest from serialized
+tensors and proves exact allowlist behavior; focused Ruff, compilation and diff
+hygiene pass. A direct bounded dry run against the preserved resident step-34
+generation also reproduced the exact `45143fbd...` payload digest while keeping
+all four history entries and training state unchanged. That dry-run campaign is
+not launch authority because its migration tool was not yet source-published.
+Next is preparing a fresh immutable capsule from this pushed checkpoint,
+executing the source-bound migration there, and completing steps 35-36 plus the
+corrected terminal ladder under the unchanged sentinel ceiling.
