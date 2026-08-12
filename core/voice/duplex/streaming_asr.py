@@ -18,6 +18,12 @@ from __future__ import annotations
 import asyncio
 import gc
 import importlib
+# `import importlib` does NOT bind importlib.util — the submodule must be
+# imported explicitly. Every find_spec() call below sat inside an
+# `except AttributeError`, so on any interpreter where nothing else had
+# imported importlib.util first, backend detection silently returned "not
+# installed" and the whole lane degraded without a word. Import it.
+import importlib.util
 import logging
 import re
 import threading
@@ -103,8 +109,20 @@ class Transcript:
         return " ".join(p for p in (self.stable.strip(), self.tentative.strip()) if p)
 
 
+def _is_parakeet_repo(repo: str) -> bool:
+    return "parakeet" in str(repo or "").lower()
+
+
+def _parakeet_available() -> bool:
+    try:
+        return importlib.util.find_spec("parakeet_mlx") is not None
+    except (ImportError, OSError, RuntimeError, ValueError) as exc:
+        logger.debug("parakeet-mlx unavailable: %s", exc)
+        return False
+
+
 class _WhisperBackend:
-    """mlx-whisper if available, faster-whisper otherwise.
+    """Parakeet if installed, mlx-whisper next, faster-whisper last.
 
     Model handles are cached per repo id because construction cost is
     dominated by weight load and Metal kernel compilation (measured 13–35 s
@@ -130,12 +148,22 @@ class _WhisperBackend:
         self._lane_lock = threading.Lock()
         self._lane_lease: Any = None
         self._model_lane_controller = model_lane_controller
-        try:
-            mlx_spec = importlib.util.find_spec("mlx_whisper")
-        except (ImportError, AttributeError, RuntimeError, ValueError):
-            mlx_spec = None
-        if mlx_spec is not None:
-            self._impl = "mlx"
+        self._parakeet: Any = None
+        self._parakeet_models: dict[str, Any] = {}
+        # Parakeet first: measured 166 ms on 12.4 s of speech against
+        # small.en's 193 ms and large-v3-turbo's 317 ms (M5 Pro, 12 Aug 2026,
+        # real speech with a known transcript). One decode is cheaper than the
+        # incumbent PARTIAL model, which is what lets one model serve both
+        # stages. Whisper remains the fallback chain, unchanged.
+        if _parakeet_available():
+            self._impl = "parakeet"
+        else:
+            try:
+                mlx_spec = importlib.util.find_spec("mlx_whisper")
+            except (ImportError, AttributeError, RuntimeError, ValueError):
+                mlx_spec = None
+            if mlx_spec is not None:
+                self._impl = "mlx"
 
     @property
     def available(self) -> bool:
@@ -146,9 +174,13 @@ class _WhisperBackend:
         return {
             "schema": "aura.voice.asr_model_runtime.v1",
             "backend": self._impl or "unavailable",
-            "native_module_loaded": self._mlx is not None or self._impl == "faster",
+            "native_module_loaded": (
+                self._parakeet is not None
+                or self._mlx is not None
+                or self._impl == "faster"
+            ),
             "model_lane_owned": self._lane_lease is not None,
-            "retained_models": sorted(self._mlx_models),
+            "retained_models": sorted({*self._mlx_models, *self._parakeet_models}),
             "warmed_models": sorted(self._warmed_repos),
         }
 
@@ -162,6 +194,21 @@ class _WhisperBackend:
 
     def _ensure_impl_loaded(self) -> None:
         """Import native ASR code only on the off-event-loop decode thread."""
+        if self._impl == "parakeet" and self._parakeet is not None:
+            return
+        if self._impl == "parakeet":
+            try:
+                self._parakeet = importlib.import_module("parakeet_mlx")
+                return
+            except (ImportError, OSError, RuntimeError, AttributeError) as exc:
+                record_degradation(
+                    "voice_duplex.asr",
+                    exc,
+                    action="parakeet-mlx unavailable; falling back to whisper",
+                    severity="warning",
+                )
+                self._parakeet = None
+                self._impl = "mlx" if importlib.util.find_spec("mlx_whisper") else ""
         if self._impl == "mlx" and self._mlx is not None:
             return
         if self._impl == "mlx":
@@ -204,6 +251,9 @@ class _WhisperBackend:
     @staticmethod
     def _footprint_gb(repo: str) -> float:
         lowered = str(repo or "").lower()
+        if "parakeet" in lowered:
+            # 0.6B in bf16 plus mel/activation headroom; 2.3 GB on disk.
+            return 1.5
         if "large" in lowered:
             return 4.0
         if "medium" in lowered:
@@ -256,6 +306,12 @@ class _WhisperBackend:
                 holder.model = None
                 holder.model_path = None
             self._mlx_models.clear()
+            # Parakeet handles are plain MLX modules with no global holder,
+            # but they hold weights just the same — an eviction that released
+            # the lane while leaving these resident would hand back memory it
+            # was still using.
+            retained = retained + tuple(self._parakeet_models.values())
+            self._parakeet_models.clear()
             self._warmed_repos.clear()
         if retained:
             gc.collect()
@@ -305,7 +361,9 @@ class _WhisperBackend:
                 raise RuntimeError("no voice ASR backend is installed")
             lease, acquired = self._acquire_model_lane()
             try:
-                if self._impl == "mlx":
+                if self._impl == "parakeet":
+                    text = self._transcribe_parakeet(audio, repo)
+                elif self._impl == "mlx":
                     result = self._transcribe_mlx(audio, repo)
                     text = str(result.get("text", "") or "")
                 else:
@@ -329,6 +387,32 @@ class _WhisperBackend:
                 if acquired:
                     self._release_model_lane_locked(reason="voice_asr_model_load_failed")
                 raise
+
+    def _transcribe_parakeet(self, audio: np.ndarray, repo: str) -> str:
+        """Decode with Parakeet TDT.
+
+        Note the API shape: ``BaseParakeet.transcribe`` takes a FILE PATH, so
+        it is not usable here — Aura holds a live capture buffer, never a
+        file. The array path is get_logmel -> generate, which is what the
+        streaming decoder uses internally too.
+
+        Model handles are cached per repo for the same reason Whisper's are:
+        weight load plus Metal kernel compilation must never land inside a
+        live turn.
+        """
+        import mlx.core as mx
+        from parakeet_mlx import from_pretrained
+        from parakeet_mlx.audio import get_logmel
+
+        with self._cache_lock:
+            model = self._parakeet_models.get(repo)
+            if model is None:
+                model = from_pretrained(repo)
+                self._parakeet_models[repo] = model
+
+        mel = get_logmel(mx.array(np.asarray(audio, dtype=np.float32)), model.preprocessor_config)
+        results = model.generate(mel)
+        return str(results[0].text) if results else ""
 
     def _transcribe_mlx(self, audio: np.ndarray, repo: str) -> dict[str, Any]:
         holder = self._mlx_holder

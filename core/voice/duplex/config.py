@@ -97,23 +97,43 @@ class VadConfig:
 
 @dataclass(slots=True)
 class AsrConfig:
-    """Two models on purpose.
+    """One model, where there used to be two.
 
-    Partials only steer endpointing, backchannels and live captions, so they
-    run on the small model (~72 ms/window measured). The final transcript is
-    what her mind actually reasons over, so it runs once on the accurate
-    model (~195 ms measured). Paying 195 ms on every 500 ms partial would
-    contend with the resident 32B for the GPU for no accuracy that matters.
+    The split existed to buy accuracy without paying for it on every window:
+    partials only steer endpointing, backchannels and captions, so they ran
+    on small.en (~72 ms/window), while the transcript her mind actually
+    reasons over ran once on large-v3-turbo (~195 ms). Paying the accurate
+    model's cost on every 500 ms partial would have contended with the
+    resident 32B for the GPU for no accuracy that mattered.
+
+    Parakeet TDT removes the trade. Measured on this host 12 Aug 2026, real
+    speech with a known transcript, median of 5 warm runs on 12.4 s of audio:
+
+        parakeet-tdt-0.6b-v3      166 ms
+        whisper-small.en          193 ms   <- the model it replaces on PARTIALS
+        whisper-large-v3-turbo    317 ms   <- the model it replaces on FINALS
+
+    One Parakeet decode is cheaper than the incumbent PARTIAL and roughly
+    half the incumbent FINAL, so both stages can run the same weights: one
+    model-lane lease, one set of weights resident, and no accuracy sacrificed
+    on partials. Parakeet also reports 6.32% English WER on the Open ASR
+    Leaderboard against turbo's 7.83% (all three scored 0% on the clean local
+    sample, which is too easy to discriminate — that comparison is cited, not
+    measured here).
+
+    Both entries stay configurable and stay separate: pointing them at
+    different repos is still supported, and the Whisper fallback chain is
+    untouched for hosts without parakeet-mlx installed.
     """
 
     partial_model: str = field(
         default_factory=lambda: os.environ.get(
-            "AURA_VOICE_ASR_PARTIAL", "mlx-community/whisper-small.en-mlx"
+            "AURA_VOICE_ASR_PARTIAL", "mlx-community/parakeet-tdt-0.6b-v3"
         )
     )
     final_model: str = field(
         default_factory=lambda: os.environ.get(
-            "AURA_VOICE_ASR_FINAL", "mlx-community/whisper-large-v3-turbo"
+            "AURA_VOICE_ASR_FINAL", "mlx-community/parakeet-tdt-0.6b-v3"
         )
     )
     # How often a partial decode runs while the user is speaking.

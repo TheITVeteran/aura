@@ -105,9 +105,17 @@ INTEGRATIONS: tuple[Integration, ...] = (
         ),
     ),
     Integration(
+        name="parakeet_mlx",
+        module="parakeet_mlx",
+        powers="primary speech-to-text; streaming-native, serves both the "
+               "partial and final duplex stages",
+        user_facing=True,
+        requires_attrs=("from_pretrained",),
+    ),
+    Integration(
         name="faster_whisper",
         module="faster_whisper",
-        powers="speech-to-text; without it Aura cannot hear",
+        powers="fallback speech-to-text (CPU); the primary is parakeet_mlx",
         user_facing=True,
         requires_attrs=("WhisperModel",),
     ),
