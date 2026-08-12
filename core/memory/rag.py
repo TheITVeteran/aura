@@ -7,6 +7,9 @@ import threading
 from collections import OrderedDict
 from typing import Any
 
+from core.memory import embedding_model
+from core.runtime.errors import record_degradation
+
 logger = logging.getLogger("Aura.RAG")
 
 # ── Semantic layer (July capability raise) ────────────────────────────────
@@ -197,7 +200,13 @@ def _semantic_scores(query: str, texts: list[str]) -> list[float] | None:
         if uncached:
             vectors = engine.embed_batch(uncached)
             _store_vectors(uncached, list(vectors))
-        qvec = np.asarray(engine.embed(query), dtype=np.float32)
+        # The query goes through the asymmetric path; the documents above do
+        # not. Same width, different prompt — see EmbeddingEngine.embed_query.
+        _embed_query = getattr(engine, "embed_query", None)
+        qvec = np.asarray(
+            _embed_query(query) if callable(_embed_query) else engine.embed(query),
+            dtype=np.float32,
+        )
         qn = float(np.linalg.norm(qvec))
         if qn <= 1e-8:
             return None
@@ -230,9 +239,32 @@ def tokenize(text: str) -> list[str]:
 
 
 def chunk_text(text: str, chunk_size: int = 500, overlap: int = 50) -> list[str]:
-    """Basic text chunking for RAG ingestion."""
+    """Basic text chunking for RAG ingestion.
+
+    ``chunk_size`` is bounded by what the encoder can actually read. Until
+    12 Aug 2026 it was not: chunks of 500 and 800 words were handed to an
+    encoder with a 256-token window, which silently dropped 64-77% of each
+    one. The dense half of the hybrid score was ranking prefixes while the
+    lexical half read whole documents. See core/memory/embedding_model.py.
+    """
     if not text:
         return []
+    ceiling = embedding_model.max_chunk_words()
+    if chunk_size > ceiling:
+        # Clamp rather than raise: a too-large chunk is a tuning mistake, not
+        # a reason to lose the ingest. But it is never silent.
+        record_degradation(
+            "rag.chunk_text",
+            ValueError(
+                f"chunk_size={chunk_size} words exceeds the encoder window "
+                f"({embedding_model.REPO_ID}, {embedding_model.MAX_INPUT_TOKENS} tokens "
+                f"= ~{ceiling} words); clamping so the tail is not silently dropped"
+            ),
+            action=f"clamped chunk_size to {ceiling}",
+        )
+        chunk_size = ceiling
+    if overlap >= chunk_size:
+        overlap = max(0, chunk_size // 10)
     words = text.split()
     chunks: list[str] = []
     for i in range(0, len(words), chunk_size - overlap):

@@ -39,7 +39,16 @@ from core.runtime.subprocess_gateway import (
 from .mlx_vision_worker import _mlx_vision_worker_loop
 
 logger = logging.getLogger("MLXVisionClient")
-DEFAULT_VISION_MODEL = "mlx-community/Qwen2-VL-2B-Instruct-4bit"
+# Qwen3-VL-4B replaced Qwen2-VL-2B on 12 Aug 2026. This is the model that
+# answers "read my screen", and Qwen2-VL-2B was two generations behind on
+# exactly the axis that matters for it: DocVQA 95.3 vs the 2B-era scores,
+# clearing every Gemma 3 size including the 27B. mlx-vlm 0.4.4 already ships
+# the qwen3_vl backend, so this needed no new dependency.
+#
+# Weights are pinned to the local HF cache — see docs on offline operation in
+# core/memory/embedding_model.py's sibling note. Nothing here reaches a
+# hosted endpoint; MLX loads safetensors off this disk.
+DEFAULT_VISION_MODEL = "mlx-community/Qwen3-VL-4B-Instruct-4bit"
 
 
 class MLXVisionClient:

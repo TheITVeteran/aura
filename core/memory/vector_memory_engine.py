@@ -62,6 +62,7 @@ import numpy as np
 
 from core.container import ServiceContainer
 from core.health.degraded_events import record_degraded_event
+from core.memory import embedding_model
 from core.runtime.effect_boundary import effect_sink
 from core.runtime.errors import record_degradation
 from core.runtime.lockdep import checked_lock
@@ -140,13 +141,16 @@ class EmbeddingEngine:
     Converts text to dense semantic vectors.
     
     Uses sentence-transformers (local, runs on MPS/CPU).
-    Model: all-MiniLM-L6-v2 (fast, 384-dim, excellent quality)
-    
+    Model and width are declared in core/memory/embedding_model.py — that
+    module is the single source of truth, because holding the model name here
+    and the chunk size in rag.py is precisely how the 256-token encoder ended
+    up being fed 800-word chunks for months.
+
     Falls back to TF-IDF if sentence-transformers isn't available.
     """
 
-    PREFERRED_MODEL = "all-MiniLM-L6-v2"
-    VECTOR_DIM = 384
+    PREFERRED_MODEL = embedding_model.REPO_ID
+    VECTOR_DIM = embedding_model.VECTOR_DIM
 
     def __init__(self):
         self._model = None
@@ -228,9 +232,9 @@ class EmbeddingEngine:
             try:
                 lane_lease = acquire_synchronous_in_process_model_lane(
                     owner_id=f"embedding-engine:{id(self)}",
-                    model_path=f"sentence-transformers/{self.PREFERRED_MODEL}",
+                    model_path=self.PREFERRED_MODEL,
                     purpose="serve",
-                    request_gb=0.5,
+                    request_gb=embedding_model.FOOTPRINT_GB,
                     priority=40,
                     preemptible=False,
                     evict=self._evict_model_lane,
@@ -247,7 +251,14 @@ class EmbeddingEngine:
                 self._initialized = True
                 return
             try:
-                self._model = SentenceTransformer(self.PREFERRED_MODEL)
+                # truncate_dim keeps the Matryoshka output at VECTOR_DIM, so
+                # the stored width never moves. assert_window_matches_model
+                # is the check whose absence let a 256-token encoder accept
+                # 800-word chunks silently.
+                self._model = SentenceTransformer(
+                    self.PREFERRED_MODEL, truncate_dim=self.VECTOR_DIM
+                )
+                embedding_model.assert_window_matches_model(self._model)
             except (OSError, RuntimeError, AttributeError, TypeError, ValueError):
                 lane_lease.release(reason="embedding_model_load_failed")
                 raise
@@ -336,6 +347,32 @@ class EmbeddingEngine:
         # Fallback: character n-gram hash (fast, fixed-size, reliable)
         return self._embed_hash(text)
 
+    def embed_query(self, text: str) -> np.ndarray:
+        """Embed the QUERY side of a retrieval.
+
+        Qwen3-Embedding is asymmetric: queries carry an instruction prefix,
+        documents do not. Encoding both sides identically is a measurable
+        quality loss, and it is invisible — the vectors come out the same
+        width and the cosines look plausible. MiniLM was symmetric, so this
+        distinction did not exist before 12 Aug 2026 and no call site made it.
+
+        Falls back to the document path when the model has no named prompts,
+        so a recall is never lost to a missing prompt template.
+        """
+        model = self._checkout_model()
+        if model is not None:
+            try:
+                vec = embedding_model.encode_query(model, [text])
+                vec = np.asarray(vec, dtype=np.float32)[0]
+                norm = float(np.linalg.norm(vec))
+                return vec / norm if norm > 0 else vec
+            except (RuntimeError, AttributeError, TypeError, ValueError) as exc:
+                record_degradation("vector_memory_engine.embed_query", exc,
+                                   action="fell back to symmetric query encoding")
+            finally:
+                self._return_model()
+        return self.embed(text)
+
     def embed_batch(self, texts: list[str]) -> np.ndarray:
         """Batch embed for efficiency."""
         model = self._checkout_model()
@@ -371,7 +408,7 @@ class EmbeddingEngine:
         vec = np.frombuffer(h, dtype=np.uint8).astype(np.float32)
         vec = vec / 255.0
         # Pad/truncate to standard dim
-        target = 384
+        target = embedding_model.VECTOR_DIM
         if len(vec) < target:
             vec = np.pad(vec, (0, target - len(vec)))
         return vec[:target]

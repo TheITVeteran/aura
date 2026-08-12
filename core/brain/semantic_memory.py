@@ -7,6 +7,7 @@ import time
 import uuid
 from typing import Any
 
+from core.memory import embedding_model
 from core.governance_context import (
     get_active_governance,
     governance_runtime_active,
@@ -189,9 +190,9 @@ class SemanticMemory:
             try:
                 lane_lease = acquire_synchronous_in_process_model_lane(
                     owner_id=f"semantic-memory-encoder:{id(self)}",
-                    model_path="sentence-transformers/all-MiniLM-L6-v2",
+                    model_path=embedding_model.REPO_ID,
                     purpose="serve",
-                    request_gb=0.5,
+                    request_gb=embedding_model.FOOTPRINT_GB,
                     priority=40,
                     preemptible=False,
                     evict=self._evict_vector_model,
@@ -208,8 +209,11 @@ class SemanticMemory:
                 return
 
             # Load encoder (can take 5-10s on first run)
-            logger.info("Loading Embedding Model (all-MiniLM-L6-v2)...")
-            encoder = SentenceTransformer("all-MiniLM-L6-v2")
+            logger.info("Loading Embedding Model (%s)...", embedding_model.REPO_ID)
+            encoder = SentenceTransformer(
+                embedding_model.REPO_ID, truncate_dim=embedding_model.VECTOR_DIM
+            )
+            embedding_model.assert_window_matches_model(encoder)
 
             # Build or load FAISS index
             if os.path.exists(self.index_path):

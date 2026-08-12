@@ -10,6 +10,7 @@ import numpy as np
 import pytest
 
 from core.brain.semantic_memory import SemanticMemory
+from core.memory import embedding_model
 from core.memory.vector_memory_engine import EmbeddingEngine
 from core.runtime.model_lane_control import ModelLaneController
 from core.runtime.receipts import ReceiptStore
@@ -54,7 +55,17 @@ def _install_fake_embedding_dependencies(
     class _Encoder:
         block = False
 
-        def __init__(self, _model_name: str) -> None:
+        #: The real encoder is constructed with truncate_dim so the
+        #: Matryoshka output stays at VECTOR_DIM. A double that does not
+        #: accept it passes while the production call fails, which is the
+        #: whole reason this signature is mirrored rather than **kwargs-ed.
+        max_seq_length = embedding_model.MAX_INPUT_TOKENS
+
+        def __init__(self, _model_name: str, truncate_dim: int | None = None) -> None:
+            assert truncate_dim == embedding_model.VECTOR_DIM, (
+                f"encoder must be pinned to {embedding_model.VECTOR_DIM} dims; "
+                f"got truncate_dim={truncate_dim!r}"
+            )
             loading_preemptibility.append(
                 bool(controller.snapshot()["owners"][0]["preemptible"])
             )
