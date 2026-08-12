@@ -45813,3 +45813,33 @@ serving authority, broad reasoning result, fusion authority, frontier result or
 (approximately `99.2%`). Next is terminal recovery admission, powered fresh-seed
 adjudication, package materialization into the durable release root and the
 actual worker restart/canary/rollback proof.
+
+## Checkpoint 2026-08-12-268: The Live Canary Has an Executable Evidence Path
+
+The private package battery and worker probe existed as library calls, but no
+operator-grade command performed the complete real-worker sequence. A future
+supported replication therefore still depended on improvised Python to load
+the resident model, establish worker/package identity, execute the hidden
+canary, preserve a negative result and tear the model lane down.
+
+The live-canary runner now reopens the sealed package before model use, starts
+Aura's actual MLX client, requires a successful resident-worker warmup, binds
+the worker load receipt to the package id and manifest, and executes the
+package's private battery only through the no-output shadow action. It rejects
+identity, plan, controller or authority disagreement before publication. Both
+supported and refuted verdicts are preserved as canonical private evidence;
+neither output text nor tokens are published, and the command returns a
+distinct negative-science exit status instead of calling a refutation an
+infrastructure error. Invalid thresholds fail before model construction, and
+worker shutdown runs on every terminal path without masking the primary error.
+
+Validation is green: `79/79` focused live-runner, durable-pointer, worker,
+shadow-runtime, private-canary, client and admission tests plus `104/104` smoke
+tests pass; direct CLI startup, focused Ruff, compilation and diff hygiene pass.
+No 32B process was started by this checkpoint because the live CP264 recovery
+owns that lane. No terminal admission, decoded gain, serving authority, broad
+reasoning result, fusion authority, frontier result or `WOW Signal` is claimed.
+The completion envelope remains `913/920` (approximately `99.2%`). Next is the
+terminal recovered checkpoint, automatically queued powered adjudication, then
+materialization, durable shadow activation and this exact live canary followed
+by restart and rollback verification.
