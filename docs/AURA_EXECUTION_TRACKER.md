@@ -45780,3 +45780,36 @@ admission, decoded gain, runtime promotion, fusion authority, frontier result
 or `WOW Signal` is claimed. Next is terminal recovery admission, the already
 queued CP265 powered adjudication, and conditional package materialization from
 that exact corrected evidence directory.
+
+## Checkpoint 2026-08-12-267: Shadow Tissue Survives Restart and Exact Rollback
+
+The resident worker could load a sealed unified-recurrence package only from a
+process environment variable. That was sufficient for an isolated lab probe,
+but it could not establish durable restart behavior, identify a stale package
+selection, or perform a compare-and-swap rollback without editing launch state.
+
+Aura now has a private canonical shadow pointer beneath its owned state root.
+The pointer binds the exact package path, package id and manifest digest; both
+the pointer and selected package are reopened through nonsymlinked private
+custody before the worker loads any tensor. Publication is atomic and
+idempotent, replacement requires the exact current pointer digest, and
+deactivation atomically retires the original pointer bytes as a rollback
+receipt. A malformed or identity-mismatched durable pointer is fatal to worker
+startup rather than silently degrading to the base path. An environment
+override remains available for bounded laboratory launches, while ordinary
+restart discovery now uses the durable pointer by default. The management CLI
+exposes explicit activate, status and digest-bound deactivate operations; none
+grant response-serving authority.
+
+Validation is green: `75/75` focused pointer, worker activation, shadow runtime,
+private-canary, client and admission tests plus `104/104` smoke tests pass;
+focused Ruff, compilation and diff hygiene pass. The live CP264 recovery has
+crossed its first post-resume evaluation at step `9`: held-out depth-relative
+cross-entropy gain is `39.116%`, all typed state/action measurements are `1.0`,
+and step `17` is durably checkpointed. Those are training-objective signals,
+not decoded-answer evidence. No terminal admission, replicated decoded gain,
+serving authority, broad reasoning result, fusion authority, frontier result or
+`WOW Signal` is claimed. The completion envelope remains `913/920`
+(approximately `99.2%`). Next is terminal recovery admission, powered fresh-seed
+adjudication, package materialization into the durable release root and the
+actual worker restart/canary/rollback proof.

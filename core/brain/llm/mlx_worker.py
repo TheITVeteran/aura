@@ -3580,7 +3580,30 @@ def _load_unified_recurrent_shadow(
     )
 
     configured = _FLAG_UNIFIED_RECURRENT_SHADOW_PACKAGE.value().strip()
-    if not configured:
+    pointer_path: Path | None = None
+    if configured:
+        package = Path(configured).expanduser()
+    else:
+        from core.brain.llm.unified_recurrent_shadow_pointer import (
+            default_shadow_activation_paths,
+            resolve_shadow_pointer,
+        )
+
+        pointer_path, releases_root = default_shadow_activation_paths()
+        if pointer_path.exists() or pointer_path.is_symlink():
+            try:
+                package = resolve_shadow_pointer(
+                    pointer_path,
+                    releases_root=releases_root,
+                )
+            except (OSError, RuntimeError, TypeError, ValueError) as exc:
+                raise RuntimeError(
+                    f"configured_unified_recurrent_shadow_pointer_invalid:"
+                    f"{pointer_path}:{exc}"
+                ) from exc
+        else:
+            package = None
+    if package is None:
         return None, seal_shadow_load_receipt(
             {
                 "schema": LOAD_SCHEMA,
@@ -3600,7 +3623,6 @@ def _load_unified_recurrent_shadow(
             }
         )
 
-    package = Path(configured).expanduser()
     try:
         from core.brain.llm.unified_recurrent_shadow import (
             load_unified_recurrent_shadow,
