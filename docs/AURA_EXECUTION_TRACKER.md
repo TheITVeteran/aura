@@ -46027,3 +46027,79 @@ not launch authority because its migration tool was not yet source-published.
 Next is preparing a fresh immutable capsule from this pushed checkpoint,
 executing the source-bound migration there, and completing steps 35-36 plus the
 corrected terminal ladder under the unchanged sentinel ceiling.
+
+## Checkpoint 2026-08-12-275: Recurrent Training Streams Exact Depth Gradients
+
+The CP274 source-bound recovery reproduced a third, distinct memory defect at
+step 35. Evaluation was already bounded, but a recurrence update constructed
+the frozen-coda graphs for depths 1, 2 and 4 together and retained all three
+until one backward pass. The external sentinel stopped the trainer at
+approximately `53.55` GiB and preserved the exact authoritative step-34
+checkpoint.
+
+The recurrence objective can now expose one algebraic depth summand with the
+original full-objective denominators. The trainer evaluates one depth,
+materializes its gradients, reclaims that graph, accumulates the exact gradient
+sum and performs the same single clipping and Adam update. A trained small-Qwen
+equivalence test compares monolithic and streamed losses and every parameter
+gradient. The immutable CP275 capsule imported the exact step-34 controller,
+optimizer, history and cursor under migration receipt
+`93e6c847...`; steps 35 and 36 then completed without restart. Peak managed
+memory stayed near `36.43` GiB during the repaired update and returned near
+`21` GiB, versus the prior `53.55` GiB failure.
+
+Validation is green: `100/100` focused objective, trainer, migration, campaign,
+preload, resume and adjudication tests passed before launch. The step-36
+training evaluation reports all typed state/action metrics at `1.0` across
+T1/T2/T4 and held-out T8/T16, with `77.684%` held-out depth-relative
+cross-entropy improvement. Those are optimization signals, not decoded-answer
+evidence. Terminal answer admission remains live; no powered gain, serving,
+fusion, frontier or `WOW Signal` claim is made.
+
+## Checkpoint 2026-08-12-276: Typed Recurrent Serving Has Separate Authority
+
+The resident worker could load certified recurrent tissue only in non-serving
+shadow mode. Aura now has a distinct qualified activation contract and durable
+store. Authority can cover only canonical `khop`, `modular` and
+`register_trace` programs at explicitly certified depths; ordinary chat and
+arbitrary reasoning remain false. The worker independently classifies the
+public token grammar, bounds every token to the resident vocabulary, performs
+greedy package-bound recurrence, validates the exact answer grammar, and grants
+output authority only after matching activation, package, checkpoint,
+controller, family and depth identities.
+
+Qualified requests are privileged signed IPC contracts. Mutation after signing
+fails before model execution. Parent and worker independently bind request,
+activation and result receipts. Shadow-pointer replacement and revocation share
+a publication lock with qualified authority, and an active authority blocks
+pointer mutation until explicitly revoked. Malformed domains, stale authority,
+cross-request receipts, symlinked custody and partial identity matches fail
+closed.
+
+Validation is green: `223/223` bounded serving, authority, worker, client,
+pointer, lifecycle and package tests plus `104/104` canonical smoke pass;
+focused Ruff, compilation and diff hygiene pass. This implements a serving
+mechanism but activates nothing by itself. A supported powered verdict and
+real lifecycle proof are still mandatory.
+
+## Checkpoint 2026-08-12-277: Qualified Promotion Is One Rollback-Safe Transaction
+
+The positive path no longer depends on improvised calls. A dedicated operator
+command reopens the package and lifecycle receipt, refuses to replace another
+active shadow package, publishes the exact pointer, derives typed authority
+from the supported lifecycle evidence, reopens both identities and returns only
+the bounded domain. Failure after pointer selection retires a newly selected
+pointer; failure after authority publication revokes that authority before
+retiring the pointer. Status refuses orphaned authority, and deactivation
+requires both exact activation and pointer digests.
+
+Validation is green: `49/49` promotion, materialization, lifecycle, pointer,
+worker and client tests plus `104/104` canonical smoke pass. The CP275 powered
+plan is frozen at three fresh seeds, 81 tasks and 648 eight-arm candidates under
+plan SHA-256 `ce1b5baa626b25cd2b6a5379181b3beeb5e576291a821d1a26a007072724ffd2`.
+Its launchd controller is authenticated and waiting for terminal admission; it
+will start automatically only from a valid completion receipt. The completion
+envelope remains `913/920` (approximately `99.2%`) because terminal admission,
+powered replication, package lifecycle proof, broader-domain evidence and final
+soak remain open. No decoded gain, fusion, frontier result or `WOW Signal` is
+claimed.

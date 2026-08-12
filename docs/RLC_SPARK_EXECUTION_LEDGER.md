@@ -5886,3 +5886,27 @@ correct count, and pairs the matched T4 candidates itself to derive
 wrong-to-right and right-to-wrong transitions. The affected surface passes
 `25/25`. The resident training run is still active under its immutable CP246
 source, so no decoded transfer or downstream claim is made.
+
+### 2026-08-12 - CP275 through CP277: terminal recovery and typed serving are executable
+
+The exact step-34 resident tissue survived three source repairs. CP275 replaced
+multi-depth graph retention with mathematically equivalent streamed gradient
+accumulation; steps 35 and 36 completed under the unchanged sentinel ceiling.
+The final training ladder has perfect typed state/action metrics through unseen
+T16 and a `77.684%` held-out relative CE gain, while terminal decoded-answer
+admission remains the deciding gate.
+
+CP276 and CP277 close the downstream implementation gap without pre-authorizing
+the result. A supported package may serve only its tokenizer-bound typed task
+families through separately signed, durable qualified authority. Pointer,
+activation, worker and client identities are independently checked, and one
+rollback-safe command owns activation and revocation. Ordinary chat, arbitrary
+reasoning, static fusion, broad capability and frontier claims remain false.
+
+The powered replication is preregistered before terminal decode under plan
+`ce1b5baa...`: three disjoint seeds, 81 tasks, 648 eight-arm candidates,
+zero regression, exact compiled controls, strict grammar/pointer/base/T1 lesion
+requirements, at least 20% pooled gain and exact one-sided `p <= 0.01`. Its
+launchd controller is alive and waits on the authenticated CP275 terminal
+receipt. SPARK completion remains `913/920`; these repairs do not count the
+remaining scientific gates as passed.
