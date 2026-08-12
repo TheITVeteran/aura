@@ -45483,3 +45483,52 @@ or `WOW Signal` is claimed. The completion envelope remains `913/920`
 (approximately `99.2%`). Next is terminal `27/27` admission, the automatically
 chained powered replication and adjudication, then a domain-qualified shadow
 runtime package only if the frozen verdict is supported.
+
+## Checkpoint 2026-08-11-257: Supported Evidence Can Become a Sealed Shadow Package
+
+A controller can no longer move from a favorable verdict into runtime through
+an informal file path. The shadow materializer independently reopens terminal
+campaign state, recomputes the powered replication verdict, resolves the
+admitted immutable checkpoint generation, and copies every controller and
+evidence artifact into a create-once private package. Its canonical manifest
+binds source, model, tokenizer, checkpoint, plan, verdict, reports and the exact
+generator/grammar domain. Publication is atomic and a second full byte-level
+inspection follows the rename.
+
+The package carries no serving authority. It explicitly denies ordinary chat,
+arbitrary reasoning, global activation and static weight fusion, and records
+the remaining promotion gates: source-bound worker loading, shadow equivalence
+and latency, restart/rollback proof, a domain-qualified live canary and broader
+equal-compute replication. Unsupported or recomputation-divergent evidence,
+artifact tampering, path redirection, weak custody and destination collisions
+all fail before publication. This machinery is conditional: no package exists
+until the active campaign earns a supported powered verdict.
+
+## Checkpoint 2026-08-11-258: Resident Worker Loads Shadow Tissue Without Serving It
+
+The resident MLX worker now has a fail-closed loader for a sealed unified
+recurrent package. It validates package custody and exact inventory; canonical
+manifest/completion commitments; terminal checkpoint, plan, verdict and every
+per-seed report; source mechanics; resident model extent; tokenizer contracts;
+controller topology, tensor names and shapes; and a second controller identity
+check through the same descriptor used for deserialization. The descriptor is
+closed before readiness, and the separately loaded controller does not mutate
+the resident model.
+
+The worker emits a sealed shadow-load receipt even when shadow mode is
+intentionally inactive. The parent validates that receipt through a pure-data
+module before accepting READY, clears stale shadow state on every failed or new
+worker generation, and exposes the accepted state through lane health and
+supervision. A configured-but-unloaded package, changed receipt, malformed
+domain or any serving-authority claim prevents readiness. There is still no IPC
+operation that can place shadow output on the response lane, so this checkpoint
+cannot alter Aura's answers.
+
+Validation is green: `60/60` focused loader, materializer, worker and handshake
+tests pass; canonical smoke passes `104/104`; focused Ruff, compilation and diff
+hygiene pass. The powered resident campaign remains live and scientifically
+unresolved, so the completion envelope remains `913/920` (approximately
+`99.2%`). Next is terminal `27/27` admission and powered adjudication; in
+parallel, add a dedicated non-serving shadow execution IPC path with bounded
+latency/equivalence telemetry. Only a supported verdict may be materialized and
+only later live gates may authorize domain-qualified serving.

@@ -80,6 +80,16 @@ _FLAG_MLX_WORKER_RSS_LIMIT_GB = _declare_flag(
     description="Migrated from a raw environment read; see owner for the lane.",
     owner="flag-migration",
 )
+_FLAG_UNIFIED_RECURRENT_SHADOW_PACKAGE = _declare_flag(
+    "AURA_UNIFIED_RECURRENT_SHADOW_PACKAGE",
+    kind=_FlagKind.STRING,
+    default="",
+    description=(
+        "Absolute path to a certified unified-recurrence shadow package; "
+        "the loaded tissue has no response-serving authority."
+    ),
+    owner="unified-recurrent-shadow",
+)
 _FLAG_REASONING_STEERING = _declare_flag(
     "AURA_REASONING_STEERING",
     kind=_FlagKind.STRING,
@@ -3554,6 +3564,67 @@ def _attach_certified_recurrent_adapter(
     return activation, receipt
 
 
+def _load_unified_recurrent_shadow(
+    model: Any,
+    tokenizer: Any,
+    *,
+    model_path: str,
+) -> tuple[Any | None, dict[str, Any]]:
+    """Load separately certified recurrent tissue with zero serving authority."""
+
+    from core.brain.llm.unified_recurrent_shadow_contract import (
+        LOAD_SCHEMA,
+        seal_shadow_load_receipt,
+        shadow_load_receipt_errors,
+    )
+
+    configured = _FLAG_UNIFIED_RECURRENT_SHADOW_PACKAGE.value().strip()
+    if not configured:
+        return None, seal_shadow_load_receipt(
+            {
+                "schema": LOAD_SCHEMA,
+                "configured": False,
+                "loaded": False,
+                "reason": "not_configured",
+                "package_id": "",
+                "manifest_sha256": "",
+                "checkpoint_sha256": "",
+                "controller_sha256": "",
+                "families": [],
+                "task_depths": [],
+                "recurrence_depth": 0,
+                "model_identity_strength": "none",
+                "mode": "shadow_only",
+                "serving_authority": False,
+            }
+        )
+
+    package = Path(configured).expanduser()
+    try:
+        from core.brain.llm.unified_recurrent_shadow import (
+            load_unified_recurrent_shadow,
+        )
+
+        loaded = load_unified_recurrent_shadow(
+            package,
+            model=model,
+            tokenizer=tokenizer,
+            model_path=Path(model_path),
+        )
+    except (ImportError, OSError, RuntimeError, TypeError, ValueError) as exc:
+        raise RuntimeError(
+            f"configured_unified_recurrent_shadow_invalid:{package}:{exc}"
+        ) from exc
+    receipt = dict(loaded.receipt)
+    errors = shadow_load_receipt_errors(receipt)
+    if errors:
+        raise RuntimeError(
+            "configured_unified_recurrent_shadow_receipt_invalid:"
+            + ",".join(errors)
+        )
+    return loaded, receipt
+
+
 # ── expert adapter hot attach/detach (in-worker, no model reload) ────────────
 # The expert-LoRA library keeps domain-specialist adapters on disk and swaps
 # them onto the RESIDENT model. Attach wraps target linears with LoRA layers
@@ -4943,6 +5014,27 @@ def _mlx_worker_loop(
                 recurrent_adapter_activation["reason"],
             )
 
+        (
+            unified_recurrent_shadow,
+            unified_recurrent_shadow_status,
+        ) = _load_unified_recurrent_shadow(
+            model,
+            tokenizer,
+            model_path=str(model_path),
+        )
+        if unified_recurrent_shadow_status["loaded"]:
+            logger.info(
+                "Unified recurrent tissue loaded in SHADOW ONLY mode: "
+                "package=%s controller=%s",
+                unified_recurrent_shadow_status["package_id"],
+                unified_recurrent_shadow_status["controller_sha256"],
+            )
+        else:
+            logger.info(
+                "Unified recurrent shadow inactive: %s",
+                unified_recurrent_shadow_status["reason"],
+            )
+
         from core.brain.llm.latent_cortex.runtime_identity import (
             build_worker_identity,
         )
@@ -4986,6 +5078,7 @@ def _mlx_worker_loop(
                     if recurrent_adapter_activation_receipt is not None
                     else None
                 ),
+                "unified_recurrent_shadow": dict(unified_recurrent_shadow_status),
                 "personality_adapter": dict(personality_adapter_status),
                 "worker_identity": dict(worker_identity),
             }

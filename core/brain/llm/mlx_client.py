@@ -4154,6 +4154,10 @@ class MLXLocalClient:
         #: its signed identity at handshake. Empty until a receipt is accepted:
         #: not knowing which adapter is live is not the same as knowing none is.
         self._recurrent_adapter_activation: dict[str, Any] = {}
+        #: Accepted non-serving recurrent controller state. This is separate
+        #: from model identity because shadow tissue is neither a model
+        #: mutation nor response-serving authority.
+        self._unified_recurrent_shadow_status: dict[str, Any] = {}
         self._worker_identity: dict[str, Any] = {}
         self._mycelial_root_refs: list[dict[str, str]] = []
         self._last_surface_control_receipt: dict[str, Any] = {}
@@ -5888,6 +5892,9 @@ class MLXLocalClient:
             "current_first_token_at": self._current_first_token_at,
             "current_request_prompt_chars": self._current_request_prompt_chars,
             "recurrent_depth": recurrent_depth_status,
+            "unified_recurrent_shadow": copy.deepcopy(
+                getattr(self, "_unified_recurrent_shadow_status", {})
+            ),
             "request_age_s": (
                 max(0.0, time.time() - self._current_request_started_at)
                 if self._current_request_started_at
@@ -5904,6 +5911,9 @@ class MLXLocalClient:
             "active_generations": int(self._active_generations),
             "expert_adapter_state_unknown": bool(
                 getattr(self, "_expert_adapter_state_unknown", False)
+            ),
+            "unified_recurrent_shadow": copy.deepcopy(
+                getattr(self, "_unified_recurrent_shadow_status", {})
             ),
             "process_uptime_s": max(0.0, now - self._process_started_at)
             if self._process_started_at
@@ -7384,6 +7394,26 @@ class MLXLocalClient:
                     errors.append("missing_recurrent_adapter_activation_receipt")
                 elif reported_activation != declared_activation:
                     errors.append("recurrent_adapter_activation_receipt_mismatch")
+
+        # Optional shadow tissue still requires an explicit inactive receipt.
+        # Otherwise a configured load failure and intentional absence are
+        # indistinguishable. This pure-data validator cannot initialize MLX in
+        # the parent process.
+        try:
+            from core.brain.llm.unified_recurrent_shadow_contract import (
+                shadow_load_receipt_errors,
+            )
+
+            errors.extend(
+                shadow_load_receipt_errors(res.get("unified_recurrent_shadow"))
+            )
+        except ImportError as exc:
+            _record_mlx_degradation(
+                exc,
+                action="unified recurrent shadow receipt validator unavailable",
+                severity="error",
+            )
+            errors.append("unified_recurrent_shadow_validator_unavailable")
         return errors
 
     def _attest_worker_capture_origin(
@@ -9370,6 +9400,7 @@ class MLXLocalClient:
         self._worker_identity = {}
         self._recurrent_depth_status = {}
         self._recurrent_adapter_activation = {}
+        self._unified_recurrent_shadow_status = {}
         self._steering_liveness_observed = False
         self._last_interoception = {}
         self._last_surface_control_receipt = {}
@@ -10746,6 +10777,7 @@ class MLXLocalClient:
                             # is cleared together. Leaving one behind lets the
                             # PREVIOUS worker's claim certify this one.
                             self._recurrent_adapter_activation = {}
+                            self._unified_recurrent_shadow_status = {}
                             self._set_lane_state(
                                 "failed",
                                 "init_receipt_invalid",
@@ -10770,6 +10802,12 @@ class MLXLocalClient:
                         self._recurrent_adapter_activation = (
                             adapter_activation
                             if isinstance(adapter_activation, dict)
+                            else {}
+                        )
+                        shadow_status = res.get("unified_recurrent_shadow")
+                        self._unified_recurrent_shadow_status = (
+                            copy.deepcopy(shadow_status)
+                            if isinstance(shadow_status, dict)
                             else {}
                         )
                         if not isinstance(recurrent_status, dict):

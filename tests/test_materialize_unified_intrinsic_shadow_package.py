@@ -1,11 +1,13 @@
 from __future__ import annotations
 
+import hashlib
 import json
 from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
 
+from core.brain.llm import unified_recurrent_shadow as runtime_shadow
 from tools import materialize_unified_intrinsic_shadow_package as materializer
 from tools.unified_intrinsic_resident_identity import canonical_bytes, canonical_sha256
 
@@ -51,16 +53,23 @@ def _fixture(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> tuple[Path, Pat
         "seeds": [101, 102, 103],
     }
     plan = {**plan_body, "plan_sha256": canonical_sha256(plan_body)}
+    reports = []
+    for seed in plan["seeds"]:
+        report_body = {"schema": "report", "evaluation_seed": seed}
+        reports.append(
+            {**report_body, "report_sha256": canonical_sha256(report_body)}
+        )
     verdict_body = {
         "supported": True,
         "verdict": "SUPPORTED",
         "checkpoint_sha256": checkpoint_sha256,
+        "plan_sha256": plan["plan_sha256"],
+        "reports": [
+            {"seed": report["evaluation_seed"], "report_sha256": report["report_sha256"]}
+            for report in reports
+        ],
     }
     verdict = {**verdict_body, "verdict_sha256": canonical_sha256(verdict_body)}
-    reports = [
-        {"schema": "report", "seed": seed, "report_sha256": str(seed) * 21 + "0"}
-        for seed in plan["seeds"]
-    ]
     monkeypatch.setattr(
         materializer,
         "_verified_evidence",
@@ -87,9 +96,11 @@ def test_materializes_and_reopens_shadow_only_package(
     )
     package = Path(result["package"])
     reopened = materializer.inspect_shadow_package(package)
+    runtime_inspection = runtime_shadow.inspect_shadow_package(package)
     manifest = json.loads((package / "manifest.json").read_bytes())
 
     assert reopened == result
+    assert runtime_inspection["manifest"] == manifest
     assert manifest["mode"] == "shadow_only"
     assert manifest["serving_authority"] is False
     assert manifest["domain_contract"]["ordinary_chat_authorized"] is False
@@ -190,3 +201,57 @@ def test_documents_are_canonical_and_read_only(
         if path.suffix == ".json":
             value = json.loads(path.read_bytes())
             assert path.read_bytes() == canonical_bytes(value) + b"\n"
+
+
+def test_runtime_refuses_report_rebound_away_from_frozen_verdict(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    campaign, output_root = _fixture(tmp_path, monkeypatch)
+    result = materializer.materialize(
+        campaign,
+        output_root=output_root,
+        package_id="report-rebind-fixture",
+    )
+    package = Path(result["package"])
+    report_path = package / "replication-report-01.json"
+    report = json.loads(report_path.read_bytes())
+    report["evaluation_seed"] = 999
+    report_body = {key: value for key, value in report.items() if key != "report_sha256"}
+    report["report_sha256"] = canonical_sha256(report_body)
+    report_path.chmod(0o600)
+    report_path.write_bytes(canonical_bytes(report) + b"\n")
+    report_path.chmod(0o400)
+
+    manifest_path = package / "manifest.json"
+    manifest = json.loads(manifest_path.read_bytes())
+    binding = manifest["artifacts"]["replication_reports"][0]
+    binding["sha256"] = hashlib.sha256(report_path.read_bytes()).hexdigest()
+    binding["size_bytes"] = report_path.stat().st_size
+    manifest_body = {
+        key: value for key, value in manifest.items() if key != "manifest_sha256"
+    }
+    manifest["manifest_sha256"] = canonical_sha256(manifest_body)
+    manifest_path.chmod(0o600)
+    manifest_path.write_bytes(canonical_bytes(manifest) + b"\n")
+    manifest_path.chmod(0o400)
+
+    complete_path = package / "PACKAGE_COMPLETE.json"
+    complete = json.loads(complete_path.read_bytes())
+    complete["manifest_sha256"] = manifest["manifest_sha256"]
+    complete["manifest_file_sha256"] = hashlib.sha256(
+        manifest_path.read_bytes()
+    ).hexdigest()
+    complete_body = {
+        key: value for key, value in complete.items() if key != "complete_sha256"
+    }
+    complete["complete_sha256"] = canonical_sha256(complete_body)
+    complete_path.chmod(0o600)
+    complete_path.write_bytes(canonical_bytes(complete) + b"\n")
+    complete_path.chmod(0o400)
+
+    with pytest.raises(
+        runtime_shadow.UnifiedRecurrentShadowError,
+        match="replication report commitments differ",
+    ):
+        runtime_shadow.inspect_shadow_package(package)

@@ -22,6 +22,31 @@ import stat
 import pytest
 
 from core.brain.llm import mlx_client
+from core.brain.llm.unified_recurrent_shadow_contract import (
+    LOAD_SCHEMA,
+    seal_shadow_load_receipt,
+)
+
+
+def _inactive_shadow_receipt():
+    return seal_shadow_load_receipt(
+        {
+            "schema": LOAD_SCHEMA,
+            "configured": False,
+            "loaded": False,
+            "reason": "not_configured",
+            "package_id": "",
+            "manifest_sha256": "",
+            "checkpoint_sha256": "",
+            "controller_sha256": "",
+            "families": [],
+            "task_depths": [],
+            "recurrence_depth": 0,
+            "model_identity_strength": "none",
+            "mode": "shadow_only",
+            "serving_authority": False,
+        }
+    )
 
 
 class TestSpawnLockCannotBeRedirected:
@@ -256,8 +281,31 @@ class TestReadyRequiresAValidatedReceipt:
         monkeypatch.setattr(
             mlx_client, "_expected_recurrent_loops_from_model_path", lambda _p: 1,
         )
-        errors = self._client()._init_receipt_errors({"status": "ok"})
+        errors = self._client()._init_receipt_errors(
+            {"status": "ok", "unified_recurrent_shadow": _inactive_shadow_receipt()}
+        )
         assert not any("recurrent_depth" in e for e in errors)
+
+    def test_shadow_receipt_is_mandatory_even_when_inactive(self, monkeypatch):
+        monkeypatch.setattr(
+            mlx_client, "_expected_recurrent_loops_from_model_path", lambda _p: 1,
+        )
+        errors = self._client()._init_receipt_errors({"status": "ok"})
+
+        assert "unified_recurrent_shadow_not_mapping" in errors
+
+    def test_shadow_serving_authority_is_rejected_at_handshake(self, monkeypatch):
+        monkeypatch.setattr(
+            mlx_client, "_expected_recurrent_loops_from_model_path", lambda _p: 1,
+        )
+        receipt = _inactive_shadow_receipt()
+        receipt["serving_authority"] = True
+
+        errors = self._client()._init_receipt_errors(
+            {"status": "ok", "unified_recurrent_shadow": receipt}
+        )
+
+        assert "unified_recurrent_shadow_receipt_invalid" in errors
 
     def test_v3_identity_requires_matching_recurrent_adapter_receipt(
         self,
@@ -300,10 +348,11 @@ class TestReadyRequiresAValidatedReceipt:
 
     def test_an_invalid_receipt_does_not_leave_stale_identity(self):
         source = inspect.getsource(mlx_client)
-        block = source.split("refused READY on an unvalidated worker init receipt", 1)[1][:600]
+        block = source.split("refused READY on an unvalidated worker init receipt", 1)[1][:800]
         assert "self._worker_identity = {}" in block
         assert "self._recurrent_depth_status = {}" in block
         assert "self._recurrent_adapter_activation = {}" in block
+        assert "self._unified_recurrent_shadow_status = {}" in block
 
     def test_a_missing_validator_is_not_a_pass(self):
         source = inspect.getsource(
