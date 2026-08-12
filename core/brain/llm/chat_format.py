@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib as _hashlib
 import os
 from typing import Dict, Iterable, List, Optional
 
@@ -48,17 +49,104 @@ def _normalize_role(role: Optional[str]) -> str:
 # the template actually references it — never speculatively.
 
 
-def template_supports_thinking(tokenizer: object) -> bool:
-    """Whether this tokenizer's chat template honours ``enable_thinking``.
+#: Per-template memo. The probe below is deterministic for a given template,
+#: so it runs once per distinct template, not once per render.
+_THINKING_SUPPORT: Dict[str, bool] = {}
+_THINKING_PROBE = [{"role": "user", "content": "probe"}]
 
-    Checked against the template source rather than by trying and catching:
-    some tokenizers accept arbitrary kwargs and silently ignore them, which
-    would make a failed suppression look like a successful one.
+
+def template_supports_thinking(tokenizer: object) -> bool:
+    """Whether ``enable_thinking`` DEMONSTRABLY changes this template's output.
+
+    Three ways this can go wrong, and only the third is obvious:
+
+    1. The tokenizer raises on the unknown kwarg. Caught, reported False.
+    2. The tokenizer ACCEPTS the kwarg and silently ignores it — many do,
+       because Jinja templates simply never reference undefined variables.
+       Nothing raises. The prompt is unchanged. The caller believes it
+       suppressed reasoning and gets a chain of thought anyway.
+    3. The template does not mention it at all.
+
+    A substring check on the template source catches (3) and misses (2), and
+    (2) is the dangerous one: a failed suppression that looks successful is
+    exactly the defect class this codebase keeps finding. So this does not
+    ask whether the template mentions the flag — it renders the same messages
+    both ways and checks that the output actually differs. A flag that
+    changes nothing is reported as unsupported and recorded, never assumed.
     """
     template = getattr(tokenizer, "chat_template", None)
-    if not isinstance(template, str):
+    apply = getattr(tokenizer, "apply_chat_template", None)
+    if not isinstance(template, str) or not template or not callable(apply):
         return False
-    return "enable_thinking" in template
+
+    key = _hashlib.sha256(template.encode("utf-8", "replace")).hexdigest()
+    cached = _THINKING_SUPPORT.get(key)
+    if cached is not None:
+        return cached
+
+    def _render(flag: bool) -> Optional[str]:
+        try:
+            return str(
+                apply(
+                    _THINKING_PROBE,
+                    add_generation_prompt=True,
+                    tokenize=False,
+                    enable_thinking=flag,
+                )
+            )
+        except (TypeError, ValueError, KeyError, RuntimeError, AttributeError):
+            return None
+
+    with_thinking = _render(True)
+    without_thinking = _render(False)
+
+    if with_thinking is None or without_thinking is None:
+        # Case 1: the kwarg is rejected outright. Honest and harmless — the
+        # caller simply gets the model's default. Not a degradation.
+        supported = False
+    elif with_thinking == without_thinking:
+        # Case 2: accepted and inert — Jinja never raises on an undefined
+        # variable, so the kwarg lands and does nothing.
+        #
+        # Whether that is a DEFECT depends on what the template claimed.
+        # A Qwen2.5-era template never mentions the flag and has no thinking
+        # mode to suppress: inert is simply correct, and warning on every
+        # load of those models would be noise on a fail-closed subsystem.
+        # A template that DOES reference enable_thinking and still renders
+        # identically is broken — it advertises a control it does not honour,
+        # and every caller suppressing reasoning is silently getting none.
+        supported = False
+        if "enable_thinking" in template:
+            _record_inert_thinking_flag(template)
+    else:
+        supported = True
+
+    _THINKING_SUPPORT[key] = supported
+    return supported
+
+
+def _record_inert_thinking_flag(template: str) -> None:
+    """A template ADVERTISED ``enable_thinking`` and then ignored it.
+
+    Only called when the template references the flag, so this is always a
+    broken control rather than an older model that never had one.
+    """
+    try:
+        from core.runtime.errors import record_degradation
+
+        record_degradation(
+            "chat_format.thinking_control",
+            RuntimeError(
+                "chat template accepted enable_thinking but rendered "
+                "identical output with and without it; reasoning-mode "
+                "suppression is INERT for this model"
+            ),
+            action="treated the model as not supporting thinking control; "
+                   "fast lanes will emit chain-of-thought and consume budget",
+            severity="warning",
+        )
+    except Exception:  # noqa: BLE001 - a probe must never break a render
+        pass
 
 
 def render_chat_template(
