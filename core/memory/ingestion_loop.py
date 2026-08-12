@@ -11,6 +11,7 @@ from typing import List
 
 from core.actuators.actuator_registry import get_actuator_registry
 from core.container import ServiceContainer
+from core.memory import embedding_model
 from core.runtime.errors import record_degradation
 
 logger = logging.getLogger("Aura.IngestionLoop")
@@ -170,7 +171,10 @@ class IngestionLoop:
                 continue
 
             # 4. Chunk content and ingest
-            chunks = self._chunk_text(content, chunk_size=800, overlap=100)
+            # No explicit size: one page is normally one vector now. The old
+            # 800/100 split shredded every page, and chunks[:5] then threw
+            # away everything past ~4,000 words of it.
+            chunks = self._chunk_text(content)
             for i, chunk in enumerate(chunks[:5]): # Ingest up to 5 chunks to save memory space
                 maybe_write = memory_facade.add_memory(
                     text=f"Source URL: {url}\n\n{chunk}",
@@ -186,13 +190,39 @@ class IngestionLoop:
                     await maybe_write
             logger.info("Successfully ingested %d chunks from %s", min(5, len(chunks)), url)
 
-    def _chunk_text(self, text: str, chunk_size: int = 800, overlap: int = 100) -> List[str]:
+    def _chunk_text(
+        self,
+        text: str,
+        chunk_size: int | None = None,
+        overlap: int | None = None,
+    ) -> List[str]:
+        """Split ingested text for embedding.
+
+        With no explicit size, the split is DERIVED from the encoder's
+        declared window (core/memory/embedding_model.py) — which now means a
+        whole page is normally one chunk. The previous fixed 800/100 split
+        was sized against a 256-token window and cut every ingested page into
+        fragments whose facts could never co-occur in a single vector.
+
+        An explicit ``chunk_size`` is still honoured: a caller that wants
+        fine-grained passages has a real reason to, and curation is not
+        embedding. It is clamped to what the encoder can actually read, so an
+        explicit request can never reintroduce silent truncation.
+        """
+        if chunk_size is None:
+            return embedding_model.chunk_for_embedding(text)
+
+        ceiling = embedding_model.max_chunk_words()
+        chunk_size = max(1, min(int(chunk_size), ceiling))
+        overlap = 0 if overlap is None else max(0, int(overlap))
+        if overlap >= chunk_size:
+            overlap = chunk_size - 1
+
         words = text.split()
-        chunks = []
+        chunks: List[str] = []
         step = chunk_size - overlap
         for i in range(0, len(words), step):
-            chunk_words = words[i:i + chunk_size]
-            chunks.append(" ".join(chunk_words))
+            chunks.append(" ".join(words[i:i + chunk_size]))
             if i + chunk_size >= len(words):
                 break
         return chunks

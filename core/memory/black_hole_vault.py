@@ -11,6 +11,7 @@ from core.governance_context import local_internal_governed_scope
 from core.memory.black_hole import BlackHoleDecodeError, decode_payload, encode_payload
 from core.memory.horcrux import HorcruxManager
 from core.memory.physics import bekenstein_check, hawking_decay
+from core.memory import embedding_model
 from core.memory.retention_policy import MemoryRetentionPolicy, black_hole_retention_policy
 from core.runtime.errors import record_degradation
 from core.runtime.file_write_gateway import get_file_write_gateway
@@ -210,7 +211,11 @@ class BlackHoleVault:
             logger.warning("Bekenstein Bound Exceeded! Evaporating oldest memories...")
             self._evaporate()
             
-        chunks = chunk_text(text, chunk_size=800, overlap=80)
+        # One memory, one vector — unless it genuinely overflows the encoder.
+        # The old fixed 800-word split predated a 256-token window; it shredded
+        # every episode into pieces whose facts could never co-occur in a
+        # single vector, so nothing downstream could score them together.
+        chunks = embedding_model.chunk_for_embedding(text)
         now_ms = int(time.time() * 1000)
         semantic_meta = self._normalize_memory_metadata(metadata)
         

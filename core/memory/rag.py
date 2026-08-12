@@ -7,7 +7,7 @@ import threading
 from collections import OrderedDict
 from typing import Any
 
-from core.memory import embedding_model
+from core.memory import embedding_model, retrieval_calibration
 from core.runtime.errors import record_degradation
 
 logger = logging.getLogger("Aura.RAG")
@@ -185,8 +185,15 @@ def _warm_cache_in_background(texts: list[str]) -> None:
     threading.Thread(target=_warm, name="SemanticRagWarm", daemon=True).start()
 
 
-def _semantic_scores(query: str, texts: list[str]) -> list[float] | None:
-    """Dense cosine per text, or None when the semantic path must sit out."""
+def _semantic_scores(
+    query: str, texts: list[str], task: str | None = None
+) -> list[float] | None:
+    """Dense cosine per text, or None when the semantic path must sit out.
+
+    ``task`` selects the query-side instruction (see embedding_model). The
+    document vectors are task-independent, which is why they stay cacheable
+    across retrieval jobs while the query is re-encoded per call.
+    """
     engine = _get_embed_engine()
     if engine is None or not texts:
         return None
@@ -204,7 +211,7 @@ def _semantic_scores(query: str, texts: list[str]) -> list[float] | None:
         # not. Same width, different prompt — see EmbeddingEngine.embed_query.
         _embed_query = getattr(engine, "embed_query", None)
         qvec = np.asarray(
-            _embed_query(query) if callable(_embed_query) else engine.embed(query),
+            _embed_query(query, task=task) if callable(_embed_query) else engine.embed(query),
             dtype=np.float32,
         )
         qn = float(np.linalg.norm(qvec))
@@ -325,6 +332,7 @@ def retrieve_memories(
     memories: list[dict[str, Any]],
     top_k: int = 5,
     threshold: float = 0.01,
+    task: str | None = None,
     **kwargs: Any,
 ) -> list[dict[str, Any]]:
     """Hybrid semantic + lexical retrieval over memory texts.
@@ -374,7 +382,7 @@ def retrieve_memories(
 
     # Semantic layer: dense-embedding cosine per memory when the real
     # backend is up and the cache admits this query's texts (bounded work).
-    dense = _semantic_scores(query, texts)
+    dense = _semantic_scores(query, texts, task=task)
 
     scored: list[dict[str, Any]] = []
     for position, (memory, tokens) in enumerate(zip(memories, doc_tokens)):
@@ -393,13 +401,20 @@ def retrieve_memories(
             score = lexical
         if query_lower and query_lower in texts[position].lower():
             score = min(1.0, score + 0.25)
-        if score >= threshold:
-            item = dict(memory)
-            item["score"] = round(float(score), 6)
-            item["retrieval"] = "hybrid_semantic" if dense is not None else "tfidf"
-            scored.append(item)
-    scored.sort(key=lambda x: float(x.get("score", 0.0)), reverse=True)
-    return scored[:top_k]
+        item = dict(memory)
+        item["score"] = round(float(score), 6)
+        item["retrieval"] = "hybrid_semantic" if dense is not None else "tfidf"
+        scored.append((float(score), item))
+
+    # Cut where the scores stop looking like chance, not at a constant.
+    # `threshold` survives only as an optional absolute backstop — it was
+    # measured admitting 5/6 unrelated pairs under MiniLM and 6/6 under
+    # Qwen3-Embedding, i.e. it never filtered anything. See
+    # core/memory/retrieval_calibration.py for the null measurement.
+    floor = float(threshold) if threshold and threshold > 0 else None
+    return list(
+        retrieval_calibration.select_above_chance(scored, top_k=top_k, floor=floor)
+    )
 
 
 def retrieve_memories_v2(

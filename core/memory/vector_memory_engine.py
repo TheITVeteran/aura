@@ -347,7 +347,7 @@ class EmbeddingEngine:
         # Fallback: character n-gram hash (fast, fixed-size, reliable)
         return self._embed_hash(text)
 
-    def embed_query(self, text: str) -> np.ndarray:
+    def embed_query(self, text: str, task: str | None = None) -> np.ndarray:
         """Embed the QUERY side of a retrieval.
 
         Qwen3-Embedding is asymmetric: queries carry an instruction prefix,
@@ -362,7 +362,7 @@ class EmbeddingEngine:
         model = self._checkout_model()
         if model is not None:
             try:
-                vec = embedding_model.encode_query(model, [text])
+                vec = embedding_model.encode_query(model, [text], task=task)
                 vec = np.asarray(vec, dtype=np.float32)[0]
                 norm = float(np.linalg.norm(vec))
                 return vec / norm if norm > 0 else vec

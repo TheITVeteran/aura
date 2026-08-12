@@ -219,11 +219,24 @@ def semantic_routing_available() -> bool:
     return model is not None
 
 
-def _embed(text: str) -> Any | None:
+def _embed(text: str, *, as_query: bool = False) -> Any | None:
+    """Embed one side of an evidence comparison.
+
+    The claim is the QUERY side and carries the "evidence" instruction; the
+    candidate evidence is the DOCUMENT side and carries none. That instruction
+    matters here more than anywhere else in the tree: the encoder's shipped
+    default asks for "passages that answer the query", which quietly demotes
+    evidence that CONTRADICTS the claim — the one thing an audit most needs to
+    surface. See TASK_INSTRUCTIONS in core/memory/embedding_model.py.
+    """
     embedder = _embedder()
     if embedder is None:
         return None
     try:
+        if as_query:
+            embed_query = getattr(embedder, "embed_query", None)
+            if callable(embed_query):
+                return embed_query(str(text or ""), task="evidence")
         return embedder.embed(str(text or ""))
     except (RuntimeError, ValueError, TypeError, OSError) as exc:
         logger.debug("Evidence relevance embedding failed: %s", exc)
@@ -260,7 +273,8 @@ def _request_vector(request: str) -> Any | None:
         cached = _REQUEST_CACHE.get(request)
     if cached is not None:
         return cached
-    vector = _embed(request)
+    # The request is the query side; anchors above are documents.
+    vector = _embed(request, as_query=True)
     if vector is None:
         return None
     with _LOCK:

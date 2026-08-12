@@ -82,6 +82,71 @@ IDENTITY = f"{REPO_ID}@{VECTOR_DIM}"
 #: Encoding both sides identically measurably degrades retrieval.
 QUERY_PROMPT_NAME = "query"
 
+# ── Per-task retrieval instructions ──────────────────────────────────────
+#
+# Qwen3-Embedding conditions the query embedding on a natural-language task
+# description. The shipped default is
+#
+#     "Given a web search query, retrieve relevant passages that answer the
+#      query"
+#
+# which describes nobody's job here. Aura does not run web search; she runs
+# three distinguishable retrieval jobs that until now shared one encoding
+# path because MiniLM had no notion of a task at all:
+#
+#   MEMORY_RECALL  black_hole_vault.retrieve / rag.retrieve_memories —
+#                  answering a question about something that happened.
+#   EVIDENCE       cognition/evidence_relevance — scoring candidate evidence
+#                  against a claim, where contradicting evidence is as
+#                  relevant as supporting evidence. A "find passages that
+#                  answer this" instruction actively suppresses the
+#                  contradictions, which is the opposite of what an audit
+#                  wants.
+#   DOCUMENT       memory/ingestion_loop + document RAG — locating a passage
+#                  inside ingested material.
+#
+# The instruction is part of the query text, so it costs one forward pass and
+# nothing at storage time. Documents are NEVER instructed — the asymmetry is
+# the point.
+TASK_INSTRUCTIONS: dict[str, str] = {
+    "memory_recall": (
+        "Given a question about a past conversation or event, retrieve the "
+        "remembered moments that answer it"
+    ),
+    "evidence": (
+        "Given a claim, retrieve passages that support or contradict it"
+    ),
+    "document": (
+        "Given a question, retrieve passages from the provided documents that "
+        "answer it"
+    ),
+}
+
+#: Used when a call site names no task. Deliberately the recall instruction
+#: rather than the model's web-search default: every current caller of the
+#: unnamed path is recalling something Aura already holds.
+DEFAULT_TASK = "memory_recall"
+
+#: Qwen3-Embedding's instruction wire format. Documented on the model card;
+#: kept here so a call site never hand-rolls it.
+_INSTRUCT_TEMPLATE = "Instruct: {instruction}\nQuery: "
+
+
+def query_prompt(task: str | None = None) -> str:
+    """The instruction prefix for ``task``.
+
+    Unknown task names fall back to DEFAULT_TASK rather than raising — a
+    retrieval is never worth losing to a typo — but the fallback is visible
+    to callers that care via ``is_known_task``.
+    """
+    key = (task or DEFAULT_TASK).strip().lower()
+    instruction = TASK_INSTRUCTIONS.get(key) or TASK_INSTRUCTIONS[DEFAULT_TASK]
+    return _INSTRUCT_TEMPLATE.format(instruction=instruction)
+
+
+def is_known_task(task: str | None) -> bool:
+    return (task or "").strip().lower() in TASK_INSTRUCTIONS
+
 #: Approximate resident footprint, for model-lane admission. 0.6B params in
 #: bf16 plus activation headroom. The old value (0.5) was sized for a 22M
 #: model and would have under-declared this one by roughly 3x.
@@ -140,14 +205,56 @@ def assert_window_matches_model(model: Any) -> None:
         )
 
 
-def encode_query(model: Any, texts: list[str]) -> Any:
-    """Encode the query side, with the asymmetric prompt applied."""
+def encode_query(model: Any, texts: list[str], task: str | None = None) -> Any:
+    """Encode the query side, conditioned on the retrieval task.
+
+    ``task`` is one of TASK_INSTRUCTIONS. Passing None uses DEFAULT_TASK.
+    """
+    prompt = query_prompt(task)
     try:
+        return model.encode(texts, prompt=prompt, show_progress_bar=False)
+    except (TypeError, ValueError, KeyError):
+        pass
+    try:
+        # Older sentence-transformers: named prompts only, no free-form prompt.
         return model.encode(texts, prompt_name=QUERY_PROMPT_NAME, show_progress_bar=False)
     except (TypeError, ValueError, KeyError):
-        # Older sentence-transformers, or a model without named prompts.
-        # Symmetric encoding is worse but correct; never fail a recall on it.
+        # No prompt support at all. Symmetric encoding is worse but correct;
+        # never fail a recall over a missing template.
         return model.encode(texts, show_progress_bar=False)
+
+
+def chunk_for_embedding(text: str, *, overlap_ratio: float = 0.1) -> list[str]:
+    """Split ``text`` only if it genuinely overflows the encoder.
+
+    THIS IS THE STRUCTURAL CHANGE, not a tuning knob.
+
+    Chunking existed because the encoder's window was 256 tokens — roughly
+    190 words — so any real memory had to be shredded to be embedded at all.
+    The window is now 32,768 tokens (~20,000 words), which is larger than
+    essentially every episode, document section, or conversation turn Aura
+    stores. So chunking becomes an OVERFLOW path rather than the default one.
+
+    Why that matters beyond convenience: a fact split across two chunks never
+    co-occurs in any single vector, so no amount of scoring can relate its
+    halves. That is the composition failure — correct at layer N, lost at
+    N+1 — expressed in the retrieval layer. Embedding a whole episode as one
+    vector is the only way those facts can be scored together.
+
+    The size here is DERIVED from the declared window, not chosen: a chunk is
+    whatever fits. Overlap is a fraction of the chunk rather than a constant,
+    so it stays proportionate at any window.
+    """
+    if not text:
+        return []
+    words = text.split()
+    ceiling = max_chunk_words()
+    if len(words) <= ceiling:
+        # The common case now, and the whole point.
+        return [text]
+    overlap = max(1, int(ceiling * overlap_ratio))
+    stride = max(1, ceiling - overlap)
+    return [" ".join(words[i:i + ceiling]) for i in range(0, len(words), stride)]
 
 
 def encode_documents(model: Any, texts: list[str]) -> Any:
