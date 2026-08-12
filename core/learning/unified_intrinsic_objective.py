@@ -194,6 +194,7 @@ def unified_answer_and_recurrent_trajectory(
     answer_role_logit_trajectory: list[Any] | None = None,
     answer_place_logit_trajectory: list[Any] | None = None,
     answer_binding_feature_trajectory: list[tuple[Any, Any, Any]] | None = None,
+    final_answer_only: bool = False,
 ) -> tuple[list[Any], list[Any], list[Any], list[Any]]:
     """Decode every recurrent state through one frozen coda and readout.
 
@@ -276,7 +277,15 @@ def unified_answer_and_recurrent_trajectory(
         == len(place_logits)
     ):
         raise RuntimeError("answer pointer trajectory differs from recurrent states")
-    for index, state in enumerate(output_states):
+    if not isinstance(final_answer_only, bool):
+        raise TypeError("final_answer_only must be boolean")
+    decode_indices = (
+        range(len(output_states) - 1, len(output_states))
+        if final_answer_only
+        else range(len(output_states))
+    )
+    for index in decode_indices:
+        state = output_states[index]
         hidden = _run(model.model.layers[plan.coda_start :], state)
         hidden = model.model.norm(hidden)
         hidden_states.append(hidden)

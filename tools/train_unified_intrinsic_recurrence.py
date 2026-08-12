@@ -1919,6 +1919,11 @@ def _evaluate_depth(
             use_state_slots=(getattr(task, "transition_trace", None) is not None),
             initial_state_logit_trajectory=initial_state_logits,
             action_logit_trajectory=action_logits,
+            # Evaluation consumes only the final answer loss. Decoding every
+            # recurrent intermediate through the resident 32B coda retains a
+            # depth-sized family of lazy Metal graphs; T16 alone can cross the
+            # host safety ceiling before the caller gets a chance to reclaim.
+            final_answer_only=True,
         )
     )
     loss = float(losses[-1].item())

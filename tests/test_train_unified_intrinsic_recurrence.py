@@ -1336,7 +1336,10 @@ def test_evaluation_separates_trained_from_heldout_depth_gains(
     spec = UnifiedIntrinsicTrainingSpec(2, 4, (1, 2), (4, 8))
     values = iter((1.0, 0.9, 1.2, 1.4))
 
-    def fake_trajectory(*_args, **_kwargs):
+    final_only_calls: list[bool] = []
+
+    def fake_trajectory(*_args, **kwargs):
+        final_only_calls.append(kwargs.get("final_answer_only") is True)
         return [], [], [mx.array(next(values))], []
 
     monkeypatch.setattr(
@@ -1370,4 +1373,5 @@ def test_evaluation_separates_trained_from_heldout_depth_gains(
     )
     assert report["trained_depth_helps"] is True
     assert report["heldout_depth_helps"] is False
+    assert final_only_calls == [True] * len(spec.depths)
     assert reclaim_calls == [True] * len(spec.depths)

@@ -26,6 +26,7 @@ from core.learning.unified_intrinsic_objective import (  # noqa: E402
     structured_action_loss,
     structured_initial_state_accuracy_breakdown,
     structured_initial_state_loss,
+    unified_answer_and_recurrent_trajectory,
     unified_answer_trajectory,
     unified_intrinsic_training_loss,
 )
@@ -118,6 +119,41 @@ def test_every_recurrent_state_is_decoded_through_the_same_readout() -> None:
     assert len(states) == len(losses) == 3
     assert all(value.shape == () for value in losses)
     assert all(float(value.item()) > 0.0 for value in losses)
+
+
+def test_final_only_evaluation_preserves_terminal_answer_loss() -> None:
+    model = _model()
+    controller = _controller()
+    plan = _spec().plan_at(5)
+    recurrent, all_hidden, all_losses, _state_logits = (
+        unified_answer_and_recurrent_trajectory(
+            model,
+            TOKENS,
+            ANSWERS,
+            plan,
+            controller,
+        )
+    )
+    final_recurrent, final_hidden, final_losses, _final_state_logits = (
+        unified_answer_and_recurrent_trajectory(
+            model,
+            TOKENS,
+            ANSWERS,
+            plan,
+            controller,
+            final_answer_only=True,
+        )
+    )
+    mx.eval(recurrent, all_hidden, all_losses, final_recurrent, final_hidden, final_losses)
+    assert len(recurrent) == len(final_recurrent) == 5
+    assert len(all_hidden) == len(all_losses) == 5
+    assert len(final_hidden) == len(final_losses) == 1
+    assert bool(mx.array_equal(recurrent[-1], final_recurrent[-1]))
+    assert float(final_losses[-1].item()) == pytest.approx(
+        float(all_losses[-1].item()),
+        rel=1e-6,
+        abs=1e-6,
+    )
 
 
 def test_student_rollin_changes_history_without_changing_labels() -> None:

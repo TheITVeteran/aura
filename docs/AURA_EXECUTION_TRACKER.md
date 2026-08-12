@@ -45964,3 +45964,34 @@ authority, broad reasoning result, fusion authority, frontier result or
 `WOW Signal` is claimed. Next remains strict terminal admission and the queued
 three-seed adjudication; a supported verdict may then be materialized and run
 through this lifecycle before domain-qualified serving is considered.
+
+## Checkpoint 2026-08-12-273: Terminal Evaluation Decodes One Coda Per Depth
+
+The CP270 recovery advanced to durable step `34`, but both bounded terminal
+attempts reproduced a second evaluation-memory defect. Managed footprint held
+near `21` GiB through model load and training, then rose through `36.25`,
+`42.38`, `47.48`, `52.18` and `55.94` GiB during the final depth ladder. The
+external sentinel correctly killed only the trainer and every detached process
+group was reaped. The exact step-34 checkpoint remains durable; the queued
+adjudicator correctly refused to consume incomplete training evidence.
+
+CP270 released graphs between depth cells, but each individual cell still
+decoded every recurrent intermediate state through the complete frozen 32B
+coda before reclamation could run. A held-out `T16` cell therefore retained
+sixteen heavyweight coda graphs at once. The trajectory primitive now exposes
+a strict evaluation-only mode that keeps the complete recurrent state and
+typed state/action trajectories but decodes only the terminal answer state.
+Training retains the original all-state objective by default. The terminal CE
+is therefore unchanged while resident evaluation performs one coda decode per
+depth rather than one per recurrent step.
+
+Validation is green: `48/48` focused objective and trainer tests pass, including
+a direct equivalence test between the former all-state terminal CE and the new
+one-coda terminal CE at depth five; focused Ruff, compilation and diff hygiene
+pass. No resource ceiling was raised and no scientific gate, task, depth,
+metric or adjudication threshold changed. No terminal admission, decoded gain,
+replication, serving authority, fusion authority, frontier result or
+`WOW Signal` is claimed. Next is a new immutable source capsule importing the
+exact step-34 tissue, a bounded terminal completion under the unchanged
+sentinel ceiling, and only then the frozen three-seed decoded-answer
+adjudication.
