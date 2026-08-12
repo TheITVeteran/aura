@@ -46,6 +46,17 @@ class _WorkerProtocolError(Exception):
     pass
 
 
+class _QualifiedService(_LatentService):
+    def __init__(self, result):
+        super().__init__({})
+        self.qualified_result = result
+        self.qualified_calls = []
+
+    async def qualified_recurrent_reason(self, objective, **kwargs):
+        self.qualified_calls.append((objective, kwargs))
+        return self.qualified_result
+
+
 def _selected(**_kwargs):
     return {
         "latent_cortex_selected": True,
@@ -247,6 +258,86 @@ async def test_foreground_latent_runner_does_not_acquire_service_for_incompatibl
     assert outcome.selected is False
     assert outcome.trace["latent_cortex_selection_reason"] == "incompatible_contract"
     assert service_resolution_attempted is False
+
+
+@pytest.mark.asyncio
+async def test_qualified_exact_domain_precedes_general_incompatible_exclusion(monkeypatch):
+    from core.learning.recurrence_curriculum import modular_chain
+
+    task = modular_chain(4, 2026081221)
+    service = _QualifiedService(
+        {
+            "eligible": True,
+            "attempted": True,
+            "ok": True,
+            "reason": "qualified_recurrent_completed",
+            "text": task.answer,
+            "receipt": {"schema": "qualified.test", "receipt_sha256": "a" * 64},
+        }
+    )
+    monkeypatch.setattr(
+        "core.brain.foreground_latent_runtime._resolve_service", lambda: service
+    )
+    monkeypatch.setattr(
+        "core.brain.foreground_latent_runtime.select_foreground_episode",
+        lambda **_kwargs: pytest.fail("qualified task must precede general selection"),
+    )
+
+    outcome = await run_foreground_latent_episode(
+        orchestrator=None,
+        messages=[{"role": "user", "content": task.prompt}],
+        visible_objective=task.prompt,
+        foreground=True,
+        desktop_required=True,
+        cognitive_mode="reactive",
+        request_timeout_s=180.0,
+        strict_output_contract=True,
+        incompatible_contract=True,
+    )
+
+    assert outcome.succeeded is True
+    assert outcome.text == task.answer
+    assert outcome.fallback_allowed is False
+    assert outcome.trace["qualified_recurrent_succeeded"] is True
+    assert outcome.trace["latent_cortex_selection_reason"] == (
+        "qualified_recurrent_exact_domain"
+    )
+    assert outcome.evidence == ("qualified_recurrent_typed_execution",)
+
+
+@pytest.mark.asyncio
+async def test_activated_qualified_failure_suppresses_uncertified_fallback(monkeypatch):
+    from core.learning.recurrence_curriculum import khop_reachability
+
+    task = khop_reachability(2, 2026081222)
+    service = _QualifiedService(
+        {
+            "eligible": True,
+            "attempted": True,
+            "ok": False,
+            "reason": "qualified_decode_receipt_invalid",
+        }
+    )
+    monkeypatch.setattr(
+        "core.brain.foreground_latent_runtime._resolve_service", lambda: service
+    )
+
+    outcome = await run_foreground_latent_episode(
+        orchestrator=None,
+        messages=[{"role": "user", "content": task.prompt}],
+        visible_objective=task.prompt,
+        foreground=True,
+        desktop_required=True,
+        cognitive_mode="deliberate",
+        request_timeout_s=180.0,
+    )
+
+    assert outcome.attempted is True
+    assert outcome.succeeded is False
+    assert outcome.fallback_allowed is False
+    assert outcome.trace["latent_cortex_failure_reason"] == (
+        "qualified_decode_receipt_invalid"
+    )
 
 
 @pytest.mark.parametrize(

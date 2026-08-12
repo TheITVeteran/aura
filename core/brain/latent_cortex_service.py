@@ -4174,6 +4174,71 @@ class LatentCortexService:
         return result
 
     # ── The episode ─────────────────────────────────────────────────────
+    async def qualified_recurrent_reason(
+        self,
+        objective: str,
+        *,
+        timeout_s: float = 180.0,
+    ) -> dict[str, Any]:
+        """Use retained recurrent tissue only inside its certified grammar."""
+
+        if not isinstance(objective, str) or not objective.strip():
+            return {
+                "eligible": False,
+                "attempted": False,
+                "ok": False,
+                "reason": "qualified_recurrent_objective_invalid",
+            }
+        try:
+            bounded_timeout = float(timeout_s)
+            if not math.isfinite(bounded_timeout) or bounded_timeout <= 0.0:
+                raise ValueError("qualified recurrent timeout is invalid")
+            from core.brain.llm.qualified_recurrent_ingress import (
+                admit_qualified_recurrent_objective,
+                execute_qualified_recurrent_objective,
+            )
+
+            normalized = objective.strip()
+            if admit_qualified_recurrent_objective(normalized) is None:
+                return {
+                    "eligible": False,
+                    "attempted": False,
+                    "ok": False,
+                    "reason": "qualified_recurrent_objective_unsupported",
+                }
+            from core.brain.llm.mlx_client import get_mlx_client
+
+            return await execute_qualified_recurrent_objective(
+                get_mlx_client(),
+                normalized,
+                timeout_s=min(300.0, max(5.0, bounded_timeout)),
+            )
+        except asyncio.CancelledError:
+            raise
+        except (
+            ImportError,
+            OSError,
+            RuntimeError,
+            TypeError,
+            ValueError,
+            TimeoutError,
+        ) as exc:
+            record_degradation(
+                "latent_cortex.qualified_recurrent_ingress",
+                exc,
+                action=(
+                    "refused activated typed recurrent serving whose exact ingress "
+                    "contract failed"
+                ),
+                severity="error",
+            )
+            return {
+                "eligible": True,
+                "attempted": True,
+                "ok": False,
+                "reason": f"qualified_recurrent_ingress_failed:{type(exc).__name__}",
+            }
+
     async def deep_reason(
         self,
         question: str | None = None,

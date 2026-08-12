@@ -53,6 +53,11 @@ def _base_trace() -> dict[str, Any]:
         "latent_cortex_identity_bound": False,
         "latent_cortex_receipt": {},
         "latent_cortex_progress": {},
+        "qualified_recurrent_eligible": False,
+        "qualified_recurrent_attempted": False,
+        "qualified_recurrent_succeeded": False,
+        "qualified_recurrent_reason": "",
+        "qualified_recurrent_receipt": {},
     }
 
 
@@ -296,6 +301,110 @@ async def run_foreground_latent_episode(
     """Select and, when warranted, execute one full-stack latent episode."""
 
     trace = _base_trace()
+    # Certified recurrent tissue has a narrower but stronger contract than the
+    # general foreground selector.  Try it before exact-format/incompatible
+    # exclusions, but only when an answer-blind parser recognizes the complete
+    # public task grammar.  Unsupported language never acquires the model lane.
+    qualified_admission = None
+    if foreground and desktop_required and not proof_or_benchmark:
+        try:
+            from core.brain.llm.qualified_recurrent_ingress import (
+                admit_qualified_recurrent_objective,
+            )
+
+            qualified_admission = admit_qualified_recurrent_objective(
+                visible_objective
+            )
+        except _RECOVERABLE_ERRORS as exc:
+            record_degradation(
+                "latent_cortex.qualified_recurrent_classification",
+                exc,
+                action="retained general foreground routing after typed classification failed",
+                severity="warning",
+            )
+    if qualified_admission is not None:
+        trace["qualified_recurrent_eligible"] = True
+        service = _resolve_service()
+        runner = getattr(service, "qualified_recurrent_reason", None)
+        if callable(runner):
+            try:
+                qualified = await runner(
+                    visible_objective,
+                    timeout_s=min(_LATENT_OWNER_TIMEOUT_SECONDS, request_timeout_s),
+                )
+            except Exception as exc:  # noqa: BLE001 - resident-owner safety boundary
+                trace.update(
+                    {
+                        "qualified_recurrent_attempted": True,
+                        "qualified_recurrent_reason": (
+                            f"qualified_recurrent_runtime_error:{type(exc).__name__}"
+                        ),
+                    }
+                )
+                return ForegroundLatentOutcome(
+                    text="", trace=trace, fallback_allowed=False
+                )
+            if isinstance(qualified, dict):
+                raw_qualified_receipt = qualified.get("receipt")
+                qualified_receipt = (
+                    dict(raw_qualified_receipt)
+                    if isinstance(raw_qualified_receipt, dict)
+                    else {}
+                )
+                trace.update(
+                    {
+                        "qualified_recurrent_attempted": bool(
+                            qualified.get("attempted")
+                        ),
+                        "qualified_recurrent_succeeded": qualified.get("ok") is True,
+                        "qualified_recurrent_reason": str(
+                            qualified.get("reason") or ""
+                        )[:160],
+                        "qualified_recurrent_receipt": qualified_receipt,
+                    }
+                )
+                if qualified.get("ok") is True:
+                    text = str(qualified.get("text") or "").strip()
+                    if not text:
+                        trace["qualified_recurrent_reason"] = (
+                            "qualified_recurrent_empty_answer"
+                        )
+                        return ForegroundLatentOutcome(
+                            text="", trace=trace, fallback_allowed=False
+                        )
+                    trace.update(
+                        {
+                            "latent_cortex_selected": True,
+                            "latent_cortex_attempted": True,
+                            "latent_cortex_succeeded": True,
+                            "latent_cortex_selection_reason": (
+                                "qualified_recurrent_exact_domain"
+                            ),
+                            "latent_cortex_identity_bound": True,
+                            "latent_cortex_receipt": qualified_receipt,
+                        }
+                    )
+                    return ForegroundLatentOutcome(
+                        text=text,
+                        trace=trace,
+                        fallback_allowed=False,
+                        evidence=("qualified_recurrent_typed_execution",),
+                    )
+                if qualified.get("attempted") is True:
+                    trace.update(
+                        {
+                            "latent_cortex_selected": True,
+                            "latent_cortex_attempted": True,
+                            "latent_cortex_failure_reason": str(
+                                qualified.get("reason")
+                                or "qualified_recurrent_failed"
+                            )[:160],
+                        }
+                    )
+                    return ForegroundLatentOutcome(
+                        text="", trace=trace, fallback_allowed=False
+                    )
+
     selection = select_foreground_episode(
         foreground=foreground,
         desktop_required=desktop_required,

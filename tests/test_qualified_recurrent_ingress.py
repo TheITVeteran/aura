@@ -1,0 +1,172 @@
+"""Contracts for live exact-domain recurrent ingress."""
+
+from __future__ import annotations
+
+import hashlib
+import json
+from pathlib import Path
+
+import pytest
+
+from core.brain.llm import qualified_recurrent_ingress as ingress
+from core.learning.recurrence_curriculum import (
+    khop_reachability,
+    modular_chain,
+    nested_boolean,
+    register_trace,
+)
+
+
+class _Tokenizer:
+    def __init__(self) -> None:
+        self.rendered = ""
+
+    def apply_chat_template(self, messages, *, add_generation_prompt, tokenize):
+        assert add_generation_prompt is True
+        assert tokenize is False
+        self.rendered = f"<user>{messages[0]['content']}</user><assistant>"
+        return self.rendered
+
+    def encode(self, text, **_kwargs):
+        return list(text.encode("utf-8"))
+
+    eos_token_id = 0
+
+
+@pytest.mark.parametrize(
+    ("generator", "family"),
+    [
+        (khop_reachability, "khop"),
+        (modular_chain, "modular"),
+        (register_trace, "register_trace"),
+    ],
+)
+def test_admission_recognizes_every_certified_public_grammar(generator, family):
+    for depth in (1, 2, 4, 8, 16, 32):
+        task = generator(depth, 2026081201 + depth)
+        admitted = ingress.admit_qualified_recurrent_objective(task.prompt)
+        assert admitted is not None
+        assert admitted.family == family
+        assert admitted.task_depth == depth
+        assert admitted.public_source_sha256 == hashlib.sha256(
+            task.prompt.encode("utf-8")
+        ).hexdigest()
+        assert set(admitted.receipt()) == {
+            "schema",
+            "family",
+            "task_depth",
+            "parser_id",
+            "public_source_sha256",
+            "syntax_sha256",
+            "receipt_sha256",
+        }
+
+
+def test_admission_does_not_broaden_to_uncertified_or_tampered_language():
+    boolean = nested_boolean(4, 2026081211)
+    assert ingress.admit_qualified_recurrent_objective(boolean.prompt) is None
+    assert ingress.admit_qualified_recurrent_objective("Please reason carefully.") is None
+
+    khop = khop_reachability(4, 2026081212)
+    non_total = khop.prompt.replace("0->", "7->", 1)
+    assert ingress.admit_qualified_recurrent_objective(non_total) is None
+
+    registers = register_trace(4, 2026081213)
+    aliased = registers.prompt.replace("r0=(r1", "r0=(r0", 1)
+    assert ingress.admit_qualified_recurrent_objective(aliased) is None
+
+
+def test_public_projection_reproduces_the_training_chat_boundary():
+    tokenizer = _Tokenizer()
+    prompt = modular_chain(4, 2026081214).prompt
+    tokens = ingress.project_qualified_public_tokens(tokenizer, prompt)
+
+    assert bytes(tokens).decode("utf-8") == (
+        tokenizer.rendered + ingress.QUALIFIED_ANSWER_BRIDGE
+    )
+    assert "FINAL_ANSWER" in bytes(tokens).decode("utf-8")
+
+
+def test_public_projection_is_identical_to_the_frozen_training_encoder():
+    from tools.train_intrinsic_recurrence import encode_example
+
+    tokenizer = _Tokenizer()
+    task = modular_chain(8, 2026081217)
+    projected = ingress.project_qualified_public_tokens(tokenizer, task.prompt)
+    training_prompt, _answer = encode_example(
+        tokenizer,
+        task,
+        ingress.QUALIFIED_ANSWER_BRIDGE,
+    )
+
+    assert projected == tuple(int(token) for token in training_prompt[0].tolist())
+
+
+@pytest.mark.asyncio
+async def test_executor_uses_active_worker_and_hides_raw_token_payload(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    task = register_trace(4, 2026081215)
+    observed = {}
+
+    class Client:
+        model_path = str(tmp_path)
+
+        def unified_recurrent_qualified_serving_status(self):
+            return {"active": True, "reason": "qualified_recurrent_serving_active"}
+
+        async def unified_recurrent_qualified_decode_async(
+            self, public_tokens, **kwargs
+        ):
+            observed["tokens"] = tuple(public_tokens)
+            observed.update(kwargs)
+            return {
+                "ok": True,
+                "receipt": {
+                    "result_sha256": "a" * 64,
+                    "generated_token_ids": [1, 2, 3],
+                    "parsed_values": {"r0": 3, "r1": 5, "r2": 8},
+                    "serving_authority": True,
+                    "qualified_activation_sha256": "b" * 64,
+                },
+            }
+
+    monkeypatch.setattr(ingress, "_load_tokenizer", lambda _path: _Tokenizer())
+    result = await ingress.execute_qualified_recurrent_objective(
+        Client(), task.prompt, timeout_s=42.0
+    )
+
+    assert result["ok"] is True
+    assert result["text"] == 'FINAL_ANSWER: {"r0":3,"r1":5,"r2":8}'
+    assert observed["family"] == "register_trace"
+    assert observed["task_depth"] == 4
+    assert observed["max_tokens"] == 32
+    wire = json.dumps(result["receipt"], sort_keys=True)
+    assert "generated_token_ids" not in wire
+    assert "parsed_values" not in wire
+    assert result["receipt"]["public_token_count"] == len(observed["tokens"])
+
+
+@pytest.mark.asyncio
+async def test_executor_does_not_load_tokenizer_when_authority_is_inactive(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    task = modular_chain(2, 2026081216)
+
+    class Client:
+        def unified_recurrent_qualified_serving_status(self):
+            return {"active": False, "reason": "qualified_recurrent_serving_not_active"}
+
+    monkeypatch.setattr(
+        ingress,
+        "_load_tokenizer",
+        lambda _path: pytest.fail("inactive authority must not load a tokenizer"),
+    )
+    result = await ingress.execute_qualified_recurrent_objective(
+        Client(), task.prompt, timeout_s=42.0
+    )
+
+    assert result["eligible"] is True
+    assert result["attempted"] is False
+    assert result["reason"] == "qualified_recurrent_serving_not_active"

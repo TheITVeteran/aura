@@ -127,6 +127,30 @@ def _authorized_receipt(request: dict, activation: dict, *, controller: str) -> 
     return {**body, "result_sha256": _sha(body)}
 
 
+def test_client_reports_exact_qualified_serving_identity() -> None:
+    client, _queue, activation = _client()
+
+    status = client.unified_recurrent_qualified_serving_status()
+
+    assert status == {
+        "active": True,
+        "reason": "qualified_recurrent_serving_active",
+        "package_id": "qualified-fixture",
+        "controller_sha256": "c" * 64,
+        "activation_sha256": activation["activation_sha256"],
+    }
+
+
+def test_client_status_refuses_mismatched_activation_identity() -> None:
+    client, _queue, _activation_value = _client()
+    client._unified_recurrent_shadow_status["controller_sha256"] = "9" * 64
+
+    status = client.unified_recurrent_qualified_serving_status()
+
+    assert status["active"] is False
+    assert status["reason"] == "qualified_activation_shadow_identity_differs"
+
+
 @pytest.mark.asyncio
 async def test_client_never_dispatches_without_qualified_authority() -> None:
     client = object.__new__(mlx_client.MLXLocalClient)

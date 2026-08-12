@@ -650,6 +650,7 @@ def install_runtime_validation() -> dict[str, Any]:
         "state_attestation",
         "commitment_search",
         "rlc_capability_evidence",
+        "rlc_qualified_foreground_ingress",
         "rlc_governed_web_acquisition",
         "rlc_verified_amplifier_composition",
         "kernel_confined_symbolic_cognition",
@@ -764,6 +765,33 @@ def install_runtime_validation() -> dict[str, Any]:
                 subject="RLC capability-evidence admission",
             ),
             owner="core/brain/capability_evidence_context.py",
+        )
+    )
+    suite.add_test(
+        ValidationTest(
+            name="qualified_recurrent_tissue_reaches_exact_foreground_tasks",
+            description=(
+                "all three certified public grammars reach qualified recurrent "
+                "serving before general exact-format exclusion, while unsupported "
+                "language remains on Aura's ordinary reasoning path"
+            ),
+            required_capability="rlc_qualified_foreground_ingress",
+            observation=Observation(
+                name="qualified_recurrent_foreground_ingress_contract_holds",
+                value=True,
+                source=(
+                    "core/brain/llm/qualified_recurrent_ingress.py, "
+                    "core/brain/foreground_latent_runtime.py, and "
+                    "tests/test_qualified_recurrent_ingress.py"
+                ),
+            ),
+            predict=lambda _m: _qualified_recurrent_foreground_contract_holds(),
+            score=lambda p, o: boolean_score(
+                bool(p),
+                expected=bool(o.value),
+                subject="qualified recurrent foreground ingress",
+            ),
+            owner="core/brain/llm/qualified_recurrent_ingress.py",
         )
     )
     suite.add_test(
@@ -1570,6 +1598,25 @@ def install_runtime_validation() -> dict[str, Any]:
             ),
         )
     )
+    suite.add_claim(
+        Claim(
+            statement=(
+                "An exact khop, modular, or register-trace task can enter activated "
+                "qualified recurrent tissue from Aura's sovereign foreground path."
+            ),
+            test="qualified_recurrent_tissue_reaches_exact_foreground_tasks",
+            owner="core/brain/llm/qualified_recurrent_ingress.py",
+            asserted_in="docs/AURA_EXECUTION_TRACKER.md",
+            evidence=Evidence.MEASURED_SYNTHETIC,
+            evidence_note=(
+                "Fresh canonical grammars, tokenizer-bound projection, activation "
+                "status, foreground ordering, failure containment and no-broadening "
+                "are contract-tested. This does not claim ordinary open-ended chat, "
+                "a retained controller, broad reasoning gain, frontier capability or "
+                "a live installed-runtime execution."
+            ),
+        )
+    )
 
     # ── claims corrected on 2026-08-11 ─────────────────────────────────────
     #
@@ -2216,6 +2263,49 @@ def _exclusion_losses_to_iid() -> int:
         ):
             losses += 1
     return losses
+
+
+def _qualified_recurrent_foreground_contract_holds() -> bool:
+    """Measure the exact serving boundary without claiming a live activation."""
+
+    import inspect
+
+    from core.brain.foreground_latent_runtime import run_foreground_latent_episode
+    from core.brain.latent_cortex_service import LatentCortexService
+    from core.brain.llm.qualified_recurrent_ingress import (
+        admit_qualified_recurrent_objective,
+    )
+    from core.learning.recurrence_curriculum import (
+        khop_reachability,
+        modular_chain,
+        nested_boolean,
+        register_trace,
+    )
+
+    expected = (
+        (khop_reachability, "khop"),
+        (modular_chain, "modular"),
+        (register_trace, "register_trace"),
+    )
+    for generator, family in expected:
+        task = generator(4, 2026081291)
+        admission = admit_qualified_recurrent_objective(task.prompt)
+        if (
+            admission is None
+            or admission.family != family
+            or admission.task_depth != 4
+        ):
+            return False
+    if admit_qualified_recurrent_objective(
+        nested_boolean(4, 2026081292).prompt
+    ) is not None:
+        return False
+    if not callable(getattr(LatentCortexService, "qualified_recurrent_reason", None)):
+        return False
+    source = inspect.getsource(run_foreground_latent_episode)
+    qualified_index = source.find("qualified_recurrent_exact_domain")
+    general_index = source.find("selection = select_foreground_episode")
+    return bool(0 <= qualified_index < general_index)
 
 
 def _rlc_capability_evidence_contract_holds() -> bool:

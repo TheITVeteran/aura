@@ -7963,20 +7963,11 @@ class MLXLocalClient:
             finally:
                 self._release_request_lock()
 
-    async def unified_recurrent_qualified_decode_async(
-        self,
-        public_token_ids: Sequence[int],
-        *,
-        family: str,
-        task_depth: int,
-        max_tokens: int,
-        timeout_s: float = 180.0,
-    ) -> dict[str, Any]:
-        """Serve one admitted typed answer through the resident worker."""
+    def unified_recurrent_qualified_serving_status(self) -> dict[str, Any]:
+        """Report whether this exact resident worker may serve qualified tissue."""
 
-        base: dict[str, Any] = {"ok": False, "status": "unavailable", "receipt": {}}
         if self._closed:
-            return {**base, "reason": "client_closed"}
+            return {"active": False, "reason": "client_closed"}
         shadow_status = copy.deepcopy(
             getattr(self, "_unified_recurrent_shadow_status", {})
         )
@@ -7996,7 +7987,59 @@ class MLXLocalClient:
             and qualified_status.get("serving_authority") is True
             and isinstance(activation, Mapping)
         ):
-            return {**base, "reason": "qualified_recurrent_serving_not_active"}
+            return {
+                "active": False,
+                "reason": "qualified_recurrent_serving_not_active",
+            }
+        try:
+            from core.brain.llm.unified_recurrent_qualified_activation import (
+                activation_matches_shadow_receipt,
+            )
+
+            if not activation_matches_shadow_receipt(activation, shadow_status):
+                return {
+                    "active": False,
+                    "reason": "qualified_activation_shadow_identity_differs",
+                }
+        except (ImportError, TypeError, ValueError):
+            return {
+                "active": False,
+                "reason": "qualified_recurrent_serving_status_invalid",
+            }
+        return {
+            "active": True,
+            "reason": "qualified_recurrent_serving_active",
+            "package_id": str(shadow_status.get("package_id") or ""),
+            "controller_sha256": str(shadow_status.get("controller_sha256") or ""),
+            "activation_sha256": str(activation.get("activation_sha256") or ""),
+        }
+
+    async def unified_recurrent_qualified_decode_async(
+        self,
+        public_token_ids: Sequence[int],
+        *,
+        family: str,
+        task_depth: int,
+        max_tokens: int,
+        timeout_s: float = 180.0,
+    ) -> dict[str, Any]:
+        """Serve one admitted typed answer through the resident worker."""
+
+        base: dict[str, Any] = {"ok": False, "status": "unavailable", "receipt": {}}
+        if self._closed:
+            return {**base, "reason": "client_closed"}
+        serving_status = self.unified_recurrent_qualified_serving_status()
+        shadow_status = copy.deepcopy(getattr(self, "_unified_recurrent_shadow_status", {}))
+        qualified_status = copy.deepcopy(
+            getattr(self, "_unified_recurrent_qualified_activation_status", {})
+        )
+        activation = (
+            qualified_status.get("activation")
+            if isinstance(qualified_status, Mapping)
+            else None
+        )
+        if serving_status.get("active") is not True:
+            return {**base, "reason": str(serving_status.get("reason") or "unknown")}
         try:
             from core.brain.llm.unified_recurrent_qualified_activation import (
                 activation_matches_shadow_receipt,

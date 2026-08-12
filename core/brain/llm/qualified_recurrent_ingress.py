@@ -1,0 +1,380 @@
+"""Exact public ingress for domain-qualified recurrent controller tissue.
+
+The qualified controller is not a general chat policy.  It may serve only the
+three public grammars named by its activation.  This module recognizes those
+grammars without an answer channel, reproduces the exact prompt-token boundary
+used by training and evaluation, and renders only worker-authorized values.
+"""
+
+from __future__ import annotations
+
+import hashlib
+import json
+import re
+from collections.abc import Mapping, Sequence
+from dataclasses import dataclass
+from functools import lru_cache
+from pathlib import Path
+from typing import Any, Final
+
+QUALIFIED_RECURRENT_INGRESS_SCHEMA: Final = (
+    "aura.unified_intrinsic.qualified_ingress.v1"
+)
+QUALIFIED_RECURRENT_RESULT_SCHEMA: Final = (
+    "aura.unified_intrinsic.qualified_foreground_result.v1"
+)
+QUALIFIED_ANSWER_BRIDGE: Final = "\n\nFINAL_ANSWER: "
+_HEX: Final = frozenset("0123456789abcdef")
+
+_TERMINAL = (
+    r" You may reason before answering\. Finish with exactly one final line using the "
+    r"envelope FINAL_ANSWER: <JSON object>\. FINAL_ANSWER is the envelope, not a "
+    r"JSON key\. The JSON object must contain exactly these keys: (?P<keys>[^.]+)\."
+)
+_KHOP_PROMPT = re.compile(
+    r"\AA functional directed graph has these edges: (?P<edges>[0-9]+->[0-9]+"
+    r"(?:, [0-9]+->[0-9]+)*)\. Start at (?P<start>[0-9]+) and follow exactly "
+    r"(?P<depth>[1-9][0-9]*) edges\." + _TERMINAL + r"\Z"
+)
+_REGISTER_PROMPT = re.compile(
+    r"\ATrace three registers from r0=(?P<r0>[0-9]+), r1=(?P<r1>[0-9]+), "
+    r"r2=(?P<r2>[0-9]+)\. Apply in order: (?P<operations>"
+    r"r[0-2]=\(r[0-2]\+[1-3]\*r[0-2]\+[1-7]\) mod 29"
+    r"(?:; r[0-2]=\(r[0-2]\+[1-3]\*r[0-2]\+[1-7]\) mod 29)*)\. End"
+    + _TERMINAL
+    + r"\Z"
+)
+_REGISTER_ACTION = re.compile(
+    r"r(?P<destination>[0-2])=\(r(?P<left>[0-2])\+(?P<multiplier>[1-3])\*"
+    r"r(?P<right>[0-2])\+(?P<offset>[1-7])\) mod 29"
+)
+_RESULT_KEYS: Final = {
+    "khop": ("node",),
+    "modular": ("residue",),
+    "register_trace": ("r0", "r1", "r2"),
+}
+
+
+def _canonical_sha256(value: Any) -> str:
+    return hashlib.sha256(
+        json.dumps(
+            value,
+            sort_keys=True,
+            separators=(",", ":"),
+            ensure_ascii=True,
+            allow_nan=False,
+        ).encode("ascii")
+    ).hexdigest()
+
+
+@dataclass(frozen=True, slots=True)
+class QualifiedRecurrentAdmission:
+    """Answer-blind admission for one exact public task grammar."""
+
+    schema: str
+    family: str
+    task_depth: int
+    parser_id: str
+    public_source_sha256: str
+    syntax_sha256: str
+
+    def __post_init__(self) -> None:
+        if (
+            self.schema != QUALIFIED_RECURRENT_INGRESS_SCHEMA
+            or self.family not in _RESULT_KEYS
+            or type(self.task_depth) is not int
+            or not 1 <= self.task_depth <= 64
+            or not isinstance(self.parser_id, str)
+            or not re.fullmatch(r"[a-z][a-z0-9_.-]{2,127}", self.parser_id)
+            or not _is_sha(self.public_source_sha256)
+            or not _is_sha(self.syntax_sha256)
+        ):
+            raise ValueError("qualified recurrent admission is invalid")
+
+    def receipt(self) -> dict[str, Any]:
+        body = {
+            "schema": self.schema,
+            "family": self.family,
+            "task_depth": self.task_depth,
+            "parser_id": self.parser_id,
+            "public_source_sha256": self.public_source_sha256,
+            "syntax_sha256": self.syntax_sha256,
+        }
+        return {**body, "receipt_sha256": _canonical_sha256(body)}
+
+
+def _is_sha(value: Any) -> bool:
+    return isinstance(value, str) and len(value) == 64 and all(c in _HEX for c in value)
+
+
+def _admit_khop(prompt: str, match: re.Match[str]) -> QualifiedRecurrentAdmission:
+    if match.group("keys") != "node":
+        raise ValueError("qualified khop result contract differs")
+    edge_pairs = tuple(
+        tuple(int(part) for part in edge.split("->", 1))
+        for edge in match.group("edges").split(", ")
+    )
+    left = tuple(pair[0] for pair in edge_pairs)
+    size = len(edge_pairs)
+    if left != tuple(range(size)) or any(not 0 <= pair[1] < size for pair in edge_pairs):
+        raise ValueError("qualified khop graph is not a total canonical function")
+    start = int(match.group("start"))
+    depth = int(match.group("depth"))
+    if not 0 <= start < size or not 1 <= depth <= 64:
+        raise ValueError("qualified khop coordinates are outside the certified domain")
+    syntax = {
+        "edges": [list(pair) for pair in edge_pairs],
+        "start": start,
+        "depth": depth,
+    }
+    return QualifiedRecurrentAdmission(
+        schema=QUALIFIED_RECURRENT_INGRESS_SCHEMA,
+        family="khop",
+        task_depth=depth,
+        parser_id="khop_total_function.v1",
+        public_source_sha256=hashlib.sha256(prompt.encode("utf-8")).hexdigest(),
+        syntax_sha256=_canonical_sha256(syntax),
+    )
+
+
+def _admit_register(prompt: str, match: re.Match[str]) -> QualifiedRecurrentAdmission:
+    if match.group("keys") != "r0, r1, r2":
+        raise ValueError("qualified register result contract differs")
+    initial = tuple(int(match.group(key)) for key in ("r0", "r1", "r2"))
+    if any(not 0 <= value < 29 for value in initial):
+        raise ValueError("qualified register initial state is outside the certified domain")
+    actions = []
+    for text in match.group("operations").split("; "):
+        action = _REGISTER_ACTION.fullmatch(text)
+        if action is None:
+            raise ValueError("qualified register action syntax differs")
+        destination = int(action.group("destination"))
+        left = int(action.group("left"))
+        right = int(action.group("right"))
+        if destination == left or destination == right or left == right:
+            raise ValueError("qualified register action aliases its operands")
+        actions.append(
+            [
+                destination,
+                left,
+                right,
+                int(action.group("multiplier")),
+                int(action.group("offset")),
+                29,
+            ]
+        )
+    if not 1 <= len(actions) <= 64:
+        raise ValueError("qualified register depth is outside the certified domain")
+    syntax = {"initial": list(initial), "actions": actions}
+    return QualifiedRecurrentAdmission(
+        schema=QUALIFIED_RECURRENT_INGRESS_SCHEMA,
+        family="register_trace",
+        task_depth=len(actions),
+        parser_id="register_trace_canonical.v1",
+        public_source_sha256=hashlib.sha256(prompt.encode("utf-8")).hexdigest(),
+        syntax_sha256=_canonical_sha256(syntax),
+    )
+
+
+def admit_qualified_recurrent_objective(
+    prompt: str,
+) -> QualifiedRecurrentAdmission | None:
+    """Recognize only the exact public grammars certified for serving."""
+
+    if (
+        not isinstance(prompt, str)
+        or not prompt
+        or prompt != prompt.strip()
+        or "\x00" in prompt
+    ):
+        return None
+    khop = _KHOP_PROMPT.fullmatch(prompt)
+    register = _REGISTER_PROMPT.fullmatch(prompt)
+    if khop is not None:
+        try:
+            return _admit_khop(prompt, khop)
+        except ValueError:
+            return None
+    if register is not None:
+        try:
+            return _admit_register(prompt, register)
+        except ValueError:
+            return None
+    try:
+        from core.brain.llm.latent_cortex.typed_action_compiler import (
+            compile_public_transition_program,
+        )
+
+        program = compile_public_transition_program(prompt)
+    except (ImportError, ValueError):
+        return None
+    if program.family != "modular" or not 1 <= program.depth <= 64:
+        return None
+    return QualifiedRecurrentAdmission(
+        schema=QUALIFIED_RECURRENT_INGRESS_SCHEMA,
+        family="modular",
+        task_depth=program.depth,
+        parser_id="modular_operation_list.v1",
+        public_source_sha256=program.public_source_sha256,
+        syntax_sha256=program.program_sha256,
+    )
+
+
+@lru_cache(maxsize=2)
+def _load_tokenizer(model_path: str) -> Any:
+    from mlx_lm.utils import load_tokenizer
+
+    return load_tokenizer(Path(model_path))
+
+
+def project_qualified_public_tokens(tokenizer: Any, prompt: str) -> tuple[int, ...]:
+    """Reproduce the exact CP275 public prefix, including its answer bridge."""
+
+    render = getattr(tokenizer, "apply_chat_template", None)
+    encode = getattr(tokenizer, "encode", None)
+    if not callable(render) or not callable(encode):
+        raise ValueError("qualified recurrent tokenizer contract is unavailable")
+    rendered = render(
+        [{"role": "user", "content": prompt}],
+        add_generation_prompt=True,
+        tokenize=False,
+    )
+    if not isinstance(rendered, str) or not rendered:
+        raise ValueError("qualified recurrent chat template is invalid")
+    tokens = encode(rendered + QUALIFIED_ANSWER_BRIDGE)
+    if (
+        not isinstance(tokens, Sequence)
+        or isinstance(tokens, (str, bytes, bytearray))
+        or not tokens
+        or len(tokens) > 16_384
+        or any(type(token) is not int or token < 0 for token in tokens)
+    ):
+        raise ValueError("qualified recurrent public token projection is invalid")
+    return tuple(tokens)
+
+
+def render_qualified_recurrent_answer(
+    family: str,
+    parsed_values: Mapping[str, Any],
+) -> str:
+    expected = _RESULT_KEYS.get(family)
+    if (
+        expected is None
+        or not isinstance(parsed_values, Mapping)
+        or tuple(sorted(parsed_values)) != tuple(sorted(expected))
+        or any(type(parsed_values[key]) is not int for key in expected)
+    ):
+        raise ValueError("qualified recurrent parsed answer contract differs")
+    return "FINAL_ANSWER: " + json.dumps(
+        {key: parsed_values[key] for key in expected},
+        sort_keys=True,
+        separators=(",", ":"),
+        ensure_ascii=True,
+    )
+
+
+async def execute_qualified_recurrent_objective(
+    client: Any,
+    prompt: str,
+    *,
+    timeout_s: float,
+) -> dict[str, Any]:
+    """Execute one admitted task, exposing no authority outside its grammar."""
+
+    admission = admit_qualified_recurrent_objective(prompt)
+    if admission is None:
+        return {
+            "eligible": False,
+            "attempted": False,
+            "ok": False,
+            "reason": "qualified_recurrent_objective_unsupported",
+        }
+    status_reader = getattr(client, "unified_recurrent_qualified_serving_status", None)
+    if not callable(status_reader):
+        return {
+            "eligible": True,
+            "attempted": False,
+            "ok": False,
+            "reason": "qualified_recurrent_serving_status_unavailable",
+            "admission": admission.receipt(),
+        }
+    status = status_reader()
+    if not isinstance(status, Mapping) or status.get("active") is not True:
+        return {
+            "eligible": True,
+            "attempted": False,
+            "ok": False,
+            "reason": str(
+                status.get("reason")
+                if isinstance(status, Mapping)
+                else "qualified_recurrent_serving_status_invalid"
+            ),
+            "admission": admission.receipt(),
+        }
+    model_path = str(getattr(client, "model_path", "") or "")
+    if not model_path:
+        raise RuntimeError("qualified_recurrent_model_identity_unavailable")
+    # MLXLocalClient canonicalizes its model path before construction. Keeping
+    # this call free of synchronous filesystem traversal also prevents a
+    # qualified foreground request from blocking Aura's event loop.
+    tokenizer = _load_tokenizer(model_path)
+    public_tokens = project_qualified_public_tokens(tokenizer, prompt)
+    decode = getattr(client, "unified_recurrent_qualified_decode_async", None)
+    if not callable(decode):
+        raise RuntimeError("qualified_recurrent_decode_contract_unavailable")
+    result = await decode(
+        public_tokens,
+        family=admission.family,
+        task_depth=admission.task_depth,
+        max_tokens=32,
+        timeout_s=timeout_s,
+    )
+    if not isinstance(result, Mapping) or result.get("ok") is not True:
+        return {
+            "eligible": True,
+            "attempted": True,
+            "ok": False,
+            "reason": str(
+                result.get("reason")
+                if isinstance(result, Mapping)
+                else "qualified_recurrent_decode_result_invalid"
+            ),
+            "admission": admission.receipt(),
+        }
+    worker = result.get("receipt")
+    if not isinstance(worker, Mapping):
+        raise RuntimeError("qualified_recurrent_worker_receipt_unavailable")
+    text = render_qualified_recurrent_answer(admission.family, worker.get("parsed_values"))
+    public_worker_receipt = {
+        key: value
+        for key, value in worker.items()
+        if key not in {"generated_token_ids", "parsed_values"}
+    }
+    body = {
+        "schema": QUALIFIED_RECURRENT_RESULT_SCHEMA,
+        "admission": admission.receipt(),
+        "public_tokens_sha256": _canonical_sha256(list(public_tokens)),
+        "public_token_count": len(public_tokens),
+        "worker_receipt": public_worker_receipt,
+        "answer_sha256": hashlib.sha256(text.encode("ascii")).hexdigest(),
+    }
+    return {
+        "eligible": True,
+        "attempted": True,
+        "ok": True,
+        "text": text,
+        "reason": "qualified_recurrent_completed",
+        "receipt": {**body, "receipt_sha256": _canonical_sha256(body)},
+    }
+
+
+__all__ = [
+    "QUALIFIED_ANSWER_BRIDGE",
+    "QUALIFIED_RECURRENT_INGRESS_SCHEMA",
+    "QUALIFIED_RECURRENT_RESULT_SCHEMA",
+    "QualifiedRecurrentAdmission",
+    "admit_qualified_recurrent_objective",
+    "execute_qualified_recurrent_objective",
+    "project_qualified_public_tokens",
+    "render_qualified_recurrent_answer",
+]

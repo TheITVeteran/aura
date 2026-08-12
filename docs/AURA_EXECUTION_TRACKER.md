@@ -46211,3 +46211,39 @@ arms and compiled execution while distinct grammar and pointer lesions failed;
 that is an early mechanism signal only, not a powered gain verdict. No serving
 authority has been published, and no broad reasoning, fusion, frontier or
 `WOW Signal` claim is made.
+
+## Checkpoint 2026-08-12-284: Qualified Tissue Reaches Sovereign Foreground Cognition
+
+Qualified recurrent serving previously had a real operator canary but no
+production caller: retaining authority would have left the certified tissue
+unreachable from Aura's cognition. The sovereign unitary response path now
+admits an exact qualified episode before its general exact-format exclusion.
+An answer-blind ingress recognizes the complete canonical `khop`, `modular`
+and `register_trace` public grammars, rejects malformed and unsupported
+language, reproduces the frozen CP275 chat-template and answer-bridge token
+boundary, checks the exact worker activation before loading the lightweight
+tokenizer, and invokes the same signed qualified-decode IPC proven by the
+operator canary. Worker-authorized values become the foreground answer while
+raw generated token payloads stay out of the public cognitive receipt.
+
+The boundary does not reinterpret open-ended chat as certified work. An
+unsupported objective continues through Aura's ordinary full RLC path. An
+inactive qualified authority incurs no tokenizer load. Once authority is
+active and a qualified request is dispatched, malformed or identity-invalid
+worker evidence fails closed instead of silently substituting an uncertified
+answer. The MLX client exposes a read-only status contract that independently
+rechecks shadow/activation identity before ingress allocates the lane. Aura's
+runtime validation registry carries the same narrow claim and explicitly
+excludes ordinary chat, a retained controller, broad reasoning, frontier
+capability and live installed-runtime evidence.
+
+Validation is green: `125/125` bounded qualified-ingress, foreground, service,
+worker/client, activation, lifecycle, materialization and rollback tests pass;
+the self-validation slice passes `37/37`; canonical smoke passes `104/104`;
+focused Ruff, compilation and diff hygiene pass. The active CP281 powered
+replication was not disturbed. At checkpoint time its first five complete
+depth-one tasks had base decode `0/5`, trained and initialization-matched
+recurrent arms `5/5`, compiled execution `5/5`, grammar lesion `0/5`, and
+pointer lesion `3/5`. That is useful mechanism evidence but no trained-over-
+control gain. No qualified authority is active, and no broad reasoning,
+fusion, frontier or `WOW Signal` claim is made.
