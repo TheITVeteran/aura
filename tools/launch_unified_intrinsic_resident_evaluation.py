@@ -170,26 +170,64 @@ def _selected_checkpoint(
         training_receipt_path = output / "training_receipt.json"
         persisted = _read_document(training_receipt_path)
         admission = persisted.get("answer_bridge_admission")
+        training_identity = persisted.get("identity")
+        dataset_identity = (
+            training_identity.get("dataset")
+            if isinstance(training_identity, dict)
+            else None
+        )
+        expected_tasks = (
+            dataset_identity.get("holdout_count")
+            if isinstance(dataset_identity, dict)
+            else None
+        )
+        persisted_body = {
+            key: value for key, value in persisted.items() if key != "receipt_sha256"
+        }
+        admission_body = (
+            {
+                key: value
+                for key, value in admission.items()
+                if key != "admission_sha256"
+            }
+            if isinstance(admission, dict)
+            else {}
+        )
         if (
             not isinstance(training_receipt, dict)
             or training_receipt.get("binding") != "authoritative_checkpoint"
             or persisted.get("receipt_sha256") != training_receipt.get("receipt_sha256")
-            or persisted.get("verdict") != "answer_bridge_admitted"
+            or persisted.get("receipt_sha256") != canonical_sha256(persisted_body)
             or not isinstance(admission, dict)
+            or admission.get("schema")
+            != "aura.unified_intrinsic.answer_bridge_admission.v3"
+            or admission.get("admission_sha256") != canonical_sha256(admission_body)
             or admission.get("admitted") is not True
             or admission.get("exact") != admission.get("tasks")
             or type(admission.get("tasks")) is not int
             or int(admission["tasks"]) < 1
+            or type(expected_tasks) is not int
+            or admission.get("tasks") != expected_tasks
             or receipt.get("step") != persisted.get("steps")
+            or receipt.get("step") != checkpoint.get("step")
+            or receipt.get("checkpoint_sha256")
+            != checkpoint.get("checkpoint_sha256")
         ):
             _fail("resident evaluation requires an admitted answer-bridge checkpoint")
-    return {
+    selected_checkpoint = {
         "stem": stem,
         "step": receipt["step"],
         "checkpoint_sha256": receipt["checkpoint_sha256"],
         "receipt_sha256": receipt["receipt_sha256"],
         "identity_sha256": receipt["identity"]["identity_sha256"],
     }
+    if stem == "checkpoint_answer_bridge_admitted":
+        selected_checkpoint["answer_bridge_admission"] = {
+            "admission_sha256": admission["admission_sha256"],
+            "tasks": admission["tasks"],
+            "exact": admission["exact"],
+        }
+    return selected_checkpoint
 
 
 def _evaluation_root(arguments: argparse.Namespace) -> tuple[Path, Path]:

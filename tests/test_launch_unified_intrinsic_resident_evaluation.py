@@ -16,7 +16,7 @@ def _arguments(root: Path) -> argparse.Namespace:
         action="prepare",
         campaign=root,
         output=None,
-        stem="checkpoint_best_heldout",
+        stem="checkpoint_answer_bridge_admitted",
         per_cell=1,
         evaluation_seed=241,
         max_tokens=32,
@@ -45,6 +45,7 @@ def _terminal_fixture(
     monkeypatch: pytest.MonkeyPatch,
     *,
     completion_checkpoint: dict[str, object] | None = None,
+    training_verdict: str = "answer_bridge_admitted",
 ) -> tuple[argparse.Namespace, dict[str, object], dict[str, object]]:
     root = tmp_path / "campaign"
     source = tmp_path / "capsule"
@@ -128,11 +129,22 @@ def _terminal_fixture(
         "resolve_checkpoint_generation",
         lambda *_args, **_kwargs: SimpleNamespace(receipt=selected_receipt),
     )
+    admission_body = {
+        "schema": "aura.unified_intrinsic.answer_bridge_admission.v3",
+        "admitted": True,
+        "exact": 1,
+        "tasks": 1,
+    }
+    admission = {
+        **admission_body,
+        "admission_sha256": launcher.canonical_sha256(admission_body),
+    }
     training_body = {
         "schema": "aura.unified_intrinsic_training.v1",
         "steps": checkpoint["step"],
-        "verdict": "answer_bridge_admitted",
-        "answer_bridge_admission": {"admitted": True, "exact": 1, "tasks": 1},
+        "verdict": training_verdict,
+        "answer_bridge_admission": admission,
+        "identity": {"dataset": {"holdout_count": 1}},
     }
     training_receipt = {
         **training_body,
@@ -165,6 +177,18 @@ def test_prepare_binds_terminal_checkpoint_and_frozen_evaluator(
 
     assert plan["scientific"]["checkpoint_sha256"] == checkpoint["checkpoint_sha256"]
     assert plan["scientific"]["checkpoint"]["stem"] == arguments.stem
+    assert plan["scientific"]["checkpoint"]["answer_bridge_admission"] == {
+        "admission_sha256": launcher.canonical_sha256(
+            {
+                "schema": "aura.unified_intrinsic.answer_bridge_admission.v3",
+                "admitted": True,
+                "exact": 1,
+                "tasks": 1,
+            }
+        ),
+        "tasks": 1,
+        "exact": 1,
+    }
     assert plan["command"][0] == config["runtime"]["interpreter"]["executable"]
     assert plan["evaluator_command"][1].startswith(
         str(Path(config["source"]["git"]["root"]))
@@ -229,6 +253,67 @@ def test_prepare_rejects_missing_admitted_checkpoint_before_model_launch(
     with pytest.raises(
         launcher.ResidentEvaluationLaunchError,
         match="checkpoint is unavailable",
+    ):
+        launcher.prepare(arguments)
+
+
+def test_prepare_accepts_admission_independent_of_summary_verdict(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    arguments, _config, checkpoint = _terminal_fixture(
+        tmp_path,
+        monkeypatch,
+        training_verdict="heldout_depth_gain",
+    )
+
+    plan = launcher.prepare(arguments)
+
+    assert plan["scientific"]["checkpoint_sha256"] == checkpoint["checkpoint_sha256"]
+    assert plan["scientific"]["checkpoint"]["answer_bridge_admission"]["exact"] == 1
+
+
+def test_prepare_rejects_tampered_answer_bridge_admission(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    arguments, config, _checkpoint = _terminal_fixture(tmp_path, monkeypatch)
+    output = Path(str(config["paths"]["training_output"]))
+    receipt = launcher._read_document(output / "training_receipt.json")
+    receipt["answer_bridge_admission"]["exact"] = 0
+    body = {key: value for key, value in receipt.items() if key != "receipt_sha256"}
+    receipt["receipt_sha256"] = launcher.canonical_sha256(body)
+    (output / "training_receipt.json").write_bytes(
+        launcher.canonical_bytes(receipt) + b"\n"
+    )
+
+    with pytest.raises(
+        launcher.ResidentEvaluationLaunchError,
+        match="requires an admitted answer-bridge checkpoint",
+    ):
+        launcher.prepare(arguments)
+
+
+def test_prepare_rejects_admitted_generation_for_a_different_checkpoint(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    arguments, _config, checkpoint = _terminal_fixture(tmp_path, monkeypatch)
+    stale_receipt = {
+        "step": checkpoint["step"],
+        "checkpoint_sha256": "f" * 64,
+        "receipt_sha256": checkpoint["receipt_sha256"],
+        "identity": {"identity_sha256": "e" * 64},
+    }
+    monkeypatch.setattr(
+        launcher,
+        "resolve_checkpoint_generation",
+        lambda *_args, **_kwargs: SimpleNamespace(receipt=stale_receipt),
+    )
+
+    with pytest.raises(
+        launcher.ResidentEvaluationLaunchError,
+        match="requires an admitted answer-bridge checkpoint",
     ):
         launcher.prepare(arguments)
 
