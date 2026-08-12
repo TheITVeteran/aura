@@ -10,6 +10,7 @@ from collections.abc import Mapping
 from pathlib import Path
 from typing import Any, Final, Never
 
+from core.runtime.atomic_writer import interprocess_file_lock
 from core.runtime.file_read_gateway import read_stable_bytes
 from core.runtime.state_ownership import state_root
 
@@ -156,6 +157,13 @@ def _read_pointer(path: Path) -> tuple[dict[str, Any], bytes]:
     return validate_shadow_pointer(_strict_json(payload)), payload
 
 
+def read_shadow_pointer(pointer_path: Path) -> dict[str, Any]:
+    """Reopen one pointer under custody checks without resolving its package."""
+
+    pointer, _payload = _read_pointer(pointer_path)
+    return pointer
+
+
 def validate_shadow_pointer(value: Mapping[str, Any]) -> dict[str, Any]:
     """Validate a pointer without trusting any path it names."""
 
@@ -226,7 +234,35 @@ def resolve_shadow_pointer(pointer_path: Path, *, releases_root: Path) -> Path:
     return package
 
 
+def shadow_pointer_publication_lock_path(pointer_path: Path) -> Path:
+    """Return the cross-document lock shared with qualified authority."""
+
+    return pointer_path.expanduser().absolute().parent / ".shadow-pointer-publication.lock"
+
+
 def publish_shadow_pointer(
+    package: Path,
+    *,
+    pointer_path: Path,
+    releases_root: Path,
+    expected_current_sha256: str | None = None,
+) -> dict[str, Any]:
+    activation_root = _private_directory(
+        pointer_path.expanduser().absolute().parent,
+        create=True,
+    )
+    with interprocess_file_lock(
+        shadow_pointer_publication_lock_path(activation_root / pointer_path.name)
+    ):
+        return _publish_shadow_pointer_locked(
+            package,
+            pointer_path=pointer_path,
+            releases_root=releases_root,
+            expected_current_sha256=expected_current_sha256,
+        )
+
+
+def _publish_shadow_pointer_locked(
     package: Path,
     *,
     pointer_path: Path,
@@ -271,6 +307,9 @@ def publish_shadow_pointer(
             _fail("unified shadow pointer replacement lost compare-and-swap")
     elif expected_current_sha256 is not None:
         _fail("unified shadow pointer expected current value is absent")
+    qualified = activation_root / "qualified-active.json"
+    if qualified.exists() or qualified.is_symlink():
+        _fail("qualified activation must be revoked before shadow pointer mutation")
 
     candidate = activation_root / f".{pointer_path.name}.{os.getpid()}.candidate"
     descriptor = -1
@@ -315,6 +354,23 @@ def deactivate_shadow_pointer(
     releases_root: Path,
     expected_current_sha256: str,
 ) -> dict[str, Any]:
+    activation_root = _private_directory(pointer_path.expanduser().absolute().parent)
+    with interprocess_file_lock(
+        shadow_pointer_publication_lock_path(activation_root / pointer_path.name)
+    ):
+        return _deactivate_shadow_pointer_locked(
+            pointer_path=pointer_path,
+            releases_root=releases_root,
+            expected_current_sha256=expected_current_sha256,
+        )
+
+
+def _deactivate_shadow_pointer_locked(
+    *,
+    pointer_path: Path,
+    releases_root: Path,
+    expected_current_sha256: str,
+) -> dict[str, Any]:
     """Atomically remove active selection while retaining an immutable receipt."""
 
     current, payload = _read_pointer(pointer_path)
@@ -323,6 +379,9 @@ def deactivate_shadow_pointer(
         _fail("unified shadow pointer deactivation lost compare-and-swap")
     resolve_shadow_pointer(pointer_path, releases_root=releases_root)
     activation_root = _private_directory(pointer_path.expanduser().absolute().parent)
+    qualified = activation_root / "qualified-active.json"
+    if qualified.exists() or qualified.is_symlink():
+        _fail("qualified activation must be revoked before shadow pointer mutation")
     retired = _private_directory(activation_root / "retired", create=True)
     destination = retired / f"{current['pointer_sha256']}.json"
     if destination.exists() or destination.is_symlink():
@@ -347,6 +406,8 @@ __all__ = [
     "deactivate_shadow_pointer",
     "default_shadow_activation_paths",
     "publish_shadow_pointer",
+    "read_shadow_pointer",
     "resolve_shadow_pointer",
+    "shadow_pointer_publication_lock_path",
     "validate_shadow_pointer",
 ]

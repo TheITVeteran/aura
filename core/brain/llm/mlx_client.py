@@ -4160,6 +4160,7 @@ class MLXLocalClient:
         self._unified_recurrent_shadow_status: dict[str, Any] = {}
         self._unified_recurrent_shadow_probe_status: dict[str, Any] = {}
         self._unified_recurrent_shadow_canary_status: dict[str, Any] = {}
+        self._unified_recurrent_qualified_activation_status: dict[str, Any] = {}
         self._worker_identity: dict[str, Any] = {}
         self._mycelial_root_refs: list[dict[str, str]] = []
         self._last_surface_control_receipt: dict[str, Any] = {}
@@ -5903,6 +5904,13 @@ class MLXLocalClient:
             "unified_recurrent_shadow_canary": copy.deepcopy(
                 getattr(self, "_unified_recurrent_shadow_canary_status", {})
             ),
+            "unified_recurrent_qualified_activation": copy.deepcopy(
+                getattr(
+                    self,
+                    "_unified_recurrent_qualified_activation_status",
+                    {},
+                )
+            ),
             "request_age_s": (
                 max(0.0, time.time() - self._current_request_started_at)
                 if self._current_request_started_at
@@ -5928,6 +5936,13 @@ class MLXLocalClient:
             ),
             "unified_recurrent_shadow_canary": copy.deepcopy(
                 getattr(self, "_unified_recurrent_shadow_canary_status", {})
+            ),
+            "unified_recurrent_qualified_activation": copy.deepcopy(
+                getattr(
+                    self,
+                    "_unified_recurrent_qualified_activation_status",
+                    {},
+                )
             ),
             "process_uptime_s": max(0.0, now - self._process_started_at)
             if self._process_started_at
@@ -7428,6 +7443,34 @@ class MLXLocalClient:
                 severity="error",
             )
             errors.append("unified_recurrent_shadow_validator_unavailable")
+        try:
+            from core.brain.llm.unified_recurrent_qualified_activation import (
+                activation_matches_shadow_receipt,
+                qualified_activation_load_receipt_errors,
+            )
+
+            qualified_receipt = res.get(
+                "unified_recurrent_qualified_activation"
+            )
+            errors.extend(
+                qualified_activation_load_receipt_errors(qualified_receipt)
+            )
+            if (
+                isinstance(qualified_receipt, Mapping)
+                and qualified_receipt.get("loaded") is True
+                and not activation_matches_shadow_receipt(
+                    qualified_receipt.get("activation", {}),
+                    res.get("unified_recurrent_shadow", {}),
+                )
+            ):
+                errors.append("qualified_activation_shadow_receipt_differs")
+        except ImportError as exc:
+            _record_mlx_degradation(
+                exc,
+                action="qualified recurrent activation validator unavailable",
+                severity="error",
+            )
+            errors.append("qualified_activation_validator_unavailable")
         return errors
 
     def _attest_worker_capture_origin(
@@ -7917,6 +7960,226 @@ class MLXLocalClient:
                         )
                     elif lane_fenced and future is None and self._active_generations <= 0:
                         await asyncio.shield(self._set_durable_lane_preemptible(True))
+            finally:
+                self._release_request_lock()
+
+    async def unified_recurrent_qualified_decode_async(
+        self,
+        public_token_ids: Sequence[int],
+        *,
+        family: str,
+        task_depth: int,
+        max_tokens: int,
+        timeout_s: float = 180.0,
+    ) -> dict[str, Any]:
+        """Serve one admitted typed answer through the resident worker."""
+
+        base: dict[str, Any] = {"ok": False, "status": "unavailable", "receipt": {}}
+        if self._closed:
+            return {**base, "reason": "client_closed"}
+        shadow_status = copy.deepcopy(
+            getattr(self, "_unified_recurrent_shadow_status", {})
+        )
+        qualified_status = copy.deepcopy(
+            getattr(self, "_unified_recurrent_qualified_activation_status", {})
+        )
+        activation = (
+            qualified_status.get("activation")
+            if isinstance(qualified_status, Mapping)
+            else None
+        )
+        if not (
+            isinstance(shadow_status, Mapping)
+            and shadow_status.get("loaded") is True
+            and isinstance(qualified_status, Mapping)
+            and qualified_status.get("loaded") is True
+            and qualified_status.get("serving_authority") is True
+            and isinstance(activation, Mapping)
+        ):
+            return {**base, "reason": "qualified_recurrent_serving_not_active"}
+        try:
+            from core.brain.llm.unified_recurrent_qualified_activation import (
+                activation_matches_shadow_receipt,
+            )
+            from core.brain.llm.unified_recurrent_qualified_decode import (
+                qualified_decode_result_errors,
+                seal_qualified_decode_request,
+            )
+
+            if not activation_matches_shadow_receipt(activation, shadow_status):
+                return {**base, "reason": "qualified_activation_shadow_identity_differs"}
+            request = seal_qualified_decode_request(
+                public_token_ids,
+                package_id=str(shadow_status.get("package_id") or ""),
+                controller_sha256=str(
+                    shadow_status.get("controller_sha256") or ""
+                ),
+                family=family,
+                task_depth=task_depth,
+                max_tokens=max_tokens,
+            )
+            bounded_timeout_s = float(timeout_s)
+            if not math.isfinite(bounded_timeout_s) or bounded_timeout_s <= 0.0:
+                raise ValueError("timeout_invalid")
+            bounded_timeout_s = min(300.0, max(5.0, bounded_timeout_s))
+        except (ImportError, TypeError, ValueError, OverflowError) as exc:
+            return {**base, "reason": f"invalid_qualified_decode_request:{exc}"}
+        if self._req_q is None or not (
+            self._process and self._process.is_alive() and self._init_done
+        ):
+            return {**base, "reason": "worker_not_ready"}
+
+        deadline = get_deadline(bounded_timeout_s)
+        acquired = await self._acquire_request_lock(
+            owner_label="unified_recurrent_qualified_decode",
+            deadline=deadline,
+            foreground_request=True,
+        )
+        if not acquired:
+            return {**base, "reason": "request_lane_busy"}
+
+        future: SharedFuture | None = None
+        request_id = ""
+        deferred_reboot = ""
+        lane_fenced = False
+        try:
+            if self._req_q is None or not (
+                self._process and self._process.is_alive() and self._init_done
+            ):
+                return {**base, "reason": "worker_not_ready"}
+            if self._warmup_in_flight or self._active_generations > 0:
+                return {**base, "reason": "generation_active"}
+            if not await self._set_durable_lane_preemptible(False):
+                return {**base, "reason": "lane_fence_lost"}
+            lane_fenced = True
+            request_id = uuid.uuid4().hex
+            self._job_seq_counter += 1
+            request_seq = self._job_seq_counter
+            job = {
+                "id": request_id,
+                "seq": request_seq,
+                "action": "unified_recurrent_qualified_decode",
+                "unified_recurrent_qualified_decode_contract": request,
+            }
+            future = _new_shared_future()
+            self._pending_generations[request_id] = future
+            self._current_gen_future = future
+            self._active_generations += 1
+            self._active_generation_started_at = time.time()
+            self._mark_generation_started(
+                request_id,
+                requested_max_tokens=max_tokens,
+                first_token_hard_ceiling_s=bounded_timeout_s,
+                request_seq=request_seq,
+            )
+            dispatch_budget = _remaining_budget(deadline, bounded_timeout_s)
+            if dispatch_budget <= 0.0:
+                return {**base, "reason": "qualified_decode_timeout:dispatch"}
+            await run_io_bound(
+                self._req_q.put,
+                self._authorize_job(
+                    job,
+                    principal="mlx_client.unified_recurrent_qualified_decode",
+                ),
+                True,
+                min(2.0, dispatch_budget),
+            )
+            generation_budget = _remaining_budget(deadline, bounded_timeout_s)
+            if generation_budget <= 0.0:
+                deferred_reboot = "qualified_decode_deadline_unacknowledged"
+                return {
+                    **base,
+                    "reason": "qualified_decode_timeout:generation_start",
+                }
+            try:
+                response = await _await_shared_future(
+                    future,
+                    timeout_s=generation_budget,
+                )
+            except TimeoutError:
+                self.soft_cancel_active_generation("qualified_decode_deadline")
+                try:
+                    response = await _await_shared_future(future, timeout_s=3.0)
+                except (TimeoutError, BrokenPipeError, OSError):
+                    deferred_reboot = "qualified_decode_deadline_unacknowledged"
+                    return {
+                        **base,
+                        "reason": "qualified_decode_timeout:unacknowledged",
+                    }
+            if not isinstance(response, Mapping):
+                return {**base, "reason": "invalid_worker_response"}
+            if response.get("status") != "ok":
+                return {
+                    **base,
+                    "status": "worker_error",
+                    "reason": str(response.get("message") or "unknown"),
+                }
+            receipt = response.get("receipt")
+            errors = qualified_decode_result_errors(
+                receipt,
+                expected_request_sha256=request["request_sha256"],
+                expected_activation_sha256=str(
+                    activation.get("activation_sha256") or ""
+                ),
+                expected_package_id=request["package_id"],
+                expected_controller_sha256=request["controller_sha256"],
+                expected_family=request["family"],
+                expected_task_depth=request["task_depth"],
+            )
+            if errors:
+                deferred_reboot = "qualified_decode_receipt_invalid"
+                return {
+                    **base,
+                    "status": "integrity_failed",
+                    "reason": ",".join(errors),
+                }
+            accepted = copy.deepcopy(receipt)
+            self._mark_progress()
+            return {
+                "ok": True,
+                "status": "completed",
+                "receipt": accepted,
+                "reason": "qualified_decode_completed",
+            }
+        except asyncio.CancelledError:
+            if future is not None:
+                self.soft_cancel_active_generation(
+                    "unified_recurrent_qualified_decode_caller_cancelled"
+                )
+                deferred_reboot = "qualified_decode_caller_cancelled"
+            raise
+        except (BrokenPipeError, OSError, TimeoutError, queue.Full) as exc:
+            deferred_reboot = f"qualified_decode_ipc_failed:{type(exc).__name__}"
+            _record_mlx_degradation(
+                exc,
+                action="recycled resident worker after qualified decode IPC failure",
+                severity="warning",
+            )
+            return {**base, "reason": deferred_reboot}
+        finally:
+            try:
+                try:
+                    if future is not None:
+                        await asyncio.shield(
+                            self._finish_generation_ownership(
+                                request_id,
+                                future,
+                                None,
+                                release_lane=not bool(deferred_reboot),
+                            )
+                        )
+                finally:
+                    if deferred_reboot:
+                        await asyncio.shield(
+                            self.reboot_worker(
+                                reason=deferred_reboot,
+                                mark_failed=False,
+                            )
+                        )
+                    elif lane_fenced and future is None and self._active_generations <= 0:
+                        await asyncio.shield(
+                            self._set_durable_lane_preemptible(True)
+                        )
             finally:
                 self._release_request_lock()
 
@@ -9737,6 +10000,7 @@ class MLXLocalClient:
         self._unified_recurrent_shadow_status = {}
         self._unified_recurrent_shadow_probe_status = {}
         self._unified_recurrent_shadow_canary_status = {}
+        self._unified_recurrent_qualified_activation_status = {}
         self._steering_liveness_observed = False
         self._last_interoception = {}
         self._last_surface_control_receipt = {}
@@ -11117,6 +11381,7 @@ class MLXLocalClient:
                             self._unified_recurrent_shadow_status = {}
                             self._unified_recurrent_shadow_probe_status = {}
                             self._unified_recurrent_shadow_canary_status = {}
+                            self._unified_recurrent_qualified_activation_status = {}
                             self._set_lane_state(
                                 "failed",
                                 "init_receipt_invalid",
@@ -11151,6 +11416,14 @@ class MLXLocalClient:
                         )
                         self._unified_recurrent_shadow_probe_status = {}
                         self._unified_recurrent_shadow_canary_status = {}
+                        qualified_status = res.get(
+                            "unified_recurrent_qualified_activation"
+                        )
+                        self._unified_recurrent_qualified_activation_status = (
+                            copy.deepcopy(qualified_status)
+                            if isinstance(qualified_status, dict)
+                            else {}
+                        )
                         if not isinstance(recurrent_status, dict):
                             _record_mlx_degradation(
                                 ValueError("missing_recurrent_depth_receipt"),

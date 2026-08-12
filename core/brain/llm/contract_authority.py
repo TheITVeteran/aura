@@ -59,6 +59,7 @@ PRIVILEGED_CONTRACT_FIELDS: tuple[str, ...] = (
     "health_probe",
     "disable_prompt_cache",
     "action_state_runtime",
+    "unified_recurrent_qualified_decode_contract",
     "unified_recurrent_shadow_contract",
     "schema",
 )

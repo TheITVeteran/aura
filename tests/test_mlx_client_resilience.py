@@ -32,6 +32,9 @@ from core.brain.llm.mlx_worker import (
     _should_emit_generation_progress,
     _trim_complete_operator_evidence,
 )
+from core.brain.llm.unified_recurrent_qualified_activation import (
+    seal_qualified_activation_load_receipt,
+)
 from core.brain.llm.unified_recurrent_shadow_contract import (
     LOAD_SCHEMA as UNIFIED_RECURRENT_SHADOW_LOAD_SCHEMA,
 )
@@ -125,6 +128,14 @@ def ready_init_receipt(
                 "mode": "shadow_only",
                 "serving_authority": False,
             }
+        ),
+        "unified_recurrent_qualified_activation": (
+            seal_qualified_activation_load_receipt(
+                configured=False,
+                loaded=False,
+                reason="not_configured",
+                activation=None,
+            )
         ),
     }
     receipt.update(overrides)

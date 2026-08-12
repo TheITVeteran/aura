@@ -543,6 +543,8 @@ class LoadedUnifiedRecurrentShadow:
     answer_contract: RecurrentAnswerEmissionContract
     receipt: dict[str, Any]
     canary_battery: dict[str, Any] | None = None
+    literal_contract: LiteralObservationContract | None = None
+    opcode_contract: OpcodeObservationContract | None = None
 
     def supports(self, public_tokens: list[int] | tuple[int, ...]) -> bool:
         return self.answer_contract.family(public_tokens) in set(self.receipt["families"])
@@ -830,6 +832,8 @@ def load_unified_recurrent_shadow(
         answer,
         receipt,
         verified["canary_battery"],
+        literal,
+        opcode,
     )
 
 

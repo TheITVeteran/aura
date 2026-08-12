@@ -160,3 +160,42 @@ def test_deactivation_is_atomic_and_retains_exact_receipt(
     archive = pointer_path.parent / "retired" / f"{pointer['pointer_sha256']}.json"
     assert archive.is_file()
     assert json.loads(archive.read_text(encoding="ascii")) == pointer
+
+
+def test_active_qualified_authority_blocks_pointer_mutation(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    pointer_path, releases, package = _fixture(tmp_path, monkeypatch)
+    replacement = releases / "cp267-replacement"
+    replacement.mkdir(mode=0o700)
+    pointer = publish_shadow_pointer(
+        package,
+        pointer_path=pointer_path,
+        releases_root=releases,
+    )
+    qualified = pointer_path.parent / "qualified-active.json"
+    qualified.write_text("active", encoding="ascii")
+    qualified.chmod(0o600)
+
+    with pytest.raises(
+        UnifiedRecurrentShadowPointerError,
+        match="qualified activation must be revoked",
+    ):
+        publish_shadow_pointer(
+            replacement,
+            pointer_path=pointer_path,
+            releases_root=releases,
+            expected_current_sha256=pointer["pointer_sha256"],
+        )
+    with pytest.raises(
+        UnifiedRecurrentShadowPointerError,
+        match="qualified activation must be revoked",
+    ):
+        deactivate_shadow_pointer(
+            pointer_path=pointer_path,
+            releases_root=releases,
+            expected_current_sha256=pointer["pointer_sha256"],
+        )
+
+    assert resolve_shadow_pointer(pointer_path, releases_root=releases) == package

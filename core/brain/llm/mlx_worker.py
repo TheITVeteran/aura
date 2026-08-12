@@ -3680,6 +3680,99 @@ def _handle_unified_recurrent_shadow_probe(
     }
 
 
+def _load_unified_recurrent_qualified_activation(
+    loaded_shadow: Any | None,
+    shadow_status: Mapping[str, Any],
+) -> tuple[dict[str, Any] | None, dict[str, Any]]:
+    """Load typed serving authority separately from non-serving tissue."""
+
+    from core.brain.llm.unified_recurrent_qualified_activation import (
+        activation_matches_shadow_receipt,
+        seal_qualified_activation_load_receipt,
+    )
+    from core.brain.llm.unified_recurrent_qualified_activation_store import (
+        default_qualified_activation_path,
+        read_qualified_activation,
+    )
+
+    activation_path = default_qualified_activation_path()
+    if not (activation_path.exists() or activation_path.is_symlink()):
+        return None, seal_qualified_activation_load_receipt(
+            configured=False,
+            loaded=False,
+            reason="not_configured",
+            activation=None,
+        )
+    if loaded_shadow is None or shadow_status.get("loaded") is not True:
+        raise RuntimeError("qualified_activation_configured_without_shadow_tissue")
+    try:
+        activation = read_qualified_activation(activation_path)
+    except (OSError, RuntimeError, TypeError, ValueError) as exc:
+        raise RuntimeError(
+            f"configured_unified_recurrent_qualified_activation_invalid:"
+            f"{activation_path}:{exc}"
+        ) from exc
+    if not activation_matches_shadow_receipt(activation, shadow_status):
+        raise RuntimeError("qualified_activation_shadow_identity_differs")
+    receipt = seal_qualified_activation_load_receipt(
+        configured=True,
+        loaded=True,
+        reason="qualified_activation_loaded",
+        activation=activation,
+    )
+    return activation, receipt
+
+
+def _handle_unified_recurrent_qualified_decode(
+    job: dict[str, Any],
+    *,
+    loaded_shadow: Any | None,
+    qualified_activation: Mapping[str, Any] | None,
+    model: Any,
+    contract_key: bytes | None,
+    cancel_check: Callable[[], bool] | None = None,
+    activity: Callable[[], None] | None = None,
+) -> dict[str, Any]:
+    """Execute one typed decode only after exact activation admission."""
+
+    if job.get("action") != "unified_recurrent_qualified_decode":
+        raise ValueError("unified_recurrent_qualified_decode_action_differs")
+    refusal = _verify_contract_authority(job, contract_key)
+    if refusal:
+        raise ValueError(refusal)
+    if loaded_shadow is None:
+        raise RuntimeError("unified_recurrent_shadow_not_loaded")
+    if qualified_activation is None:
+        raise RuntimeError("unified_recurrent_qualified_activation_not_loaded")
+    from core.brain.llm.unified_recurrent_qualified_activation import (
+        activation_matches_shadow_receipt,
+    )
+    from core.brain.llm.unified_recurrent_qualified_decode import (
+        authorize_qualified_decode_result,
+        run_qualified_decode,
+    )
+
+    if not activation_matches_shadow_receipt(
+        qualified_activation,
+        loaded_shadow.receipt,
+    ):
+        raise RuntimeError("qualified_activation_shadow_identity_differs")
+    result = run_qualified_decode(
+        loaded_shadow,
+        model,
+        job.get("unified_recurrent_qualified_decode_contract"),
+        cancel_check=cancel_check,
+        activity=activity,
+    )
+    authorized = authorize_qualified_decode_result(result, qualified_activation)
+    return {
+        "id": str(job.get("id") or ""),
+        "action": "unified_recurrent_qualified_decode",
+        "status": "ok",
+        "receipt": authorized,
+    }
+
+
 # ── expert adapter hot attach/detach (in-worker, no model reload) ────────────
 # The expert-LoRA library keeps domain-specialist adapters on disk and swaps
 # them onto the RESIDENT model. Attach wraps target linears with LoRA layers
@@ -5089,6 +5182,26 @@ def _mlx_worker_loop(
                 "Unified recurrent shadow inactive: %s",
                 unified_recurrent_shadow_status["reason"],
             )
+        (
+            unified_recurrent_qualified_activation,
+            unified_recurrent_qualified_activation_status,
+        ) = _load_unified_recurrent_qualified_activation(
+            unified_recurrent_shadow,
+            unified_recurrent_shadow_status,
+        )
+        if unified_recurrent_qualified_activation_status["loaded"]:
+            logger.info(
+                "Unified recurrent tissue admitted for QUALIFIED TYPED serving: "
+                "activation=%s",
+                unified_recurrent_qualified_activation_status["activation"][
+                    "activation_sha256"
+                ],
+            )
+        else:
+            logger.info(
+                "Unified recurrent qualified serving inactive: %s",
+                unified_recurrent_qualified_activation_status["reason"],
+            )
 
         from core.brain.llm.latent_cortex.runtime_identity import (
             build_worker_identity,
@@ -5134,6 +5247,9 @@ def _mlx_worker_loop(
                     else None
                 ),
                 "unified_recurrent_shadow": dict(unified_recurrent_shadow_status),
+                "unified_recurrent_qualified_activation": dict(
+                    unified_recurrent_qualified_activation_status
+                ),
                 "personality_adapter": dict(personality_adapter_status),
                 "worker_identity": dict(worker_identity),
             }
@@ -7979,6 +8095,76 @@ def _mlx_worker_loop(
                             cancel_seq.value = 0
                         except (AttributeError, OSError, TypeError, ValueError):
                             logger.debug("Shadow probe soft-cancel acknowledgement failed.")
+                ipc_writer.put(response)
+
+            elif action == "unified_recurrent_qualified_decode":
+                request_id = str(job.get("id") or "")
+                job_seq = max(0, _safe_int(job.get("seq"), 0))
+                response = {
+                    "id": request_id,
+                    "action": "unified_recurrent_qualified_decode",
+                }
+                clear_stale_soft_cancel(cancel_seq, job_seq)
+                watchdog.start_job(request_id, "unified_recurrent_qualified_decode")
+                try:
+                    with metal_semaphore:
+                        response = _handle_unified_recurrent_qualified_decode(
+                            job,
+                            loaded_shadow=unified_recurrent_shadow,
+                            qualified_activation=(
+                                unified_recurrent_qualified_activation
+                            ),
+                            model=model,
+                            contract_key=contract_key,
+                            cancel_check=lambda _job_seq=job_seq: soft_cancel_requested(
+                                cancel_seq,
+                                _job_seq,
+                            ),
+                            activity=watchdog.activity,
+                        )
+                except InterruptedError:
+                    response.update(
+                        {
+                            "status": "error",
+                            "message": "unified_recurrent_qualified_decode_cancelled",
+                        }
+                    )
+                except (
+                    ImportError,
+                    RuntimeError,
+                    AttributeError,
+                    TypeError,
+                    ValueError,
+                    KeyError,
+                    OSError,
+                ) as decode_exc:
+                    _record_mlx_degradation(
+                        decode_exc,
+                        action=(
+                            "reported unified recurrent qualified decode failure "
+                            "to parent IPC"
+                        ),
+                        severity="warning",
+                    )
+                    response.update(
+                        {
+                            "status": "error",
+                            "message": (
+                                "unified_recurrent_qualified_decode_failed:"
+                                f"{type(decode_exc).__name__}:"
+                                f"{str(decode_exc)[:180]}"
+                            ),
+                        }
+                    )
+                finally:
+                    watchdog.stop_job()
+                    if soft_cancel_requested(cancel_seq, job_seq):
+                        try:
+                            cancel_seq.value = 0
+                        except (AttributeError, OSError, TypeError, ValueError):
+                            logger.debug(
+                                "Qualified decode soft-cancel acknowledgement failed."
+                            )
                 ipc_writer.put(response)
 
             elif action == "latent_reason":
