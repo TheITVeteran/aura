@@ -24,7 +24,7 @@ if str(REPO_ROOT) not in sys.path:
 import mlx.core as mx  # noqa: E402
 import mlx.nn as nn  # noqa: E402
 import mlx.optimizers as optim  # noqa: E402
-from mlx.utils import tree_flatten, tree_unflatten  # noqa: E402
+from mlx.utils import tree_flatten, tree_map, tree_unflatten  # noqa: E402
 
 from core.learning.intrinsic_recurrence import _run, checkpointed_window  # noqa: E402
 from core.learning.recurrent_action_schema import (  # noqa: E402
@@ -912,6 +912,72 @@ def _apply_training_gradients(
         )
     optimizer.update(bundle, gradients)
     mx.eval(bundle.parameters(), optimizer.state, loss)
+
+
+def _streamed_recurrent_objective_gradients(
+    bundle: UnifiedTrainingBundle,
+    prompt: Any,
+    answer: Any,
+    spec: UnifiedIntrinsicTrainingSpec,
+    *,
+    readout_sha256: str,
+    decoder_input_tokens: Any,
+    transition_trace: Any,
+    transition_program: Any,
+    state_teacher_forcing_probability: float,
+    envelope: Any,
+) -> tuple[Any, Any]:
+    """Differentiate the exact recurrence objective one depth graph at a time."""
+
+    accumulated = None
+    total_loss = 0.0
+    for depth in spec.train_depths:
+
+        def depth_objective(
+            candidate: UnifiedTrainingBundle,
+            objective_prompt: Any,
+            objective_answer: Any,
+            objective_rollin: Any,
+            objective_depth: int = depth,
+        ) -> Any:
+            return unified_intrinsic_training_loss(
+                candidate.model,
+                objective_prompt,
+                objective_answer,
+                candidate.controller,
+                spec,
+                readout_sha256=readout_sha256,
+                decoder_input_tokens=objective_rollin,
+                transition_trace=transition_trace,
+                transition_program=transition_program,
+                state_teacher_forcing_probability=state_teacher_forcing_probability,
+                objective_depth=objective_depth,
+            )[0]
+
+        loss, gradients = nn.value_and_grad(bundle, depth_objective)(
+            bundle,
+            prompt,
+            answer,
+            decoder_input_tokens,
+        )
+        materialized = tree_map(mx.stop_gradient, gradients)
+        mx.eval(loss, materialized)
+        total_loss += float(loss.item())
+        accumulated = (
+            materialized
+            if accumulated is None
+            else tree_map(
+                lambda prior, current: prior + current,
+                accumulated,
+                materialized,
+            )
+        )
+        mx.eval(accumulated)
+        del gradients, materialized, loss
+        envelope.reclaim(force=True)
+    if accumulated is None:  # pragma: no cover - the spec requires train depths
+        raise RuntimeError("streamed recurrence objective emitted no gradients")
+    return mx.array(total_loss, dtype=mx.float32), accumulated
 
 
 def _student_rollin_probability(
@@ -3110,15 +3176,31 @@ def main() -> int:
                                 ),
                             )[0]
 
-                        loss, gradients = nn.value_and_grad(
-                            bundle,
-                            recurrent_objective,
-                        )(
-                            bundle,
-                            prompt,
-                            answer,
-                            effective,
-                        )
+                        if phase == "recurrence":
+                            loss, gradients = _streamed_recurrent_objective_gradients(
+                                bundle,
+                                prompt,
+                                answer,
+                                spec,
+                                readout_sha256=readout_sha256,
+                                decoder_input_tokens=effective,
+                                transition_trace=task.transition_trace,
+                                transition_program=task.transition_program,
+                                state_teacher_forcing_probability=(
+                                    state_teacher_probability
+                                ),
+                                envelope=envelope,
+                            )
+                        else:
+                            loss, gradients = nn.value_and_grad(
+                                bundle,
+                                recurrent_objective,
+                            )(
+                                bundle,
+                                prompt,
+                                answer,
+                                effective,
+                            )
                     if not update_applied:
                         _apply_training_gradients(
                             bundle,

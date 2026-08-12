@@ -644,13 +644,25 @@ def unified_intrinsic_training_loss(
     transition_trace: Any | None = None,
     transition_program: Any | None = None,
     state_teacher_forcing_probability: float = 0.0,
+    objective_depth: int | None = None,
 ) -> tuple[Any, dict[str, Any]]:
-    """Train semantics at shallow depths while keeping readout immutable."""
+    """Train semantics at shallow depths while keeping readout immutable.
+
+    ``objective_depth`` exposes one algebraically additive depth contribution so
+    resident training can materialize and release each frozen-coda gradient
+    before constructing the next. Its denominators remain those of the full
+    objective, so summing every selected contribution is the same loss.
+    """
 
     if readout_sha256 is None:
         readout_sha256 = readout_fingerprint(model, spec.coda_start)
     elif re.fullmatch(r"[0-9a-f]{64}", readout_sha256) is None:
         raise ValueError("readout commitment is invalid")
+    if objective_depth is not None and objective_depth not in spec.train_depths:
+        raise ValueError("objective depth is outside the trained recurrence ladder")
+    selected_depths = (
+        spec.train_depths if objective_depth is None else (objective_depth,)
+    )
     final_losses: list[Any] = []
     progression_terms: list[Any] = []
     halt_terms: list[Any] = []
@@ -658,7 +670,7 @@ def unified_intrinsic_training_loss(
     stutter_terms: list[Any] = []
     state_commitments: dict[str, dict[str, Any]] = {}
     per_depth: dict[str, dict[str, Any]] = {}
-    for depth in spec.train_depths:
+    for depth in selected_depths:
         depth_targets = (
             state_targets_from_trace(transition_trace, depth)
             if transition_trace is not None
@@ -776,13 +788,24 @@ def unified_intrinsic_training_loss(
             "state_step_accuracy": list(state_step_accuracy),
             "stutter_loss": float(stuttering.item()),
         }
-    anchor = final_losses[spec.train_depths.index(1)]
-    final_mean = mx.mean(mx.stack(final_losses))
-    progression_mean = mx.mean(mx.stack(progression_terms))
-    halt_mean = mx.mean(mx.stack(halt_terms)) if halt_terms else mx.zeros(())
-    state_mean = mx.mean(mx.stack(state_terms)) if state_terms else mx.zeros(())
+    depth_count = len(spec.train_depths)
+    anchor = (
+        final_losses[selected_depths.index(1)]
+        if 1 in selected_depths
+        else mx.zeros(())
+    )
+    # A one-depth invocation is a summand, not a reweighted smaller objective.
+    final_mean = mx.sum(mx.stack(final_losses)) / depth_count
+    progression_mean = mx.sum(mx.stack(progression_terms)) / depth_count
+    halt_denominator = depth_count if transition_trace is None else 1
+    halt_mean = (
+        mx.sum(mx.stack(halt_terms)) / halt_denominator
+        if halt_terms
+        else mx.zeros(())
+    )
+    state_mean = mx.sum(mx.stack(state_terms)) if state_terms else mx.zeros(())
     stutter_mean = (
-        mx.mean(mx.stack(stutter_terms)) if stutter_terms else mx.zeros(())
+        mx.sum(mx.stack(stutter_terms)) if stutter_terms else mx.zeros(())
     )
     total = (
         spec.answer_weight * final_mean
@@ -820,6 +843,7 @@ def unified_intrinsic_training_loss(
         ),
         "labels_from_generated_tokens": False,
         "heldout_depths_unopened": list(spec.heldout_depths),
+        "objective_depth": objective_depth,
     }
 
 

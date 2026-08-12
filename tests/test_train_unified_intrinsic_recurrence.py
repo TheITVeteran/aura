@@ -27,6 +27,7 @@ from core.learning.recurrent_answer_emission import (  # noqa: E402
 )
 from core.learning.unified_intrinsic_objective import (  # noqa: E402
     UnifiedIntrinsicTrainingSpec,
+    unified_intrinsic_training_loss,
 )
 from core.learning.unified_intrinsic_recurrence import (  # noqa: E402
     UnifiedRecurrenceConfig,
@@ -69,6 +70,7 @@ from tools.train_unified_intrinsic_recurrence import (  # noqa: E402
     _rollin_report,
     _save_checkpoint,
     _semantic_execution_depth,
+    _streamed_recurrent_objective_gradients,
     _student_rollin_probability,
     _trainable,
     _training_halt_reason,
@@ -173,6 +175,77 @@ def test_model_lane_envelope_tracks_the_trainable_tissue_class() -> None:
     assert _model_lane_purpose("scoped_lora") == "train"
     with pytest.raises(ValueError, match="window tissue mode"):
         _model_lane_purpose("unknown")
+
+
+def test_streamed_recurrent_gradients_equal_monolithic_objective() -> None:
+    from core.learning.recurrence_curriculum import task_battery
+
+    original, _wiring = _bundle()
+    bundle = UnifiedTrainingBundle(
+        original.model,
+        UnifiedRecurrentController(
+            UnifiedRecurrenceConfig(
+                hidden_size=32,
+                correction_rank=4,
+                literal_digit_token_ids=tuple(range(10)),
+            )
+        ),
+    )
+    spec = UnifiedIntrinsicTrainingSpec(2, 4, (1, 2, 4), (8, 16))
+    task = task_battery(("khop",), (4,), 1, seed=20260812)[0]
+    prompt = mx.array([[1, 2, 3]], dtype=mx.int32)
+    answer = mx.array([[4, 5]], dtype=mx.int32)
+    readout = "0" * 64
+
+    def monolithic(candidate: UnifiedTrainingBundle) -> object:
+        return unified_intrinsic_training_loss(
+            candidate.model,
+            prompt,
+            answer,
+            candidate.controller,
+            spec,
+            readout_sha256=readout,
+            decoder_input_tokens=answer,
+            transition_trace=task.transition_trace,
+            transition_program=task.transition_program,
+        )[0]
+
+    expected_loss, expected_gradients = nn.value_and_grad(bundle, monolithic)(bundle)
+    mx.eval(expected_loss, expected_gradients)
+    reclaims: list[bool] = []
+    envelope = type(
+        "Envelope",
+        (),
+        {
+            "reclaim": lambda _self, *_args, **kwargs: reclaims.append(
+                kwargs.get("force") is True
+            )
+        },
+    )()
+    observed_loss, observed_gradients = _streamed_recurrent_objective_gradients(
+        bundle,
+        prompt,
+        answer,
+        spec,
+        readout_sha256=readout,
+        decoder_input_tokens=answer,
+        transition_trace=task.transition_trace,
+        transition_program=task.transition_program,
+        state_teacher_forcing_probability=0.0,
+        envelope=envelope,
+    )
+    mx.eval(observed_loss, observed_gradients)
+
+    assert float(observed_loss.item()) == pytest.approx(
+        float(expected_loss.item()), abs=1e-5
+    )
+    expected = dict(tree_flatten(expected_gradients))
+    observed = dict(tree_flatten(observed_gradients))
+    assert observed.keys() == expected.keys()
+    for name in expected:
+        matches = mx.allclose(observed[name], expected[name], rtol=2e-4, atol=2e-5)
+        assert matches.item(), name
+    assert reclaims == [True] * len(spec.train_depths)
 
 
 def test_invocation_boundary_is_operational_and_resumable() -> None:
