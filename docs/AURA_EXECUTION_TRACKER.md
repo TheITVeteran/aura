@@ -45415,3 +45415,71 @@ The completion envelope remains `913/920` (approximately `99.2%`). Next is to
 publish CP253, freeze its exact source into a full 72-example resident campaign,
 require `27/27` terminal admission, and run the preregistered powered decode
 replication only if that gate passes.
+
+## Checkpoint 2026-08-11-254: Powered Resident Replication Is Frozen Before Outcome
+
+The full resident-32B campaign is source-bound to immutable commit
+`c2a06bb6c56b3cb3d10a858a2e7bce801c41bb9f`. Its campaign configuration
+commitment is
+`15143a19ef4005efbc41137294e9f9561080ce5f704f7d9c46e734266cbb858b`;
+the frozen dataset and tokenization commitments are respectively
+`240ede39a0e135dd4887ca698b807886a92242c58c3d01e476931851f9d55180`
+and `7a3dde16d81027f1d32e5614b83c272a5bc9c1348fd2b04778af89e8e842bc25`.
+The profile contains 72 answer-bridge examples, all 27 fresh holdouts, 72
+bridge steps, one terminal recurrence update and nine scheduled complete
+holdout evaluations. The first launch failed closed before loading the model
+because physical headroom was 33.67 GB against a 34.35 GB admission request;
+after an idle competing renderer was retired, attempt two entered training
+under the same frozen source and scientific identity without losing a
+checkpoint.
+
+Before terminal training or decode evidence existed, CP254 froze a three-seed
+powered replication over 27 prompt-disjoint tasks and 216 eight-arm candidate
+decodes. Its plan commitment is
+`e1a565426d8e0f3047174c2f3635d6685f576ad67ab6c9a885ad56a32dc402d0`.
+A supported verdict requires every individual seed to show a positive matched
+controller gain, zero pooled right-to-wrong regression, at least 20% pooled
+gain, an exact compiled instrument, one-sided exact paired probability at most
+0.01, strict aggregate losses under grammar and pointer lesions, treatment
+improvement over both base and trained T1, and disjoint task and prompt
+identities across seeds. The independent adjudicator reconstructs each
+single-seed verdict before pooling evidence and refuses malformed, duplicate or
+identity-drifting reports.
+
+The adjudicator surface passes `14/14` focused tests; canonical smoke passes
+`104/104`; Ruff and compilation are clean. No full-campaign result, replicated
+gain, runtime promotion, broad reasoning result, fusion authority, frontier
+result or `WOW Signal` is claimed. The completion envelope remains `913/920`
+(approximately `99.2%`).
+
+## Checkpoint 2026-08-11-255: Powered Replication Has Unattended Custody
+
+The three frozen resident evaluations no longer depend on an interactive agent
+to notice completion and start the next seed. A bounded controller waits for an
+authenticated terminal training receipt, launches exactly one source-bound
+resident evaluation at a time, monitors every frozen seed, writes the final
+independent verdict automatically, and exits nonzero when the scientific
+result is negative. It publishes an HMAC-authenticated phase heartbeat bound to
+the campaign and replication-plan commitments. The controller itself runs
+under the repository detached supervisor with moving atomic heartbeat,
+process-group containment, a trainer-bound sleep inhibitor and an 18-hour hard
+outer timeout; the scientific chain has a separate 16-hour deadline.
+
+Review also corrected an evidence-classification defect: a well-formed seed
+that fails its transfer rule is retained as negative evidence and contributes
+to a `refuted_powered_resident_replication` verdict. Only malformed,
+incomplete, overlapping or identity-inconsistent evidence is an infrastructure
+failure. Tests cover immutable plan replay, positive exact pooling, valid
+negative evidence, cross-seed contamination, malformed candidate matrices,
+automatic terminal adjudication, heartbeat authentication and status
+tampering.
+
+The replication/adjudication surface passes `17/17` focused tests; canonical
+smoke passes `104/104`; Ruff and compilation are clean. The live detached
+controller has an independently observable supervisor, child and `caffeinate`
+lineage, and its signed state is `waiting_for_training`. No replicated gain,
+runtime promotion, broad reasoning result, fusion authority, frontier result
+or `WOW Signal` is claimed. The completion envelope remains `913/920`
+(approximately `99.2%`). Next is terminal `27/27` admission, the automatically
+chained powered replication and adjudication, then a domain-qualified shadow
+runtime package only if the frozen verdict is supported.
