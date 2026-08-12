@@ -3716,6 +3716,13 @@ def _load_unified_recurrent_qualified_activation(
         ) from exc
     if not activation_matches_shadow_receipt(activation, shadow_status):
         raise RuntimeError("qualified_activation_shadow_identity_differs")
+    if activation.get("mode") == "qualified_typed_pending":
+        return None, seal_qualified_activation_load_receipt(
+            configured=True,
+            loaded=False,
+            reason="qualified_activation_pending_canary",
+            activation=activation,
+        )
     receipt = seal_qualified_activation_load_receipt(
         configured=True,
         loaded=True,
@@ -3732,6 +3739,7 @@ def _handle_unified_recurrent_qualified_decode(
     qualified_activation: Mapping[str, Any] | None,
     model: Any,
     contract_key: bytes | None,
+    consumed_canary_nonces: set[str] | None = None,
     cancel_check: Callable[[], bool] | None = None,
     activity: Callable[[], None] | None = None,
 ) -> dict[str, Any]:
@@ -3744,18 +3752,45 @@ def _handle_unified_recurrent_qualified_decode(
         raise ValueError(refusal)
     if loaded_shadow is None:
         raise RuntimeError("unified_recurrent_shadow_not_loaded")
-    if qualified_activation is None:
+    canary_activation = job.get("unified_recurrent_qualified_canary_activation")
+    canary_authority = job.get("unified_recurrent_qualified_canary_authority")
+    if qualified_activation is None and not isinstance(canary_activation, Mapping):
         raise RuntimeError("unified_recurrent_qualified_activation_not_loaded")
     from core.brain.llm.unified_recurrent_qualified_activation import (
         activation_matches_shadow_receipt,
+        qualified_activation_errors,
     )
     from core.brain.llm.unified_recurrent_qualified_decode import (
         authorize_qualified_decode_result,
+        qualified_canary_authority_matches,
         run_qualified_decode,
     )
 
-    if not activation_matches_shadow_receipt(
-        qualified_activation,
+    if canary_activation is not None:
+        if qualified_activation is not None:
+            raise RuntimeError("qualified_canary_requires_inactive_durable_authority")
+        if qualified_activation_errors(canary_activation):
+            raise RuntimeError("qualified_canary_activation_invalid")
+        if (
+            not isinstance(canary_authority, Mapping)
+            or not isinstance(getattr(loaded_shadow, "canary_battery", None), Mapping)
+            or not qualified_canary_authority_matches(
+                canary_authority,
+                activation=canary_activation,
+                request=job.get("unified_recurrent_qualified_decode_contract") or {},
+                battery=loaded_shadow.canary_battery,
+            )
+        ):
+            raise RuntimeError("qualified_canary_authority_invalid")
+        nonce = str(canary_authority.get("nonce") or "")
+        if consumed_canary_nonces is None or nonce in consumed_canary_nonces:
+            raise RuntimeError("qualified_canary_authority_replayed")
+        consumed_canary_nonces.add(nonce)
+        effective_activation = canary_activation
+    else:
+        effective_activation = qualified_activation
+    if not isinstance(effective_activation, Mapping) or not activation_matches_shadow_receipt(
+        effective_activation,
         loaded_shadow.receipt,
     ):
         raise RuntimeError("qualified_activation_shadow_identity_differs")
@@ -3766,7 +3801,11 @@ def _handle_unified_recurrent_qualified_decode(
         cancel_check=cancel_check,
         activity=activity,
     )
-    authorized = authorize_qualified_decode_result(result, qualified_activation)
+    authorized = authorize_qualified_decode_result(
+        result,
+        effective_activation,
+        canary_only=canary_activation is not None,
+    )
     return {
         "id": str(job.get("id") or ""),
         "action": "unified_recurrent_qualified_decode",
@@ -5204,6 +5243,7 @@ def _mlx_worker_loop(
                 "Unified recurrent qualified serving inactive: %s",
                 unified_recurrent_qualified_activation_status["reason"],
             )
+        consumed_unified_recurrent_canary_nonces: set[str] = set()
 
         from core.brain.llm.latent_cortex.runtime_identity import (
             build_worker_identity,
@@ -8124,6 +8164,9 @@ def _mlx_worker_loop(
                             ),
                             model=model,
                             contract_key=contract_key,
+                            consumed_canary_nonces=(
+                                consumed_unified_recurrent_canary_nonces
+                            ),
                             cancel_check=lambda _job_seq=job_seq: soft_cancel_requested(
                                 cancel_seq,
                                 _job_seq,

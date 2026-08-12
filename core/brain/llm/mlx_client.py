@@ -6564,7 +6564,16 @@ class MLXLocalClient:
         """
         if not p:
             return True
-        if not p.is_alive():
+        try:
+            initially_alive = bool(p.is_alive())
+        except (RuntimeError, AttributeError, TypeError, ValueError, OSError) as exc:
+            _record_mlx_degradation(
+                exc,
+                action="could not establish worker liveness before shutdown",
+                severity="critical",
+            )
+            return False
+        if not initially_alive:
             return True
         try:
             p.kill()
@@ -8022,6 +8031,10 @@ class MLXLocalClient:
         task_depth: int,
         max_tokens: int,
         timeout_s: float = 180.0,
+        _canary_activation: Mapping[str, Any] | None = None,
+        _canary_battery_sha256: str = "",
+        _canary_case_index: int = -1,
+        _canary_nonce: str = "",
     ) -> dict[str, Any]:
         """Serve one admitted typed answer through the resident worker."""
 
@@ -8033,23 +8046,39 @@ class MLXLocalClient:
         qualified_status = copy.deepcopy(
             getattr(self, "_unified_recurrent_qualified_activation_status", {})
         )
-        activation = (
+        durable_activation = (
             qualified_status.get("activation")
             if isinstance(qualified_status, Mapping)
             else None
         )
-        if serving_status.get("active") is not True:
+        canary_activation = (
+            copy.deepcopy(dict(_canary_activation))
+            if isinstance(_canary_activation, Mapping)
+            else None
+        )
+        activation = canary_activation or durable_activation
+        if canary_activation is None and serving_status.get("active") is not True:
             return {**base, "reason": str(serving_status.get("reason") or "unknown")}
         try:
             from core.brain.llm.unified_recurrent_qualified_activation import (
                 activation_matches_shadow_receipt,
+                qualified_activation_errors,
             )
             from core.brain.llm.unified_recurrent_qualified_decode import (
                 qualified_decode_result_errors,
+                seal_qualified_canary_request_authority,
                 seal_qualified_decode_request,
             )
 
-            if not activation_matches_shadow_receipt(activation, shadow_status):
+            if (
+                not isinstance(activation, Mapping)
+                or qualified_activation_errors(activation)
+                or not activation_matches_shadow_receipt(activation, shadow_status)
+                or (
+                    canary_activation is not None
+                    and qualified_status.get("loaded") is True
+                )
+            ):
                 return {**base, "reason": "qualified_activation_shadow_identity_differs"}
             request = seal_qualified_decode_request(
                 public_token_ids,
@@ -8065,6 +8094,20 @@ class MLXLocalClient:
             if not math.isfinite(bounded_timeout_s) or bounded_timeout_s <= 0.0:
                 raise ValueError("timeout_invalid")
             bounded_timeout_s = min(300.0, max(5.0, bounded_timeout_s))
+            canary_authority = None
+            if canary_activation is not None:
+                issued_at = time.time()
+                canary_authority = seal_qualified_canary_request_authority(
+                    activation_sha256=str(
+                        canary_activation.get("activation_sha256") or ""
+                    ),
+                    battery_sha256=_canary_battery_sha256,
+                    case_index=_canary_case_index,
+                    request_sha256=request["request_sha256"],
+                    nonce=_canary_nonce,
+                    issued_at_unix=issued_at,
+                    expires_at_unix=issued_at + bounded_timeout_s,
+                )
         except (ImportError, TypeError, ValueError, OverflowError) as exc:
             return {**base, "reason": f"invalid_qualified_decode_request:{exc}"}
         if self._req_q is None or not (
@@ -8104,6 +8147,9 @@ class MLXLocalClient:
                 "action": "unified_recurrent_qualified_decode",
                 "unified_recurrent_qualified_decode_contract": request,
             }
+            if canary_activation is not None:
+                job["unified_recurrent_qualified_canary_activation"] = canary_activation
+                job["unified_recurrent_qualified_canary_authority"] = canary_authority
             future = _new_shared_future()
             self._pending_generations[request_id] = future
             self._current_gen_future = future
@@ -8168,6 +8214,7 @@ class MLXLocalClient:
                 expected_controller_sha256=request["controller_sha256"],
                 expected_family=request["family"],
                 expected_task_depth=request["task_depth"],
+                expected_canary_authority=canary_activation is not None,
             )
             if errors:
                 deferred_reboot = "qualified_decode_receipt_invalid"
@@ -8225,6 +8272,33 @@ class MLXLocalClient:
                         )
             finally:
                 self._release_request_lock()
+
+    async def unified_recurrent_qualified_canary_decode_async(
+        self,
+        public_token_ids: Sequence[int],
+        *,
+        family: str,
+        task_depth: int,
+        max_tokens: int,
+        activation: Mapping[str, Any],
+        battery_sha256: str,
+        case_index: int,
+        nonce: str,
+        timeout_s: float = 180.0,
+    ) -> dict[str, Any]:
+        """Prove qualified IPC with an in-memory, request-bound authority."""
+
+        return await self.unified_recurrent_qualified_decode_async(
+            public_token_ids,
+            family=family,
+            task_depth=task_depth,
+            max_tokens=max_tokens,
+            timeout_s=timeout_s,
+            _canary_activation=activation,
+            _canary_battery_sha256=battery_sha256,
+            _canary_case_index=case_index,
+            _canary_nonce=nonce,
+        )
 
     async def unified_recurrent_shadow_canary_async(
         self,
@@ -14484,6 +14558,7 @@ class MLXLocalClient:
         # it now waits long enough for ordinary contention to clear and
         # receipts the case where it genuinely could not.
         acquired = self._lock.acquire(timeout=_CLOSE_LOCK_WAIT_S)
+        shutdown_proven = True
         if not acquired:
             _record_mlx_degradation(
                 TimeoutError("close_lock_unavailable"),
@@ -14508,14 +14583,18 @@ class MLXLocalClient:
                 _cancel_task_threadsafe(self._listener_task)
                 self._listener_task = None
             process = self._process
-            self._process = None
-            if process is not None and process.is_alive():
-                self._kill_and_join_blocking(process)
-            self._drain_queue()
-            self._close_ipc_queues()
+            if process is not None:
+                shutdown_proven = self._kill_and_join_blocking(process)
+            if shutdown_proven:
+                self._process = None
+                self._drain_queue()
+                self._close_ipc_queues()
             self._release_request_lock()
-            self._closed = True
-            self._set_lane_state("closed", "shutdown")
+            self._closed = shutdown_proven
+            self._set_lane_state(
+                "closed" if shutdown_proven else "shutdown_failed",
+                "shutdown" if shutdown_proven else "worker_termination_unproven",
+            )
         finally:
             if acquired:
                 try:
@@ -14525,6 +14604,8 @@ class MLXLocalClient:
                         "Loop-agnostic lifecycle lock for %s was already released.",
                         os.path.basename(self.model_path),
                     )
+        if not shutdown_proven:
+            raise RuntimeError("mlx_worker_termination_unproven")
         try:
             self._release_durable_model_lane_owner_sync(reason="client_close")
         except (ImportError, OSError, RuntimeError, AttributeError, TypeError, ValueError) as exc:
@@ -14649,13 +14730,26 @@ def get_mlx_client(model_path: str | None = None, **kwargs) -> MLXLocalClient:
 
     with _CLIENTS_LOCK:
         existing = _CLIENTS.get(client_key)
+        if existing is not None and getattr(existing, "_closed", False):
+            _CLIENTS.pop(client_key, None)
+            existing = None
     if existing is not None:
         return existing
     # Construction happens outside the lock (it can be slow), then a
     # last-writer check keeps a concurrent creator from being discarded.
     created = MLXLocalClient(model_path=runtime_path, **kwargs)
     with _CLIENTS_LOCK:
-        return _CLIENTS.setdefault(client_key, created)
+        existing = _CLIENTS.get(client_key)
+        if existing is not None and getattr(existing, "_closed", False):
+            _CLIENTS.pop(client_key, None)
+            existing = None
+        if existing is None:
+            _CLIENTS[client_key] = created
+            return created
+    # A concurrent constructor won the registry race. Do not strand a second
+    # worker/model allocation outside registry ownership.
+    created.close()
+    return existing
 
 
 #: Context keys that CONFER AUTHORITY. A caller handing an untyped mapping to

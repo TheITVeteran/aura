@@ -162,6 +162,8 @@ def _publish_qualified_activation_locked(
     errors = qualified_activation_errors(value)
     if errors:
         _fail("qualified activation publication is invalid:" + ",".join(errors))
+    if value.get("mode") not in {"qualified_typed_pending", "qualified_typed_only"}:
+        _fail("qualified activation publication requires persisted typed authority")
     pointer = read_shadow_pointer(shadow_pointer_path)
     if any(
         (

@@ -812,6 +812,37 @@ class TestWorkerDeathIsProven:
 
         assert client._kill_and_join_blocking(_Opaque()) is False
 
+    def test_close_retains_a_survivor_and_refuses_replacement(
+        self,
+        client,
+        monkeypatch,
+    ):
+        survivor = self._Immortal()
+        client._process = survivor
+        monkeypatch.setattr(
+            client,
+            "_drain_queue",
+            lambda: pytest.fail("surviving worker queues must remain owned"),
+        )
+        monkeypatch.setattr(
+            client,
+            "_close_ipc_queues",
+            lambda: pytest.fail("surviving worker IPC must not be discarded"),
+        )
+        monkeypatch.setattr(
+            client,
+            "_release_durable_model_lane_owner_sync",
+            lambda **_kwargs: pytest.fail("surviving worker lane must remain owned"),
+        )
+
+        with pytest.raises(RuntimeError, match="termination_unproven"):
+            client.close()
+
+        assert client._process is survivor
+        assert client._closed is False
+        assert client._lane_state == "shutdown_failed"
+        client._process = None
+
     def test_a_forced_abort_that_leaves_a_survivor_reports_failure(self, client):
         client._record_degraded_event = lambda *a, **k: None
         client._replace_ipc_queues = lambda *a, **k: None

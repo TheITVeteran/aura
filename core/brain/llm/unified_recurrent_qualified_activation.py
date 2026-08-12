@@ -4,12 +4,14 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
 from collections.abc import Mapping
 from typing import Any, Final
 
-ACTIVATION_SCHEMA: Final = "aura.unified_intrinsic.qualified_activation.v1"
+ACTIVATION_SCHEMA: Final = "aura.unified_intrinsic.qualified_activation.v2"
 LOAD_SCHEMA: Final = "aura.unified_intrinsic.qualified_activation_load.v1"
 LIFECYCLE_SCHEMA: Final = "aura.unified_intrinsic.shadow_lifecycle_run.v1"
+QUALIFIED_CANARY_SCHEMA: Final = "aura.unified_intrinsic.qualified_serving_canary.v3"
 _HEX = frozenset("0123456789abcdef")
 _QUALIFIED_FAMILIES: Final = frozenset({"khop", "modular", "register_trace"})
 _FIELDS: Final = {
@@ -21,6 +23,8 @@ _FIELDS: Final = {
     "pointer_sha256",
     "lifecycle_result_sha256",
     "canary_plan_sha256",
+    "candidate_canary_sha256",
+    "qualified_canary_sha256",
     "families",
     "task_depths",
     "recurrence_depth",
@@ -46,6 +50,40 @@ _LOAD_FIELDS: Final = {
     "activation",
     "serving_authority",
     "receipt_sha256",
+}
+_CANARY_FIELDS: Final = {
+    "schema",
+    "package_id",
+    "manifest_sha256",
+    "checkpoint_sha256",
+    "controller_sha256",
+    "activation_sha256",
+    "battery_sha256",
+    "started_at_unix",
+    "completed_at_unix",
+    "case_count",
+    "exact_count",
+    "total_latency_ms",
+    "maximum_latency_ms",
+    "evidence",
+    "supported",
+    "serving_authority",
+    "authority_remains_active",
+    "canary_authority_was_request_scoped",
+    "output_exposed",
+    "result_sha256",
+}
+_CANARY_EVIDENCE_FIELDS: Final = {
+    "index",
+    "task_id",
+    "family",
+    "task_depth",
+    "request_sha256",
+    "expected_token_ids_sha256",
+    "generated_token_ids_sha256",
+    "qualified_result_sha256",
+    "latency_ms",
+    "exact",
 }
 
 
@@ -119,14 +157,175 @@ def qualified_activation_errors(value: Any) -> list[str]:
         or (depths and max(depths) > value["recurrence_depth"])
     ):
         errors.append("qualified_activation_domain_invalid")
+    candidate = (
+        value.get("mode") == "qualified_canary_only"
+        and value.get("serving_authority") is False
+        and value.get("candidate_canary_sha256") == ""
+        and value.get("qualified_canary_sha256") == ""
+    )
+    pending = (
+        value.get("mode") == "qualified_typed_pending"
+        and value.get("serving_authority") is False
+        and _is_sha(value.get("candidate_canary_sha256"))
+        and value.get("qualified_canary_sha256") == ""
+    )
+    durable = (
+        value.get("mode") == "qualified_typed_only"
+        and value.get("serving_authority") is True
+        and _is_sha(value.get("candidate_canary_sha256"))
+        and _is_sha(value.get("qualified_canary_sha256"))
+    )
     if (
-        value.get("mode") != "qualified_typed_only"
+        not (candidate or pending or durable)
         or value.get("ordinary_chat_authorized") is not False
         or value.get("arbitrary_reasoning_authorized") is not False
-        or value.get("serving_authority") is not True
     ):
         errors.append("qualified_activation_authority_invalid")
     return errors
+
+
+def qualified_serving_canary_errors(
+    value: Any,
+    *,
+    expected_activation: Mapping[str, Any] | None = None,
+    expected_battery: Mapping[str, Any] | None = None,
+) -> list[str]:
+    """Validate the complete candidate or durable cold-load canary artifact."""
+
+    if not isinstance(value, Mapping) or set(value) != _CANARY_FIELDS:
+        return ["qualified_serving_canary_fields_differ"]
+    body = {key: item for key, item in value.items() if key != "result_sha256"}
+    evidence = value.get("evidence")
+    started = value.get("started_at_unix")
+    completed = value.get("completed_at_unix")
+    counts = (value.get("case_count"), value.get("exact_count"))
+    latencies = (value.get("total_latency_ms"), value.get("maximum_latency_ms"))
+    errors: list[str] = []
+    if (
+        value.get("schema") != QUALIFIED_CANARY_SCHEMA
+        or value.get("result_sha256") != _sha(body)
+        or not isinstance(value.get("package_id"), str)
+        or not value["package_id"]
+        or any(
+            not _is_sha(value.get(key))
+            for key in (
+                "manifest_sha256",
+                "checkpoint_sha256",
+                "controller_sha256",
+                "activation_sha256",
+                "battery_sha256",
+            )
+        )
+        or any(type(item) is not int or item < 0 for item in (*counts, *latencies))
+        or not isinstance(started, (int, float))
+        or isinstance(started, bool)
+        or not isinstance(completed, (int, float))
+        or isinstance(completed, bool)
+        or not math.isfinite(float(started))
+        or not math.isfinite(float(completed))
+        or float(completed) < float(started)
+        or value.get("supported") is not True
+        or value.get("output_exposed") is not False
+    ):
+        errors.append("qualified_serving_canary_identity_invalid")
+    request_scoped = value.get("canary_authority_was_request_scoped")
+    candidate = (
+        value.get("serving_authority") is False
+        and value.get("authority_remains_active") is False
+        and request_scoped is True
+    )
+    durable = (
+        value.get("serving_authority") is True
+        and value.get("authority_remains_active") is True
+        and request_scoped is False
+    )
+    if not (candidate or durable):
+        errors.append("qualified_serving_canary_authority_invalid")
+    if not isinstance(evidence, list) or not evidence:
+        errors.append("qualified_serving_canary_evidence_invalid")
+    else:
+        task_ids: set[str] = set()
+        observed_latencies: list[int] = []
+        for index, row in enumerate(evidence):
+            if (
+                not isinstance(row, Mapping)
+                or set(row) != _CANARY_EVIDENCE_FIELDS
+                or row.get("index") != index
+                or not isinstance(row.get("task_id"), str)
+                or not row["task_id"]
+                or row["task_id"] in task_ids
+                or row.get("family") not in _QUALIFIED_FAMILIES
+                or type(row.get("task_depth")) is not int
+                or row["task_depth"] < 1
+                or not _is_sha(row.get("request_sha256"))
+                or not _is_sha(row.get("expected_token_ids_sha256"))
+                or not _is_sha(row.get("generated_token_ids_sha256"))
+                or not _is_sha(row.get("qualified_result_sha256"))
+                or type(row.get("latency_ms")) is not int
+                or row["latency_ms"] < 0
+                or row.get("exact") is not True
+            ):
+                errors.append("qualified_serving_canary_evidence_invalid")
+                break
+            task_ids.add(row["task_id"])
+            observed_latencies.append(row["latency_ms"])
+        if observed_latencies and (
+            counts[0] != len(evidence)
+            or counts[1] != len(evidence)
+            or latencies[0] != sum(observed_latencies)
+            or latencies[1] != max(observed_latencies)
+        ):
+            errors.append("qualified_serving_canary_aggregate_invalid")
+    if isinstance(expected_activation, Mapping) and any(
+        value.get(key) != expected_activation.get(key)
+        for key in (
+            "package_id",
+            "manifest_sha256",
+            "checkpoint_sha256",
+            "controller_sha256",
+            "activation_sha256",
+        )
+    ):
+        errors.append("qualified_serving_canary_activation_differs")
+    if isinstance(expected_activation, Mapping) and isinstance(evidence, list) and any(
+        not isinstance(row, Mapping)
+        or row.get("family") not in set(expected_activation.get("families") or ())
+        or row.get("task_depth") not in set(expected_activation.get("task_depths") or ())
+        for row in evidence
+    ):
+        errors.append("qualified_serving_canary_domain_differs")
+    if isinstance(expected_battery, Mapping):
+        try:
+            from core.brain.llm.unified_recurrent_shadow_battery import (
+                validate_shadow_canary_battery,
+            )
+
+            battery = validate_shadow_canary_battery(expected_battery)
+        except (ImportError, TypeError, ValueError):
+            errors.append("qualified_serving_canary_battery_invalid")
+        else:
+            cases = battery["cases"]
+            if (
+                value.get("battery_sha256") != battery.get("battery_sha256")
+                or not isinstance(evidence, list)
+                or len(evidence) != len(cases)
+            ):
+                errors.append("qualified_serving_canary_battery_differs")
+            elif any(
+                row.get("index") != index
+                or row.get("task_id") != case.get("task_id")
+                or row.get("family") != case.get("family")
+                or row.get("task_depth") != case.get("task_depth")
+                or row.get("request_sha256") != case.get("request_sha256")
+                or row.get("expected_token_ids_sha256")
+                != _sha(case.get("expected_token_ids"))
+                or row.get("generated_token_ids_sha256")
+                != row.get("expected_token_ids_sha256")
+                or row.get("exact") is not True
+                for index, (row, case) in enumerate(zip(evidence, cases, strict=True))
+            ):
+                errors.append("qualified_serving_canary_case_inventory_differs")
+    return list(dict.fromkeys(errors))
 
 
 def seal_qualified_activation_load_receipt(
@@ -184,11 +383,21 @@ def qualified_activation_load_receipt_errors(value: Any) -> list[str]:
             errors.extend(activation_errors)
         if value.get("serving_authority") is not True:
             errors.append("loaded_qualified_activation_lacks_authority")
+    elif configured:
+        activation_errors = qualified_activation_errors(activation)
+        if (
+            activation_errors
+            or not isinstance(activation, Mapping)
+            or activation.get("mode") != "qualified_typed_pending"
+            or activation.get("serving_authority") is not False
+            or value.get("serving_authority") is not False
+            or value.get("reason") != "qualified_activation_pending_canary"
+        ):
+            errors.append("pending_qualified_activation_state_invalid")
     elif (
         activation is not None
         or value.get("serving_authority") is not False
-        or (configured and value.get("reason") == "not_configured")
-        or (not configured and value.get("reason") != "not_configured")
+        or value.get("reason") != "not_configured"
     ):
         errors.append("inactive_qualified_activation_claims_state")
     return errors
@@ -256,16 +465,146 @@ def seal_qualified_activation(
         "families": list(domain["families"]),
         "task_depths": list(domain["task_depths"]),
         "recurrence_depth": int(domain["recurrence_depth"]),
-        "mode": "qualified_typed_only",
+        "candidate_canary_sha256": "",
+        "qualified_canary_sha256": "",
+        "mode": "qualified_canary_only",
         "ordinary_chat_authorized": False,
         "arbitrary_reasoning_authorized": False,
-        "serving_authority": True,
+        "serving_authority": False,
     }
     activation = {**body, "activation_sha256": _sha(body)}
     errors = qualified_activation_errors(activation)
     if errors:
         raise ValueError(",".join(errors))
     return activation
+
+
+def seal_verified_qualified_activation(
+    candidate: Mapping[str, Any],
+    canary: Mapping[str, Any],
+) -> dict[str, Any]:
+    """Seal inert persisted authority from an exact in-memory canary."""
+
+    errors = qualified_activation_errors(candidate)
+    if (
+        errors
+        or candidate.get("mode") != "qualified_canary_only"
+        or candidate.get("serving_authority") is not False
+        or qualified_serving_canary_errors(
+            canary,
+            expected_activation=candidate,
+        )
+        or canary.get("canary_authority_was_request_scoped") is not True
+    ):
+        raise ValueError("qualified_canary_evidence_is_not_admissible")
+    body = {
+        key: value
+        for key, value in candidate.items()
+        if key != "activation_sha256"
+    }
+    body.update(
+        {
+            "candidate_canary_sha256": canary["result_sha256"],
+            "mode": "qualified_typed_pending",
+        }
+    )
+    activation = {**body, "activation_sha256": _sha(body)}
+    errors = qualified_activation_errors(activation)
+    if errors:
+        raise ValueError(",".join(errors))
+    return activation
+
+
+def seal_serving_qualified_activation(
+    pending: Mapping[str, Any],
+    canary: Mapping[str, Any],
+) -> dict[str, Any]:
+    """Promote a cold-loaded pending document only after its exact canary."""
+
+    if (
+        qualified_activation_errors(pending)
+        or pending.get("mode") != "qualified_typed_pending"
+        or pending.get("serving_authority") is not False
+        or qualified_serving_canary_errors(canary, expected_activation=pending)
+        or canary.get("canary_authority_was_request_scoped") is not True
+    ):
+        raise ValueError("qualified_pending_canary_evidence_is_not_admissible")
+    body = {
+        key: value
+        for key, value in pending.items()
+        if key != "activation_sha256"
+    }
+    body.update(
+        {
+            "qualified_canary_sha256": canary["result_sha256"],
+            "mode": "qualified_typed_only",
+            "serving_authority": True,
+        }
+    )
+    activation = {**body, "activation_sha256": _sha(body)}
+    errors = qualified_activation_errors(activation)
+    if errors:
+        raise ValueError(",".join(errors))
+    return activation
+
+
+def pending_activation_from_serving(
+    serving: Mapping[str, Any],
+) -> dict[str, Any]:
+    """Reconstruct the exact pending identity committed by serving authority."""
+
+    if (
+        qualified_activation_errors(serving)
+        or serving.get("mode") != "qualified_typed_only"
+        or serving.get("serving_authority") is not True
+    ):
+        raise ValueError("serving_qualified_activation_is_not_admissible")
+    body = {
+        key: value
+        for key, value in serving.items()
+        if key != "activation_sha256"
+    }
+    body.update(
+        {
+            "qualified_canary_sha256": "",
+            "mode": "qualified_typed_pending",
+            "serving_authority": False,
+        }
+    )
+    pending = {**body, "activation_sha256": _sha(body)}
+    errors = qualified_activation_errors(pending)
+    if errors:
+        raise ValueError(",".join(errors))
+    return pending
+
+
+def candidate_activation_from_pending(
+    pending: Mapping[str, Any],
+) -> dict[str, Any]:
+    """Reconstruct the exact ephemeral candidate committed by pending state."""
+
+    if (
+        qualified_activation_errors(pending)
+        or pending.get("mode") != "qualified_typed_pending"
+        or pending.get("serving_authority") is not False
+    ):
+        raise ValueError("pending_qualified_activation_is_not_admissible")
+    body = {
+        key: value
+        for key, value in pending.items()
+        if key != "activation_sha256"
+    }
+    body.update(
+        {
+            "candidate_canary_sha256": "",
+            "mode": "qualified_canary_only",
+        }
+    )
+    candidate = {**body, "activation_sha256": _sha(body)}
+    errors = qualified_activation_errors(candidate)
+    if errors:
+        raise ValueError(",".join(errors))
+    return candidate
 
 
 def activation_matches_shadow_receipt(
@@ -292,8 +631,13 @@ __all__ = [
     "LOAD_SCHEMA",
     "LIFECYCLE_SCHEMA",
     "activation_matches_shadow_receipt",
+    "candidate_activation_from_pending",
     "qualified_activation_errors",
     "qualified_activation_load_receipt_errors",
+    "qualified_serving_canary_errors",
+    "pending_activation_from_serving",
     "seal_qualified_activation",
     "seal_qualified_activation_load_receipt",
+    "seal_serving_qualified_activation",
+    "seal_verified_qualified_activation",
 ]

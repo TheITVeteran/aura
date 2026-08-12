@@ -98,7 +98,7 @@ def _model():
 
 def _activation() -> dict:
     body = {
-        "schema": "aura.unified_intrinsic.qualified_activation.v1",
+        "schema": "aura.unified_intrinsic.qualified_activation.v2",
         "package_id": "qualified-fixture",
         "manifest_sha256": "b" * 64,
         "checkpoint_sha256": "d" * 64,
@@ -106,6 +106,8 @@ def _activation() -> dict:
         "pointer_sha256": "e" * 64,
         "lifecycle_result_sha256": "f" * 64,
         "canary_plan_sha256": "1" * 64,
+        "candidate_canary_sha256": "3" * 64,
+        "qualified_canary_sha256": "2" * 64,
         "families": ["khop", "modular", "register_trace"],
         "task_depths": [1, 2, 4],
         "recurrence_depth": 4,

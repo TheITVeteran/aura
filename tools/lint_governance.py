@@ -107,6 +107,11 @@ CANONICAL_PRIMITIVE_OWNERS: dict[str, frozenset[str]] = {
             # generation immutable and rmtree reclaiming only its own staged
             # temporaries. It accepts no caller path and publishes no adapter.
             "core/learning/verified_transition_measurement_chain.py",
+            # The recurrent shadow pointer is the sole CAS owner for one fixed,
+            # private release namespace. Its no-follow create/replace/fsync and
+            # digest-addressed retirement operations are the custody contract;
+            # callers cannot select an arbitrary destination or payload.
+            "core/brain/llm/unified_recurrent_shadow_pointer.py",
             "core/runtime/file_read_gateway.py",
             "core/runtime/file_write_gateway.py",
             "core/runtime/shutdown_artifact_store.py",
@@ -134,6 +139,10 @@ CANONICAL_PRIMITIVE_OWNERS: dict[str, frozenset[str]] = {
             # evidence blobs under one owner-private store. This owner accepts
             # no caller-selected filename or production mutation surface.
             "core/learning/verified_transition_episode.py",
+            # Qualified recurrent authority owns one fixed private activation
+            # document and retirement namespace. Directory custody is checked
+            # before all gateway-mediated publication and revocation.
+            "core/brain/llm/unified_recurrent_qualified_activation_store.py",
             "core/runtime/atomic_writer.py",
             "core/runtime/file_write_gateway.py",
             "core/runtime/post_action_receipt.py",
@@ -175,6 +184,10 @@ CANONICAL_PRIMITIVE_OWNERS: dict[str, frozenset[str]] = {
             # caller-selected file path and writes only from its named scope.
             "core/brain/external_execute_coordinator.py",
             "core/brain/llm/latent_cortex/persistence.py",
+            # Qualified recurrent authority publishes only its schema-bound,
+            # CAS-guarded activation and digest-addressed retirement receipt
+            # under a fixed Aura state root and named governance scopes.
+            "core/brain/llm/unified_recurrent_qualified_activation_store.py",
             # Ontogeny owns only its schema-bound experience, reservoir,
             # learned-head, and authority records under the configured Aura
             # data root (or an explicitly injected test store). Every write

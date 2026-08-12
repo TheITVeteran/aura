@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import time
 from types import SimpleNamespace
 
 import pytest
@@ -30,6 +31,8 @@ def _sha(value) -> str:
 def _qualified_evidence():
     from core.brain.llm.unified_recurrent_qualified_activation import (
         seal_qualified_activation,
+        seal_serving_qualified_activation,
+        seal_verified_qualified_activation,
     )
 
     pointer_body = {
@@ -70,7 +73,72 @@ def _qualified_evidence():
         "output_exposed": False,
     }
     lifecycle = {**lifecycle_body, "result_sha256": _sha(lifecycle_body)}
-    return seal_qualified_activation(manifest, lifecycle, pointer)
+    candidate = seal_qualified_activation(manifest, lifecycle, pointer)
+    evidence = [
+        {
+            "index": 0,
+            "task_id": "fresh-khop-1",
+            "family": "khop",
+            "task_depth": 1,
+            "request_sha256": "6" * 64,
+            "expected_token_ids_sha256": "7" * 64,
+            "generated_token_ids_sha256": "7" * 64,
+            "qualified_result_sha256": "9" * 64,
+            "latency_ms": 7,
+            "exact": True,
+        }
+    ]
+    canary_body = {
+        "schema": "aura.unified_intrinsic.qualified_serving_canary.v3",
+        "package_id": candidate["package_id"],
+        "manifest_sha256": candidate["manifest_sha256"],
+        "checkpoint_sha256": candidate["checkpoint_sha256"],
+        "controller_sha256": candidate["controller_sha256"],
+        "activation_sha256": candidate["activation_sha256"],
+        "battery_sha256": "8" * 64,
+        "started_at_unix": 1.0,
+        "completed_at_unix": 2.0,
+        "case_count": 1,
+        "exact_count": 1,
+        "total_latency_ms": 7,
+        "maximum_latency_ms": 7,
+        "evidence": evidence,
+        "supported": True,
+        "serving_authority": False,
+        "authority_remains_active": False,
+        "canary_authority_was_request_scoped": True,
+        "output_exposed": False,
+    }
+    pending = seal_verified_qualified_activation(
+        candidate,
+        {**canary_body, "result_sha256": _sha(canary_body)},
+    )
+    pending_canary_body = {
+        **canary_body,
+        "activation_sha256": pending["activation_sha256"],
+    }
+    return seal_serving_qualified_activation(
+        pending,
+        {**pending_canary_body, "result_sha256": _sha(pending_canary_body)},
+    )
+
+
+def _qualified_candidate() -> dict:
+    durable = _qualified_evidence()
+    body = {
+        key: value
+        for key, value in durable.items()
+        if key != "activation_sha256"
+    }
+    body.update(
+        {
+            "candidate_canary_sha256": "",
+            "qualified_canary_sha256": "",
+            "mode": "qualified_canary_only",
+            "serving_authority": False,
+        }
+    )
+    return {**body, "activation_sha256": _sha(body)}
 
 
 def _loaded_shadow_receipt() -> dict:
@@ -376,7 +444,7 @@ def test_worker_qualified_decode_requires_signed_matching_authority(
     monkeypatch.setattr(
         "core.brain.llm.unified_recurrent_qualified_decode."
         "authorize_qualified_decode_result",
-        lambda result, observed: authorized
+        lambda result, observed, **_kwargs: authorized
         if result is inactive and observed == activation
         else pytest.fail("worker authorized the wrong result or activation"),
     )
@@ -407,4 +475,123 @@ def test_worker_qualified_decode_requires_signed_matching_authority(
             qualified_activation=activation,
             model=object(),
             contract_key=key,
+        )
+
+
+def test_worker_canary_accepts_only_signed_request_scoped_authority(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    key = new_contract_key()
+    activation = _qualified_candidate()
+    request = seal_qualified_decode_request(
+        [1],
+        package_id="package",
+        controller_sha256="c" * 64,
+        family="khop",
+        task_depth=1,
+        max_tokens=4,
+    )
+    from core.brain.llm.unified_recurrent_qualified_decode import (
+        seal_qualified_canary_request_authority,
+    )
+    from core.brain.llm.unified_recurrent_shadow_battery import (
+        seal_shadow_canary_battery,
+    )
+
+    case = {
+        "task_id": "canary-khop-1",
+        "family": "khop",
+        "task_depth": 1,
+        "prompt_sha256": "1" * 64,
+        "expected_sha256": "2" * 64,
+        "public_token_ids": [1],
+        "expected_token_ids": [1],
+        "max_tokens": 4,
+    }
+    battery = seal_shadow_canary_battery(
+        [case],
+        seed=7,
+        replication_plan_sha256="3" * 64,
+        replication_verdict_sha256="4" * 64,
+        excluded_task_ids_sha256="5" * 64,
+        excluded_prompt_sha256s_sha256="6" * 64,
+        generator_source_sha256s={"generator.py": "7" * 64},
+    )
+    loaded = SimpleNamespace(
+        receipt=_loaded_shadow_receipt(),
+        canary_battery=battery,
+    )
+    inactive = {"serving_authority": False}
+    authorized = {
+        "serving_authority": True,
+        "qualified_activation_sha256": activation["activation_sha256"],
+    }
+    monkeypatch.setattr(
+        "core.brain.llm.unified_recurrent_qualified_decode.run_qualified_decode",
+        lambda *_args, **_kwargs: inactive,
+    )
+    monkeypatch.setattr(
+        "core.brain.llm.unified_recurrent_qualified_decode."
+        "authorize_qualified_decode_result",
+        lambda result, observed, **_kwargs: authorized
+        if result is inactive and observed == activation
+        else pytest.fail("worker authorized the wrong canary activation"),
+    )
+
+    def signed_job() -> dict:
+        now = time.time()
+        authority = seal_qualified_canary_request_authority(
+            activation_sha256=activation["activation_sha256"],
+            battery_sha256=battery["battery_sha256"],
+            case_index=0,
+            request_sha256=request["request_sha256"],
+            nonce="8" * 64,
+            issued_at_unix=now,
+            expires_at_unix=now + 300.0,
+        )
+        return sign_job(
+            {
+                "id": "canary-1",
+                "action": "unified_recurrent_qualified_decode",
+                "unified_recurrent_qualified_decode_contract": request,
+                "unified_recurrent_qualified_canary_activation": activation,
+                "unified_recurrent_qualified_canary_authority": authority,
+            },
+            key,
+            principal="mlx_client.unified_recurrent_qualified_decode",
+        )
+
+    response = mlx_worker._handle_unified_recurrent_qualified_decode(
+        signed_job(),
+        loaded_shadow=loaded,
+        qualified_activation=None,
+        model=object(),
+        contract_key=key,
+        consumed_canary_nonces=set(),
+    )
+    assert response["receipt"] == authorized
+
+    with pytest.raises(
+        RuntimeError,
+        match="qualified_canary_requires_inactive_durable_authority",
+    ):
+        mlx_worker._handle_unified_recurrent_qualified_decode(
+            signed_job(),
+            loaded_shadow=loaded,
+            qualified_activation=activation,
+            model=object(),
+            contract_key=key,
+            consumed_canary_nonces=set(),
+        )
+
+    tampered = signed_job()
+    tampered["unified_recurrent_qualified_canary_activation"]["task_depths"] = [9]
+    with pytest.raises(ValueError, match="invalid_contract_authority"):
+        mlx_worker._handle_unified_recurrent_qualified_decode(
+            tampered,
+            loaded_shadow=loaded,
+            qualified_activation=None,
+            model=object(),
+            contract_key=key,
+            consumed_canary_nonces=set(),
         )

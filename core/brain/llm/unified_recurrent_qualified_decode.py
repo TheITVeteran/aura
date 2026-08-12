@@ -15,6 +15,7 @@ from core.learning.unified_intrinsic_recurrence import unified_recurrent_logits
 
 REQUEST_SCHEMA: Final = "aura.unified_intrinsic.qualified_decode_request.v1"
 RESULT_SCHEMA: Final = "aura.unified_intrinsic.qualified_decode_result.v1"
+CANARY_AUTHORITY_SCHEMA: Final = "aura.unified_intrinsic.qualified_canary_request.v1"
 MAX_PUBLIC_TOKENS: Final = 16_384
 MAX_ANSWER_TOKENS: Final = 32
 _FAMILIES: Final = frozenset({"khop", "modular", "register_trace"})
@@ -129,6 +130,107 @@ def qualified_decode_request_errors(value: Any) -> list[str]:
     ):
         errors.append("qualified_decode_public_tokens_invalid")
     return errors
+
+
+def seal_qualified_canary_request_authority(
+    *,
+    activation_sha256: str,
+    battery_sha256: str,
+    case_index: int,
+    request_sha256: str,
+    nonce: str,
+    issued_at_unix: float,
+    expires_at_unix: float,
+) -> dict[str, Any]:
+    """Bind provisional authority to one sealed battery case and short lease."""
+
+    body = {
+        "schema": CANARY_AUTHORITY_SCHEMA,
+        "activation_sha256": activation_sha256,
+        "battery_sha256": battery_sha256,
+        "case_index": case_index,
+        "request_sha256": request_sha256,
+        "nonce": nonce,
+        "issued_at_unix": issued_at_unix,
+        "expires_at_unix": expires_at_unix,
+    }
+    result = {**body, "authority_sha256": _sha(body)}
+    errors = qualified_canary_request_authority_errors(result)
+    if errors:
+        raise ValueError(",".join(errors))
+    return result
+
+
+def qualified_canary_request_authority_errors(value: Any) -> list[str]:
+    fields = {
+        "schema",
+        "activation_sha256",
+        "battery_sha256",
+        "case_index",
+        "request_sha256",
+        "nonce",
+        "issued_at_unix",
+        "expires_at_unix",
+        "authority_sha256",
+    }
+    if not isinstance(value, Mapping) or set(value) != fields:
+        return ["qualified_canary_authority_fields_differ"]
+    body = {key: item for key, item in value.items() if key != "authority_sha256"}
+    issued = value.get("issued_at_unix")
+    expires = value.get("expires_at_unix")
+    if (
+        value.get("schema") != CANARY_AUTHORITY_SCHEMA
+        or value.get("authority_sha256") != _sha(body)
+        or not _is_sha(value.get("activation_sha256"))
+        or not _is_sha(value.get("battery_sha256"))
+        or not _is_sha(value.get("request_sha256"))
+        or type(value.get("case_index")) is not int
+        or value["case_index"] < 0
+        or not _is_sha(value.get("nonce"))
+        or not isinstance(issued, (int, float))
+        or isinstance(issued, bool)
+        or not isinstance(expires, (int, float))
+        or isinstance(expires, bool)
+        or not float(issued) < float(expires) <= float(issued) + 3600.0
+    ):
+        return ["qualified_canary_authority_invalid"]
+    return []
+
+
+def qualified_canary_authority_matches(
+    authority: Mapping[str, Any],
+    *,
+    activation: Mapping[str, Any],
+    request: Mapping[str, Any],
+    battery: Mapping[str, Any],
+    now_unix: float | None = None,
+) -> bool:
+    """Prove a provisional request is one exact case from the loaded package."""
+
+    if qualified_canary_request_authority_errors(authority):
+        return False
+    now = time.time() if now_unix is None else float(now_unix)
+    cases = battery.get("cases")
+    index = authority.get("case_index")
+    if (
+        not isinstance(cases, list)
+        or type(index) is not int
+        or not 0 <= index < len(cases)
+        or not float(authority["issued_at_unix"]) - 5.0 <= now
+        or now > float(authority["expires_at_unix"])
+        or authority.get("activation_sha256") != activation.get("activation_sha256")
+        or authority.get("battery_sha256") != battery.get("battery_sha256")
+        or authority.get("request_sha256") != request.get("request_sha256")
+    ):
+        return False
+    case = cases[index]
+    return bool(
+        isinstance(case, Mapping)
+        and case.get("public_token_ids") == request.get("public_token_ids")
+        and case.get("family") == request.get("family")
+        and case.get("task_depth") == request.get("task_depth")
+        and case.get("max_tokens") == request.get("max_tokens")
+    )
 
 
 def _occurrences(row: Sequence[int], pattern: tuple[int, ...], *, start: int = 0) -> tuple[int, ...]:
@@ -310,6 +412,7 @@ def qualified_decode_result_errors(
     expected_controller_sha256: str = "",
     expected_family: str = "",
     expected_task_depth: int | None = None,
+    expected_canary_authority: bool = False,
 ) -> list[str]:
     """Validate a decoded result and its optional serving authority binding."""
 
@@ -374,11 +477,23 @@ def qualified_decode_result_errors(
             or (expected_activation_sha256 and activation_sha != expected_activation_sha256)
         ):
             errors.append("qualified_decode_result_authority_invalid")
+    elif authority_source == "qualified_canary_request":
+        if (
+            value.get("serving_authority") is not False
+            or not _is_sha(activation_sha)
+            or not expected_canary_authority
+            or (
+                expected_activation_sha256
+                and activation_sha != expected_activation_sha256
+            )
+        ):
+            errors.append("qualified_decode_result_canary_authority_invalid")
     elif (
         value.get("serving_authority") is not False
         or activation_sha != ""
         or authority_source != "qualified_activation_required_by_caller"
         or expected_activation_sha256
+        or expected_canary_authority
     ):
         errors.append("qualified_decode_result_inactive_authority_invalid")
     return errors
@@ -387,6 +502,8 @@ def qualified_decode_result_errors(
 def authorize_qualified_decode_result(
     result: Mapping[str, Any],
     activation: Mapping[str, Any],
+    *,
+    canary_only: bool = False,
 ) -> dict[str, Any]:
     """Bind one typed result to an independently admitted activation."""
 
@@ -401,7 +518,20 @@ def authorize_qualified_decode_result(
     if activation_errors:
         raise UnifiedRecurrentQualifiedDecodeError(",".join(activation_errors))
     if (
-        activation.get("serving_authority") is not True
+        (
+            canary_only
+            and (
+                activation.get("mode") != "qualified_canary_only"
+                or activation.get("serving_authority") is not False
+            )
+        )
+        or (
+            not canary_only
+            and (
+                activation.get("mode") != "qualified_typed_only"
+                or activation.get("serving_authority") is not True
+            )
+        )
         or result.get("package_id") != activation.get("package_id")
         or result.get("controller_sha256") != activation.get("controller_sha256")
         or result.get("family") not in set(activation.get("families") or ())
@@ -417,8 +547,12 @@ def authorize_qualified_decode_result(
     }
     body.update(
         {
-            "serving_authority": True,
-            "authority_source": "qualified_activation",
+            "serving_authority": not canary_only,
+            "authority_source": (
+                "qualified_canary_request"
+                if canary_only
+                else "qualified_activation"
+            ),
             "qualified_activation_sha256": activation["activation_sha256"],
         }
     )
@@ -427,6 +561,7 @@ def authorize_qualified_decode_result(
         authorized,
         expected_request_sha256=str(result.get("request_sha256") or ""),
         expected_activation_sha256=str(activation.get("activation_sha256") or ""),
+        expected_canary_authority=canary_only,
     )
     if errors:
         raise UnifiedRecurrentQualifiedDecodeError(",".join(errors))
@@ -535,14 +670,18 @@ def run_qualified_decode(
 
 __all__ = [
     "MAX_ANSWER_TOKENS",
+    "CANARY_AUTHORITY_SCHEMA",
     "REQUEST_SCHEMA",
     "RESULT_SCHEMA",
     "UnifiedRecurrentQualifiedDecodeError",
     "authorize_qualified_decode_result",
     "classify_public_program",
     "qualified_decode_request_errors",
+    "qualified_canary_authority_matches",
+    "qualified_canary_request_authority_errors",
     "qualified_decode_result_errors",
     "run_qualified_decode",
     "seal_qualified_decode_request",
+    "seal_qualified_canary_request_authority",
     "validate_qualified_answer",
 ]

@@ -7,17 +7,24 @@ import json
 import pytest
 
 from core.brain.llm.unified_recurrent_qualified_activation import (
+    QUALIFIED_CANARY_SCHEMA,
     activation_matches_shadow_receipt,
     qualified_activation_errors,
     qualified_activation_load_receipt_errors,
+    qualified_serving_canary_errors,
     seal_qualified_activation,
     seal_qualified_activation_load_receipt,
+    seal_serving_qualified_activation,
+    seal_verified_qualified_activation,
 )
 from core.brain.llm.unified_recurrent_qualified_activation_store import (
     UnifiedRecurrentQualifiedActivationStoreError,
     deactivate_qualified_activation,
     publish_qualified_activation,
     read_qualified_activation,
+)
+from core.brain.llm.unified_recurrent_shadow_battery import (
+    seal_shadow_canary_battery,
 )
 from core.runtime.atomic_writer import atomic_write_bytes, ensure_private_directory
 
@@ -70,16 +77,205 @@ def _evidence():
     return manifest, lifecycle, pointer
 
 
-def test_supported_lifecycle_can_issue_typed_only_authority() -> None:
+def _durable_activation() -> dict:
+    manifest, lifecycle, pointer = _evidence()
+    candidate = seal_qualified_activation(manifest, lifecycle, pointer)
+    canary = _canary(candidate)
+    pending = seal_verified_qualified_activation(candidate, canary)
+    return seal_serving_qualified_activation(pending, _canary(pending))
+
+
+def _canary(activation: dict, *, serving: bool = False) -> dict:
+    evidence = [
+        {
+            "index": 0,
+            "task_id": "fresh-khop-1",
+            "family": "khop",
+            "task_depth": 2,
+            "request_sha256": "6" * 64,
+            "expected_token_ids_sha256": "7" * 64,
+            "generated_token_ids_sha256": "7" * 64,
+            "qualified_result_sha256": "9" * 64,
+            "latency_ms": 7,
+            "exact": True,
+        }
+    ]
+    canary_body = {
+        "schema": QUALIFIED_CANARY_SCHEMA,
+        "package_id": activation["package_id"],
+        "manifest_sha256": activation["manifest_sha256"],
+        "checkpoint_sha256": activation["checkpoint_sha256"],
+        "controller_sha256": activation["controller_sha256"],
+        "activation_sha256": activation["activation_sha256"],
+        "battery_sha256": "8" * 64,
+        "started_at_unix": 1.0,
+        "completed_at_unix": 2.0,
+        "case_count": 1,
+        "exact_count": 1,
+        "total_latency_ms": 7,
+        "maximum_latency_ms": 7,
+        "evidence": evidence,
+        "supported": True,
+        "serving_authority": serving,
+        "authority_remains_active": serving,
+        "canary_authority_was_request_scoped": not serving,
+        "output_exposed": False,
+    }
+    return {**canary_body, "result_sha256": _sha(canary_body)}
+
+
+def _battery_canary(activation: dict) -> tuple[dict, dict]:
+    cases = [
+        {
+            "task_id": "fresh-khop-1",
+            "family": "khop",
+            "task_depth": 1,
+            "prompt_sha256": "1" * 64,
+            "expected_sha256": "2" * 64,
+            "public_token_ids": [10],
+            "expected_token_ids": [20],
+            "max_tokens": 1,
+        },
+        {
+            "task_id": "fresh-modular-1",
+            "family": "modular",
+            "task_depth": 2,
+            "prompt_sha256": "3" * 64,
+            "expected_sha256": "4" * 64,
+            "public_token_ids": [11],
+            "expected_token_ids": [21],
+            "max_tokens": 1,
+        },
+    ]
+    battery = seal_shadow_canary_battery(
+        cases,
+        seed=7,
+        replication_plan_sha256="5" * 64,
+        replication_verdict_sha256="6" * 64,
+        excluded_task_ids_sha256="7" * 64,
+        excluded_prompt_sha256s_sha256="8" * 64,
+        generator_source_sha256s={"generator.py": "9" * 64},
+    )
+    evidence = []
+    for index, case in enumerate(battery["cases"]):
+        expected = _sha(case["expected_token_ids"])
+        evidence.append(
+            {
+                "index": index,
+                "task_id": case["task_id"],
+                "family": case["family"],
+                "task_depth": case["task_depth"],
+                "request_sha256": case["request_sha256"],
+                "expected_token_ids_sha256": expected,
+                "generated_token_ids_sha256": expected,
+                "qualified_result_sha256": str(index + 1) * 64,
+                "latency_ms": index + 1,
+                "exact": True,
+            }
+        )
+    body = {
+        "schema": QUALIFIED_CANARY_SCHEMA,
+        "package_id": activation["package_id"],
+        "manifest_sha256": activation["manifest_sha256"],
+        "checkpoint_sha256": activation["checkpoint_sha256"],
+        "controller_sha256": activation["controller_sha256"],
+        "activation_sha256": activation["activation_sha256"],
+        "battery_sha256": battery["battery_sha256"],
+        "started_at_unix": 1.0,
+        "completed_at_unix": 2.0,
+        "case_count": 2,
+        "exact_count": 2,
+        "total_latency_ms": 3,
+        "maximum_latency_ms": 2,
+        "evidence": evidence,
+        "supported": True,
+        "serving_authority": False,
+        "authority_remains_active": False,
+        "canary_authority_was_request_scoped": True,
+        "output_exposed": False,
+    }
+    return battery, {**body, "result_sha256": _sha(body)}
+
+
+def _reseal_canary(canary: dict) -> dict:
+    body = {key: value for key, value in canary.items() if key != "result_sha256"}
+    return {**body, "result_sha256": _sha(body)}
+
+
+def test_supported_lifecycle_issues_only_nonserving_canary_candidate() -> None:
     manifest, lifecycle, pointer = _evidence()
 
     activation = seal_qualified_activation(manifest, lifecycle, pointer)
 
     assert qualified_activation_errors(activation) == []
-    assert activation["serving_authority"] is True
-    assert activation["mode"] == "qualified_typed_only"
+    assert activation["serving_authority"] is False
+    assert activation["mode"] == "qualified_canary_only"
+    assert activation["qualified_canary_sha256"] == ""
     assert activation["ordinary_chat_authorized"] is False
     assert activation["arbitrary_reasoning_authorized"] is False
+
+
+def test_durable_authority_requires_the_complete_exact_canary_artifact() -> None:
+    manifest, lifecycle, pointer = _evidence()
+    candidate = seal_qualified_activation(manifest, lifecycle, pointer)
+    canary = _canary(candidate)
+
+    assert qualified_serving_canary_errors(
+        canary,
+        expected_activation=candidate,
+    ) == []
+    pending = seal_verified_qualified_activation(candidate, canary)
+    assert pending["candidate_canary_sha256"] == canary["result_sha256"]
+    assert pending["qualified_canary_sha256"] == ""
+    pending_canary = _canary(pending)
+    serving = seal_serving_qualified_activation(pending, pending_canary)
+    assert serving["qualified_canary_sha256"] == pending_canary["result_sha256"]
+
+    incomplete = {
+        "schema": QUALIFIED_CANARY_SCHEMA,
+        "supported": True,
+        "serving_authority": False,
+        "authority_remains_active": False,
+        "canary_authority_was_request_scoped": True,
+    }
+    incomplete["result_sha256"] = _sha(incomplete)
+    with pytest.raises(ValueError, match="not_admissible"):
+        seal_verified_qualified_activation(candidate, incomplete)
+
+
+@pytest.mark.parametrize("mutation", ["foreign", "omitted", "reordered", "wrong_answer"])
+def test_canary_must_match_exact_ordered_sealed_battery(mutation: str) -> None:
+    manifest, lifecycle, pointer = _evidence()
+    candidate = seal_qualified_activation(manifest, lifecycle, pointer)
+    battery, canary = _battery_canary(candidate)
+
+    assert qualified_serving_canary_errors(
+        canary,
+        expected_activation=candidate,
+        expected_battery=battery,
+    ) == []
+    attacked = copy.deepcopy(canary)
+    if mutation == "foreign":
+        attacked["battery_sha256"] = "f" * 64
+    elif mutation == "omitted":
+        attacked["evidence"] = attacked["evidence"][:1]
+        attacked["case_count"] = 1
+        attacked["exact_count"] = 1
+        attacked["total_latency_ms"] = 1
+        attacked["maximum_latency_ms"] = 1
+    elif mutation == "reordered":
+        attacked["evidence"].reverse()
+        for index, row in enumerate(attacked["evidence"]):
+            row["index"] = index
+    else:
+        attacked["evidence"][0]["generated_token_ids_sha256"] = "f" * 64
+    attacked = _reseal_canary(attacked)
+
+    assert qualified_serving_canary_errors(
+        attacked,
+        expected_activation=candidate,
+        expected_battery=battery,
+    )
 
 
 @pytest.mark.parametrize(
@@ -155,8 +351,7 @@ def test_activation_must_match_the_loaded_shadow_exactly() -> None:
 
 
 def test_load_receipt_is_explicitly_active_or_inactive() -> None:
-    manifest, lifecycle, pointer = _evidence()
-    activation = seal_qualified_activation(manifest, lifecycle, pointer)
+    activation = _durable_activation()
 
     active = seal_qualified_activation_load_receipt(
         configured=True,
@@ -178,8 +373,7 @@ def test_load_receipt_is_explicitly_active_or_inactive() -> None:
 
 
 def test_inactive_load_receipt_cannot_retain_activation_authority() -> None:
-    manifest, lifecycle, pointer = _evidence()
-    activation = seal_qualified_activation(manifest, lifecycle, pointer)
+    activation = _durable_activation()
 
     receipt = seal_qualified_activation_load_receipt(
         configured=True,
@@ -191,14 +385,14 @@ def test_inactive_load_receipt_cannot_retain_activation_authority() -> None:
     body = {key: value for key, value in receipt.items() if key != "receipt_sha256"}
     receipt["receipt_sha256"] = _sha(body)
 
-    assert "inactive_qualified_activation_claims_state" in (
+    assert "pending_qualified_activation_state_invalid" in (
         qualified_activation_load_receipt_errors(receipt)
     )
 
 
 def test_activation_publication_is_pointer_bound_cas_and_revocable(tmp_path) -> None:
-    manifest, lifecycle, pointer = _evidence()
-    activation = seal_qualified_activation(manifest, lifecycle, pointer)
+    _manifest, _lifecycle, pointer = _evidence()
+    activation = _durable_activation()
     root = ensure_private_directory(tmp_path / "authority")
     pointer_path = root / "active.json"
     activation_path = root / "qualified-active.json"
@@ -244,9 +438,31 @@ def test_activation_publication_is_pointer_bound_cas_and_revocable(tmp_path) -> 
     assert not activation_path.exists()
 
 
-def test_activation_publication_rejects_an_unrelated_shadow_pointer(tmp_path) -> None:
+def test_nonserving_candidate_cannot_enter_durable_authority_store(tmp_path) -> None:
     manifest, lifecycle, pointer = _evidence()
-    activation = seal_qualified_activation(manifest, lifecycle, pointer)
+    candidate = seal_qualified_activation(manifest, lifecycle, pointer)
+    root = ensure_private_directory(tmp_path / "authority")
+    pointer_path = root / "active.json"
+    atomic_write_bytes(
+        pointer_path,
+        json.dumps(pointer, sort_keys=True, separators=(",", ":")).encode("ascii"),
+        mode=0o600,
+    )
+
+    with pytest.raises(
+        UnifiedRecurrentQualifiedActivationStoreError,
+        match="requires persisted typed authority",
+    ):
+        publish_qualified_activation(
+            candidate,
+            activation_path=root / "qualified-active.json",
+            shadow_pointer_path=pointer_path,
+        )
+
+
+def test_activation_publication_rejects_an_unrelated_shadow_pointer(tmp_path) -> None:
+    _manifest, _lifecycle, pointer = _evidence()
+    activation = _durable_activation()
     root = ensure_private_directory(tmp_path / "authority")
     pointer_path = root / "active.json"
     replacement = copy.deepcopy(pointer)
@@ -273,8 +489,8 @@ def test_activation_publication_rejects_an_unrelated_shadow_pointer(tmp_path) ->
 
 
 def test_activation_publication_requires_shared_pointer_custody(tmp_path) -> None:
-    manifest, lifecycle, pointer = _evidence()
-    activation = seal_qualified_activation(manifest, lifecycle, pointer)
+    _manifest, _lifecycle, pointer = _evidence()
+    activation = _durable_activation()
     pointer_root = ensure_private_directory(tmp_path / "pointer-authority")
     activation_root = ensure_private_directory(tmp_path / "other-authority")
     pointer_path = pointer_root / "active.json"

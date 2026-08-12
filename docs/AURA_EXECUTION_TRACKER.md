@@ -46247,3 +46247,55 @@ recurrent arms `5/5`, compiled execution `5/5`, grammar lesion `0/5`, and
 pointer lesion `3/5`. That is useful mechanism evidence but no trained-over-
 control gain. No qualified authority is active, and no broad reasoning,
 fusion, frontier or `WOW Signal` claim is made.
+
+## Checkpoint 2026-08-12-285: Promotion Cannot Turn a Canary Into Authority
+
+The post-verdict path is now one independently supervised, restart-safe
+transaction rather than a set of operator steps. A source-bound promotion
+controller waits for the canonical powered verdict, independently recomputes
+it, materializes only a supported exact controller, runs the two-load shadow
+lifecycle and conditionally performs qualified activation. Each long stage has
+an authenticated active-stage receipt, exact PID/start-token/process-group
+identity, an accumulating signed inventory of descendant identities, bounded
+timeout, controller-death watchdog, dedicated `caffeinate` lineage and restart
+reconciliation. Recovery refuses an unknown group member and cannot erase the
+receipt until the authenticated group is empty, including when its leader died
+first. Package verification separately binds the training campaign's source
+epoch while the controller config binds the later clean promotion capsule; the
+two are no longer incorrectly required to be the same commit. A refuted
+scientific verdict terminates without package or serving publication.
+
+Qualified activation now has three structurally different states. The first is
+a non-serving in-memory candidate that cannot enter the durable authority
+store. Its canary request is signed into the worker contract and bound to one
+exact ordered case in the package's sealed battery, its request digest, a
+one-use nonce and a short expiry. The evidence commits the expected and
+generated token digests without publishing either token sequence. A successful
+candidate canary seals only a persisted `qualified_typed_pending` document;
+workers report that document as configured but inert and cannot use it for
+ordinary serving. A fresh worker must cold-load that exact pending identity and
+pass the complete battery again through request-scoped authority. Only that
+second canary can atomically replace pending state with serving
+`qualified_typed_only` authority. Thus neither candidate success nor durable
+discoverability alone can authorize an answer.
+
+The legacy one-phase activation entry point is retired. Missing, stale,
+malformed or identity-mismatched canary evidence causes exact CAS revocation of
+both durable authority and shadow pointer. Candidate and durable canary files
+are separately named and interrupted artifacts are quarantined, preventing an
+`O_EXCL` restart loop. A stage child must own its process group before doing
+work; its parent-death monitor terminates only that exact group and otherwise
+terminates the child itself. The durable store directly rejects non-serving
+candidate documents, and a closed MLX client can no longer be reused for the
+required second cold load.
+
+Validation is green under Aura's Python 3.12 runtime: `179/179` broad
+qualified-runtime, ingress, foreground, authority, IPC, lifecycle, pointer,
+canary and promotion tests pass `254/254`; canonical smoke passes `104/104`; governance
+ownership, layering, compilation, focused Ruff and diff hygiene pass. The
+independently supervised CP281 powered replication was not disturbed. It
+remains scientifically unresolved, so no decoded gain, retained runtime
+authority, broad reasoning, fusion, frontier result or `WOW Signal` is claimed.
+The completion envelope remains `913/920` (approximately `99.2%`). Next is the
+frozen powered adjudication; only a supported verdict may enter this promotion
+transaction, after which broader-domain replication and final soak remain.

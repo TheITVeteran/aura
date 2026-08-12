@@ -697,6 +697,30 @@
       "scope": "<module>._store_probe_cache_to_disk"
     },
     {
+      "callee": "core.runtime.atomic_writer.ensure_private_directory",
+      "canonical_owner": true,
+      "category": "direct_atomic_file_write",
+      "count": 1,
+      "path": "core/brain/llm/unified_recurrent_qualified_activation_store.py",
+      "scope": "<module>._publish_qualified_activation_locked"
+    },
+    {
+      "callee": "core.runtime.atomic_writer.ensure_private_directory",
+      "canonical_owner": true,
+      "category": "direct_atomic_file_write",
+      "count": 1,
+      "path": "core/brain/llm/unified_recurrent_qualified_activation_store.py",
+      "scope": "<module>.deactivate_qualified_activation"
+    },
+    {
+      "callee": "core.runtime.atomic_writer.ensure_private_directory",
+      "canonical_owner": true,
+      "category": "direct_atomic_file_write",
+      "count": 1,
+      "path": "core/brain/llm/unified_recurrent_qualified_activation_store.py",
+      "scope": "<module>.publish_qualified_activation"
+    },
+    {
       "callee": "core.runtime.atomic_writer.atomic_write_text",
       "canonical_owner": false,
       "category": "direct_atomic_file_write",
@@ -3591,6 +3615,22 @@
       "count": 1,
       "path": "core/brain/llm/substrate_readout_training.py",
       "scope": "<module>.save_fit"
+    },
+    {
+      "callee": "core.runtime.file_write_gateway.get_file_write_gateway().write_bytes",
+      "canonical_owner": true,
+      "category": "file_write_gateway",
+      "count": 1,
+      "path": "core/brain/llm/unified_recurrent_qualified_activation_store.py",
+      "scope": "<module>._publish_qualified_activation_locked"
+    },
+    {
+      "callee": "<file_write_gateway>.delete_file",
+      "canonical_owner": true,
+      "category": "file_write_gateway",
+      "count": 1,
+      "path": "core/brain/llm/unified_recurrent_qualified_activation_store.py",
+      "scope": "<module>.deactivate_qualified_activation"
     },
     {
       "callee": "core.runtime.file_write_gateway.get_file_write_gateway().write_bytes",
@@ -8447,6 +8487,54 @@
       "count": 1,
       "path": "core/brain/llm/model_lifecycle.py",
       "scope": "<module>.ModelLifecycleManager._default_downloader._download"
+    },
+    {
+      "callee": "os.replace",
+      "canonical_owner": true,
+      "category": "raw_file_mutation",
+      "count": 1,
+      "path": "core/brain/llm/unified_recurrent_shadow_pointer.py",
+      "scope": "<module>._deactivate_shadow_pointer_locked"
+    },
+    {
+      "callee": "pointer_path.unlink",
+      "canonical_owner": true,
+      "category": "raw_file_mutation",
+      "count": 1,
+      "path": "core/brain/llm/unified_recurrent_shadow_pointer.py",
+      "scope": "<module>._deactivate_shadow_pointer_locked"
+    },
+    {
+      "callee": "lexical.mkdir",
+      "canonical_owner": true,
+      "category": "raw_file_mutation",
+      "count": 1,
+      "path": "core/brain/llm/unified_recurrent_shadow_pointer.py",
+      "scope": "<module>._private_directory"
+    },
+    {
+      "callee": "candidate.unlink",
+      "canonical_owner": true,
+      "category": "raw_file_mutation",
+      "count": 1,
+      "path": "core/brain/llm/unified_recurrent_shadow_pointer.py",
+      "scope": "<module>._publish_shadow_pointer_locked"
+    },
+    {
+      "callee": "os.open",
+      "canonical_owner": true,
+      "category": "raw_file_mutation",
+      "count": 1,
+      "path": "core/brain/llm/unified_recurrent_shadow_pointer.py",
+      "scope": "<module>._publish_shadow_pointer_locked"
+    },
+    {
+      "callee": "os.replace",
+      "canonical_owner": true,
+      "category": "raw_file_mutation",
+      "count": 1,
+      "path": "core/brain/llm/unified_recurrent_shadow_pointer.py",
+      "scope": "<module>._publish_shadow_pointer_locked"
     },
     {
       "callee": "self._dedup_path.parent.mkdir",
@@ -16658,6 +16746,6 @@
     }
   ],
   "description": "Exact AST effect-ownership debt ratchet; refresh only after reviewed change",
-  "inventory_sha256": "b08871eb4817252cdbebf58680ca8ea7e52c7c2446e3031f61c741861ff081eb",
+  "inventory_sha256": "3181c4333f99a6b764aa8b55a9e7674914cc40c21513fd0e1e8c7b05a84405f5",
   "schema_version": 1
 }

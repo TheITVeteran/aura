@@ -60,6 +60,8 @@ PRIVILEGED_CONTRACT_FIELDS: tuple[str, ...] = (
     "disable_prompt_cache",
     "action_state_runtime",
     "unified_recurrent_qualified_decode_contract",
+    "unified_recurrent_qualified_canary_activation",
+    "unified_recurrent_qualified_canary_authority",
     "unified_recurrent_shadow_contract",
     "schema",
 )
