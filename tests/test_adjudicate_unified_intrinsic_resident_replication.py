@@ -7,7 +7,7 @@ from pathlib import Path
 import pytest
 
 from tools import adjudicate_unified_intrinsic_resident_replication as replication
-from tools.unified_intrinsic_resident_identity import canonical_sha256
+from tools.unified_intrinsic_resident_identity import canonical_bytes, canonical_sha256
 
 SEEDS = replication.DEFAULT_SEEDS
 
@@ -20,6 +20,8 @@ def _arguments(campaign: Path, **overrides: object) -> argparse.Namespace:
         "seeds": SEEDS,
         "per_cell": 1,
         "max_tokens": 32,
+        "poll_interval": 0.01,
+        "controller_timeout": 60.0,
         "task_depths": (1, 2, 4),
         "recurrence_depths": (4,),
     }
@@ -94,6 +96,30 @@ def _report(seed: int, *, task_prefix: str | None = None) -> dict:
         },
     }
     return {**body, "report_sha256": canonical_sha256(body)}
+
+
+def _neutralize_treatment(report: dict) -> dict:
+    changed = copy.deepcopy(report)
+    changed["arm_results"]["trained_t4"] = {
+        "correct": 1,
+        "tasks": 9,
+        "accuracy": 1 / 9,
+        "eos_stops": 9,
+    }
+    for candidate in changed["candidates"]:
+        if candidate["arm"] == "trained_t4":
+            candidate["correct"] = candidate["task_id"].endswith("task-0")
+    changed["paired_training_effects"]["4"].update(
+        {
+            "trained_correct": 1,
+            "net_correct_gain": 0,
+            "wrong_to_right": 0,
+            "right_to_wrong": 0,
+        }
+    )
+    body = {key: value for key, value in changed.items() if key != "report_sha256"}
+    changed["report_sha256"] = canonical_sha256(body)
+    return changed
 
 
 def _installed_plan(campaign: Path) -> dict:
@@ -214,6 +240,21 @@ def test_adjudicate_rejects_cross_seed_task_or_prompt_reuse(
         replication.adjudicate(_arguments(tmp_path))
 
 
+def test_valid_negative_seed_produces_refutation_not_infrastructure_failure(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    reports = {seed: _report(seed) for seed in SEEDS}
+    reports[SEEDS[0]] = _neutralize_treatment(reports[SEEDS[0]])
+    _install_adjudication(tmp_path, monkeypatch, reports)
+
+    verdict = replication.adjudicate(_arguments(tmp_path))
+
+    assert verdict["verdict"] == replication.REFUTED
+    assert verdict["supported"] is False
+    assert verdict["checks"]["every_seed_positive_matched_control_gain"] is False
+
+
 def test_adjudicate_contains_malformed_single_seed_evidence(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -228,3 +269,103 @@ def test_adjudicate_contains_malformed_single_seed_evidence(
 
     with pytest.raises(replication.ResidentReplicationError, match="malformed"):
         replication.adjudicate(_arguments(tmp_path))
+
+
+def test_run_adjudicates_and_publishes_terminal_controller_state(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    plan_body = _installed_plan(tmp_path)
+    plan = {**plan_body, "plan_sha256": canonical_sha256(plan_body)}
+    config = _config(tmp_path)
+    monkeypatch.setattr(
+        replication,
+        "_load_plan",
+        lambda _args: (tmp_path, config, plan),
+    )
+    monkeypatch.setattr(
+        replication,
+        "_campaign_is_terminal",
+        lambda _campaign, _config: (True, {"completion_sha256": "e" * 64}),
+    )
+    monkeypatch.setattr(
+        replication,
+        "status",
+        lambda _args: {"complete": True, "evaluations": []},
+    )
+    expected = {
+        "verdict": replication.SUPPORTED,
+        "supported": True,
+        "verdict_sha256": "f" * 64,
+    }
+    monkeypatch.setattr(replication, "adjudicate", lambda _args: expected)
+    published: list[tuple[str, dict]] = []
+
+    def publish(
+        _arguments: argparse.Namespace,
+        _campaign: Path,
+        _config: dict,
+        _plan: dict,
+        state: str,
+        details: dict,
+    ) -> dict:
+        published.append((state, details))
+        return {"state": state}
+
+    monkeypatch.setattr(replication, "_publish_controller_status", publish)
+
+    result = replication.run(_arguments(tmp_path))
+
+    assert result["state"] == "completed"
+    assert result["supported"] is True
+    assert published[-1][0] == "completed"
+    assert published[-1][1]["verdict_sha256"] == "f" * 64
+
+
+def test_status_authenticates_controller_heartbeat_and_rejects_tampering(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    root = tmp_path / "resident-replication"
+    root.mkdir()
+    plan_body = _installed_plan(tmp_path)
+    plan = {**plan_body, "plan_sha256": canonical_sha256(plan_body)}
+    config = _config(tmp_path)
+    monkeypatch.setattr(
+        replication,
+        "_load_plan",
+        lambda _args: (tmp_path, config, plan),
+    )
+    monkeypatch.setattr(replication, "_controller_key", lambda _config: b"k" * 32)
+    monkeypatch.setattr(
+        replication.launcher.detached,
+        "_process_start_token",
+        lambda _pid: "process-token",
+    )
+    monkeypatch.setattr(
+        replication.launcher.detached,
+        "_identity_state",
+        lambda _pid, _token: "alive",
+    )
+    arguments = _arguments(tmp_path)
+    replication._publish_controller_status(
+        arguments,
+        tmp_path,
+        config,
+        plan,
+        "waiting_for_training",
+        {"training_state": "training"},
+    )
+
+    observed = replication.status(arguments)
+
+    assert observed["controller"]["state"] == "waiting_for_training"
+    assert observed["controller_liveness"] == "alive"
+
+    path = root / "controller-status.json"
+    tampered = replication._read_canonical(path)
+    tampered["state"] = "completed"
+    path.chmod(0o600)
+    path.write_bytes(canonical_bytes(tampered) + b"\n")
+    with pytest.raises(replication.ResidentReplicationError, match="authentication"):
+        replication.status(arguments)

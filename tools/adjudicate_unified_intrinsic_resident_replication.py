@@ -4,8 +4,12 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
+import hmac
 import json
+import os
 import sys
+import time
 from collections.abc import Mapping, Sequence
 from fractions import Fraction
 from pathlib import Path
@@ -33,6 +37,7 @@ from tools.unified_intrinsic_resident_identity import (  # noqa: E402
 
 PLAN_SCHEMA: Final = "aura.unified_intrinsic.resident_replication_plan.v1"
 VERDICT_SCHEMA: Final = "aura.unified_intrinsic.resident_replication_verdict.v1"
+CONTROLLER_STATUS_SCHEMA: Final = "aura.unified_intrinsic.resident_replication_controller_status.v1"
 SUPPORTED: Final = "supported_powered_resident_replication"
 REFUTED: Final = "refuted_powered_resident_replication"
 DEFAULT_SEEDS: Final = (20260811261, 20260811262, 20260811263)
@@ -88,6 +93,84 @@ def _replication_root(arguments: argparse.Namespace, campaign: Path) -> Path:
 
 def _plan_path(arguments: argparse.Namespace, campaign: Path) -> Path:
     return _replication_root(arguments, campaign) / "replication-plan.json"
+
+
+def _controller_status_path(arguments: argparse.Namespace, campaign: Path) -> Path:
+    return _replication_root(arguments, campaign) / "controller-status.json"
+
+
+def _controller_signature(body: Mapping[str, Any], key: bytes) -> str:
+    return hmac.new(key, canonical_bytes(dict(body)), hashlib.sha256).hexdigest()
+
+
+def _controller_key(config: Mapping[str, Any]) -> bytes:
+    return resident._key(  # noqa: SLF001
+        Path(config["paths"]["heartbeat_key"]),
+        expected_sha256=str(config["heartbeat_key_sha256"]),
+    )
+
+
+def _read_controller_status(
+    arguments: argparse.Namespace,
+    campaign: Path,
+    config: Mapping[str, Any],
+    plan: Mapping[str, Any],
+) -> dict[str, Any] | None:
+    path = _controller_status_path(arguments, campaign)
+    if not path.exists():
+        return None
+    status = _read_canonical(path)
+    body = {key: value for key, value in status.items() if key != "hmac_sha256"}
+    signature = status.get("hmac_sha256")
+    if (
+        status.get("schema") != CONTROLLER_STATUS_SCHEMA
+        or status.get("plan_sha256") != plan["plan_sha256"]
+        or status.get("campaign_config_sha256") != config["config_sha256"]
+        or type(status.get("sequence")) is not int
+        or status["sequence"] < 1
+        or not isinstance(signature, str)
+        or not hmac.compare_digest(
+            signature,
+            _controller_signature(body, _controller_key(config)),
+        )
+    ):
+        _fail("replication controller status authentication failed")
+    return status
+
+
+def _publish_controller_status(
+    arguments: argparse.Namespace,
+    campaign: Path,
+    config: Mapping[str, Any],
+    plan: Mapping[str, Any],
+    state: str,
+    details: Mapping[str, Any],
+) -> dict[str, Any]:
+    previous = _read_controller_status(arguments, campaign, config, plan)
+    body = {
+        "schema": CONTROLLER_STATUS_SCHEMA,
+        "campaign_id": config["campaign_id"],
+        "campaign_config_sha256": config["config_sha256"],
+        "plan_sha256": plan["plan_sha256"],
+        "sequence": 1 if previous is None else int(previous["sequence"]) + 1,
+        "state": state,
+        "controller_pid": os.getpid(),
+        "controller_start_token": launcher.detached._process_start_token(  # noqa: SLF001
+            os.getpid()
+        ),
+        "heartbeat_at": time.time(),
+        "details": dict(details),
+    }
+    status = {
+        **body,
+        "hmac_sha256": _controller_signature(body, _controller_key(config)),
+    }
+    atomic_write_bytes(
+        _controller_status_path(arguments, campaign),
+        canonical_bytes(status) + b"\n",
+        mode=0o600,
+    )
+    return status
 
 
 def prepare(arguments: argparse.Namespace) -> dict[str, Any]:
@@ -192,7 +275,7 @@ def _evaluation_arguments(
 
 
 def status(arguments: argparse.Namespace) -> dict[str, Any]:
-    campaign, _config, plan = _load_plan(arguments)
+    campaign, config, plan = _load_plan(arguments)
     rows: list[dict[str, Any]] = []
     for evaluation in plan["evaluations"]:
         output = Path(evaluation["output"])
@@ -202,11 +285,20 @@ def status(arguments: argparse.Namespace) -> dict[str, Any]:
             detail = launcher.status(_evaluation_arguments(campaign, plan, evaluation))
             state = str(detail["state"])
         rows.append({"seed": evaluation["seed"], "state": state, "detail": detail})
+    controller = _read_controller_status(arguments, campaign, config, plan)
+    controller_liveness = None
+    if controller is not None:
+        controller_liveness = launcher.detached._identity_state(  # noqa: SLF001
+            int(controller.get("controller_pid") or 0),
+            str(controller.get("controller_start_token") or ""),
+        )
     return {
         "schema": "aura.unified_intrinsic.resident_replication_status.v1",
         "plan_sha256": plan["plan_sha256"],
         "evaluations": rows,
         "complete": all(row["state"] == "completed" for row in rows),
+        "controller": controller,
+        "controller_liveness": controller_liveness,
     }
 
 
@@ -285,8 +377,6 @@ def adjudicate(arguments: argparse.Namespace) -> dict[str, Any]:
             raise ResidentReplicationError(
                 f"replication seed evidence is malformed: seed={evaluation['seed']}"
             ) from exc
-        if single_verdict.get("supported") is not True:
-            _fail(f"replication seed verdict is not supported: seed={evaluation['seed']}")
         candidates = report.get("candidates")
         if not isinstance(candidates, list):
             _fail("replication candidates are unavailable")
@@ -386,9 +476,105 @@ def adjudicate(arguments: argparse.Namespace) -> dict[str, Any]:
     return verdict
 
 
+def _campaign_is_terminal(
+    campaign: Path,
+    config: Mapping[str, Any],
+) -> tuple[bool, dict[str, Any]]:
+    completion_path = campaign / "completion-receipt.json"
+    if completion_path.exists():
+        _verified_config, completion = launcher._terminal_campaign(  # noqa: SLF001
+            campaign / "campaign.json"
+        )
+        return True, {"completion_sha256": completion["completion_sha256"]}
+    training = resident._inspect_status(config)  # noqa: SLF001
+    if training.get("effective_state") == "failed":
+        _fail("resident training failed before replication")
+    return False, {
+        "training_state": training.get("effective_state"),
+        "training_controller_liveness": training.get("controller_liveness"),
+    }
+
+
+def run(arguments: argparse.Namespace) -> dict[str, Any]:
+    campaign, config, plan = _load_plan(arguments)
+    deadline = time.monotonic() + float(arguments.controller_timeout)
+    try:
+        while time.monotonic() < deadline:
+            terminal, training = _campaign_is_terminal(campaign, config)
+            if not terminal:
+                _publish_controller_status(
+                    arguments,
+                    campaign,
+                    config,
+                    plan,
+                    "waiting_for_training",
+                    training,
+                )
+                time.sleep(float(arguments.poll_interval))
+                continue
+
+            observed = status(arguments)
+            if observed["complete"] is True:
+                verdict_arguments = argparse.Namespace(**vars(arguments))
+                verdict_arguments.verdict_output = (
+                    _replication_root(arguments, campaign) / "replication-verdict.json"
+                )
+                verdict = adjudicate(verdict_arguments)
+                final_state = "completed" if verdict["supported"] else "refuted"
+                controller = _publish_controller_status(
+                    arguments,
+                    campaign,
+                    config,
+                    plan,
+                    final_state,
+                    {
+                        **training,
+                        "verdict": verdict["verdict"],
+                        "verdict_sha256": verdict["verdict_sha256"],
+                    },
+                )
+                return {
+                    "state": final_state,
+                    "supported": verdict["supported"],
+                    "verdict": verdict,
+                    "controller": controller,
+                }
+
+            next_result = launch_next(arguments)
+            _publish_controller_status(
+                arguments,
+                campaign,
+                config,
+                plan,
+                str(next_result["state"]),
+                {
+                    **training,
+                    "seed": next_result.get("seed"),
+                    "evaluations": [
+                        {"seed": row["seed"], "state": row["state"]}
+                        for row in observed["evaluations"]
+                    ],
+                },
+            )
+            if next_result["state"] == "completed":
+                continue
+            time.sleep(float(arguments.poll_interval))
+        _fail("replication controller timed out")
+    except Exception as exc:
+        _publish_controller_status(
+            arguments,
+            campaign,
+            config,
+            plan,
+            "failed",
+            {"error_type": type(exc).__name__, "error": str(exc)},
+        )
+        raise
+
+
 def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("action", choices=("prepare", "status", "launch-next", "adjudicate"))
+    parser.add_argument("action", choices=("prepare", "status", "launch-next", "adjudicate", "run"))
     parser.add_argument("campaign", type=Path)
     parser.add_argument("--output", type=Path)
     parser.add_argument("--verdict-output", type=Path)
@@ -399,6 +585,8 @@ def _parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--per-cell", type=int, default=1)
     parser.add_argument("--max-tokens", type=int, default=32)
+    parser.add_argument("--poll-interval", type=float, default=15.0)
+    parser.add_argument("--controller-timeout", type=float, default=16 * 60 * 60)
     parser.add_argument(
         "--task-depths",
         type=lambda value: launcher._csv_positive_ints(value, minimum=1),  # noqa: SLF001
@@ -415,7 +603,13 @@ def _parser() -> argparse.ArgumentParser:
 def main(argv: Sequence[str] | None = None) -> int:
     parser = _parser()
     arguments = parser.parse_args(argv)
-    if arguments.per_cell < 1 or arguments.max_tokens < 1 or len(arguments.recurrence_depths) != 1:
+    if (
+        arguments.per_cell < 1
+        or arguments.max_tokens < 1
+        or arguments.poll_interval <= 0.0
+        or arguments.controller_timeout <= arguments.poll_interval
+        or len(arguments.recurrence_depths) != 1
+    ):
         parser.error("replication numeric contract is invalid")
     try:
         result = {
@@ -423,12 +617,13 @@ def main(argv: Sequence[str] | None = None) -> int:
             "status": status,
             "launch-next": launch_next,
             "adjudicate": adjudicate,
+            "run": run,
         }[arguments.action](arguments)
     except (OSError, ValueError, ResidentReplicationError) as exc:
         print(f"resident replication failed: {exc}", file=sys.stderr)
         return 2
     print(json.dumps(result, indent=2, sort_keys=True))
-    if arguments.action == "adjudicate" and result.get("supported") is not True:
+    if arguments.action in {"adjudicate", "run"} and result.get("supported") is not True:
         return 1
     return 0
 
