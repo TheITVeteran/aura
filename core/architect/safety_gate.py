@@ -21,6 +21,7 @@ from core.architect.models import (
 )
 from core.runtime.file_write_gateway import get_file_write_gateway
 from core.runtime.subprocess_gateway import get_subprocess_gateway
+from core.runtime.errors import record_degradation
 
 
 # ---------------------------------------------------------------------------
@@ -85,6 +86,11 @@ FREEZE_DURATIONS: dict[str, float] = {
 MAX_PLAN_FILES = 5
 MAX_PLAN_LOC = 200
 REPEAT_FILE_WINDOW_S = 7200.0        # 2 hours
+#: How long the architect stays frozen when its own safety state cannot be
+#: read. Long enough that the freeze cannot be waited out inside a session,
+#: because the correct response to "the restraints are unreadable" is a
+#: person looking, not a timer.
+UNREADABLE_STATE_FREEZE_S = 24 * 60 * 60
 T3_OBSERVATION_WINDOW_S = 1800.0     # 30 min before next T3 allowed
 
 # Surfaces that trigger indirect escalation for T3 helpers
@@ -115,12 +121,42 @@ class ASASafetyGate:
     # -- state persistence ---------------------------------------------------
 
     def _load_state(self) -> dict[str, Any]:
-        if self.state_path.exists():
-            try:
-                return json.loads(self.state_path.read_text(encoding="utf-8"))
-            except (json.JSONDecodeError, OSError):
-                return self._empty_state()
-        return self._empty_state()
+        """Read the persisted safety state, or hold closed without it.
+
+        An unreadable file used to become `_empty_state()`, which clears
+        `frozen_until`, zeroes `consecutive_failures` and empties the
+        promotion and observation lists. Every one of those is a RESTRAINT,
+        so corrupting this file — or writing it non-atomically and crashing
+        mid-write — was a way to end a freeze early and start again with a
+        clean record. The gate's own memory of why it stopped is the thing
+        least able to afford a permissive default.
+
+        An ABSENT file is a genuinely fresh start and still gets the empty
+        state. A file that exists and will not parse is damage, and the gate
+        holds closed until a person looks at it.
+        """
+        if not self.state_path.exists():
+            return self._empty_state()
+        try:
+            loaded = json.loads(self.state_path.read_text(encoding="utf-8"))
+        except (json.JSONDecodeError, OSError) as exc:
+            record_degradation(
+                "architect_safety_gate",
+                exc,
+                severity="critical",
+                action="froze the architect because its safety state was unreadable",
+                extra={"state_path": str(self.state_path)},
+            )
+            frozen = self._empty_state()
+            frozen["frozen_until"] = time.time() + UNREADABLE_STATE_FREEZE_S
+            frozen["freeze_reason"] = (
+                f"safety state at {self.state_path} is unreadable "
+                f"({type(exc).__name__}); restraints cannot be established"
+            )
+            return frozen
+        if not isinstance(loaded, dict):
+            return self._empty_state()
+        return loaded
 
     @staticmethod
     def _empty_state() -> dict[str, Any]:
@@ -310,6 +346,18 @@ class ASASafetyGate:
                 source="architect.safety_gate.git_status",
                 accelerator_capability="none",
             )
+            # returncode FIRST. This inspected only stdout, so a git that
+            # exited non-zero with nothing on stdout — not a repository, an
+            # index lock held by another process, a permissions failure —
+            # left `dirty` empty and reported the tree CLEAN. The check that
+            # exists to stop the architect editing a repo with uncommitted
+            # work passed hardest exactly when git was broken.
+            if result.returncode != 0:
+                stderr = str(getattr(result, "stderr", "") or "").strip()
+                return False, (
+                    f"git status failed (exit {result.returncode}): "
+                    f"{stderr[:200] or 'no stderr'}"
+                )
             dirty = result.stdout.strip()
             if dirty:
                 return False, f"git not clean: {dirty[:200]}"

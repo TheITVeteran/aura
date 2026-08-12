@@ -842,7 +842,20 @@ def test_small_runtime_service_batch_uses_registry():
     install_service_resolver(lambda name, default=None: services.get(name, default))
     try:
         anchor = identity_anchor.IdentityAnchor()
-        assert anchor.get_identity() == "Aura-abcdefgh"
+        # Identity comes from the DURABLE ENTITY KEY, not from the state
+        # repository this batch installs. That dependency was removed on
+        # purpose — reading identity out of AuraState is what made it
+        # transient, so it changed between the first tick after boot and the
+        # ten-thousandth. Asserting the old state-derived value here would
+        # pin the defect: the mocked repo below must not be able to move it.
+        identity = anchor.get_identity()
+        assert identity
+        assert identity == identity_anchor.IdentityAnchor().get_identity(), (
+            "identity differs between two anchors in the same process"
+        )
+        assert "abcdefgh" not in identity, (
+            "identity is being derived from the mocked state repository again"
+        )
 
         facade = affect_facade.AffectFacade()
         assert facade.is_ready() is True

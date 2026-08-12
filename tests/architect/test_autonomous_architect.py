@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import ast
 import json
+import os
 import sys
 from dataclasses import asdict
 from pathlib import Path
@@ -65,7 +66,47 @@ def tiny_repo(tmp_path: Path) -> Path:
     )
     write(tmp_path / "tests" / "test_mod.py", "from pkg.mod import used\n\ndef test_used():\n    assert used().__name__ == 'Worker'\n")
     write(tmp_path / "OWNERSHIP.md", "| Concern | Owner | Role | File |\n| Work | `Worker` | owner | `pkg/mod.py` |\n")
+    _git_init(tmp_path)
     return tmp_path
+
+
+def _git_init(root: Path) -> None:
+    """Make the fixture a real repository, because the architect's target is.
+
+    This used to be a bare directory. `SafetyGate._check_git_clean` read only
+    git's STDOUT, so "not a git repository" — a non-zero exit with nothing on
+    stdout — came back as an empty diff and the tree was reported CLEAN. The
+    fixture passed the safety gate by not being a repo at all.
+
+    That is the more dangerous state, not the safer one: with no git there is
+    nothing to roll back to, and rollback is why the gate wants a clean tree.
+    So the gate now refuses, and the fixture provides what the architect
+    actually operates on.
+    """
+    env = {
+        "GIT_CONFIG_GLOBAL": "/dev/null",
+        "GIT_CONFIG_SYSTEM": "/dev/null",
+        "GIT_AUTHOR_NAME": "Aura Test",
+        "GIT_AUTHOR_EMAIL": "test@example.invalid",
+        "GIT_COMMITTER_NAME": "Aura Test",
+        "GIT_COMMITTER_EMAIL": "test@example.invalid",
+    }
+    for args in (
+        ["git", "init", "-q"],
+        ["git", "add", "-A"],
+        ["git", "commit", "-q", "-m", "fixture"],
+    ):
+        result = get_subprocess_gateway().run(
+            args,
+            cwd=root,
+            capture_output=True,
+            timeout=30,
+            env={**os.environ, **env},
+            offline_tooling=True,
+            source="certification_tooling:test_autonomous_architect",
+            accelerator_capability="none",
+        )
+        assert result.returncode == 0, f"{args}: {result.stderr}"
 
 
 def config(root: Path, **kwargs) -> ASAConfig:
