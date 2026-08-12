@@ -1103,6 +1103,10 @@ def test_bootstrap_imports_only_compatible_tissue_into_a_new_campaign(
             "readout_sha256",
         )
     }
+    compatibility["spec"] = {
+        "train_depths": [1, 2, 4],
+        "heldout_depths": [8, 16],
+    }
     parent_identity_body = {"schema": "test", **compatibility}
     parent_identity = {
         **parent_identity_body,
@@ -1124,7 +1128,14 @@ def test_bootstrap_imports_only_compatible_tissue_into_a_new_campaign(
         tmp_path,
         "checkpoint_latest",
         child,
-        expected_identity={**compatibility, "dataset": "fresh"},
+        expected_identity={
+            **compatibility,
+            "spec": {
+                "train_depths": (1, 2, 4),
+                "heldout_depths": (8, 16),
+            },
+            "dataset": "fresh",
+        },
     )
 
     imported = _trainable(child)

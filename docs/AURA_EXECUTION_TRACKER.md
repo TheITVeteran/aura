@@ -45702,3 +45702,27 @@ training or scientific verdict is claimed at this checkpoint. CP254 remains
 new recovery capsule from it, and verifying launchd, detached trainer,
 `caffeinate`, authenticated heartbeat and the first durable recovery checkpoint
 before unattended continuation.
+
+## Checkpoint 2026-08-12-264: Canonical Topology Survives Checkpoint Serialization
+
+The first live recovery preflight refused the imported checkpoint before
+optimization because JSON had serialized tuple-valued specification fields as
+lists. The parent and reconstructed recurrence depths had identical canonical
+content but unequal Python container types. The exact CP263 training and
+replication launchd jobs were stopped before retry, and their detached failure
+receipt was preserved. No optimizer step ran, so this remains infrastructure
+evidence rather than a capability result.
+
+Bootstrap compatibility now compares every protected topology field by its
+canonical JSON commitment. Lists and tuples with identical ordered values are
+therefore equivalent across the checkpoint boundary, while changed values,
+ordering, structure or rank still fail closed. The regression test serializes
+the parent depths as lists, reconstructs them as tuples, proves successful
+controller-only import, and separately proves that a real topology difference
+is rejected.
+
+Validation is green: `67/67` focused trainer, controller and resume tests pass;
+canonical smoke passes `104/104`; Ruff, compilation and diff hygiene pass. No
+training or reasoning gain is claimed. Next is publishing this corrected source
+boundary, freezing a new campaign instead of mutating the failed CP263 package,
+and repeating the one-step launch admission through independent supervision.

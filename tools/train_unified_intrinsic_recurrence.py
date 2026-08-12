@@ -1866,7 +1866,8 @@ def _bootstrap_bundle_from_checkpoint(
     mismatches = [
         name
         for name in compatibility_fields
-        if parent_identity.get(name) != expected_identity.get(name)
+        if _canonical_sha256(parent_identity.get(name))
+        != _canonical_sha256(expected_identity.get(name))
     ]
     if mismatches:
         raise RuntimeError(
