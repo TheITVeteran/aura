@@ -343,6 +343,8 @@ def test_run_adjudicates_and_publishes_terminal_controller_state(
 
     assert result["state"] == "completed"
     assert result["supported"] is True
+    assert published[0][0] == "admitted"
+    assert published[0][1]["answer_bridge_admitted"] is True
     assert published[-1][0] == "completed"
     assert published[-1][1]["verdict_sha256"] == "f" * 64
 

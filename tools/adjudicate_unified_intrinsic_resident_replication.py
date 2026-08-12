@@ -833,6 +833,14 @@ def run(arguments: argparse.Namespace) -> dict[str, Any]:
                     "controller": controller,
                 }
 
+            _publish_controller_status(
+                arguments,
+                campaign,
+                config,
+                plan,
+                "admitted",
+                {**training, "launchd": launchd},
+            )
             observed = status(arguments)
             if observed["complete"] is True:
                 verdict_arguments = argparse.Namespace(**vars(arguments))
