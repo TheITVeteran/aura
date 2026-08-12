@@ -24,7 +24,7 @@ from core.brain.llm.unified_recurrent_shadow import (  # noqa: E402
     inspect_shadow_package,
 )
 
-RESULT_SCHEMA: Final = "aura.unified_intrinsic.live_shadow_canary_run.v1"
+RESULT_SCHEMA: Final = "aura.unified_intrinsic.live_shadow_canary_run.v2"
 
 
 class UnifiedRecurrentLiveCanaryError(RuntimeError):
@@ -179,6 +179,7 @@ async def run_live_canary(
     *,
     model_path: Path,
     output: Path,
+    discovery_mode: str = "environment_override",
     minimum_wrong_to_right: int,
     maximum_shadow_latency_ms: int,
     maximum_latency_ratio_numerator: int,
@@ -202,6 +203,10 @@ async def run_live_canary(
         raise UnifiedRecurrentLiveCanaryError(
             "live shadow canary threshold is invalid"
         )
+    if discovery_mode not in {"environment_override", "durable_pointer"}:
+        raise UnifiedRecurrentLiveCanaryError(
+            "live shadow canary discovery mode is invalid"
+        )
     package = _absolute(package)
     model_path = _absolute(model_path)
     verified = await asyncio.to_thread(inspect_shadow_package, package)
@@ -212,7 +217,25 @@ async def run_live_canary(
         )
     environment_key = "AURA_UNIFIED_RECURRENT_SHADOW_PACKAGE"
     previous_environment = os.environ.get(environment_key)
-    os.environ[environment_key] = str(package)
+    if discovery_mode == "environment_override":
+        os.environ[environment_key] = str(package)
+    else:
+        from core.brain.llm.unified_recurrent_shadow_pointer import (
+            default_shadow_activation_paths,
+            resolve_shadow_pointer,
+        )
+
+        pointer_path, releases_root = default_shadow_activation_paths()
+        selected = await asyncio.to_thread(
+            resolve_shadow_pointer,
+            pointer_path,
+            releases_root=releases_root,
+        )
+        if selected != package:
+            raise UnifiedRecurrentLiveCanaryError(
+                "live shadow canary durable pointer selected a different package"
+            )
+        os.environ.pop(environment_key, None)
     from core.brain.llm.mlx_client import get_mlx_client
 
     try:
@@ -263,6 +286,7 @@ async def run_live_canary(
         "package_id": manifest["package_id"],
         "manifest_sha256": manifest["manifest_sha256"],
         "model_path": str(model_path),
+        "discovery_mode": discovery_mode,
         "started_at_unix": started_at,
         "completed_at_unix": time.time(),
         "worker_shadow_status": worker_status,
@@ -280,6 +304,11 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("package", type=Path)
     parser.add_argument("--model", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
+    parser.add_argument(
+        "--discovery-mode",
+        choices=("environment_override", "durable_pointer"),
+        default="environment_override",
+    )
     parser.add_argument("--minimum-wrong-to-right", type=int, default=1)
     parser.add_argument("--maximum-shadow-latency-ms", type=int, default=120_000)
     parser.add_argument("--maximum-latency-ratio-numerator", type=int, default=8)
@@ -295,6 +324,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 arguments.package,
                 model_path=arguments.model,
                 output=arguments.output,
+                discovery_mode=arguments.discovery_mode,
                 minimum_wrong_to_right=arguments.minimum_wrong_to_right,
                 maximum_shadow_latency_ms=arguments.maximum_shadow_latency_ms,
                 maximum_latency_ratio_numerator=(

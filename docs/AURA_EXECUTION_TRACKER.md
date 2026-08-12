@@ -45928,3 +45928,39 @@ versus `51.52` GiB at the prior failure. The powered three-seed replication plan
 is frozen and its authenticated controller is waiting for strict terminal
 admission. No decoded gain, replication, serving authority, fusion authority,
 frontier result or `WOW Signal` is claimed.
+
+## Checkpoint 2026-08-12-272: Restart and Rollback Are Executable Evidence
+
+The live shadow canary previously forced package discovery through an
+environment override. That proved real worker execution, but not the durable
+pointer path Aura uses after restart. The canary runner now has an explicit
+durable-pointer mode: it reopens the canonical pointer, requires it to select
+the exact requested package, removes any inherited environment override before
+worker construction, and records the discovery mode in the immutable result.
+An environment variable can therefore no longer accidentally make a restart
+test pass.
+
+A new operator lifecycle command performs the complete promotion prerequisite
+without improvisation: publish an exact compare-and-swap pointer, reopen it,
+cold-load the real resident worker and run the hidden canary, close that worker,
+cold-load a second worker through the same pointer, rerun the canary, verify
+stable package/controller/plan identity, atomically retire the pointer, then
+cold-load a third worker and require the canonical inactive shadow receipt. A
+refuted or inconsistent canary triggers digest-bound emergency rollback, an
+existing activation is never replaced, and the final private artifact binds
+both canary results, pointer receipt, inactive load receipt and every lifecycle
+check while retaining `serving_authority=false` and `output_exposed=false`.
+
+Validation is green: `40/40` focused pointer, worker, package, canary and
+lifecycle tests plus `104/104` canonical smoke tests pass; targeted Ruff,
+compilation and diff hygiene pass. The CP270 resident
+recovery remains independently supervised and has reached durable step `17`
+without restart. Its step-9 full ladder retained `69.421%` held-out
+depth-relative cross-entropy improvement with all typed state/action metrics at
+`1.0`; managed footprint is approximately `19.2` GiB, well below the `48` GiB
+sentinel boundary. These are training and operational signals, not decoded
+capability evidence. No terminal admission, powered replication, serving
+authority, broad reasoning result, fusion authority, frontier result or
+`WOW Signal` is claimed. Next remains strict terminal admission and the queued
+three-seed adjudication; a supported verdict may then be materialized and run
+through this lifecycle before domain-qualified serving is considered.

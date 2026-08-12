@@ -175,6 +175,77 @@ async def test_negative_canary_is_preserved_without_serving_authority(
 
 
 @pytest.mark.asyncio
+async def test_durable_pointer_discovery_cannot_be_bypassed_by_environment(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    package, model, client = _fixture(tmp_path, monkeypatch)
+    pointer = tmp_path / "active.json"
+    releases = tmp_path / "releases"
+    monkeypatch.setenv("AURA_UNIFIED_RECURRENT_SHADOW_PACKAGE", "stale-override")
+    monkeypatch.setattr(
+        "core.brain.llm.unified_recurrent_shadow_pointer.default_shadow_activation_paths",
+        lambda: (pointer, releases),
+    )
+    monkeypatch.setattr(
+        "core.brain.llm.unified_recurrent_shadow_pointer.resolve_shadow_pointer",
+        lambda selected, *, releases_root: package
+        if selected == pointer and releases_root == releases
+        else None,
+    )
+    output_dir = tmp_path / "evidence"
+    output_dir.mkdir(mode=0o700)
+
+    result = await runner.run_live_canary(
+        package,
+        model_path=model,
+        output=output_dir / "durable.json",
+        discovery_mode="durable_pointer",
+        minimum_wrong_to_right=1,
+        maximum_shadow_latency_ms=120_000,
+        maximum_latency_ratio_numerator=8,
+        maximum_latency_ratio_denominator=1,
+    )
+
+    assert result["discovery_mode"] == "durable_pointer"
+    assert client.closed is True
+    assert os.environ["AURA_UNIFIED_RECURRENT_SHADOW_PACKAGE"] == "stale-override"
+
+
+@pytest.mark.asyncio
+async def test_durable_pointer_must_select_the_exact_requested_package(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    package, model, _client = _fixture(tmp_path, monkeypatch)
+    other = tmp_path / "other-package"
+    other.mkdir()
+    monkeypatch.setattr(
+        "core.brain.llm.unified_recurrent_shadow_pointer.default_shadow_activation_paths",
+        lambda: (tmp_path / "active.json", tmp_path / "releases"),
+    )
+    monkeypatch.setattr(
+        "core.brain.llm.unified_recurrent_shadow_pointer.resolve_shadow_pointer",
+        lambda *_args, **_kwargs: other,
+    )
+
+    with pytest.raises(
+        runner.UnifiedRecurrentLiveCanaryError,
+        match="selected a different package",
+    ):
+        await runner.run_live_canary(
+            package,
+            model_path=model,
+            output=tmp_path / "unwritten.json",
+            discovery_mode="durable_pointer",
+            minimum_wrong_to_right=1,
+            maximum_shadow_latency_ms=120_000,
+            maximum_latency_ratio_numerator=8,
+            maximum_latency_ratio_denominator=1,
+        )
+
+
+@pytest.mark.asyncio
 async def test_worker_identity_mismatch_fails_before_evidence_publication(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
