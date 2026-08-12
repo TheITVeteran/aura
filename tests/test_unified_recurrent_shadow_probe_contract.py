@@ -76,6 +76,31 @@ def test_parent_binding_rejects_a_replayed_receipt() -> None:
     )
 
 
+def test_receipt_refuses_contradictory_output_equality() -> None:
+    request = seal_shadow_probe_request([1, 2, 3], [4, 5], max_tokens=2)
+    body = _completed_body(request["request_sha256"])
+    body["outputs_equal"] = True
+
+    with pytest.raises(
+        ValueError,
+        match="unified_recurrent_shadow_probe_output_equality_differs",
+    ):
+        seal_shadow_probe_receipt(body)
+
+
+def test_receipt_refuses_exact_match_without_expected_length_and_eos() -> None:
+    request = seal_shadow_probe_request([1, 2, 3], [4, 5], max_tokens=2)
+    body = _completed_body(request["request_sha256"])
+    body["shadow_token_count"] = 1
+    body["shadow_stopped_on_eos"] = False
+
+    with pytest.raises(
+        ValueError,
+        match="unified_recurrent_shadow_probe_shadow_exactness_invalid",
+    ):
+        seal_shadow_probe_receipt(body)
+
+
 def test_output_commitment_is_keyed_and_not_a_reusable_small_answer_hash() -> None:
     token_ids = [12, 999]
     first_key = b"a" * 32

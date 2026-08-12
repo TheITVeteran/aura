@@ -48,6 +48,8 @@ async def test_parent_accepts_only_a_bound_no_output_probe_receipt(monkeypatch) 
         "package_id": "fixture",
         "controller_sha256": "c" * 64,
     }
+    client._unified_recurrent_shadow_canary_status = {}
+    client._mark_progress = lambda: None
     client._unified_recurrent_shadow_probe_status = {}
     client._req_q = queue
     client._process = SimpleNamespace(is_alive=lambda: True)
@@ -136,3 +138,70 @@ async def test_parent_accepts_only_a_bound_no_output_probe_receipt(monkeypatch) 
     assert "text" not in result
     assert "tokens" not in result
     assert client._unified_recurrent_shadow_probe_status == result["receipt"]
+
+
+@pytest.mark.asyncio
+async def test_client_canary_uses_loaded_package_identity(monkeypatch) -> None:
+    client = object.__new__(mlx_client.MLXLocalClient)
+    client._unified_recurrent_shadow_status = {
+        "loaded": True,
+        "serving_authority": False,
+        "package_id": "fixture",
+        "controller_sha256": "c" * 64,
+    }
+    client._unified_recurrent_shadow_canary_status = {}
+    client._mark_progress = lambda: None
+    observed = {}
+
+    async def run(cases, **kwargs):
+        observed["cases"] = cases
+        observed.update(kwargs)
+        return {
+            "plan": {"serving_authority": False},
+            "verdict": {
+                "supported": True,
+                "verdict": "supported_domain_shadow_canary",
+                "serving_authority": False,
+            },
+        }
+
+    monkeypatch.setattr(
+        "core.brain.llm.unified_recurrent_shadow_canary.run_shadow_canary",
+        run,
+    )
+    cases = [
+        {
+            "task_id": "task-1",
+            "family": "khop",
+            "public_token_ids": [1],
+            "expected_token_ids": [2],
+            "max_tokens": 1,
+        }
+    ]
+
+    result = await client.unified_recurrent_shadow_canary_async(cases)
+
+    assert result["supported"] is True
+    assert observed["package_id"] == "fixture"
+    assert observed["controller_sha256"] == "c" * 64
+    assert observed["probe"] == client.unified_recurrent_shadow_probe_async
+    assert client._unified_recurrent_shadow_canary_status == result["verdict"]
+
+
+@pytest.mark.asyncio
+async def test_client_canary_never_runs_without_loaded_shadow(monkeypatch) -> None:
+    client = object.__new__(mlx_client.MLXLocalClient)
+    client._unified_recurrent_shadow_status = {}
+
+    async def forbidden(*_args, **_kwargs):
+        raise AssertionError("canary runner must not be invoked")
+
+    monkeypatch.setattr(
+        "core.brain.llm.unified_recurrent_shadow_canary.run_shadow_canary",
+        forbidden,
+    )
+
+    result = await client.unified_recurrent_shadow_canary_async([])
+
+    assert result["supported"] is False
+    assert result["reason"] == "unified_recurrent_shadow_not_loaded"

@@ -196,6 +196,25 @@ def shadow_probe_receipt_errors(
             or value["shadow_token_count"] > value["max_tokens"]
         ):
             errors.append("unified_recurrent_shadow_probe_completed_state_invalid")
+        digests_equal = value["base_output_sha256"] == value["shadow_output_sha256"]
+        if value["outputs_equal"] is not digests_equal:
+            errors.append("unified_recurrent_shadow_probe_output_equality_differs")
+        if value["base_exact_match"] and (
+            value["base_token_count"] != value["expected_token_count"]
+            or value["base_stopped_on_eos"] is not True
+        ):
+            errors.append("unified_recurrent_shadow_probe_base_exactness_invalid")
+        if value["shadow_exact_match"] and (
+            value["shadow_token_count"] != value["expected_token_count"]
+            or value["shadow_stopped_on_eos"] is not True
+        ):
+            errors.append("unified_recurrent_shadow_probe_shadow_exactness_invalid")
+        if value["outputs_equal"] and (
+            value["base_token_count"] != value["shadow_token_count"]
+            or value["base_exact_match"] is not value["shadow_exact_match"]
+            or value["base_stopped_on_eos"] is not value["shadow_stopped_on_eos"]
+        ):
+            errors.append("unified_recurrent_shadow_probe_equal_output_state_differs")
     elif any(
         value.get(key)
         for key in (

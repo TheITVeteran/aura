@@ -45566,3 +45566,36 @@ frontier result or `WOW Signal` is claimed. The completion envelope remains
 a supported verdict may be materialized into this non-serving lane, followed by
 live shadow equivalence, latency, restart and rollback gates before any
 domain-qualified serving decision.
+
+## Checkpoint 2026-08-11-260: Shadow Promotion Requires a Bound Canary Verdict
+
+Individual no-output probes now compose into a deterministic domain canary
+rather than an informal collection of favorable observations. Its sealed plan
+binds the exact package, controller, task order, task family and request
+commitment before execution. The adjudicator independently revalidates every
+worker receipt and requires complete evidence, exact recurrent answers, a
+configured minimum wrong-to-right gain, zero right-to-wrong regressions, a
+per-probe latency ceiling and a bounded aggregate recurrent/base latency ratio.
+Replayed requests, family rebinding, callback/receipt disagreement,
+contradictory output commitments and malformed exactness claims become negative
+operational evidence rather than promotion.
+
+The client runs the cases only through the dedicated non-serving worker lane,
+retains no answer text or token IDs in the public plan or verdict, records the
+latest accepted verdict in health/supervision telemetry, and clears that state
+whenever worker or package identity changes. A canary cannot spawn a worker,
+cannot run without a loaded sealed shadow package and cannot grant serving
+authority. Validation is green: `447/447` focused shadow, authority, client
+ownership, admission and resilience tests pass; canonical smoke passes
+`104/104`; focused Ruff, compilation and diff hygiene pass.
+
+The resident trainer has completed its configured `73/73` steps and terminal
+evaluation with a best held-out depth-relative cross-entropy gain of
+`39.038%`; authenticated completion and the automatically chained powered
+decoded-answer adjudication remain pending. This training metric is not a
+decoded capability verdict. No replicated gain, runtime promotion, broad
+reasoning result, fusion authority, frontier result or `WOW Signal` is claimed.
+The completion envelope remains `913/920` (approximately `99.2%`). Next is the
+frozen three-seed adjudication, conditional package materialization, this live
+shadow canary, and restart/rollback proof before any domain-qualified serving
+decision.

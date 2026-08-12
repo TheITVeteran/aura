@@ -4159,6 +4159,7 @@ class MLXLocalClient:
         #: mutation nor response-serving authority.
         self._unified_recurrent_shadow_status: dict[str, Any] = {}
         self._unified_recurrent_shadow_probe_status: dict[str, Any] = {}
+        self._unified_recurrent_shadow_canary_status: dict[str, Any] = {}
         self._worker_identity: dict[str, Any] = {}
         self._mycelial_root_refs: list[dict[str, str]] = []
         self._last_surface_control_receipt: dict[str, Any] = {}
@@ -5899,6 +5900,9 @@ class MLXLocalClient:
             "unified_recurrent_shadow_probe": copy.deepcopy(
                 getattr(self, "_unified_recurrent_shadow_probe_status", {})
             ),
+            "unified_recurrent_shadow_canary": copy.deepcopy(
+                getattr(self, "_unified_recurrent_shadow_canary_status", {})
+            ),
             "request_age_s": (
                 max(0.0, time.time() - self._current_request_started_at)
                 if self._current_request_started_at
@@ -5921,6 +5925,9 @@ class MLXLocalClient:
             ),
             "unified_recurrent_shadow_probe": copy.deepcopy(
                 getattr(self, "_unified_recurrent_shadow_probe_status", {})
+            ),
+            "unified_recurrent_shadow_canary": copy.deepcopy(
+                getattr(self, "_unified_recurrent_shadow_canary_status", {})
             ),
             "process_uptime_s": max(0.0, now - self._process_started_at)
             if self._process_started_at
@@ -7913,6 +7920,71 @@ class MLXLocalClient:
             finally:
                 self._release_request_lock()
 
+    async def unified_recurrent_shadow_canary_async(
+        self,
+        cases: Sequence[Mapping[str, Any]],
+        *,
+        minimum_wrong_to_right: int = 1,
+        maximum_shadow_latency_ms: int = 120_000,
+        maximum_latency_ratio_numerator: int = 8,
+        maximum_latency_ratio_denominator: int = 1,
+    ) -> dict[str, Any]:
+        """Run the domain-bound shadow gate without placing output on chat."""
+
+        shadow_status = copy.deepcopy(
+            getattr(self, "_unified_recurrent_shadow_status", {})
+        )
+        if not (
+            isinstance(shadow_status, dict)
+            and shadow_status.get("loaded") is True
+            and shadow_status.get("serving_authority") is False
+        ):
+            return {
+                "plan": {},
+                "verdict": {},
+                "supported": False,
+                "reason": "unified_recurrent_shadow_not_loaded",
+            }
+        try:
+            from core.brain.llm.unified_recurrent_shadow_canary import (
+                run_shadow_canary,
+            )
+
+            result = await run_shadow_canary(
+                cases,
+                package_id=str(shadow_status.get("package_id") or ""),
+                controller_sha256=str(
+                    shadow_status.get("controller_sha256") or ""
+                ),
+                probe=self.unified_recurrent_shadow_probe_async,
+                minimum_wrong_to_right=minimum_wrong_to_right,
+                maximum_shadow_latency_ms=maximum_shadow_latency_ms,
+                maximum_latency_ratio_numerator=maximum_latency_ratio_numerator,
+                maximum_latency_ratio_denominator=maximum_latency_ratio_denominator,
+            )
+        except (ImportError, RuntimeError, TypeError, ValueError) as exc:
+            return {
+                "plan": {},
+                "verdict": {},
+                "supported": False,
+                "reason": f"shadow_canary_invalid:{exc}",
+            }
+        verdict = result.get("verdict")
+        accepted_verdict = copy.deepcopy(verdict) if isinstance(verdict, dict) else {}
+        self._unified_recurrent_shadow_canary_status = accepted_verdict
+        self._mark_progress()
+        return {
+            **result,
+            "supported": bool(
+                isinstance(verdict, dict) and verdict.get("supported") is True
+            ),
+            "reason": (
+                str(verdict.get("verdict") or "shadow_canary_unavailable")
+                if isinstance(verdict, dict)
+                else "shadow_canary_unavailable"
+            ),
+        }
+
     async def latent_reason_async(
         self,
         prompt: str | None = None,
@@ -9602,6 +9674,7 @@ class MLXLocalClient:
         self._recurrent_adapter_activation = {}
         self._unified_recurrent_shadow_status = {}
         self._unified_recurrent_shadow_probe_status = {}
+        self._unified_recurrent_shadow_canary_status = {}
         self._steering_liveness_observed = False
         self._last_interoception = {}
         self._last_surface_control_receipt = {}
@@ -10980,6 +11053,8 @@ class MLXLocalClient:
                             # PREVIOUS worker's claim certify this one.
                             self._recurrent_adapter_activation = {}
                             self._unified_recurrent_shadow_status = {}
+                            self._unified_recurrent_shadow_probe_status = {}
+                            self._unified_recurrent_shadow_canary_status = {}
                             self._set_lane_state(
                                 "failed",
                                 "init_receipt_invalid",
@@ -11012,6 +11087,8 @@ class MLXLocalClient:
                             if isinstance(shadow_status, dict)
                             else {}
                         )
+                        self._unified_recurrent_shadow_probe_status = {}
+                        self._unified_recurrent_shadow_canary_status = {}
                         if not isinstance(recurrent_status, dict):
                             _record_mlx_degradation(
                                 ValueError("missing_recurrent_depth_receipt"),
