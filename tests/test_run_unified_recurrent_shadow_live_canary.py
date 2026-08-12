@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 
 import pytest
@@ -28,16 +29,52 @@ class _Client:
         _package,
         **_kwargs,
     ):
-        plan = {
+        plan_body = {
+            "schema": "aura.unified_intrinsic.shadow_canary_plan.v1",
             "package_id": "cp268-package",
             "controller_sha256": "b" * 64,
-            "plan_sha256": "c" * 64,
+            "cases": [
+                {
+                    "index": 0,
+                    "task_id": "khop-1",
+                    "family": "khop",
+                    "request_sha256": "d" * 64,
+                }
+            ],
+            "decision_rule": {
+                "all_probes_completed": True,
+                "all_shadow_answers_exact": True,
+                "minimum_wrong_to_right": 1,
+                "maximum_right_to_wrong": 0,
+                "maximum_shadow_latency_ms": 120_000,
+                "maximum_latency_ratio_numerator": 8,
+                "maximum_latency_ratio_denominator": 1,
+            },
+            "output_exposed": False,
+            "serving_authority": False,
         }
-        verdict = {
-            "plan_sha256": "c" * 64,
+        plan = {**plan_body, "plan_sha256": runner._canonical_sha256(plan_body)}
+        checks = {"complete": self.supported}
+        verdict_body = {
+            "schema": "aura.unified_intrinsic.shadow_canary_verdict.v1",
+            "plan_sha256": plan["plan_sha256"],
+            "package_id": "cp268-package",
+            "controller_sha256": "b" * 64,
+            "verdict": (
+                "supported_domain_shadow_canary"
+                if self.supported
+                else "refuted_domain_shadow_canary"
+            ),
             "supported": self.supported,
+            "checks": checks,
+            "measurements": {},
+            "evidence": [],
             "serving_authority": False,
             "output_exposed": False,
+        }
+        verdict = {
+            **verdict_body,
+            "verdict_sha256": runner._canonical_sha256(verdict_body),
         }
         return {
             "plan": plan,
@@ -84,6 +121,7 @@ async def test_live_canary_persists_canonical_no_output_verdict(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     package, model, client = _fixture(tmp_path, monkeypatch)
+    monkeypatch.setenv("AURA_UNIFIED_RECURRENT_SHADOW_PACKAGE", "prior-package")
     output_dir = tmp_path / "evidence"
     output_dir.mkdir(mode=0o700)
     output_dir.chmod(0o700)
@@ -103,6 +141,7 @@ async def test_live_canary_persists_canonical_no_output_verdict(
     assert result["serving_authority"] is False
     assert result["output_exposed"] is False
     assert client.closed is True
+    assert os.environ["AURA_UNIFIED_RECURRENT_SHADOW_PACKAGE"] == "prior-package"
     assert output.stat().st_mode & 0o777 == 0o400
     payload = output.read_bytes()
     assert payload == json.dumps(

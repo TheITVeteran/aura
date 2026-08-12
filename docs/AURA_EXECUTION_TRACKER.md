@@ -45843,3 +45843,32 @@ The completion envelope remains `913/920` (approximately `99.2%`). Next is the
 terminal recovered checkpoint, automatically queued powered adjudication, then
 materialization, durable shadow activation and this exact live canary followed
 by restart and rollback verification.
+
+## Checkpoint 2026-08-12-269: Live Canary Verdicts Are Reopened, Not Trusted
+
+Review of the CP268 operator path found that the worker receipts were strongly
+validated inside the client, but the final file writer accepted the client
+wrapper's plan and verdict shape. A mutation between in-process adjudication and
+evidence publication could therefore have produced a locally inconsistent
+artifact. The runner also left its package environment override set when used
+as a library, and a failed short write could leave a partial evidence file.
+
+The runner now independently revalidates the sealed plan, recomputes the plan
+and verdict bindings, derives support from the complete check set, verifies the
+supported/refuted label, binds package and controller identity again, and
+rejects any evidence field that could disclose text or tokens. It rejects
+symlinked output ancestry, removes incomplete evidence writes, restores the
+caller's prior environment on every path, and preserves the primary failure if
+worker cleanup also fails. Validation remains green: `79/79` focused
+live-runner, pointer, worker, shadow-runtime, private-canary, client and
+admission tests plus `104/104` smoke tests pass; focused Ruff, compilation and
+diff hygiene pass.
+
+The CP264 recovery remains live and has crossed step `21`; its step-18
+evaluation retained a `39.116%` held-out depth-relative cross-entropy gain with
+all typed state/action measurements at `1.0`. This is still a training signal,
+not decoded capability evidence. No terminal admission, replicated decoded
+gain, serving authority, broad reasoning result, fusion authority, frontier
+result or `WOW Signal` is claimed. The completion envelope remains `913/920`
+(approximately `99.2%`). Next remains terminal admission and the already queued
+powered decoded-answer adjudication.

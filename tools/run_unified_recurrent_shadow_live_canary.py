@@ -19,6 +19,7 @@ BASE_DIR = Path(__file__).resolve().parents[1]
 if str(BASE_DIR) not in sys.path:
     sys.path.insert(0, str(BASE_DIR))
 
+from core.brain.llm import unified_recurrent_shadow_canary as canary  # noqa: E402
 from core.brain.llm.unified_recurrent_shadow import (  # noqa: E402
     inspect_shadow_package,
 )
@@ -52,6 +53,13 @@ def _private_output(path: Path, payload: bytes) -> None:
     destination = path.expanduser().absolute()
     destination.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
     parent = destination.parent
+    current = Path(parent.anchor)
+    for part in parent.parts[1:]:
+        current /= part
+        if current.is_symlink():
+            raise UnifiedRecurrentLiveCanaryError(
+                "live shadow canary output path contains a symlink"
+            )
     metadata = parent.stat()
     if (
         not stat.S_ISDIR(metadata.st_mode)
@@ -114,6 +122,20 @@ def _validated_result(
         raise UnifiedRecurrentLiveCanaryError(
             "live shadow canary plan or verdict is unavailable"
         )
+    try:
+        canary._validate_plan(plan)  # noqa: SLF001 - independent evidence reopening
+    except (TypeError, ValueError, canary.UnifiedRecurrentShadowCanaryError) as exc:
+        raise UnifiedRecurrentLiveCanaryError(
+            "live shadow canary plan is invalid"
+        ) from exc
+    verdict_body = {
+        key: value for key, value in verdict.items() if key != "verdict_sha256"
+    }
+    checks = verdict.get("checks")
+    evidence = verdict.get("evidence")
+    recomputed_support = isinstance(checks, Mapping) and bool(checks) and all(
+        value is True for value in checks.values()
+    )
     package_id = manifest.get("package_id")
     controller_sha256 = worker_status.get("controller_sha256")
     if (
@@ -124,6 +146,19 @@ def _validated_result(
         or plan.get("package_id") != package_id
         or plan.get("controller_sha256") != controller_sha256
         or verdict.get("plan_sha256") != plan.get("plan_sha256")
+        or verdict.get("schema") != canary.VERDICT_SCHEMA
+        or verdict.get("package_id") != package_id
+        or verdict.get("controller_sha256") != controller_sha256
+        or verdict.get("verdict_sha256") != _canonical_sha256(verdict_body)
+        or verdict.get("supported") is not recomputed_support
+        or verdict.get("verdict")
+        != (canary.SUPPORTED if recomputed_support else canary.REFUTED)
+        or not isinstance(evidence, list)
+        or any(
+            not isinstance(row, Mapping)
+            or any("text" in key or "token" in key for key in row)
+            for row in evidence
+        )
         or verdict.get("serving_authority") is not False
         or verdict.get("output_exposed") is not False
         or result.get("supported") is not bool(verdict.get("supported"))
@@ -175,46 +210,54 @@ async def run_live_canary(
         raise UnifiedRecurrentLiveCanaryError(
             "live shadow package manifest is unavailable"
         )
-    os.environ["AURA_UNIFIED_RECURRENT_SHADOW_PACKAGE"] = str(package)
+    environment_key = "AURA_UNIFIED_RECURRENT_SHADOW_PACKAGE"
+    previous_environment = os.environ.get(environment_key)
+    os.environ[environment_key] = str(package)
     from core.brain.llm.mlx_client import get_mlx_client
 
-    client = get_mlx_client(str(model_path))
-    started_at = time.time()
-    primary_error: BaseException | None = None
     try:
-        ready = await client.warmup(
-            foreground_request=True,
-            skip_swap_cooldown=True,
-        )
-        if not ready:
-            raise UnifiedRecurrentLiveCanaryError(
-                "resident worker did not become ready for live shadow canary"
-            )
-        worker_status = dict(
-            getattr(client, "_unified_recurrent_shadow_status", {}) or {}
-        )
-        result = await client.unified_recurrent_shadow_package_canary_async(
-            package,
-            minimum_wrong_to_right=minimum_wrong_to_right,
-            maximum_shadow_latency_ms=maximum_shadow_latency_ms,
-            maximum_latency_ratio_numerator=maximum_latency_ratio_numerator,
-            maximum_latency_ratio_denominator=maximum_latency_ratio_denominator,
-        )
-        accepted = _validated_result(
-            result,
-            manifest=manifest,
-            worker_status=worker_status,
-        )
-    except BaseException as exc:  # noqa: BLE001 - preserve cancellation through cleanup
-        primary_error = exc
-        raise
-    finally:
+        client = get_mlx_client(str(model_path))
+        started_at = time.time()
+        primary_error: BaseException | None = None
         try:
-            await client.aclose()
-        except BaseException as close_exc:  # noqa: BLE001 - cleanup must not hide evidence failure
-            if primary_error is None:
-                raise
-            primary_error.add_note(f"resident worker close also failed: {close_exc}")
+            ready = await client.warmup(
+                foreground_request=True,
+                skip_swap_cooldown=True,
+            )
+            if not ready:
+                raise UnifiedRecurrentLiveCanaryError(
+                    "resident worker did not become ready for live shadow canary"
+                )
+            worker_status = dict(
+                getattr(client, "_unified_recurrent_shadow_status", {}) or {}
+            )
+            result = await client.unified_recurrent_shadow_package_canary_async(
+                package,
+                minimum_wrong_to_right=minimum_wrong_to_right,
+                maximum_shadow_latency_ms=maximum_shadow_latency_ms,
+                maximum_latency_ratio_numerator=maximum_latency_ratio_numerator,
+                maximum_latency_ratio_denominator=maximum_latency_ratio_denominator,
+            )
+            accepted = _validated_result(
+                result,
+                manifest=manifest,
+                worker_status=worker_status,
+            )
+        except BaseException as exc:  # noqa: BLE001 - preserve cancellation through cleanup
+            primary_error = exc
+            raise
+        finally:
+            try:
+                await client.aclose()
+            except BaseException as close_exc:  # noqa: BLE001 - do not hide evidence failure
+                if primary_error is None:
+                    raise
+                primary_error.add_note(f"resident worker close also failed: {close_exc}")
+    finally:
+        if previous_environment is None:
+            os.environ.pop(environment_key, None)
+        else:
+            os.environ[environment_key] = previous_environment
     body = {
         "schema": RESULT_SCHEMA,
         "package_id": manifest["package_id"],
