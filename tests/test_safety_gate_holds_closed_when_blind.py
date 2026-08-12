@@ -151,3 +151,65 @@ def test_the_failure_reason_names_git_rather_than_the_tree():
     ).read_text("utf-8")
 
     assert 'f"git status failed (exit {result.returncode})' in source
+
+
+# ──────────── "we could not tell" is not a finding of "peripheral"
+
+
+def test_unmatched_code_is_unclassified_rather_than_peripheral():
+    """Every keyword list in the classifier is a list of things somebody
+    thought of, so "nothing matched" describes the LIST, not the code.
+
+    Answering it with the most benign surface reported a positive finding —
+    "this is peripheral utility" — where there was no finding at all, and a
+    novel or newly-named subsystem inherited it.
+    """
+    from core.architect.models import SemanticSurface
+    from core.architect.semantic_classifier import SemanticClassifier
+
+    surfaces = SemanticClassifier().classify_path("pkg/zzz_nothing_matches.py")
+
+    assert SemanticSurface.UNCLASSIFIED in surfaces
+    assert SemanticSurface.UTILITY_PERIPHERAL not in surfaces
+
+
+def test_a_recognised_surface_is_still_named():
+    """The fix must not turn real classifications into shrugs."""
+    from core.architect.models import SemanticSurface
+    from core.architect.semantic_classifier import SemanticClassifier
+
+    surfaces = SemanticClassifier().classify_path("core/executive/authority_gateway.py")
+
+    assert SemanticSurface.UNCLASSIFIED not in surfaces
+
+
+def test_the_planner_defaults_to_unclassified_not_peripheral():
+    """A path absent from the graph is unknown, not benign."""
+    from pathlib import Path
+
+    source = (
+        Path(__file__).resolve().parents[1]
+        / "core"
+        / "architect"
+        / "refactor_planner.py"
+    ).read_text("utf-8")
+
+    assert "(SemanticSurface.UTILITY_PERIPHERAL,)" not in source, (
+        "a path the graph has no entry for defaults to peripheral again"
+    )
+
+
+def test_the_unknown_tier_is_a_stated_decision_not_an_accident():
+    """UNCLASSIFIED shares T1 on purpose — raising it makes every unused
+    import in an unrecognised module governance-sensitive. The reasoning has
+    to stay next to the code, because the stricter option looks safer."""
+    from pathlib import Path
+
+    source = (
+        Path(__file__).resolve().parents[1]
+        / "core"
+        / "architect"
+        / "mutation_classifier.py"
+    ).read_text("utf-8")
+
+    assert "UNCLASSIFIED deliberately shares T1" in source

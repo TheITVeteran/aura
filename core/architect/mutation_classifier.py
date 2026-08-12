@@ -63,6 +63,21 @@ class MutationClassifier:
             return MutationTier.T3_BEHAVIORAL_IMPROVEMENT
         if surface in {SemanticSurface.CAPABILITY_TOOL_EXECUTION, SemanticSurface.UI_API, SemanticSurface.TRAINING_FINETUNE}:
             return MutationTier.T2_REFACTOR
+        # UNCLASSIFIED deliberately shares T1 with UTILITY_PERIPHERAL, and
+        # the reason is worth stating because the opposite looks safer.
+        #
+        # Raising it escalates through `_unused_import_plan`'s rule that any
+        # tier above T1 becomes T4_GOVERNANCE_SENSITIVE — so every unused
+        # import in every module no keyword list happens to name would need
+        # governance review, and the architect could no longer do its safest
+        # and most common job anywhere. That is a real cost paid for a
+        # speculative risk.
+        #
+        # What the separate surface buys is that "we could not tell" is now
+        # VISIBLE on the plan and in the receipts, instead of arriving as a
+        # positive finding of "peripheral utility". Retuning the tier for
+        # unknown surfaces is a calibration decision with its own evidence,
+        # not a side effect of naming the state honestly.
         return MutationTier.T1_CLEANUP
 
     def classify_symbol(self, symbol: str) -> MutationTier:

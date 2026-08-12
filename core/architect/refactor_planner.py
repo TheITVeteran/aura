@@ -144,7 +144,7 @@ class RefactorPlanner:
         path = self.config.repo_root / smell.path
         source = path.read_text(encoding="utf-8")
         new_source = apply_unused_import_cleanup(source)
-        surfaces = graph.semantic_surfaces.get(smell.path, (SemanticSurface.UTILITY_PERIPHERAL,))
+        surfaces = graph.semantic_surfaces.get(smell.path, (SemanticSurface.UNCLASSIFIED,))
         tier = self.classifier.classify((smell.path,), surfaces=surfaces)
         if tier > MutationTier.T1_CLEANUP:
             tier = MutationTier.T4_GOVERNANCE_SENSITIVE
@@ -193,7 +193,7 @@ class RefactorPlanner:
         )
 
     def _dead_code_quarantine_plan(self, smell: ArchitecturalSmell, graph: ArchitectureGraph) -> RefactorPlan:
-        surfaces = graph.semantic_surfaces.get(smell.path, (SemanticSurface.UTILITY_PERIPHERAL,))
+        surfaces = graph.semantic_surfaces.get(smell.path, (SemanticSurface.UNCLASSIFIED,))
         tier = max(MutationTier.T1_CLEANUP, self.classifier.classify((smell.path,), surfaces=surfaces))
         if tier > MutationTier.T1_CLEANUP:
             tier = MutationTier.T4_GOVERNANCE_SENSITIVE
@@ -222,7 +222,7 @@ class RefactorPlanner:
         )
 
     def _suggestion_plan(self, smell: ArchitecturalSmell, graph: ArchitectureGraph, objective: str) -> RefactorPlan:
-        surfaces = graph.semantic_surfaces.get(smell.path, (SemanticSurface.UTILITY_PERIPHERAL,))
+        surfaces = graph.semantic_surfaces.get(smell.path, (SemanticSurface.UNCLASSIFIED,))
         tier = max(smell.suggested_tier, self.classifier.classify((smell.path,), surfaces=surfaces, symbols=(smell.symbol,) if smell.symbol else ()))
         plan_id = _plan_id(smell.kind, (smell.path, smell.symbol), objective)
         step = RefactorStep(
@@ -249,7 +249,7 @@ class RefactorPlanner:
         )
 
     def _proposal_plan_for_path(self, path: str, graph: ArchitectureGraph) -> RefactorPlan:
-        surfaces = graph.semantic_surfaces.get(path, (SemanticSurface.UTILITY_PERIPHERAL,))
+        surfaces = graph.semantic_surfaces.get(path, (SemanticSurface.UNCLASSIFIED,))
         tier = self.classifier.classify((path,), surfaces=surfaces)
         plan_id = _plan_id("path-proposal", (path,), ",".join(surface.value for surface in surfaces))
         step = RefactorStep(

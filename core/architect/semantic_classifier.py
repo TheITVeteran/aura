@@ -87,7 +87,12 @@ class SemanticClassifier:
             ("training", "finetune", "lora", "adapter", "dataset"),
         )
         if not surfaces:
-            surfaces.append(SemanticSurface.UTILITY_PERIPHERAL)
+            # Was UTILITY_PERIPHERAL. Every keyword list above is a list of
+            # things somebody thought of, so "nothing matched" describes the
+            # LIST, not the code — and answering it with the most benign
+            # surface handed the lowest mutation tier to exactly the modules
+            # no rule has ever seen.
+            surfaces.append(SemanticSurface.UNCLASSIFIED)
         return tuple(dict.fromkeys(surfaces))
 
     @staticmethod

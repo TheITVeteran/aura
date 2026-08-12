@@ -24,6 +24,12 @@ class SemanticSurface(StrEnum):
     UI_API = "ui/api"
     TRAINING_FINETUNE = "training/finetune"
     UTILITY_PERIPHERAL = "utility/peripheral"
+    #: No classification rule matched. NOT the same as "peripheral utility":
+    #: one is a positive finding about what the code touches, the other is
+    #: the absence of any finding at all. Novel or newly-named subsystems
+    #: land here, and they are the LAST thing that should inherit the
+    #: lowest-scrutiny tier.
+    UNCLASSIFIED = "unclassified"
 
 
 class SmellSeverity(IntEnum):
