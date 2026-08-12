@@ -177,6 +177,7 @@ def _loaded_fixture(
                 "sha256": checkpoint_sha256,
                 "size_bytes": controller_path.stat().st_size,
             },
+            "canary_battery": {"battery_sha256": "d" * 64},
         },
     )
     monkeypatch.setattr(shadow, "_source_mechanics_match", lambda _identity: True)
@@ -217,6 +218,7 @@ def test_loads_controller_as_shadow_without_mutating_model(
     assert loaded.receipt["mode"] == "shadow_only"
     assert loaded.receipt["serving_authority"] is False
     assert loaded.receipt["recurrence_depth"] == 4
+    assert loaded.canary_battery == {"battery_sha256": "d" * 64}
     assert loaded.supports([0, 201, 0]) is True
     assert loaded.supports([0, 1, 2]) is False
 

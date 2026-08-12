@@ -45599,3 +45599,33 @@ The completion envelope remains `913/920` (approximately `99.2%`). Next is the
 frozen three-seed adjudication, conditional package materialization, this live
 shadow canary, and restart/rollback proof before any domain-qualified serving
 decision.
+
+## Checkpoint 2026-08-11-261: Promotion Canaries Are Fresh, Hidden and Package-Bound
+
+A supported recurrent package now carries a sealed private canary battery rather
+than depending on caller-supplied favorable examples. Materialization derives a
+deterministic fresh seed from the frozen replication verdict, excludes every
+training and replication task and prompt, regenerates all admitted families and
+depths, tokenizes the exact answer contract, and binds the generator source,
+tokenizer, plan and verdict identities into the package inventory. Traversal,
+duplicate, malformed, stale or cross-package batteries fail inspection.
+
+The resident client can reopen only its already attested package, verify that
+the package id and manifest still match the worker handshake, extract the
+private cases internally and run them through the non-serving shadow canary.
+Neither callers nor the response lane receive expected answers. Validation is
+green: `460/460` focused package, shadow, authority, ownership, admission and
+resilience tests pass; canonical smoke passes `104/104`; focused Ruff,
+compilation and diff hygiene pass.
+
+The resident trainer completed `73/73` steps and preserved a terminal checkpoint
+with `39.038%` best held-out depth-relative cross-entropy gain. Its separate
+decoded answer-bridge admission was `26/27` exact (`96.296%`), so it did not
+earn the required `27/27` gate and is not promotable on that evidence. The
+automatically chained powered replication then failed before any scientific
+decode because the outer no-fork supervisor blocked its nested evaluation
+launcher. That is an orchestration defect, not positive or negative capability
+evidence; repair and exact frozen replication recovery remain open. No runtime
+promotion, broad reasoning result, fusion authority, frontier result or
+`WOW Signal` is claimed. The completion envelope remains `913/920`
+(approximately `99.2%`).

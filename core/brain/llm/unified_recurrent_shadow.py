@@ -21,6 +21,10 @@ from typing import Any, Final, Never
 import mlx.core as mx
 from mlx.utils import tree_flatten, tree_unflatten
 
+from core.brain.llm.unified_recurrent_shadow_battery import (
+    UnifiedRecurrentShadowBatteryError,
+    validate_shadow_canary_battery,
+)
 from core.brain.llm.unified_recurrent_shadow_contract import (
     LOAD_SCHEMA,
     seal_shadow_load_receipt,
@@ -49,8 +53,8 @@ from core.learning.unified_intrinsic_recurrence import (
     unified_recurrent_logits,
 )
 
-PACKAGE_SCHEMA: Final = "aura.unified_intrinsic.shadow_package.v1"
-COMPLETE_SCHEMA: Final = "aura.unified_intrinsic.shadow_package_complete.v1"
+PACKAGE_SCHEMA: Final = "aura.unified_intrinsic.shadow_package.v2"
+COMPLETE_SCHEMA: Final = "aura.unified_intrinsic.shadow_package_complete.v2"
 _MAX_JSON_BYTES: Final = 64 * 1024 * 1024
 _MAX_CONTROLLER_BYTES: Final = 2 * 1024 * 1024 * 1024
 _PACKAGE_ID: Final = re.compile(r"[a-z0-9][a-z0-9._-]{0,119}")
@@ -329,6 +333,7 @@ def inspect_shadow_package(path: Path) -> dict[str, Any]:
         "campaign_completion",
         "replication_plan",
         "replication_verdict",
+        "canary_battery",
     ):
         bound[role] = _binding(
             root,
@@ -361,6 +366,13 @@ def inspect_shadow_package(path: Path) -> dict[str, Any]:
     completion = documents["campaign_completion"]
     plan = documents["replication_plan"]
     verdict = documents["replication_verdict"]
+    canary_battery = documents["canary_battery"]
+    try:
+        validate_shadow_canary_battery(canary_battery)
+    except UnifiedRecurrentShadowBatteryError as exc:
+        raise UnifiedRecurrentShadowError(
+            "unified shadow canary battery differs"
+        ) from exc
     report_rows = verdict.get("reports")
     if (
         verdict.get("supported") is not True
@@ -369,6 +381,12 @@ def inspect_shadow_package(path: Path) -> dict[str, Any]:
         or plan.get("plan_sha256") != manifest.get("replication_plan_sha256")
         or verdict.get("checkpoint_sha256") != manifest.get("checkpoint_sha256")
         or checkpoint.get("checkpoint_sha256") != manifest.get("checkpoint_sha256")
+        or canary_battery.get("battery_sha256")
+        != manifest.get("canary_battery_sha256")
+        or canary_battery.get("replication_plan_sha256")
+        != manifest.get("replication_plan_sha256")
+        or canary_battery.get("replication_verdict_sha256")
+        != manifest.get("replication_verdict_sha256")
         or not isinstance(completion.get("checkpoint"), dict)
         or completion["checkpoint"].get("checkpoint_sha256")
         != manifest.get("checkpoint_sha256")
@@ -406,6 +424,7 @@ def inspect_shadow_package(path: Path) -> dict[str, Any]:
         "root": root,
         "manifest": manifest,
         "checkpoint": checkpoint,
+        "canary_battery": canary_battery,
         "controller_path": bound["controller"][0],
         "controller_binding": dict(artifacts["controller"]),
     }
@@ -523,6 +542,7 @@ class LoadedUnifiedRecurrentShadow:
     spec: UnifiedIntrinsicTrainingSpec
     answer_contract: RecurrentAnswerEmissionContract
     receipt: dict[str, Any]
+    canary_battery: dict[str, Any] | None = None
 
     def supports(self, public_tokens: list[int] | tuple[int, ...]) -> bool:
         return self.answer_contract.family(public_tokens) in set(self.receipt["families"])
@@ -804,7 +824,13 @@ def load_unified_recurrent_shadow(
         "serving_authority": False,
     }
     receipt = seal_shadow_load_receipt(body)
-    return LoadedUnifiedRecurrentShadow(controller, spec, answer, receipt)
+    return LoadedUnifiedRecurrentShadow(
+        controller,
+        spec,
+        answer,
+        receipt,
+        verified["canary_battery"],
+    )
 
 
 __all__ = [

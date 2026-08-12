@@ -5,10 +5,13 @@ import json
 from pathlib import Path
 from types import SimpleNamespace
 
+import mlx_lm.utils
 import pytest
 
 from core.brain.llm import unified_recurrent_shadow as runtime_shadow
+from tools import evaluate_unified_intrinsic_checkpoint as checkpoint_evaluator
 from tools import materialize_unified_intrinsic_shadow_package as materializer
+from tools import unified_intrinsic_tokenization_contract as tokenization_contract
 from tools.unified_intrinsic_resident_identity import canonical_bytes, canonical_sha256
 
 
@@ -70,6 +73,26 @@ def _fixture(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> tuple[Path, Pat
         ],
     }
     verdict = {**verdict_body, "verdict_sha256": canonical_sha256(verdict_body)}
+    canary_battery = materializer.seal_shadow_canary_battery(
+        [
+            {
+                "task_id": "fresh-khop-1",
+                "family": "khop",
+                "task_depth": 2,
+                "prompt_sha256": "8" * 64,
+                "expected_sha256": "9" * 64,
+                "public_token_ids": [1, 201, 2],
+                "expected_token_ids": [12, 999],
+                "max_tokens": 2,
+            }
+        ],
+        seed=301,
+        replication_plan_sha256=plan["plan_sha256"],
+        replication_verdict_sha256=verdict["verdict_sha256"],
+        excluded_task_ids_sha256="a" * 64,
+        excluded_prompt_sha256s_sha256="b" * 64,
+        generator_source_sha256s={"core/learning/example.py": "c" * 64},
+    )
     monkeypatch.setattr(
         materializer,
         "_verified_evidence",
@@ -79,6 +102,11 @@ def _fixture(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> tuple[Path, Pat
         materializer,
         "resolve_checkpoint_generation",
         lambda *_args, **_kwargs: checkpoint,
+    )
+    monkeypatch.setattr(
+        materializer,
+        "_fresh_canary_battery",
+        lambda *_args, **_kwargs: canary_battery,
     )
     return campaign, output_root
 
@@ -105,6 +133,9 @@ def test_materializes_and_reopens_shadow_only_package(
     assert manifest["serving_authority"] is False
     assert manifest["domain_contract"]["ordinary_chat_authorized"] is False
     assert manifest["domain_contract"]["arbitrary_reasoning_authorized"] is False
+    assert manifest["canary_battery_sha256"] == runtime_inspection[
+        "canary_battery"
+    ]["battery_sha256"]
     assert "global_activation" in manifest["claims_not_supported"]
     assert set(path.name for path in package.iterdir()) == {
         "PACKAGE_COMPLETE.json",
@@ -117,7 +148,78 @@ def test_materializes_and_reopens_shadow_only_package(
         "replication-report-02.json",
         "replication-report-03.json",
         "replication-verdict.json",
+        "shadow-canary-battery.json",
     }
+
+
+def test_fresh_canary_generator_tokenizes_prompt_disjoint_tasks(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    dataset = tmp_path / "dataset.json"
+    dataset.write_text("fixture")
+    training = [SimpleNamespace(task_id="train-1", prompt="training prompt")]
+    holdout = [SimpleNamespace(task_id="holdout-1", prompt="holdout prompt")]
+
+    class Tokenizer:
+        eos_token_id = 999
+
+        def apply_chat_template(self, messages, **_kwargs):
+            return f"USER:{messages[0]['content']}\nASSISTANT:"
+
+        def encode(self, text, **_kwargs):
+            return [1, *text.encode("ascii"), 2]
+
+    monkeypatch.setattr(
+        tokenization_contract,
+        "load_source_dataset",
+        lambda _path: (training, holdout),
+    )
+    monkeypatch.setattr(mlx_lm.utils, "load_tokenizer", lambda _path: Tokenizer())
+
+    def fresh(_identity, *, per_cell, seed, task_depth):
+        assert per_cell == 1
+        return [
+            SimpleNamespace(
+                task_id=f"fresh-{task_depth}-{seed}",
+                family="khop",
+                depth=task_depth,
+                prompt=f"fresh prompt {task_depth} {seed}",
+                answer='FINAL_ANSWER: {"value":1}',
+            )
+        ]
+
+    monkeypatch.setattr(checkpoint_evaluator, "_fresh_tasks", fresh)
+    plan = {"plan_sha256": "1" * 64}
+    verdict = {"verdict_sha256": "2" * 64}
+    reports = [
+        {
+            "candidates": [
+                {
+                    "task_id": "replication-1",
+                    "prompt_sha256": "3" * 64,
+                }
+            ]
+        }
+    ]
+
+    battery = materializer._fresh_canary_battery(
+        {"paths": {"dataset": str(dataset)}},
+        {
+            "model": {"canonical_path": str(tmp_path)},
+            "task_depths": [1, 2, 4],
+            "bridge": "assistant_answer",
+        },
+        plan,
+        verdict,
+        reports,
+    )
+
+    assert battery["task_count"] == 3
+    assert {row["task_depth"] for row in battery["cases"]} == {1, 2, 4}
+    assert all(row["expected_token_ids"][-1] == 999 for row in battery["cases"])
+    assert battery["replication_plan_sha256"] == plan["plan_sha256"]
+    assert battery["replication_verdict_sha256"] == verdict["verdict_sha256"]
 
 
 def test_refuses_existing_destination(

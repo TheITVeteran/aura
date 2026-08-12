@@ -205,3 +205,84 @@ async def test_client_canary_never_runs_without_loaded_shadow(monkeypatch) -> No
 
     assert result["supported"] is False
     assert result["reason"] == "unified_recurrent_shadow_not_loaded"
+
+
+@pytest.mark.asyncio
+async def test_package_canary_reopens_worker_bound_private_battery(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    client = object.__new__(mlx_client.MLXLocalClient)
+    client._unified_recurrent_shadow_status = {
+        "loaded": True,
+        "serving_authority": False,
+        "package_id": "fixture",
+        "manifest_sha256": "a" * 64,
+        "controller_sha256": "c" * 64,
+    }
+    cases = [{"task_id": "fresh-1", "family": "khop"}]
+    observed = {}
+    monkeypatch.setattr(
+        "core.brain.llm.unified_recurrent_shadow.inspect_shadow_package",
+        lambda _path: {
+            "manifest": {
+                "package_id": "fixture",
+                "manifest_sha256": "a" * 64,
+            },
+            "canary_battery": {"battery_sha256": "b" * 64},
+        },
+    )
+    monkeypatch.setattr(
+        "core.brain.llm.unified_recurrent_shadow_battery.shadow_canary_cases",
+        lambda _battery: cases,
+    )
+
+    async def canary(received, **kwargs):
+        observed["cases"] = received
+        observed.update(kwargs)
+        return {"supported": True, "reason": "supported_domain_shadow_canary"}
+
+    client.unified_recurrent_shadow_canary_async = canary
+
+    result = await client.unified_recurrent_shadow_package_canary_async(
+        tmp_path,
+        minimum_wrong_to_right=2,
+    )
+
+    assert result["supported"] is True
+    assert observed["cases"] == cases
+    assert observed["minimum_wrong_to_right"] == 2
+
+
+@pytest.mark.asyncio
+async def test_package_canary_refuses_manifest_not_loaded_by_worker(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    client = object.__new__(mlx_client.MLXLocalClient)
+    client._unified_recurrent_shadow_status = {
+        "loaded": True,
+        "serving_authority": False,
+        "package_id": "fixture",
+        "manifest_sha256": "a" * 64,
+    }
+    monkeypatch.setattr(
+        "core.brain.llm.unified_recurrent_shadow.inspect_shadow_package",
+        lambda _path: {
+            "manifest": {
+                "package_id": "fixture",
+                "manifest_sha256": "b" * 64,
+            },
+            "canary_battery": {},
+        },
+    )
+
+    async def forbidden(*_args, **_kwargs):
+        raise AssertionError("mismatched package must not reach model execution")
+
+    client.unified_recurrent_shadow_canary_async = forbidden
+
+    result = await client.unified_recurrent_shadow_package_canary_async(tmp_path)
+
+    assert result["supported"] is False
+    assert "worker_identity_differs" in result["reason"]

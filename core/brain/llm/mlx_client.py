@@ -7985,6 +7985,68 @@ class MLXLocalClient:
             ),
         }
 
+    async def unified_recurrent_shadow_package_canary_async(
+        self,
+        package: Path | None = None,
+        *,
+        minimum_wrong_to_right: int = 1,
+        maximum_shadow_latency_ms: int = 120_000,
+        maximum_latency_ratio_numerator: int = 8,
+        maximum_latency_ratio_denominator: int = 1,
+    ) -> dict[str, Any]:
+        """Run the package's private fresh battery through the shadow lane."""
+
+        shadow_status = copy.deepcopy(
+            getattr(self, "_unified_recurrent_shadow_status", {})
+        )
+        configured_value: Path | str = (
+            package
+            if package is not None
+            else os.getenv("AURA_UNIFIED_RECURRENT_SHADOW_PACKAGE", "")
+        )
+        if not str(configured_value).strip():
+            return {
+                "plan": {},
+                "verdict": {},
+                "supported": False,
+                "reason": "unified_recurrent_shadow_package_not_configured",
+            }
+        try:
+            from core.brain.llm.unified_recurrent_shadow import (
+                inspect_shadow_package,
+            )
+            from core.brain.llm.unified_recurrent_shadow_battery import (
+                shadow_canary_cases,
+            )
+
+            configured = await asyncio.to_thread(
+                lambda: Path(configured_value).expanduser()
+            )
+            verified = await asyncio.to_thread(inspect_shadow_package, configured)
+            manifest = verified.get("manifest")
+            if not (
+                isinstance(manifest, dict)
+                and manifest.get("package_id") == shadow_status.get("package_id")
+                and manifest.get("manifest_sha256")
+                == shadow_status.get("manifest_sha256")
+            ):
+                raise ValueError("shadow_package_worker_identity_differs")
+            cases = shadow_canary_cases(verified.get("canary_battery"))
+        except (ImportError, OSError, RuntimeError, TypeError, ValueError) as exc:
+            return {
+                "plan": {},
+                "verdict": {},
+                "supported": False,
+                "reason": f"shadow_package_canary_invalid:{exc}",
+            }
+        return await self.unified_recurrent_shadow_canary_async(
+            cases,
+            minimum_wrong_to_right=minimum_wrong_to_right,
+            maximum_shadow_latency_ms=maximum_shadow_latency_ms,
+            maximum_latency_ratio_numerator=maximum_latency_ratio_numerator,
+            maximum_latency_ratio_denominator=maximum_latency_ratio_denominator,
+        )
+
     async def latent_reason_async(
         self,
         prompt: str | None = None,

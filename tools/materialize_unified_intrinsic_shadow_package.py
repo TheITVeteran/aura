@@ -20,6 +20,10 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
+from core.brain.llm.unified_recurrent_shadow_battery import (  # noqa: E402
+    seal_shadow_canary_battery,
+    validate_shadow_canary_battery,
+)
 from core.runtime.atomic_writer import atomic_write_bytes  # noqa: E402
 from tools import adjudicate_unified_intrinsic_resident_replication as replication  # noqa: E402
 from tools import launch_unified_intrinsic_resident_evaluation as launcher  # noqa: E402
@@ -31,8 +35,8 @@ from tools.unified_intrinsic_resident_identity import (  # noqa: E402
     canonical_sha256,
 )
 
-PACKAGE_SCHEMA: Final = "aura.unified_intrinsic.shadow_package.v1"
-COMPLETE_SCHEMA: Final = "aura.unified_intrinsic.shadow_package_complete.v1"
+PACKAGE_SCHEMA: Final = "aura.unified_intrinsic.shadow_package.v2"
+COMPLETE_SCHEMA: Final = "aura.unified_intrinsic.shadow_package_complete.v2"
 _PACKAGE_ID = re.compile(r"[a-z0-9][a-z0-9._-]{0,119}")
 _MAX_COPY_BYTES: Final = 64 * 1024 * 1024 * 1024
 
@@ -244,6 +248,154 @@ def _verified_evidence(
     return config, completion, plan, verdict, reports
 
 
+_CANARY_GENERATOR_SOURCES: Final = (
+    "core/learning/recurrence_curriculum.py",
+    "tools/evaluate_unified_intrinsic_checkpoint.py",
+    "tools/train_intrinsic_recurrence.py",
+)
+
+
+def _fresh_canary_battery(
+    config: Mapping[str, Any],
+    identity: Mapping[str, Any],
+    plan: Mapping[str, Any],
+    verdict: Mapping[str, Any],
+    reports: Sequence[Mapping[str, Any]],
+) -> dict[str, Any]:
+    """Generate a tokenizer-bound battery disjoint from all frozen evidence."""
+
+    from mlx_lm.utils import load_tokenizer
+
+    from tools.evaluate_unified_intrinsic_checkpoint import _fresh_tasks
+    from tools.train_intrinsic_recurrence import encode_example
+    from tools.unified_intrinsic_tokenization_contract import load_source_dataset
+
+    paths = config.get("paths")
+    model = identity.get("model")
+    if not isinstance(paths, Mapping) or not isinstance(model, Mapping):
+        _fail("shadow package canary source identity is unavailable")
+    try:
+        training, holdout = load_source_dataset(Path(str(paths["dataset"])))
+    except (KeyError, OSError, RuntimeError, TypeError, ValueError) as exc:
+        raise UnifiedIntrinsicShadowPackageError(
+            "shadow package frozen dataset is unavailable"
+        ) from exc
+    excluded_task_ids = {str(task.task_id) for task in (*training, *holdout)}
+    excluded_prompt_sha256s = {
+        hashlib.sha256(str(task.prompt).encode()).hexdigest()
+        for task in (*training, *holdout)
+    }
+    for report in reports:
+        candidates = report.get("candidates")
+        if not isinstance(candidates, list) or not candidates:
+            _fail("shadow package canary replication candidates are unavailable")
+        for candidate in candidates:
+            if (
+                not isinstance(candidate, Mapping)
+                or not isinstance(candidate.get("task_id"), str)
+                or not candidate["task_id"]
+                or not isinstance(candidate.get("prompt_sha256"), str)
+                or len(candidate["prompt_sha256"]) != 64
+                or any(
+                    character not in "0123456789abcdef"
+                    for character in candidate["prompt_sha256"]
+                )
+            ):
+                _fail("shadow package canary replication identity differs")
+            excluded_task_ids.add(candidate["task_id"])
+            excluded_prompt_sha256s.add(candidate["prompt_sha256"])
+    verdict_sha256 = verdict.get("verdict_sha256")
+    plan_sha256 = plan.get("plan_sha256")
+    if not isinstance(verdict_sha256, str) or not isinstance(plan_sha256, str):
+        _fail("shadow package canary evidence commitments are unavailable")
+    base_seed = int(
+        hashlib.sha256(f"{verdict_sha256}:live-shadow-canary".encode()).hexdigest()[:15],
+        16,
+    )
+    task_depths = tuple(int(value) for value in identity.get("task_depths", ()))
+    if not task_depths:
+        _fail("shadow package canary task depths are unavailable")
+    tasks: list[Any] = []
+    selected_seed = -1
+    for attempt in range(64):
+        selected_seed = base_seed + attempt * 10_000_019
+        proposed = [
+            task
+            for depth in task_depths
+            for task in _fresh_tasks(
+                dict(identity),
+                per_cell=1,
+                seed=selected_seed + depth * 1_000_003,
+                task_depth=depth,
+            )
+        ]
+        proposed_ids = {str(task.task_id) for task in proposed}
+        proposed_prompts = {
+            hashlib.sha256(str(task.prompt).encode()).hexdigest()
+            for task in proposed
+        }
+        if (
+            len(proposed_ids) == len(proposed)
+            and len(proposed_prompts) == len(proposed)
+            and not proposed_ids & excluded_task_ids
+            and not proposed_prompts & excluded_prompt_sha256s
+        ):
+            tasks = proposed
+            break
+    if not tasks:
+        _fail("shadow package fresh canary could not be made disjoint")
+    model_path = model.get("canonical_path")
+    if not isinstance(model_path, str) or not model_path:
+        _fail("shadow package canary tokenizer path is unavailable")
+    try:
+        tokenizer = load_tokenizer(model_path)
+    except (OSError, RuntimeError, TypeError, ValueError) as exc:
+        raise UnifiedIntrinsicShadowPackageError(
+            "shadow package canary tokenizer is unavailable"
+        ) from exc
+    bridge_value = identity.get("bridge")
+    if not isinstance(bridge_value, str) or not bridge_value:
+        _fail("shadow package canary answer bridge is unavailable")
+    bridge = {"assistant_answer": "\n\nFINAL_ANSWER: "}.get(
+        bridge_value,
+        bridge_value,
+    )
+    cases: list[dict[str, Any]] = []
+    for task in tasks:
+        prompt, answer = encode_example(tokenizer, task, bridge)
+        public_token_ids = [int(value) for value in prompt[0].tolist()]
+        expected_token_ids = [int(value) for value in answer[0].tolist()]
+        if not public_token_ids or not expected_token_ids:
+            _fail("shadow package canary tokenization is empty")
+        cases.append(
+            {
+                "task_id": str(task.task_id),
+                "family": str(task.family),
+                "task_depth": int(task.depth),
+                "prompt_sha256": hashlib.sha256(str(task.prompt).encode()).hexdigest(),
+                "expected_sha256": hashlib.sha256(str(task.answer).encode()).hexdigest(),
+                "public_token_ids": public_token_ids,
+                "expected_token_ids": expected_token_ids,
+                "max_tokens": len(expected_token_ids),
+            }
+        )
+    source_sha256s = {
+        relative: hashlib.sha256((REPO_ROOT / relative).read_bytes()).hexdigest()
+        for relative in _CANARY_GENERATOR_SOURCES
+    }
+    return seal_shadow_canary_battery(
+        cases,
+        seed=selected_seed,
+        replication_plan_sha256=plan_sha256,
+        replication_verdict_sha256=verdict_sha256,
+        excluded_task_ids_sha256=canonical_sha256(sorted(excluded_task_ids)),
+        excluded_prompt_sha256s_sha256=canonical_sha256(
+            sorted(excluded_prompt_sha256s)
+        ),
+        generator_source_sha256s=source_sha256s,
+    )
+
+
 def inspect_shadow_package(
     package: Path,
     *,
@@ -297,6 +449,7 @@ def inspect_shadow_package(
         "campaign_completion",
         "replication_plan",
         "replication_verdict",
+        "canary_battery",
     ):
         binding = artifacts.get(role)
         if not isinstance(binding, dict):
@@ -327,11 +480,24 @@ def inspect_shadow_package(
 
     verdict = _read_document(package / str(artifacts["replication_verdict"]["path"]))
     checkpoint = _read_document(package / str(artifacts["checkpoint"]["path"]))
+    canary_battery = _read_document(package / str(artifacts["canary_battery"]["path"]))
+    try:
+        validate_shadow_canary_battery(canary_battery)
+    except (TypeError, ValueError) as exc:
+        raise UnifiedIntrinsicShadowPackageError(
+            "shadow package canary battery differs"
+        ) from exc
     if (
         verdict.get("supported") is not True
         or verdict.get("verdict_sha256") != manifest.get("replication_verdict_sha256")
         or verdict.get("checkpoint_sha256") != manifest.get("checkpoint_sha256")
         or checkpoint.get("checkpoint_sha256") != manifest.get("checkpoint_sha256")
+        or canary_battery.get("battery_sha256")
+        != manifest.get("canary_battery_sha256")
+        or canary_battery.get("replication_plan_sha256")
+        != manifest.get("replication_plan_sha256")
+        or canary_battery.get("replication_verdict_sha256")
+        != manifest.get("replication_verdict_sha256")
     ):
         _fail("shadow package scientific evidence differs")
     return {
@@ -411,6 +577,17 @@ def materialize(
         identity = checkpoint.receipt.get("identity")
         if not isinstance(identity, dict):
             _fail("shadow package checkpoint identity is unavailable")
+        canary_battery = _fresh_canary_battery(
+            config,
+            identity,
+            plan,
+            verdict,
+            reports,
+        )
+        artifacts["canary_battery"] = _write_document(
+            stage / "shadow-canary-battery.json",
+            canary_battery,
+        )
         body = {
             "schema": PACKAGE_SCHEMA,
             "package_id": package_id,
@@ -425,6 +602,7 @@ def materialize(
             "tokenizer_identity_sha256": identity["tokenizer"]["identity_sha256"],
             "replication_plan_sha256": plan["plan_sha256"],
             "replication_verdict_sha256": verdict["verdict_sha256"],
+            "canary_battery_sha256": canary_battery["battery_sha256"],
             "domain_contract": {
                 "qualification": "generator_and_grammar_bound",
                 "families": list(identity["families"]),
@@ -460,7 +638,7 @@ def materialize(
             "package_id": package_id,
             "manifest_sha256": manifest["manifest_sha256"],
             "manifest_file_sha256": manifest_binding["sha256"],
-            "bound_artifact_count": 6 + len(report_bindings),
+            "bound_artifact_count": 7 + len(report_bindings),
             "mode": "shadow_only",
             "serving_authority": False,
         }
