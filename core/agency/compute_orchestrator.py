@@ -74,8 +74,17 @@ RAM_CRITICAL = 90.0  # % — emergency conservation
 RAM_HIGH = 80.0  # % — reduce context depth
 TEMP_CRITICAL = 90.0  # °C (macOS CPU temp) — thermal throttle
 UPDATE_INTERVAL = 15.0  # seconds between resource checks
-DEFAULT_CPU_PCT = 40.0
-DEFAULT_RAM_PCT = 50.0
+# What to assume when the host cannot be sampled at all.
+#
+# These were 40.0 and 50.0 and the degradation called them "conservative".
+# They are not: CPU_NORMAL is 50.0 and means FULL OPERATION, so an
+# unmeasurable host was being treated as comfortably idle and every
+# reduction below stayed switched off during exactly the pressure nobody
+# could read. Anchored to the named thresholds rather than picked: one step
+# into the reduce-background band, so an unobserved host behaves like a busy
+# one without behaving like a critical one.
+DEFAULT_CPU_PCT = CPU_HIGH
+DEFAULT_RAM_PCT = RAM_HIGH
 MIN_TOKEN_MULTIPLIER = 0.25
 MAX_TOKEN_MULTIPLIER = 1.5
 
@@ -248,7 +257,7 @@ class ComputeOrchestrator:
             self._last_resource_sample_error = f"{type(exc).__name__}: {exc}"
             _record_compute_degradation(
                 exc,
-                action="used conservative static resource defaults because psutil is unavailable",
+                action="assumed a loaded host because psutil is unavailable; resource pressure is unmeasured",
                 extra={"cpu_pct": DEFAULT_CPU_PCT, "ram_pct": DEFAULT_RAM_PCT},
             )
             return DEFAULT_CPU_PCT, DEFAULT_RAM_PCT, None
@@ -260,7 +269,7 @@ class ComputeOrchestrator:
             self._last_resource_sample_error = f"{type(exc).__name__}: {exc}"
             _record_compute_degradation(
                 exc,
-                action="used conservative static resource defaults because live resource sampling failed",
+                action="assumed a loaded host because live resource sampling failed; resource pressure is unmeasured",
                 extra={"cpu_pct": DEFAULT_CPU_PCT, "ram_pct": DEFAULT_RAM_PCT},
             )
             return DEFAULT_CPU_PCT, DEFAULT_RAM_PCT, None

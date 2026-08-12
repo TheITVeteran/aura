@@ -56,10 +56,12 @@ class SomaticComputeSentinel:
 
         # 1b. Fetch governance token throttle factor
         gov_throttle = 1.0
+        gov_measured = False
         try:
             from research.protocols.resource_quotas import get_compute_governor
             gov = get_compute_governor()
             gov_throttle = gov.get_throttle_factor()
+            gov_measured = True
         except _SOMATIC_THROTTLE_BOUNDARY_ERRORS as e:
             _record_somatic_throttle_degradation(e, action="using default compute governor throttle")
             logger.debug("Failed to resolve compute governor: %s", e)
@@ -67,9 +69,11 @@ class SomaticComputeSentinel:
         # 2. Fetch hardware stress metrics
         cpu_load = 0.0
         ram_pct = 0.0
+        hardware_measured = False
         try:
             cpu_load = psutil.cpu_percent(interval=0) / 100.0
             ram_pct = psutil.virtual_memory().percent / 100.0
+            hardware_measured = True
         except _SOMATIC_THROTTLE_BOUNDARY_ERRORS as e:
             _record_somatic_throttle_degradation(e, action="using neutral hardware metrics for generation throttle")
             logger.debug("Failed to retrieve hardware metrics: %s", e)
@@ -77,9 +81,24 @@ class SomaticComputeSentinel:
         # 3. Determine if systemic overload is present.
         # Virtual arousal is an affective/context signal. It becomes a compute
         # throttling signal only when it is coupled to real resource pressure.
+        #
+        # An UNMEASURED signal must not vote "fine". The defaults above are
+        # 0% CPU, 0% RAM and a throttle factor of 1.0 — a perfectly idle host
+        # with unlimited quota — so a psutil failure or a missing compute
+        # governor made every stress test below unable to fire, and heavy
+        # generation was admitted during exactly the pressure the observer
+        # could not read. The degradation was recorded and the decision was
+        # made anyway, on numbers that describe nothing.
+        #
+        # Unmeasured is treated as stressed but never as critical: we cannot
+        # prove there is headroom, so the conservative sampling profile
+        # applies, while the severe caps stay reserved for pressure that was
+        # actually observed.
+        unobserved = (not hardware_measured) or (not gov_measured)
         arousal_resource_coupled = arousal > 0.9 and (ram_pct > 0.82 or cpu_load > 0.85)
         is_stressed = (
-            arousal_resource_coupled
+            unobserved
+            or arousal_resource_coupled
             or (ram_pct > 0.88)
             or (cpu_load > 0.9)
             or (gov_throttle <= 0.5)
@@ -91,7 +110,7 @@ class SomaticComputeSentinel:
             or (gov_throttle <= 0.2)
         )
 
-        if gov_throttle == 0.0:
+        if gov_throttle == 0.0 and gov_measured:
             # Token exhaustion: severe cap to block further consumption
             original_max = base_options.get("max_tokens", 512)
             base_options["max_tokens"] = min(original_max, 8)

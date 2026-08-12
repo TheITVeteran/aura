@@ -27,6 +27,8 @@ from collections import deque
 from dataclasses import dataclass, field
 from typing import Deque, Dict, Optional, Tuple
 
+from core.runtime.errors import record_degradation
+
 
 def _clamp(x: float, lo: float = 0.0, hi: float = 1.0) -> float:
     return lo if x < lo else hi if x > hi else x
@@ -89,12 +91,27 @@ class EmotionalRegulator:
             sustained = self._sustained(now)
 
         # Reappraisal: how much real, current damage backs this arousal?
+        #
+        # A read failure left this at 0.0 and said nothing. Both branches
+        # below use LOW damage as grounds to down-regulate — "no real damage,
+        # hold" and "arousal exceeds actual damage, reframe" — so an
+        # unreadable nociception engine actively suppressed a response that
+        # may have been entirely warranted. Reappraising a feeling away
+        # because you could not measure what caused it is the one thing this
+        # function must never do.
         actual_damage = 0.0
+        damage_measured = False
         try:
             from core.affect.nociception import get_nociception_engine
             actual_damage = float(get_nociception_engine().nociceptive_pressure())
-        except (ImportError, AttributeError, RuntimeError, TypeError, ValueError):
-            pass
+            damage_measured = True
+        except (ImportError, AttributeError, RuntimeError, TypeError, ValueError) as exc:
+            record_degradation(
+                "emotional_regulation",
+                exc,
+                severity="warning",
+                action="left arousal unregulated because nociceptive pressure could not be read",
+            )
 
         if stakes is None:
             # Stakes default to the stronger of felt damage and sustained negative affect.
@@ -103,7 +120,8 @@ class EmotionalRegulator:
 
         factors = {
             "sustained": sustained,
-            "actual_damage": actual_damage,
+            "actual_damage": actual_damage if damage_measured else None,
+            "damage_measured": damage_measured,
             "deliberation": _clamp(deliberation),
             "stakes": stakes,
         }
@@ -112,7 +130,12 @@ class EmotionalRegulator:
         # (sustained + high-stakes) before the down-regulating strategies, so a real, ongoing,
         # important situation isn't mistakenly reappraised away.
         hold = False
-        if arousal >= self._hold_arousal and deliberation < 0.4 and actual_damage < 0.5:
+        if (
+            arousal >= self._hold_arousal
+            and deliberation < 0.4
+            and damage_measured
+            and actual_damage < 0.5
+        ):
             strategy, hold = "hold", True
             regulated = arousal * 0.5
             rationale = "high arousal, thin deliberation, no real damage — hold before acting"
@@ -124,7 +147,7 @@ class EmotionalRegulator:
             strategy = "dampen"
             regulated = arousal * 0.55
             rationale = "transient spike not backed by sustained signal — soften"
-        elif arousal >= 0.5 and actual_damage < 0.3 and valence < 0:
+        elif arousal >= 0.5 and damage_measured and actual_damage < 0.3 and valence < 0:
             strategy = "reappraise"
             regulated = arousal * 0.65
             rationale = "arousal exceeds actual damage — reframe rather than react to the feeling"
