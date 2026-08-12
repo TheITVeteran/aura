@@ -1327,6 +1327,83 @@ def test_launchd_install_never_boots_out_unproven_existing_controller(
         pipeline.install_launchd(arguments)
 
 
+def test_launchd_install_accepts_only_recomputed_terminal_refutation(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    config = _config(tmp_path)
+    config_path = tmp_path / "promotion-config.json"
+    plist_path = tmp_path / "promotion.plist"
+    intent = {
+        "config_sha256": config["config_sha256"],
+        "intent_sha256": "i" * 64,
+    }
+    verdict = {
+        "supported": False,
+        "verdict": "refuted_powered_resident_replication",
+        "verdict_sha256": "v" * 64,
+    }
+    status = {
+        "state": "refuted",
+        "controller_pid": 41,
+        "controller_start_token": "token-41",
+        "sleep_inhibitor_pid": 42,
+        "details": {
+            "verdict": verdict["verdict"],
+            "verdict_sha256": verdict["verdict_sha256"],
+        },
+    }
+    writes: list[Path] = []
+    arguments = argparse.Namespace(
+        config=config_path,
+        poll_interval=1.0,
+        controller_timeout=30.0,
+    )
+    monkeypatch.setattr(pipeline, "_load_config", lambda _path: config)
+    monkeypatch.setattr(
+        pipeline,
+        "_launch_contract",
+        lambda *_args: (plist_path, b"plist", intent),
+    )
+    monkeypatch.setattr(pipeline, "LAUNCH_AGENTS_ROOT", tmp_path)
+    monkeypatch.setattr(
+        pipeline,
+        "atomic_write_bytes_if_absent",
+        lambda *_args, **_kwargs: True,
+    )
+    monkeypatch.setattr(
+        pipeline,
+        "atomic_write_bytes",
+        lambda path, *_args, **_kwargs: writes.append(path),
+    )
+    monkeypatch.setattr(pipeline, "ensure_private_directory", lambda _path: None)
+    monkeypatch.setattr(
+        pipeline,
+        "_launchd_job",
+        lambda _label: (_ for _ in ()).throw(
+            pipeline.UnifiedRecurrentPromotionError("job exited")
+        ),
+    )
+    monkeypatch.setattr(pipeline, "_read_status", lambda _config: status)
+    monkeypatch.setattr(
+        pipeline,
+        "_adjudicate_available_replication",
+        lambda _config: verdict,
+    )
+    monkeypatch.setattr(
+        pipeline.subprocess,
+        "run",
+        lambda *_args, **_kwargs: pytest.fail("terminal refutation was relaunched"),
+    )
+
+    receipt = pipeline.install_launchd(arguments)
+
+    assert receipt["terminal_refutation"] is True
+    assert receipt["pid"] == 41
+    assert receipt["target"].endswith(pipeline._label(config))  # noqa: SLF001
+    assert writes[-1] == Path(config["pipeline_root"]) / "launchd-receipt.json"
+
+
 def test_run_stage_rejects_result_outside_pipeline_root(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

@@ -947,6 +947,35 @@ def _installed_lineage_state(
     return "conflict"
 
 
+def _terminal_refutation_is_valid(
+    config: Mapping[str, Any],
+    status: Mapping[str, Any] | None,
+) -> bool:
+    if status is None or status.get("state") != "refuted":
+        return False
+    controller_pid = status.get("controller_pid")
+    inhibitor_pid = status.get("sleep_inhibitor_pid")
+    start_token = status.get("controller_start_token")
+    details = status.get("details")
+    if (
+        type(controller_pid) is not int
+        or controller_pid <= 1
+        or type(inhibitor_pid) is not int
+        or inhibitor_pid <= 1
+        or not isinstance(start_token, str)
+        or not start_token
+        or not isinstance(details, Mapping)
+    ):
+        return False
+    verdict = _adjudicate_available_replication(config)
+    return bool(
+        verdict is not None
+        and verdict.get("supported") is False
+        and details.get("verdict") == verdict.get("verdict")
+        and details.get("verdict_sha256") == verdict.get("verdict_sha256")
+    )
+
+
 def _active_stage_path(config: Mapping[str, Any]) -> Path:
     return Path(str(config["pipeline_root"])) / "active-stage.json"
 
@@ -1685,12 +1714,20 @@ def install_launchd(arguments: argparse.Namespace) -> dict[str, Any]:
         existing_job = _launchd_job(_label(config))
     except UnifiedRecurrentPromotionError:
         existing_job = None
-    existing_status = _read_status(config) if existing_job is not None else None
+    existing_status = _read_status(config)
     existing_state = _installed_lineage_state(existing_status, existing_job)
     bootstrapped_here = False
+    terminal_refutation = _terminal_refutation_is_valid(config, existing_status)
     if existing_state == "valid":
         status = existing_status
         job = existing_job
+        validated = True
+    elif existing_job is None and terminal_refutation:
+        status = existing_status
+        job = {
+            "target": f"{domain}/{_label(config)}",
+            "pid": status["controller_pid"],
+        }
         validated = True
     else:
         if existing_job is not None:
@@ -1729,8 +1766,26 @@ def install_launchd(arguments: argparse.Namespace) -> dict[str, Any]:
             if _installed_lineage_is_valid(status, job):
                 validated = True
                 break
+            if (
+                job.get("pid") == status.get("controller_pid")
+                and _terminal_refutation_is_valid(config, status)
+            ):
+                terminal_refutation = True
+                validated = True
+                break
         except UnifiedRecurrentPromotionError:
-            status = None
+            try:
+                status = _read_status(config)
+                if _terminal_refutation_is_valid(config, status):
+                    terminal_refutation = True
+                    job = {
+                        "target": f"{domain}/{_label(config)}",
+                        "pid": status["controller_pid"],
+                    }
+                    validated = True
+                    break
+            except UnifiedRecurrentPromotionError:
+                status = None
         time.sleep(0.25)
     if not validated or status is None or job is None:
         if bootstrapped_here:
@@ -1750,6 +1805,7 @@ def install_launchd(arguments: argparse.Namespace) -> dict[str, Any]:
         "pid": status["controller_pid"],
         "start_token": status["controller_start_token"],
         "sleep_inhibitor_pid": status["sleep_inhibitor_pid"],
+        "terminal_refutation": terminal_refutation,
         "initial_status_sha256": canonical_sha256(status),
         "installed_at_unix_ns": time.time_ns(),
     }

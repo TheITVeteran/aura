@@ -46379,3 +46379,34 @@ ownership, layering, Ruff and diff hygiene pass. The completion envelope
 advances to `914/920` (approximately `99.3%`). Next is using the matched-control
 localization to revise the trained controller rather than repeating a campaign
 whose support rule is already false.
+
+## Checkpoint 2026-08-12-288: Fast Negative Promotion Is a Successful Exit
+
+A promotion controller can legitimately finish before its installer observes
+a stable live PID: a canonical negative verdict requires no materialization or
+canary stages, so the controller publishes `refuted`, terminates its
+`caffeinate` child and exits successfully within seconds. The installer
+previously required a still-live controller lineage and therefore timed out
+after the correct negative path had already finished.
+
+Terminal refutation is now a separate, narrow launch outcome. The installer
+accepts it only after reopening the HMAC-authenticated status, validating its
+controller and sleep-inhibitor identities, independently recomputing the exact
+frozen replication verdict, and matching both verdict name and digest. It does
+not generalize this exception to failed or positive controllers; all
+non-terminal work still requires the live launchd PID and exact `caffeinate`
+lineage. The launch receipt records whether it observed a terminal
+refutation, making clean completion distinguishable from a missing process.
+
+Validation is green under Aura's Python 3.12 runtime: `48/48` focused
+replication and promotion tests and `104/104` canonical smoke tests pass;
+focused Ruff, compilation and diff hygiene pass. Regression coverage proves a
+signed terminal status is insufficient by itself: its verdict name and digest
+must match independently recomputed frozen evidence, while unproven live or
+PID-reused launchd jobs retain the strict conflict path.
+
+The completion envelope advances to `915/920` (approximately `99.5%`). No
+package, pointer or qualified serving authority is created from the refuted
+CP281 evidence. Next remains a controller/training revision that must beat its
+initialization-matched control on bounded diagnostics before another powered
+resident campaign is admitted.
