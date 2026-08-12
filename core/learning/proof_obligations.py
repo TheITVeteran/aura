@@ -120,7 +120,19 @@ class ProofObligationEngine:
         if is_sabotaged:
             violations.append("semantic_behavior_degraded")
 
-        status = ProofStatus.PROVED if verifier.ok and bytecode_ok and not arbitrary_scope and not is_sabotaged else ProofStatus.NOT_PROVEN
+        # `verifier.ok` is True when NOTHING was checked — the documented
+        # contract of VerificationResult. Reading it alone here meant an
+        # obligation reached PROVED because no verifier found anything to
+        # look at, which is the strongest possible claim resting on the
+        # weakest possible evidence.
+        verifier_conclusive = bool(
+            getattr(verifier, "conclusively_ok", verifier.ok and getattr(verifier, "checked", True))
+        )
+        status = (
+            ProofStatus.PROVED
+            if verifier_conclusive and bytecode_ok and not arbitrary_scope and not is_sabotaged
+            else ProofStatus.NOT_PROVEN
+        )
         if any(
             item.startswith("protected_symbol_removed:")
             or item.startswith("unsafe_new_import:")

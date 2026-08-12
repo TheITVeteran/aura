@@ -25,11 +25,39 @@ class VerificationResult:
     evidence: list[str] = field(default_factory=list)
     detail: dict[str, Any] = field(default_factory=dict)
 
+    @property
+    def verdict(self) -> str:
+        """PASSED, FAILED, or UNCHECKED — the question callers actually mean.
+
+        ``ok`` is "no provable failure was found", which is TRUE when nothing
+        was checked. That contract is deliberate and documented above, and it
+        is also a trap: every caller that reads ``.ok`` alone treats "we did
+        not look" as "we looked and it was fine". Two were doing exactly
+        that — a proof obligation reached PROVED on an unchecked verifier,
+        and Aura's own introspection rendered "Verifier: pass" for a check
+        that never ran.
+
+        Three states, so the unchecked one has to be handled rather than
+        collapsed into the passing one.
+        """
+        if not self.checked:
+            return "UNCHECKED"
+        return "PASSED" if self.ok else "FAILED"
+
+    @property
+    def conclusively_ok(self) -> bool:
+        """True only when a real check ran AND it passed.
+
+        This is what a gate wants. ``ok`` is what a ranking wants.
+        """
+        return bool(self.checked and self.ok)
+
     def to_dict(self) -> dict[str, Any]:
         return {
             "domain": self.domain,
             "ok": self.ok,
             "checked": self.checked,
+            "verdict": self.verdict,
             "score": round(float(self.score), 3),
             "engine": self.engine,
             "issues": self.issues[:8],

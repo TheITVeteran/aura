@@ -219,14 +219,32 @@ class IdentityGuard:
         checking live LLM output against Aura's identity invariants.
 
         Returns: (ok: bool, reason: str, score: float)
+
+        Fails CLOSED. This used to return ``(True, "OK", 1.0)`` when the real
+        gate could not be reached — the loss of the identity guard was
+        reported as a perfect pass, with the maximum possible score, and the
+        caller (`IdentityReflectionPhase`) has no way to tell that verdict
+        apart from one the gate actually issued.
+
+        The failure is not "non-critical", as the old debug line called it.
+        This is the check that decides whether live model output still sounds
+        like her; when it cannot run, saying so is the only honest answer.
+        The caller rolls the turn back, which is the correct response to "the
+        identity check is unavailable" and the wrong response to nothing at
+        all.
         """
         try:
             from core.identity.identity_guard import PersonaEnforcementGate
             return PersonaEnforcementGate().validate_output(content)
         except (ImportError, AttributeError, RuntimeError) as e:
-            record_degradation('identity_guard', e)
-            logger.debug("validate_output delegation error (non-critical): %s", e)
-            return True, "OK", 1.0
+            record_degradation(
+                'identity_guard',
+                e,
+                severity="critical",
+                action="refused output because the persona enforcement gate was unreachable",
+            )
+            logger.error("Identity output gate unavailable; failing closed: %s", e)
+            return False, "identity_gate_unavailable", 0.0
 
     def validate_new_skill(self, skill_code: str, skill_name: str) -> ValidationResult:
         """Validate a synthesized skill before registration."""

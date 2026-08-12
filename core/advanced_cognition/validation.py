@@ -27,6 +27,9 @@ class BenchmarkResult:
     passed: bool
     baseline_score: float
     ablation: str
+    #: Whether a real checker ran. False means `passed` and `score` carry no
+    #: evidence — they are the absence of a check, not its result.
+    checked: bool = True
     receipts: list[str] = field(default_factory=list)
     notes: str = ""
     created_at: float = field(default_factory=time.time)
@@ -50,8 +53,18 @@ class IndependentValidationLoop:
         ablation: str = "full_system",
     ) -> BenchmarkResult:
         output = runner(dict(task.prompt))
-        passed = bool(task.hidden_checker(output)) if task.hidden_checker else True
-        score = float(scorer(output)) if scorer else (1.0 if passed else 0.0)
+        # A task with no hidden checker used to be recorded as PASSED with a
+        # perfect score. Every unscoreable task therefore raised the pass
+        # rate, so the benchmark read best exactly where it measured least —
+        # absent validation converted into perfect evidence.
+        checked = task.hidden_checker is not None
+        passed = bool(task.hidden_checker(output)) if checked else False
+        if scorer is not None:
+            score = float(scorer(output))
+        elif checked:
+            score = 1.0 if passed else 0.0
+        else:
+            score = 0.0
         result = BenchmarkResult(
             result_id=stable_hash(
                 {
@@ -59,6 +72,7 @@ class IndependentValidationLoop:
                     "domain": task.domain,
                     "score": score,
                     "passed": passed,
+                    "checked": checked,
                     "ablation": ablation,
                     "ts": round(time.time(), 3),
                 },
@@ -68,6 +82,7 @@ class IndependentValidationLoop:
             domain=task.domain,
             score=score,
             passed=passed,
+            checked=checked,
             baseline_score=task.baseline_score,
             ablation=ablation,
             notes="improved_over_baseline" if score > task.baseline_score else "no_improvement",
@@ -92,7 +107,15 @@ class IndependentValidationLoop:
             return {"count": 0, "pass_rate": 0.0, "avg_score": 0.0}
         return {
             "count": len(items),
-            "pass_rate": sum(1 for r in items if r.passed) / len(items),
+            # Over the tasks that were actually checkable. Dividing by every
+            # task would let an unscoreable one move a rate it contributed no
+            # evidence to, in whichever direction the default happened to be.
+            "pass_rate": (
+                sum(1 for r in items if r.passed and getattr(r, "checked", True))
+                / max(1, sum(1 for r in items if getattr(r, "checked", True)))
+            ),
+            "checked_tasks": sum(1 for r in items if getattr(r, "checked", True)),
+            "unchecked_tasks": sum(1 for r in items if not getattr(r, "checked", True)),
             "avg_score": sum(r.score for r in items) / len(items),
             "domains": sorted({r.domain for r in items}),
             "receipt_id": stable_hash([r.result_id for r in items], prefix="val_"),

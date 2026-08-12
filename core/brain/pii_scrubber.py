@@ -18,6 +18,20 @@ import logging
 import re
 from typing import Optional
 
+from core.runtime.errors import record_degradation
+
+
+class PrivateNamesUnavailable(RuntimeError):
+    """The private-name list could not be read.
+
+    Its own exception type because the caller's correct response is specific:
+    a scrub that cannot load the names it exists to remove must not report
+    success. Reusing a generic error would let a broad `except` upstream
+    treat "redaction is unavailable" the same as "there was nothing to
+    redact" — which is how the names would reach the cloud provider.
+    """
+
+
 logger = logging.getLogger("Aura.PIIScrubber")
 
 __all__ = ["scrub_pii_for_cloud", "get_pii_patterns"]
@@ -64,8 +78,25 @@ def _load_private_names() -> list[str]:
                 if name and len(name) > 1:
                     names.append(name)
             return names
-    except (ImportError, AttributeError, RuntimeError):
-        pass  # no-op: intentional
+    except (ImportError, AttributeError, RuntimeError, OSError, ValueError) as exc:
+        # Silently returning [] disabled targeted redaction and let the
+        # caller carry on scrubbing — so the owner's and his family's real
+        # names went to a cloud provider unredacted, and the only signal was
+        # an empty list that looks exactly like "this user named nobody".
+        #
+        # Raised rather than recorded-and-continued: the caller decides
+        # whether to proceed without redaction, and it cannot decide what it
+        # is never told.
+        record_degradation(
+            "pii_scrubber",
+            exc,
+            severity="critical",
+            action="could not load the private-name list; targeted redaction is unavailable",
+        )
+        raise PrivateNamesUnavailable(
+            "private-name list could not be loaded; refusing to report an "
+            "empty redaction set"
+        ) from exc
     return []
 
 
@@ -73,9 +104,11 @@ _cached_names: Optional[list[str]] = None
 
 
 def _get_private_names() -> list[str]:
-    """Cached loader for private names."""
+    """Cached loader for private names. Raises PrivateNamesUnavailable."""
     global _cached_names
     if _cached_names is None:
+        # Not cached on failure: a transient read error must not disable
+        # targeted redaction for the life of the process.
         _cached_names = _load_private_names()
     return _cached_names
 
@@ -102,8 +135,18 @@ def scrub_pii_for_cloud(text: str) -> str:
 
     scrubbed = text
 
-    # Replace real names with "the user"
-    for name in _get_private_names():
+    # Replace real names with "the user".
+    #
+    # A failure here is NOT recoverable by continuing. The regex patterns
+    # below catch shapes — emails, numbers — and cannot catch "Bryan",
+    # which is exactly what this list is for. Scrubbing the rest and
+    # returning would hand the caller text that looks scrubbed and still
+    # carries the owner's and his family's names.
+    try:
+        private_names = _get_private_names()
+    except PrivateNamesUnavailable:
+        raise
+    for name in private_names:
         if name in scrubbed:
             scrubbed = scrubbed.replace(name, "the user")
             # Also replace lowercase/title variants
