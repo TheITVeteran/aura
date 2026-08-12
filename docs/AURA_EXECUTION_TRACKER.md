@@ -46182,3 +46182,32 @@ Validation is green: `30/30` focused identity and resident-bootstrap tests,
 focused Ruff and `104/104` canonical smoke passed. The active CP281 evaluator
 already completed exact model, checkpoint and matched-parent loading and wrote
 its first durable decode records before this independent hardening change.
+
+## Checkpoint 2026-08-12-283: Qualified Authority Must Prove Its Live Serving Path
+
+The positive recurrent handoff previously proved the package twice in
+non-serving shadow mode and could then publish typed serving authority, but the
+publication transaction stopped after reopening static package and authority
+identity. A broken worker discovery or qualified IPC path could therefore leave
+an apparently active controller that had never served one authorized request.
+
+The operator command now has an `activate-verified` transaction. It publishes
+the exact shadow pointer and qualified authority, cold-loads the resident
+worker, requires that worker to reopen the same activation digest, and sends
+every sealed, disjoint package canary through the real qualified-decode client
+and worker contract. Every emitted token sequence must equal the private
+expected sequence and every receipt must bind the family, task depth and
+activation. The durable canary result contains only task identities, receipt
+digests, latency and exactness; public, expected and generated token payloads
+remain absent. Any load, timeout, output, identity, publication or cleanup
+failure revokes qualified authority and the shadow pointer by exact digest.
+
+Validation is green: `65/65` focused materialization, pointer, shadow lifecycle,
+qualified authority, worker/client decode and rollback tests plus `104/104`
+canonical smoke tests pass; focused Ruff, compilation and diff hygiene pass.
+The active CP281 resident replication is unchanged and remains independently
+supervised. Its first complete eight-arm task showed exact controls, trained
+arms and compiled execution while distinct grammar and pointer lesions failed;
+that is an early mechanism signal only, not a powered gain verdict. No serving
+authority has been published, and no broad reasoning, fusion, frontier or
+`WOW Signal` claim is made.

@@ -4,10 +4,13 @@
 from __future__ import annotations
 
 import argparse
+import asyncio
+import hashlib
 import json
 import os
 import stat
 import sys
+import time
 from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import Any, Final
@@ -29,6 +32,9 @@ from core.brain.llm.unified_recurrent_qualified_activation_store import (  # noq
 from core.brain.llm.unified_recurrent_shadow import (  # noqa: E402
     inspect_shadow_package,
 )
+from core.brain.llm.unified_recurrent_shadow_battery import (  # noqa: E402
+    validate_shadow_canary_battery,
+)
 from core.brain.llm.unified_recurrent_shadow_pointer import (  # noqa: E402
     deactivate_shadow_pointer,
     default_shadow_activation_paths,
@@ -39,6 +45,9 @@ from core.brain.llm.unified_recurrent_shadow_pointer import (  # noqa: E402
 from core.runtime.file_read_gateway import read_stable_bytes  # noqa: E402
 
 MAX_LIFECYCLE_BYTES: Final = 4 * 1024 * 1024
+QUALIFIED_CANARY_SCHEMA: Final = (
+    "aura.unified_intrinsic.qualified_activation_canary.v1"
+)
 
 
 class UnifiedRecurrentQualifiedActivationCommandError(RuntimeError):
@@ -53,6 +62,68 @@ def _canonical_bytes(value: Any) -> bytes:
         ensure_ascii=True,
         allow_nan=False,
     ).encode("ascii")
+
+
+def _canonical_sha256(value: Any) -> str:
+    return hashlib.sha256(_canonical_bytes(value)).hexdigest()
+
+
+def _publish_private_result(path: Path, value: Mapping[str, Any]) -> None:
+    destination = path.expanduser().absolute()
+    destination.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+    parent = destination.parent
+    metadata = parent.stat()
+    if (
+        not stat.S_ISDIR(metadata.st_mode)
+        or metadata.st_uid != os.geteuid()
+        or stat.S_IMODE(metadata.st_mode) & 0o077
+    ):
+        raise UnifiedRecurrentQualifiedActivationCommandError(
+            "qualified canary output custody differs"
+        )
+    current = Path(parent.anchor)
+    for part in parent.parts[1:]:
+        current /= part
+        if current.is_symlink():
+            raise UnifiedRecurrentQualifiedActivationCommandError(
+                "qualified canary output path contains a symlink"
+            )
+    payload = _canonical_bytes(value)
+    descriptor = -1
+    created = False
+    completed = False
+    try:
+        descriptor = os.open(
+            destination,
+            os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_CLOEXEC", 0),
+            0o400,
+        )
+        created = True
+        if os.write(descriptor, payload) != len(payload):
+            raise UnifiedRecurrentQualifiedActivationCommandError(
+                "qualified canary result write was short"
+            )
+        os.fsync(descriptor)
+        os.close(descriptor)
+        descriptor = -1
+        directory_fd = os.open(parent, os.O_RDONLY | getattr(os, "O_CLOEXEC", 0))
+        try:
+            os.fsync(directory_fd)
+        finally:
+            os.close(directory_fd)
+        completed = True
+    except OSError as exc:
+        raise UnifiedRecurrentQualifiedActivationCommandError(
+            "qualified canary result publication failed"
+        ) from exc
+    finally:
+        if descriptor >= 0:
+            os.close(descriptor)
+        if created and not completed:
+            try:
+                destination.unlink()
+            except FileNotFoundError:
+                pass
 
 
 def _read_lifecycle(path: Path) -> dict[str, Any]:
@@ -220,6 +291,174 @@ def _activate(arguments: argparse.Namespace) -> dict[str, Any]:
     }
 
 
+async def _run_qualified_canary(
+    arguments: argparse.Namespace,
+    activation_result: Mapping[str, Any],
+) -> dict[str, Any]:
+    """Cold-load serving authority and prove every sealed typed case end to end."""
+
+    verified = await asyncio.to_thread(
+        inspect_shadow_package,
+        arguments.package.expanduser().absolute(),
+    )
+    manifest = verified.get("manifest")
+    battery_value = verified.get("canary_battery")
+    if not isinstance(manifest, Mapping) or not isinstance(battery_value, Mapping):
+        raise UnifiedRecurrentQualifiedActivationCommandError(
+            "qualified canary package evidence is unavailable"
+        )
+    battery = validate_shadow_canary_battery(battery_value)
+    cases = battery["cases"]
+    activation = await asyncio.to_thread(
+        read_qualified_activation,
+        Path(str(activation_result["activation_path"])),
+    )
+    if activation.get("activation_sha256") != activation_result.get(
+        "activation_sha256"
+    ):
+        raise UnifiedRecurrentQualifiedActivationCommandError(
+            "qualified canary activation identity differs"
+        )
+
+    from core.brain.llm.mlx_client import get_mlx_client
+
+    client = get_mlx_client(str(arguments.model.expanduser().absolute()))
+    primary_error: BaseException | None = None
+    started_at = time.time()
+    evidence: list[dict[str, Any]] = []
+    total_latency_ms = 0
+    try:
+        ready = await client.warmup(
+            foreground_request=True,
+            skip_swap_cooldown=True,
+        )
+        if not ready:
+            raise UnifiedRecurrentQualifiedActivationCommandError(
+                "qualified canary resident worker did not become ready"
+            )
+        qualified_status = dict(
+            getattr(client, "_unified_recurrent_qualified_activation_status", {})
+            or {}
+        )
+        loaded_activation = qualified_status.get("activation")
+        if (
+            qualified_status.get("loaded") is not True
+            or qualified_status.get("serving_authority") is not True
+            or not isinstance(loaded_activation, Mapping)
+            or loaded_activation.get("activation_sha256")
+            != activation["activation_sha256"]
+        ):
+            raise UnifiedRecurrentQualifiedActivationCommandError(
+                "qualified canary worker did not load exact serving authority"
+            )
+        for index, case in enumerate(cases):
+            began = time.monotonic_ns()
+            result = await client.unified_recurrent_qualified_decode_async(
+                case["public_token_ids"],
+                family=case["family"],
+                task_depth=case["task_depth"],
+                max_tokens=case["max_tokens"],
+                timeout_s=arguments.case_timeout,
+            )
+            elapsed_ms = max(0, (time.monotonic_ns() - began) // 1_000_000)
+            receipt = result.get("receipt") if isinstance(result, Mapping) else None
+            exact = bool(
+                isinstance(receipt, Mapping)
+                and result.get("ok") is True
+                and result.get("status") == "completed"
+                and receipt.get("generated_token_ids") == case["expected_token_ids"]
+                and receipt.get("family") == case["family"]
+                and receipt.get("task_depth") == case["task_depth"]
+                and receipt.get("qualified_activation_sha256")
+                == activation["activation_sha256"]
+            )
+            total_latency_ms += elapsed_ms
+            evidence.append(
+                {
+                    "index": index,
+                    "task_id": case["task_id"],
+                    "family": case["family"],
+                    "task_depth": case["task_depth"],
+                    "qualified_result_sha256": (
+                        str(receipt.get("result_sha256") or "")
+                        if isinstance(receipt, Mapping)
+                        else ""
+                    ),
+                    "latency_ms": elapsed_ms,
+                    "exact": exact,
+                }
+            )
+            if not exact:
+                reason = (
+                    str(result.get("reason") or "qualified_result_not_exact")
+                    if isinstance(result, Mapping)
+                    else "qualified_result_unavailable"
+                )
+                raise UnifiedRecurrentQualifiedActivationCommandError(
+                    f"qualified canary case {index} failed: {reason}"
+                )
+    except BaseException as exc:  # noqa: BLE001 - preserve close failure context
+        primary_error = exc
+        raise
+    finally:
+        try:
+            await client.aclose()
+        except BaseException as close_exc:  # noqa: BLE001
+            if primary_error is None:
+                raise
+            primary_error.add_note(
+                f"qualified canary resident worker close also failed: {close_exc}"
+            )
+
+    body = {
+        "schema": QUALIFIED_CANARY_SCHEMA,
+        "package_id": manifest["package_id"],
+        "manifest_sha256": manifest["manifest_sha256"],
+        "checkpoint_sha256": manifest["checkpoint_sha256"],
+        "controller_sha256": activation["controller_sha256"],
+        "activation_sha256": activation["activation_sha256"],
+        "battery_sha256": battery["battery_sha256"],
+        "started_at_unix": started_at,
+        "completed_at_unix": time.time(),
+        "case_count": len(cases),
+        "exact_count": sum(row["exact"] for row in evidence),
+        "total_latency_ms": total_latency_ms,
+        "maximum_latency_ms": max((row["latency_ms"] for row in evidence), default=0),
+        "evidence": evidence,
+        "supported": len(evidence) == len(cases) and all(row["exact"] for row in evidence),
+        "serving_authority": True,
+        "authority_remains_active": True,
+        "output_exposed": False,
+    }
+    result = {**body, "result_sha256": _canonical_sha256(body)}
+    _publish_private_result(arguments.canary_output, result)
+    return result
+
+
+def _activate_verified(arguments: argparse.Namespace) -> dict[str, Any]:
+    """Activate, prove the live serving path, or revoke both publications."""
+
+    activated = _activate(arguments)
+    try:
+        canary = asyncio.run(_run_qualified_canary(arguments, activated))
+    except BaseException as exc:  # noqa: BLE001 - rollback must follow cancellation too
+        rollback_arguments = argparse.Namespace(
+            pointer=Path(activated["pointer_path"]),
+            releases_root=arguments.releases_root,
+            activation=Path(activated["activation_path"]),
+            expected_current_pointer_sha256=activated["pointer_sha256"],
+            expected_current_activation_sha256=activated["activation_sha256"],
+        )
+        try:
+            _deactivate(rollback_arguments)
+        except BaseException as rollback_exc:  # noqa: BLE001
+            exc.add_note(
+                f"qualified canary authority rollback also failed: {rollback_exc}"
+            )
+        raise
+    return {**activated, "action": "activate_verified", "canary": canary}
+
+
 def _deactivate(arguments: argparse.Namespace) -> dict[str, Any]:
     pointer_path, releases_root, activation_path = _paths(arguments)
     activation = deactivate_qualified_activation(
@@ -306,6 +545,15 @@ def _parser() -> argparse.ArgumentParser:
     activate.add_argument("--expected-current-pointer-sha256")
     activate.add_argument("--expected-current-activation-sha256")
 
+    activate_verified = subparsers.add_parser("activate-verified")
+    activate_verified.add_argument("package", type=Path)
+    activate_verified.add_argument("--lifecycle-result", type=Path, required=True)
+    activate_verified.add_argument("--model", type=Path, required=True)
+    activate_verified.add_argument("--canary-output", type=Path, required=True)
+    activate_verified.add_argument("--case-timeout", type=float, default=180.0)
+    activate_verified.add_argument("--expected-current-pointer-sha256")
+    activate_verified.add_argument("--expected-current-activation-sha256")
+
     deactivate = subparsers.add_parser("deactivate")
     deactivate.add_argument("--expected-current-pointer-sha256", required=True)
     deactivate.add_argument("--expected-current-activation-sha256", required=True)
@@ -319,6 +567,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     try:
         result = {
             "activate": _activate,
+            "activate-verified": _activate_verified,
             "deactivate": _deactivate,
             "status": _status,
         }[arguments.action](arguments)
