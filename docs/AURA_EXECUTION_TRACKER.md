@@ -45755,3 +45755,28 @@ The CP264 trainer remains live under its original immutable source capsule.
 Next is publishing this repair, installing the queued powered adjudicator from
 a separate clean source capsule, and allowing it to wait for strict terminal
 admission before any resident evaluator can load the model.
+
+## Checkpoint 2026-08-12-266: Promotion Consumes the Corrected Evidence Set
+
+The repaired CP265 adjudicator intentionally writes into a new campaign-child
+directory so the original failed launch record remains immutable. The shadow
+package materializer still assumed the historical `resident-replication`
+directory, which meant a future positive verdict from the corrected run could
+not become a runtime package without moving or rewriting evidence.
+
+Materialization now accepts an explicit replication-evidence root, requires it
+to be a private, nonsymlinked strict child of the frozen campaign, and passes
+that exact root through plan loading, independent verdict recomputation and
+per-seed report inspection. The default remains backward compatible, while a
+path outside campaign custody fails before evidence is read. The CLI exposes
+the same bound selection through `--replication-root`.
+
+Validation is green: `22/22` focused materializer, runtime-shadow, worker-client
+probe and fresh-canary tests plus `104/104` smoke tests pass; focused Ruff,
+compilation and diff hygiene pass. The CP264
+recovery campaign has independently completed its one-step resumability gate
+and entered attempt 2 from the authenticated step-1 checkpoint. No terminal
+admission, decoded gain, runtime promotion, fusion authority, frontier result
+or `WOW Signal` is claimed. Next is terminal recovery admission, the already
+queued CP265 powered adjudication, and conditional package materialization from
+that exact corrected evidence directory.

@@ -96,7 +96,7 @@ def _fixture(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> tuple[Path, Pat
     monkeypatch.setattr(
         materializer,
         "_verified_evidence",
-        lambda _campaign: (config, completion, plan, verdict, reports),
+        lambda _campaign, **_kwargs: (config, completion, plan, verdict, reports),
     )
     monkeypatch.setattr(
         materializer,
@@ -150,6 +150,57 @@ def test_materializes_and_reopens_shadow_only_package(
         "replication-verdict.json",
         "shadow-canary-battery.json",
     }
+
+
+def test_materialize_forwards_explicit_replication_evidence_root(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    campaign, output_root = _fixture(tmp_path, monkeypatch)
+    replication_root = campaign / "resident-replication-corrected"
+    replication_root.mkdir(mode=0o700)
+    original = materializer._verified_evidence
+    observed: list[Path | None] = []
+
+    def verified(campaign_path: Path, *, replication_root: Path | None = None):
+        observed.append(replication_root)
+        return original(campaign_path, replication_root=replication_root)
+
+    monkeypatch.setattr(materializer, "_verified_evidence", verified)
+
+    result = materializer.materialize(
+        campaign,
+        output_root=output_root,
+        package_id="cp266-explicit-evidence",
+        replication_root=replication_root,
+    )
+
+    assert Path(result["package"]).is_dir()
+    assert observed == [replication_root]
+
+
+def test_replication_evidence_root_cannot_escape_campaign(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    campaign = tmp_path / "campaign"
+    campaign.mkdir(mode=0o700)
+    outside = tmp_path / "outside"
+    outside.mkdir(mode=0o700)
+    monkeypatch.setattr(
+        materializer.launcher,
+        "_terminal_campaign",
+        lambda *_args, **_kwargs: ({}, {}),
+    )
+
+    with pytest.raises(
+        materializer.UnifiedIntrinsicShadowPackageError,
+        match="strict campaign child",
+    ):
+        materializer._verified_evidence(  # noqa: SLF001
+            campaign,
+            replication_root=outside,
+        )
 
 
 def test_fresh_canary_generator_tokenizes_prompt_disjoint_tasks(
@@ -270,8 +321,8 @@ def test_refuses_unsupported_verdict_before_publication(
     campaign, output_root = _fixture(tmp_path, monkeypatch)
     original = materializer._verified_evidence
 
-    def unsupported(path: Path):
-        config, completion, plan, verdict, reports = original(path)
+    def unsupported(path: Path, **kwargs):
+        config, completion, plan, verdict, reports = original(path, **kwargs)
         return config, completion, plan, {**verdict, "supported": False}, reports
 
     monkeypatch.setattr(materializer, "_verified_evidence", unsupported)

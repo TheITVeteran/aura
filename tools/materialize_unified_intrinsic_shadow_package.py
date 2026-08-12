@@ -215,6 +215,8 @@ def _read_document(path: Path) -> dict[str, Any]:
 
 def _verified_evidence(
     campaign: Path,
+    *,
+    replication_root: Path | None = None,
 ) -> tuple[
     dict[str, Any],
     dict[str, Any],
@@ -223,13 +225,21 @@ def _verified_evidence(
     list[dict[str, Any]],
 ]:
     config, completion = launcher._terminal_campaign(campaign / "campaign.json")  # noqa: SLF001
+    requested_root = (
+        replication_root.expanduser().absolute()
+        if replication_root is not None
+        else campaign / "resident-replication"
+    )
+    if requested_root == campaign or not requested_root.is_relative_to(campaign):
+        _fail("shadow package replication evidence must be a strict campaign child")
+    evidence_root = _private_directory(requested_root, create=False)
     arguments = argparse.Namespace(
         campaign=campaign,
-        output=None,
+        output=evidence_root,
         verdict_output=None,
     )
     _campaign, _config, plan = replication._load_plan(arguments)  # noqa: SLF001
-    verdict_path = campaign / "resident-replication" / "replication-verdict.json"
+    verdict_path = evidence_root / "replication-verdict.json"
     verdict = replication._read_canonical(verdict_path)  # noqa: SLF001
     recomputed = replication.adjudicate(arguments)
     if verdict != recomputed or verdict.get("supported") is not True:
@@ -516,6 +526,7 @@ def materialize(
     *,
     output_root: Path,
     package_id: str,
+    replication_root: Path | None = None,
 ) -> dict[str, Any]:
     if not isinstance(package_id, str) or _PACKAGE_ID.fullmatch(package_id) is None:
         _fail("shadow package id is invalid")
@@ -525,7 +536,10 @@ def materialize(
     if destination.exists() or destination.is_symlink():
         _fail("shadow package destination already exists")
 
-    config, completion, plan, verdict, reports = _verified_evidence(campaign)
+    config, completion, plan, verdict, reports = _verified_evidence(
+        campaign,
+        replication_root=replication_root,
+    )
     if verdict.get("supported") is not True:
         _fail("shadow package requires a supported replication verdict")
     checkpoint = resolve_checkpoint_generation(
@@ -668,6 +682,14 @@ def _parser() -> argparse.ArgumentParser:
     materialize_parser.add_argument("campaign", type=Path)
     materialize_parser.add_argument("--output-root", type=Path, required=True)
     materialize_parser.add_argument("--package-id", required=True)
+    materialize_parser.add_argument(
+        "--replication-root",
+        type=Path,
+        help=(
+            "Explicit campaign-child directory containing the frozen replication "
+            "plan, reports and verdict. Defaults to resident-replication."
+        ),
+    )
     inspect_parser = subparsers.add_parser("inspect")
     inspect_parser.add_argument("package", type=Path)
     return parser
@@ -683,6 +705,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 arguments.campaign,
                 output_root=arguments.output_root,
                 package_id=arguments.package_id,
+                replication_root=arguments.replication_root,
             )
     except (
         OSError,
