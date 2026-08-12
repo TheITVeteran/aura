@@ -1572,6 +1572,52 @@ def _result_path(config: Mapping[str, Any], attempt: int) -> Path:
     )
 
 
+def _resource_guard_intervention(
+    release_evidence: Mapping[str, Any] | None,
+) -> dict[str, Any] | None:
+    """Reopen a sentinel kill as typed evidence, never as a retryable crash."""
+
+    if not isinstance(release_evidence, Mapping):
+        return None
+    raw_run_dir = release_evidence.get("sentinel_run_dir")
+    if not isinstance(raw_run_dir, str) or not raw_run_dir:
+        return None
+    run_dir = _private_directory(Path(raw_run_dir))
+    tombstone_dir = run_dir / "tombstones"
+    if not tombstone_dir.exists():
+        return None
+    tombstone_dir = _private_directory(tombstone_dir)
+    tombstones = sorted(tombstone_dir.glob("sentinel_tombstone_*.json"))
+    if len(tombstones) != 1:
+        _fail(
+            "resource_guard_evidence_ambiguous",
+            tombstone_count=len(tombstones),
+            sentinel_run_dir=str(run_dir),
+        )
+    tombstone = _read_canonical(tombstones[0], expected_mode=0o400)
+    killed = tombstone.get("killed_pids")
+    reason = tombstone.get("reason")
+    if (
+        tombstone.get("schema") != "aura.memory_sentinel.tombstone.v1"
+        or not isinstance(reason, str)
+        or not reason
+        or not isinstance(killed, list)
+        or not killed
+        or any(type(pid) is not int or pid <= 1 for pid in killed)
+    ):
+        _fail("resource_guard_evidence_invalid", path=str(tombstones[0]))
+    body = {
+        "schema": "aura.unified_intrinsic.resource_guard_intervention.v1",
+        "reason": reason,
+        "guard_stage": tombstone.get("guard_stage"),
+        "killed_pids": killed,
+        "final_sample": tombstone.get("final_sample"),
+        "tombstone": str(tombstones[0]),
+        "tombstone_sha256": canonical_sha256(tombstone),
+    }
+    return {**body, "intervention_sha256": canonical_sha256(body)}
+
+
 def _reserve_attempt(
     config: Mapping[str, Any],
     run_dir: Path,
@@ -1631,6 +1677,7 @@ def _record_attempt(
     receipt = status.get("receipt")
     returncode = receipt.get("returncode") if isinstance(receipt, dict) else None
     durable_progress = after_step > before_step
+    resource_guard_intervention = _resource_guard_intervention(release_evidence)
     body = {
         "schema": ATTEMPT_RESULT_SCHEMA,
         "campaign_id": config["campaign_id"],
@@ -1644,6 +1691,7 @@ def _record_attempt(
         "detached_plan_sha256": status.get("plan_sha256"),
         "detached_receipt": receipt,
         "preload_release": dict(release_evidence or {}),
+        "resource_guard_intervention": resource_guard_intervention,
         "terminal_success": bool(returncode == 0 and (durable_progress or after["complete"])),
     }
     result = {**body, "attempt_sha256": canonical_sha256(body)}
@@ -1804,6 +1852,12 @@ def run_controller(config_path: Path, *, launchd_supervised: bool) -> dict[str, 
                 )
                 if after["complete"]:
                     return _completion(config, package, launchd, after, attempt)
+                if result["resource_guard_intervention"] is not None:
+                    _fail(
+                        "resource_guard_intervention_requires_repair",
+                        attempt=attempt,
+                        intervention=result["resource_guard_intervention"],
+                    )
                 if result["terminal_success"] is not True:
                     if _trailing_no_progress(config, attempt) >= max_no_progress:
                         _fail("consecutive_no_progress_limit_exhausted")

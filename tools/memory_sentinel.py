@@ -180,15 +180,45 @@ def kill_tree(root_pid: int) -> list[int]:
 def _write_tombstone(directory: Path, payload: dict) -> Path | None:
     """Best-effort durable incident record for every sentinel kill path."""
 
+    path: Path | None = None
     try:
-        directory.mkdir(parents=True, exist_ok=True)
+        directory.mkdir(mode=0o700, parents=True, exist_ok=True)
+        directory.chmod(0o700)
         path = directory / f"sentinel_tombstone_{time.time_ns()}.json"
-        path.write_text(
-            json.dumps(payload, indent=2, sort_keys=True) + "\n",
-            encoding="utf-8",
+        document = (
+            json.dumps(payload, ensure_ascii=True, separators=(",", ":"), sort_keys=True)
+            + "\n"
+        ).encode("ascii")
+        descriptor = os.open(
+            path,
+            os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_CLOEXEC", 0),
+            0o400,
         )
+        try:
+            view = memoryview(document)
+            while view:
+                written = os.write(descriptor, view)
+                if written <= 0:
+                    raise OSError("short tombstone write")
+                view = view[written:]
+            os.fsync(descriptor)
+        finally:
+            os.close(descriptor)
+        directory_descriptor = os.open(
+            directory,
+            os.O_RDONLY | getattr(os, "O_CLOEXEC", 0),
+        )
+        try:
+            os.fsync(directory_descriptor)
+        finally:
+            os.close(directory_descriptor)
         return path
     except OSError:
+        if path is not None:
+            try:
+                path.unlink(missing_ok=True)
+            except OSError:
+                pass
         return None
 
 

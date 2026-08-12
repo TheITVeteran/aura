@@ -679,6 +679,59 @@ def test_controller_waits_for_installer_host_lease_handoff(
     assert observed_waits == [controller.HOST_LEASE_HANDOFF_TIMEOUT_S]
 
 
+def test_controller_stops_after_canonical_resource_guard_intervention(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    path, _raw = _config(tmp_path)
+    sentinel = _private(tmp_path / "sentinel")
+    tombstones = _private(sentinel / "tombstones")
+    tombstone = {
+        "schema": "aura.memory_sentinel.tombstone.v1",
+        "reason": "external sentinel killed process tree at lethal ceiling",
+        "guard_stage": "steady",
+        "killed_pids": [4242],
+        "final_sample": {"managed_mb": 51_515.0, "lethal_mb": 49_152.0},
+    }
+    tombstone_path = tombstones / "sentinel_tombstone_1.json"
+    tombstone_path.write_bytes(canonical_bytes(tombstone) + b"\n")
+    tombstone_path.chmod(0o400)
+    snapshots = iter(
+        (
+            {"step": 0, "complete": False},
+            {"step": 1, "complete": False},
+        )
+    )
+    monkeypatch.setattr(controller, "_host_lease", lambda *_args, **_kwargs: nullcontext({}))
+    monkeypatch.setattr(controller, "_verify_launchd", lambda *_args, **_kwargs: {})
+    monkeypatch.setattr(controller, "verify_package", lambda _config: {"valid": True})
+    monkeypatch.setattr(controller, "_publish_status", lambda *_args, **_kwargs: {})
+    monkeypatch.setattr(controller, "_require_empty_model_lane", lambda: [])
+    monkeypatch.setattr(controller, "_checkpoint_snapshot", lambda _config: next(snapshots))
+    monkeypatch.setattr(
+        controller,
+        "_monitor_attempt",
+        lambda *_args, **_kwargs: (
+            {"plan_sha256": "a" * 64, "receipt": {"returncode": -9}},
+            {"sentinel_run_dir": str(sentinel)},
+        ),
+    )
+
+    with pytest.raises(
+        controller.UnifiedResidentControllerError,
+        match="resource_guard_intervention_requires_repair",
+    ):
+        controller.run_controller(path, launchd_supervised=True)
+
+    result = json.loads(
+        (path.parent / "attempt-results/attempt-0001.json").read_text(encoding="ascii")
+    )
+    intervention = result["resource_guard_intervention"]
+    assert intervention["reason"] == tombstone["reason"]
+    assert intervention["tombstone_sha256"] == canonical_sha256(tombstone)
+    assert intervention["intervention_sha256"]
+
+
 def test_install_publishes_intent_before_launch_and_receipts_exact_job(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

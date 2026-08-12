@@ -341,6 +341,18 @@ def test_memory_sentinel_kills_target_on_invalid_stage_handshake(
     assert killed == [123]
     tombstone = next(tmp_path.glob("sentinel_tombstone_*.json"))
     assert "invalid steady-stage" in tombstone.read_text(encoding="utf-8")
+    assert tombstone.stat().st_mode & 0o777 == 0o400
+    assert tombstone.parent.stat().st_mode & 0o777 == 0o700
+    payload = json.loads(tombstone.read_text(encoding="ascii"))
+    assert tombstone.read_bytes() == (
+        json.dumps(
+            payload,
+            ensure_ascii=True,
+            separators=(",", ":"),
+            sort_keys=True,
+        ).encode("ascii")
+        + b"\n"
+    )
 
 
 def test_memory_sentinel_enforces_compute_lease_and_low_water_rearm(

@@ -45900,3 +45900,31 @@ pass. No decoded capability, terminal admission, replication, serving
 authority, fusion authority, frontier result or `WOW Signal` is claimed. Next
 is publication, then a new immutable recovery capsule that imports the exact
 step-26 tissue while starting a fresh source-bound optimizer/evidence lineage.
+
+## Checkpoint 2026-08-12-271: Resource Intervention Is a Stop, Not a Retry
+
+The CP270 incident also exposed a controller-policy defect: a sentinel kill was
+durably tombstoned, but the sentinel's successful protection action exited
+zero while the trainer surfaced only `-9`. Because the trainer had made some
+durable progress before evaluation, the campaign controller treated the event
+as another retryable attempt and began the same deterministic workload again.
+
+Sentinel tombstones are now private, create-once canonical JSON documents with
+file and directory durability barriers; partial writes are removed. The
+campaign controller reopens the exact sentinel run directory and tombstone
+under private nonsymlinked custody, validates its schema and killed process
+identities, binds the incident digest into the immutable attempt result, and
+emits `resource_guard_intervention_requires_repair` as a non-restartable
+terminal controller state. A protected checkpoint remains available for a new
+source-bound recovery, but identical code cannot consume the remaining attempt
+budget after a known lethal resource intervention.
+
+Validation is green: `49/49` focused sentinel and campaign-controller tests,
+focused Ruff, compilation and diff hygiene pass. The new CP270 recovery capsule
+is source-bound to commit `a2eec4ffb`, imported the exact prior step-26 tissue,
+and wrote its own durable step-1 checkpoint. Its first full 32B evaluation
+ladder remains live with a maximum observed managed footprint of `21.23` GiB,
+versus `51.52` GiB at the prior failure. The powered three-seed replication plan
+is frozen and its authenticated controller is waiting for strict terminal
+admission. No decoded gain, replication, serving authority, fusion authority,
+frontier result or `WOW Signal` is claimed.
