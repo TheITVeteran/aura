@@ -12,9 +12,11 @@ import pytest
 import tools.run_unified_intrinsic_resident_campaign as controller
 from tools import run_detached_step as detached
 from tools.prepare_unified_intrinsic_resident_campaign import (
+    _freeze_bootstrap_checkpoint,
     _profile_training,
     _training_cli,
 )
+from tools.unified_intrinsic_checkpoint import resolve_checkpoint_generation
 from tools.unified_intrinsic_resident_identity import canonical_bytes, canonical_sha256
 
 
@@ -74,6 +76,22 @@ def _config(tmp_path: Path, *, profile: str = "canary") -> tuple[Path, dict]:
     key.chmod(0o400)
     training = _profile_training(profile)
     campaign_id = f"unit-{profile}"
+    bootstrap = None
+    if profile == "recovery":
+        bootstrap_output = _private(inputs / "bootstrap-output")
+        body_without_sha = {
+            "schema": "aura.unified_intrinsic.bootstrap_input.v1",
+            "stem": "checkpoint_latest",
+            "output": str(bootstrap_output),
+            "parent_step": 73,
+            "parent_checkpoint_sha256": "c" * 64,
+            "parent_receipt_sha256": "d" * 64,
+            "parent_identity_sha256": "e" * 64,
+        }
+        bootstrap = {
+            **body_without_sha,
+            "bootstrap_sha256": canonical_sha256(body_without_sha),
+        }
     body = {
         "schema": "aura.unified_intrinsic.resident_campaign.v1",
         "campaign_id": campaign_id,
@@ -96,6 +114,7 @@ def _config(tmp_path: Path, *, profile: str = "canary") -> tuple[Path, dict]:
         "dataset": {"identity_sha256": "1" * 64},
         "tokenizer": {"identity_sha256": "2" * 64},
         "tokenized_dataset": {"identity_sha256": "3" * 64},
+        **({"bootstrap": bootstrap} if profile == "recovery" else {}),
         "paths": {
             "workspace_root": str(tmp_path),
             "campaign_root": str(root),
@@ -105,6 +124,11 @@ def _config(tmp_path: Path, *, profile: str = "canary") -> tuple[Path, dict]:
             "tokenized_dataset": str(tokenized),
             "detached_attempts": str(attempts),
             "heartbeat_key": str(key),
+            **(
+                {"bootstrap_output": bootstrap["output"]}
+                if bootstrap is not None
+                else {}
+            ),
         },
         "heartbeat_key_sha256": hashlib.sha256(b"k" * 32).hexdigest(),
         "training": training,
@@ -211,6 +235,107 @@ def test_full_profile_uses_the_decode_admitted_cached_bridge_schedule() -> None:
     assert training["answer_bridge_inner_steps"] == 32
     assert training["eval_every"] == 9
     assert training["max_steps"] == 73
+
+
+def test_recovery_profile_warm_starts_fresh_data_without_parent_optimizer() -> None:
+    training = _profile_training("recovery")
+
+    assert training["per_cell"] == 8
+    assert training["holdout_per_cell"] == 3
+    assert training["answer_bridge_steps"] == 18
+    assert training["max_steps"] == 36
+    assert training["seed"] != training["init_seed"]
+
+
+def test_recovery_config_binds_parent_checkpoint_and_trainer_command(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    path, raw = _config(tmp_path, profile="recovery")
+    resolved = SimpleNamespace(
+        receipt={
+            "step": 73,
+            "checkpoint_sha256": "c" * 64,
+            "receipt_sha256": "d" * 64,
+            "identity": {"identity_sha256": "e" * 64},
+        }
+    )
+    monkeypatch.setattr(
+        controller,
+        "resolve_checkpoint_generation",
+        lambda *_args, **_kwargs: resolved,
+    )
+
+    config = controller._load_config(path)
+    command = controller._trainer_command(path, config, invocation_steps=1)
+
+    assert "--resume-if-available" in command
+    assert command[command.index("--bootstrap-output-dir") + 1] == raw["paths"][
+        "bootstrap_output"
+    ]
+    assert command[command.index("--bootstrap-stem") + 1] == "checkpoint_latest"
+    assert command[-2:] == ["--max-invocation-steps", "1"]
+    assert controller._planned_invocation_steps(config, {"step": 0}) == 1
+    assert controller._planned_invocation_steps(config, {"step": 1}) == 35
+
+
+def test_bootstrap_freeze_copies_one_authoritative_generation(tmp_path: Path) -> None:
+    source = _private(tmp_path / "source-output")
+    generations = _private(source / "checkpoint_generations")
+    checkpoint_id = "checkpoint_latest-step-00000073-" + "a" * 32
+    generation = _private(generations / checkpoint_id)
+    weights = generation / "bundle.safetensors"
+    weights.write_bytes(b"controller-tissue")
+    weights.chmod(0o400)
+    identity = {"identity_sha256": "e" * 64}
+    receipt_body = {
+        "schema": "aura.unified_intrinsic_training.v1",
+        "checkpoint_generation_schema": "aura.unified_intrinsic_checkpoint.v3",
+        "checkpoint_id": checkpoint_id,
+        "checkpoint_file": weights.name,
+        "checkpoint_size_bytes": weights.stat().st_size,
+        "checkpoint_sha256": hashlib.sha256(weights.read_bytes()).hexdigest(),
+        "identity": identity,
+        "step": 73,
+        "stem": "checkpoint_latest",
+    }
+    receipt = {
+        **receipt_body,
+        "receipt_sha256": canonical_sha256(receipt_body),
+    }
+    complete = generation / "complete.json"
+    complete.write_bytes(canonical_bytes(receipt) + b"\n")
+    complete.chmod(0o400)
+    generation.chmod(0o500)
+    pointer = {
+        "schema": "aura.unified_intrinsic_checkpoint_pointer.v2",
+        "checkpoint": f"checkpoint_generations/{checkpoint_id}",
+        "complete_sha256": hashlib.sha256(complete.read_bytes()).hexdigest(),
+        "identity_sha256": identity["identity_sha256"],
+        "step": 73,
+        "stem": "checkpoint_latest",
+    }
+    pointer_path = source / "checkpoint_latest_pointer.json"
+    pointer_path.write_bytes(canonical_bytes(pointer) + b"\n")
+    pointer_path.chmod(0o600)
+    inputs = _private(tmp_path / "inputs")
+
+    frozen = _freeze_bootstrap_checkpoint(
+        source,
+        inputs,
+        stem="checkpoint_latest",
+    )
+    selected = resolve_checkpoint_generation(
+        inputs / "bootstrap-output",
+        stem="checkpoint_latest",
+        required=True,
+    )
+
+    assert selected is not None
+    assert selected.weights_path.read_bytes() == b"controller-tissue"
+    assert frozen["parent_checkpoint_sha256"] == receipt["checkpoint_sha256"]
+    assert frozen["parent_receipt_sha256"] == receipt["receipt_sha256"]
+    assert frozen["parent_identity_sha256"] == identity["identity_sha256"]
 
 
 def test_clean_child_exit_waits_for_signed_detached_terminal_handoff(

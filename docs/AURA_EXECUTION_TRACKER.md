@@ -45663,3 +45663,42 @@ claimed. The completion envelope remains `913/920` (approximately `99.2%`).
 Next is a provenance-bound warm-start recovery that reuses the step-73 tissue,
 trains on fresh examples without leaking the failed holdout, and must earn a
 new strict admission before powered evaluation.
+
+## Checkpoint 2026-08-12-263: Recovery Reuses Tissue, Not Failed Evidence
+
+The one-token CP254 admission miss can now be repaired without restarting the
+resident controller from random initialization and without pretending the
+failed holdout was unseen. A dedicated recovery profile freezes a fresh
+dataset and tokenized holdout under a new seed, while copying exactly one
+authoritative parent checkpoint generation into the new immutable campaign
+inputs. The copied generation is reopened through the canonical checkpoint
+resolver and bound by parent step, checkpoint, receipt and identity hashes.
+
+At trainer startup, only the exact `bundle.*` trainable tensor inventory is
+loaded. Parent optimizer state, training cursor, history and dataset are never
+restored. Topology, model, runtime, tokenizer, recurrence geometry, grammar,
+answer emission, controller rank and readout identity must match before any
+tissue is accepted. The new campaign records the imported parent in its own
+identity, creates a fresh optimizer, and thereafter resumes only from its own
+source-bound checkpoints. This makes retries durable without allowing the old
+experiment to leak authority into the new one.
+
+The launchd controller now validates recovery packages and forwards the sealed
+bootstrap path to the trainer. Its first invocation is deliberately limited to
+one durable step before the remaining schedule, giving the independent
+supervisor an early liveness and resumability checkpoint. The recovery attempt
+is bounded to fourteen hours rather than inheriting the full campaign's
+fifty-four-hour outer timeout. While closing this path, an undefined logger in
+secondary failure reporting was also removed so launch failures cannot obscure
+their original exception.
+
+Validation is green: `86/86` focused trainer, controller, resume, launcher and
+adjudicator tests pass; the canonical smoke suite passes `104/104`; Ruff,
+compilation and diff hygiene pass. Tests include byte-exact immutable checkpoint
+copying, topology mismatch refusal, controller-only import, old campaign schema
+compatibility, fresh recovery scheduling and command custody. No new resident
+training or scientific verdict is claimed at this checkpoint. CP254 remains
+`26/27` and non-promotable. Next is publishing this source boundary, freezing a
+new recovery capsule from it, and verifying launchd, detached trainer,
+`caffeinate`, authenticated heartbeat and the first durable recovery checkpoint
+before unattended continuation.

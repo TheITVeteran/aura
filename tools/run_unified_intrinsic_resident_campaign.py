@@ -270,12 +270,13 @@ def _load_config(path: Path) -> dict[str, Any]:
         "claims",
         "config_sha256",
     }
+    allowed_keys = (required, required | {"bootstrap"})
     body = {key: value for key, value in config.items() if key != "config_sha256"}
     if (
-        set(config) != required
+        set(config) not in allowed_keys
         or config.get("schema") != CONFIG_SCHEMA
         or config.get("config_sha256") != canonical_sha256(body)
-        or config.get("profile") not in {"canary", "full"}
+        or config.get("profile") not in {"canary", "full", "recovery"}
         or not isinstance(config.get("campaign_id"), str)
     ):
         _fail("campaign_config_invalid")
@@ -286,7 +287,7 @@ def _load_config(path: Path) -> dict[str, Any]:
     ):
         _fail("campaign_training_profile_drift")
     paths = config.get("paths")
-    if not isinstance(paths, dict) or set(paths) != {
+    base_path_keys = {
         "workspace_root",
         "campaign_root",
         "inputs",
@@ -295,7 +296,13 @@ def _load_config(path: Path) -> dict[str, Any]:
         "tokenized_dataset",
         "detached_attempts",
         "heartbeat_key",
-    }:
+    }
+    expected_path_keys = (
+        base_path_keys | {"bootstrap_output"}
+        if config["profile"] == "recovery"
+        else base_path_keys
+    )
+    if not isinstance(paths, dict) or set(paths) != expected_path_keys:
         _fail("campaign_paths_invalid")
     root = _private_directory(Path(paths["campaign_root"]))
     inputs = _private_directory(Path(paths["inputs"]))
@@ -309,6 +316,11 @@ def _load_config(path: Path) -> dict[str, Any]:
         "tokenized_dataset": inputs / "tokenized_dataset.json",
         "detached_attempts": attempts,
         "heartbeat_key": root / "heartbeat.key",
+        **(
+            {"bootstrap_output": inputs / "bootstrap-output"}
+            if config["profile"] == "recovery"
+            else {}
+        ),
     }
     for name, expected in expected_paths.items():
         observed = Path(paths[name]).expanduser().resolve(strict=True)
@@ -316,6 +328,66 @@ def _load_config(path: Path) -> dict[str, Any]:
             _fail("campaign_path_binding_drift", role=name)
     if path != root / "campaign.json":
         _fail("campaign_config_path_drift")
+    bootstrap = config.get("bootstrap")
+    if config["profile"] == "recovery":
+        if not isinstance(bootstrap, dict):
+            _fail("campaign_bootstrap_invalid")
+        bootstrap_body = {
+            key: value for key, value in bootstrap.items() if key != "bootstrap_sha256"
+        }
+        if (
+            set(bootstrap)
+            != {
+                "schema",
+                "stem",
+                "output",
+                "parent_step",
+                "parent_checkpoint_sha256",
+                "parent_receipt_sha256",
+                "parent_identity_sha256",
+                "bootstrap_sha256",
+            }
+            or bootstrap.get("schema") != "aura.unified_intrinsic.bootstrap_input.v1"
+            or bootstrap.get("bootstrap_sha256") != canonical_sha256(bootstrap_body)
+            or bootstrap.get("output") != paths["bootstrap_output"]
+            or type(bootstrap.get("parent_step")) is not int
+            or int(bootstrap["parent_step"]) < 0
+            or any(
+                not _is_sha(bootstrap.get(name))
+                for name in (
+                    "parent_checkpoint_sha256",
+                    "parent_receipt_sha256",
+                    "parent_identity_sha256",
+                )
+            )
+        ):
+            _fail("campaign_bootstrap_invalid")
+        try:
+            selected = resolve_checkpoint_generation(
+                Path(paths["bootstrap_output"]),
+                stem=str(bootstrap.get("stem") or ""),
+                required=True,
+            )
+        except (OSError, UnifiedCheckpointError, ValueError) as exc:
+            raise UnifiedResidentControllerError(
+                "campaign_bootstrap_checkpoint_invalid"
+            ) from exc
+        if selected is None:  # pragma: no cover - required=True is authoritative
+            _fail("campaign_bootstrap_checkpoint_unavailable")
+        parent_identity = selected.receipt.get("identity")
+        if (
+            selected.receipt.get("step") != bootstrap["parent_step"]
+            or selected.receipt.get("checkpoint_sha256")
+            != bootstrap["parent_checkpoint_sha256"]
+            or selected.receipt.get("receipt_sha256")
+            != bootstrap["parent_receipt_sha256"]
+            or not isinstance(parent_identity, dict)
+            or parent_identity.get("identity_sha256")
+            != bootstrap["parent_identity_sha256"]
+        ):
+            _fail("campaign_bootstrap_checkpoint_drift")
+    elif bootstrap is not None:
+        _fail("campaign_bootstrap_not_permitted")
     label = f"com.aura.unified-intrinsic.{config['campaign_id']}"
     if config.get("launch") != {
         "label": label,
@@ -404,6 +476,11 @@ def verify_package(config: Mapping[str, Any]) -> dict[str, Any]:
         "dataset_identity_sha256": dataset_identity["identity_sha256"],
         "tokenizer_identity_sha256": tokenizer_identity["identity_sha256"],
         "tokenized_dataset_identity_sha256": tokenized_identity["identity_sha256"],
+        "bootstrap_sha256": (
+            config["bootstrap"]["bootstrap_sha256"]
+            if isinstance(config.get("bootstrap"), dict)
+            else None
+        ),
     }
 
 
@@ -610,7 +687,12 @@ def _publish_failure_status(
             },
         )
     except Exception as exc:  # noqa: BLE001 - original controller failure remains primary
-        logger.debug("failure-report emit failed, primary error preserved: %s", exc)
+        print(
+            "unified resident controller could not publish secondary failure status: "
+            f"{type(exc).__name__}: {exc}",
+            file=sys.stderr,
+            flush=True,
+        )
         return
 
 
@@ -904,6 +986,16 @@ def _trainer_command(
         str(config["config_sha256"]),
         *[str(value) for value in config["training_args"]],
     ]
+    if config["profile"] == "recovery":
+        bootstrap = config["bootstrap"]
+        command.extend(
+            (
+                "--bootstrap-output-dir",
+                str(config["paths"]["bootstrap_output"]),
+                "--bootstrap-stem",
+                str(bootstrap["stem"]),
+            )
+        )
     if invocation_steps is not None:
         command.extend(("--max-invocation-steps", str(invocation_steps)))
     return command
@@ -1589,7 +1681,7 @@ def _trailing_no_progress(config: Mapping[str, Any], completed_attempts: int) ->
 def _planned_invocation_steps(
     config: Mapping[str, Any], checkpoint: Mapping[str, Any]
 ) -> int | None:
-    if config["profile"] != "canary":
+    if config["profile"] not in {"canary", "recovery"}:
         return None
     step = int(checkpoint["step"])
     if step == 0:

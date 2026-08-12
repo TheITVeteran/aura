@@ -41,6 +41,7 @@ from tools.train_unified_intrinsic_recurrence import (  # noqa: E402
     _atomic_canonical_json,
     _attach_window_adapters,
     _await_resource_guard,
+    _bootstrap_bundle_from_checkpoint,
     _cached_answer_binding_loss,
     _canonical_sha256,
     _clip_gradient_groups,
@@ -1068,6 +1069,80 @@ def test_checkpoint_roundtrip_restores_exact_trainable_state(tmp_path: Path) -> 
     after = _trainable(bundle)
     assert set(after) == set(before)
     assert all(bool(mx.array_equal(after[name], value)) for name, value in before.items())
+
+
+def test_bootstrap_imports_only_compatible_tissue_into_a_new_campaign(
+    tmp_path: Path,
+) -> None:
+    parent, _wiring = _bundle()
+    optimizer = optim.Adam(learning_rate=0.01)
+    optimizer.init(parent.trainable_parameters())
+    compatibility = {
+        name: f"value-{name}"
+        for name in (
+            "model",
+            "runtime",
+            "tokenizer",
+            "spec",
+            "window_geometry",
+            "families",
+            "task_depths",
+            "init_seed",
+            "bridge",
+            "window_tissue_mode",
+            "lora_rank",
+            "controller_rank",
+            "state_weight",
+            "stutter_weight",
+            "state_codebook_sha256",
+            "literal_observation_contract",
+            "opcode_observation_contract",
+            "answer_emission_contract",
+            "depth_basis_size",
+            "lora_targets",
+            "readout_sha256",
+        )
+    }
+    parent_identity_body = {"schema": "test", **compatibility}
+    parent_identity = {
+        **parent_identity_body,
+        "identity_sha256": _canonical_sha256(parent_identity_body),
+    }
+    expected = {name: value + 0 for name, value in _trainable(parent).items()}
+    mx.eval(expected)
+    _save_checkpoint(
+        tmp_path,
+        parent,
+        optimizer,
+        step=73,
+        history=[{"step": 73}],
+        identity=parent_identity,
+    )
+    child, _child_wiring = _bundle()
+
+    receipt = _bootstrap_bundle_from_checkpoint(
+        tmp_path,
+        "checkpoint_latest",
+        child,
+        expected_identity={**compatibility, "dataset": "fresh"},
+    )
+
+    imported = _trainable(child)
+    assert all(
+        bool(mx.array_equal(imported[name], value)) for name, value in expected.items()
+    )
+    assert receipt["parent_step"] == 73
+    assert receipt["optimizer_inherited"] is False
+    assert receipt["history_inherited"] is False
+    assert receipt["dataset_inherited"] is False
+
+    with pytest.raises(RuntimeError, match="topology differs: controller_rank"):
+        _bootstrap_bundle_from_checkpoint(
+            tmp_path,
+            "checkpoint_latest",
+            child,
+            expected_identity={**compatibility, "controller_rank": "different"},
+        )
 
 
 def test_optional_resume_starts_fresh_only_when_no_checkpoint_exists(

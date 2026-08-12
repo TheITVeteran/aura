@@ -10,6 +10,7 @@ import os
 import random
 import re
 import secrets
+import shutil
 import stat
 import subprocess
 import sys
@@ -30,6 +31,10 @@ from tools.resident_recurrent_sft_bootstrap_identity import (  # noqa: E402
     load_resident_bootstrap_tokenizer,
     resident_bootstrap_tokenizer_identity,
 )
+from tools.unified_intrinsic_checkpoint import (  # noqa: E402
+    UnifiedCheckpointError,
+    resolve_checkpoint_generation,
+)
 from tools.unified_intrinsic_resident_identity import (  # noqa: E402
     build_model_manifest,
     build_source_git_identity,
@@ -49,7 +54,7 @@ from tools.unified_intrinsic_tokenization_contract import (  # noqa: E402
 
 PREPARATION_SCHEMA: Final = "aura.unified_intrinsic.resident_preparation.v1"
 CONFIG_SCHEMA: Final = "aura.unified_intrinsic.resident_campaign.v1"
-PROFILES: Final = frozenset({"canary", "full"})
+PROFILES: Final = frozenset({"canary", "full", "recovery"})
 DEFAULT_MODEL: Final = Path(
     "/Users/bryan/.aura/live-source/training/fused-model/"
     "Aura-32B-crsm-closeout-jul1-20260701-215118"
@@ -108,6 +113,14 @@ def _write_once(path: Path, payload: bytes, *, mode: int = 0o400) -> None:
         != (after.st_dev, after.st_ino, after.st_size, after.st_mtime_ns)
     ):
         _fail(f"immutable_artifact_drift:{path.name}")
+
+
+def _file_sha256(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(8 * 1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
 
 
 def _git(root: Path, *arguments: str, timeout: float = 120.0) -> str:
@@ -224,6 +237,24 @@ def _profile_training(profile: str) -> dict[str, Any]:
             "eval_every": family_count * task_depth_count,
             "max_minutes": 240.0,
         }
+    if profile == "recovery":
+        return {
+            **common,
+            "per_cell": 8,
+            "holdout_per_cell": 3,
+            "max_steps": 36,
+            "semantic_warmup_steps": 0,
+            "state_warmup_steps": 0,
+            "answer_bridge_steps": 18,
+            "answer_bridge_inner_steps": 16,
+            "answer_bridge_learning_rate": 0.0001,
+            "recurrent_learning_rate": 0.000025,
+            "answer_bridge_rollin_probability": 0.6,
+            "answer_bridge_rollin_final_probability": 0.8,
+            "eval_every": 9,
+            "seed": 20260812263,
+            "max_minutes": 720.0,
+        }
     full_per_cell = 8
     family_count = len(str(common["families"]).split(","))
     task_depth_count = len(str(common["task_depths"]).split(","))
@@ -300,6 +331,59 @@ def _training_cli(training: Mapping[str, Any]) -> list[str]:
     return arguments
 
 
+def _freeze_bootstrap_checkpoint(
+    source_output: Path,
+    destination_inputs: Path,
+    *,
+    stem: str,
+) -> dict[str, Any]:
+    try:
+        selected = resolve_checkpoint_generation(
+            source_output.expanduser(),
+            stem=stem,
+            required=True,
+        )
+    except (OSError, UnifiedCheckpointError, ValueError) as exc:
+        raise UnifiedResidentPreparationError("bootstrap_checkpoint_invalid") from exc
+    if selected is None:  # pragma: no cover - required=True is authoritative
+        _fail("bootstrap_checkpoint_unavailable")
+    output = _private_directory(destination_inputs / "bootstrap-output", must_be_new=True)
+    generations = _private_directory(output / "checkpoint_generations")
+    generation = _private_directory(generations / selected.generation_dir.name)
+    weights = generation / selected.weights_path.name
+    shutil.copyfile(selected.weights_path, weights)
+    os.chmod(weights, 0o400)
+    if (
+        weights.stat().st_size != selected.receipt["checkpoint_size_bytes"]
+        or _file_sha256(weights) != selected.receipt["checkpoint_sha256"]
+    ):
+        _fail("bootstrap_checkpoint_copy_drift")
+    _write_once(
+        generation / "complete.json",
+        canonical_bytes(selected.receipt) + b"\n",
+        mode=0o400,
+    )
+    _write_once(
+        output / f"{stem}_pointer.json",
+        canonical_bytes(selected.pointer) + b"\n",
+        mode=0o600,
+    )
+    os.chmod(generation, 0o500)
+    identity = selected.receipt.get("identity")
+    if not isinstance(identity, dict):
+        _fail("bootstrap_checkpoint_identity_invalid")
+    body = {
+        "schema": "aura.unified_intrinsic.bootstrap_input.v1",
+        "stem": stem,
+        "output": str(output),
+        "parent_step": selected.receipt["step"],
+        "parent_checkpoint_sha256": selected.receipt["checkpoint_sha256"],
+        "parent_receipt_sha256": selected.receipt["receipt_sha256"],
+        "parent_identity_sha256": identity["identity_sha256"],
+    }
+    return {**body, "bootstrap_sha256": canonical_sha256(body)}
+
+
 def _freeze_campaign(
     *,
     source_root: Path,
@@ -308,6 +392,8 @@ def _freeze_campaign(
     campaign_id: str,
     profile: str,
     model_path: Path,
+    bootstrap_output_dir: Path | None = None,
+    bootstrap_stem: str = "checkpoint_latest",
 ) -> dict[str, Any]:
     source_root = source_root.expanduser().resolve(strict=True)
     campaign_id = _validate_campaign_id(campaign_id)
@@ -325,6 +411,17 @@ def _freeze_campaign(
     _private_directory(root / "training-output")
     detached_attempts = _private_directory(root / "detached-attempts")
     del detached_attempts
+    if (profile == "recovery") != (bootstrap_output_dir is not None):
+        _fail("recovery_profile_requires_exactly_one_bootstrap_checkpoint")
+    bootstrap = (
+        _freeze_bootstrap_checkpoint(
+            bootstrap_output_dir,
+            inputs,
+            stem=bootstrap_stem,
+        )
+        if bootstrap_output_dir is not None
+        else None
+    )
     families = tuple(str(training["families"]).split(","))
     task_depths = tuple(
         int(value) for value in str(training["task_depths"]).split(",")
@@ -382,6 +479,7 @@ def _freeze_campaign(
         "dataset": dataset_identity,
         "tokenizer": tokenizer_identity,
         "tokenized_dataset": tokenized_dataset_identity,
+        "bootstrap": bootstrap,
         "paths": {
             "workspace_root": str(Path.home() / ".aura"),
             "campaign_root": str(root),
@@ -391,6 +489,11 @@ def _freeze_campaign(
             "tokenized_dataset": str(inputs / TOKENIZED_DATASET_FILENAME),
             "detached_attempts": str(root / "detached-attempts"),
             "heartbeat_key": str(key_path),
+            **(
+                {"bootstrap_output": str(inputs / "bootstrap-output")}
+                if bootstrap is not None
+                else {}
+            ),
         },
         "heartbeat_key_sha256": hashlib.sha256(heartbeat_key).hexdigest(),
         "training": training,
@@ -399,7 +502,11 @@ def _freeze_campaign(
             "poll_interval_s": 15.0,
             "heartbeat_stale_s": 180.0,
             "attempt_timeout_s": (
-                5.0 * 3600.0 if profile == "canary" else 54.0 * 3600.0
+                5.0 * 3600.0
+                if profile == "canary"
+                else 14.0 * 3600.0
+                if profile == "recovery"
+                else 54.0 * 3600.0
             ),
             "max_attempts": 8,
             "max_consecutive_no_progress": 2,
@@ -495,6 +602,15 @@ def _create_capsule_and_freeze(args: argparse.Namespace) -> dict[str, Any]:
         "--model",
         str(args.model),
     ]
+    if args.bootstrap_output_dir is not None:
+        command.extend(
+            (
+                "--bootstrap-output-dir",
+                str(args.bootstrap_output_dir.expanduser().resolve(strict=True)),
+                "--bootstrap-stem",
+                args.bootstrap_stem,
+            )
+        )
     result = subprocess.run(
         command,
         capture_output=True,
@@ -523,6 +639,8 @@ def _parser() -> argparse.ArgumentParser:
     prepare.add_argument("--capsule-root", type=Path, default=DEFAULT_CAPSULE_ROOT)
     prepare.add_argument("--campaign-root", type=Path, default=DEFAULT_CAMPAIGN_ROOT)
     prepare.add_argument("--model", type=Path, default=DEFAULT_MODEL)
+    prepare.add_argument("--bootstrap-output-dir", type=Path)
+    prepare.add_argument("--bootstrap-stem", default="checkpoint_latest")
 
     freeze = commands.add_parser("_freeze", help=argparse.SUPPRESS)
     freeze.add_argument("--source-root", type=Path, required=True)
@@ -531,6 +649,8 @@ def _parser() -> argparse.ArgumentParser:
     freeze.add_argument("--campaign-id", required=True)
     freeze.add_argument("--profile", choices=sorted(PROFILES), required=True)
     freeze.add_argument("--model", type=Path, required=True)
+    freeze.add_argument("--bootstrap-output-dir", type=Path)
+    freeze.add_argument("--bootstrap-stem", default="checkpoint_latest")
     return parser
 
 
@@ -547,6 +667,8 @@ def main(argv: Sequence[str] | None = None) -> int:
                 campaign_id=args.campaign_id,
                 profile=args.profile,
                 model_path=args.model.expanduser().resolve(strict=True),
+                bootstrap_output_dir=args.bootstrap_output_dir,
+                bootstrap_stem=args.bootstrap_stem,
             )
     except Exception as exc:  # noqa: BLE001 - stable CLI failure boundary
         print(

@@ -1821,6 +1821,81 @@ def _restore_checkpoint(
     )
 
 
+def _bootstrap_bundle_from_checkpoint(
+    output_dir: Path,
+    stem: str,
+    bundle: UnifiedTrainingBundle,
+    *,
+    expected_identity: dict[str, Any],
+) -> dict[str, Any]:
+    """Initialize new-campaign tissue from a verified parent, never its optimizer."""
+
+    try:
+        resolved = resolve_checkpoint_generation(output_dir, stem=stem, required=True)
+    except (OSError, UnifiedCheckpointError, ValueError) as exc:
+        raise RuntimeError("unified recurrence bootstrap checkpoint is invalid") from exc
+    if resolved is None:  # pragma: no cover - required=True is authoritative
+        raise RuntimeError("unified recurrence bootstrap checkpoint is unavailable")
+    receipt = resolved.receipt
+    parent_identity = receipt.get("identity")
+    if not isinstance(parent_identity, dict):
+        raise RuntimeError("unified recurrence bootstrap identity is unavailable")
+    compatibility_fields = (
+        "model",
+        "runtime",
+        "tokenizer",
+        "spec",
+        "window_geometry",
+        "families",
+        "task_depths",
+        "init_seed",
+        "bridge",
+        "window_tissue_mode",
+        "lora_rank",
+        "controller_rank",
+        "state_weight",
+        "stutter_weight",
+        "state_codebook_sha256",
+        "literal_observation_contract",
+        "opcode_observation_contract",
+        "answer_emission_contract",
+        "depth_basis_size",
+        "lora_targets",
+        "readout_sha256",
+    )
+    mismatches = [
+        name
+        for name in compatibility_fields
+        if parent_identity.get(name) != expected_identity.get(name)
+    ]
+    if mismatches:
+        raise RuntimeError(
+            "unified recurrence bootstrap topology differs: " + ",".join(mismatches)
+        )
+    tensors = mx.load(str(resolved.weights_path))
+    bundle_values = {
+        name.removeprefix("bundle."): value
+        for name, value in tensors.items()
+        if name.startswith("bundle.")
+    }
+    expected = set(_trainable(bundle))
+    if set(bundle_values) != expected:
+        raise RuntimeError("unified recurrence bootstrap tensor inventory differs")
+    bundle.update(tree_unflatten(list(bundle_values.items())))
+    mx.eval(bundle.parameters())
+    return {
+        "schema": "aura.unified_intrinsic.bootstrap_tissue.v1",
+        "stem": stem,
+        "parent_step": int(receipt["step"]),
+        "parent_checkpoint_sha256": receipt["checkpoint_sha256"],
+        "parent_receipt_sha256": receipt["receipt_sha256"],
+        "parent_identity_sha256": parent_identity["identity_sha256"],
+        "optimizer_inherited": False,
+        "history_inherited": False,
+        "dataset_inherited": False,
+    }
+
+
 def _evaluate(
     bundle: UnifiedTrainingBundle,
     tokenizer: Any,
@@ -2206,10 +2281,22 @@ def main() -> int:
             "at step zero; intended for one immutable supervised replay command"
         ),
     )
+    parser.add_argument(
+        "--bootstrap-output-dir",
+        type=Path,
+        help="immutable imported parent checkpoint directory for new-campaign tissue",
+    )
+    parser.add_argument(
+        "--bootstrap-stem",
+        default="checkpoint_latest",
+        help="authoritative parent checkpoint stem used only for initialization",
+    )
     args = parser.parse_args()
     campaign_binding = _parse_campaign_binding(args.campaign_binding_json)
     if args.resume and args.resume_if_available:
         raise ValueError("resume modes are mutually exclusive")
+    if args.bootstrap_output_dir is not None and args.resume:
+        raise ValueError("bootstrap cannot accompany an unconditional local resume")
     if not (
         0 <= args.semantic_warmup_steps < args.max_steps
         and args.state_warmup_steps >= 0
@@ -2577,7 +2664,6 @@ def main() -> int:
             prelude_end=spec.prelude_end,
             batch_size=args.grounding_batch_size,
         )
-        initial_controller_sha256 = controller.parameter_sha256()
         bundle = UnifiedTrainingBundle(model, controller)
         readout_sha256 = readout_fingerprint(model, spec.coda_start)
         identity = {
@@ -2630,7 +2716,6 @@ def main() -> int:
             ),
             "state_codebook_sha256": state_codebook_grounding["sha256"],
             "state_codebook_grounding": state_codebook_grounding,
-            "initial_controller_sha256": initial_controller_sha256,
             "literal_observation_contract": {
                 **literal_contract.to_dict(),
                 "contract_sha256": literal_contract.contract_sha256,
@@ -2664,6 +2749,18 @@ def main() -> int:
             },
             "mlx_memory_envelope": envelope.to_receipt(),
         }
+        bootstrap = (
+            _bootstrap_bundle_from_checkpoint(
+                args.bootstrap_output_dir.expanduser(),
+                args.bootstrap_stem,
+                bundle,
+                expected_identity=identity,
+            )
+            if args.bootstrap_output_dir is not None
+            else None
+        )
+        identity["initial_controller_sha256"] = controller.parameter_sha256()
+        identity["bootstrap"] = bootstrap
         identity["identity_sha256"] = _canonical_sha256(identity)
         def phase_learning_rate(phase: str) -> float:
             return {
