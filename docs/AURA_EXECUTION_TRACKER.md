@@ -45341,3 +45341,51 @@ controller/profile surface passes `21/21` focused tests; canonical smoke passes
 `912/920` (approximately `99.1%`). Next is publish this repair, freeze CP251
 against a new seed, require exact admission, and only then run the eight-arm
 resident decoded canary.
+
+## Checkpoint 2026-08-11-252: Resident-32B Neural Transfer Passes Its Frozen Canary
+
+The immutable CP251 resident-32B campaign at source commit
+`6de8d72c944b2869a0c78ad0cfd2b7bf15fcb50b` completed all 37 planned
+training steps in `30.253` minutes. Its terminal T4/T8/T16 held-out
+cross-entropy was `1.435998` versus T1 `3.143116`, a `54.313%` relative
+reduction, while every typed state/action invariant remained exact. More
+importantly, the autonomous answer-bridge admission passed all `9/9` fresh
+family/depth cells and all `98/98` answer tokens. The admitted checkpoint
+commitment is
+`c63c4d2afbadc7edc0bc670faa56f570864c01fa1ba20178f6f98fac2688bdc5`,
+the training receipt commitment is
+`8772a54dc3d6f6fa9dfdd147af31e9b99810afcbfb075edc57204d37417e07c4`,
+and the admission commitment is
+`1ab0542974d5e48ade1e6ba7e2bd9e35a1c169d1bb3df6738e578e507edd2dd5`.
+
+The already-frozen eight-arm evaluator then decoded 72 prompt-disjoint
+resident candidates from a third seed. The initialization-matched untrained
+T4 control solved `2/9`; the trained T4 controller solved `9/9`, producing
+seven paired wrong-to-right corrections and zero right-to-wrong regressions.
+Base T1 solved `5/9`, trained T1 solved `3/9`, grammar-lesioned T4 solved
+`1/9`, neural-pointer-lesioned T4 solved `2/9`, and the separately compiled
+instrument solved `9/9`. The detached evaluator exited zero after `27.655`
+minutes with verified containment, an empty process group and no surviving
+lineage. Its receipt commitment is
+`b1231eb796519acf0b552a46c23435fede459c9926c4da271053496a80218451`
+and the canonical decode-report commitment is
+`2802ad19eb85e3c717129b7e1a417f08292192f1e447560dc07361efcdbd8075`.
+
+The independent CP247/CP248 adjudicator reconstructed all eight arm totals
+and paired transitions from the individual candidate records. Every frozen
+check passed: control headroom, exact compiled instrument, wrong-to-right
+presence, zero regression, positive matched-control gain, recurrence over T1,
+treatment over base, and strict losses under both mechanism lesions. Its
+verdict is `supported_bounded_resident_transfer`, committed as
+`0d67f3c30781556d93946f688e9b212b4f672369b79b9dcaf4d08994f53e2956`.
+
+This is causal, prompt-disjoint resident-32B neural transfer on the typed
+recurrent battery: the trained recurrent controller made the same frozen
+resident checkpoint decode seven answers that its initialization-matched
+controller did not, and removing either required mechanism reduced the gain.
+It is not broad reasoning, frontier performance, production fusion or a
+`WOW Signal`. The Spark completion envelope advances to `913/920`
+(approximately `99.2%`). Next is powered fresh-seed replication under the
+full 72-example schedule, with all fresh holdouts admitted, followed only on
+replication by a governed domain-qualified shadow runtime package and broader
+equal-compute reasoning batteries.
