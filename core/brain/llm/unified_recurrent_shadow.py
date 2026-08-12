@@ -10,7 +10,10 @@ import hashlib
 import json
 import os
 import re
+import secrets
 import stat
+import time
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Final, Never
@@ -21,6 +24,14 @@ from mlx.utils import tree_flatten, tree_unflatten
 from core.brain.llm.unified_recurrent_shadow_contract import (
     LOAD_SCHEMA,
     seal_shadow_load_receipt,
+)
+from core.brain.llm.unified_recurrent_shadow_probe_contract import (
+    RECEIPT_SCHEMA as PROBE_RECEIPT_SCHEMA,
+)
+from core.brain.llm.unified_recurrent_shadow_probe_contract import (
+    seal_shadow_probe_receipt,
+    shadow_probe_request_errors,
+    token_sequence_sha256,
 )
 from core.learning.recurrent_answer_emission import (
     RecurrentAnswerEmissionContract,
@@ -35,6 +46,7 @@ from core.learning.unified_intrinsic_objective import UnifiedIntrinsicTrainingSp
 from core.learning.unified_intrinsic_recurrence import (
     UnifiedRecurrenceConfig,
     UnifiedRecurrentController,
+    unified_recurrent_logits,
 )
 
 PACKAGE_SCHEMA: Final = "aura.unified_intrinsic.shadow_package.v1"
@@ -514,6 +526,167 @@ class LoadedUnifiedRecurrentShadow:
 
     def supports(self, public_tokens: list[int] | tuple[int, ...]) -> bool:
         return self.answer_contract.family(public_tokens) in set(self.receipt["families"])
+
+    def probe(
+        self,
+        model: Any,
+        request: dict[str, Any],
+        *,
+        cancel_check: Callable[[], bool] | None = None,
+        activity: Callable[[], None] | None = None,
+    ) -> dict[str, Any]:
+        """Run matched base/recurrent decodes without exposing either output."""
+
+        errors = shadow_probe_request_errors(request)
+        if errors:
+            raise UnifiedRecurrentShadowError(",".join(errors))
+        public_tokens = tuple(int(value) for value in request["public_token_ids"])
+        expected_tokens = tuple(int(value) for value in request["expected_token_ids"])
+        max_tokens = int(request["max_tokens"])
+        request_sha256 = str(request["request_sha256"])
+        family = self.answer_contract.family(public_tokens)
+        if family not in set(self.receipt["families"]):
+            return self._empty_probe_receipt(
+                request_sha256=request_sha256,
+                status="abstained",
+                reason="unsupported_public_token_family",
+                input_token_count=len(public_tokens),
+                expected_token_count=len(expected_tokens),
+                max_tokens=max_tokens,
+            )
+        if expected_tokens[-1] != self.answer_contract.eos_token_id:
+            raise UnifiedRecurrentShadowError(
+                "unified recurrent shadow expected sequence lacks exact EOS"
+            )
+
+        prompt = mx.array([public_tokens], dtype=mx.int32)
+
+        def logits(value: Any) -> Any:
+            if hasattr(value, "logits"):
+                return value.logits
+            if isinstance(value, tuple):
+                return value[0]
+            return value
+
+        def decode(operation: Callable[[Any], Any]) -> tuple[tuple[int, ...], bool, int]:
+            started = time.perf_counter()
+            tokens = prompt
+            generated: list[int] = []
+            stopped = False
+            for _index in range(max_tokens):
+                if cancel_check is not None and cancel_check():
+                    raise InterruptedError("unified_recurrent_shadow_probe_cancelled")
+                if activity is not None:
+                    activity()
+                next_logits = operation(tokens)
+                token_id = int(mx.argmax(next_logits[0, -1]).item())
+                generated.append(token_id)
+                if token_id == self.answer_contract.eos_token_id:
+                    stopped = True
+                    break
+                tokens = mx.concatenate(
+                    [tokens, mx.array([[token_id]], dtype=tokens.dtype)],
+                    axis=1,
+                )
+            elapsed_ms = max(0, int(round((time.perf_counter() - started) * 1000.0)))
+            return tuple(generated), stopped, elapsed_ms
+
+        base_tokens, base_stopped, base_latency_ms = decode(
+            lambda tokens: logits(model(tokens))
+        )
+        plan = self.spec.plan_at(int(self.receipt["recurrence_depth"]))
+
+        def recurrent(tokens: Any) -> Any:
+            value, _telemetry = unified_recurrent_logits(
+                model,
+                tokens,
+                plan,
+                self.controller,
+                state_slot_start=len(public_tokens),
+                answer_emission_contract=self.answer_contract,
+                answer_digit_pointer_enabled=True,
+            )
+            return value
+
+        from core.brain.llm.latent_cortex.recurrence_adapter import (
+            recurrence_adapter_scope,
+        )
+
+        with recurrence_adapter_scope(start=None, stop=None):
+            shadow_tokens, shadow_stopped, shadow_latency_ms = decode(recurrent)
+        output_commitment_key = secrets.token_bytes(32)
+        body = {
+            "schema": PROBE_RECEIPT_SCHEMA,
+            "request_sha256": request_sha256,
+            "status": "completed",
+            "reason": "matched_shadow_probe_completed",
+            "package_id": self.receipt["package_id"],
+            "controller_sha256": self.receipt["controller_sha256"],
+            "family": family,
+            "recurrence_depth": int(self.receipt["recurrence_depth"]),
+            "input_token_count": len(public_tokens),
+            "expected_token_count": len(expected_tokens),
+            "max_tokens": max_tokens,
+            "base_token_count": len(base_tokens),
+            "base_output_sha256": token_sequence_sha256(
+                base_tokens,
+                key=output_commitment_key,
+            ),
+            "base_exact_match": base_tokens == expected_tokens,
+            "base_stopped_on_eos": base_stopped,
+            "base_latency_ms": base_latency_ms,
+            "shadow_token_count": len(shadow_tokens),
+            "shadow_output_sha256": token_sequence_sha256(
+                shadow_tokens,
+                key=output_commitment_key,
+            ),
+            "shadow_exact_match": shadow_tokens == expected_tokens,
+            "shadow_stopped_on_eos": shadow_stopped,
+            "shadow_latency_ms": shadow_latency_ms,
+            "outputs_equal": shadow_tokens == base_tokens,
+            "output_exposed": False,
+            "serving_authority": False,
+        }
+        return seal_shadow_probe_receipt(body)
+
+    def _empty_probe_receipt(
+        self,
+        *,
+        request_sha256: str,
+        status: str,
+        reason: str,
+        input_token_count: int,
+        expected_token_count: int,
+        max_tokens: int,
+    ) -> dict[str, Any]:
+        return seal_shadow_probe_receipt(
+            {
+                "schema": PROBE_RECEIPT_SCHEMA,
+                "request_sha256": request_sha256,
+                "status": status,
+                "reason": reason,
+                "package_id": self.receipt["package_id"],
+                "controller_sha256": self.receipt["controller_sha256"],
+                "family": "",
+                "recurrence_depth": int(self.receipt["recurrence_depth"]),
+                "input_token_count": input_token_count,
+                "expected_token_count": expected_token_count,
+                "max_tokens": max_tokens,
+                "base_token_count": 0,
+                "base_output_sha256": "",
+                "base_exact_match": False,
+                "base_stopped_on_eos": False,
+                "base_latency_ms": 0,
+                "shadow_token_count": 0,
+                "shadow_output_sha256": "",
+                "shadow_exact_match": False,
+                "shadow_stopped_on_eos": False,
+                "shadow_latency_ms": 0,
+                "outputs_equal": False,
+                "output_exposed": False,
+                "serving_authority": False,
+            }
+        )
 
 
 def load_unified_recurrent_shadow(

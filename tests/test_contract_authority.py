@@ -135,6 +135,16 @@ class TestSigningAndVerification:
         signed["capability_inventory_contract"] = True
         assert verify_job(signed, key).startswith("invalid_contract_authority")
 
+    def test_changing_a_structured_contract_after_signing_is_refused(self, key):
+        signed = sign_job(
+            _job(unified_recurrent_shadow_contract={"request_sha256": "a" * 64}),
+            key,
+            principal="shadow_probe",
+        )
+        signed["unified_recurrent_shadow_contract"]["request_sha256"] = "b" * 64
+
+        assert verify_job(signed, key).startswith("invalid_contract_authority")
+
     def test_changing_the_principal_after_signing_is_refused(self, key):
         signed = sign_job(_job(proof_evaluation_contract=True), key, principal="p")
         signed[AUTH_FIELD]["principal"] = "someone_else"

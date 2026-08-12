@@ -12,7 +12,7 @@ import threading
 import time
 import uuid
 from collections import deque
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -30,10 +30,11 @@ from core.conversation.user_surface_contract import (
 )
 from core.runtime.desktop_boot_safety import compute_mlx_cache_limit, compute_mlx_memory_limit
 from core.runtime.errors import record_degradation
+from core.runtime.flags import FlagKind as _FlagKind
+from core.runtime.flags import declare as _declare_flag
 from core.runtime.state_ownership import shared_asset_root, state_root
 
 from .model_registry import resolve_personality_adapter
-from core.runtime.flags import FlagKind as _FlagKind, declare as _declare_flag
 
 # Declared flags (migrated from raw os.environ reads so the knobs are
 # inventoried and reportable). STRING kind with the original literal
@@ -3623,6 +3624,38 @@ def _load_unified_recurrent_shadow(
             + ",".join(errors)
         )
     return loaded, receipt
+
+
+def _handle_unified_recurrent_shadow_probe(
+    job: dict[str, Any],
+    *,
+    loaded_shadow: Any | None,
+    model: Any,
+    contract_key: bytes | None,
+    cancel_check: Callable[[], bool] | None = None,
+    activity: Callable[[], None] | None = None,
+) -> dict[str, Any]:
+    """Execute one authenticated shadow probe and expose no model output."""
+
+    if job.get("action") != "unified_recurrent_shadow_probe":
+        raise ValueError("unified_recurrent_shadow_probe_action_differs")
+    refusal = _verify_contract_authority(job, contract_key)
+    if refusal:
+        raise ValueError(refusal)
+    if loaded_shadow is None:
+        raise RuntimeError("unified_recurrent_shadow_not_loaded")
+    receipt = loaded_shadow.probe(
+        model,
+        job.get("unified_recurrent_shadow_contract"),
+        cancel_check=cancel_check,
+        activity=activity,
+    )
+    return {
+        "id": str(job.get("id") or ""),
+        "action": "unified_recurrent_shadow_probe",
+        "status": "ok",
+        "receipt": receipt,
+    }
 
 
 # ── expert adapter hot attach/detach (in-worker, no model reload) ────────────
@@ -7863,6 +7896,67 @@ def _mlx_worker_loop(
                             "requires_worker_recycle": not identity_restored,
                         }
                     )
+                ipc_writer.put(response)
+
+            elif action == "unified_recurrent_shadow_probe":
+                request_id = str(job.get("id") or "")
+                job_seq = max(0, _safe_int(job.get("seq"), 0))
+                response = {
+                    "id": request_id,
+                    "action": "unified_recurrent_shadow_probe",
+                }
+                clear_stale_soft_cancel(cancel_seq, job_seq)
+                watchdog.start_job(request_id, "unified_recurrent_shadow_probe")
+                try:
+                    with metal_semaphore:
+                        response = _handle_unified_recurrent_shadow_probe(
+                            job,
+                            loaded_shadow=unified_recurrent_shadow,
+                            model=model,
+                            contract_key=contract_key,
+                            cancel_check=lambda _job_seq=job_seq: soft_cancel_requested(
+                                cancel_seq,
+                                _job_seq,
+                            ),
+                            activity=watchdog.activity,
+                        )
+                except InterruptedError:
+                    response.update(
+                        {
+                            "status": "error",
+                            "message": "unified_recurrent_shadow_probe_cancelled",
+                        }
+                    )
+                except (
+                    ImportError,
+                    RuntimeError,
+                    AttributeError,
+                    TypeError,
+                    ValueError,
+                    KeyError,
+                    OSError,
+                ) as probe_exc:
+                    _record_mlx_degradation(
+                        probe_exc,
+                        action="reported unified recurrent shadow probe failure to parent IPC",
+                        severity="warning",
+                    )
+                    response.update(
+                        {
+                            "status": "error",
+                            "message": (
+                                "unified_recurrent_shadow_probe_failed:"
+                                f"{type(probe_exc).__name__}:{str(probe_exc)[:180]}"
+                            ),
+                        }
+                    )
+                finally:
+                    watchdog.stop_job()
+                    if soft_cancel_requested(cancel_seq, job_seq):
+                        try:
+                            cancel_seq.value = 0
+                        except (AttributeError, OSError, TypeError, ValueError):
+                            logger.debug("Shadow probe soft-cancel acknowledgement failed.")
                 ipc_writer.put(response)
 
             elif action == "latent_reason":

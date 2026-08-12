@@ -32,6 +32,12 @@ from core.brain.llm.mlx_worker import (
     _should_emit_generation_progress,
     _trim_complete_operator_evidence,
 )
+from core.brain.llm.unified_recurrent_shadow_contract import (
+    LOAD_SCHEMA as UNIFIED_RECURRENT_SHADOW_LOAD_SCHEMA,
+)
+from core.brain.llm.unified_recurrent_shadow_contract import (
+    seal_shadow_load_receipt,
+)
 from core.utils.deadlines import get_deadline
 from tests.fixtures.rlc_runtime_integrity import complete_serving_stack
 
@@ -102,6 +108,24 @@ def ready_init_receipt(
             "expected_loops": loops,
             "required": loops > 1,
         },
+        "unified_recurrent_shadow": seal_shadow_load_receipt(
+            {
+                "schema": UNIFIED_RECURRENT_SHADOW_LOAD_SCHEMA,
+                "configured": False,
+                "loaded": False,
+                "reason": "not_configured",
+                "package_id": "",
+                "manifest_sha256": "",
+                "checkpoint_sha256": "",
+                "controller_sha256": "",
+                "families": [],
+                "task_depths": [],
+                "recurrence_depth": 0,
+                "model_identity_strength": "none",
+                "mode": "shadow_only",
+                "serving_authority": False,
+            }
+        ),
     }
     receipt.update(overrides)
     return receipt

@@ -22,7 +22,7 @@ import sys
 import threading as _threading
 import time
 import uuid
-from collections.abc import AsyncIterator, Iterable, Mapping
+from collections.abc import AsyncIterator, Iterable, Mapping, Sequence
 from contextvars import ContextVar
 from dataclasses import dataclass
 from pathlib import Path
@@ -4158,6 +4158,7 @@ class MLXLocalClient:
         #: from model identity because shadow tissue is neither a model
         #: mutation nor response-serving authority.
         self._unified_recurrent_shadow_status: dict[str, Any] = {}
+        self._unified_recurrent_shadow_probe_status: dict[str, Any] = {}
         self._worker_identity: dict[str, Any] = {}
         self._mycelial_root_refs: list[dict[str, str]] = []
         self._last_surface_control_receipt: dict[str, Any] = {}
@@ -5895,6 +5896,9 @@ class MLXLocalClient:
             "unified_recurrent_shadow": copy.deepcopy(
                 getattr(self, "_unified_recurrent_shadow_status", {})
             ),
+            "unified_recurrent_shadow_probe": copy.deepcopy(
+                getattr(self, "_unified_recurrent_shadow_probe_status", {})
+            ),
             "request_age_s": (
                 max(0.0, time.time() - self._current_request_started_at)
                 if self._current_request_started_at
@@ -5914,6 +5918,9 @@ class MLXLocalClient:
             ),
             "unified_recurrent_shadow": copy.deepcopy(
                 getattr(self, "_unified_recurrent_shadow_status", {})
+            ),
+            "unified_recurrent_shadow_probe": copy.deepcopy(
+                getattr(self, "_unified_recurrent_shadow_probe_status", {})
             ),
             "process_uptime_s": max(0.0, now - self._process_started_at)
             if self._process_started_at
@@ -7713,6 +7720,199 @@ class MLXLocalClient:
             severity="error",
         )
 
+    async def unified_recurrent_shadow_probe_async(
+        self,
+        public_token_ids: Sequence[int],
+        expected_token_ids: Sequence[int],
+        *,
+        max_tokens: int,
+        timeout_s: float = 180.0,
+    ) -> dict[str, Any]:
+        """Measure resident recurrent tissue without exposing or serving its text."""
+
+        base: dict[str, Any] = {"ok": False, "status": "unavailable", "receipt": {}}
+        if self._closed:
+            return {**base, "reason": "client_closed"}
+        shadow_status = copy.deepcopy(
+            getattr(self, "_unified_recurrent_shadow_status", {})
+        )
+        if not (
+            isinstance(shadow_status, dict)
+            and shadow_status.get("loaded") is True
+            and shadow_status.get("serving_authority") is False
+        ):
+            return {**base, "reason": "unified_recurrent_shadow_not_loaded"}
+        try:
+            from core.brain.llm.unified_recurrent_shadow_probe_contract import (
+                seal_shadow_probe_request,
+                shadow_probe_receipt_errors,
+            )
+
+            probe_request = seal_shadow_probe_request(
+                public_token_ids,
+                expected_token_ids,
+                max_tokens=max_tokens,
+            )
+            bounded_timeout_s = float(timeout_s)
+            if not math.isfinite(bounded_timeout_s) or bounded_timeout_s <= 0.0:
+                raise ValueError("timeout_invalid")
+            bounded_timeout_s = min(300.0, max(5.0, bounded_timeout_s))
+        except (ImportError, TypeError, ValueError, OverflowError) as exc:
+            return {**base, "reason": f"invalid_shadow_probe_request:{exc}"}
+        if self._req_q is None or not (
+            self._process and self._process.is_alive() and self._init_done
+        ):
+            return {**base, "reason": "worker_not_ready"}
+        try:
+            if get_memory_pressure_snapshot().refuse_heavy_local_generation:
+                return {**base, "reason": "memory_pressure"}
+        except (OSError, AttributeError, RuntimeError, TypeError, ValueError):
+            return {**base, "reason": "memory_pressure_unobservable"}
+
+        deadline = get_deadline(bounded_timeout_s)
+        acquired = await self._acquire_request_lock(
+            owner_label="unified_recurrent_shadow_probe",
+            deadline=deadline,
+            foreground_request=False,
+        )
+        if not acquired:
+            return {**base, "reason": "request_lane_busy"}
+        if _foreground_owner_active():
+            self._release_request_lock()
+            return {**base, "reason": "foreground_active_after_lane"}
+
+        future: SharedFuture | None = None
+        request_id = ""
+        deferred_reboot = ""
+        lane_fenced = False
+        try:
+            if self._req_q is None or not (
+                self._process and self._process.is_alive() and self._init_done
+            ):
+                return {**base, "reason": "worker_not_ready"}
+            if self._warmup_in_flight or self._active_generations > 0:
+                return {**base, "reason": "generation_active"}
+            if not await self._set_durable_lane_preemptible(False):
+                return {**base, "reason": "lane_fence_lost"}
+            lane_fenced = True
+            request_id = uuid.uuid4().hex
+            self._job_seq_counter += 1
+            request_seq = self._job_seq_counter
+            job = {
+                "id": request_id,
+                "seq": request_seq,
+                "action": "unified_recurrent_shadow_probe",
+                "unified_recurrent_shadow_contract": probe_request,
+            }
+            future = _new_shared_future()
+            self._pending_generations[request_id] = future
+            self._current_gen_future = future
+            self._active_generations += 1
+            self._active_generation_started_at = time.time()
+            self._mark_generation_started(
+                request_id,
+                requested_max_tokens=max_tokens,
+                first_token_hard_ceiling_s=bounded_timeout_s,
+                request_seq=request_seq,
+            )
+            dispatch_budget = _remaining_budget(deadline, bounded_timeout_s)
+            if dispatch_budget <= 0.0:
+                return {**base, "reason": "shadow_probe_timeout:dispatch"}
+            await run_io_bound(
+                self._req_q.put,
+                self._authorize_job(
+                    job,
+                    principal="mlx_client.unified_recurrent_shadow_probe",
+                ),
+                True,
+                min(2.0, dispatch_budget),
+            )
+            generation_budget = _remaining_budget(deadline, bounded_timeout_s)
+            if generation_budget <= 0.0:
+                deferred_reboot = "shadow_probe_deadline_unacknowledged"
+                return {**base, "reason": "shadow_probe_timeout:generation_start"}
+            try:
+                response = await _await_shared_future(future, timeout_s=generation_budget)
+            except TimeoutError:
+                self.soft_cancel_active_generation("unified_recurrent_shadow_probe_deadline")
+                try:
+                    response = await _await_shared_future(future, timeout_s=3.0)
+                except (TimeoutError, BrokenPipeError, OSError):
+                    deferred_reboot = "shadow_probe_deadline_unacknowledged"
+                    return {**base, "reason": "shadow_probe_timeout:unacknowledged"}
+            if not isinstance(response, dict):
+                return {**base, "reason": "invalid_worker_response"}
+            if response.get("status") != "ok":
+                return {
+                    **base,
+                    "status": "worker_error",
+                    "reason": str(response.get("message") or "unknown"),
+                }
+            receipt = response.get("receipt")
+            errors = shadow_probe_receipt_errors(
+                receipt,
+                expected_request_sha256=probe_request["request_sha256"],
+                expected_package_id=str(shadow_status.get("package_id") or ""),
+                expected_controller_sha256=str(
+                    shadow_status.get("controller_sha256") or ""
+                ),
+            )
+            if errors:
+                deferred_reboot = "shadow_probe_receipt_invalid"
+                return {
+                    **base,
+                    "status": "integrity_failed",
+                    "reason": ",".join(errors),
+                }
+            accepted = copy.deepcopy(receipt)
+            self._unified_recurrent_shadow_probe_status = accepted
+            self._mark_progress()
+            return {
+                "ok": accepted["status"] == "completed",
+                "status": accepted["status"],
+                "receipt": accepted,
+                "reason": accepted["reason"],
+            }
+        except asyncio.CancelledError:
+            if future is not None:
+                self.soft_cancel_active_generation(
+                    "unified_recurrent_shadow_probe_caller_cancelled"
+                )
+                deferred_reboot = "shadow_probe_caller_cancelled"
+            raise
+        except (BrokenPipeError, OSError, TimeoutError, queue.Full) as exc:
+            deferred_reboot = f"shadow_probe_ipc_failed:{type(exc).__name__}"
+            _record_mlx_degradation(
+                exc,
+                action="recycled resident worker after shadow probe IPC failure",
+                severity="warning",
+            )
+            return {**base, "reason": deferred_reboot}
+        finally:
+            try:
+                try:
+                    if future is not None:
+                        await asyncio.shield(
+                            self._finish_generation_ownership(
+                                request_id,
+                                future,
+                                None,
+                                release_lane=not bool(deferred_reboot),
+                            )
+                        )
+                finally:
+                    if deferred_reboot:
+                        await asyncio.shield(
+                            self.reboot_worker(
+                                reason=deferred_reboot,
+                                mark_failed=False,
+                            )
+                        )
+                    elif lane_fenced and future is None and self._active_generations <= 0:
+                        await asyncio.shield(self._set_durable_lane_preemptible(True))
+            finally:
+                self._release_request_lock()
+
     async def latent_reason_async(
         self,
         prompt: str | None = None,
@@ -9401,6 +9601,7 @@ class MLXLocalClient:
         self._recurrent_depth_status = {}
         self._recurrent_adapter_activation = {}
         self._unified_recurrent_shadow_status = {}
+        self._unified_recurrent_shadow_probe_status = {}
         self._steering_liveness_observed = False
         self._last_interoception = {}
         self._last_surface_control_receipt = {}
@@ -9913,6 +10114,7 @@ class MLXLocalClient:
                     "stream_done",
                     "set_expert_adapter",
                     "nonparametric_ingest",
+                    "unified_recurrent_shadow_probe",
                     "latent_reason",
                 ):
                     # Before routing: a terminal frame for a cancelled request

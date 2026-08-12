@@ -45532,3 +45532,37 @@ unresolved, so the completion envelope remains `913/920` (approximately
 parallel, add a dedicated non-serving shadow execution IPC path with bounded
 latency/equivalence telemetry. Only a supported verdict may be materialized and
 only later live gates may authorize domain-qualified serving.
+
+## Checkpoint 2026-08-11-259: Shadow Tissue Can Be Measured Without Becoming an Answer
+
+The resident worker now exposes one dedicated, authenticated shadow-probe IPC
+operation. The parent seals the exact public and expected token sequences and
+budget, signs the complete structured contract rather than only its field name,
+and refuses to spawn a worker for a probe. The worker executes only when a
+validated shadow package is already loaded, abstains before model execution for
+an unsupported package family, and runs matched greedy base and trained
+recurrent decodes under the package's exact recurrence depth and answer-emission
+contract.
+
+Neither decode can reach the response lane. The receipt contains bounded
+correctness, EOS, token-count and latency measurements, plus per-probe keyed
+output commitments that cannot be reused as a small-answer lookup table. It
+contains no text or token IDs and asserts both `output_exposed=false` and
+`serving_authority=false`. The parent revalidates request, package and controller
+bindings before accepting telemetry; malformed or replayed receipts fail
+integrity, unacknowledged cancellation recycles the worker, foreground work
+preempts the probe, and health exposes the last accepted receipt without
+conferring answer authority.
+
+The worker READY contract remains explicit when no package is configured, and
+the shared lifecycle fixture now emits the same sealed inactive receipt as a
+real worker. Validation is green: `435/435` focused shadow, authority, client
+ownership, admission and resilience tests pass; canonical smoke passes
+`104/104`; focused Ruff, compilation and diff hygiene pass. The powered resident
+campaign remains live at its terminal evaluation/admission boundary and no
+replicated gain, runtime promotion, broad reasoning result, fusion authority,
+frontier result or `WOW Signal` is claimed. The completion envelope remains
+`913/920` (approximately `99.2%`). Next is the frozen powered adjudication; only
+a supported verdict may be materialized into this non-serving lane, followed by
+live shadow equivalence, latency, restart and rollback gates before any
+domain-qualified serving decision.

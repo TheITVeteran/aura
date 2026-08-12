@@ -5,8 +5,12 @@ from types import SimpleNamespace
 import pytest
 
 from core.brain.llm import mlx_worker
+from core.brain.llm.contract_authority import new_contract_key, sign_job
 from core.brain.llm.unified_recurrent_shadow_contract import (
     shadow_load_receipt_errors,
+)
+from core.brain.llm.unified_recurrent_shadow_probe_contract import (
+    seal_shadow_probe_request,
 )
 
 
@@ -75,4 +79,50 @@ def test_worker_revalidates_loaded_runtime_receipt(
             object(),
             object(),
             model_path="/model",
+        )
+
+
+def test_worker_shadow_probe_requires_bound_authority_and_exposes_no_output() -> None:
+    key = new_contract_key()
+    contract = seal_shadow_probe_request([1, 2], [3], max_tokens=1)
+    receipt = {
+        "schema": "fixture",
+        "status": "completed",
+        "output_exposed": False,
+        "serving_authority": False,
+    }
+    loaded = SimpleNamespace(probe=lambda *_args, **_kwargs: receipt)
+    job = sign_job(
+        {
+            "id": "probe-1",
+            "action": "unified_recurrent_shadow_probe",
+            "unified_recurrent_shadow_contract": contract,
+        },
+        key,
+        principal="mlx_client.unified_recurrent_shadow_probe",
+    )
+
+    response = mlx_worker._handle_unified_recurrent_shadow_probe(
+        job,
+        loaded_shadow=loaded,
+        model=object(),
+        contract_key=key,
+    )
+
+    assert response == {
+        "id": "probe-1",
+        "action": "unified_recurrent_shadow_probe",
+        "status": "ok",
+        "receipt": receipt,
+    }
+    assert "text" not in response
+    assert "tokens" not in response
+
+    job["unified_recurrent_shadow_contract"]["public_token_ids"][0] = 99
+    with pytest.raises(ValueError, match="invalid_contract_authority"):
+        mlx_worker._handle_unified_recurrent_shadow_probe(
+            job,
+            loaded_shadow=loaded,
+            model=object(),
+            contract_key=key,
         )

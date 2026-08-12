@@ -59,6 +59,7 @@ PRIVILEGED_CONTRACT_FIELDS: tuple[str, ...] = (
     "health_probe",
     "disable_prompt_cache",
     "action_state_runtime",
+    "unified_recurrent_shadow_contract",
     "schema",
 )
 
@@ -102,21 +103,29 @@ def exclusive_conflict(job: dict[str, Any]) -> list[str]:
 
 
 def _canonical_payload(job: dict[str, Any], principal: str) -> bytes:
-    """Exactly what is signed: this job's id, principal, and selections.
+    """Exactly what is signed: request identity, principal, and contracts.
 
     The job id binds the signature to one request so a valid signature
-    cannot be lifted onto a different job. Selections are sorted so the
-    same choice always produces the same bytes.
+    cannot be lifted onto a different job. Selected fields and their values
+    are sorted so the same contract always produces the same bytes.
     """
+    selected = selected_privileged_fields(job)
     return json.dumps(
         {
             "id": str(job.get("id") or ""),
             "action": str(job.get("action") or ""),
             "principal": principal,
-            "fields": sorted(selected_privileged_fields(job)),
+            "fields": sorted(selected),
+            # Bind the selected values as well as their names. This matters for
+            # structured contracts whose payload determines the computation:
+            # changing a token, budget, or request commitment after signing
+            # must invalidate authority just as surely as adding a new flag.
+            "bindings": {field: job.get(field) for field in sorted(selected)},
         },
         sort_keys=True,
         separators=(",", ":"),
+        ensure_ascii=True,
+        allow_nan=False,
     ).encode("utf-8")
 
 
