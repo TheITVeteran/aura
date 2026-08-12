@@ -1349,7 +1349,16 @@ def test_evaluation_separates_trained_from_heldout_depth_gains(
         "tools.train_unified_intrinsic_recurrence.encode_example",
         lambda *_args: (mx.array([[1]]), mx.array([[2]])),
     )
-    envelope = type("Envelope", (), {"reclaim": lambda *_args, **_kwargs: None})()
+    reclaim_calls: list[bool] = []
+    envelope = type(
+        "Envelope",
+        (),
+        {
+            "reclaim": lambda _self, *_args, **kwargs: reclaim_calls.append(
+                kwargs.get("force") is True
+            )
+        },
+    )()
     report = _evaluate(
         bundle,
         tokenizer,
@@ -1361,3 +1370,4 @@ def test_evaluation_separates_trained_from_heldout_depth_gains(
     )
     assert report["trained_depth_helps"] is True
     assert report["heldout_depth_helps"] is False
+    assert reclaim_calls == [True] * len(spec.depths)

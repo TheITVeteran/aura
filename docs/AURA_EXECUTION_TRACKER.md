@@ -45872,3 +45872,31 @@ gain, serving authority, broad reasoning result, fusion authority, frontier
 result or `WOW Signal` is claimed. The completion envelope remains `913/920`
 (approximately `99.2%`). Next remains terminal admission and the already queued
 powered decoded-answer adjudication.
+
+## Checkpoint 2026-08-12-270: Resident Evaluation Reclaims Every Depth Cell
+
+The CP264 recovery reached durable step `26`, then its step-27 evaluation
+crossed the external sentinel's 48 GiB steady-state ceiling. The sentinel
+recorded a rapid physical-footprint rise from `23.37` GiB through `51.52` GiB
+and correctly terminated the trainer. The launchd controller resumed from the
+exact step-26 checkpoint, proving operational recovery, but the next attempt
+would encounter the same deterministic defect. Raising the ceiling would have
+hidden the failure and endangered the host.
+
+Evaluation previously retained the model outputs, recurrent trajectories,
+state/action logits and lazy MLX graphs for every requested depth until the
+entire task ladder finished. Each `(task, depth)` cell now executes in an
+isolated function that returns only realized Python scalars. Its tensor graph
+therefore leaves scope before the memory envelope synchronizes and reclaims,
+and reclamation occurs after every depth rather than once per task. The
+regression contract requires exactly one forced reclaim for every evaluated
+depth cell while preserving the trained-versus-heldout verdict.
+
+The affected controller, trainer, sentinel and waiting replication job were
+retired through their scoped launchd/detached controls after the step-26
+checkpoint was durable. Validation is green: `38/38` focused trainer tests,
+`104/104` canonical smoke tests, focused Ruff, compilation and diff hygiene
+pass. No decoded capability, terminal admission, replication, serving
+authority, fusion authority, frontier result or `WOW Signal` is claimed. Next
+is publication, then a new immutable recovery capsule that imports the exact
+step-26 tissue while starting a fresh source-bound optimizer/evidence lineage.

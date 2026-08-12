@@ -1897,6 +1897,91 @@ def _bootstrap_bundle_from_checkpoint(
     }
 
 
+def _evaluate_depth(
+    bundle: UnifiedTrainingBundle,
+    prompt: Any,
+    answer: Any,
+    task: Any,
+    spec: UnifiedIntrinsicTrainingSpec,
+    depth: int,
+) -> dict[str, float]:
+    """Evaluate one depth and release its MLX graph before the next depth."""
+
+    initial_state_logits: list[Any] = []
+    action_logits: list[Any] = []
+    recurrent_states, _states, losses, state_logits = (
+        unified_answer_and_recurrent_trajectory(
+            bundle.model,
+            prompt,
+            answer,
+            spec.plan_at(depth),
+            bundle.controller,
+            use_state_slots=(getattr(task, "transition_trace", None) is not None),
+            initial_state_logit_trajectory=initial_state_logits,
+            action_logit_trajectory=action_logits,
+        )
+    )
+    loss = float(losses[-1].item())
+    trace = getattr(task, "transition_trace", None)
+    if trace is None:
+        return {"loss": loss}
+
+    targets = state_targets_from_trace(trace, depth)
+    _state_loss, state_accuracy, _step_accuracy = structured_state_loss(
+        bundle.controller,
+        recurrent_states,
+        targets,
+        public_token_count=int(prompt.shape[-1]),
+        state_slot_start=int(prompt.shape[-1]),
+        state_logits=state_logits,
+    )
+    if len(initial_state_logits) != 1:
+        raise RuntimeError("evaluation emitted no initial state decision")
+    _initial_loss, initial_accuracy = structured_initial_state_loss(
+        initial_state_logits[0],
+        targets,
+    )
+    state_breakdown = structured_state_accuracy_breakdown(state_logits, targets)
+    initial_breakdown = structured_initial_state_accuracy_breakdown(
+        initial_state_logits[0], targets
+    )
+    program = getattr(task, "transition_program", None)
+    if program is None:
+        raise RuntimeError("evaluation task has no exact action program")
+    action_targets = action_targets_from_program(program, depth)
+    _action_loss, action_accuracy, _action_steps = structured_action_loss(
+        action_logits, action_targets
+    )
+    action_breakdown = structured_action_accuracy_breakdown(
+        action_logits, action_targets
+    )
+    return {
+        "loss": loss,
+        "state_accuracy": float(state_accuracy),
+        "initial_state_accuracy": float(initial_accuracy),
+        "state_value_accuracy": float(state_breakdown["value_accuracy"] or 0.0),
+        "state_control_accuracy": float(
+            state_breakdown["control_accuracy"] or 0.0
+        ),
+        "initial_value_accuracy": float(
+            initial_breakdown["value_accuracy"] or 0.0
+        ),
+        "initial_control_accuracy": float(
+            initial_breakdown["control_accuracy"] or 0.0
+        ),
+        "state_value_exact_accuracy": float(
+            state_breakdown["value_exact_accuracy"] or 0.0
+        ),
+        "initial_value_exact_accuracy": float(
+            initial_breakdown["value_exact_accuracy"] or 0.0
+        ),
+        "action_accuracy": float(action_accuracy),
+        "action_instruction_exact_accuracy": float(
+            action_breakdown["instruction_exact_accuracy"] or 0.0
+        ),
+    }
+
+
 def _evaluate(
     bundle: UnifiedTrainingBundle,
     tokenizer: Any,
@@ -1927,87 +2012,42 @@ def _evaluate(
         for task in tasks:
             prompt, answer = encode_example(tokenizer, task, bridge)
             for depth in depths:
-                initial_state_logits: list[Any] = []
-                action_logits: list[Any] = []
-                recurrent_states, _states, losses, state_logits = (
-                    unified_answer_and_recurrent_trajectory(
-                        bundle.model,
-                        prompt,
-                        answer,
-                        spec.plan_at(depth),
-                        bundle.controller,
-                        use_state_slots=(
-                            getattr(task, "transition_trace", None) is not None
-                        ),
-                        initial_state_logit_trajectory=initial_state_logits,
-                        action_logit_trajectory=action_logits,
-                    )
+                metrics = _evaluate_depth(
+                    bundle,
+                    prompt,
+                    answer,
+                    task,
+                    spec,
+                    depth,
                 )
-                totals[depth] += float(losses[-1].item())
-                trace = getattr(task, "transition_trace", None)
-                if trace is not None:
-                    targets = state_targets_from_trace(trace, depth)
-                    _state_loss, state_accuracy, _step_accuracy = structured_state_loss(
-                        bundle.controller,
-                        recurrent_states,
-                        targets,
-                        public_token_count=int(prompt.shape[-1]),
-                        state_slot_start=int(prompt.shape[-1]),
-                        state_logits=state_logits,
-                    )
-                    if len(initial_state_logits) != 1:
-                        raise RuntimeError(
-                            "evaluation emitted no initial state decision"
-                        )
-                    _initial_loss, initial_accuracy = structured_initial_state_loss(
-                        initial_state_logits[0],
-                        targets,
-                    )
-                    state_breakdown = structured_state_accuracy_breakdown(
-                        state_logits,
-                        targets,
-                    )
-                    initial_breakdown = structured_initial_state_accuracy_breakdown(
-                        initial_state_logits[0],
-                        targets,
-                    )
-                    program = getattr(task, "transition_program", None)
-                    if program is None:
-                        raise RuntimeError("evaluation task has no exact action program")
-                    action_targets = action_targets_from_program(program, depth)
-                    _action_loss, action_accuracy, _action_steps = (
-                        structured_action_loss(action_logits, action_targets)
-                    )
-                    action_breakdown = structured_action_accuracy_breakdown(
-                        action_logits,
-                        action_targets,
-                    )
-                    state_totals[depth] += state_accuracy
-                    initial_state_totals[depth] += initial_accuracy
-                    state_value_totals[depth] += float(
-                        state_breakdown["value_accuracy"] or 0.0
-                    )
-                    state_control_totals[depth] += float(
-                        state_breakdown["control_accuracy"] or 0.0
-                    )
-                    initial_value_totals[depth] += float(
-                        initial_breakdown["value_accuracy"] or 0.0
-                    )
-                    initial_control_totals[depth] += float(
-                        initial_breakdown["control_accuracy"] or 0.0
-                    )
-                    state_value_exact_totals[depth] += float(
-                        state_breakdown["value_exact_accuracy"] or 0.0
-                    )
-                    initial_value_exact_totals[depth] += float(
-                        initial_breakdown["value_exact_accuracy"] or 0.0
-                    )
-                    action_totals[depth] += action_accuracy
-                    action_exact_totals[depth] += float(
-                        action_breakdown["instruction_exact_accuracy"] or 0.0
-                    )
+                totals[depth] += metrics["loss"]
+                if "state_accuracy" in metrics:
+                    state_totals[depth] += metrics["state_accuracy"]
+                    initial_state_totals[depth] += metrics["initial_state_accuracy"]
+                    state_value_totals[depth] += metrics["state_value_accuracy"]
+                    state_control_totals[depth] += metrics[
+                        "state_control_accuracy"
+                    ]
+                    initial_value_totals[depth] += metrics[
+                        "initial_value_accuracy"
+                    ]
+                    initial_control_totals[depth] += metrics[
+                        "initial_control_accuracy"
+                    ]
+                    state_value_exact_totals[depth] += metrics[
+                        "state_value_exact_accuracy"
+                    ]
+                    initial_value_exact_totals[depth] += metrics[
+                        "initial_value_exact_accuracy"
+                    ]
+                    action_totals[depth] += metrics["action_accuracy"]
+                    action_exact_totals[depth] += metrics[
+                        "action_instruction_exact_accuracy"
+                    ]
                     state_counts[depth] += 1
-            envelope.reclaim(force=True)
+                # Reclaim after each depth. Holding the full ladder's lazy MLX
+                # graphs caused resident-32B evaluation to exceed 51 GiB.
+                envelope.reclaim(force=True)
     count = len(tasks)
     ce = {f"T{depth}": totals[depth] / count for depth in depths}
     state_accuracy = {
