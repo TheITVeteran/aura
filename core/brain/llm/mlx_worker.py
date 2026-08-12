@@ -1721,11 +1721,13 @@ def _build_user_surface_quality_retry_prompt(
     retry_messages = _messages_with_user_surface_retry(messages, reasons, job)
     if retry_messages is not None and hasattr(tokenizer, "apply_chat_template"):
         try:
-            rendered = tokenizer.apply_chat_template(
+            from core.brain.llm.chat_format import render_chat_template
+
+            rendered = render_chat_template(
+                tokenizer,
                 retry_messages,
                 tools=tools,
                 add_generation_prompt=True,
-                tokenize=False,
             )
             if rendered:
                 return str(rendered)
@@ -5499,11 +5501,17 @@ def _mlx_worker_loop(
                 elif messages and hasattr(tokenizer, "apply_chat_template"):
                     try:
                         logger.info("🎯 [WORKER] Rendering native chat/tool template.")
-                        prompt = tokenizer.apply_chat_template(
+                        from core.brain.llm.chat_format import (
+                            render_chat_template,
+                            thinking_enabled_for_model,
+                        )
+
+                        prompt = render_chat_template(
+                            tokenizer,
                             messages,
                             tools=tools,
                             add_generation_prompt=True,
-                            tokenize=False
+                            enable_thinking=thinking_enabled_for_model(model_path),
                         )
                     except (RuntimeError, AttributeError, TypeError, ValueError) as e:
                         if tools:

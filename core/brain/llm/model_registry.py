@@ -32,7 +32,12 @@ from core.runtime.flags import FlagKind as _FlagKind, declare as _declare_flag
 _FLAG_BRAINSTEM_MODEL = _declare_flag(
     "AURA_BRAINSTEM_MODEL",
     kind=_FlagKind.STRING,
-    default="Qwen2.5-7B-Instruct-4bit",
+    # Qwen3.5-9B replaced Qwen2.5-7B on 12 Aug 2026. Unlike the 1.5B reflex
+    # model — which is the speculative draft and contrastive amateur for the
+    # cortex and therefore locked to the cortex's own distribution — nothing
+    # is keyed to this tier's weights. Verified: no draft/amateur/contrastive
+    # path references the brainstem, so the generation gap was free to close.
+    default="Qwen3.5-9B-4bit",
     description="Migrated from a raw environment read; see owner for the lane.",
     owner="flag-migration",
 )
@@ -268,12 +273,13 @@ _SOLVER_PATH = Path(
 )
 _BRAINSTEM_PATH = Path(
     _FLAG_LLM__MLX_BRAINSTEM_PATH.value()
-    or str(BASE_DIR / "models" / "Qwen2.5-7B-Instruct-4bit")
+    or str(BASE_DIR / "models" / "Qwen3.5-9B-4bit")
 )
 
 MODEL_PATHS = {
     "Qwen2.5-1.5B-Instruct-4bit": BASE_DIR / "models" / "Qwen2.5-1.5B-Instruct-4bit",
-    "Qwen2.5-7B-Instruct-4bit":   _BRAINSTEM_PATH,
+    "Qwen3.5-9B-4bit":            _BRAINSTEM_PATH,
+    "Qwen2.5-7B-Instruct-4bit":   BASE_DIR / "models" / "Qwen2.5-7B-Instruct-4bit",  # legacy
     "Qwen2.5-14B-Instruct-4bit":  BASE_DIR / "models" / "Qwen2.5-14B-Instruct-4bit",
     "Qwen2.5-32B-Instruct-8bit":  _CORTEX_PATH,
     "Qwen2.5-32B-Instruct-4bit":  BASE_DIR / "models" / "Qwen2.5-32B-Instruct-4bit",  # legacy
@@ -394,6 +400,7 @@ def get_model_path(model_name: str | None = None) -> str:
     # Mapping of local names to HF repo IDs for auto-download fallback
     hf_fallbacks = {
         "Qwen2.5-1.5B-Instruct-4bit": "mlx-community/Qwen2.5-1.5B-Instruct-4bit",
+        "Qwen3.5-9B-4bit":            "mlx-community/Qwen3.5-9B-4bit",
         "Qwen2.5-7B-Instruct-4bit":   "mlx-community/Qwen2.5-7B-Instruct-4bit",
         "Qwen2.5-32B-Instruct-8bit":  "mlx-community/Qwen2.5-32B-Instruct-8bit",
         "Qwen2.5-32B-Instruct-4bit":  "mlx-community/Qwen2.5-32B-Instruct-4bit",

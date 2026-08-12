@@ -387,7 +387,7 @@ class LLMConfig(BaseModel):
 
     # Tri-Cameral Architecture (Phase 16) — Tuned for M5 Pro 64 GB
     # Tier 1: Brainstem (Heartbeat, telemetry, background tasks)
-    chat_model: str = "Qwen2.5-7B-Instruct-4bit"
+    chat_model: str = "Qwen3.5-9B-4bit"
 
     # Tier 2: Cortex (daily interaction — 32B primary conversation lane)
     fast_model: str = "Qwen2.5-32B-Instruct-8bit"

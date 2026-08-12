@@ -46,6 +46,7 @@ _LIFECYCLE_RECOVERABLE_ERRORS = (
 # deep solver uses). Source of truth for "where does a missing model come from".
 DEFAULT_REPO_MAP: dict[str, str] = {
     "Qwen2.5-1.5B-Instruct-4bit": "mlx-community/Qwen2.5-1.5B-Instruct-4bit",
+    "Qwen3.5-9B-4bit": "mlx-community/Qwen3.5-9B-4bit",
     "Qwen2.5-7B-Instruct-4bit": "mlx-community/Qwen2.5-7B-Instruct-4bit",
     "Qwen2.5-14B-Instruct-4bit": "mlx-community/Qwen2.5-14B-Instruct-4bit",
     "Qwen2.5-32B-Instruct-4bit": "mlx-community/Qwen2.5-32B-Instruct-4bit",
@@ -62,6 +63,7 @@ DEFAULT_REPO_MAP: dict[str, str] = {
 # "do you have room?" check, not an exact figure.
 _APPROX_SIZE_GB: dict[str, float] = {
     "Qwen2.5-1.5B-Instruct-4bit": 1.0,
+    "Qwen3.5-9B-4bit": 5.5,
     "Qwen2.5-7B-Instruct-4bit": 4.5,
     "Qwen2.5-14B-Instruct-4bit": 8.5,
     "Qwen2.5-32B-Instruct-4bit": 18.0,

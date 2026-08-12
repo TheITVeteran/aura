@@ -29,6 +29,79 @@ def _normalize_role(role: Optional[str]) -> str:
     return _ROLE_ALIASES.get(normalized, "user")
 
 
+# ── Reasoning-mode control ───────────────────────────────────────────────
+#
+# Qwen3.5 and its generation emit a visible chain of thought unless the chat
+# template is rendered with enable_thinking=False. Measured on the brainstem
+# candidate 12 Aug 2026, same prompt, same weights:
+#
+#     default                    "Thinking Process:\n\n1.  **Analyze the..."
+#     enable_thinking=False      "BRAINSTEM OK"
+#
+# That matters most exactly where it is least wanted: the Brainstem tier is
+# the background/reflex lane with an 8,000-token budget, so a model that
+# spends its window narrating its own reasoning has a smaller effective
+# budget than the one it replaced. Passing the flag is not a style
+# preference, it is what makes a reasoning model usable as a fast tier.
+#
+# Qwen2.5-era tokenizers reject the kwarg outright, so it is passed only when
+# the template actually references it — never speculatively.
+
+
+def template_supports_thinking(tokenizer: object) -> bool:
+    """Whether this tokenizer's chat template honours ``enable_thinking``.
+
+    Checked against the template source rather than by trying and catching:
+    some tokenizers accept arbitrary kwargs and silently ignore them, which
+    would make a failed suppression look like a successful one.
+    """
+    template = getattr(tokenizer, "chat_template", None)
+    if not isinstance(template, str):
+        return False
+    return "enable_thinking" in template
+
+
+def render_chat_template(
+    tokenizer: object,
+    messages: object,
+    *,
+    tools: object = None,
+    add_generation_prompt: bool = True,
+    enable_thinking: Optional[bool] = None,
+) -> str:
+    """Render a chat template, applying reasoning control when supported.
+
+    ``enable_thinking=None`` leaves the model's own default alone. Raises
+    whatever the tokenizer raises — callers already distinguish a tool-schema
+    failure (which must not degrade to prose) from a plain one.
+    """
+    apply = getattr(tokenizer, "apply_chat_template")
+    kwargs = {
+        "tools": tools,
+        "add_generation_prompt": add_generation_prompt,
+        "tokenize": False,
+    }
+    if enable_thinking is not None and template_supports_thinking(tokenizer):
+        kwargs["enable_thinking"] = bool(enable_thinking)
+    return str(apply(messages, **kwargs))
+
+
+def thinking_enabled_for_model(model_name: Optional[str]) -> Optional[bool]:
+    """Reasoning-mode policy per lane. None means 'use the model's default'.
+
+    Only the fast lanes are pinned. The Brainstem (background/reflex) and the
+    1.5B Reflex fallback exist to answer quickly inside small budgets; the
+    Cortex and Solver are where deliberation is the point, and they keep
+    whatever the artifact ships with.
+    """
+    name = str(model_name or "").strip().lower()
+    if not name:
+        return None
+    if "brainstem" in name or "9b" in name or "1.5b" in name or "7b" in name:
+        return False
+    return None
+
+
 def _uses_grok_chat_template(model_name: Optional[str]) -> bool:
     return "grok" in str(model_name or "").strip().lower()
 
