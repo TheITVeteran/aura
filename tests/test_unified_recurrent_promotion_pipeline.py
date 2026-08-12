@@ -1404,6 +1404,86 @@ def test_launchd_install_accepts_only_recomputed_terminal_refutation(
     assert writes[-1] == Path(config["pipeline_root"]) / "launchd-receipt.json"
 
 
+def test_launchd_install_tolerates_job_visible_before_first_status(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    config = _config(tmp_path)
+    config_path = tmp_path / "promotion-config.json"
+    plist_path = tmp_path / "promotion.plist"
+    intent = {
+        "config_sha256": config["config_sha256"],
+        "intent_sha256": "i" * 64,
+    }
+    status = {
+        "state": "refuted",
+        "controller_pid": 41,
+        "controller_start_token": "token-41",
+        "sleep_inhibitor_pid": 42,
+        "details": {"verdict": "refuted", "verdict_sha256": "v" * 64},
+    }
+    status_reads = iter((None, None, status))
+    job_reads = 0
+    monotonic = iter((0.0, 0.0, 1.0))
+    commands: list[list[str]] = []
+    arguments = argparse.Namespace(
+        config=config_path,
+        poll_interval=1.0,
+        controller_timeout=30.0,
+    )
+    monkeypatch.setattr(pipeline, "_load_config", lambda _path: config)
+    monkeypatch.setattr(
+        pipeline,
+        "_launch_contract",
+        lambda *_args: (plist_path, b"plist", intent),
+    )
+    monkeypatch.setattr(pipeline, "LAUNCH_AGENTS_ROOT", tmp_path)
+    monkeypatch.setattr(
+        pipeline,
+        "atomic_write_bytes_if_absent",
+        lambda *_args, **_kwargs: True,
+    )
+    monkeypatch.setattr(pipeline, "atomic_write_bytes", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(pipeline, "ensure_private_directory", lambda _path: None)
+
+    def launchd_job(_label: str) -> dict:
+        nonlocal job_reads
+        job_reads += 1
+        if job_reads == 1:
+            raise pipeline.UnifiedRecurrentPromotionError("not launched")
+        return {"target": "gui/501/test", "pid": 41}
+
+    monkeypatch.setattr(pipeline, "_launchd_job", launchd_job)
+    monkeypatch.setattr(pipeline, "_read_status", lambda _config: next(status_reads))
+    monkeypatch.setattr(pipeline, "_installed_lineage_is_valid", lambda *_args: False)
+    monkeypatch.setattr(
+        pipeline,
+        "_terminal_refutation_is_valid",
+        lambda _config, observed: observed is status,
+    )
+
+    def run(command: list[str], **_kwargs: object) -> SimpleNamespace:
+        commands.append(command)
+        return SimpleNamespace(returncode=0, stdout="", stderr="")
+
+    monkeypatch.setattr(pipeline.subprocess, "run", run)
+    monkeypatch.setattr(
+        pipeline,
+        "time",
+        SimpleNamespace(
+            monotonic=lambda: next(monotonic),
+            sleep=lambda _seconds: None,
+            time_ns=lambda: 1,
+        ),
+    )
+
+    receipt = pipeline.install_launchd(arguments)
+
+    assert receipt["terminal_refutation"] is True
+    assert receipt["pid"] == 41
+    assert commands == [["/bin/launchctl", "bootstrap", "gui/501", str(plist_path)]]
+
+
 def test_run_stage_rejects_result_outside_pipeline_root(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

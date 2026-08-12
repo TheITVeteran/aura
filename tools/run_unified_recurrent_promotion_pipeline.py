@@ -1767,7 +1767,8 @@ def install_launchd(arguments: argparse.Namespace) -> dict[str, Any]:
                 validated = True
                 break
             if (
-                job.get("pid") == status.get("controller_pid")
+                isinstance(status, Mapping)
+                and job.get("pid") == status.get("controller_pid")
                 and _terminal_refutation_is_valid(config, status)
             ):
                 terminal_refutation = True

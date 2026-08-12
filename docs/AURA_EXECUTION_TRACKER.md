@@ -46410,3 +46410,21 @@ package, pointer or qualified serving authority is created from the refuted
 CP281 evidence. Next remains a controller/training revision that must beat its
 initialization-matched control on bounded diagnostics before another powered
 resident campaign is admitted.
+
+## Checkpoint 2026-08-12-289: Launch Discovery May Precede First Heartbeat
+
+The first live CP288 capsule exposed the expected launchd ordering race: the
+job PID can become visible before the controller has atomically published its
+first authenticated status. The terminal-refutation branch assumed both
+appeared together and dereferenced the absent status. Installation now treats
+that interval as pending, continues bounded polling, and admits the terminal
+result only after the exact status exists and independently verified evidence
+matches it.
+
+A deterministic regression models `job -> no status -> terminal status` and
+proves one bootstrap, no destructive retry and a terminal launch receipt. The
+focused replication and promotion suite passes `49/49`; canonical smoke passes
+`104/104`; focused Ruff, compilation and diff hygiene pass. The completion
+envelope remains `915/920`; this checkpoint repairs transport of the
+already-refuted result and does not change scientific evidence or authorize
+recurrent serving.
