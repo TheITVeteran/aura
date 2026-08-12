@@ -183,8 +183,24 @@ async def amplify(
     # filtered out (we have no grounds to reject it) but it is not certified
     # either — it simply carries no verification evidence.
     valid = [c for c, o in zip(cands, outcomes, strict=True) if o is VerifierOutcome.PASS]
+    unrejected = [
+        c for c, o in zip(cands, outcomes, strict=True) if o is not VerifierOutcome.FAIL
+    ]
     verifier_checked = any(o is not VerifierOutcome.UNKNOWN for o in outcomes)
-    pool = valid if valid else cands
+
+    # `valid if valid else cands` collapsed two different facts. "Nothing
+    # passed because nothing was checkable" and "every candidate was
+    # PROVABLY WRONG" both fell back to the full pool, so a unanimously
+    # rejected set was clustered and shipped with a confidence computed as
+    # though it were merely unverified — the enum above exists precisely to
+    # stop that conflation, and this line reintroduced it downstream.
+    #
+    # Preference order: certified, then merely unchecked, then — only when
+    # the verifier rejected everything — the rejected set, because returning
+    # nothing at all is worse than returning a flagged answer. That last
+    # case is marked so the confidence below can say what it is.
+    all_rejected = not unrejected
+    pool = valid or unrejected or cands
 
     # Self-consistency: cluster the pool by extracted answer; the biggest cluster wins.
     clusters: dict[str, list[str]] = {}
@@ -193,7 +209,23 @@ async def amplify(
     _key, winners = max(clusters.items(), key=lambda kv: len(kv[1]))
     agreement = len(winners) / len(pool)
     verified_winner = bool(valid) and winners[0] in valid
-    confidence = min(0.98, agreement * (1.0 if verified_winner else 0.85))
+    if verified_winner:
+        certainty = 1.0
+    elif all_rejected:
+        # Every path carried a provable error. Agreement among wrong answers
+        # is agreement about being wrong; it must not read like an ordinary
+        # unverified result.
+        certainty = 0.25
+    else:
+        certainty = 0.85
+    confidence = min(0.98, agreement * certainty)
+
+    if all_rejected:
+        logger.warning(
+            "🧠 [Amplify] every one of %d paths FAILED verification — "
+            "returning the largest cluster with confidence %.2f",
+            len(cands), confidence,
+        )
 
     if not verifier_checked:
         logger.warning(

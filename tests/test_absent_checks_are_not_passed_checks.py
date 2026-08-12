@@ -247,3 +247,70 @@ def test_a_failed_load_is_not_cached_as_an_empty_list():
         "a failed private-name load silently returns an empty redaction set "
         "again, and scrubbing continues on it"
     )
+
+
+# ─────────────────── a rejected pool is not the same as an unchecked one
+
+
+@pytest.mark.asyncio
+async def test_a_unanimously_rejected_pool_is_not_shipped_as_merely_unverified():
+    """`pool = valid if valid else cands` collapsed two different facts.
+
+    "Nothing passed because nothing was checkable" and "every candidate was
+    PROVABLY WRONG" both fell back to the full pool, and the confidence was
+    then computed as though the answer were merely unverified. Agreement
+    among wrong answers is agreement about being wrong.
+    """
+    from core.brain.reasoning_amplifier import VerifierOutcome, amplify
+
+    async def _reject_everything(_text: str):
+        return VerifierOutcome.FAIL, ["provable arithmetic error"]
+
+    result = await amplify(
+        ["the answer is 4", "the answer is 4", "the answer is 4"],
+        verify=_reject_everything,
+    )
+
+    assert result.valid_n == 0
+    assert result.confidence <= 0.30, (
+        f"a unanimously rejected pool returned confidence {result.confidence}, "
+        "which is what an ordinary unverified answer scores"
+    )
+
+
+@pytest.mark.asyncio
+async def test_an_unverifiable_pool_keeps_its_ordinary_confidence():
+    """The fix must not punish "could not check", which establishes nothing
+    and is not evidence against the candidates."""
+    from core.brain.reasoning_amplifier import VerifierOutcome, amplify
+
+    async def _cannot_check(_text: str):
+        return VerifierOutcome.UNKNOWN, []
+
+    result = await amplify(
+        ["the answer is 4", "the answer is 4"], verify=_cannot_check
+    )
+
+    assert result.confidence > 0.30
+
+
+@pytest.mark.asyncio
+async def test_an_unchecked_candidate_is_preferred_over_a_rejected_one():
+    """With no PASS available, the pool should be the NOT-REJECTED set
+    rather than everything — a provable error is grounds to exclude."""
+    from core.brain.reasoning_amplifier import VerifierOutcome, amplify
+
+    async def _reject_the_wrong_one(text: str):
+        if "9" in text:
+            return VerifierOutcome.FAIL, ["provable error"]
+        return VerifierOutcome.UNKNOWN, []
+
+    result = await amplify(
+        ["the answer is 9", "the answer is 9", "the answer is 4"],
+        verify=_reject_the_wrong_one,
+    )
+
+    assert "4" in result.answer, (
+        "the rejected majority won because failed candidates stayed in the "
+        "pool alongside the unchecked one"
+    )
