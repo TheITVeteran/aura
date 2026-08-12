@@ -45726,3 +45726,32 @@ canonical smoke passes `104/104`; Ruff, compilation and diff hygiene pass. No
 training or reasoning gain is claimed. Next is publishing this corrected source
 boundary, freezing a new campaign instead of mutating the failed CP263 package,
 and repeating the one-step launch admission through independent supervision.
+
+## Checkpoint 2026-08-12-265: Replication Launches Only Through the Attested MLX Runtime
+
+The CP264 recovery trainer reached its first durable step under independent
+supervision, but the separately queued replication controller exposed a launch
+provenance defect before training completed. Its installer resolved the Aura
+virtualenv symlink to Homebrew's base interpreter and then reported a transient
+launchd PID as success. Launchd correctly restarted the process, but every
+attempt failed during import because that interpreter did not contain MLX. No
+resident evaluation or scientific decode ran, and the recovery trainer was not
+disturbed.
+
+The replication launch contract now takes the lexical virtualenv executable
+from the campaign's signed runtime identity rather than from the process that
+happened to install it. Executable, real binary, prefix, byte size and SHA-256
+must all match the frozen campaign. Installation performs a bounded MLX import
+inside that exact interpreter, records the probe commitment in the launch
+receipt, and does not report success until the controller publishes an
+authenticated heartbeat whose PID and start token are still alive. A transient
+or crash-looping process is booted out and fails installation.
+
+Validation is green: the live Aura virtualenv MLX preflight passes; `45/45`
+focused replication, evaluation and resident-controller tests pass; focused
+Ruff, compilation and diff hygiene pass. No recovery admission, decoded gain,
+runtime promotion, fusion authority, frontier result or `WOW Signal` is claimed.
+The CP264 trainer remains live under its original immutable source capsule.
+Next is publishing this repair, installing the queued powered adjudicator from
+a separate clean source capsule, and allowing it to wait for strict terminal
+admission before any resident evaluator can load the model.

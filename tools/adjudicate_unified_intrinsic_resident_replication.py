@@ -112,6 +112,88 @@ def _launch_label(config: Mapping[str, Any]) -> str:
     return f"com.aura.unified-intrinsic-replication.{campaign_id}"
 
 
+def _runtime_python(config: Mapping[str, Any]) -> tuple[Path, dict[str, Any]]:
+    runtime = config.get("runtime")
+    interpreter = runtime.get("interpreter") if isinstance(runtime, Mapping) else None
+    if not isinstance(interpreter, Mapping):
+        _fail("replication runtime interpreter attestation is unavailable")
+    executable_value = interpreter.get("executable")
+    prefix_value = interpreter.get("sys_prefix")
+    real_value = interpreter.get("real_executable")
+    sha256_value = interpreter.get("sha256")
+    size_value = interpreter.get("size_bytes")
+    if not all(isinstance(value, str) and value for value in (executable_value, prefix_value)):
+        _fail("replication runtime interpreter path is malformed")
+    executable = Path(executable_value)
+    prefix = Path(prefix_value)
+    if not executable.is_absolute() or not prefix.is_absolute():
+        _fail("replication runtime interpreter path is not absolute")
+    if executable != prefix / "bin/python":
+        _fail("replication runtime interpreter is not the attested virtualenv python")
+    try:
+        stat = executable.stat()
+        real_executable = executable.resolve(strict=True)
+        digest = hashlib.sha256(real_executable.read_bytes()).hexdigest()
+    except OSError as exc:
+        raise ResidentReplicationError(
+            "replication runtime interpreter is unavailable"
+        ) from exc
+    if (
+        not isinstance(real_value, str)
+        or real_executable != Path(real_value)
+        or not isinstance(sha256_value, str)
+        or digest != sha256_value
+        or type(size_value) is not int
+        or stat.st_size != size_value
+    ):
+        _fail("replication runtime interpreter attestation differs")
+    return executable, {
+        "executable": str(executable),
+        "real_executable": str(real_executable),
+        "sys_prefix": str(prefix),
+        "sha256": digest,
+        "size_bytes": stat.st_size,
+    }
+
+
+def _probe_runtime_python(config: Mapping[str, Any]) -> dict[str, Any]:
+    python, identity = _runtime_python(config)
+    probe_source = (
+        "import json,sys; import mlx.core as mx; "
+        "print(json.dumps({'executable':sys.executable,'prefix':sys.prefix,"
+        "'mlx_module':mx.__file__},sort_keys=True))"
+    )
+    result = subprocess.run(
+        [str(python), "-I", "-c", probe_source],
+        capture_output=True,
+        text=True,
+        timeout=30.0,
+        check=False,
+    )
+    if result.returncode != 0:
+        detail = (result.stderr or result.stdout).strip()[:300]
+        _fail(f"replication runtime MLX preflight failed: {detail}")
+    try:
+        observed = json.loads(result.stdout)
+    except json.JSONDecodeError as exc:
+        raise ResidentReplicationError(
+            "replication runtime MLX preflight output is malformed"
+        ) from exc
+    if (
+        not isinstance(observed, dict)
+        or observed.get("executable") != identity["executable"]
+        or observed.get("prefix") != identity["sys_prefix"]
+        or not isinstance(observed.get("mlx_module"), str)
+        or not observed["mlx_module"]
+    ):
+        _fail("replication runtime MLX preflight identity differs")
+    body = {
+        "interpreter": identity,
+        "mlx_module": observed["mlx_module"],
+    }
+    return {**body, "probe_sha256": canonical_sha256(body)}
+
+
 def _launch_contract(
     arguments: argparse.Namespace,
     campaign: Path,
@@ -123,7 +205,7 @@ def _launch_contract(
     script = (source_root / "tools/adjudicate_unified_intrinsic_resident_replication.py").resolve(
         strict=True
     )
-    python = Path(sys.executable).resolve(strict=True)
+    python, interpreter = _runtime_python(config)
     label = _launch_label(config)
     command = [
         str(python),
@@ -146,6 +228,7 @@ def _launch_contract(
         "KeepAlive": {"SuccessfulExit": False},
         "ThrottleInterval": 30,
         "ProcessType": "Background",
+        "EnvironmentVariables": {"VIRTUAL_ENV": interpreter["sys_prefix"]},
         "StandardOutPath": str(root / "controller-launchd.log"),
         "StandardErrorPath": str(root / "controller-launchd.log"),
     }
@@ -163,6 +246,7 @@ def _launch_contract(
         "working_directory": str(campaign),
         "controller_source": str(script),
         "controller_source_sha256": hashlib.sha256(script.read_bytes()).hexdigest(),
+        "interpreter": interpreter,
     }
     return plist_path, plist, {**body, "intent_sha256": canonical_sha256(body)}
 
@@ -222,6 +306,7 @@ def install_launchd(arguments: argparse.Namespace) -> dict[str, Any]:
     campaign, config, plan = _load_plan(arguments)
     root = _replication_root(arguments, campaign)
     ensure_private_directory(root)
+    runtime_probe = _probe_runtime_python(config)
     plist_path, plist, intent = _launch_contract(arguments, campaign, config, plan)
     intent_path = root / "launch-intent.json"
     payload = canonical_bytes(intent) + b"\n"
@@ -247,16 +332,36 @@ def install_launchd(arguments: argparse.Namespace) -> dict[str, Any]:
     )
     if started.returncode != 0:
         _fail(f"replication launchd bootstrap failed: {started.stderr.strip()[:300]}")
-    deadline = time.monotonic() + 15.0
+    deadline = time.monotonic() + 20.0
     job: dict[str, Any] | None = None
+    controller: dict[str, Any] | None = None
+    authenticated = False
     while time.monotonic() < deadline:
         try:
             job = _launchd_job(_launch_label(config))
-            break
+            controller = _read_controller_status(arguments, campaign, config, plan)
+            if (
+                controller is not None
+                and controller.get("controller_pid") == job["pid"]
+                and launcher.detached._identity_state(  # noqa: SLF001
+                    job["pid"], str(controller.get("controller_start_token") or "")
+                )
+                == "alive"
+            ):
+                authenticated = True
+                break
         except ResidentReplicationError:
-            time.sleep(0.25)
-    if job is None:
-        _fail("replication launchd start timed out")
+            job = None
+        time.sleep(0.25)
+    if not authenticated or job is None or controller is None:
+        subprocess.run(
+            ["/bin/launchctl", "bootout", f"gui/{os.getuid()}/{_launch_label(config)}"],
+            capture_output=True,
+            text=True,
+            timeout=30.0,
+            check=False,
+        )
+        _fail("replication launchd authenticated start timed out")
     body = {
         "schema": LAUNCH_RECEIPT_SCHEMA,
         "campaign_id": config["campaign_id"],
@@ -268,6 +373,8 @@ def install_launchd(arguments: argparse.Namespace) -> dict[str, Any]:
         "start_token": launcher.detached._process_start_token(job["pid"]),  # noqa: SLF001
         "plist_path": str(plist_path),
         "plist_sha256": intent["plist_sha256"],
+        "runtime_probe": runtime_probe,
+        "initial_controller_status_sha256": canonical_sha256(controller),
         "installed_at_unix_ns": time.time_ns(),
     }
     receipt = {**body, "launch_sha256": canonical_sha256(body)}

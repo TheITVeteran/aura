@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import argparse
 import copy
+import hashlib
+import sys
 from pathlib import Path
 
 import pytest
@@ -31,11 +33,22 @@ def _arguments(campaign: Path, **overrides: object) -> argparse.Namespace:
 
 
 def _config(campaign: Path) -> dict:
+    executable = Path(sys.executable).absolute()
+    real_executable = executable.resolve()
     return {
         "campaign_id": "resident-full",
         "config_sha256": "c" * 64,
         "paths": {"campaign_root": str(campaign)},
         "source": {"git": {"commit": "d" * 40}},
+        "runtime": {
+            "interpreter": {
+                "executable": str(executable),
+                "real_executable": str(real_executable),
+                "sys_prefix": str(Path(sys.prefix).absolute()),
+                "sha256": hashlib.sha256(real_executable.read_bytes()).hexdigest(),
+                "size_bytes": executable.stat().st_size,
+            }
+        },
         "training": {"families": "khop,modular,register_trace"},
     }
 
@@ -403,12 +416,68 @@ def test_launchd_contract_runs_process_capable_controller_with_failure_restart(
     plist = plistlib.loads(plist_bytes)
     assert plist_path.parent == tmp_path / "agents"
     assert plist["KeepAlive"] == {"SuccessfulExit": False}
+    assert plist["ProgramArguments"][0] == str(Path(sys.executable).absolute())
+    assert plist["EnvironmentVariables"] == {"VIRTUAL_ENV": str(Path(sys.prefix).absolute())}
     assert "--launchd-supervised" in plist["ProgramArguments"]
     assert plist["ProgramArguments"][2:4] == ["run", str(campaign)]
     assert intent["plan_sha256"] == plan["plan_sha256"]
     assert intent["controller_source_sha256"] == replication.hashlib.sha256(
         Path(replication.__file__).read_bytes()
     ).hexdigest()
+    assert intent["interpreter"]["sys_prefix"] == str(Path(sys.prefix).absolute())
+
+
+def test_launchd_contract_rejects_base_interpreter_in_place_of_virtualenv(
+    tmp_path: Path,
+) -> None:
+    campaign = tmp_path / "campaign"
+    campaign.mkdir()
+    config = _config(campaign)
+    config["runtime"]["interpreter"]["executable"] = config["runtime"]["interpreter"][
+        "real_executable"
+    ]
+    plan_body = _installed_plan(campaign)
+    plan = {**plan_body, "plan_sha256": canonical_sha256(plan_body)}
+
+    with pytest.raises(
+        replication.ResidentReplicationError,
+        match="attested virtualenv python",
+    ):
+        replication._launch_contract(_arguments(campaign), campaign, config, plan)  # noqa: SLF001
+
+
+def test_runtime_probe_requires_mlx_and_exact_interpreter_identity(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    config = _config(tmp_path)
+    identity = config["runtime"]["interpreter"]
+
+    class Result:
+        returncode = 0
+        stderr = ""
+        stdout = replication.json.dumps(
+            {
+                "executable": identity["executable"],
+                "prefix": identity["sys_prefix"],
+                "mlx_module": "/venv/mlx/core.so",
+            }
+        )
+
+    commands: list[list[str]] = []
+
+    def run(command: list[str], **_kwargs: object) -> Result:
+        commands.append(command)
+        return Result()
+
+    monkeypatch.setattr(replication.subprocess, "run", run)
+
+    receipt = replication._probe_runtime_python(config)  # noqa: SLF001
+
+    assert commands[0][0] == identity["executable"]
+    assert "import mlx.core as mx" in commands[0][-1]
+    assert receipt["interpreter"]["sys_prefix"] == identity["sys_prefix"]
+    assert len(receipt["probe_sha256"]) == 64
 
 
 def test_status_authenticates_controller_heartbeat_and_rejects_tampering(
