@@ -260,6 +260,8 @@ def qualified_serving_canary_errors(
                 or not _is_sha(row.get("request_sha256"))
                 or not _is_sha(row.get("expected_token_ids_sha256"))
                 or not _is_sha(row.get("generated_token_ids_sha256"))
+                or row.get("generated_token_ids_sha256")
+                != row.get("expected_token_ids_sha256")
                 or not _is_sha(row.get("qualified_result_sha256"))
                 or type(row.get("latency_ms")) is not int
                 or row["latency_ms"] < 0
@@ -482,9 +484,13 @@ def seal_qualified_activation(
 def seal_verified_qualified_activation(
     candidate: Mapping[str, Any],
     canary: Mapping[str, Any],
+    *,
+    expected_battery: Mapping[str, Any],
 ) -> dict[str, Any]:
     """Seal inert persisted authority from an exact in-memory canary."""
 
+    if not isinstance(expected_battery, Mapping):
+        raise ValueError("qualified_canary_battery_is_not_admissible")
     errors = qualified_activation_errors(candidate)
     if (
         errors
@@ -493,6 +499,7 @@ def seal_verified_qualified_activation(
         or qualified_serving_canary_errors(
             canary,
             expected_activation=candidate,
+            expected_battery=expected_battery,
         )
         or canary.get("canary_authority_was_request_scoped") is not True
     ):
@@ -518,14 +525,22 @@ def seal_verified_qualified_activation(
 def seal_serving_qualified_activation(
     pending: Mapping[str, Any],
     canary: Mapping[str, Any],
+    *,
+    expected_battery: Mapping[str, Any],
 ) -> dict[str, Any]:
     """Promote a cold-loaded pending document only after its exact canary."""
 
+    if not isinstance(expected_battery, Mapping):
+        raise ValueError("qualified_canary_battery_is_not_admissible")
     if (
         qualified_activation_errors(pending)
         or pending.get("mode") != "qualified_typed_pending"
         or pending.get("serving_authority") is not False
-        or qualified_serving_canary_errors(canary, expected_activation=pending)
+        or qualified_serving_canary_errors(
+            canary,
+            expected_activation=pending,
+            expected_battery=expected_battery,
+        )
         or canary.get("canary_authority_was_request_scoped") is not True
     ):
         raise ValueError("qualified_pending_canary_evidence_is_not_admissible")

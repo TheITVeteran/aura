@@ -12,6 +12,7 @@ from core.brain.llm.contract_authority import new_contract_key, sign_job
 from core.brain.llm.unified_recurrent_qualified_decode import (
     seal_qualified_decode_request,
 )
+from core.brain.llm.unified_recurrent_shadow_battery import seal_shadow_canary_battery
 from core.brain.llm.unified_recurrent_shadow_contract import (
     LOAD_SCHEMA,
     seal_shadow_load_receipt,
@@ -74,15 +75,37 @@ def _qualified_evidence():
     }
     lifecycle = {**lifecycle_body, "result_sha256": _sha(lifecycle_body)}
     candidate = seal_qualified_activation(manifest, lifecycle, pointer)
+    battery = seal_shadow_canary_battery(
+        [
+            {
+                "task_id": "fresh-khop-1",
+                "family": "khop",
+                "task_depth": 1,
+                "prompt_sha256": "1" * 64,
+                "expected_sha256": "2" * 64,
+                "public_token_ids": [10],
+                "expected_token_ids": [20],
+                "max_tokens": 1,
+            }
+        ],
+        seed=7,
+        replication_plan_sha256="5" * 64,
+        replication_verdict_sha256="6" * 64,
+        excluded_task_ids_sha256="7" * 64,
+        excluded_prompt_sha256s_sha256="8" * 64,
+        generator_source_sha256s={"generator.py": "9" * 64},
+    )
+    case = battery["cases"][0]
+    expected = _sha(case["expected_token_ids"])
     evidence = [
         {
             "index": 0,
             "task_id": "fresh-khop-1",
             "family": "khop",
             "task_depth": 1,
-            "request_sha256": "6" * 64,
-            "expected_token_ids_sha256": "7" * 64,
-            "generated_token_ids_sha256": "7" * 64,
+            "request_sha256": case["request_sha256"],
+            "expected_token_ids_sha256": expected,
+            "generated_token_ids_sha256": expected,
             "qualified_result_sha256": "9" * 64,
             "latency_ms": 7,
             "exact": True,
@@ -95,7 +118,7 @@ def _qualified_evidence():
         "checkpoint_sha256": candidate["checkpoint_sha256"],
         "controller_sha256": candidate["controller_sha256"],
         "activation_sha256": candidate["activation_sha256"],
-        "battery_sha256": "8" * 64,
+        "battery_sha256": battery["battery_sha256"],
         "started_at_unix": 1.0,
         "completed_at_unix": 2.0,
         "case_count": 1,
@@ -112,6 +135,7 @@ def _qualified_evidence():
     pending = seal_verified_qualified_activation(
         candidate,
         {**canary_body, "result_sha256": _sha(canary_body)},
+        expected_battery=battery,
     )
     pending_canary_body = {
         **canary_body,
@@ -120,6 +144,7 @@ def _qualified_evidence():
     return seal_serving_qualified_activation(
         pending,
         {**pending_canary_body, "result_sha256": _sha(pending_canary_body)},
+        expected_battery=battery,
     )
 
 

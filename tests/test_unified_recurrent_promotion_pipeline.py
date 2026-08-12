@@ -169,9 +169,14 @@ def _activation_chain() -> tuple[dict, dict, dict, dict, dict]:
     pending = pipeline.activation.seal_verified_qualified_activation(
         candidate,
         candidate_canary,
+        expected_battery=_battery(),
     )
     canary = _canary(pending, serving=False)
-    durable = pipeline.activation.seal_serving_qualified_activation(pending, canary)
+    durable = pipeline.activation.seal_serving_qualified_activation(
+        pending,
+        canary,
+        expected_battery=_battery(),
+    )
     return candidate, candidate_canary, pending, canary, durable
 
 
@@ -700,6 +705,14 @@ def test_installed_lineage_rejects_every_partial_match(
     assert pipeline._installed_lineage_is_valid(status, {"pid": 99}) is False  # noqa: SLF001
     monkeypatch.setattr(pipeline, "_process_row", lambda _pid: (99, "wrong"))
     assert pipeline._installed_lineage_is_valid(status, job) is False  # noqa: SLF001
+
+    monkeypatch.setattr(
+        pipeline.replication.launcher.detached,
+        "_identity_state",
+        lambda _pid, _token: "unknown",
+    )
+    assert pipeline._installed_lineage_state(status, job) == "unknown"  # noqa: SLF001
+    assert pipeline._installed_lineage_is_valid(status, job) is False  # noqa: SLF001
     monkeypatch.setattr(
         pipeline,
         "_process_row",
@@ -709,6 +722,11 @@ def test_installed_lineage_rejects_every_partial_match(
         pipeline.replication.launcher.detached,
         "_identity_state",
         lambda _pid, _token: "dead",
+    )
+    monkeypatch.setattr(
+        pipeline.os,
+        "kill",
+        lambda _pid, _signal: (_ for _ in ()).throw(ProcessLookupError()),
     )
     assert pipeline._installed_lineage_is_valid(status, job) is False  # noqa: SLF001
 
@@ -723,7 +741,7 @@ def test_active_stage_receipt_is_authenticated_and_tamper_evident(
     monkeypatch.setattr(
         pipeline.replication.launcher.detached,
         "_process_start_token",
-        lambda pid: f"token-{pid}",
+        lambda _pid: pytest.fail("stage publication re-probed controller identity"),
     )
     monkeypatch.setattr(
         pipeline,
@@ -733,6 +751,8 @@ def test_active_stage_receipt_is_authenticated_and_tamper_evident(
 
     receipt = pipeline._publish_active_stage(  # noqa: SLF001
         config,
+        controller_pid=41,
+        controller_start_token="token-41",
         stage="lifecycle",
         child_pid=42,
         child_start_token="token-42",
@@ -752,6 +772,41 @@ def test_active_stage_receipt_is_authenticated_and_tamper_evident(
         match="authentication failed",
     ):
         pipeline._read_active_stage(config)  # noqa: SLF001
+
+
+def test_stage_cleanup_uses_authenticated_memory_when_receipt_reopen_fails(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    active = {
+        "group_members": [
+            {"pid": 42, "start_token": "token-42"},
+        ]
+    }
+    monkeypatch.setattr(
+        pipeline,
+        "_refresh_active_stage_members",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            pipeline.UnifiedRecurrentPromotionError("receipt unavailable")
+        ),
+    )
+    monkeypatch.setattr(
+        pipeline,
+        "_process_group_members",
+        lambda _pgid: [
+            {"pid": 42, "start_token": "token-42"},
+            {"pid": 44, "start_token": "token-44"},
+        ],
+    )
+
+    assert pipeline._stage_cleanup_members(  # noqa: SLF001
+        {},
+        active,
+        expected_pid=42,
+        expected_start_token="token-42",
+    ) == [
+        {"pid": 42, "start_token": "token-42"},
+        {"pid": 44, "start_token": "token-44"},
+    ]
 
 
 def test_exact_stage_termination_targets_only_recorded_process_group(
@@ -879,6 +934,8 @@ def test_restart_never_retires_stage_owned_by_another_live_controller(
     )
     pipeline._publish_active_stage(  # noqa: SLF001
         config,
+        controller_pid=41,
+        controller_start_token="token-41",
         stage="lifecycle",
         child_pid=43,
         child_start_token="token-43",
@@ -915,7 +972,124 @@ def test_restart_never_retires_stage_owned_by_another_live_controller(
 
     with pytest.raises(
         pipeline.UnifiedRecurrentPromotionError,
-        match="another live controller",
+        match="owner is not proven dead: alive",
+    ):
+        pipeline._retire_interrupted_stage(config)  # noqa: SLF001
+
+
+def test_restart_never_retires_stage_when_owner_liveness_is_unknown(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    config = _config(tmp_path)
+    monkeypatch.setattr(pipeline, "_key", lambda _config: b"k" * 32)
+    monkeypatch.setattr(pipeline.os, "getpid", lambda: 41)
+    monkeypatch.setattr(
+        pipeline.replication.launcher.detached,
+        "_process_start_token",
+        lambda pid: f"token-{pid}",
+    )
+    monkeypatch.setattr(
+        pipeline,
+        "_process_group_members",
+        lambda pgid: [{"pid": pgid, "start_token": f"token-{pgid}"}],
+    )
+    pipeline._publish_active_stage(  # noqa: SLF001
+        config,
+        controller_pid=41,
+        controller_start_token="token-41",
+        stage="lifecycle",
+        child_pid=43,
+        child_start_token="token-43",
+        result_path=Path(config["pipeline_root"]) / "result.json",
+        log_path=Path(config["pipeline_root"]) / "stage.log",
+        timeout_s=30.0,
+    )
+    value = pipeline._read_active_stage(config)  # noqa: SLF001
+    assert value is not None
+    body = {key: item for key, item in value.items() if key != "hmac_sha256"}
+    body["controller_pid"] = 42
+    body["controller_start_token"] = "token-42"
+    interrupted = {
+        **body,
+        "hmac_sha256": pipeline._signature(body, b"k" * 32),  # noqa: SLF001
+    }
+    pipeline._active_stage_path(config).write_bytes(  # noqa: SLF001
+        canonical_bytes(interrupted) + b"\n"
+    )
+    monkeypatch.setattr(
+        pipeline.replication.launcher.detached,
+        "_identity_state",
+        lambda _pid, _token: "unknown",
+    )
+    monkeypatch.setattr(
+        pipeline,
+        "_terminate_exact_stage_process",
+        lambda *_args, **_kwargs: pytest.fail("unknown owner child was terminated"),
+    )
+
+    with pytest.raises(
+        pipeline.UnifiedRecurrentPromotionError,
+        match="owner is not proven dead: unknown",
+    ):
+        pipeline._retire_interrupted_stage(config)  # noqa: SLF001
+
+
+def test_restart_does_not_trust_reused_current_controller_pid(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    config = _config(tmp_path)
+    monkeypatch.setattr(pipeline, "_key", lambda _config: b"k" * 32)
+    monkeypatch.setattr(pipeline.os, "getpid", lambda: 41)
+    monkeypatch.setattr(
+        pipeline.replication.launcher.detached,
+        "_process_start_token",
+        lambda pid: "current-token" if pid == 41 else f"token-{pid}",
+    )
+    monkeypatch.setattr(
+        pipeline,
+        "_process_group_members",
+        lambda pgid: [{"pid": pgid, "start_token": f"token-{pgid}"}],
+    )
+    pipeline._publish_active_stage(  # noqa: SLF001
+        config,
+        controller_pid=41,
+        controller_start_token="current-token",
+        stage="lifecycle",
+        child_pid=43,
+        child_start_token="token-43",
+        result_path=Path(config["pipeline_root"]) / "result.json",
+        log_path=Path(config["pipeline_root"]) / "stage.log",
+        timeout_s=30.0,
+    )
+    value = pipeline._read_active_stage(config)  # noqa: SLF001
+    assert value is not None
+    body = {key: item for key, item in value.items() if key != "hmac_sha256"}
+    body["controller_start_token"] = "previous-token"
+    interrupted = {
+        **body,
+        "hmac_sha256": pipeline._signature(body, b"k" * 32),  # noqa: SLF001
+    }
+    pipeline._active_stage_path(config).write_bytes(  # noqa: SLF001
+        canonical_bytes(interrupted) + b"\n"
+    )
+    monkeypatch.setattr(
+        pipeline.replication.launcher.detached,
+        "_identity_state",
+        lambda pid, token: (
+            "unknown" if (pid, token) == (41, "previous-token") else "dead"
+        ),
+    )
+    monkeypatch.setattr(
+        pipeline,
+        "_terminate_exact_stage_process",
+        lambda *_args, **_kwargs: pytest.fail("reused PID child was terminated"),
+    )
+
+    with pytest.raises(
+        pipeline.UnifiedRecurrentPromotionError,
+        match="owner is not proven dead: unknown",
     ):
         pipeline._retire_interrupted_stage(config)  # noqa: SLF001
 
@@ -946,6 +1120,109 @@ def test_stage_parent_monitor_terminates_its_own_group_on_parent_loss(
     pipeline._monitor_controller(41, "token-41")  # noqa: SLF001
 
     assert signals == [(73, pipeline.signal.SIGTERM)]
+
+
+def test_stage_parent_monitor_does_not_signal_on_unknown_liveness(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    signals: list[tuple[int, int]] = []
+    states = iter(["unknown", "dead"])
+    monkeypatch.setattr(pipeline.time, "sleep", lambda _seconds: None)
+    monkeypatch.setattr(
+        pipeline.replication.launcher.detached,
+        "_identity_state",
+        lambda _pid, _token: next(states),
+    )
+    monkeypatch.setattr(pipeline.os, "getpid", lambda: 73)
+    monkeypatch.setattr(pipeline.os, "getpgrp", lambda: 73)
+    monkeypatch.setattr(
+        pipeline.os,
+        "killpg",
+        lambda pgid, sent: signals.append((pgid, sent)),
+    )
+
+    pipeline._monitor_controller(41, "token-41")  # noqa: SLF001
+
+    assert signals == [(73, pipeline.signal.SIGTERM)]
+
+
+@pytest.mark.parametrize(
+    ("owner_state", "pid_present", "expected_state"),
+    [
+        ("unknown", False, "unknown"),
+        ("dead", True, "conflict"),
+    ],
+)
+def test_launchd_install_never_boots_out_unproven_existing_controller(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    owner_state: str,
+    pid_present: bool,
+    expected_state: str,
+) -> None:
+    config = _config(tmp_path)
+    config_path = tmp_path / "promotion-config.json"
+    plist_path = tmp_path / "promotion.plist"
+    intent = {
+        "config_sha256": config["config_sha256"],
+        "intent_sha256": "i" * 64,
+    }
+    status = {
+        "controller_pid": 41,
+        "controller_start_token": "token-41",
+        "sleep_inhibitor_pid": 42,
+    }
+    arguments = argparse.Namespace(
+        config=config_path,
+        poll_interval=1.0,
+        controller_timeout=30.0,
+    )
+    monkeypatch.setattr(pipeline, "_load_config", lambda _path: config)
+    monkeypatch.setattr(
+        pipeline,
+        "_launch_contract",
+        lambda *_args: (plist_path, b"plist", intent),
+    )
+    monkeypatch.setattr(pipeline, "LAUNCH_AGENTS_ROOT", tmp_path)
+    monkeypatch.setattr(
+        pipeline,
+        "atomic_write_bytes_if_absent",
+        lambda *_args, **_kwargs: True,
+    )
+    monkeypatch.setattr(pipeline, "atomic_write_bytes", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(pipeline, "ensure_private_directory", lambda _path: None)
+    monkeypatch.setattr(
+        pipeline,
+        "_launchd_job",
+        lambda _label: {"target": "gui/501/test", "pid": 41},
+    )
+    monkeypatch.setattr(pipeline, "_read_status", lambda _config: status)
+    monkeypatch.setattr(
+        pipeline.replication.launcher.detached,
+        "_identity_state",
+        lambda _pid, _token: owner_state,
+    )
+
+    def probe_pid(_pid: int, _signal: int) -> None:
+        if not pid_present:
+            raise ProcessLookupError
+
+    monkeypatch.setattr(
+        pipeline.os,
+        "kill",
+        probe_pid,
+    )
+    monkeypatch.setattr(
+        pipeline.subprocess,
+        "run",
+        lambda *_args, **_kwargs: pytest.fail("unknown controller was disturbed"),
+    )
+
+    with pytest.raises(
+        pipeline.UnifiedRecurrentPromotionError,
+        match=f"not proven stale: {expected_state}",
+    ):
+        pipeline.install_launchd(arguments)
 
 
 def test_run_stage_rejects_result_outside_pipeline_root(

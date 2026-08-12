@@ -46299,3 +46299,42 @@ authority, broad reasoning, fusion, frontier result or `WOW Signal` is claimed.
 The completion envelope remains `913/920` (approximately `99.2%`). Next is the
 frozen powered adjudication; only a supported verdict may enter this promotion
 transaction, after which broader-domain replication and final soak remain.
+
+## Checkpoint 2026-08-12-286: Canary Authority Is Bound to One Exact Battery
+
+Independent review of CP285 found two remaining fail-open edges before any
+scientific verdict could enter promotion. The activation sealers accepted a
+structurally valid canary without themselves receiving the package battery, so
+a caller could have sealed evidence from a different valid battery. Both the
+candidate-to-pending and pending-to-serving transitions now require the exact
+inspected battery and revalidate its digest, ordered cases, request identities
+and expected token digests at the authority boundary. A canary whose generated
+token digest differs from its expected digest is invalid even when no caller
+supplies an optional comparison object.
+
+Interrupted-stage recovery is also strictly non-destructive under uncertainty.
+The authenticated stage receipt must contain a valid controller PID and process
+start token. Cleanup proceeds only when the owner exactly matches the current
+controller identity or the prior PID/token pair is positively proven dead;
+`unknown` liveness refuses cleanup. PID equality without start-token equality
+does not confer ownership, closing the PID-reuse case.
+
+Validation is green under Aura's Python 3.12 runtime: `264/264` focused
+authority, promotion, worker/client, ingress and lifecycle tests pass; canonical
+smoke passes `104/104`; governance ownership, layering, compilation, focused
+Ruff and diff hygiene pass. Adversarial regressions cover a valid canary from a
+foreign battery, unknown prior-owner liveness and reuse of the current PID with
+a different start token. They also prove that stage publication consumes the
+already validated controller identity and that in-memory authenticated process
+membership remains sufficient to terminate a child when receipt reopening
+fails. Runtime calls cannot bypass either authority transition with an absent
+or non-mapping battery. A stage watchdog retries unknown parent liveness rather
+than signaling, and launchd installation refuses to boot out an existing
+controller unless that exact PID/token is proven dead; timeout cleanup remains
+allowed only for the job created by that invocation. A stale launchd start
+token is not sufficient proof of death when the PID has been reused: a
+non-signaling presence probe classifies the live replacement as a conflict.
+The CP281 powered
+replication remains detached and unchanged. No verdict, retained authority,
+broad reasoning, fusion, frontier result or `WOW Signal` is claimed. The
+completion envelope remains `913/920` (approximately `99.2%`).

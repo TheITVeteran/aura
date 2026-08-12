@@ -47,16 +47,42 @@ def _manifest() -> dict:
     }
 
 
+def _unit_battery() -> dict:
+    return seal_shadow_canary_battery(
+        [
+            {
+                "task_id": "fresh-khop-1",
+                "family": "khop",
+                "task_depth": 2,
+                "prompt_sha256": "1" * 64,
+                "expected_sha256": "2" * 64,
+                "public_token_ids": [10],
+                "expected_token_ids": [20],
+                "max_tokens": 1,
+            }
+        ],
+        seed=7,
+        replication_plan_sha256="5" * 64,
+        replication_verdict_sha256="6" * 64,
+        excluded_task_ids_sha256="7" * 64,
+        excluded_prompt_sha256s_sha256="8" * 64,
+        generator_source_sha256s={"generator.py": "9" * 64},
+    )
+
+
 def _canary(activation: dict, *, serving: bool) -> dict:
+    battery = _unit_battery()
+    case = battery["cases"][0]
+    expected = command._canonical_sha256(case["expected_token_ids"])  # noqa: SLF001
     evidence = [
         {
             "index": 0,
             "task_id": "fresh-khop-1",
             "family": "khop",
             "task_depth": 2,
-            "request_sha256": "6" * 64,
-            "expected_token_ids_sha256": "7" * 64,
-            "generated_token_ids_sha256": "7" * 64,
+            "request_sha256": case["request_sha256"],
+            "expected_token_ids_sha256": expected,
+            "generated_token_ids_sha256": expected,
             "qualified_result_sha256": "9" * 64,
             "latency_ms": 7,
             "exact": True,
@@ -69,7 +95,7 @@ def _canary(activation: dict, *, serving: bool) -> dict:
         "checkpoint_sha256": activation["checkpoint_sha256"],
         "controller_sha256": activation["controller_sha256"],
         "activation_sha256": activation["activation_sha256"],
-        "battery_sha256": "8" * 64,
+        "battery_sha256": battery["battery_sha256"],
         "started_at_unix": 1.0,
         "completed_at_unix": 2.0,
         "case_count": 1,
@@ -189,10 +215,12 @@ async def test_verified_activation_canary_uses_live_qualified_path_without_publi
     pending = command.seal_verified_qualified_activation(
         candidate,
         _canary(candidate, serving=False),
+        expected_battery=_unit_battery(),
     )
     activation = command.seal_serving_qualified_activation(
         pending,
         _canary(pending, serving=False),
+        expected_battery=_unit_battery(),
     )
     manifest = {
         "package_id": "qualified-fixture",
@@ -382,7 +410,11 @@ async def test_verified_activation_canary_uses_only_request_scoped_authority(
     assert result["serving_authority"] is False
     assert result["authority_remains_active"] is False
     assert result["canary_authority_was_request_scoped"] is True
-    pending = command.seal_verified_qualified_activation(activation, result)
+    pending = command.seal_verified_qualified_activation(
+        activation,
+        result,
+        expected_battery=battery,
+    )
     assert pending["candidate_canary_sha256"] == result["result_sha256"]
     assert pending["serving_authority"] is False
 
@@ -404,7 +436,7 @@ def test_verified_activation_failure_never_publishes_authority_and_retires_point
     monkeypatch.setattr(
         command,
         "inspect_shadow_package",
-        lambda _path: {"manifest": _manifest()},
+        lambda _path: {"manifest": _manifest(), "canary_battery": _unit_battery()},
     )
     monkeypatch.setattr(command, "_read_lifecycle", lambda _path: {})
     monkeypatch.setattr(
@@ -475,14 +507,18 @@ def test_pending_cold_load_failure_revokes_pending_authority_and_pointer(
     revoked: list[str] = []
     retired: list[str] = []
     calls = 0
-    monkeypatch.setattr(command, "inspect_shadow_package", lambda _path: {"manifest": _manifest()})
+    monkeypatch.setattr(
+        command,
+        "inspect_shadow_package",
+        lambda _path: {"manifest": _manifest(), "canary_battery": _unit_battery()},
+    )
     monkeypatch.setattr(command, "_read_lifecycle", lambda _path: {})
     monkeypatch.setattr(command, "publish_shadow_pointer", lambda *_args, **_kwargs: pointer)
     monkeypatch.setattr(command, "seal_qualified_activation", lambda *_args: candidate)
     monkeypatch.setattr(
         command,
         "seal_verified_qualified_activation",
-        lambda received, receipt: (
+        lambda received, receipt, **_kwargs: (
             pending
             if received == candidate and receipt == candidate_canary
             else pytest.fail("pending authority sealed from different evidence")
@@ -575,7 +611,7 @@ def test_verified_activation_publishes_authority_only_after_request_scoped_canar
     monkeypatch.setattr(
         command,
         "inspect_shadow_package",
-        lambda _path: {"manifest": _manifest()},
+        lambda _path: {"manifest": _manifest(), "canary_battery": _unit_battery()},
     )
     monkeypatch.setattr(command, "_read_lifecycle", lambda _path: {})
 
@@ -612,7 +648,7 @@ def test_verified_activation_publishes_authority_only_after_request_scoped_canar
     monkeypatch.setattr(
         command,
         "seal_verified_qualified_activation",
-        lambda received, receipt: (
+        lambda received, receipt, **_kwargs: (
             pending
             if received == candidate and receipt == candidate_canary
             else pytest.fail("durable authority sealed from different evidence")
@@ -622,7 +658,7 @@ def test_verified_activation_publishes_authority_only_after_request_scoped_canar
     monkeypatch.setattr(
         command,
         "seal_serving_qualified_activation",
-        lambda received, receipt: (
+        lambda received, receipt, **_kwargs: (
             durable
             if received == pending and receipt == pending_canary
             else pytest.fail("serving authority sealed from different evidence")

@@ -81,20 +81,55 @@ def _durable_activation() -> dict:
     manifest, lifecycle, pointer = _evidence()
     candidate = seal_qualified_activation(manifest, lifecycle, pointer)
     canary = _canary(candidate)
-    pending = seal_verified_qualified_activation(candidate, canary)
-    return seal_serving_qualified_activation(pending, _canary(pending))
+    battery = _battery()
+    pending = seal_verified_qualified_activation(
+        candidate,
+        canary,
+        expected_battery=battery,
+    )
+    return seal_serving_qualified_activation(
+        pending,
+        _canary(pending),
+        expected_battery=battery,
+    )
+
+
+def _battery() -> dict:
+    return seal_shadow_canary_battery(
+        [
+            {
+                "task_id": "fresh-khop-1",
+                "family": "khop",
+                "task_depth": 2,
+                "prompt_sha256": "1" * 64,
+                "expected_sha256": "2" * 64,
+                "public_token_ids": [10],
+                "expected_token_ids": [20],
+                "max_tokens": 1,
+            }
+        ],
+        seed=7,
+        replication_plan_sha256="5" * 64,
+        replication_verdict_sha256="6" * 64,
+        excluded_task_ids_sha256="7" * 64,
+        excluded_prompt_sha256s_sha256="8" * 64,
+        generator_source_sha256s={"generator.py": "9" * 64},
+    )
 
 
 def _canary(activation: dict, *, serving: bool = False) -> dict:
+    battery = _battery()
+    case = battery["cases"][0]
+    expected = _sha(case["expected_token_ids"])
     evidence = [
         {
             "index": 0,
             "task_id": "fresh-khop-1",
             "family": "khop",
             "task_depth": 2,
-            "request_sha256": "6" * 64,
-            "expected_token_ids_sha256": "7" * 64,
-            "generated_token_ids_sha256": "7" * 64,
+            "request_sha256": case["request_sha256"],
+            "expected_token_ids_sha256": expected,
+            "generated_token_ids_sha256": expected,
             "qualified_result_sha256": "9" * 64,
             "latency_ms": 7,
             "exact": True,
@@ -107,7 +142,7 @@ def _canary(activation: dict, *, serving: bool = False) -> dict:
         "checkpoint_sha256": activation["checkpoint_sha256"],
         "controller_sha256": activation["controller_sha256"],
         "activation_sha256": activation["activation_sha256"],
-        "battery_sha256": "8" * 64,
+        "battery_sha256": battery["battery_sha256"],
         "started_at_unix": 1.0,
         "completed_at_unix": 2.0,
         "case_count": 1,
@@ -224,11 +259,20 @@ def test_durable_authority_requires_the_complete_exact_canary_artifact() -> None
         canary,
         expected_activation=candidate,
     ) == []
-    pending = seal_verified_qualified_activation(candidate, canary)
+    battery = _battery()
+    pending = seal_verified_qualified_activation(
+        candidate,
+        canary,
+        expected_battery=battery,
+    )
     assert pending["candidate_canary_sha256"] == canary["result_sha256"]
     assert pending["qualified_canary_sha256"] == ""
     pending_canary = _canary(pending)
-    serving = seal_serving_qualified_activation(pending, pending_canary)
+    serving = seal_serving_qualified_activation(
+        pending,
+        pending_canary,
+        expected_battery=battery,
+    )
     assert serving["qualified_canary_sha256"] == pending_canary["result_sha256"]
 
     incomplete = {
@@ -240,7 +284,11 @@ def test_durable_authority_requires_the_complete_exact_canary_artifact() -> None
     }
     incomplete["result_sha256"] = _sha(incomplete)
     with pytest.raises(ValueError, match="not_admissible"):
-        seal_verified_qualified_activation(candidate, incomplete)
+        seal_verified_qualified_activation(
+            candidate,
+            incomplete,
+            expected_battery=battery,
+        )
 
 
 @pytest.mark.parametrize("mutation", ["foreign", "omitted", "reordered", "wrong_answer"])
@@ -276,6 +324,100 @@ def test_canary_must_match_exact_ordered_sealed_battery(mutation: str) -> None:
         expected_activation=candidate,
         expected_battery=battery,
     )
+
+
+def test_canary_rejects_generated_digest_mismatch_without_battery_comparator() -> None:
+    manifest, lifecycle, pointer = _evidence()
+    candidate = seal_qualified_activation(manifest, lifecycle, pointer)
+    canary = _canary(candidate)
+    canary["evidence"][0]["generated_token_ids_sha256"] = "f" * 64
+    attacked = _reseal_canary(canary)
+
+    assert qualified_serving_canary_errors(
+        attacked,
+        expected_activation=candidate,
+    )
+
+
+def test_authority_sealer_rejects_valid_canary_from_foreign_battery() -> None:
+    manifest, lifecycle, pointer = _evidence()
+    candidate = seal_qualified_activation(manifest, lifecycle, pointer)
+    battery, canary = _battery_canary(candidate)
+    foreign_battery = seal_shadow_canary_battery(
+        [
+            {
+                "task_id": "fresh-khop-foreign",
+                "family": "khop",
+                "task_depth": 2,
+                "prompt_sha256": "a" * 64,
+                "expected_sha256": "b" * 64,
+                "public_token_ids": [30],
+                "expected_token_ids": [40],
+                "max_tokens": 1,
+            }
+        ],
+        seed=11,
+        replication_plan_sha256="5" * 64,
+        replication_verdict_sha256="6" * 64,
+        excluded_task_ids_sha256="7" * 64,
+        excluded_prompt_sha256s_sha256="8" * 64,
+        generator_source_sha256s={"generator.py": "9" * 64},
+    )
+
+    assert qualified_serving_canary_errors(
+        canary,
+        expected_activation=candidate,
+        expected_battery=battery,
+    ) == []
+    with pytest.raises(ValueError, match="not_admissible"):
+        seal_verified_qualified_activation(
+            candidate,
+            canary,
+            expected_battery=foreign_battery,
+        )
+
+    pending = seal_verified_qualified_activation(
+        candidate,
+        canary,
+        expected_battery=battery,
+    )
+    pending_battery, pending_canary = _battery_canary(pending)
+    assert pending_battery["battery_sha256"] == battery["battery_sha256"]
+    with pytest.raises(ValueError, match="not_admissible"):
+        seal_serving_qualified_activation(
+            pending,
+            pending_canary,
+            expected_battery=foreign_battery,
+        )
+
+
+@pytest.mark.parametrize("transition", ["candidate", "pending"])
+def test_authority_sealers_reject_absent_battery_at_runtime(transition: str) -> None:
+    manifest, lifecycle, pointer = _evidence()
+    candidate = seal_qualified_activation(manifest, lifecycle, pointer)
+    battery, canary = _battery_canary(candidate)
+
+    if transition == "candidate":
+        with pytest.raises(ValueError, match="battery_is_not_admissible"):
+            seal_verified_qualified_activation(
+                candidate,
+                canary,
+                expected_battery=None,  # type: ignore[arg-type]
+            )
+        return
+
+    pending = seal_verified_qualified_activation(
+        candidate,
+        canary,
+        expected_battery=battery,
+    )
+    _pending_battery, pending_canary = _battery_canary(pending)
+    with pytest.raises(ValueError, match="battery_is_not_admissible"):
+        seal_serving_qualified_activation(
+            pending,
+            pending_canary,
+            expected_battery=None,  # type: ignore[arg-type]
+        )
 
 
 @pytest.mark.parametrize(

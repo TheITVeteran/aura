@@ -861,6 +861,20 @@ def _process_row(pid: int) -> tuple[int, str] | None:
         return None
 
 
+def _process_presence_state(pid: int) -> str:
+    """Distinguish an absent PID from a live replacement without signaling it."""
+
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return "absent"
+    except PermissionError:
+        return "present"
+    except OSError:
+        return "unknown"
+    return "present"
+
+
 def _verify_supervision(config: Mapping[str, Any], inhibitor_pid: int) -> dict[str, Any]:
     job = _launchd_job(_label(config))
     if job["pid"] != os.getpid():
@@ -880,24 +894,41 @@ def _installed_lineage_is_valid(
     status: Mapping[str, Any] | None,
     job: Mapping[str, Any] | None,
 ) -> bool:
+    return _installed_lineage_state(status, job) == "valid"
+
+
+def _installed_lineage_state(
+    status: Mapping[str, Any] | None,
+    job: Mapping[str, Any] | None,
+) -> str:
     if status is None or job is None:
-        return False
+        return "unknown"
     controller_pid = status.get("controller_pid")
     inhibitor_pid = status.get("sleep_inhibitor_pid")
     if type(controller_pid) is not int or type(inhibitor_pid) is not int:
-        return False
+        return "unknown"
+    if job.get("pid") != controller_pid:
+        return "conflict"
+    owner_state = replication.launcher.detached._identity_state(  # noqa: SLF001
+        controller_pid,
+        str(status.get("controller_start_token") or ""),
+    )
+    if owner_state == "dead":
+        presence = _process_presence_state(controller_pid)
+        if presence == "present":
+            return "conflict"
+        if presence != "absent":
+            return "unknown"
+    if owner_state != "alive":
+        return owner_state
     inhibitor = _process_row(inhibitor_pid)
-    return bool(
-        job.get("pid") == controller_pid
-        and inhibitor is not None
+    if (
+        inhibitor is not None
         and inhibitor[0] == controller_pid
         and inhibitor[1] == f"/usr/bin/caffeinate -dims -w {controller_pid}"
-        and replication.launcher.detached._identity_state(  # noqa: SLF001
-            controller_pid,
-            str(status.get("controller_start_token") or ""),
-        )
-        == "alive"
-    )
+    ):
+        return "valid"
+    return "conflict"
 
 
 def _active_stage_path(config: Mapping[str, Any]) -> Path:
@@ -915,6 +946,10 @@ def _read_active_stage(config: Mapping[str, Any]) -> dict[str, Any] | None:
         value.get("schema") != ACTIVE_STAGE_SCHEMA
         or value.get("config_sha256") != config.get("config_sha256")
         or value.get("stage") not in _STAGE_TIMEOUTS
+        or type(value.get("controller_pid")) is not int
+        or int(value["controller_pid"]) <= 1
+        or not isinstance(value.get("controller_start_token"), str)
+        or not value["controller_start_token"]
         or type(value.get("child_pid")) is not int
         or int(value["child_pid"]) <= 1
         or not isinstance(value.get("child_start_token"), str)
@@ -983,6 +1018,8 @@ def _process_group_members(process_group_id: int) -> list[dict[str, Any]]:
 def _publish_active_stage(
     config: Mapping[str, Any],
     *,
+    controller_pid: int,
+    controller_start_token: str,
     stage: str,
     child_pid: int,
     child_start_token: str,
@@ -1000,10 +1037,8 @@ def _publish_active_stage(
         "schema": ACTIVE_STAGE_SCHEMA,
         "config_sha256": config["config_sha256"],
         "stage": stage,
-        "controller_pid": os.getpid(),
-        "controller_start_token": replication.launcher.detached._process_start_token(  # noqa: SLF001
-            os.getpid()
-        ),
+        "controller_pid": controller_pid,
+        "controller_start_token": controller_start_token,
         "child_pid": child_pid,
         "child_start_token": child_start_token,
         "process_group_id": child_pid,
@@ -1131,13 +1166,20 @@ def _retire_interrupted_stage(config: Mapping[str, Any]) -> None:
         return
     owner_pid = observed.get("controller_pid")
     owner_token = str(observed.get("controller_start_token") or "")
-    if (
-        type(owner_pid) is int
-        and owner_pid != os.getpid()
-        and replication.launcher.detached._identity_state(owner_pid, owner_token)  # noqa: SLF001
-        == "alive"
-    ):
-        _fail("promotion active stage is owned by another live controller")
+    current_pid = os.getpid()
+    current_token = replication.launcher.detached._process_start_token(  # noqa: SLF001
+        current_pid
+    )
+    if (owner_pid, owner_token) != (current_pid, current_token):
+        owner_state = replication.launcher.detached._identity_state(  # noqa: SLF001
+            int(owner_pid),
+            owner_token,
+        )
+        if owner_state != "dead":
+            _fail(
+                "promotion active stage owner is not proven dead: "
+                f"{owner_state}"
+            )
     _terminate_exact_stage_process(
         None,
         pid=int(observed["child_pid"]),
@@ -1164,6 +1206,38 @@ def _runtime_python(config: Mapping[str, Any]) -> Path:
     )
     python, _interpreter = replication._runtime_python(campaign_config)  # noqa: SLF001
     return python.resolve(strict=True)
+
+
+def _stage_cleanup_members(
+    config: Mapping[str, Any],
+    active: Mapping[str, Any],
+    *,
+    expected_pid: int,
+    expected_start_token: str,
+) -> list[dict[str, Any]]:
+    """Recover exact stage membership even when receipt reopening fails."""
+
+    try:
+        refreshed = _refresh_active_stage_members(
+            config,
+            expected_pid=expected_pid,
+            expected_start_token=expected_start_token,
+        )
+        return list(refreshed["group_members"])
+    except UnifiedRecurrentPromotionError:
+        known = {
+            int(member["pid"]): str(member["start_token"])
+            for member in active["group_members"]
+        }
+        for member in _process_group_members(expected_pid):
+            previous = known.get(member["pid"])
+            if previous is not None and previous != member["start_token"]:
+                _fail("promotion cleanup observed process identity reuse")
+            known[member["pid"]] = member["start_token"]
+        return [
+            {"pid": pid, "start_token": token}
+            for pid, token in sorted(known.items())
+        ]
 
 
 def _run_bounded_stage(
@@ -1195,6 +1269,15 @@ def _run_bounded_stage(
     controller_start_token = replication.launcher.detached._process_start_token(  # noqa: SLF001
         controller_pid
     )
+    if (
+        not controller_start_token
+        or replication.launcher.detached._identity_state(  # noqa: SLF001
+            controller_pid,
+            controller_start_token,
+        )
+        != "alive"
+    ):
+        _fail("promotion controller identity is not proven alive before stage launch")
     command = [
         str(_runtime_python(config)),
         str(Path(__file__).resolve(strict=True)),
@@ -1236,6 +1319,8 @@ def _run_bounded_stage(
                 _fail(f"promotion {stage} stage exited before supervision")
             active = _publish_active_stage(
                 config,
+                controller_pid=controller_pid,
+                controller_start_token=controller_start_token,
                 stage=stage,
                 child_pid=process.pid,
                 child_start_token=child_token,
@@ -1286,12 +1371,12 @@ def _run_bounded_stage(
         finally:
             if process is not None and child_token:
                 if active is not None:
-                    active = _refresh_active_stage_members(
+                    members = _stage_cleanup_members(
                         config,
+                        active,
                         expected_pid=process.pid,
                         expected_start_token=child_token,
                     )
-                    members = active["group_members"]
                 else:
                     members = _process_group_members(process.pid)
                     if not any(member["pid"] == process.pid for member in members):
@@ -1318,13 +1403,11 @@ def _run_bounded_stage(
 def _monitor_controller(controller_pid: int, controller_start_token: str) -> None:
     while True:
         time.sleep(1.0)
-        if (
-            replication.launcher.detached._identity_state(  # noqa: SLF001
-                controller_pid,
-                controller_start_token,
-            )
-            != "alive"
-        ):
+        owner_state = replication.launcher.detached._identity_state(  # noqa: SLF001
+            controller_pid,
+            controller_start_token,
+        )
+        if owner_state == "dead":
             pid = os.getpid()
             process_group = os.getpgrp()
             if process_group != pid:
@@ -1568,27 +1651,48 @@ def install_launchd(arguments: argparse.Namespace) -> dict[str, Any]:
     ensure_private_directory(LAUNCH_AGENTS_ROOT)
     atomic_write_bytes(plist_path, plist, mode=0o600)
     domain = f"gui/{os.getuid()}"
-    subprocess.run(
-        ["/bin/launchctl", "bootout", domain, str(plist_path)],
-        capture_output=True,
-        text=True,
-        timeout=30.0,
-        check=False,
-    )
-    started = subprocess.run(
-        ["/bin/launchctl", "bootstrap", domain, str(plist_path)],
-        capture_output=True,
-        text=True,
-        timeout=30.0,
-        check=False,
-    )
-    if started.returncode != 0:
-        _fail(f"promotion launchd bootstrap failed: {started.stderr.strip()[:300]}")
+    try:
+        existing_job = _launchd_job(_label(config))
+    except UnifiedRecurrentPromotionError:
+        existing_job = None
+    existing_status = _read_status(config) if existing_job is not None else None
+    existing_state = _installed_lineage_state(existing_status, existing_job)
+    bootstrapped_here = False
+    if existing_state == "valid":
+        status = existing_status
+        job = existing_job
+        validated = True
+    else:
+        if existing_job is not None:
+            if existing_state != "dead":
+                _fail(
+                    "promotion existing launchd controller is not proven stale: "
+                    f"{existing_state}"
+                )
+            subprocess.run(
+                ["/bin/launchctl", "bootout", f"{domain}/{_label(config)}"],
+                capture_output=True,
+                text=True,
+                timeout=30.0,
+                check=False,
+            )
+        started = subprocess.run(
+            ["/bin/launchctl", "bootstrap", domain, str(plist_path)],
+            capture_output=True,
+            text=True,
+            timeout=30.0,
+            check=False,
+        )
+        if started.returncode != 0:
+            _fail(f"promotion launchd bootstrap failed: {started.stderr.strip()[:300]}")
+        bootstrapped_here = True
+        status = None
+        job = None
+        validated = False
     deadline = time.monotonic() + 20.0
-    status: dict[str, Any] | None = None
-    job: dict[str, Any] | None = None
-    validated = False
     while time.monotonic() < deadline:
+        if validated:
+            break
         try:
             job = _launchd_job(_label(config))
             status = _read_status(config)
@@ -1599,13 +1703,14 @@ def install_launchd(arguments: argparse.Namespace) -> dict[str, Any]:
             status = None
         time.sleep(0.25)
     if not validated or status is None or job is None:
-        subprocess.run(
-            ["/bin/launchctl", "bootout", f"{domain}/{_label(config)}"],
-            capture_output=True,
-            text=True,
-            timeout=30.0,
-            check=False,
-        )
+        if bootstrapped_here:
+            subprocess.run(
+                ["/bin/launchctl", "bootout", f"{domain}/{_label(config)}"],
+                capture_output=True,
+                text=True,
+                timeout=30.0,
+                check=False,
+            )
         _fail("promotion launchd authenticated start timed out")
     body = {
         "schema": LAUNCH_SCHEMA,

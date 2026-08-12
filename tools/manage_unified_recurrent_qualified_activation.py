@@ -435,6 +435,12 @@ def _activate_verified(arguments: argparse.Namespace) -> dict[str, Any]:
     package = arguments.package.expanduser().absolute()
     verified = inspect_shadow_package(package)
     manifest = verified.get("manifest")
+    battery_value = verified.get("canary_battery")
+    if not isinstance(battery_value, Mapping):
+        raise UnifiedRecurrentQualifiedActivationCommandError(
+            "qualified package canary battery is unavailable"
+        )
+    battery = validate_shadow_canary_battery(battery_value)
     if not isinstance(manifest, Mapping):
         # The package inspector deliberately exposes only a receipt. Reopen
         # the already-bound manifest for activation sealing.
@@ -490,7 +496,11 @@ def _activate_verified(arguments: argparse.Namespace) -> dict[str, Any]:
             raise UnifiedRecurrentQualifiedActivationCommandError(
                 "qualified request-scoped canary did not pass"
             )
-        pending = seal_verified_qualified_activation(candidate, candidate_canary)
+        pending = seal_verified_qualified_activation(
+            candidate,
+            candidate_canary,
+            expected_battery=battery,
+        )
         published = publish_qualified_activation(
             pending,
             activation_path=activation_path,
@@ -532,7 +542,11 @@ def _activate_verified(arguments: argparse.Namespace) -> dict[str, Any]:
             raise UnifiedRecurrentQualifiedActivationCommandError(
                 "qualified persisted-pending cold-load canary did not pass"
             )
-        durable = seal_serving_qualified_activation(published, canary)
+        durable = seal_serving_qualified_activation(
+            published,
+            canary,
+            expected_battery=battery,
+        )
         published = publish_qualified_activation(
             durable,
             activation_path=activation_path,
