@@ -687,6 +687,82 @@ def test_answer_bridge_admission_requires_exact_autonomous_emission_per_cell(
     ]
 
 
+def test_answer_bridge_admission_evaluates_every_unseen_task(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    bundle, _wiring = _bundle()
+    spec = UnifiedIntrinsicTrainingSpec(2, 4, (1,), (4, 8))
+    tasks = [
+        type(
+            "Task",
+            (),
+            {
+                "family": "khop",
+                "task_id": f"khop-1-{index}",
+                "depth": 1,
+            },
+        )()
+        for index in range(3)
+    ]
+    answer = mx.array([[10, 63]], dtype=mx.int32)
+    monkeypatch.setattr(
+        "tools.train_unified_intrinsic_recurrence.encode_example",
+        lambda _tokenizer, _task, _bridge: (mx.array([[1]]), answer),
+    )
+    calls = 0
+
+    def corrupt_last_holdout(
+        _bundle: UnifiedTrainingBundle,
+        _prompt: object,
+        expected: object,
+        _plan: object,
+        **_kwargs: object,
+    ) -> object:
+        nonlocal calls
+        calls += 1
+        if calls < 3:
+            return expected
+        return mx.array([[11, 63]], dtype=expected.dtype)
+
+    monkeypatch.setattr(
+        "tools.train_unified_intrinsic_recurrence._generate_student_rollin",
+        corrupt_last_holdout,
+    )
+    tokenizer = type("Tokenizer", (), {"eos_token_id": 63})()
+    contract = RecurrentAnswerEmissionContract(
+        digit_token_ids=tuple(range(10, 20)),
+        eos_token_id=63,
+        family_markers=(
+            ("khop", (1,)),
+            ("modular", (2,)),
+            ("register_trace", (3,)),
+        ),
+        syntax=(
+            ("close", (4,)),
+            ("khop", (5,)),
+            ("modular", (6,)),
+            ("register_head", (7,)),
+            ("register_mid_r1", (8,)),
+            ("register_mid_r2", (9,)),
+        ),
+    )
+
+    report = _evaluate_answer_bridge_admission(
+        bundle,
+        tokenizer,
+        tasks,
+        spec,
+        "",
+        contract,
+    )
+
+    assert calls == 3
+    assert report["cells"] == 1
+    assert report["tasks"] == 3
+    assert report["exact"] == 2
+    assert report["admitted"] is False
+
+
 def test_model_identity_hashes_weight_content_not_only_path(tmp_path: Path) -> None:
     (tmp_path / "config.json").write_text('{"hidden_size": 4}\n')
     (tmp_path / "tokenizer.json").write_text('{"version": 1}\n')

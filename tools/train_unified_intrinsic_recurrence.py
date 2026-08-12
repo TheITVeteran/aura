@@ -1247,13 +1247,18 @@ def _evaluate_answer_bridge_admission(
     bridge: str,
     contract: RecurrentAnswerEmissionContract,
 ) -> dict[str, Any]:
-    """Require exact emission on one unseen task from every family/depth cell."""
+    """Require exact autonomous emission on every supplied unseen task."""
 
     cells = {(str(task.family), int(task.depth)) for task in tasks}
-    selected = [
-        _answer_bridge_task(tasks, index)
-        for index in range(len(cells))
-    ]
+    if not cells:
+        raise ValueError("answer bridge admission requires unseen tasks")
+    selected = sorted(
+        tasks,
+        key=lambda task: (str(task.family), int(task.depth), str(task.task_id)),
+    )
+    task_ids = [str(task.task_id) for task in selected]
+    if len(task_ids) != len(set(task_ids)):
+        raise ValueError("answer bridge admission task identities are duplicated")
     selected_cells = {(str(task.family), int(task.depth)) for task in selected}
     if selected_cells != cells:
         raise RuntimeError("answer bridge admission did not cover every task cell")

@@ -45389,3 +45389,29 @@ It is not broad reasoning, frontier performance, production fusion or a
 full 72-example schedule, with all fresh holdouts admitted, followed only on
 replication by a governed domain-qualified shadow runtime package and broader
 equal-compute reasoning batteries.
+
+## Checkpoint 2026-08-11-253: Powered Admission Tests Every Fresh Holdout
+
+The full resident profile already generated three prompt-disjoint holdouts for
+each of its nine family/depth cells, but the terminal answer-bridge admission
+selected only one representative from each cell. That was sufficient for the
+bounded CP251 canary and insufficient for a powered promotion decision: an
+unstable controller could pass `9/9` sampled tasks while failing other evidence
+that had already been generated for the same frozen gate.
+
+Admission now greedily decodes every supplied unseen task in deterministic
+family/depth/task-identity order. It rejects empty batteries and duplicate task
+identities, records every mismatch, and admits only when every task and token
+matches exactly. The canary contract remains nine fresh tasks because it
+generates one per cell; the full profile now requires all 27 independently
+generated holdouts rather than silently sampling nine. A regression test uses
+three holdouts in one cell and proves that failure of the last task blocks
+promotion.
+
+The affected trainer/resident-contract surface passes `61/61`; canonical smoke
+passes `104/104`; Ruff, compilation and diff hygiene are clean. No new model
+result, broad reasoning gain, runtime activation or `WOW Signal` is claimed.
+The completion envelope remains `913/920` (approximately `99.2%`). Next is to
+publish CP253, freeze its exact source into a full 72-example resident campaign,
+require `27/27` terminal admission, and run the preregistered powered decode
+replication only if that gate passes.
