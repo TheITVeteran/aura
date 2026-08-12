@@ -88,7 +88,7 @@ def _degrade(exc: BaseException, action: str, *, severity: str = "degraded") -> 
             "cognitive_loop_pathway", exc, severity=severity, action=action,
             enforce_failure_policy=False,
         )
-    except Exception as record_exc:
+    except Exception as record_exc:  # noqa: BLE001 - the recorder itself failed; logged as the secondary signal
         # The primary recorder may itself be unavailable during boot. Keep a
         # secondary observable signal without raising into the agency pulse.
         logger.warning(

@@ -566,7 +566,7 @@ def main() -> int:
             learning_rate=args.learning_rate,
             lora_rank=args.lora_rank,
         )
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001 - printed to stderr and returned non-zero
         print(
             f"transition_discriminator_failed:{type(exc).__name__}:{exc}",
             file=sys.stderr,

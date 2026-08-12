@@ -3306,7 +3306,7 @@ class LatentCortexEngine:
                     verifier = pending_verifier
                 else:
                     receipt.flag("verifier_preflight_decoy_calibration_failed")
-            except Exception as exc:
+            except Exception as exc:  # noqa: BLE001 - flagged on the receipt with the exception type
                 receipt.flag(f"verifier_preflight_failed:{type(exc).__name__}")
                 pending_verifier = None
                 verifier = None
@@ -5204,7 +5204,7 @@ class LatentCortexEngine:
                             runner.cache_discipline_receipt()
                         ),
                     )
-                except Exception as exc:
+                except Exception as exc:  # noqa: BLE001 - flagged on the receipt with the exception type
                     receipt.flag(f"branch_decoy_review_failed:{type(exc).__name__}")
                     branch_probe_texts = {}
                     verifier = None

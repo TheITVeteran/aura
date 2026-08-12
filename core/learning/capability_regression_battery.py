@@ -25,6 +25,9 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from typing import Any, Callable
+import logging
+
+logger = logging.getLogger(__name__)
 
 CAPABILITY_REGRESSION_SCHEMA = "aura.capability_regression_battery.v1"
 
@@ -69,7 +72,15 @@ def score_family(
         try:
             answer = solve(probe.prompt)
             ok = bool(probe.grader(str(answer)))
-        except Exception:
+        except Exception as exc:  # noqa: BLE001 - a crashed grader is a failed probe
+            # Counting it as a failure is right; doing so silently is not.
+            # A grader that crashes on every probe and a model that fails
+            # every probe produce the same regression number.
+            logger.warning(
+                "Capability probe grader crashed for family %s: %s",
+                probe.family,
+                exc,
+            )
             ok = False
         by_family.setdefault(probe.family, []).append(ok)
     return {family: round(sum(v) / len(v), 4) for family, v in by_family.items()}

@@ -282,7 +282,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         )
         print(json.dumps(result, indent=2, sort_keys=True))
         return 0
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001 - printed to stderr and returned non-zero
         print(
             f"archive_memory_sentinel_ring: {type(exc).__name__}: {exc}",
             file=sys.stderr,

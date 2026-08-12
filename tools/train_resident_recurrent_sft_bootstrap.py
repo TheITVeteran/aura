@@ -1568,7 +1568,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         signal.signal(signum, _signal_handler)
     try:
         return _run(args)
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001 - printed to stderr and returned non-zero
         error = {
             "schema": "aura.resident_recurrent_sft_bootstrap_error.v1",
             "error_type": type(exc).__name__,

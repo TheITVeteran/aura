@@ -972,13 +972,13 @@ class FileWriteGateway:
                                     name,
                                 )
                             os.fsync(directory_fd)
-                    except BaseException as rollback_exc:
+                    except BaseException as rollback_exc:  # noqa: BLE001 - aggregated into rollback_failures, which raises below
                         rollback_failures.append(
                             f"{type(rollback_exc).__name__}:{rollback_exc}"
                         )
                     try:
                         _assert_lock_binding(directory_fd, lock_fd)
-                    except BaseException as lock_exc:
+                    except BaseException as lock_exc:  # noqa: BLE001 - aggregated into rollback_failures, which raises below
                         rollback_failures.append(
                             f"lock:{type(lock_exc).__name__}:{lock_exc}"
                         )

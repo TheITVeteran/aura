@@ -1,18 +1,18 @@
 {
-  "description": "Aura enterprise gate debt baseline. Reduce counts over time; do not raise them.",
+  "description": "Aura enterprise gate debt baseline. Reduce counts over time; do not raise them. Every count here is what the tree actually measures, not headroom.",
   "generated_at_unix": 1786012800.0,
   "max_counts": {
-    "broad_exception_review": 33,
+    "broad_exception_review": 0,
     "hardcoded_local_path": 0,
-    "pass_only_function": 1,
+    "pass_only_function": 0,
     "placeholder_stub_mock": 3,
     "potential_secret": 0,
     "pytest_skip_xfail": 0,
     "raise_only_function": 0,
     "subprocess_usage_review": 0,
-    "swallowed_broad_exception": 6,
+    "swallowed_broad_exception": 0,
     "unbounded_loop_review": 0
   },
-  "max_high_or_critical_count": 1,
-  "python_files": 4472
+  "max_high_or_critical_count": 0,
+  "python_files": 5949
 }

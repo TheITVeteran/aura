@@ -338,7 +338,7 @@ def main() -> int:
             validation_per_cell=args.validation_per_cell,
             regularization=args.regularization,
         )
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001 - printed to stderr and returned non-zero
         print(f"state_probe_failed:{type(exc).__name__}:{exc}", file=sys.stderr)
         return 1
     print(json.dumps(receipt, sort_keys=True, indent=2))

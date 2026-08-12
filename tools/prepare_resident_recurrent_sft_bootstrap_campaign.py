@@ -868,7 +868,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             committed_at=committed_at,
             max_minutes=args.max_minutes,
         )
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001 - emitted as a structured error receipt
         print(
             json.dumps(
                 {

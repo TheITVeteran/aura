@@ -193,7 +193,16 @@ class WorkspaceComposer:
         for producer in self.producers:
             try:
                 material = producer.produce(query, limit=self.per_source_limit)
-            except Exception:
+            except Exception as exc:  # noqa: BLE001 - one source must not fail the gather
+                # `per_source[producer.name] = 0` below is indistinguishable
+                # from a source that legitimately had nothing, so a producer
+                # crashing on every query looked exactly like a quiet corpus.
+                logger.warning(
+                    "Workspace producer %s failed for query %r: %s",
+                    getattr(producer, "name", producer),
+                    str(query)[:80],
+                    exc,
+                )
                 material = []
             per_source[producer.name] = len(material)
             gathered.extend(material)

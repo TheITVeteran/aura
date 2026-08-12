@@ -187,7 +187,7 @@ def audit_skill_readiness_ui() -> dict[str, Any]:
             )
             context.close()
             browser.close()
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001 - appended to failures and reported by the caller
         failures.append(f"browser_audit_failed:{type(exc).__name__}:{exc}")
     finally:
         server.shutdown()

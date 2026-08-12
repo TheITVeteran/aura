@@ -715,7 +715,7 @@ async def run_acoustic_a1_acceptance(
                 else _inverse_monotone(config.calibration_amplitudes, fitted, target)
             )
             await capture(arm, amplitude, target=target, repeat=repeat)
-    except BaseException as exc:
+    except BaseException as exc:  # noqa: BLE001 - captured as experiment_error and reported by the caller
         experiment_error = exc
 
     try:

@@ -2220,7 +2220,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 return 0
             return 1
         return 2
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001 - printed to stderr and returned non-zero
         error = {
             "schema": "aura.resident_recurrent_sft_controller_crash.v1",
             "error_type": type(exc).__name__,

@@ -2142,7 +2142,7 @@ def _run_training(
         result = 1
         try:
             result = int(run_verified_recurrent_grpo_training.main(invocation))
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001 - captured as error and recorded in the campaign record
             error = exc
         after = _training_progress_snapshot(training_root)
         disposition: str | None = None
@@ -2153,7 +2153,7 @@ def _run_training(
                     training_root=training_root,
                     progress=after,
                 )
-            except Exception as exc:
+            except Exception as exc:  # noqa: BLE001 - captured as error and recorded in the campaign record
                 error = exc
         progressed = training_progress_advanced(before, after)
         consecutive_no_progress = 0 if progressed else consecutive_no_progress + 1

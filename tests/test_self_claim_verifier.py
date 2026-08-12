@@ -355,7 +355,32 @@ def test_dialogue_contract_repairs_self_claim_before_model_retry():
     assert verify_self_claims(repaired).ok
 
 
-def test_dialogue_contract_repairs_ungrounded_live_voice_before_retry():
+def test_an_ungrounded_live_voice_is_not_patched_into_looking_grounded():
+    """The repair this used to assert was REMOVED on purpose, and it must stay
+    removed.
+
+    `_ground_live_voice_surface` prefixed a synthesised clause — "From my
+    current live state, ", "From my conversation memory, " — onto a draft that
+    failed the grounding contract. Three things were wrong with it:
+
+    * it asserted provenance the runtime had not established (the flag it
+      keyed on fires when evidence is THIN, not when a memory was retrieved —
+      live on 2026-08-10 it prefixed an invented room during an imagination
+      turn);
+    * it put that claim in her voice, where a reader cannot check it;
+    * worst, it ran BEFORE the retry and could flip validation to ok, so a
+      draft that failed the contract was cosmetically patched and shipped
+      instead of being regenerated.
+
+    So the missing stance is now left failing, control reaches the retry, and
+    a retry that produces nothing returns EMPTY — fail-closed, so the caller's
+    no-answer recovery goes through the canonical engine rather than shipping
+    a false self-description.
+
+    This test pins that. It is the anti-regression for a deliberate removal:
+    the previous version asserted the prefix, so restoring the defect would
+    have turned this file green.
+    """
     import asyncio
 
     from core.phases.dialogue_policy import enforce_dialogue_contract
@@ -385,13 +410,33 @@ def test_dialogue_contract_repairs_ungrounded_live_voice_before_retry():
         )
     )
 
-    assert retried is False
-    assert retry_called is False
-    assert validation.ok
-    assert repaired.startswith("From my current live state, ")
+    # The retry is REACHED. That is the whole point of leaving the violation
+    # standing rather than patching it away.
+    assert retry_called is True
+    assert retried is True
+
+    # Fail-closed rather than a cosmetically-grounded draft.
+    assert repaired == ""
+    assert validation.ok is False
+    assert "ungrounded_live_voice" in validation.violations
 
 
-# ── action claims require receipts ──────────────────────────────────────
+def test_no_synthesised_grounding_clause_is_ever_prepended():
+    """The removed function by its signature, so it cannot come back quietly."""
+    from pathlib import Path
+
+    source = (
+        Path(__file__).resolve().parents[1] / "core" / "phases" / "dialogue_policy.py"
+    ).read_text("utf-8")
+
+    assert "def _ground_live_voice_surface" not in source, (
+        "the synthesised grounding prefix is back; it asserts provenance the "
+        "runtime has not established and hides a failed draft from the retry"
+    )
+    assert "REMOVED: _ground_live_voice_surface" in source, (
+        "the record of why this was removed is the only thing stopping it "
+        "being re-added as an obvious improvement"
+    )
 
 def _contract_without_tool_evidence():
     from core.phases.response_contract import build_response_contract

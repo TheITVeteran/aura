@@ -435,7 +435,7 @@ def run_contradiction_perturbation(
         for replicate, order in enumerate(orders):
             for name in order:
                 results[name].append(evaluate(name, states[name], replicate).normalized())
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001 - reported on the receipt as an empty result with the reason
         payload = _empty_receipt(
             config=config,
             contradiction_tensor=contradiction_tensor,

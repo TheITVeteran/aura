@@ -602,6 +602,8 @@ def test_on_demand_camera_provider_captures_without_inprocess_cv2(monkeypatch):
     np = pytest.importorskip("numpy")
     lease = SimpleNamespace(active=True, last_error="", capture=object())
 
+    released: list[object] = []
+
     class _Authority:
         def acquire(self, *_args, **_kwargs):
             return lease
@@ -609,8 +611,8 @@ def test_on_demand_camera_provider_captures_without_inprocess_cv2(monkeypatch):
         def read(self, _lease):
             return np.zeros((24, 32, 3), dtype=np.uint8)
 
-        def release(self, _lease):
-            pass
+        def release(self, released_lease):
+            released.append(released_lease)
 
     monkeypatch.setattr(camera_mod, "get_camera_authority", lambda: _Authority())
     provider = CameraProvider()
@@ -622,6 +624,9 @@ def test_on_demand_camera_provider_captures_without_inprocess_cv2(monkeypatch):
     assert sight.captured is True
     assert (sight.width, sight.height) == (32, 24)
     assert sight.detail["faces"] is None, "unmeasured face count became a false zero"
+    # A capture that does not release holds the device until the stale-lease
+    # sweep reclaims it 30s later — a dark camera for every caller in between.
+    assert released == [lease], "the provider captured without releasing the lease"
 
 
 def test_continuous_camera_keeps_sidecar_enabled_when_main_process_is_blocked(

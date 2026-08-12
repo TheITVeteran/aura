@@ -7442,7 +7442,20 @@ def _model_text_integrity_reasons(
             from core.conversation.surface_disposition import turn_tool_receipts
 
             receipts = turn_tool_receipts()
-        except Exception:
+        except Exception as exc:  # noqa: BLE001 - reported below, then fails closed
+            # Silent before this. The empty tuple is what
+            # `_has_unfounded_tool_execution_claim` reads to decide whether a
+            # claim about running a tool is founded, so losing the receipts
+            # makes every such claim look unfounded — or, if the check is
+            # inverted anywhere downstream, makes none of them checkable. A
+            # reliability gate whose evidence quietly became empty is the
+            # absence of a check reported as a passed check.
+            record_degradation(
+                "response_reliability",
+                exc,
+                severity="warning",
+                action="evaluated tool-execution claims with no receipts available",
+            )
             receipts = ()
         if _has_unfounded_tool_execution_claim(raw, tool_receipts=receipts):
             reasons.append("unfounded_tool_execution_claim")

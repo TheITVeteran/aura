@@ -523,7 +523,7 @@ def run_heterogeneous_integration(
                     or evaluated["fusion_weight"] != gamma
                 ):
                     raise ValueError("heterogeneous policy evidence state lineage differs")
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001 - reported on the receipt as an empty result
         receipt = _empty_receipt(
             config=config,
             contradiction_perturbation=contradiction_perturbation,

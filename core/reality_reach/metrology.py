@@ -612,7 +612,7 @@ class RealityMetrologyService:
                     self._inflight_refresh.result()
                 except asyncio.CancelledError:
                     pass
-                except Exception as exc:
+                except Exception as exc:  # noqa: BLE001 - logged at warning before acquisition continues
                     logger.warning("Prior Reality Reach refresh failed before acquisition: %s", exc)
                 self._inflight_refresh = None
             started_ns = int(self._wall_clock_ns())

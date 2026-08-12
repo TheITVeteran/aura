@@ -618,7 +618,7 @@ class TransientConstraintLedger:
                         else {}
                     )
                     results[name].append(normalized)
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001 - recorded as an inactive attempt with the reason
             return self._record_inactive_attempt(
                 source=source,
                 status="restored",

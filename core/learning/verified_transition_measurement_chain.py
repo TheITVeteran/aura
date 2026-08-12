@@ -251,7 +251,7 @@ def _tensor_maps_equal(
         comparisons = [mx.array_equal(left[key], right[key]) for key in sorted(left)]
         mx.eval(*comparisons)
         return all(bool(value) for value in comparisons)
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001 - logged, and the comparison fails closed
         logger.debug("Tensor-map identity comparison failed closed: %s", exc)
         return False
 

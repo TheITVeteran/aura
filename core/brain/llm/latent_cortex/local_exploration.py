@@ -763,7 +763,7 @@ def run_local_exploration(
         for replicate, order in enumerate(orders):
             for label in order:
                 results[label].append(evaluate(label, states[label], replicate).normalized())
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001 - reported on the receipt as an empty result
         payload = _empty_receipt(
             config=config,
             contradiction_tensor=contradiction_tensor,

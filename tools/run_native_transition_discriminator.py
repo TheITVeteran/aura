@@ -681,7 +681,7 @@ def main() -> int:
             learning_rate=args.learning_rate,
             bottleneck_size=args.bottleneck_size,
         )
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001 - printed to stderr and returned non-zero
         print(
             f"native_transition_discriminator_failed:{type(exc).__name__}:{exc}",
             file=sys.stderr,

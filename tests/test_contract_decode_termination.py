@@ -488,7 +488,22 @@ def test_branch_selection_receipts_contract_verdicts():
     rows = result.receipt.branch_contract
     assert [row["branch"] for row in rows] == [0, 1]
     for row in rows:
-        assert set(row) == {"branch", "marker_count", "complete", "valid", "reason"}
+        # `response_contract_valid` is a real verdict the engine now emits
+        # per branch: the probe text is checked against the response contract
+        # as well as the decode contract, and a branch that fails the second
+        # is marked invalid with reason "response_contract_invalid". Kept as
+        # an exact set rather than a superset so a junk field still fails —
+        # the point of this assertion is that a receipt row carries the
+        # verdicts and nothing else.
+        assert set(row) == {
+            "branch",
+            "marker_count",
+            "complete",
+            "valid",
+            "reason",
+            "response_contract_valid",
+        }
+        assert row["response_contract_valid"] in (True, False, None)
         # _ContractAtFive probes decode to the complete contract text.
         assert row["complete"] is True and row["valid"] is True
     assert "branch_contract" in result.receipt.to_dict()

@@ -450,7 +450,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     try:
         print(json.dumps(verify(args), indent=2, sort_keys=True))
         return 0
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001 - printed to stderr and returned non-zero
         print(
             f"verify_resident_v3_recovery_training_admission: {type(exc).__name__}: {exc}",
             file=sys.stderr,

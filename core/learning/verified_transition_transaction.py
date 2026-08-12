@@ -295,7 +295,7 @@ def _tensor_maps_equal(left: Mapping[str, Any], right: Mapping[str, Any]) -> boo
         comparisons = [mx.array_equal(left[key], right[key]) for key in left]
         mx.eval(*comparisons)
         return all(bool(value) for value in comparisons)
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001 - logged, and the comparison fails closed
         logger.debug("Transaction tensor comparison failed closed: %s", exc)
         return False
 
