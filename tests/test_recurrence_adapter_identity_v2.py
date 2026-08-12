@@ -4,9 +4,11 @@ from __future__ import annotations
 import copy
 import hashlib
 import json
+from pathlib import PurePosixPath
 
 import pytest
 
+from core.brain.llm.latent_cortex import recurrence_adapter_identity_v2 as identity_v2
 from core.brain.llm.latent_cortex.execution_spec import RLCExecutionSpec
 from core.brain.llm.latent_cortex.recurrence_adapter_identity_v2 import (
     SOURCE_ROLES,
@@ -28,6 +30,85 @@ def _binding(path: str, payload: bytes) -> dict[str, object]:
         "sha256": hashlib.sha256(payload).hexdigest(),
         "size_bytes": len(payload),
     }
+
+
+def _dependency_runtime(files: list[dict[str, object]]) -> dict[str, object]:
+    files = sorted(files, key=lambda row: str(row["path"]))
+    dependencies = {}
+    for name in ("mlx", "mlx-lm", "numpy"):
+        dependency_body = {
+            "schema": identity_v2.DEPENDENCY_TREE_SCHEMA_V1,
+            "distribution": name,
+            "version": "1.0",
+            "file_count": len(files),
+            "total_bytes": sum(int(row["size_bytes"]) for row in files),
+            "files": files,
+        }
+        dependencies[name] = {
+            **dependency_body,
+            "tree_sha256": hashlib.sha256(
+                canonical_json_bytes(dependency_body)
+            ).hexdigest(),
+        }
+    body = {
+        "python": "3.12.0",
+        "platform_system": "Darwin",
+        "platform_release": "test",
+        "platform_machine": "arm64",
+        "dependencies": dependencies,
+    }
+    return {
+        **body,
+        "identity_sha256": hashlib.sha256(canonical_json_bytes(body)).hexdigest(),
+    }
+
+
+def test_dependency_identity_excludes_optional_python_bytecode(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    source = tmp_path / "pkg/module.py"
+    source.parent.mkdir()
+    source.write_text("VALUE = 1\n", encoding="ascii")
+
+    class Distribution:
+        version = "1.0"
+        files = (
+            PurePosixPath("pkg/module.py"),
+            PurePosixPath("pkg/__pycache__/module.cpython-312.pyc"),
+        )
+
+        @staticmethod
+        def locate_file(path):
+            return tmp_path / str(path)
+
+    monkeypatch.setattr(
+        identity_v2.importlib.metadata,
+        "distribution",
+        lambda _name: Distribution(),
+    )
+
+    observed = identity_v2._distribution_tree_identity("demo")  # noqa: SLF001
+
+    assert observed["file_count"] == 1
+    assert [row["path"] for row in observed["files"]] == ["pkg/module.py"]
+
+
+def test_runtime_semantics_ignore_bytecode_but_not_source_changes() -> None:
+    source = _binding("pkg/module.py", b"VALUE = 1\n")
+    changed_source = _binding("pkg/module.py", b"VALUE = 2\n")
+    bytecode = _binding("pkg/__pycache__/module.cpython-312.pyc", b"cache")
+
+    without_cache = _dependency_runtime([source])
+    with_cache = _dependency_runtime([source, bytecode])
+    changed = _dependency_runtime([changed_source])
+
+    assert identity_v2._runtime_semantic_identity(  # noqa: SLF001
+        without_cache
+    ) == identity_v2._runtime_semantic_identity(with_cache)  # noqa: SLF001
+    assert identity_v2._runtime_semantic_identity(  # noqa: SLF001
+        without_cache
+    ) != identity_v2._runtime_semantic_identity(changed)  # noqa: SLF001
 
 
 def _bundle():

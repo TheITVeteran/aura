@@ -45929,20 +45929,6 @@ is frozen and its authenticated controller is waiting for strict terminal
 admission. No decoded gain, replication, serving authority, fusion authority,
 frontier result or `WOW Signal` is claimed.
 
-## Checkpoint 2026-08-12-281: One Evaluator Identity Governs Every Seed
-
-The powered replication preregistration now commits the complete evaluator
-source digest map before any seed starts. The controller rechecks those bytes
-whenever it reopens the plan, and adjudication requires every per-seed report
-to carry that same map. A source change between seeds is therefore an explicit
-infrastructure failure, not an unreported experiment change.
-
-Validation is green: `35/35` focused evaluator, launcher and replication tests,
-focused Ruff and `104/104` canonical smoke passed, including direct post-plan
-source-drift rejection. No task, prompt, arm, model, seed, sample count or
-decision threshold changed. Next is a fresh v3 plan and detached resident
-launch from the exact CP275 training source plus the CP280 evaluator overlay.
-
 ## Checkpoint 2026-08-12-272: Restart and Rollback Are Executable Evidence
 
 The live shadow canary previously forced package discovery through an
@@ -46167,3 +46153,32 @@ prompt, arm and decision identities remain unchanged. Next is freezing an
 old-source-compatible evaluator capsule, proving pre-score loading of both exact
 controllers and relaunching the unconsumed battery. No decoded gain, fusion,
 frontier result or `WOW Signal` is claimed.
+
+## Checkpoint 2026-08-12-281: One Evaluator Identity Governs Every Seed
+
+The powered replication preregistration now commits the complete evaluator
+source digest map before any seed starts. The controller rechecks those bytes
+whenever it reopens the plan, and adjudication requires every per-seed report
+to carry that same map. A source change between seeds is therefore an explicit
+infrastructure failure, not an unreported experiment change.
+
+Validation is green: `35/35` focused evaluator, launcher and replication tests,
+focused Ruff and `104/104` canonical smoke passed, including direct post-plan
+source-drift rejection. No task, prompt, arm, model, seed, sample count or
+decision threshold changed. The v3 plan is now live under launchd with the
+exact CP275 training source and CP280 evaluator overlay.
+
+## Checkpoint 2026-08-12-282: Runtime Identity Excludes Ephemeral Bytecode
+
+Installed-package identity previously included optional `.pyc` and
+`__pycache__` entries from wheel metadata. Importing an otherwise unused MLX
+model could therefore change the runtime digest without changing source,
+native code, package version or behavior. The collector now excludes Python
+bytecode caches while continuing to hash stable source, metadata and native
+binary bytes. Semantic comparison normalizes those caches out of older valid
+receipts, but any source or native-package change still fails closed.
+
+Validation is green: `30/30` focused identity and resident-bootstrap tests,
+focused Ruff and `104/104` canonical smoke passed. The active CP281 evaluator
+already completed exact model, checkpoint and matched-parent loading and wrote
+its first durable decode records before this independent hardening change.

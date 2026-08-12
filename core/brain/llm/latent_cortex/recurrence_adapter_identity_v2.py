@@ -524,6 +524,8 @@ def _distribution_tree_identity(distribution_name: str) -> dict[str, Any]:
     records: list[dict[str, Any]] = []
     for declared in sorted(declared_files, key=str):
         declared_label = str(declared)
+        if _is_ephemeral_python_bytecode(declared_label):
+            continue
         declared_parts = PurePosixPath(declared_label).parts
         label = (
             declared_label
@@ -581,6 +583,16 @@ def _distribution_tree_identity(distribution_name: str) -> dict[str, Any]:
         "files": records,
     }
     return {**body, "tree_sha256": sha256_bytes(canonical_json_bytes(body))}
+
+
+def _is_ephemeral_python_bytecode(path: str) -> bool:
+    """Exclude interpreter caches that are neither source nor stable runtime input."""
+
+    candidate = PurePosixPath(path)
+    return (
+        "__pycache__" in candidate.parts
+        or candidate.suffix.lower() in {".pyc", ".pyo"}
+    )
 
 
 def runtime_environment_identity() -> dict[str, Any]:
@@ -755,6 +767,31 @@ def _runtime_identity(value: Any) -> dict[str, Any]:
     if identity_sha256 != sha256_bytes(canonical_json_bytes(body)):
         _fail("training_runtime_digest_mismatch")
     return {**body, "identity_sha256": identity_sha256}
+
+
+def _runtime_semantic_identity(value: Any) -> dict[str, Any]:
+    """Compare executable package content independent of optional bytecode caches."""
+
+    normalized = _runtime_identity(value)
+    dependencies = {
+        name: {
+            "distribution": dependency["distribution"],
+            "version": dependency["version"],
+            "files": [
+                record
+                for record in dependency["files"]
+                if not _is_ephemeral_python_bytecode(record["path"])
+            ],
+        }
+        for name, dependency in normalized["dependencies"].items()
+    }
+    return {
+        "python": normalized["python"],
+        "platform_system": normalized["platform_system"],
+        "platform_release": normalized["platform_release"],
+        "platform_machine": normalized["platform_machine"],
+        "dependencies": dependencies,
+    }
 
 
 def _verify_artifact(
@@ -932,7 +969,9 @@ def validate_v2_adapter_identity(
     if personality != _personality_identity(actual_personality_adapter):
         _fail("personality_adapter_mismatch")
     training_runtime = _runtime_identity(parsed["training_runtime"])
-    if training_runtime != _runtime_identity(actual_runtime_environment):
+    if _runtime_semantic_identity(training_runtime) != _runtime_semantic_identity(
+        actual_runtime_environment
+    ):
         _fail("training_runtime_mismatch")
 
     artifact_roles = [
