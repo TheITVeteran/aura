@@ -4,6 +4,7 @@ import argparse
 import hashlib
 import json
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -116,6 +117,41 @@ def _terminal_fixture(
         "_checkpoint_snapshot",
         lambda _config: checkpoint,
     )
+    selected_receipt = {
+        "step": checkpoint["step"],
+        "checkpoint_sha256": checkpoint["checkpoint_sha256"],
+        "receipt_sha256": checkpoint["receipt_sha256"],
+        "identity": {"identity_sha256": "e" * 64},
+    }
+    monkeypatch.setattr(
+        launcher,
+        "resolve_checkpoint_generation",
+        lambda *_args, **_kwargs: SimpleNamespace(receipt=selected_receipt),
+    )
+    training_body = {
+        "schema": "aura.unified_intrinsic_training.v1",
+        "steps": checkpoint["step"],
+        "verdict": "answer_bridge_admitted",
+        "answer_bridge_admission": {"admitted": True, "exact": 1, "tasks": 1},
+    }
+    training_receipt = {
+        **training_body,
+        "receipt_sha256": launcher.canonical_sha256(training_body),
+    }
+    checkpoint["training_receipt"]["receipt_sha256"] = training_receipt[
+        "receipt_sha256"
+    ]
+    (output / "training_receipt.json").write_bytes(
+        launcher.canonical_bytes(training_receipt) + b"\n"
+    )
+    completion_body["checkpoint"] = completion_checkpoint or checkpoint
+    completion = {
+        **completion_body,
+        "completion_sha256": launcher.canonical_sha256(completion_body),
+    }
+    (root / "completion-receipt.json").write_bytes(
+        launcher.canonical_bytes(completion) + b"\n"
+    )
     return _arguments(root), config, checkpoint
 
 
@@ -128,6 +164,7 @@ def test_prepare_binds_terminal_checkpoint_and_frozen_evaluator(
     plan = launcher.prepare(arguments)
 
     assert plan["scientific"]["checkpoint_sha256"] == checkpoint["checkpoint_sha256"]
+    assert plan["scientific"]["checkpoint"]["stem"] == arguments.stem
     assert plan["command"][0] == config["runtime"]["interpreter"]["executable"]
     assert plan["evaluator_command"][1].startswith(
         str(Path(config["source"]["git"]["root"]))
@@ -174,6 +211,24 @@ def test_prepare_rejects_completion_for_a_different_checkpoint(
     with pytest.raises(
         launcher.ResidentEvaluationLaunchError,
         match="exact terminal campaign checkpoint",
+    ):
+        launcher.prepare(arguments)
+
+
+def test_prepare_rejects_missing_admitted_checkpoint_before_model_launch(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    arguments, _config, _checkpoint = _terminal_fixture(tmp_path, monkeypatch)
+
+    def missing(*_args: object, **_kwargs: object) -> None:
+        raise launcher.UnifiedCheckpointError("missing")
+
+    monkeypatch.setattr(launcher, "resolve_checkpoint_generation", missing)
+
+    with pytest.raises(
+        launcher.ResidentEvaluationLaunchError,
+        match="checkpoint is unavailable",
     ):
         launcher.prepare(arguments)
 

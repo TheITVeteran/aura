@@ -22,6 +22,7 @@ def _arguments(campaign: Path, **overrides: object) -> argparse.Namespace:
         "max_tokens": 32,
         "poll_interval": 0.01,
         "controller_timeout": 60.0,
+        "launchd_supervised": True,
         "task_depths": (1, 2, 4),
         "recurrence_depths": (4,),
     }
@@ -286,7 +287,18 @@ def test_run_adjudicates_and_publishes_terminal_controller_state(
     monkeypatch.setattr(
         replication,
         "_campaign_is_terminal",
-        lambda _campaign, _config: (True, {"completion_sha256": "e" * 64}),
+        lambda _campaign, _config: (
+            True,
+            {
+                "completion_sha256": "e" * 64,
+                "answer_bridge_admitted": True,
+            },
+        ),
+    )
+    monkeypatch.setattr(
+        replication,
+        "_verify_launchd_supervision",
+        lambda *_args: {"target": "gui/501/test"},
     )
     monkeypatch.setattr(
         replication,
@@ -320,6 +332,83 @@ def test_run_adjudicates_and_publishes_terminal_controller_state(
     assert result["supported"] is True
     assert published[-1][0] == "completed"
     assert published[-1][1]["verdict_sha256"] == "f" * 64
+
+
+def test_run_stops_cleanly_when_terminal_training_never_earned_admission(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    plan_body = _installed_plan(tmp_path)
+    plan = {**plan_body, "plan_sha256": canonical_sha256(plan_body)}
+    config = _config(tmp_path)
+    monkeypatch.setattr(
+        replication,
+        "_load_plan",
+        lambda _args: (tmp_path, config, plan),
+    )
+    monkeypatch.setattr(
+        replication,
+        "_verify_launchd_supervision",
+        lambda *_args: {"target": "gui/501/test"},
+    )
+    monkeypatch.setattr(
+        replication,
+        "_campaign_is_terminal",
+        lambda _campaign, _config: (
+            True,
+            {
+                "completion_sha256": "e" * 64,
+                "answer_bridge_admitted": False,
+                "admission_error": "checkpoint unavailable",
+            },
+        ),
+    )
+    monkeypatch.setattr(
+        replication,
+        "launch_next",
+        lambda _args: pytest.fail("an evaluator must not launch without admission"),
+    )
+    published: list[str] = []
+
+    def publish(*_args: object) -> dict[str, str]:
+        published.append(str(_args[4]))
+        return {"state": str(_args[4])}
+
+    monkeypatch.setattr(replication, "_publish_controller_status", publish)
+
+    result = replication.run(_arguments(tmp_path))
+
+    assert result["state"] == "not_admitted"
+    assert result["supported"] is False
+    assert published == ["not_admitted"]
+
+
+def test_launchd_contract_runs_process_capable_controller_with_failure_restart(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    campaign = tmp_path / "campaign"
+    campaign.mkdir()
+    config = _config(campaign)
+    plan_body = _installed_plan(campaign)
+    plan = {**plan_body, "plan_sha256": canonical_sha256(plan_body)}
+    monkeypatch.setattr(replication, "LAUNCH_AGENTS_ROOT", tmp_path / "agents")
+
+    plist_path, plist_bytes, intent = replication._launch_contract(  # noqa: SLF001
+        _arguments(campaign), campaign, config, plan
+    )
+
+    import plistlib
+
+    plist = plistlib.loads(plist_bytes)
+    assert plist_path.parent == tmp_path / "agents"
+    assert plist["KeepAlive"] == {"SuccessfulExit": False}
+    assert "--launchd-supervised" in plist["ProgramArguments"]
+    assert plist["ProgramArguments"][2:4] == ["run", str(campaign)]
+    assert intent["plan_sha256"] == plan["plan_sha256"]
+    assert intent["controller_source_sha256"] == replication.hashlib.sha256(
+        Path(replication.__file__).read_bytes()
+    ).hexdigest()
 
 
 def test_status_authenticates_controller_heartbeat_and_rejects_tampering(

@@ -29,6 +29,10 @@ from core.runtime.atomic_writer import (  # noqa: E402
 from core.runtime.mlx_memory_guard import host_pressure  # noqa: E402
 from tools import run_detached_step as detached  # noqa: E402
 from tools import run_unified_intrinsic_resident_campaign as resident  # noqa: E402
+from tools.unified_intrinsic_checkpoint import (  # noqa: E402
+    UnifiedCheckpointError,
+    resolve_checkpoint_generation,
+)
 from tools.unified_intrinsic_preload_barrier import (  # noqa: E402
     command_sha256,
     publish_release,
@@ -140,6 +144,54 @@ def _terminal_campaign(config_path: Path) -> tuple[dict[str, Any], dict[str, Any
     return config, completion
 
 
+def _selected_checkpoint(
+    config: Mapping[str, Any],
+    completion: Mapping[str, Any],
+    *,
+    stem: str,
+) -> dict[str, Any]:
+    """Resolve the exact checkpoint named by an evaluation before model load."""
+
+    output = Path(str(config["paths"]["training_output"]))
+    try:
+        selected = resolve_checkpoint_generation(output, stem=stem, required=True)
+    except (OSError, UnifiedCheckpointError, ValueError) as exc:
+        raise ResidentEvaluationLaunchError(
+            f"resident evaluation checkpoint is unavailable: {stem}"
+        ) from exc
+    if selected is None:  # pragma: no cover - required=True is authoritative
+        _fail(f"resident evaluation checkpoint is unavailable: {stem}")
+    receipt = selected.receipt
+    checkpoint = completion.get("checkpoint")
+    if not isinstance(checkpoint, dict):
+        _fail("resident evaluation completion checkpoint is malformed")
+    if stem == "checkpoint_answer_bridge_admitted":
+        training_receipt = checkpoint.get("training_receipt")
+        training_receipt_path = output / "training_receipt.json"
+        persisted = _read_document(training_receipt_path)
+        admission = persisted.get("answer_bridge_admission")
+        if (
+            not isinstance(training_receipt, dict)
+            or training_receipt.get("binding") != "authoritative_checkpoint"
+            or persisted.get("receipt_sha256") != training_receipt.get("receipt_sha256")
+            or persisted.get("verdict") != "answer_bridge_admitted"
+            or not isinstance(admission, dict)
+            or admission.get("admitted") is not True
+            or admission.get("exact") != admission.get("tasks")
+            or type(admission.get("tasks")) is not int
+            or int(admission["tasks"]) < 1
+            or receipt.get("step") != persisted.get("steps")
+        ):
+            _fail("resident evaluation requires an admitted answer-bridge checkpoint")
+    return {
+        "stem": stem,
+        "step": receipt["step"],
+        "checkpoint_sha256": receipt["checkpoint_sha256"],
+        "receipt_sha256": receipt["receipt_sha256"],
+        "identity_sha256": receipt["identity"]["identity_sha256"],
+    }
+
+
 def _evaluation_root(arguments: argparse.Namespace) -> tuple[Path, Path]:
     campaign_root = arguments.campaign.expanduser().resolve(strict=True)
     evaluation_root = (
@@ -173,6 +225,11 @@ def _build_plan(arguments: argparse.Namespace) -> dict[str, Any]:
     requested_campaign_root, evaluation_root = _evaluation_root(arguments)
     config_path = requested_campaign_root / "campaign.json"
     config, completion = _terminal_campaign(config_path)
+    selected_checkpoint = _selected_checkpoint(
+        config,
+        completion,
+        stem=arguments.stem,
+    )
     campaign_root = Path(config["paths"]["campaign_root"])
     source_root = Path(config["source"]["git"]["root"]).resolve(strict=True)
     python = Path(config["runtime"]["interpreter"]["executable"])
@@ -196,7 +253,8 @@ def _build_plan(arguments: argparse.Namespace) -> dict[str, Any]:
     scientific = {
         "campaign_config_sha256": config["config_sha256"],
         "campaign_completion_sha256": completion["completion_sha256"],
-        "checkpoint_sha256": completion["checkpoint"]["checkpoint_sha256"],
+        "checkpoint_sha256": selected_checkpoint["checkpoint_sha256"],
+        "checkpoint": selected_checkpoint,
         "evaluator": str(evaluator),
         "stem": arguments.stem,
         "per_cell": arguments.per_cell,
@@ -359,6 +417,10 @@ def _next_attempt_run_dir(root: Path) -> tuple[int, Path]:
 
 def launch(arguments: argparse.Namespace) -> dict[str, Any]:
     plan = prepare(arguments)
+    config, completion = _terminal_campaign(Path(plan["campaign_root"]) / "campaign.json")
+    selected = _selected_checkpoint(config, completion, stem=str(plan["scientific"]["stem"]))
+    if selected != plan["scientific"].get("checkpoint"):
+        _fail("resident evaluation selected checkpoint differs from its frozen plan")
     root = Path(plan["evaluation_root"])
     attempt, run_dir = _next_attempt_run_dir(root)
     detached_result = _invoke_detached(

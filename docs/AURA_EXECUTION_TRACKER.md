@@ -45629,3 +45629,37 @@ evidence; repair and exact frozen replication recovery remain open. No runtime
 promotion, broad reasoning result, fusion authority, frontier result or
 `WOW Signal` is claimed. The completion envelope remains `913/920`
 (approximately `99.2%`).
+
+## Checkpoint 2026-08-11-262: Replication Cannot Outrun Training Admission
+
+The completed CP254 campaign exposed two independent orchestration defects
+before any powered replication decode ran. Its strict terminal answer bridge
+was `26/27`, so `checkpoint_answer_bridge_admitted` was correctly never
+published; nevertheless the old evaluator launcher trusted the requested stem
+and would have loaded the resident model before discovering that absence. The
+replication controller was also nested inside the detached supervisor's
+intentional no-fork sandbox even though its job is to create independently
+contained evaluator and sentinel processes, so the kernel denied its first
+launch with `EPERM`.
+
+Evaluation now resolves and authenticates the exact named checkpoint before
+any process or model load. The admitted stem additionally requires the bound
+training receipt to say `answer_bridge_admitted`, prove exact equals total, and
+match the selected checkpoint step. Stored plans are rechecked at launch, so a
+stale or fabricated stem cannot bypass the gate. The replication controller
+terminates cleanly as `not_admitted` when terminal training never earned that
+artifact and cannot launch an evaluator in that state.
+
+Process topology now reflects actual responsibilities: launchd supervises the
+lightweight replication controller and restarts only infrastructure failures;
+each resident evaluator and memory sentinel remains under the strict no-fork
+detached supervisor, process-group custody, sleep inhibition and resource
+guard. The launch intent binds campaign, plan, controller source, exact plist
+and arguments. `19/19` focused launcher and adjudicator tests pass; Ruff,
+compilation and diff hygiene pass. CP254 therefore provides useful negative
+admission evidence, not a powered replication verdict. No runtime promotion,
+fusion authority, broad reasoning result, frontier result or `WOW Signal` is
+claimed. The completion envelope remains `913/920` (approximately `99.2%`).
+Next is a provenance-bound warm-start recovery that reuses the step-73 tissue,
+trains on fresh examples without leaking the failed holdout, and must earn a
+new strict admission before powered evaluation.

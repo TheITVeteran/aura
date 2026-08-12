@@ -8,6 +8,9 @@ import hashlib
 import hmac
 import json
 import os
+import plistlib
+import re
+import subprocess
 import sys
 import time
 from collections.abc import Mapping, Sequence
@@ -38,9 +41,12 @@ from tools.unified_intrinsic_resident_identity import (  # noqa: E402
 PLAN_SCHEMA: Final = "aura.unified_intrinsic.resident_replication_plan.v1"
 VERDICT_SCHEMA: Final = "aura.unified_intrinsic.resident_replication_verdict.v1"
 CONTROLLER_STATUS_SCHEMA: Final = "aura.unified_intrinsic.resident_replication_controller_status.v1"
+LAUNCH_INTENT_SCHEMA: Final = "aura.unified_intrinsic.resident_replication_launch_intent.v1"
+LAUNCH_RECEIPT_SCHEMA: Final = "aura.unified_intrinsic.resident_replication_launchd.v1"
 SUPPORTED: Final = "supported_powered_resident_replication"
 REFUTED: Final = "refuted_powered_resident_replication"
 DEFAULT_SEEDS: Final = (20260811261, 20260811262, 20260811263)
+LAUNCH_AGENTS_ROOT: Final = Path.home() / "Library/LaunchAgents"
 
 
 class ResidentReplicationError(RuntimeError):
@@ -97,6 +103,180 @@ def _plan_path(arguments: argparse.Namespace, campaign: Path) -> Path:
 
 def _controller_status_path(arguments: argparse.Namespace, campaign: Path) -> Path:
     return _replication_root(arguments, campaign) / "controller-status.json"
+
+
+def _launch_label(config: Mapping[str, Any]) -> str:
+    campaign_id = str(config.get("campaign_id") or "")
+    if not campaign_id or re.fullmatch(r"[A-Za-z0-9._-]+", campaign_id) is None:
+        _fail("replication launchd campaign id is invalid")
+    return f"com.aura.unified-intrinsic-replication.{campaign_id}"
+
+
+def _launch_contract(
+    arguments: argparse.Namespace,
+    campaign: Path,
+    config: Mapping[str, Any],
+    plan: Mapping[str, Any],
+) -> tuple[Path, bytes, dict[str, Any]]:
+    root = _replication_root(arguments, campaign)
+    source_root = Path(__file__).resolve(strict=True).parent.parent
+    script = (source_root / "tools/adjudicate_unified_intrinsic_resident_replication.py").resolve(
+        strict=True
+    )
+    python = Path(sys.executable).resolve(strict=True)
+    label = _launch_label(config)
+    command = [
+        str(python),
+        str(script),
+        "run",
+        str(campaign),
+        "--controller-timeout",
+        str(float(arguments.controller_timeout)),
+        "--poll-interval",
+        str(float(arguments.poll_interval)),
+        "--launchd-supervised",
+    ]
+    if arguments.output is not None:
+        command.extend(["--output", str(root)])
+    payload = {
+        "Label": label,
+        "ProgramArguments": command,
+        "WorkingDirectory": str(campaign),
+        "RunAtLoad": True,
+        "KeepAlive": {"SuccessfulExit": False},
+        "ThrottleInterval": 30,
+        "ProcessType": "Background",
+        "StandardOutPath": str(root / "controller-launchd.log"),
+        "StandardErrorPath": str(root / "controller-launchd.log"),
+    }
+    plist = plistlib.dumps(payload, fmt=plistlib.FMT_XML, sort_keys=True)
+    plist_path = LAUNCH_AGENTS_ROOT / f"{label}.plist"
+    body = {
+        "schema": LAUNCH_INTENT_SCHEMA,
+        "campaign_id": config["campaign_id"],
+        "campaign_config_sha256": config["config_sha256"],
+        "plan_sha256": plan["plan_sha256"],
+        "label": label,
+        "plist_path": str(plist_path),
+        "plist_sha256": hashlib.sha256(plist).hexdigest(),
+        "program_arguments": command,
+        "working_directory": str(campaign),
+        "controller_source": str(script),
+        "controller_source_sha256": hashlib.sha256(script.read_bytes()).hexdigest(),
+    }
+    return plist_path, plist, {**body, "intent_sha256": canonical_sha256(body)}
+
+
+def _launchd_job(label: str) -> dict[str, Any]:
+    target = f"gui/{os.getuid()}/{label}"
+    result = subprocess.run(
+        ["/bin/launchctl", "print", target],
+        capture_output=True,
+        text=True,
+        timeout=30.0,
+        check=False,
+    )
+    if result.returncode != 0:
+        _fail("replication launchd job is unavailable")
+    pid = 0
+    for line in result.stdout.splitlines():
+        stripped = line.strip()
+        if stripped.startswith("pid = "):
+            try:
+                pid = int(stripped.removeprefix("pid = "))
+            except ValueError:
+                _fail("replication launchd pid is invalid")
+            break
+    if pid <= 1:
+        _fail("replication launchd pid is unavailable")
+    return {"target": target, "pid": pid}
+
+
+def _verify_launchd_supervision(
+    arguments: argparse.Namespace,
+    campaign: Path,
+    config: Mapping[str, Any],
+    plan: Mapping[str, Any],
+) -> dict[str, Any]:
+    if getattr(arguments, "launchd_supervised", False) is not True:
+        _fail("replication launchd supervision is required")
+    plist_path, expected_plist, expected_intent = _launch_contract(
+        arguments, campaign, config, plan
+    )
+    intent = _read_canonical(_replication_root(arguments, campaign) / "launch-intent.json")
+    if intent != expected_intent or plist_path.read_bytes() != expected_plist:
+        _fail("replication launchd intent differs")
+    job = _launchd_job(_launch_label(config))
+    if job["pid"] != os.getpid():
+        _fail("replication launchd controller pid differs")
+    return {
+        "target": job["target"],
+        "controller_pid": job["pid"],
+        "controller_start_token": launcher.detached._process_start_token(job["pid"]),  # noqa: SLF001
+        "intent_sha256": intent["intent_sha256"],
+        "plist_sha256": intent["plist_sha256"],
+    }
+
+
+def install_launchd(arguments: argparse.Namespace) -> dict[str, Any]:
+    campaign, config, plan = _load_plan(arguments)
+    root = _replication_root(arguments, campaign)
+    ensure_private_directory(root)
+    plist_path, plist, intent = _launch_contract(arguments, campaign, config, plan)
+    intent_path = root / "launch-intent.json"
+    payload = canonical_bytes(intent) + b"\n"
+    if not atomic_write_bytes_if_absent(intent_path, payload, mode=0o400):
+        if _read_canonical(intent_path) != intent:
+            _fail("replication launch intent already differs")
+    ensure_private_directory(LAUNCH_AGENTS_ROOT)
+    atomic_write_bytes(plist_path, plist, mode=0o600)
+    domain = f"gui/{os.getuid()}"
+    subprocess.run(
+        ["/bin/launchctl", "bootout", domain, str(plist_path)],
+        capture_output=True,
+        text=True,
+        timeout=30.0,
+        check=False,
+    )
+    started = subprocess.run(
+        ["/bin/launchctl", "bootstrap", domain, str(plist_path)],
+        capture_output=True,
+        text=True,
+        timeout=30.0,
+        check=False,
+    )
+    if started.returncode != 0:
+        _fail(f"replication launchd bootstrap failed: {started.stderr.strip()[:300]}")
+    deadline = time.monotonic() + 15.0
+    job: dict[str, Any] | None = None
+    while time.monotonic() < deadline:
+        try:
+            job = _launchd_job(_launch_label(config))
+            break
+        except ResidentReplicationError:
+            time.sleep(0.25)
+    if job is None:
+        _fail("replication launchd start timed out")
+    body = {
+        "schema": LAUNCH_RECEIPT_SCHEMA,
+        "campaign_id": config["campaign_id"],
+        "campaign_config_sha256": config["config_sha256"],
+        "plan_sha256": plan["plan_sha256"],
+        "intent_sha256": intent["intent_sha256"],
+        "target": job["target"],
+        "pid": job["pid"],
+        "start_token": launcher.detached._process_start_token(job["pid"]),  # noqa: SLF001
+        "plist_path": str(plist_path),
+        "plist_sha256": intent["plist_sha256"],
+        "installed_at_unix_ns": time.time_ns(),
+    }
+    receipt = {**body, "launch_sha256": canonical_sha256(body)}
+    atomic_write_bytes(
+        root / "launchd-receipt.json",
+        canonical_bytes(receipt) + b"\n",
+        mode=0o600,
+    )
+    return receipt
 
 
 def _controller_signature(body: Mapping[str, Any], key: bytes) -> str:
@@ -485,7 +665,23 @@ def _campaign_is_terminal(
         _verified_config, completion = launcher._terminal_campaign(  # noqa: SLF001
             campaign / "campaign.json"
         )
-        return True, {"completion_sha256": completion["completion_sha256"]}
+        try:
+            selected = launcher._selected_checkpoint(  # noqa: SLF001
+                config,
+                completion,
+                stem="checkpoint_answer_bridge_admitted",
+            )
+        except launcher.ResidentEvaluationLaunchError as exc:
+            return True, {
+                "completion_sha256": completion["completion_sha256"],
+                "answer_bridge_admitted": False,
+                "admission_error": str(exc),
+            }
+        return True, {
+            "completion_sha256": completion["completion_sha256"],
+            "answer_bridge_admitted": True,
+            "admitted_checkpoint": selected,
+        }
     training = resident._inspect_status(config)  # noqa: SLF001
     if training.get("effective_state") == "failed":
         _fail("resident training failed before replication")
@@ -497,6 +693,7 @@ def _campaign_is_terminal(
 
 def run(arguments: argparse.Namespace) -> dict[str, Any]:
     campaign, config, plan = _load_plan(arguments)
+    launchd = _verify_launchd_supervision(arguments, campaign, config, plan)
     deadline = time.monotonic() + float(arguments.controller_timeout)
     try:
         while time.monotonic() < deadline:
@@ -512,6 +709,22 @@ def run(arguments: argparse.Namespace) -> dict[str, Any]:
                 )
                 time.sleep(float(arguments.poll_interval))
                 continue
+
+            if training.get("answer_bridge_admitted") is not True:
+                controller = _publish_controller_status(
+                    arguments,
+                    campaign,
+                    config,
+                    plan,
+                    "not_admitted",
+                    {**training, "launchd": launchd},
+                )
+                return {
+                    "state": "not_admitted",
+                    "supported": False,
+                    "reason": training.get("admission_error"),
+                    "controller": controller,
+                }
 
             observed = status(arguments)
             if observed["complete"] is True:
@@ -574,7 +787,10 @@ def run(arguments: argparse.Namespace) -> dict[str, Any]:
 
 def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("action", choices=("prepare", "status", "launch-next", "adjudicate", "run"))
+    parser.add_argument(
+        "action",
+        choices=("prepare", "status", "launch-next", "adjudicate", "run", "install-launchd"),
+    )
     parser.add_argument("campaign", type=Path)
     parser.add_argument("--output", type=Path)
     parser.add_argument("--verdict-output", type=Path)
@@ -587,6 +803,7 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--max-tokens", type=int, default=32)
     parser.add_argument("--poll-interval", type=float, default=15.0)
     parser.add_argument("--controller-timeout", type=float, default=16 * 60 * 60)
+    parser.add_argument("--launchd-supervised", action="store_true")
     parser.add_argument(
         "--task-depths",
         type=lambda value: launcher._csv_positive_ints(value, minimum=1),  # noqa: SLF001
@@ -618,12 +835,19 @@ def main(argv: Sequence[str] | None = None) -> int:
             "launch-next": launch_next,
             "adjudicate": adjudicate,
             "run": run,
+            "install-launchd": install_launchd,
         }[arguments.action](arguments)
     except (OSError, ValueError, ResidentReplicationError) as exc:
         print(f"resident replication failed: {exc}", file=sys.stderr)
         return 2
     print(json.dumps(result, indent=2, sort_keys=True))
-    if arguments.action in {"adjudicate", "run"} and result.get("supported") is not True:
+    if arguments.action == "adjudicate" and result.get("supported") is not True:
+        return 1
+    if arguments.action == "run" and result.get("state") not in {
+        "completed",
+        "refuted",
+        "not_admitted",
+    }:
         return 1
     return 0
 
