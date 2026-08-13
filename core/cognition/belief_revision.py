@@ -1,338 +1,81 @@
-"""Belief Revision System — Aura's Epistemic Engine
+"""core/cognition/belief_revision.py — retired duplicate belief engine.
 
-Manages Aura's beliefs about the world with confidence tracking,
-evidence-based revision, and contradiction detection.
+Aura had two belief-revision engines. One of them ran.
 
-A belief is a proposition Aura holds to be true, with:
-  - Confidence (0.0 to 1.0) — how strongly Aura believes it
-  - Evidence — what supports the belief
-  - Source — where the belief came from
-  - Revision history — how the belief has changed over time
+    core/epistemics/belief_revision.py    canonical. Started during boot by
+                                          BootAutonomyMixin, registered as the
+                                          `belief_revision_engine` service, and
+                                          referenced by the memory synthesizer.
+                                          639 lines: domains, PLN evidence
+                                          mass, consistency checking, logical
+                                          conflict resolution, atomspace
+                                          mirroring, persistence with
+                                          quarantine on an unreadable store.
 
-Key behaviors:
-  - New evidence can strengthen or weaken beliefs
-  - Contradictory evidence triggers belief revision
-  - Beliefs decay slightly if not reinforced over time
-  - The LLM can be asked to resolve contradictions
+    core/cognition/belief_revision.py     this file. 338 lines exposing
+                                          get_belief_engine(), reachable from
+                                          nothing at all.
 
-Design: Backed by the PersistentKnowledgeGraph for persistence.
+The duplicate was also less honest than it looked. Its module docstring
+declared four key behaviours — evidence adjusts confidence, contradictory
+evidence triggers revision, beliefs decay if unreinforced, the LLM resolves
+contradictions — and only the first existed. Its class docstring went further,
+claiming "contradictions are detected via semantic similarity + LLM judgment",
+and no such code was anywhere in the file. An epistemic engine that cannot be
+argued with is a list of things it was once told.
+
+So the resolution is not to wire this one up. Two belief engines is the problem
+the affect retirement already solved once: a second opinion presented as the
+first, from a model nothing else reads. What was worth keeping was the one
+capability the canonical engine genuinely lacked — decay — and that has been
+implemented there, damped by the evidence mass the canonical engine already
+tracks, so a conclusion drawn from twenty observations fades far more slowly
+than one drawn from an offhand remark.
+
+Worth recording separately: ``core/brain/llm/context_assembler.py`` tells the
+model, in the live system prompt, that "beliefs in your context carry a
+confidence, and that number is part of what you know". That instruction is
+about the canonical engine. It was accurate for the wired engine and would have
+been quietly wrong about this one.
+
+Retirement follows the pattern of core/global_workspace.py and
+core/affect/emotion_engine.py: keep the module importable, re-export the
+canonical names, let one implementation exist.
 """
 
-from core.runtime.errors import record_degradation
-import hashlib
-import json
-import logging
-import time
-from dataclasses import dataclass, field, asdict
-from typing import Any, Dict, List, Optional
+from __future__ import annotations
 
-logger = logging.getLogger("Cognition.Beliefs")
+from typing import Any
 
+from core.epistemics.belief_revision import (
+    Belief,
+    BeliefDomain,
+    BeliefRevisionEngine,
+    get_belief_revision_engine,
+)
 
-@dataclass
-class Belief:
-    """A single proposition Aura believes to be true."""
-    id: str
-    proposition: str
-    confidence: float              # 0.0 (no confidence) to 1.0 (certain)
-    evidence: List[str]            # Supporting evidence
-    source: str                    # Where the belief originated
-    created_at: float = field(default_factory=time.time)
-    last_updated: float = field(default_factory=time.time)
-    revision_count: int = 0
-    category: str = "general"      # "fact", "preference", "opinion", "rule", "self"
-    active: bool = True            # False if retracted
-
-    def to_dict(self) -> Dict[str, Any]:
-        return asdict(self)
-
-    @classmethod
-    def from_dict(cls, data: Dict[str, Any]) -> 'Belief':
-        return cls(**{k: v for k, v in data.items() if k in cls.__dataclass_fields__})
+__all__ = [
+    "Belief",
+    "BeliefDomain",
+    "BeliefRevisionEngine",
+    "get_belief_revision_engine",
+    "get_belief_engine",
+]
 
 
-class BeliefRevisionEngine:
-    """Manages Aura's belief system with evidence-based updates.
-    
-    Architecture:
-      - Beliefs are stored in the knowledge graph as type "belief"
-      - Contradictions are detected via semantic similarity + LLM judgment  
-      - Revision follows a Bayesian-like update: new evidence adjusts confidence
+def get_belief_engine(knowledge_graph: Any = None, brain: Any = None) -> Any:
+    """The one belief engine, from the container rather than a fresh instance.
+
+    Constructing an engine here is what created the second one. A caller that
+    wants beliefs wants the registered singleton the rest of the runtime reads;
+    if it is not registered they want to know that, rather than be handed a
+    private engine whose beliefs nothing else shares.
+
+    The ``knowledge_graph`` and ``brain`` arguments are accepted and ignored so
+    that any legacy call site keeps working — the canonical engine resolves its
+    own dependencies.
     """
+    from core.container import ServiceContainer
 
-    # Confidence thresholds
-    CERTAIN = 0.95
-    STRONG = 0.8
-    MODERATE = 0.5
-    WEAK = 0.3
-    RETRACTED = 0.05
-
-    def __init__(self, knowledge_graph=None, brain=None):
-        self._kg = knowledge_graph
-        self._brain = brain
-        self._beliefs: Dict[str, Belief] = {}
-        self._load_beliefs()
-
-    def _load_beliefs(self):
-        """Load beliefs from knowledge graph on startup."""
-        if not self._kg:
-            return
-        try:
-            nodes = self._kg.search_knowledge("", type="belief", limit=500)
-            for node in nodes:
-                raw_meta = node.get("metadata", {})
-                meta = raw_meta if isinstance(raw_meta, dict) else json.loads(raw_meta or "{}")
-                belief = Belief(
-                    id=node["id"],
-                    proposition=node["content"],
-                    confidence=node.get("confidence", 0.5),
-                    evidence=meta.get("evidence", []),
-                    source=node.get("source", "unknown"),
-                    created_at=node.get("created_at", time.time()),
-                    last_updated=meta.get("last_updated", time.time()),
-                    revision_count=meta.get("revision_count", 0),
-                    category=meta.get("category", "general"),
-                    active=meta.get("active", True),
-                )
-                self._beliefs[belief.id] = belief
-            logger.info("📖 Loaded %d beliefs from knowledge graph", len(self._beliefs))
-        except (OSError, ConnectionError, TimeoutError) as e:
-            record_degradation('belief_revision', e)
-            logger.warning("Failed to load beliefs: %s", e)
-
-    def believe(
-        self,
-        proposition: str,
-        confidence: float = 0.7,
-        evidence: str = "",
-        source: str = "conversation",
-        category: str = "general",
-    ) -> Belief:
-        """Form a new belief or strengthen an existing one.
-        
-        If a matching belief exists, confidence is updated via Bayesian-like averaging.
-        If not, a new belief is created and persisted.
-        """
-        belief_id = hashlib.sha256(proposition.lower().strip().encode()).hexdigest()[:16]
-
-        if belief_id in self._beliefs:
-            existing = self._beliefs[belief_id]
-            # Bayesian-like update: weighted average with existing confidence
-            n = existing.revision_count + 1
-            existing.confidence = (existing.confidence * n + confidence) / (n + 1)
-            existing.confidence = min(1.0, max(0.0, existing.confidence))
-            existing.revision_count += 1
-            existing.last_updated = time.time()
-            if evidence:
-                existing.evidence.append(evidence)
-                existing.evidence = existing.evidence[-10:]  # Keep last 10
-            self._persist_belief(existing)
-            logger.info("📖 Belief reinforced (%.2f): %s", existing.confidence, proposition[:60])
-            return existing
-
-        belief = Belief(
-            id=belief_id,
-            proposition=proposition,
-            confidence=confidence,
-            evidence=[evidence] if evidence else [],
-            source=source,
-            category=category,
-        )
-        self._beliefs[belief_id] = belief
-        self._persist_belief(belief)
-
-        logger.info("📖 New belief (%.2f): %s", confidence, proposition[:60])
-        
-        try:
-            from core.thought_stream import get_emitter
-            get_emitter().emit(
-                "Belief Formed 📖",
-                f"{proposition[:80]} (confidence: {confidence:.0%})",
-                level="info",
-                category="Cognition"
-            )
-        except (ImportError, AttributeError, RuntimeError) as _exc:
-            record_degradation('belief_revision', _exc)
-            logger.debug("Suppressed Exception: %s", _exc)
-
-        return belief
-
-    async def challenge(self, proposition: str, counter_evidence: str) -> Dict[str, Any]:
-        """Challenge an existing belief with new evidence.
-        
-        Uses the LLM to evaluate whether the counter-evidence is strong enough
-        to revise the belief. Returns the revision outcome.
-        """
-        belief_id = hashlib.sha256(proposition.lower().strip().encode()).hexdigest()[:16]
-        belief = self._beliefs.get(belief_id)
-
-        if not belief:
-            return {"revised": False, "reason": "No matching belief found"}
-
-        if not self._brain:
-            # Without LLM, apply simple confidence reduction
-            belief.confidence = max(0.1, belief.confidence - 0.15)
-            belief.evidence.append(f"[COUNTER] {counter_evidence}")
-            belief.revision_count += 1
-            belief.last_updated = time.time()
-            self._persist_belief(belief)
-            return {
-                "revised": True,
-                "old_confidence": belief.confidence + 0.15,
-                "new_confidence": belief.confidence,
-                "method": "simple_reduction"
-            }
-
-        # LLM-based evaluation
-        try:
-            prompt = (
-                f"You are evaluating whether new evidence should revise a belief.\n\n"
-                f"CURRENT BELIEF (confidence {belief.confidence:.0%}):\n"
-                f"  \"{belief.proposition}\"\n"
-                f"  Evidence: {'; '.join(belief.evidence[-3:])}\n\n"
-                f"NEW COUNTER-EVIDENCE:\n"
-                f"  \"{counter_evidence}\"\n\n"
-                f"On a scale of 0.0 to 1.0, what should the revised confidence be?\n"
-                f"Respond with ONLY a JSON object: "
-                f'{{\"revised_confidence\": 0.X, \"reasoning\": \"...\"}}'
-            )
-
-            response = await self._brain.generate(prompt, use_strategies=False)
-
-            import re
-            json_match = re.search(r'\{.*\}', response, re.DOTALL)
-            if json_match:
-                result = json.loads(json_match.group(0))
-                old_conf = belief.confidence
-                belief.confidence = max(0.0, min(1.0, float(result.get("revised_confidence", belief.confidence))))
-                belief.evidence.append(f"[COUNTER] {counter_evidence}")
-                belief.revision_count += 1
-                belief.last_updated = time.time()
-                
-                # Retract if confidence drops too low
-                if belief.confidence < self.RETRACTED:
-                    belief.active = False
-                    logger.info("📖 Belief retracted: %s", belief.proposition[:60])
-                
-                self._persist_belief(belief)
-
-                try:
-                    from core.thought_stream import get_emitter
-                    get_emitter().emit(
-                        "Belief Revised 📖",
-                        f"{belief.proposition[:60]}: {old_conf:.0%} → {belief.confidence:.0%}",
-                        level="warning" if abs(old_conf - belief.confidence) > 0.2 else "info",
-                        category="Cognition"
-                    )
-                except (ImportError, AttributeError, RuntimeError) as _exc:
-                    record_degradation('belief_revision', _exc)
-                    logger.debug("Suppressed Exception: %s", _exc)
-
-                return {
-                    "revised": True,
-                    "old_confidence": old_conf,
-                    "new_confidence": belief.confidence,
-                    "reasoning": result.get("reasoning", ""),
-                    "active": belief.active,
-                }
-
-        except (ImportError, AttributeError, RuntimeError) as e:
-            record_degradation('belief_revision', e)
-            logger.debug("LLM belief revision failed: %s", e)
-
-        return {"revised": False, "reason": "evaluation_failed"}
-
-    def get_beliefs(
-        self,
-        category: Optional[str] = None,
-        min_confidence: float = 0.0,
-        active_only: bool = True,
-    ) -> List[Belief]:
-        """Retrieve beliefs matching criteria."""
-        beliefs = list(self._beliefs.values())
-        if active_only:
-            beliefs = [b for b in beliefs if b.active]
-        if category:
-            beliefs = [b for b in beliefs if b.category == category]
-        if min_confidence > 0:
-            beliefs = [b for b in beliefs if b.confidence >= min_confidence]
-        beliefs.sort(key=lambda b: b.confidence, reverse=True)
-        return beliefs
-
-    def get_context_beliefs(self, query: str, limit: int = 5) -> str:
-        """Get beliefs relevant to a query, formatted for prompt injection."""
-        words = set(query.lower().split())
-        scored = []
-        for belief in self._beliefs.values():
-            if not belief.active:
-                continue
-            prop_words = set(belief.proposition.lower().split())
-            overlap = len(words & prop_words)
-            if overlap > 0:
-                score = overlap * belief.confidence
-                scored.append((score, belief))
-
-        if not scored:
-            return ""
-
-        scored.sort(key=lambda x: x[0], reverse=True)
-        top = scored[:limit]
-
-        lines = ["[Active Beliefs]"]
-        for _, b in top:
-            lines.append(f"- ({b.confidence:.0%}) {b.proposition}")
-        return "\n".join(lines) + "\n"
-
-    def get_stats(self) -> Dict[str, Any]:
-        """Belief system statistics."""
-        active = [b for b in self._beliefs.values() if b.active]
-        return {
-            "total_beliefs": len(self._beliefs),
-            "active_beliefs": len(active),
-            "retracted": len(self._beliefs) - len(active),
-            "avg_confidence": (
-                sum(b.confidence for b in active) / max(1, len(active))
-            ),
-            "categories": list(set(b.category for b in active)),
-            "most_revised": max(
-                (b.revision_count for b in self._beliefs.values()), default=0
-            ),
-        }
-
-    def _persist_belief(self, belief: Belief):
-        """Save belief to knowledge graph."""
-        if not self._kg:
-            return
-        try:
-            metadata = {
-                "evidence": belief.evidence[-10:],
-                "last_updated": belief.last_updated,
-                "revision_count": belief.revision_count,
-                "category": belief.category,
-                "active": belief.active,
-            }
-            # Use add_knowledge which does upsert
-            self._kg.add_knowledge(
-                content=belief.proposition,
-                type="belief",
-                source=belief.source,
-                confidence=belief.confidence,
-                metadata=metadata,
-            )
-        except (RuntimeError, AttributeError, TypeError, ValueError) as e:
-            record_degradation('belief_revision', e)
-            logger.warning("Failed to persist belief: %s", e)
-
-
-# ---------------------------------------------------------------------------
-# Singleton
-# ---------------------------------------------------------------------------
-_instance: Optional[BeliefRevisionEngine] = None
-
-
-def get_belief_engine(knowledge_graph=None, brain=None) -> BeliefRevisionEngine:
-    """Singleton accessor."""
-    global _instance
-    if _instance is None:
-        _instance = BeliefRevisionEngine(knowledge_graph=knowledge_graph, brain=brain)
-    return _instance
+    registered = ServiceContainer.get("belief_revision_engine", default=None)
+    return registered if registered is not None else get_belief_revision_engine()

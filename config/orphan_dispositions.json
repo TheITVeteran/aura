@@ -186,12 +186,6 @@
       "lines": 21,
       "reason": "exposes ['get_circuit']"
     },
-    "core.cognition.belief_revision": {
-      "classified": "SERVICE",
-      "disposition": "WIRE_PENDING",
-      "lines": 338,
-      "reason": "exposes ['get_belief_engine', 'get_beliefs', 'get_context_beliefs']"
-    },
     "core.cognition.loop_detector": {
       "classified": "SCAFFOLDING",
       "disposition": "RETIRE",

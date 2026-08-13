@@ -616,6 +616,65 @@ class BeliefRevisionEngine:
         await self._async_save()
         return {"ok": True, "episodes": len(recent_episodes), "derived_implications": derived_count}
 
+    #: Per-day multiplicative decay toward the point of no opinion, for a
+    #: belief carrying a single piece of evidence. The implied half-life is
+    #: about five weeks, long enough that a true belief nobody happened to
+    #: mention survives a normal gap in conversation.
+    DECAY_PER_DAY = 0.98
+    #: Beliefs age toward agnosticism, never toward disbelief. Absence of
+    #: reinforcement is absence of evidence; decaying to zero would let silence
+    #: manufacture the confident negative of everything ever believed.
+    DECAY_FLOOR = 0.5
+
+    def apply_decay(self, now: float | None = None) -> int:
+        """Age unreinforced beliefs toward agnosticism. Returns how many moved.
+
+        The engine tracked ``last_updated`` on every belief and never read it,
+        so a belief formed once from a passing remark was asserted with its
+        original confidence indefinitely. Nothing in the system could express
+        "I believed that, but it was a while ago and nothing has confirmed it
+        since" — which is most of what changing your mind slowly consists of.
+
+        Decay is damped by evidence mass rather than uniform. ``evidence_count``
+        already records how much weighted evidence stands behind a belief, so a
+        conclusion drawn from twenty observations should fade far more slowly
+        than one drawn from a single offhand comment. Ignoring that would erode
+        well-founded beliefs at exactly the same rate as guesses, which is the
+        opposite of epistemic hygiene.
+
+        ``now`` is injectable. A decay function that cannot be tested at a
+        chosen clock cannot be tested at all, which is how this codebase
+        previously shipped a recency score that had silently become a constant.
+        """
+        moment = time.time() if now is None else now
+        moved = 0
+        for belief in self.beliefs:
+            if belief.source == "axiom":
+                # Axioms are held by construction, not by evidence, so there is
+                # nothing for time to erode.
+                continue
+            days = max(0.0, (moment - belief.last_updated) / 86400.0)
+            if days < 1.0:
+                continue
+            if belief.confidence <= self.DECAY_FLOOR:
+                # Decay erodes; it never builds. Relaxing a doubted belief
+                # UPWARD toward the floor would let silence manufacture
+                # confidence in something previously disbelieved — measured at
+                # 0.10 rising to 0.4997 over a year before this guard. Old
+                # disbelief losing force is a defensible idea and it is not
+                # this function's job.
+                continue
+            mass = max(1.0, float(getattr(belief, "evidence_count", 1.0)))
+            retained = self.DECAY_PER_DAY ** (days / mass)
+            decayed = self.DECAY_FLOOR + (belief.confidence - self.DECAY_FLOOR) * retained
+            if abs(decayed - belief.confidence) < 1e-9:
+                continue
+            belief.confidence = min(1.0, max(0.0, decayed))
+            moved += 1
+        if moved:
+            logger.info("Belief decay: %d belief(s) aged toward agnosticism", moved)
+        return moved
+
     def get_summary(self) -> str:
         """Returns consolidated belief summary for context building."""
         self_beliefs = [

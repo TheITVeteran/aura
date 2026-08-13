@@ -139,6 +139,9 @@ def test_the_wire_pending_set_is_real_debt_and_stays_visible():
     """
     modules = _dispositions()["modules"]
     pending = [n for n, e in modules.items() if e["disposition"] == "WIRE_PENDING"]
-    assert len(pending) <= 66, (
+    # 66 at first count; 65 after core.cognition.belief_revision was resolved
+    # (retired as a duplicate, with its one genuine capability ported into the
+    # engine that runs). The ceiling only falls.
+    assert len(pending) <= 65, (
         f"modules written to be wired but unreachable grew to {len(pending)}"
     )

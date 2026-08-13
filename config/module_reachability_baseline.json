@@ -1,6 +1,6 @@
 {
-  "orphan_count": 279,
-  "orphan_lines": 26060,
+  "orphan_count": 278,
+  "orphan_lines": 25722,
   "orphans": [
     "core.advanced_cognition.evidence_deliberation",
     "core.advanced_cognition.social_cognition",
@@ -32,7 +32,6 @@
     "core.brain.verifiers.logic_engine",
     "core.capabilities.app_builder",
     "core.circuit_breaker",
-    "core.cognition.belief_revision",
     "core.cognition.loop_detector",
     "core.cognition.synthetic_language_genesis",
     "core.cognitive.parallel_thought",
