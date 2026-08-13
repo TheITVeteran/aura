@@ -512,6 +512,45 @@ class TestIdentityContract(unittest.TestCase):
         block = self._render()
         self.assertLessEqual(len(block), cp.MAX_OPERATIONAL_SELF_CONTEXT_CHARS)
 
+    def test_contract_uses_attributable_process_observation_for_uptime(self):
+        from core.runtime.resource_observation import (
+            ObservationProvenance,
+            ObservationSource,
+            ProcessObservation,
+        )
+
+        started_at = 1_700_000_000.0
+        observed_at = started_at + 42.75
+        process = ProcessObservation(
+            provenance=ObservationProvenance(
+                source=ObservationSource.SIMULATED,
+                scenario_id="chat-uptime-contract",
+                captured_at=observed_at,
+                observer="test",
+            ),
+            pid=os.getpid(),
+            ppid=1,
+            create_time=started_at,
+            status="running",
+            name="aura",
+            cmdline=("python", "aura_main.py"),
+            rss_bytes=1,
+        )
+        observer = mock.Mock()
+        observer.process.return_value = process
+
+        with (
+            mock.patch(
+                "core.runtime.resource_observation.get_resource_observer",
+                return_value=observer,
+            ),
+            mock.patch("core.conversation.chat_preflight.time.time", return_value=observed_at),
+        ):
+            block = self._render()
+
+        observer.process.assert_called_once_with(os.getpid())
+        self.assertIn("Uptime: 42 seconds since this process started.", block)
+
     def test_contract_includes_ranked_live_capability_catalog_when_available(self):
         import asyncio
 

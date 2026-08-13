@@ -1374,9 +1374,16 @@ def _live_health_summary() -> list[str]:
             stage="operational_self_context.heartbeats",
         )
     try:
-        import psutil
+        from core.runtime.resource_observation import get_resource_observer
 
-        uptime_s = max(0.0, time.time() - psutil.Process().create_time())
+        process = get_resource_observer().process(os.getpid())
+        if process is None:
+            raise RuntimeError("current process observation unavailable")
+        observed_at = time.time()
+        started_at = float(process.create_time)
+        if started_at <= 0.0 or started_at > observed_at + 1.0:
+            raise ValueError(f"invalid process create_time: {started_at!r}")
+        uptime_s = max(0.0, observed_at - started_at)
         lines.append(f"Uptime: {int(uptime_s)} seconds since this process started.")
     except _CHAT_PREFLIGHT_RECOVERABLE_ERRORS as exc:
         _emit_chat_fault(
@@ -1443,8 +1450,7 @@ _REFERENCE_STOPWORDS = frozenset(
         "your",
         # Pronouns and copulas, which carry no topic and dominate a BM25
         # any-term fallback if they reach the index.
-        "are", "hers", "him", "his", "she", "them", "they", "theirs", "was",
-        "were", "our", "ours", "myself", "itself", "there", "here",
+        "hers", "she", "theirs", "our", "ours", "myself", "itself",
     }
 )
 
