@@ -564,6 +564,31 @@ def test_lineage_waits_for_caffeinate_startup_race(
     }
 
 
+def test_lineage_accepts_mac_resolved_python_executable_name(
+    tmp_path: Path, monkeypatch
+):
+    source, _out, config_path, config = _prepared(tmp_path)
+    controller_command = (
+        "/opt/homebrew/Cellar/python@3.12/3.12.13/Frameworks/Python.framework/"
+        "Versions/3.12/Resources/Python.app/Contents/MacOS/Python "
+        f"{source / 'tools/run_rlc_reconciliation_controller.py'} run "
+        f"--config {config_path} --launchd-supervised"
+    )
+    caffeinate_command = (
+        f"/usr/bin/caffeinate -dims {config['python']} "
+        f"{source / 'tools/run_rlc_reconciliation_controller.py'} run "
+        f"--config {config_path} --launchd-supervised"
+    )
+    monkeypatch.setattr(os, "getpid", lambda: 41)
+    monkeypatch.setattr(controller, "_process_record", lambda _pid: (1, controller_command))
+    monkeypatch.setattr(
+        controller,
+        "_process_table",
+        lambda: [(42, 41, caffeinate_command)],
+    )
+    assert controller._verify_launchd_lineage(config)["caffeinate_pid"] == 42
+
+
 def plistlib_loads(payload: bytes):
     import plistlib
 

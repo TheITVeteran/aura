@@ -1239,7 +1239,6 @@ def _verify_launchd_lineage(
     controller_parent, controller_command = _process_record(controller_pid)
     controller_program = str(_controller_program(config))
     controller_required = (
-        str(config["python"]),
         controller_program,
         " run ",
         "--config",

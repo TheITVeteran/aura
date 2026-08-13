@@ -48320,3 +48320,29 @@ Ruff, byte compilation and diff hygiene pass. Evidence is
 No scientific result was produced or lost. The next launch will freeze CP377
 source while preserving CP376's seed, domains, task budget, controller package
 and causal arm design.
+
+## Checkpoint 2026-08-13-378: Lineage Uses Stable Identity on macOS
+
+The CP377 relaunch was also rejected before model load and before its first
+scientific cell. The bounded child-observation window closed the startup race,
+but the strengthened controller-command check introduced a macOS-specific
+false predicate: launchd invoked the hash-bound virtualenv interpreter while
+`ps` rendered the running process using Python's resolved framework executable
+path. Comparing those two path strings can never establish interpreter
+identity on this host.
+
+The redundant textual comparison is removed. Interpreter custody remains
+strict: campaign preparation hashes the exact virtualenv interpreter bytes,
+the launch plist records that exact interpreter in `ProgramArguments`, and the
+signed launch receipt binds the plist bytes. Runtime lineage still requires
+launchd ownership, the frozen controller source path, `run` action, config
+flag, campaign identity, launchd-supervised flag, and exactly one matching
+`caffeinate` child owned by the controller. A regression now covers the
+resolved framework path emitted by macOS.
+
+The controller suite passes `47/47`, canonical smoke passes `104/104`, and
+Ruff, byte compilation and diff hygiene pass. Evidence is
+`artifacts/closeout/latent_cortex/cp378_macos_python_lineage_identity.json`.
+Both rejected launches remain useful control-plane evidence and contain zero
+scientific observations. The causal design, seed and qualified recurrent
+package remain unchanged for the CP378 relaunch.

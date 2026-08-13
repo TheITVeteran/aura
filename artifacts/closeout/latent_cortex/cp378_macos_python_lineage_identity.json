@@ -1,0 +1,33 @@
+{
+  "schema": "aura.rlc.closeout_checkpoint.v1",
+  "checkpoint": "CP378",
+  "subject": "macOS resolved Python lineage identity",
+  "failed_launch": {
+    "campaign": "cp377-monotonic-component-s41037613",
+    "config_sha256": "5398256d20cdba974ecf42e1b702bbcbff2109d8f82d78da6dd3ee8b7715300d",
+    "reason": "controller_launchd_caffeinate_lineage_invalid",
+    "scientific_cells_started": 0,
+    "model_loaded": false
+  },
+  "root_cause": "macOS ps exposes the resolved Python framework executable rather than the venv symlink stored in launchd ProgramArguments",
+  "runtime_changes": [
+    "lineage no longer compares the textual Python executable rendered by ps",
+    "the prepared config still hashes the exact venv interpreter bytes",
+    "the launch plist and launch receipt still hash the exact venv ProgramArguments",
+    "controller source, campaign identity, config flag, launchd ownership, and caffeinate ownership remain required"
+  ],
+  "verification": {
+    "focused_tests": "47 passed",
+    "smoke": "104 passed",
+    "ruff": "passed",
+    "compile": "passed",
+    "diff_check": "passed"
+  },
+  "claims": {
+    "resident_32b_campaign_run": false,
+    "reasoning_gain_proven": false,
+    "fusion_authorized": false,
+    "wow_signal_authorized": false
+  },
+  "next": "freeze CP378 source and rerun the unchanged resident-32B component design"
+}
