@@ -644,6 +644,18 @@ def status(arguments: argparse.Namespace) -> dict[str, Any]:
     if not run_dirs:
         return {"schema": STATUS_SCHEMA, "state": "not_launched", "plan": plan}
     run_dir = run_dirs[-1]
+    if not (run_dir / detached.PLAN_FILE).exists():
+        return {
+            "schema": STATUS_SCHEMA,
+            "state": "starting",
+            "attempt": len(run_dirs),
+            "run_dir": str(run_dir),
+            "attempt_count": len(run_dirs),
+            "plan_sha256": plan["plan_sha256"],
+            "detached": None,
+            "report": None,
+            "report_transport": None,
+        }
     inspection = detached._status(run_dir)  # noqa: SLF001
     report_path = Path(plan["report"])
     report: dict[str, Any] | None = None

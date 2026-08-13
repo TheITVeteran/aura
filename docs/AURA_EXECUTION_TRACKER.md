@@ -46649,3 +46649,36 @@ handoff and promotion lineages are independently detached from Codex and each
 has a moving authenticated heartbeat and exact sleep inhibitor. The completion
 envelope remains `915/920` until the canary and powered evidence actually
 adjudicate.
+
+## Checkpoint 2026-08-12-298: True-Root Canary Supports Neural Transfer
+
+The frozen CP292 resident-32B canary completed all 72 candidates and the CP296
+handoff independently adjudicated
+`supported_bounded_resident_transfer`. On nine fresh typed tasks, trained
+depth-four tissue scored `9/9` versus CP254's deterministic pre-training root
+at `2/9`: seven wrong answers became right, no right answer became wrong, and
+net gain was seven. Ordinary decode scored `3/9`; trained depth one scored
+`4/9`; grammar lesion scored `6/9`; pointer lesion scored `1/9`; compiled
+execution was exact at `9/9`. All nine single-seed causal checks passed under
+verdict `7d51908a5a27f7bf091210da7f5edeece2799d7383b1a6860d78af2944e1f70d`.
+
+This proves a bounded prompt-disjoint resident-32B neural-transfer result on
+the typed recurrent battery relative to a true pre-training controller and
+mechanism lesions. It does not yet prove a powered effect estimate, broad
+reasoning, frontier performance, production fusion or a `WOW Signal`. The
+positive handoff automatically launched the frozen 81-task, 648-candidate
+three-seed replication under launchd.
+
+That transition exposed a narrow observer race: promotion status could see a
+new contiguous detached-attempt directory before its plan was atomically
+published and treat the normal construction window as corrupt evidence.
+Evaluator status now reports that exact interval as `starting` without
+inspecting absent bytes. Once the plan exists, all detached artifact checks
+remain mandatory; launch allocation still sees the attempt and cannot create a
+duplicate.
+
+Validation is green under Aura's Python 3.12 runtime: `71/71` focused
+evaluator, replication and promotion tests pass; canonical smoke passes
+`104/104`; focused Ruff, compilation and diff hygiene pass. The completion
+envelope remains `915/920` pending the powered replication; the canary result
+is real evidence but not the powered replication gate.

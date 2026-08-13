@@ -649,6 +649,35 @@ def test_status_uses_latest_immutable_attempt(
     assert result["run_dir"] == str(second)
 
 
+def test_status_reports_attempt_directory_before_atomic_plan_publication(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    arguments, _config, _checkpoint = _terminal_fixture(tmp_path, monkeypatch)
+    plan = launcher.prepare(arguments)
+    attempt = Path(plan["evaluation_root"]) / "detached-attempts" / "attempt-0001"
+    attempt.mkdir(parents=True)
+    monkeypatch.setattr(
+        launcher.detached,
+        "_status",
+        lambda _path: pytest.fail("an unpublished detached plan is not inspectable"),
+    )
+
+    result = launcher.status(arguments)
+
+    assert result == {
+        "schema": launcher.STATUS_SCHEMA,
+        "state": "starting",
+        "attempt": 1,
+        "run_dir": str(attempt),
+        "attempt_count": 1,
+        "plan_sha256": plan["plan_sha256"],
+        "detached": None,
+        "report": None,
+        "report_transport": None,
+    }
+
+
 def test_depth_parser_rejects_duplicate_and_shallow_recurrence() -> None:
     assert launcher._csv_positive_ints("1,2,4", minimum=1) == (1, 2, 4)
     with pytest.raises(argparse.ArgumentTypeError):
