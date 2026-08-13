@@ -350,6 +350,7 @@ async def run_shadow_canary(
     maximum_shadow_latency_ms: int = 120_000,
     maximum_latency_ratio_numerator: int = 8,
     maximum_latency_ratio_denominator: int = 1,
+    progress: Callable[[Mapping[str, Any]], None] | None = None,
 ) -> dict[str, Any]:
     """Execute a bounded case list sequentially and adjudicate every receipt."""
 
@@ -364,6 +365,17 @@ async def run_shadow_canary(
     )
     observations: list[dict[str, Any]] = []
     for row in normalized:
+        if progress is not None:
+            progress(
+                {
+                    "event": "case_started",
+                    "case_index": row["index"],
+                    "case_number": row["index"] + 1,
+                    "case_count": len(normalized),
+                    "task_id": row["task_id"],
+                    "family": row["family"],
+                }
+            )
         request = row["request"]
         try:
             result = await probe(
@@ -384,6 +396,19 @@ async def run_shadow_canary(
                 "receipt": result.get("receipt"),
             }
         )
+        if progress is not None:
+            progress(
+                {
+                    "event": "case_completed",
+                    "case_index": row["index"],
+                    "case_number": row["index"] + 1,
+                    "case_count": len(normalized),
+                    "task_id": row["task_id"],
+                    "family": row["family"],
+                    "status": result.get("status"),
+                    "reason": result.get("reason"),
+                }
+            )
     return {
         "plan": plan,
         "verdict": adjudicate_shadow_canary(plan, observations),

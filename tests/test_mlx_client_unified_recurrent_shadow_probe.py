@@ -32,7 +32,15 @@ async def test_probe_never_spawns_a_worker_when_shadow_is_not_loaded() -> None:
 
 
 @pytest.mark.asyncio
-async def test_parent_accepts_only_a_bound_no_output_probe_receipt(monkeypatch) -> None:
+@pytest.mark.parametrize(
+    ("allocator_reclaimed", "expected_ok"),
+    ((True, True), (False, False)),
+)
+async def test_parent_accepts_only_a_bound_reclaimed_no_output_probe_receipt(
+    monkeypatch,
+    allocator_reclaimed: bool,
+    expected_ok: bool,
+) -> None:
     class Queue:
         job = None
 
@@ -80,6 +88,11 @@ async def test_parent_accepts_only_a_bound_no_output_probe_receipt(monkeypatch) 
     client._mark_progress = lambda: None
     client.soft_cancel_active_generation = lambda *_args, **_kwargs: {}
 
+    async def reboot(_self, **_kwargs):
+        return True
+
+    client.reboot_worker = _bind(client, reboot)
+
     monkeypatch.setattr(
         mlx_client,
         "get_memory_pressure_snapshot",
@@ -123,6 +136,7 @@ async def test_parent_accepts_only_a_bound_no_output_probe_receipt(monkeypatch) 
             "action": "unified_recurrent_shadow_probe",
             "status": "ok",
             "receipt": receipt,
+            "allocator_reclaimed": allocator_reclaimed,
         }
 
     monkeypatch.setattr(mlx_client, "_await_shared_future", await_receipt)
@@ -133,11 +147,16 @@ async def test_parent_accepts_only_a_bound_no_output_probe_receipt(monkeypatch) 
         max_tokens=1,
     )
 
-    assert result["ok"] is True
-    assert result["receipt"]["shadow_exact_match"] is True
+    assert result["ok"] is expected_ok
     assert "text" not in result
     assert "tokens" not in result
-    assert client._unified_recurrent_shadow_probe_status == result["receipt"]
+    if expected_ok:
+        assert result["receipt"]["shadow_exact_match"] is True
+        assert client._unified_recurrent_shadow_probe_status == result["receipt"]
+    else:
+        assert result["status"] == "integrity_failed"
+        assert result["reason"] == "shadow_probe_allocator_reclaim_unproven"
+        assert client._unified_recurrent_shadow_probe_status == {}
 
 
 @pytest.mark.asyncio

@@ -422,6 +422,7 @@ def test_worker_shadow_probe_requires_bound_authority_and_exposes_no_output() ->
         loaded_shadow=loaded,
         model=object(),
         contract_key=key,
+        reclaim=lambda: True,
     )
 
     assert response == {
@@ -429,6 +430,7 @@ def test_worker_shadow_probe_requires_bound_authority_and_exposes_no_output() ->
         "action": "unified_recurrent_shadow_probe",
         "status": "ok",
         "receipt": receipt,
+        "allocator_reclaimed": True,
     }
     assert "text" not in response
     assert "tokens" not in response
@@ -440,7 +442,49 @@ def test_worker_shadow_probe_requires_bound_authority_and_exposes_no_output() ->
             loaded_shadow=loaded,
             model=object(),
             contract_key=key,
+            reclaim=lambda: True,
         )
+
+
+def test_worker_shadow_probe_refuses_unreclaimed_allocator_state() -> None:
+    key = new_contract_key()
+    loaded = SimpleNamespace(
+        probe=lambda *_args, **_kwargs: {"status": "completed"}
+    )
+    job = sign_job(
+        {
+            "id": "probe-reclaim",
+            "action": "unified_recurrent_shadow_probe",
+            "unified_recurrent_shadow_contract": seal_shadow_probe_request(
+                [1], [2], max_tokens=1
+            ),
+        },
+        key,
+        principal="mlx_client.unified_recurrent_shadow_probe",
+    )
+
+    with pytest.raises(RuntimeError, match="memory_not_reclaimed"):
+        mlx_worker._handle_unified_recurrent_shadow_probe(
+            job,
+            loaded_shadow=loaded,
+            model=object(),
+            contract_key=key,
+            reclaim=lambda: False,
+        )
+
+
+def test_worker_shadow_probe_reclaim_is_a_synchronous_allocator_barrier(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[str] = []
+    fake_mx = SimpleNamespace(
+        synchronize=lambda: calls.append("synchronize"),
+        clear_cache=lambda: calls.append("clear_cache"),
+    )
+    monkeypatch.setattr(mlx_worker.gc, "collect", lambda: calls.append("gc"))
+
+    assert mlx_worker._reclaim_unified_recurrent_probe_memory(fake_mx) is True
+    assert calls == ["gc", "synchronize", "clear_cache", "synchronize"]
 
 
 def test_worker_qualified_decode_requires_signed_matching_authority(

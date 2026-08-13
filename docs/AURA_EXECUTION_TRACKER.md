@@ -47436,3 +47436,42 @@ still complete lifecycle, qualified canary and activation before runtime
 authority advances. The powered replication remains the same bounded positive
 result; no broad reasoning gain, frontier claim, static fusion or `WOW Signal`
 is inferred.
+
+## Checkpoint 2026-08-13-346: Shadow Probes Reclaim Resident MLX State Per Case
+
+The CP345 package loaded its projected controller successfully on the real
+resident 32B worker, closing the optimizer-inventory defect, but its first
+nine-case cold-load canary was refuted after five completed cases. Differently
+shaped base and recurrent decodes accumulated transient MLX allocator state
+until resident RSS reached `35.9 GB` against the existing `35.8 GB` worker
+fuse. The fuse correctly cancelled work instead of permitting host exhaustion;
+the immutable `cold-load-01.json` records the partial evidence and is not
+relabelled as a scientific negative result. The active pointer was retired and
+the exact launchd promotion job was booted out. No CP345 process or serving
+authority remains active.
+
+Every recurrent shadow probe must now complete a synchronous
+`gc -> MLX synchronize -> clear_cache -> synchronize` barrier before its
+worker response can be acknowledged. The worker reports that reclamation over
+IPC, and the parent treats a missing acknowledgement as an integrity failure
+and recycles the worker. This preserves the existing memory fuse rather than
+raising or suppressing it. The canary emits structured start/completion
+progress for every case without exposing model output, so a long resident run
+has moving diagnostic evidence instead of one opaque lifecycle state.
+
+Lifecycle control now stops and rolls back immediately when the first cold
+load is refuted; it no longer spends a second model load on evidence that can
+no longer satisfy the gate. Regression coverage proves the exact allocator
+barrier, worker refusal when reclamation fails, parent refusal when the IPC
+receipt omits reclamation, per-case progress, and single-attempt fail-fast
+rollback. Focused affected tests pass `58/58`, canonical smoke passes
+`104/104`, and Ruff, compilation, governance lint, layering and diff hygiene
+pass under Aura's Python 3.12 environment.
+
+This checkpoint repairs resident canary memory ownership and observability. It
+does not promote the controller or reinterpret CP345. A new immutable package
+and source-bound lifecycle must still pass both cold loads, the qualified
+canary, rollback/absence proof and activation transaction before any typed
+serving authority advances. The powered replication remains a bounded positive
+result only; broad reasoning, frontier performance, static fusion and
+`WOW Signal` remain unproven.

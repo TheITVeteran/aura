@@ -109,6 +109,7 @@ async def test_refuted_restart_triggers_exact_emergency_rollback(
     model = tmp_path / "model"
     model.mkdir()
     retired: list[str] = []
+    calls = 0
     monkeypatch.setattr(
         lifecycle,
         "inspect_shadow_package",
@@ -143,13 +144,15 @@ async def test_refuted_restart_triggers_exact_emergency_rollback(
     monkeypatch.setattr(lifecycle, "deactivate_shadow_pointer", deactivate)
 
     async def refuted(_package, **_kwargs):
+        nonlocal calls
+        calls += 1
         return {**_canary_result(1), "supported": False}
 
     monkeypatch.setattr(lifecycle, "run_live_canary", refuted)
 
     with pytest.raises(
         lifecycle.UnifiedRecurrentShadowLifecycleError,
-        match="cold-load evidence differs or is refuted",
+        match="first cold-load evidence is refuted",
     ):
         await lifecycle.run_lifecycle(
             package,
@@ -162,6 +165,7 @@ async def test_refuted_restart_triggers_exact_emergency_rollback(
         )
 
     assert retired == ["d" * 64]
+    assert calls == 1
     assert not pointer_path.exists()
 
 

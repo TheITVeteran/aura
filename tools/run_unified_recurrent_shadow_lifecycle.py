@@ -179,11 +179,18 @@ async def run_lifecycle(
             "maximum_latency_ratio_numerator": maximum_latency_ratio_numerator,
             "maximum_latency_ratio_denominator": maximum_latency_ratio_denominator,
         }
+        print("recurrent shadow lifecycle: cold-load 1 started", flush=True)
         first = await run_live_canary(
             package,
             output=output_directory / "cold-load-01.json",
             **canary_arguments,
         )
+        if first.get("supported") is not True:
+            raise UnifiedRecurrentShadowLifecycleError(
+                "recurrent shadow first cold-load evidence is refuted"
+            )
+        print("recurrent shadow lifecycle: cold-load 1 supported", flush=True)
+        print("recurrent shadow lifecycle: cold-load 2 started", flush=True)
         second = await run_live_canary(
             package,
             output=output_directory / "cold-load-02.json",

@@ -254,12 +254,24 @@ async def run_live_canary(
             worker_status = dict(
                 getattr(client, "_unified_recurrent_shadow_status", {}) or {}
             )
+
+            def report_progress(event: Mapping[str, Any]) -> None:
+                print(
+                    json.dumps(
+                        {"event": "shadow_canary_progress", **dict(event)},
+                        sort_keys=True,
+                        separators=(",", ":"),
+                    ),
+                    flush=True,
+                )
+
             result = await client.unified_recurrent_shadow_package_canary_async(
                 package,
                 minimum_wrong_to_right=minimum_wrong_to_right,
                 maximum_shadow_latency_ms=maximum_shadow_latency_ms,
                 maximum_latency_ratio_numerator=maximum_latency_ratio_numerator,
                 maximum_latency_ratio_denominator=maximum_latency_ratio_denominator,
+                progress=report_progress,
             )
             accepted = _validated_result(
                 result,

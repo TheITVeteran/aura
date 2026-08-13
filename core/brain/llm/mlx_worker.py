@@ -1,4 +1,5 @@
 import copy
+import gc
 import json
 import logging
 import math
@@ -3495,6 +3496,35 @@ def _clear_mlx_cache(mx_module: Any) -> None:
             logger.debug("Suppressed Exception: %s", _exc)
 
 
+def _reclaim_unified_recurrent_probe_memory(mx_module: Any) -> bool:
+    """Synchronously release transient probe graphs before the next case.
+
+    A shadow canary executes many differently shaped base/recurrent decodes in
+    one resident process. Python frame exit alone does not force MLX's
+    asynchronous allocator to retire those graphs, so resident memory can grow
+    until the worker fuse trips. This is a correctness boundary, not an
+    optional optimization: a probe is not acknowledged until queued Metal work
+    is complete and its transient allocator cache has been reclaimed.
+    """
+
+    try:
+        gc.collect()
+        mx_module.synchronize()
+        mx_module.clear_cache()
+        mx_module.synchronize()
+        return True
+    except (RuntimeError, AttributeError, TypeError, ValueError) as exc:
+        _record_mlx_degradation(
+            exc,
+            action=(
+                "refused recurrent shadow probe acknowledgement because "
+                "transient MLX memory could not be reclaimed"
+            ),
+            severity="critical",
+        )
+        return False
+
+
 def _attach_certified_recurrent_adapter(
     model: Any,
     *,
@@ -3680,6 +3710,7 @@ def _handle_unified_recurrent_shadow_probe(
     contract_key: bytes | None,
     cancel_check: Callable[[], bool] | None = None,
     activity: Callable[[], None] | None = None,
+    reclaim: Callable[[], bool],
 ) -> dict[str, Any]:
     """Execute one authenticated shadow probe and expose no model output."""
 
@@ -3690,17 +3721,23 @@ def _handle_unified_recurrent_shadow_probe(
         raise ValueError(refusal)
     if loaded_shadow is None:
         raise RuntimeError("unified_recurrent_shadow_not_loaded")
-    receipt = loaded_shadow.probe(
-        model,
-        job.get("unified_recurrent_shadow_contract"),
-        cancel_check=cancel_check,
-        activity=activity,
-    )
+    try:
+        receipt = loaded_shadow.probe(
+            model,
+            job.get("unified_recurrent_shadow_contract"),
+            cancel_check=cancel_check,
+            activity=activity,
+        )
+    finally:
+        reclaimed = reclaim()
+    if reclaimed is not True:
+        raise RuntimeError("unified_recurrent_shadow_probe_memory_not_reclaimed")
     return {
         "id": str(job.get("id") or ""),
         "action": "unified_recurrent_shadow_probe",
         "status": "ok",
         "receipt": receipt,
+        "allocator_reclaimed": True,
     }
 
 
@@ -8127,6 +8164,7 @@ def _mlx_worker_loop(
                                 _job_seq,
                             ),
                             activity=watchdog.activity,
+                            reclaim=lambda: _reclaim_unified_recurrent_probe_memory(mx),
                         )
                 except InterruptedError:
                     response.update(

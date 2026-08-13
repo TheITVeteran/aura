@@ -22,7 +22,7 @@ import sys
 import threading as _threading
 import time
 import uuid
-from collections.abc import AsyncIterator, Iterable, Mapping, Sequence
+from collections.abc import AsyncIterator, Callable, Iterable, Mapping, Sequence
 from contextvars import ContextVar
 from dataclasses import dataclass
 from pathlib import Path
@@ -8012,6 +8012,13 @@ class MLXLocalClient:
                     "status": "worker_error",
                     "reason": str(response.get("message") or "unknown"),
                 }
+            if response.get("allocator_reclaimed") is not True:
+                deferred_reboot = "shadow_probe_allocator_reclaim_unproven"
+                return {
+                    **base,
+                    "status": "integrity_failed",
+                    "reason": deferred_reboot,
+                }
             receipt = response.get("receipt")
             errors = shadow_probe_receipt_errors(
                 receipt,
@@ -8413,6 +8420,7 @@ class MLXLocalClient:
         maximum_shadow_latency_ms: int = 120_000,
         maximum_latency_ratio_numerator: int = 8,
         maximum_latency_ratio_denominator: int = 1,
+        progress: Callable[[Mapping[str, Any]], None] | None = None,
     ) -> dict[str, Any]:
         """Run the domain-bound shadow gate without placing output on chat."""
 
@@ -8446,6 +8454,7 @@ class MLXLocalClient:
                 maximum_shadow_latency_ms=maximum_shadow_latency_ms,
                 maximum_latency_ratio_numerator=maximum_latency_ratio_numerator,
                 maximum_latency_ratio_denominator=maximum_latency_ratio_denominator,
+                progress=progress,
             )
         except (ImportError, RuntimeError, TypeError, ValueError) as exc:
             return {
@@ -8478,6 +8487,7 @@ class MLXLocalClient:
         maximum_shadow_latency_ms: int = 120_000,
         maximum_latency_ratio_numerator: int = 8,
         maximum_latency_ratio_denominator: int = 1,
+        progress: Callable[[Mapping[str, Any]], None] | None = None,
     ) -> dict[str, Any]:
         """Run the package's private fresh battery through the shadow lane."""
 
@@ -8530,6 +8540,7 @@ class MLXLocalClient:
             maximum_shadow_latency_ms=maximum_shadow_latency_ms,
             maximum_latency_ratio_numerator=maximum_latency_ratio_numerator,
             maximum_latency_ratio_denominator=maximum_latency_ratio_denominator,
+            progress=progress,
         )
 
     async def latent_reason_async(

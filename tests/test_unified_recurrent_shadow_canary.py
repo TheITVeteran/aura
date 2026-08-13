@@ -202,6 +202,7 @@ def test_malformed_case_request_has_stable_canary_error_boundary() -> None:
 @pytest.mark.asyncio
 async def test_runner_executes_each_case_and_returns_only_no_output_evidence() -> None:
     calls = 0
+    progress: list[dict[str, object]] = []
 
     async def probe(public, expected, *, max_tokens):
         nonlocal calls
@@ -230,9 +231,18 @@ async def test_runner_executes_each_case_and_returns_only_no_output_evidence() -
         package_id=PACKAGE,
         controller_sha256=CONTROLLER,
         probe=probe,
+        progress=lambda event: progress.append(dict(event)),
     )
 
     assert calls == 2
     assert result["verdict"]["supported"] is True
     assert "text" not in result
     assert "tokens" not in result
+    assert [event["event"] for event in progress] == [
+        "case_started",
+        "case_completed",
+        "case_started",
+        "case_completed",
+    ]
+    assert progress[-1]["case_number"] == 2
+    assert progress[-1]["case_count"] == 2
