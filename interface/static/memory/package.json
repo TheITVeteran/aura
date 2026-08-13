@@ -16,10 +16,10 @@
     "tailwind-merge": "^1.14.0"
   },
   "devDependencies": {
-    "@vitejs/plugin-react": "^4.1.0",
+    "@vitejs/plugin-react": "^5.2.0",
     "autoprefixer": "^10.4.16",
-    "postcss": "^8.4.31",
-    "tailwindcss": "^3.3.3",
-    "vite": "^4.4.11"
+    "postcss": "^8.5.26",
+    "tailwindcss": "^3.4.19",
+    "vite": "^7.3.6"
   }
 }

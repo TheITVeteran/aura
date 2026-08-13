@@ -24092,45 +24092,6 @@ async def api_export(request: Request, _: None = Depends(_require_internal)):
     )
 
 
-@router.post("/think")
-async def api_think(
-    body: dict[str, Any],
-    request: Request,
-    _: None = Depends(_require_internal),
-):
-    """Secure LLM Proxy for the Black Hole Dashboard."""
-    prompt = body.get("prompt")
-    if not prompt:
-        raise HTTPException(status_code=400, detail="Missing prompt")
-
-    try:
-        from core.container import ServiceContainer
-        engine = ServiceContainer.get("cognitive_engine", default=None)
-
-        if not engine:
-            raise HTTPException(status_code=503, detail="Cognitive Engine unavailable")
-
-        from core.brain.types import ThinkingMode
-        result = await engine.think(prompt, mode=ThinkingMode.FAST)
-
-        return JSONResponse({
-            "ok": True,
-            "response": getattr(result, "content", str(result)),
-            "metadata": {
-                "engine": engine.__class__.__name__,
-                "mode": getattr(result.mode, "name", "UNKNOWN") if hasattr(result, "mode") else "FAST",
-                "timestamp": time.time()
-            }
-        })
-    except _CHAT_RECOVERABLE_ERRORS as e:
-        record_degradation('chat', e)
-        logger.error("Neural bridge failure in /api/think: %s", e)
-        return JSONResponse({
-            "ok": False,
-            "error": str(e)
-        }, status_code=500)
-
-
 def _early_chat_json_response(
     payload: dict[str, Any],
     *,

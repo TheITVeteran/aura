@@ -101,6 +101,20 @@ def test_global_error_and_introspection_paths_do_not_hide_failures():
     assert "approved = True  # fail-open" not in synthesis
 
 
+def test_chat_has_one_authoritative_generation_surface():
+    from interface.routes.chat import router
+
+    route_paths = {route.path for route in router.routes}
+    memory_proxy = (
+        PROJECT_ROOT / "interface" / "static" / "memory" / "src" / "utils" / "apiProxy.js"
+    ).read_text(encoding="utf-8")
+
+    assert "/chat" in route_paths
+    assert "/think" not in route_paths
+    assert "/api/think" not in memory_proxy
+    assert "callQuantumLLM" not in memory_proxy
+
+
 def test_gui_actor_preserves_window_across_extended_kernel_loss():
     gui_actor = (PROJECT_ROOT / "interface" / "gui_actor.py").read_text(encoding="utf-8")
 

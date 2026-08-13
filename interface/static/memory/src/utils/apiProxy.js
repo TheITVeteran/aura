@@ -23,19 +23,6 @@ const fetchJson = async (url, options = {}, timeoutMs = 4000) => {
     }
 };
 
-export const callQuantumLLM = async (prompt) => {
-    try {
-        return await fetchJson('/api/think', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ prompt })
-        }, 15000);
-    } catch (e) {
-        console.error("Neural link severed:", e);
-        return { error: "Link lost", details: e.message };
-    }
-};
-
 export const fetchMemoryStats = async () => {
     try {
         return await fetchJson('/memory/api/memory');
