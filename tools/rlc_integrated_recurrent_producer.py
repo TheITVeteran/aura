@@ -24,6 +24,10 @@ RESOURCE_ESTIMATOR: Final = "unified_general_recurrent_structural_v1"
 SOURCE_NAME: Final = "unified_recurrent_controller"
 INITIAL_CONTROL_SOURCE: Final = "unified_recurrent_initial_control"
 DEPTH_LESION_SOURCE: Final = "unified_recurrent_depth_lesion"
+TRAINED_DEPTH_ONE_SOURCE: Final = "unified_recurrent_controller_depth_one"
+INITIAL_CONTROL_DEPTH_ONE_SOURCE: Final = (
+    "unified_recurrent_initial_control_depth_one"
+)
 
 
 def _canonical_sha256(value: Any) -> str:
@@ -169,7 +173,13 @@ def produce_integrated_recurrent_candidate(
     if not tokens or any(value < 0 for value in tokens):
         raise ValueError("integrated recurrent prompt tokens are invalid")
     selected_controller = loaded.controller if controller is None else controller
-    if source not in {SOURCE_NAME, INITIAL_CONTROL_SOURCE, DEPTH_LESION_SOURCE}:
+    if source not in {
+        SOURCE_NAME,
+        INITIAL_CONTROL_SOURCE,
+        DEPTH_LESION_SOURCE,
+        TRAINED_DEPTH_ONE_SOURCE,
+        INITIAL_CONTROL_DEPTH_ONE_SOURCE,
+    }:
         raise ValueError("integrated recurrent source identity is invalid")
     if not hasattr(selected_controller, "config") or not callable(
         getattr(selected_controller, "parameter_sha256", None)
@@ -180,6 +190,12 @@ def produce_integrated_recurrent_candidate(
         if recurrence_depth is None
         else _positive_integer(recurrence_depth, name="recurrence_depth")
     )
+    if source in {
+        DEPTH_LESION_SOURCE,
+        TRAINED_DEPTH_ONE_SOURCE,
+        INITIAL_CONTROL_DEPTH_ONE_SOURCE,
+    } and depth != 1:
+        raise ValueError("integrated recurrent depth-one source requires depth one")
     plan = loaded.spec.plan_at(depth)
     started = time.perf_counter()
     generated, stopped, latency_ms = loaded.decode_general_recurrent_tokens(
@@ -263,9 +279,11 @@ def produce_integrated_recurrent_candidate(
 __all__ = [
     "PRODUCER_SCHEMA",
     "DEPTH_LESION_SOURCE",
+    "INITIAL_CONTROL_DEPTH_ONE_SOURCE",
     "INITIAL_CONTROL_SOURCE",
     "RESOURCE_ESTIMATOR",
     "SOURCE_NAME",
+    "TRAINED_DEPTH_ONE_SOURCE",
     "build_general_recurrent_resource_receipt",
     "produce_integrated_recurrent_candidate",
 ]

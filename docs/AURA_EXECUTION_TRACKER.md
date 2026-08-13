@@ -48253,3 +48253,37 @@ recurrence an additional candidate rather than a destructive replacement.
 The changed sweep/controller surface passes `80/80`, canonical smoke passes
 `104/104`, and Ruff, byte compilation and diff hygiene pass. No gain, fusion,
 activation, frontier, or `WOW Signal` claim is authorized.
+
+## Checkpoint 2026-08-13-376: Recurrent Depth Is Monotonic
+
+CP368 showed that the trained controller was not inert: package-depth trained
+parameters beat their exact initialization control `3/7` to `2/7`. The serving
+policy nevertheless failed because fixed depth four discarded a correct
+depth-one answer and produced no new success over ordinary decode. Repeating
+that campaign without changing the serving mechanism could not answer the
+actual engineering question.
+
+The composed treatment now produces two separately attested candidates from
+the same trained controller: depth one and the package-qualified depth. Public
+exact verification considers both. A deeper decode can therefore add a success
+that depth one missed, but it cannot erase a shallow answer already proven
+correct. Source labels for the shallow trained candidate, shallow
+initialization control and depth lesion are rejected unless the resource
+receipt records recurrence depth one.
+
+The initialization-matched control receives the identical two-depth opportunity
+using the package's deterministic initial controller. This preserves the
+causal comparison: treatment versus initialization asks what the learned
+parameters contribute under the same decode count and depth choices; treatment
+versus the trained depth-one lesion asks whether deeper recurrence contributes
+anything beyond the shallow trained tissue; treatment versus the uncomposed
+engine and ordinary decode measures system lift and base-floor preservation.
+
+The producer and sweep surface passes `83/83`, canonical smoke passes
+`104/104`, and Ruff, byte compilation and diff hygiene pass. Evidence is
+`artifacts/closeout/latent_cortex/cp376_monotonic_recurrent_depth_ensemble.json`.
+
+This is the mechanism repair implied by CP368, not a resident-32B result. It
+does not authorize fusion, global activation, a broad gain claim, frontier
+reasoning, or `WOW Signal`. The next bounded milestone is a frozen task-major
+resident-32B component campaign using the already-qualified recurrent package.

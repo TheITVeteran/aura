@@ -13,9 +13,11 @@ from core.brain.llm.latent_cortex.resource_accounting import (
 )
 from tools.rlc_complete_system_closed_book import build_integrated_candidate
 from tools.rlc_integrated_recurrent_producer import (
+    INITIAL_CONTROL_DEPTH_ONE_SOURCE,
     INITIAL_CONTROL_SOURCE,
     PRODUCER_SCHEMA,
     RESOURCE_ESTIMATOR,
+    TRAINED_DEPTH_ONE_SOURCE,
     build_general_recurrent_resource_receipt,
     produce_integrated_recurrent_candidate,
 )
@@ -115,7 +117,7 @@ class _Loaded:
         assert model is not None
         assert tuple(public_tokens) == (1, 2, 3)
         assert max_tokens == 32
-        assert recurrence_depth == 4
+        assert recurrence_depth in {1, 4}
         assert controller.parameter_sha256() in {"b" * 64, "c" * 64}
         assert completion_check((7, 8)) is True
         if activity is not None:
@@ -185,6 +187,41 @@ def test_integrated_producer_binds_an_initialization_matched_controller_control(
     assert candidate["source"] == INITIAL_CONTROL_SOURCE
     assert producer["package_controller_sha256"] == "b" * 64
     assert producer["controller_sha256"] == "c" * 64
+
+
+@pytest.mark.parametrize(
+    "source",
+    [TRAINED_DEPTH_ONE_SOURCE, INITIAL_CONTROL_DEPTH_ONE_SOURCE],
+)
+def test_integrated_producer_binds_depth_one_source_to_measured_depth(source: str):
+    task = SimpleNamespace(
+        task_id="task-fixture",
+        public=SimpleNamespace(prompt="What is 6 * 7?"),
+    )
+    candidate, producer = produce_integrated_recurrent_candidate(
+        model=_model(),
+        tokenizer=_Tokenizer(),
+        task=task,
+        loaded=_Loaded(),
+        public_tokens=(1, 2, 3),
+        max_tokens=32,
+        recurrence_depth=1,
+        source=source,
+    )
+    assert candidate["source"] == source
+    assert producer["recurrence_depth"] == 1
+
+    with pytest.raises(ValueError, match="depth-one source requires depth one"):
+        produce_integrated_recurrent_candidate(
+            model=_model(),
+            tokenizer=_Tokenizer(),
+            task=task,
+            loaded=_Loaded(),
+            public_tokens=(1, 2, 3),
+            max_tokens=32,
+            recurrence_depth=2,
+            source=source,
+        )
 
 
 def test_integrated_candidate_refuses_incomplete_resource_accounting():

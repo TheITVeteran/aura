@@ -1,0 +1,33 @@
+{
+  "schema": "aura.rlc.closeout_checkpoint.v1",
+  "checkpoint": "CP376",
+  "subject": "monotonic trained recurrent depth ensemble",
+  "runtime_changes": [
+    "the composed treatment produces both trained depth-one and package-depth candidates",
+    "the initialization-matched control receives the same depth-one and package-depth decode opportunities",
+    "the depth lesion remains trained depth one only",
+    "public exact verification may add a deeper success but cannot discard an exact shallow success",
+    "depth-one source identities are contract-bound to measured recurrence depth one"
+  ],
+  "causal_question": {
+    "trained_parameters": "trained two-depth ensemble versus initialization-matched two-depth ensemble",
+    "marginal_recurrence": "trained two-depth ensemble versus trained depth-one lesion",
+    "composition": "trained two-depth ensemble versus uncomposed complete engine",
+    "base_floor": "trained two-depth ensemble versus ordinary resident decode"
+  },
+  "verification": {
+    "focused_tests": "83 passed",
+    "smoke": "104 passed",
+    "ruff": "passed",
+    "compile": "passed",
+    "diff_check": "passed"
+  },
+  "claims": {
+    "resident_32b_campaign_run": false,
+    "broad_controller_gain_proven": false,
+    "reasoning_gain_proven": false,
+    "fusion_authorized": false,
+    "wow_signal_authorized": false
+  },
+  "next": "launch a frozen task-major resident-32B component campaign with the qualified recurrent package"
+}

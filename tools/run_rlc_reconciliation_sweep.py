@@ -2453,37 +2453,47 @@ def _integrated_candidates_for_profile(
         raise EpisodeFault("composed recurrent package was not loaded")
     from tools.rlc_integrated_recurrent_producer import (
         DEPTH_LESION_SOURCE,
+        INITIAL_CONTROL_DEPTH_ONE_SOURCE,
         INITIAL_CONTROL_SOURCE,
         SOURCE_NAME,
+        TRAINED_DEPTH_ONE_SOURCE,
         produce_integrated_recurrent_candidate,
     )
 
-    controller = None
-    source = SOURCE_NAME
-    recurrence_depth = None
+    candidate_specs: list[tuple[Any | None, str, int | None]]
     if profile == "complete_closed_book_recurrent_initial_control":
         if initial_controller is None:
             raise EpisodeFault("initialization-matched recurrent control was not loaded")
-        controller = initial_controller
-        source = INITIAL_CONTROL_SOURCE
+        candidate_specs = [
+            (initial_controller, INITIAL_CONTROL_DEPTH_ONE_SOURCE, 1),
+            (initial_controller, INITIAL_CONTROL_SOURCE, None),
+        ]
     elif profile == "complete_closed_book_recurrent_depth_lesion":
-        controller = loaded.controller
-        source = DEPTH_LESION_SOURCE
-        recurrence_depth = 1
+        candidate_specs = [(loaded.controller, DEPTH_LESION_SOURCE, 1)]
+    else:
+        # Monotonic treatment: depth four may add a verified answer but can no
+        # longer erase a verified depth-one answer, the exact CP368 failure.
+        candidate_specs = [
+            (loaded.controller, TRAINED_DEPTH_ONE_SOURCE, 1),
+            (loaded.controller, SOURCE_NAME, None),
+        ]
 
-    candidate, _producer_receipt = produce_integrated_recurrent_candidate(
-        model=model,
-        tokenizer=tokenizer,
-        task=task,
-        loaded=loaded,
-        public_tokens=public_tokens,
-        max_tokens=max_tokens,
-        recurrence_depth=recurrence_depth,
-        controller=controller,
-        source=source,
-        activity=activity,
-    )
-    return [candidate]
+    candidates: list[dict[str, Any]] = []
+    for controller, source, recurrence_depth in candidate_specs:
+        candidate, _producer_receipt = produce_integrated_recurrent_candidate(
+            model=model,
+            tokenizer=tokenizer,
+            task=task,
+            loaded=loaded,
+            public_tokens=public_tokens,
+            max_tokens=max_tokens,
+            recurrence_depth=recurrence_depth,
+            controller=controller,
+            source=source,
+            activity=activity,
+        )
+        candidates.append(candidate)
+    return candidates
 
 
 def _paired_arm_comparison(

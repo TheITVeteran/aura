@@ -321,7 +321,10 @@ def test_composed_profiles_invoke_their_causally_matched_recurrent_producer(
 
     def fake_produce(**kwargs):
         calls.append(kwargs)
-        return {"candidate": True}, {"receipt": True}
+        return {
+            "source": kwargs["source"],
+            "recurrence_depth": kwargs["recurrence_depth"],
+        }, {"receipt": True}
 
     monkeypatch.setattr(producer, "produce_integrated_recurrent_candidate", fake_produce)
     trained_controller = object()
@@ -342,24 +345,39 @@ def test_composed_profiles_invoke_their_causally_matched_recurrent_producer(
     assert sweep._integrated_candidates_for_profile(
         profile="complete_closed_book_recurrent_composed",
         **common,
-    ) == [{"candidate": True}]
-    assert len(calls) == 1
+    ) == [
+        {"source": producer.TRAINED_DEPTH_ONE_SOURCE, "recurrence_depth": 1},
+        {"source": producer.SOURCE_NAME, "recurrence_depth": None},
+    ]
+    assert len(calls) == 2
     assert calls[0]["public_tokens"] == [1, 2, 3]
     assert calls[0]["max_tokens"] == 2048
-    assert calls[0]["source"] == producer.SOURCE_NAME
-    assert calls[0]["controller"] is None
-    assert calls[0]["recurrence_depth"] is None
+    assert calls[0]["source"] == producer.TRAINED_DEPTH_ONE_SOURCE
+    assert calls[0]["controller"] is trained_controller
+    assert calls[0]["recurrence_depth"] == 1
+    assert calls[1]["source"] == producer.SOURCE_NAME
+    assert calls[1]["controller"] is trained_controller
+    assert calls[1]["recurrence_depth"] is None
     assert sweep._integrated_candidates_for_profile(
         profile="complete_closed_book_recurrent_initial_control",
         **common,
-    ) == [{"candidate": True}]
+    ) == [
+        {
+            "source": producer.INITIAL_CONTROL_DEPTH_ONE_SOURCE,
+            "recurrence_depth": 1,
+        },
+        {"source": producer.INITIAL_CONTROL_SOURCE, "recurrence_depth": None},
+    ]
+    assert calls[-2]["source"] == producer.INITIAL_CONTROL_DEPTH_ONE_SOURCE
+    assert calls[-2]["controller"] is common["initial_controller"]
+    assert calls[-2]["recurrence_depth"] == 1
     assert calls[-1]["source"] == producer.INITIAL_CONTROL_SOURCE
     assert calls[-1]["controller"] is common["initial_controller"]
     assert calls[-1]["recurrence_depth"] is None
     assert sweep._integrated_candidates_for_profile(
         profile="complete_closed_book_recurrent_depth_lesion",
         **common,
-    ) == [{"candidate": True}]
+    ) == [{"source": producer.DEPTH_LESION_SOURCE, "recurrence_depth": 1}]
     assert calls[-1]["source"] == producer.DEPTH_LESION_SOURCE
     assert calls[-1]["controller"] is trained_controller
     assert calls[-1]["recurrence_depth"] == 1
@@ -3013,6 +3031,10 @@ def test_complete_system_admits_a_bound_recurrent_candidate_without_answer_key()
         _select_complete_system_promotion_candidate,
         build_integrated_candidate,
     )
+    from tools.rlc_integrated_recurrent_producer import (
+        SOURCE_NAME,
+        TRAINED_DEPTH_ONE_SOURCE,
+    )
 
     task = generate_task_battery(
         [131973299],
@@ -3043,7 +3065,7 @@ def test_complete_system_admits_a_bound_recurrent_candidate_without_answer_key()
     )
     source_body = {
         "schema": "aura.rlc.integrated_recurrent_producer.v1",
-        "source": "unified_recurrent_controller",
+        "source": TRAINED_DEPTH_ONE_SOURCE,
         "task_id": task.task_id,
         "text_sha256": hashlib.sha256(correct.encode()).hexdigest(),
         "resource_accounting_sha256": ledger.to_receipt()["receipt_sha256"],
@@ -3061,17 +3083,41 @@ def test_complete_system_admits_a_bound_recurrent_candidate_without_answer_key()
         ).hexdigest(),
     }
     integrated = build_integrated_candidate(
-        source="unified_recurrent_controller",
+        source=TRAINED_DEPTH_ONE_SOURCE,
         task_id=task.task_id,
         text=correct,
         resource_accounting=ledger.to_receipt(),
         source_receipt=source_receipt,
         source_receipt_sha256=source_receipt["receipt_sha256"],
     )
-    assert _normalize_integrated_candidates(
-        [integrated],
+    wrong = 'FINAL_ANSWER: {"sequence":[],"checksum":0}'
+    deep_source_body = {
+        **source_body,
+        "source": SOURCE_NAME,
+        "text_sha256": hashlib.sha256(wrong.encode()).hexdigest(),
+    }
+    deep_source_receipt = {
+        **deep_source_body,
+        "receipt_sha256": hashlib.sha256(
+            json.dumps(
+                deep_source_body,
+                sort_keys=True,
+                separators=(",", ":"),
+            ).encode("ascii")
+        ).hexdigest(),
+    }
+    deep_integrated = build_integrated_candidate(
+        source=SOURCE_NAME,
         task_id=task.task_id,
-    ) == [integrated]
+        text=wrong,
+        resource_accounting=ledger.to_receipt(),
+        source_receipt=deep_source_receipt,
+        source_receipt_sha256=deep_source_receipt["receipt_sha256"],
+    )
+    assert _normalize_integrated_candidates(
+        [integrated, deep_integrated],
+        task_id=task.task_id,
+    ) == [integrated, deep_integrated]
 
     selected, receipt = _select_complete_system_promotion_candidate(
         verifier=EpisodeTaskVerifier(
@@ -3082,14 +3128,15 @@ def test_complete_system_admits_a_bound_recurrent_candidate_without_answer_key()
         amplifier_text='FINAL_ANSWER: {"sequence":[],"checksum":0}',
         amplifier_consensus_programs=0,
         amplifier_consensus_strategies=0,
-        integrated_candidates=[integrated],
+        integrated_candidates=[integrated, deep_integrated],
     )
     assert selected == correct
-    assert receipt["selected_source"] == "unified_recurrent_controller"
+    assert receipt["selected_source"] == TRAINED_DEPTH_ONE_SOURCE
     assert receipt["authority"] == "public_objective_deterministic_execution"
     assert [row["source"] for row in receipt["candidates"]] == [
         "rlc_final",
-        "unified_recurrent_controller",
+        TRAINED_DEPTH_ONE_SOURCE,
+        SOURCE_NAME,
         "reasoning_amplifier",
     ]
 
