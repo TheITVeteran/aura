@@ -81,6 +81,101 @@ async def test_worker_heartbeat_renews_durable_lane_owner(
 
 
 @pytest.mark.asyncio
+async def test_slow_lane_renewal_does_not_block_terminal_response(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from core.container import ServiceContainer
+    from core.runtime import model_lane_control
+
+    renewal_started = asyncio.Event()
+    release_renewal = asyncio.Event()
+
+    class _Controller:
+        async def heartbeat_owner(self, _owner_id: str, *, fencing_token: int) -> bool:
+            assert fencing_token == 79
+            renewal_started.set()
+            await release_renewal.wait()
+            return True
+
+    monkeypatch.setattr(model_lane_control, "get_model_lane_controller", lambda: _Controller())
+    monkeypatch.setattr(ServiceContainer, "get", lambda *_args, **_kwargs: None)
+    client = MLXLocalClient(model_path="/models/test-1.5b")
+    client._res_q = queue.Queue()
+    client._model_lane_owner_id = "mlx:test:nonblocking-heartbeat"
+    client._model_lane_fencing_token = 79
+    client._current_request_id = "foreground-request"
+    client._current_gen_future = asyncio.get_running_loop().create_future()
+    listener = asyncio.create_task(client._response_listener_loop())
+    try:
+        client._res_q.put({"status": "heartbeat"})
+        await asyncio.wait_for(renewal_started.wait(), timeout=2.0)
+        client._res_q.put(
+            {
+                "status": "ok",
+                "action": "generate",
+                "id": "foreground-request",
+                "text": "answer arrived while lease storage was slow",
+            }
+        )
+        result = await asyncio.wait_for(
+            asyncio.shield(client._current_gen_future),
+            timeout=0.5,
+        )
+    finally:
+        release_renewal.set()
+        renewal = client._lane_renewal_task
+        if renewal is not None:
+            with contextlib.suppress(asyncio.CancelledError):
+                await renewal
+        listener.cancel()
+        await listener
+        client._model_lane_fencing_token = 0
+
+    assert result["text"] == "answer arrived while lease storage was slow"
+
+
+@pytest.mark.asyncio
+async def test_stale_lane_renewal_cannot_kill_replacement_owner() -> None:
+    renewal_started = asyncio.Event()
+    release_renewal = asyncio.Event()
+
+    class _Controller:
+        async def heartbeat_owner(self, _owner_id: str, *, fencing_token: int) -> bool:
+            assert fencing_token == 81
+            renewal_started.set()
+            await release_renewal.wait()
+            return False
+
+    client = MLXLocalClient(model_path="/models/test-1.5b")
+    process = _ProcessProbe()
+    client._process = process
+    client._model_lane_owner_id = "mlx:test:old-owner"
+    client._model_lane_fencing_token = 81
+    client._set_lane_state("ready")
+    renewal = asyncio.create_task(
+        client._renew_durable_lane_lease_in_background(
+            _Controller(),
+            "mlx:test:old-owner",
+            81,
+            2,
+        )
+    )
+    await asyncio.wait_for(renewal_started.wait(), timeout=2.0)
+
+    client._model_lane_owner_id = "mlx:test:replacement-owner"
+    client._model_lane_fencing_token = 82
+    release_renewal.set()
+    await asyncio.wait_for(renewal, timeout=2.0)
+
+    assert process.killed is False
+    assert client._process is process
+    assert client._model_lane_fencing_token == 82
+    assert client._lane_state == "ready"
+    client._model_lane_fencing_token = 0
+    client._process = None
+
+
+@pytest.mark.asyncio
 async def test_lost_heartbeat_fence_stops_stale_worker(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

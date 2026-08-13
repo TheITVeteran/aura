@@ -4079,6 +4079,8 @@ class MLXLocalClient:
         self._listener_queue_generation = -1
         self._listener_response_queue: Any | None = None
         self._retired_listener_tasks: set[asyncio.Task] = set()
+        self._lane_renewal_task: asyncio.Task | None = None
+        self._listener_stop_generation = -1
         self._last_heartbeat = 0.0
         # Once-per-episode reporting latches for worker self-reported health
         # evidence (heartbeat loop_stalled / ipc_broken frames).
@@ -6346,6 +6348,7 @@ class MLXLocalClient:
         if self._listener_task is not None:
             _cancel_task_threadsafe(self._listener_task)
             self._listener_task = None
+        self._cancel_lane_renewal_task()
         self._replace_ipc_queues()
         self._release_request_lock_if_aborted(str(reason))
         logger.warning(
@@ -9660,6 +9663,127 @@ class MLXLocalClient:
             )
         return alive
 
+    def _schedule_durable_lane_renewal(
+        self,
+        controller: Any,
+        owner_id: str,
+        fencing_token: int,
+        queue_generation: int,
+    ) -> None:
+        """Renew one durable lease without blocking the response consumer."""
+        task = self._lane_renewal_task
+        if task is not None and not task.done():
+            return
+        task = get_task_tracker().create_task(
+            self._renew_durable_lane_lease_in_background(
+                controller,
+                owner_id,
+                fencing_token,
+                queue_generation,
+            ),
+            name=f"MLXLeaseRenewal:{owner_id}:{fencing_token}",
+        )
+        self._lane_renewal_task = task
+
+        def _clear(completed: asyncio.Task) -> None:
+            if self._lane_renewal_task is completed:
+                self._lane_renewal_task = None
+
+        task.add_done_callback(_clear)
+
+    def _cancel_lane_renewal_task(self) -> None:
+        task, self._lane_renewal_task = self._lane_renewal_task, None
+        if task is not None and not task.done():
+            _cancel_task_threadsafe(task)
+
+    async def _renew_durable_lane_lease_in_background(
+        self,
+        controller: Any,
+        owner_id: str,
+        fencing_token: int,
+        queue_generation: int,
+    ) -> None:
+        """Renew and reconcile an exact owner generation.
+
+        The response listener must remain dedicated to IPC drainage.  A stale
+        renewal result is harmless unless the same owner and fencing token are
+        still authoritative when the result is applied.
+        """
+        try:
+            lease_alive = await self._renew_durable_lane_lease(
+                controller,
+                owner_id,
+                fencing_token,
+            )
+            if not lease_alive:
+                raise RuntimeError("model_lane_fence_lost")
+        except asyncio.CancelledError:
+            raise
+        except (
+            OSError,
+            RuntimeError,
+            AttributeError,
+            TypeError,
+            ValueError,
+            TimeoutError,
+        ) as exc:
+            current_owner, current_token, _receipt_id = self._durable_model_lane_owner_snapshot()
+            if current_owner != owner_id or current_token != fencing_token:
+                logger.info(
+                    "Ignored stale MLX lease result for retired owner=%s token=%s",
+                    owner_id,
+                    fencing_token,
+                )
+                return
+            _record_mlx_degradation(
+                exc,
+                action="stopped MLX worker after durable lane heartbeat failed",
+                severity="critical",
+            )
+            self._deferred_reboot_reason = "model_lane_fence_lost"
+            # Fail every waiter before dropping the process handle.  Otherwise
+            # callers can miss both the dead-process and pending-future tests.
+            for req_id, pending in list(self._pending_generations.items()):
+                if pending is not None and not pending.done():
+                    _set_shared_future_result(
+                        pending,
+                        {
+                            "status": "error",
+                            "action": "generate",
+                            "id": str(req_id),
+                            "message": "model_lane_fence_lost",
+                        },
+                    )
+            current_fut = self._current_gen_future
+            if current_fut is not None and not current_fut.done():
+                _set_shared_future_result(
+                    current_fut,
+                    {
+                        "status": "error",
+                        "action": "generate",
+                        "id": self._current_request_id,
+                        "message": "model_lane_fence_lost",
+                    },
+                )
+            if self._init_future is not None and not self._init_future.done():
+                _cancel_shared_future(self._init_future)
+            self._pending_generations.clear()
+            self._current_gen_future = None
+            self._active_generations = 0
+
+            process, self._process = self._process, None
+            if process is not None:
+                await asyncio.to_thread(self._kill_and_join_blocking, process)
+            from core.runtime.model_lane_control import unregister_model_lane_owner_adapter
+
+            unregister_model_lane_owner_adapter(owner_id)
+            with self._model_lane_state_lock:
+                if self._model_lane_fencing_token == fencing_token:
+                    self._model_lane_fencing_token = 0
+                    self._model_lane_terminal_receipt_id = ""
+            self._set_lane_state("cold", "model_lane_fence_lost")
+            self._listener_stop_generation = queue_generation
+
     def soft_cancel_active_generation(
         self, reason: str = "foreground_preemption"
     ) -> dict[str, Any]:
@@ -10110,6 +10234,7 @@ class MLXLocalClient:
             if self._listener_task is not None:
                 _cancel_task_threadsafe(self._listener_task)
                 self._listener_task = None
+            self._cancel_lane_renewal_task()
 
             if process is not None and process.is_alive() and not killed_process_before_lock:
                 _note_lane_worker_death(self, reason)
@@ -10508,6 +10633,7 @@ class MLXLocalClient:
             if (
                 owned_queue is not self._res_q
                 or owned_generation != self._response_queue_generation
+                or owned_generation == self._listener_stop_generation
             ):
                 break
             try:
@@ -10547,6 +10673,7 @@ class MLXLocalClient:
             if (
                 owned_queue is not self._res_q
                 or owned_generation != self._response_queue_generation
+                or owned_generation == self._listener_stop_generation
             ):
                 # The queue changed while the executor poll was in flight.  The
                 # frame belongs to the retired worker generation and must not
@@ -10613,23 +10740,12 @@ class MLXLocalClient:
                                 get_model_lane_controller,
                             )
 
-                            # CP126 1210919c: this ran INLINE on the sole
-                            # response listener. A blocked file lock or a slow
-                            # controller stalled init, token and completion
-                            # delivery for every request on the lane, and the
-                            # worker's response queue filled behind it. The
-                            # renewal is still awaited here — a lease this
-                            # lane holds must not be renewed by a task that
-                            # outlives the check — but it is BOUNDED, and a
-                            # renewal that cannot finish in time is a fence
-                            # loss like any other rather than a stall.
-                            lease_alive = await self._renew_durable_lane_lease(
+                            self._schedule_durable_lane_renewal(
                                 get_model_lane_controller(),
                                 owner_id,
                                 fencing_token,
+                                owned_generation,
                             )
-                            if not lease_alive:
-                                raise RuntimeError("model_lane_fence_lost")
                         except (
                             OSError,
                             RuntimeError,
@@ -10640,62 +10756,9 @@ class MLXLocalClient:
                         ) as exc:
                             _record_mlx_degradation(
                                 exc,
-                                action="stopped MLX worker after durable lane heartbeat failed",
+                                action="could not schedule durable model-lane renewal",
                                 severity="critical",
                             )
-                            self._deferred_reboot_reason = "model_lane_fence_lost"
-                            # CP126 1321b74b. Fail every waiter BEFORE the
-                            # handle is dropped, not after. The generation
-                            # waiter's fast-fail only trips while _process is
-                            # non-None and dead; between `self._process = None`
-                            # and the resolution below there was a window in
-                            # which neither condition held, and a waiter that
-                            # sampled it sat until its own deadline or the
-                            # hard cap — the worst outcome for a foreground
-                            # turn whose lane had already been declared lost.
-                            for req_id, pending in list(self._pending_generations.items()):
-                                if pending is not None and not pending.done():
-                                    _set_shared_future_result(
-                                        pending,
-                                        {
-                                            "status": "error",
-                                            "action": "generate",
-                                            "id": str(req_id),
-                                            "message": "model_lane_fence_lost",
-                                        },
-                                    )
-                            current_fut = self._current_gen_future
-                            if current_fut is not None and not current_fut.done():
-                                _set_shared_future_result(
-                                    current_fut,
-                                    {
-                                        "status": "error",
-                                        "action": "generate",
-                                        "id": self._current_request_id,
-                                        "message": "model_lane_fence_lost",
-                                    },
-                                )
-                            if self._init_future is not None and not self._init_future.done():
-                                _cancel_shared_future(self._init_future)
-                            self._pending_generations.clear()
-                            self._current_gen_future = None
-                            self._active_generations = 0
-
-                            # Only now drop the handle and tear the worker down.
-                            process, self._process = self._process, None
-                            if process is not None:
-                                await asyncio.to_thread(self._kill_and_join_blocking, process)
-                            from core.runtime.model_lane_control import (
-                                unregister_model_lane_owner_adapter,
-                            )
-
-                            unregister_model_lane_owner_adapter(owner_id)
-                            with self._model_lane_state_lock:
-                                if self._model_lane_fencing_token == fencing_token:
-                                    self._model_lane_fencing_token = 0
-                                    self._model_lane_terminal_receipt_id = ""
-                            self._set_lane_state("cold", "model_lane_fence_lost")
-                            return
                     audit = ServiceContainer.get("subsystem_audit", default=None)
                     if audit:
                         tier_name = (
@@ -14322,6 +14385,7 @@ class MLXLocalClient:
             if self._listener_task:
                 _cancel_task_threadsafe(self._listener_task)
                 self._listener_task = None
+            self._cancel_lane_renewal_task()
 
             # [OOM FIX] Force memory reclaim after killing heavy model process
             gc.collect()
@@ -14683,6 +14747,7 @@ class MLXLocalClient:
             if self._listener_task is not None:
                 _cancel_task_threadsafe(self._listener_task)
                 self._listener_task = None
+            self._cancel_lane_renewal_task()
             process = self._process
             if process is not None:
                 shutdown_proven = self._kill_and_join_blocking(process)
