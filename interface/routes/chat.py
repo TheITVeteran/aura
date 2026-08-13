@@ -2588,6 +2588,9 @@ async def _run_chat_turn_memory_log_item(
                     "principal_surface": principal_surface,
                     "memory_log_operation_id": operation_id,
                     "conversation_revision": revision,
+                    "conversation_exchange_id": str(
+                        payload.get("exchange_id") or ""
+                    )[:128],
                 },
             ),
             timeout=_CHAT_TURN_MEMORY_LOG_TIMEOUT_S,

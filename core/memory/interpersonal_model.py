@@ -188,7 +188,7 @@ class Occurrence:
         }
 
     @classmethod
-    def from_dict(cls, data: dict[str, object]) -> "Occurrence":
+    def from_dict(cls, data: dict[str, object]) -> Occurrence:
         return cls(
             episode_id=str(data["episode_id"]),
             provenance=Provenance(str(data.get("provenance", Provenance.OBSERVED))),
@@ -311,7 +311,7 @@ class Observation:
         }
 
     @classmethod
-    def from_dict(cls, data: dict[str, object]) -> "Observation":
+    def from_dict(cls, data: dict[str, object]) -> Observation:
         ttl = data.get("ttl")
         corrected = data.get("corrected_by")
         resolved = data.get("resolved_by")
@@ -467,6 +467,8 @@ class PersonModel:
         if existing is None:
             self._observations[candidate.key] = candidate
             existing = candidate
+        if any(item.episode_id == episode_id for item in existing.occurrences):
+            return existing
         if existing.corrected:
             # He already said this was wrong. Observing it again does not
             # reopen the question; that is what "correction is permanent" means.
@@ -482,6 +484,47 @@ class PersonModel:
         )
         self._evict_if_needed()
         return existing
+
+    def remove_episode(self, episode_id: str) -> int:
+        """Remove every evidence edge owned by one superseded episode."""
+
+        target = str(episode_id or "").strip()
+        if not target:
+            return 0
+        removed = 0
+        for key, observation in list(self._observations.items()):
+            occurrences = [
+                item for item in observation.occurrences if item.episode_id != target
+            ]
+            counter_examples = [
+                item
+                for item in observation.counter_examples
+                if item.episode_id != target
+            ]
+            removed += len(observation.occurrences) - len(occurrences)
+            removed += len(observation.counter_examples) - len(counter_examples)
+            observation.occurrences = occurrences
+            observation.counter_examples = counter_examples
+            if (
+                observation.corrected_by is not None
+                and observation.corrected_by.episode_id == target
+            ):
+                observation.corrected_by = None
+                removed += 1
+            if (
+                observation.resolved_by is not None
+                and observation.resolved_by.episode_id == target
+            ):
+                observation.resolved_by = None
+                removed += 1
+            if (
+                not observation.occurrences
+                and not observation.counter_examples
+                and observation.corrected_by is None
+                and observation.resolved_by is None
+            ):
+                del self._observations[key]
+        return removed
 
     def contradict(
         self,
@@ -572,7 +615,7 @@ class PersonModel:
 
     # -- consolidation is aggregation --------------------------------------
 
-    def merge(self, other: "PersonModel") -> None:
+    def merge(self, other: PersonModel) -> None:
         """Fold another model in by aggregating evidence. Never by rewording."""
         if _normalize(other.person) != _normalize(self.person):
             raise ValueError(
@@ -671,7 +714,7 @@ class PersonModel:
 
     # -- dynamics: read off the record, never asserted ----------------------
 
-    def dynamics(self, *, now: float | None = None) -> list["Dynamic"]:
+    def dynamics(self, *, now: float | None = None) -> list[Dynamic]:
         """Trust, safety, comfort, novelty, connection, enjoyment, investment.
 
         These are *derived*, and that is the whole point. Storing "trust: 0.7"
@@ -704,7 +747,7 @@ class PersonModel:
             and (resolved is None or o.resolved is resolved)
         )
 
-    def _trust(self, now: float) -> "Dynamic":
+    def _trust(self, now: float) -> Dynamic:
         kept = self._count(Facet.COMMITMENT, resolved=True)
         open_ = self._count(Facet.COMMITMENT, resolved=False)
         repaired = self._count(Facet.RUPTURE, resolved=True)
@@ -728,7 +771,7 @@ class PersonModel:
             ),
         )
 
-    def _safety(self, now: float) -> "Dynamic":
+    def _safety(self, now: float) -> Dynamic:
         unrepaired = self._count(Facet.RUPTURE, resolved=False)
         corrections = sum(1 for o in self._observations.values() if o.corrected)
         disclosed = sum(
@@ -753,7 +796,7 @@ class PersonModel:
             ),
         )
 
-    def _comfort(self, now: float) -> "Dynamic":
+    def _comfort(self, now: float) -> Dynamic:
         stamps = [
             o.first_seen() for o in self._observations.values() if o.first_seen()
         ]
@@ -776,7 +819,7 @@ class PersonModel:
             ),
         )
 
-    def _connection(self, now: float) -> "Dynamic":
+    def _connection(self, now: float) -> Dynamic:
         mutual = self._count(Facet.UNDERSTANDING)
         missed = self._count(Facet.MISUNDERSTANDING)
         shared = self._count(Facet.EXPERIENCE) + self._count(Facet.EVENT)
@@ -801,7 +844,7 @@ class PersonModel:
             ),
         )
 
-    def _enjoyment(self, now: float) -> "Dynamic":
+    def _enjoyment(self, now: float) -> Dynamic:
         warm = sum(
             1 for o in self._observations.values()
             if o.valence is Valence.WARM and not o.corrected
@@ -824,7 +867,7 @@ class PersonModel:
             basis=(f"{warm} warm, {difficult} difficult",),
         )
 
-    def _novelty(self, now: float) -> "Dynamic":
+    def _novelty(self, now: float) -> Dynamic:
         """New ground versus familiar ground, recently.
 
         Measured as first sightings in the last fortnight against repeats in
@@ -856,7 +899,7 @@ class PersonModel:
             basis=(f"{firsts} new thing(s) and {repeats} familiar in the last fortnight",),
         )
 
-    def _investment(self, now: float) -> "Dynamic":
+    def _investment(self, now: float) -> Dynamic:
         commitments = self._count(Facet.COMMITMENT)
         questions = self._count(Facet.QUESTION, resolved=False)
         total = sum(o.support for o in self._observations.values())
@@ -894,7 +937,7 @@ class PersonModel:
         }
 
     @classmethod
-    def from_dict(cls, data: dict[str, object]) -> "PersonModel":
+    def from_dict(cls, data: dict[str, object]) -> PersonModel:
         model = cls(
             str(data["person"]),
             max_observations=int(data.get("max_observations", 256)),  # type: ignore[arg-type]

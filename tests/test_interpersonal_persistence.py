@@ -186,6 +186,30 @@ def test_a_state_keeps_its_own_expiry():
     assert state.ttl == 2 * DAY_SECONDS
 
 
+def test_replaying_the_same_episode_does_not_manufacture_frequency():
+    model = PersonModel("Bryan")
+
+    model.observe("prefers precise answers", episode_id="ep-1")
+    model.observe("prefers precise answers", episode_id="ep-1")
+
+    observation = next(iter(model))
+    assert [item.episode_id for item in observation.occurrences] == ["ep-1"]
+
+
+def test_removing_a_superseded_episode_removes_every_evidence_edge():
+    model = PersonModel("Bryan")
+    model.observe("prefers precise answers", episode_id="ep-old")
+    model.contradict("prefers precise answers", episode_id="ep-old")
+    model.resolve(
+        "prefers precise answers",
+        episode_id="ep-old",
+        facet=Facet.TRAIT,
+    )
+
+    assert model.remove_episode("ep-old") == 3
+    assert len(model) == 0
+
+
 # ── the store on disk ──────────────────────────────────────────────────────
 
 
@@ -201,6 +225,31 @@ async def test_what_she_noticed_is_there_after_a_restart(tmp_path):
     restarted = InterpersonalStore(root=tmp_path / "interpersonal", authority=consent)
 
     assert "when I'm already behind" in restarted.render("Bryan")
+
+
+async def test_regenerated_turn_replaces_interpersonal_episode_evidence(tmp_path):
+    consent = _Consent()
+    store = InterpersonalStore(root=tmp_path / "interpersonal", authority=consent)
+    await store.observe_turn(
+        "Bryan",
+        episode_id="ep-old",
+        user_text="I prefer terse answers",
+    )
+
+    await store.observe_turn(
+        "Bryan",
+        episode_id="ep-new",
+        user_text="I prefer terse answers",
+        superseded_episode_ids=("ep-old",),
+    )
+
+    restored = InterpersonalStore(root=tmp_path / "interpersonal", authority=consent)
+    occurrences = [
+        item.episode_id
+        for observation in restored.model_for("Bryan")
+        for item in observation.occurrences
+    ]
+    assert occurrences == ["ep-new"]
 
 
 async def test_a_person_is_not_named_in_the_filename(tmp_path):

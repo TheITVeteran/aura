@@ -125,6 +125,70 @@ async def test_chat_turn_logger_forwards_exact_identity_to_profile_learning(monk
 
 
 @pytest.mark.asyncio
+async def test_chat_turn_logger_propagates_superseded_episode_evidence(monkeypatch):
+    from core.memory import interpersonal_store, profile_manager
+
+    observed = []
+    tasks = []
+
+    class _EpisodicMemory:
+        def record_episode(self, **_kwargs):
+            return "episode-new"
+
+        def superseded_source_episode_ids(self, **kwargs):
+            assert kwargs["session_id"] == "desktop-session"
+            assert kwargs["exchange_id"] == "exchange-1"
+            return ("episode-old",)
+
+    class _InterpersonalStore:
+        async def observe_turn(self, *args, **kwargs):
+            observed.append((args, kwargs))
+            return []
+
+    class _Tracker:
+        def create_task(self, coro, **_kwargs):
+            task = asyncio.create_task(coro)
+            tasks.append(task)
+            return task
+
+    async def _no_profile_facts(**_kwargs):
+        return (0, 0)
+
+    monkeypatch.setattr(
+        "core.container.ServiceContainer.get",
+        staticmethod(
+            lambda name, default=None: (
+                _EpisodicMemory() if name == "episodic_memory" else default
+            )
+        ),
+    )
+    monkeypatch.setattr(chat_turn_logger, "get_task_tracker", lambda: _Tracker())
+    monkeypatch.setattr(profile_manager, "learn_from_turn_auto", _no_profile_facts)
+    monkeypatch.setattr(
+        interpersonal_store,
+        "get_interpersonal_store",
+        lambda: _InterpersonalStore(),
+    )
+    turn_logger = ChatTurnLogger()
+
+    assert await turn_logger.log_chat_turn(
+        "I prefer concise progress summaries.",
+        "I will keep the next progress summary concise and evidence-based.",
+        session_id="desktop-session",
+        metadata={
+            "user_id": "bryan",
+            "conversation_exchange_id": "exchange-1",
+            "conversation_revision": 2,
+            "memory_log_operation_id": "desktop-session:exchange-1:r2",
+        },
+    )
+    await asyncio.gather(*tasks)
+
+    assert observed[0][1]["episode_id"] == "episode-new"
+    assert observed[0][1]["superseded_episode_ids"] == ("episode-old",)
+
+
+@pytest.mark.asyncio
 async def test_chat_turn_logger_never_schedules_unscoped_profile_learning(monkeypatch):
     scheduled_names = []
 

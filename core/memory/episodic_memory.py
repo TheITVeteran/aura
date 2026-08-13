@@ -83,6 +83,11 @@ class Episode(BaseModel):
     source_ref: str = ""
     source_revision: int = 0
     source_metadata: dict[str, Any] = Field(default_factory=dict)
+    source_session_id: str = ""
+    source_exchange_id: str = ""
+    source_authoritative: bool = True
+    superseded_at: float = 0.0
+    superseded_by: str = ""
 
     model_config = {
         "populate_by_name": True,
@@ -297,7 +302,12 @@ class EpisodicMemory:
                     source TEXT DEFAULT 'episodic_memory',
                     source_ref TEXT DEFAULT '',
                     source_revision INTEGER DEFAULT 0,
-                    source_metadata TEXT DEFAULT '{}'
+                    source_metadata TEXT DEFAULT '{}',
+                    source_session_id TEXT DEFAULT '',
+                    source_exchange_id TEXT DEFAULT '',
+                    source_authoritative INTEGER NOT NULL DEFAULT 1,
+                    superseded_at REAL DEFAULT 0.0,
+                    superseded_by TEXT DEFAULT ''
                 )
             """)
             conn.commit()
@@ -326,6 +336,11 @@ class EpisodicMemory:
                 ("source_ref", "TEXT DEFAULT ''"),
                 ("source_revision", "INTEGER DEFAULT 0"),
                 ("source_metadata", "TEXT DEFAULT '{}'"),
+                ("source_session_id", "TEXT DEFAULT ''"),
+                ("source_exchange_id", "TEXT DEFAULT ''"),
+                ("source_authoritative", "INTEGER NOT NULL DEFAULT 1"),
+                ("superseded_at", "REAL DEFAULT 0.0"),
+                ("superseded_by", "TEXT DEFAULT ''"),
             ]
             # Add all missing columns before creating indexes that depend on them.
             cursor = conn.execute("PRAGMA table_info(episodes)")
@@ -343,9 +358,14 @@ class EpisodicMemory:
                     logger.info("📝 Schema migration: added %s column", col_name)
                     existing_columns.add(col_name)
 
+            self._migrate_conversation_revision_authority(conn)
             conn.execute("CREATE INDEX IF NOT EXISTS idx_next_decay ON episodes (next_decay_eval)")
             conn.execute("CREATE INDEX IF NOT EXISTS idx_ep_timestamp ON episodes (timestamp DESC)")
             conn.execute("CREATE INDEX IF NOT EXISTS idx_ep_importance ON episodes (importance DESC)")
+            conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_ep_source_revision ON episodes "
+                "(source, source_session_id, source_exchange_id, source_revision DESC)"
+            )
             conn.commit()
             try:
                 conn.execute("PRAGMA wal_checkpoint(FULL)")
@@ -359,6 +379,78 @@ class EpisodicMemory:
         conn = db_config.configure_connection(self._db_path)
         conn.row_factory = sqlite3.Row
         return conn
+
+    @staticmethod
+    def _migrate_conversation_revision_authority(conn: sqlite3.Connection) -> None:
+        """Backfill CP359 chat rows and normalize one winner per exchange."""
+
+        rows = conn.execute(
+            "SELECT episode_id, timestamp, source_ref, source_revision, "
+            "source_metadata, source_session_id, source_exchange_id "
+            "FROM episodes WHERE source='chat_turn_logger'"
+        ).fetchall()
+        groups: dict[tuple[str, str], list[sqlite3.Row]] = {}
+        for row in rows:
+            session_id = str(row["source_session_id"] or "")[:64]
+            exchange_id = str(row["source_exchange_id"] or "")[:128]
+            try:
+                metadata = json.loads(str(row["source_metadata"] or "{}"))
+            except (json.JSONDecodeError, TypeError, ValueError):
+                metadata = {}
+            if not session_id:
+                session_id = str(metadata.get("session_id") or "")[:64]
+            if not exchange_id:
+                exchange_id = str(
+                    metadata.get("conversation_exchange_id") or ""
+                )[:128]
+            revision = int(row["source_revision"] or 0)
+            source_ref = str(row["source_ref"] or "")
+            suffix = f":r{revision}"
+            prefix = f"{session_id}:" if session_id else ""
+            if (
+                not exchange_id
+                and prefix
+                and source_ref.startswith(prefix)
+                and source_ref.endswith(suffix)
+            ):
+                exchange_id = source_ref[len(prefix) : -len(suffix)][:128]
+            if not session_id or not exchange_id or revision <= 0:
+                continue
+            conn.execute(
+                "UPDATE episodes SET source_session_id=?, source_exchange_id=? "
+                "WHERE episode_id=?",
+                (session_id, exchange_id, str(row["episode_id"])),
+            )
+            groups.setdefault((session_id, exchange_id), []).append(row)
+
+        for (session_id, exchange_id), revisions in groups.items():
+            winner = max(
+                revisions,
+                key=lambda item: (
+                    int(item["source_revision"] or 0),
+                    float(item["timestamp"] or 0.0),
+                    str(item["episode_id"]),
+                ),
+            )
+            winner_id = str(winner["episode_id"])
+            winner_at = float(winner["timestamp"] or 0.0)
+            conn.execute(
+                "UPDATE episodes SET source_authoritative=CASE WHEN episode_id=? "
+                "THEN 1 ELSE 0 END, superseded_at=CASE WHEN episode_id=? THEN 0.0 "
+                "ELSE ? END, superseded_by=CASE WHEN episode_id=? THEN '' ELSE ? END "
+                "WHERE source='chat_turn_logger' AND source_session_id=? "
+                "AND source_exchange_id=?",
+                (
+                    winner_id,
+                    winner_id,
+                    winner_at,
+                    winner_id,
+                    winner_id,
+                    session_id,
+                    exchange_id,
+                ),
+            )
+        conn.commit()
 
     def close(self) -> None:
         """Commit and release every connection owned by this durable store."""
@@ -522,7 +614,8 @@ class EpisodicMemory:
             ).hexdigest()[:24]
             with self._get_conn() as conn:
                 existing = conn.execute(
-                    "SELECT context, action, outcome, success FROM episodes "
+                    "SELECT context, action, outcome, success, source_authoritative "
+                    "FROM episodes "
                     "WHERE episode_id = ?",
                     (episode_id,),
                 ).fetchone()
@@ -600,10 +693,11 @@ class EpisodicMemory:
         original_valence = emotional_valence
 
         inserted = False
+        authoritative = True
 
         def _persist() -> None:
-            nonlocal inserted
-            inserted = self._insert_and_index(
+            nonlocal inserted, authoritative
+            inserted, authoritative = self._insert_and_index(
                 episode_id=episode_id,
                 now=now,
                 context=context,
@@ -635,6 +729,12 @@ class EpisodicMemory:
 
         if not inserted:
             return episode_id
+        if not authoritative:
+            logger.info(
+                "Recorded superseded conversation revision for audit only: %s",
+                episode_id,
+            )
+            return episode_id
 
         # Causal encode signals — novelty feeds the neuromodulatory system and the
         # encoding is broadcast so self-model / dreaming / identity can react.
@@ -664,7 +764,7 @@ class EpisodicMemory:
         source_ref: str,
         source_revision: int,
         source_metadata: dict[str, Any],
-    ) -> bool:
+    ) -> tuple[bool, bool]:
         """Persist one episode row, index it for semantic + associative recall,
         and bind its engram cues in the hippocampal index.
 
@@ -674,7 +774,8 @@ class EpisodicMemory:
         with self._lock:
             with self._get_conn() as conn:
                 existing = conn.execute(
-                    "SELECT context, action, outcome, success FROM episodes "
+                    "SELECT context, action, outcome, success, source_authoritative "
+                    "FROM episodes "
                     "WHERE episode_id = ?",
                     (episode_id,),
                 ).fetchone()
@@ -686,12 +787,54 @@ class EpisodicMemory:
                     or bool(existing["success"]) != bool(success)
                 ):
                     raise ValueError("episodic episode identity collision")
-                return False
+                return False, bool(existing["source_authoritative"])
             max_retries = 3
             inserted_here = False
+            source_session_id = str(source_metadata.get("session_id") or "")[:64]
+            source_exchange_id = str(
+                source_metadata.get("conversation_exchange_id") or ""
+            )[:128]
+            authoritative = True
             for attempt in range(max_retries):
                 try:
                     with self._get_conn() as conn:
+                        conn.execute("BEGIN IMMEDIATE")
+                        if (
+                            str(source or "") == "chat_turn_logger"
+                            and source_session_id
+                            and source_exchange_id
+                            and source_revision > 0
+                        ):
+                            latest = conn.execute(
+                                "SELECT episode_id, source_revision FROM episodes "
+                                "WHERE source='chat_turn_logger' "
+                                "AND source_session_id=? AND source_exchange_id=? "
+                                "ORDER BY source_revision DESC, timestamp DESC LIMIT 1",
+                                (source_session_id, source_exchange_id),
+                            ).fetchone()
+                            if latest is not None:
+                                latest_revision = int(latest["source_revision"] or 0)
+                                if latest_revision > source_revision:
+                                    authoritative = False
+                                elif latest_revision == source_revision:
+                                    raise ValueError(
+                                        "conversation episode revision identity collision"
+                                    )
+                                else:
+                                    conn.execute(
+                                        "UPDATE episodes SET source_authoritative=0, "
+                                        "superseded_at=?, superseded_by=? "
+                                        "WHERE source='chat_turn_logger' "
+                                        "AND source_session_id=? AND source_exchange_id=? "
+                                        "AND source_revision < ? AND source_authoritative=1",
+                                        (
+                                            now,
+                                            episode_id,
+                                            source_session_id,
+                                            source_exchange_id,
+                                            source_revision,
+                                        ),
+                                    )
                         cursor = conn.execute(
                             """INSERT OR IGNORE INTO episodes
                                (episode_id, timestamp, context, action, outcome, success,
@@ -700,8 +843,10 @@ class EpisodicMemory:
                                 qualia_snapshot, next_decay_eval,
                                 fidelity, original_valence, reconsolidation_count,
                                 last_reconsolidated, novelty, source, source_ref,
-                                source_revision, source_metadata)
-                               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                                source_revision, source_metadata, source_session_id,
+                                source_exchange_id, source_authoritative, superseded_at,
+                                superseded_by)
+                               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                             (
                                 episode_id, now, context, action, outcome,
                                 int(success), emotional_valence, 0.5, importance,
@@ -715,6 +860,11 @@ class EpisodicMemory:
                                 str(source_ref or "")[:160],
                                 int(source_revision),
                                 json.dumps(source_metadata, cls=_SafeEncoder),
+                                source_session_id,
+                                source_exchange_id,
+                                int(authoritative),
+                                0.0 if authoritative else now,
+                                "" if authoritative else str(latest["episode_id"]),
                             ),
                         )
                         inserted_here = cursor.rowcount == 1
@@ -744,7 +894,10 @@ class EpisodicMemory:
                         raise
 
             if not inserted_here:
-                return False
+                return False, authoritative
+
+            if not authoritative:
+                return True, False
 
             # Index in vector memory for semantic retrieval
             if self._vector_memory:
@@ -776,7 +929,7 @@ class EpisodicMemory:
                 logger.debug("Hippocampal cue binding skipped for %s: %s", episode_id, e)
 
             self._maybe_prune()
-            return True
+            return True, True
 
     # ---- Compatibility Shims ------------------------------------------------
     
@@ -819,7 +972,8 @@ class EpisodicMemory:
                 with self._get_conn() as conn:
                     # Only calculate decay for records due for evaluation
                     rows = conn.execute(
-                        "SELECT * FROM episodes WHERE next_decay_eval < ? ORDER BY next_decay_eval ASC LIMIT 500",
+                        "SELECT * FROM episodes WHERE source_authoritative=1 "
+                        "AND next_decay_eval < ? ORDER BY next_decay_eval ASC LIMIT 500",
                         (now,)
                     ).fetchall()
                     
@@ -936,7 +1090,7 @@ class EpisodicMemory:
                     # Find episodes that are near-death but haven't been compacted yet
                     rows = conn.execute(
                         """SELECT * FROM episodes
-                           WHERE importance < 0.5
+                           WHERE source_authoritative=1 AND importance < 0.5
                            ORDER BY timestamp ASC
                            LIMIT ?""",
                         (batch_size,)
@@ -1015,7 +1169,8 @@ class EpisodicMemory:
         with self._get_conn() as conn:
             # Fetch more than needed so we can filter out decayed ones
             rows = conn.execute(
-                "SELECT * FROM episodes ORDER BY timestamp DESC LIMIT ?", 
+                "SELECT * FROM episodes WHERE source_authoritative=1 "
+                "ORDER BY timestamp DESC LIMIT ?",
                 (limit * 3,)
             ).fetchall()
         
@@ -1321,7 +1476,8 @@ class EpisodicMemory:
         """Retrieve recent failures — the best learning opportunities."""
         with self._get_conn() as conn:
             rows = conn.execute(
-                "SELECT * FROM episodes WHERE success = 0 ORDER BY timestamp DESC LIMIT ?",
+                "SELECT * FROM episodes WHERE source_authoritative=1 AND success = 0 "
+                "ORDER BY timestamp DESC LIMIT ?",
                 (limit,),
             ).fetchall()
         return [self._row_to_episode(r) for r in rows]
@@ -1331,10 +1487,34 @@ class EpisodicMemory:
         with self._get_conn() as conn:
             # tools_used is a JSON array; use LIKE for simple matching
             rows = conn.execute(
-                "SELECT * FROM episodes WHERE tools_used LIKE ? ORDER BY timestamp DESC LIMIT ?",
+                "SELECT * FROM episodes WHERE source_authoritative=1 "
+                "AND tools_used LIKE ? ORDER BY timestamp DESC LIMIT ?",
                 (f'%"{tool_name}"%', limit),
             ).fetchall()
         return self._register_recall([self._row_to_episode(r) for r in rows])
+
+    def superseded_source_episode_ids(
+        self,
+        *,
+        source: str,
+        session_id: str,
+        exchange_id: str,
+    ) -> tuple[str, ...]:
+        """Return audit rows displaced by the current source revision."""
+
+        safe_source = str(source or "")[:64]
+        safe_session = str(session_id or "")[:64]
+        safe_exchange = str(exchange_id or "")[:128]
+        if not safe_source or not safe_session or not safe_exchange:
+            return ()
+        with self._get_conn() as conn:
+            rows = conn.execute(
+                "SELECT episode_id FROM episodes WHERE source=? "
+                "AND source_session_id=? AND source_exchange_id=? "
+                "AND source_authoritative=0 ORDER BY source_revision ASC",
+                (safe_source, safe_session, safe_exchange),
+            ).fetchall()
+        return tuple(str(row["episode_id"]) for row in rows)
 
     def get_summary_cached(self, max_age_seconds: float = 30.0) -> dict[str, Any]:
         """TTL-cached summary for telemetry hot paths (health endpoint, panels).
@@ -1358,19 +1538,38 @@ class EpisodicMemory:
     def get_summary(self) -> dict[str, Any]:
         """Introspection summary for self-model."""
         with self._get_conn() as conn:
-            total = conn.execute("SELECT COUNT(*) FROM episodes").fetchone()[0]
-            successes = conn.execute("SELECT COUNT(*) FROM episodes WHERE success = 1").fetchone()[0]
+            stored_rows = conn.execute("SELECT COUNT(*) FROM episodes").fetchone()[0]
+            superseded = conn.execute(
+                "SELECT COUNT(*) FROM episodes WHERE source_authoritative = 0"
+            ).fetchone()[0]
+            total = stored_rows - superseded
+            successes = conn.execute(
+                "SELECT COUNT(*) FROM episodes WHERE source_authoritative = 1 "
+                "AND success = 1"
+            ).fetchone()[0]
             failures = total - successes
-            avg_valence = conn.execute("SELECT AVG(emotional_valence) FROM episodes").fetchone()[0] or 0.0
-            important = conn.execute("SELECT COUNT(*) FROM episodes WHERE importance > 0.7").fetchone()[0]
-            avg_fidelity = conn.execute("SELECT AVG(fidelity) FROM episodes").fetchone()[0]
+            avg_valence = conn.execute(
+                "SELECT AVG(emotional_valence) FROM episodes "
+                "WHERE source_authoritative = 1"
+            ).fetchone()[0] or 0.0
+            important = conn.execute(
+                "SELECT COUNT(*) FROM episodes WHERE source_authoritative = 1 "
+                "AND importance > 0.7"
+            ).fetchone()[0]
+            avg_fidelity = conn.execute(
+                "SELECT AVG(fidelity) FROM episodes WHERE source_authoritative = 1"
+            ).fetchone()[0]
             reshaped = conn.execute(
-                "SELECT COUNT(*) FROM episodes WHERE reconsolidation_count > 0"
+                "SELECT COUNT(*) FROM episodes WHERE source_authoritative = 1 "
+                "AND reconsolidation_count > 0"
             ).fetchone()[0]
             total_reconsolidations = conn.execute(
-                "SELECT COALESCE(SUM(reconsolidation_count), 0) FROM episodes"
+                "SELECT COALESCE(SUM(reconsolidation_count), 0) FROM episodes "
+                "WHERE source_authoritative = 1"
             ).fetchone()[0]
-            avg_novelty = conn.execute("SELECT AVG(novelty) FROM episodes").fetchone()[0]
+            avg_novelty = conn.execute(
+                "SELECT AVG(novelty) FROM episodes WHERE source_authoritative = 1"
+            ).fetchone()[0]
         engram_stats = {}
         try:
             engram_stats = self._hippocampus.stats()
@@ -1378,6 +1577,8 @@ class EpisodicMemory:
             pass
         return {
             "total_episodes": total,
+            "stored_episode_rows": stored_rows,
+            "superseded_conversation_revisions": superseded,
             "successes": successes,
             "failures": failures,
             "success_rate": successes / max(1, total),
@@ -1820,6 +2021,11 @@ class EpisodicMemory:
             source_ref=safe_get("source_ref", ""),
             source_revision=safe_get("source_revision", 0),
             source_metadata=load_json(safe_get("source_metadata", "{}"), {}),
+            source_session_id=safe_get("source_session_id", ""),
+            source_exchange_id=safe_get("source_exchange_id", ""),
+            source_authoritative=bool(safe_get("source_authoritative", 1)),
+            superseded_at=safe_get("superseded_at", 0.0),
+            superseded_by=safe_get("superseded_by", ""),
         )
 
     def _fetch_by_ids(self, episode_ids: list[str]) -> list[Episode]:
@@ -1834,7 +2040,8 @@ class EpisodicMemory:
         with self._get_conn() as conn:
             placeholders = ",".join("?" for _ in episode_ids)
             rows = conn.execute(
-                f"SELECT * FROM episodes WHERE episode_id IN ({placeholders})",
+                f"SELECT * FROM episodes WHERE source_authoritative=1 "
+                f"AND episode_id IN ({placeholders})",
                 episode_ids,
             ).fetchall()
         return [self._row_to_episode(r) for r in rows]
@@ -1848,7 +2055,9 @@ class EpisodicMemory:
         """
         with self._get_conn() as conn:
             rows = conn.execute(
-                "SELECT * FROM episodes ORDER BY timestamp DESC LIMIT ?", (limit,)
+                "SELECT * FROM episodes WHERE source_authoritative=1 "
+                "ORDER BY timestamp DESC LIMIT ?",
+                (limit,),
             ).fetchall()
         return [self._row_to_episode(r) for r in rows]
 
@@ -1895,7 +2104,8 @@ class EpisodicMemory:
             rows = conn.execute(
                 f"""
                 SELECT * FROM (
-                    SELECT * FROM episodes ORDER BY timestamp DESC LIMIT ?
+                    SELECT * FROM episodes WHERE source_authoritative=1
+                    ORDER BY timestamp DESC LIMIT ?
                 )
                 WHERE {and_conditions}
                 ORDER BY timestamp DESC
@@ -1906,7 +2116,8 @@ class EpisodicMemory:
             # 2. Strict AND across the full table
             if not rows:
                 rows = conn.execute(
-                    f"SELECT * FROM episodes WHERE {and_conditions} ORDER BY timestamp DESC LIMIT ?",
+                    f"SELECT * FROM episodes WHERE source_authoritative=1 "
+                    f"AND {and_conditions} ORDER BY timestamp DESC LIMIT ?",
                     [*params, limit],
                 ).fetchall()
             if rows:
@@ -1920,7 +2131,8 @@ class EpisodicMemory:
             or_rows = conn.execute(
                 f"""
                 SELECT * FROM (
-                    SELECT * FROM episodes ORDER BY timestamp DESC LIMIT ?
+                    SELECT * FROM episodes WHERE source_authoritative=1
+                    ORDER BY timestamp DESC LIMIT ?
                 )
                 WHERE {or_conditions}
                 """,
@@ -1964,7 +2176,8 @@ class EpisodicMemory:
                 victims = [
                     r[0] for r in conn.execute(
                         """SELECT episode_id FROM episodes
-                           ORDER BY importance ASC, access_count ASC, timestamp ASC
+                           ORDER BY source_authoritative ASC, importance ASC,
+                                    access_count ASC, timestamp ASC
                            LIMIT ?""",
                         (excess,),
                     ).fetchall()

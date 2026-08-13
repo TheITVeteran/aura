@@ -180,6 +180,38 @@ class ChatTurnLogger:
             logger.debug("Profile learning unavailable: %s", exc)
             return False
 
+    async def _observe_interpersonal(
+        self,
+        *,
+        user_id: str,
+        user_message: str,
+        aura_response: str,
+        episode_id: str,
+        superseded_episode_ids: tuple[str, ...] = (),
+    ) -> bool:
+        """Record what this turn showed about the person, against its episode."""
+
+        normalized_user_id = " ".join(str(user_id or "").strip().split())[:160]
+        if not normalized_user_id or not episode_id:
+            return False
+        try:
+            from core.memory.interpersonal_store import get_interpersonal_store
+
+            written = await get_interpersonal_store().observe_turn(
+                normalized_user_id,
+                episode_id=str(episode_id),
+                user_text=user_message,
+                assistant_text=aura_response,
+                superseded_episode_ids=superseded_episode_ids,
+            )
+            if written:
+                logger.debug("Interpersonal: recorded %d observation(s)", len(written))
+            return True
+        except _CHAT_TURN_RECOVERABLE_ERRORS as exc:
+            record_degradation("chat_turn_logger.interpersonal", exc)
+            logger.debug("Interpersonal observation skipped: %s", exc)
+            return False
+
     def _schedule_interpersonal_observation(
         self,
         *,
@@ -187,8 +219,9 @@ class ChatTurnLogger:
         user_message: str,
         aura_response: str,
         episode_id: str,
+        superseded_episode_ids: tuple[str, ...] = (),
     ) -> bool:
-        """Record what this turn showed about the person, against its episode.
+        """Schedule a non-outbox observation after its episode exists.
 
         Scheduled after the episode exists rather than alongside profile
         learning, and that ordering is the point: the interpersonal store
@@ -200,30 +233,17 @@ class ChatTurnLogger:
         Consent, admissibility and durability are all the store's business; this
         only supplies the turn.
         """
-        normalized_user_id = " ".join(str(user_id or "").strip().split())[:160]
-        if not normalized_user_id or not episode_id:
+        if not str(user_id or "").strip() or not episode_id:
             return False
         try:
-            from core.memory.interpersonal_store import get_interpersonal_store
-
-            async def _observe() -> None:
-                try:
-                    written = await get_interpersonal_store().observe_turn(
-                        normalized_user_id,
-                        episode_id=str(episode_id),
-                        user_text=user_message,
-                        assistant_text=aura_response,
-                    )
-                    if written:
-                        logger.debug(
-                            "Interpersonal: recorded %d observation(s)", len(written)
-                        )
-                except _CHAT_TURN_RECOVERABLE_ERRORS as exc:
-                    record_degradation("chat_turn_logger.interpersonal", exc)
-                    logger.debug("Interpersonal observation skipped: %s", exc)
-
             get_task_tracker().create_task(
-                _observe(),
+                self._observe_interpersonal(
+                    user_id=user_id,
+                    user_message=user_message,
+                    aura_response=aura_response,
+                    episode_id=episode_id,
+                    superseded_episode_ids=superseded_episode_ids,
+                ),
                 name=f"interpersonal_observation_{str(episode_id)[:64]}",
             )
             return True
@@ -308,12 +328,33 @@ class ChatTurnLogger:
             
             if episode_id:
                 logger.debug(f"✓ Chat turn logged to episodic memory (episode={episode_id})")
-                self._schedule_interpersonal_observation(
-                    user_id=profile_user_id,
-                    user_message=user_message,
-                    aura_response=aura_response,
-                    episode_id=str(episode_id),
+                superseded_episode_ids: tuple[str, ...] = ()
+                source_episode_ids = getattr(
+                    self._episodic_memory,
+                    "superseded_source_episode_ids",
+                    None,
                 )
+                if callable(source_episode_ids):
+                    superseded_episode_ids = tuple(
+                        source_episode_ids(
+                            source="chat_turn_logger",
+                            session_id=session_id,
+                            exchange_id=str(
+                                episode_metadata.get("conversation_exchange_id") or ""
+                            ),
+                        )
+                    )
+                interpersonal_kwargs = {
+                    "user_id": profile_user_id,
+                    "user_message": user_message,
+                    "aura_response": aura_response,
+                    "episode_id": str(episode_id),
+                    "superseded_episode_ids": superseded_episode_ids,
+                }
+                if episode_metadata.get("memory_log_operation_id"):
+                    await self._observe_interpersonal(**interpersonal_kwargs)
+                else:
+                    self._schedule_interpersonal_observation(**interpersonal_kwargs)
                 return True
             else:
                 logger.debug("Chat turn logging returned empty episode_id (governance blocked or deferral)")

@@ -167,6 +167,7 @@ class InterpersonalStore:
         user_text: str = "",
         assistant_text: str = "",
         at: float | None = None,
+        superseded_episode_ids: tuple[str, ...] = (),
     ) -> list[Observation]:
         """Notice what one turn says about someone, and record it durably.
 
@@ -180,6 +181,11 @@ class InterpersonalStore:
             self._consent_skips += 1
             return []
 
+        model = self.model_for(key)
+        removed = sum(
+            model.remove_episode(episode_id)
+            for episode_id in dict.fromkeys(superseded_episode_ids)
+        )
         observer = self.observer_for(key)
         exchange = Exchange(
             episode_id=episode_id,
@@ -190,6 +196,7 @@ class InterpersonalStore:
         written = observer.observe_exchange(exchange)
         if written:
             self._written += len(written)
+        if written or removed:
             await self.save(key)
         return written
 
@@ -226,7 +233,7 @@ class InterpersonalStore:
         label: str = BLOCK_LABEL,
         limit: int = DEFAULT_LIMIT,
         per_facet: int = 6,
-    ) -> "MemoryBlock | None":
+    ) -> MemoryBlock | None:
         """This person's notes as a memory block, owned by this store.
 
         ``derived_from`` is what keeps sleep-time consolidation away from it.
@@ -282,11 +289,11 @@ class InterpersonalStore:
 
     def refresh_block(
         self,
-        blocks: "MemoryBlockSet",
+        blocks: MemoryBlockSet,
         person: str,
         *,
         label: str = BLOCK_LABEL,
-    ) -> "MemoryBlock | None":
+    ) -> MemoryBlock | None:
         """Re-render this person's block in an existing set.
 
         The write is attributed to this store because the store is the only
