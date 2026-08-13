@@ -482,7 +482,7 @@ def test_lineage_requires_launchd_controller_and_exact_caffeinate_child(
 ):
     source, _out, config_path, config = _prepared(tmp_path)
     controller_command = (
-        f"python {source / 'tools/run_rlc_reconciliation_controller.py'} run "
+        f"{config['python']} {source / 'tools/run_rlc_reconciliation_controller.py'} run "
         f"--config {config_path} --launchd-supervised"
     )
     caffeinate_command = (
@@ -504,10 +504,12 @@ def test_lineage_requires_launchd_controller_and_exact_caffeinate_child(
     }
 
 
-def test_lineage_rejects_caffeinate_owned_by_another_process(tmp_path: Path, monkeypatch):
+def test_lineage_rejects_caffeinate_owned_by_another_process(
+    tmp_path: Path, monkeypatch
+):
     source, _out, config_path, config = _prepared(tmp_path)
     controller_command = (
-        f"python {source / 'tools/run_rlc_reconciliation_controller.py'} run "
+        f"{config['python']} {source / 'tools/run_rlc_reconciliation_controller.py'} run "
         f"--config {config_path} --launchd-supervised"
     )
     caffeinate_command = (
@@ -519,7 +521,47 @@ def test_lineage_rejects_caffeinate_owned_by_another_process(tmp_path: Path, mon
     monkeypatch.setattr(controller, "_process_record", lambda _pid: (1, controller_command))
     monkeypatch.setattr(controller, "_process_table", lambda: [(42, 99, caffeinate_command)])
     with pytest.raises(controller.ControllerError, match="lineage_invalid"):
+        controller._verify_launchd_lineage(config, caffeinate_wait_s=0.0)
+
+
+def test_lineage_rejects_controller_not_owned_by_launchd(
+    tmp_path: Path, monkeypatch
+):
+    source, _out, config_path, config = _prepared(tmp_path)
+    controller_command = (
+        f"{config['python']} {source / 'tools/run_rlc_reconciliation_controller.py'} run "
+        f"--config {config_path} --launchd-supervised"
+    )
+    monkeypatch.setattr(os, "getpid", lambda: 42)
+    monkeypatch.setattr(controller, "_process_record", lambda _pid: (99, controller_command))
+    monkeypatch.setattr(controller, "_process_table", lambda: [])
+    with pytest.raises(controller.ControllerError, match="lineage_invalid"):
         controller._verify_launchd_lineage(config)
+
+
+def test_lineage_waits_for_caffeinate_startup_race(
+    tmp_path: Path, monkeypatch
+):
+    source, _out, config_path, config = _prepared(tmp_path)
+    controller_command = (
+        f"{config['python']} {source / 'tools/run_rlc_reconciliation_controller.py'} run "
+        f"--config {config_path} --launchd-supervised"
+    )
+    caffeinate_command = (
+        f"/usr/bin/caffeinate -dims {config['python']} "
+        f"{source / 'tools/run_rlc_reconciliation_controller.py'} run "
+        f"--config {config_path} --launchd-supervised"
+    )
+    observations = iter([[], [], [(42, 41, caffeinate_command)]])
+    monkeypatch.setattr(os, "getpid", lambda: 41)
+    monkeypatch.setattr(controller, "_process_record", lambda _pid: (1, controller_command))
+    monkeypatch.setattr(controller, "_process_table", lambda: next(observations))
+    monkeypatch.setattr(controller.time, "sleep", lambda _seconds: None)
+    assert controller._verify_launchd_lineage(config) == {
+        "launchd_pid": 1,
+        "caffeinate_pid": 42,
+        "controller_pid": 41,
+    }
 
 
 def plistlib_loads(payload: bytes):

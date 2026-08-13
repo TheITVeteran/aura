@@ -1232,12 +1232,17 @@ def _process_table() -> list[tuple[int, int, str]]:
     return rows
 
 
-def _verify_launchd_lineage(config: Mapping[str, Any]) -> dict[str, Any]:
+def _verify_launchd_lineage(
+    config: Mapping[str, Any], *, caffeinate_wait_s: float = 5.0
+) -> dict[str, Any]:
     controller_pid = os.getpid()
     controller_parent, controller_command = _process_record(controller_pid)
     controller_program = str(_controller_program(config))
     controller_required = (
+        str(config["python"]),
         controller_program,
+        " run ",
+        "--config",
         str(config["campaign_id"]),
         "--launchd-supervised",
     )
@@ -1252,14 +1257,19 @@ def _verify_launchd_lineage(config: Mapping[str, Any]) -> dict[str, Any]:
         controller_program,
         str(config["campaign_id"]),
     )
-    caffeinate_children = [
-        pid
-        for pid, parent, command in _process_table()
-        if parent == controller_pid
-        and all(value in command for value in caffeinate_required)
-    ]
-    if len(caffeinate_children) != 1:
-        raise ControllerError("controller_launchd_caffeinate_lineage_invalid")
+    deadline = time.monotonic() + max(0.0, float(caffeinate_wait_s))
+    while True:
+        caffeinate_children = [
+            pid
+            for pid, parent, command in _process_table()
+            if parent == controller_pid
+            and all(value in command for value in caffeinate_required)
+        ]
+        if len(caffeinate_children) == 1:
+            break
+        if len(caffeinate_children) > 1 or time.monotonic() >= deadline:
+            raise ControllerError("controller_launchd_caffeinate_lineage_invalid")
+        time.sleep(0.05)
     return {
         "launchd_pid": 1,
         "caffeinate_pid": caffeinate_children[0],

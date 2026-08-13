@@ -1,0 +1,42 @@
+{
+  "schema": "aura.rlc.closeout_checkpoint.v1",
+  "checkpoint": "CP377",
+  "subject": "launchd caffeinate startup race",
+  "failed_launch": {
+    "campaign": "cp376-monotonic-component-s41037613",
+    "config_sha256": "b90f75f4ab085e1681351f4f7bffd670fe2076be35e1d4ca9e9cf49bd9ef2f81",
+    "reason": "controller_launchd_caffeinate_lineage_invalid",
+    "scientific_cells_started": 0,
+    "model_loaded": false
+  },
+  "root_cause": "the controller sampled the correct launchd-controller-caffeinate topology before caffeinate's assertion-holding child became observable",
+  "runtime_changes": [
+    "lineage verification retains launchd as the controller parent and caffeinate as the controller child",
+    "the controller observes the assertion child through a bounded five-second startup window",
+    "wrong-parent and duplicate assertion holders still fail closed",
+    "controller command identity now includes the frozen Python path, run action, config flag, campaign identity, and launchd-supervised flag"
+  ],
+  "host_observation": {
+    "topology": "caller -> python target -> caffeinate assertion holder",
+    "assertions": [
+      "PreventUserIdleSystemSleep",
+      "PreventUserIdleDisplaySleep",
+      "PreventSystemSleep",
+      "PreventDiskIdle"
+    ]
+  },
+  "verification": {
+    "focused_tests": "46 passed",
+    "smoke": "104 passed",
+    "ruff": "passed",
+    "compile": "passed",
+    "diff_check": "passed"
+  },
+  "claims": {
+    "resident_32b_campaign_run": false,
+    "reasoning_gain_proven": false,
+    "fusion_authorized": false,
+    "wow_signal_authorized": false
+  },
+  "next": "freeze CP377 source and relaunch the unchanged CP376 scientific design"
+}

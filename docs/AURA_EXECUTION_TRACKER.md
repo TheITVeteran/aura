@@ -48287,3 +48287,36 @@ This is the mechanism repair implied by CP368, not a resident-32B result. It
 does not authorize fusion, global activation, a broad gain claim, frontier
 reasoning, or `WOW Signal`. The next bounded milestone is a frozen task-major
 resident-32B component campaign using the already-qualified recurrent package.
+
+## Checkpoint 2026-08-13-377: Sleep Custody Survives Its Startup Race
+
+The first CP376 campaign launch was rejected before model load and before any
+scientific cell began. Launchd did start the configured `caffeinate` utility,
+but the controller's one-shot lineage observation ran before macOS exposed the
+assertion-holding child. The job exited with
+`controller_launchd_caffeinate_lineage_invalid`; launchd retry was stopped
+while the control plane was repaired.
+
+A real-host observation established the operating-system topology. When
+`caffeinate -dims <python> ...` starts, Python becomes launchd's direct child
+and a short-lived fork transition leaves an assertion-holding `caffeinate`
+child owned by that Python process. `pmset -g assertions` confirmed that child
+held `PreventUserIdleSystemSleep`, `PreventUserIdleDisplaySleep`,
+`PreventSystemSleep` and `PreventDiskIdle` on behalf of the target process.
+The previous verifier encoded the final topology correctly but assumed the
+child was observable immediately.
+
+Lineage verification now retains the strict `launchd -> controller ->
+caffeinate` ownership contract and waits up to five seconds for the exact
+assertion child. Wrong ownership, multiple matching inhibitors, source drift,
+Python drift and command drift still fail closed. The controller command check
+now also binds the frozen interpreter, `run` action and config flag rather than
+relying only on the campaign label.
+
+The controller suite passes `46/46`, canonical smoke passes `104/104`, and
+Ruff, byte compilation and diff hygiene pass. Evidence is
+`artifacts/closeout/latent_cortex/cp377_caffeinate_startup_race.json`.
+
+No scientific result was produced or lost. The next launch will freeze CP377
+source while preserving CP376's seed, domains, task budget, controller package
+and causal arm design.
