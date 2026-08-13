@@ -46994,3 +46994,27 @@ code is committed, published and hash-bound by the next evidence checkpoint.
 Powered resident-32B replication remains separate and undisturbed. This
 checkpoint does not claim a replication verdict, runtime tissue qualification,
 fusion authority, frontier reasoning or a `WOW Signal`.
+
+## Checkpoint 2026-08-12-325: Semantic Reliability Closure Is Commit-Bound
+
+All six `semantic-content-reliability` findings are closed in the append-only
+semantic remediation ledger against CP324's published implementation commit
+`99a4949141e094241c3e60f6a672b78cbe65be01`. The ledger now reports `43/58`
+findings closed (`74.1%`) with `15` open: `8/8` inventory-critical, `32/40`
+inventory-high and `3/10` inventory-medium findings are closed.
+
+Because CP324 also changed the central surface-disposition policy, verification
+correctly marked the older exact-turn receipt for that file as changed. Its
+custody and child-lease semantics were reverified against CP324 and the current
+tests, then recorded as `verified_already_remediated`; the ledger now reports
+zero orphaned finding IDs and zero files changed since their latest closure.
+The scoped manifest records ledger digest
+`1298d0f3e92abfd29a151a132343e1a0c460f8ed14e34d2d6f4bcd14a1311e91`.
+
+This is an evidence checkpoint, not whole-slice or whole-repository semantic
+closeout. The remaining scoped queue is bounded to `15` findings across
+terminal chat, demo support, capability preconditions, reply subject,
+arithmetic checking, one chat-preflight boundary, choice consistency,
+conversational momentum and request mood. Powered resident-32B replication
+remains independent; no scientific verdict, runtime tissue qualification,
+fusion authority, frontier reasoning or `WOW Signal` is claimed here.
