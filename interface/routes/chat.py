@@ -44,6 +44,7 @@ from core.brain.live_mind_contract import (
 from core.brain.llm.cloud_errors import cloud_call_error_types
 from core.brain.llm.latent_cortex.output_quality import evaluate_latent_output
 from core.container import ServiceContainer
+from core.conversation.persistence import ConversationRevisionConflict
 from core.conversation.session_scope import (
     conversation_session_var as _CHAT_REQUEST_SESSION,  # noqa: N812
 )
@@ -2203,6 +2204,10 @@ async def _complete_logged_exchange(
         target["status"] = "complete"
         target["completed_at"] = _utc_now_iso()
         target["durability_state"] = "pending"
+        target.setdefault("revision", 1)
+        target["aura_sha256"] = hashlib.sha256(
+            final_response.encode("utf-8")
+        ).hexdigest()
         if regenerated:
             target["regenerated"] = True
         _trim_conversation_log_locked()
@@ -23050,30 +23055,315 @@ async def api_chat_delivery_status(
     return response
 
 
-async def _apply_regenerated_reply(
+async def _finalize_regenerated_reply_write(
     *,
+    record: _DurableConversationWrite,
     exchange_id: str,
     session_id: str,
-    reply_text: str,
+    expected_revision: int,
+    expected_reply_sha256: str,
+    replacement_text: str,
+    reservation_token: str,
 ) -> bool:
-    """Replace exactly the exchange selected before model execution."""
+    """Publish a committed durable regeneration into the live transcript."""
 
+    if record.state == "pending" and record.task.done():
+        _settle_durable_conversation_write(record.operation_id, record.task)
+    if record.state != "committed":
+        async with _get_convo_lock():
+            for entry in _conversation_log:
+                if (
+                    str(entry.get("id") or "") == exchange_id
+                    and str(entry.get("session_id") or "")[:64] == session_id
+                    and entry.get("regeneration_reservation") == reservation_token
+                ):
+                    entry.pop("regeneration_reservation", None)
+                    entry["regeneration_persistence_state"] = record.state
+                    if record.error:
+                        entry["regeneration_error"] = record.error
+                    break
+        return False
+
+    try:
+        receipt = record.task.result()
+    except Exception:  # noqa: BLE001 - state/error already retained by registry
+        return False
+    if not isinstance(receipt, dict) or not bool(receipt.get("applied")):
+        return False
+
+    replacement_sha256 = hashlib.sha256(replacement_text.encode("utf-8")).hexdigest()
+    applied = False
     async with _get_convo_lock():
         target_exchange = next(
             (
                 entry
                 for entry in _conversation_log
-                if str(entry.get("id") or "") == str(exchange_id or "")
-                and str(entry.get("session_id") or "")[:64]
-                == str(session_id or "")[:64]
+                if str(entry.get("id") or "") == exchange_id
+                and str(entry.get("session_id") or "")[:64] == session_id
             ),
             None,
         )
         if target_exchange is None:
             return False
-        target_exchange["aura"] = reply_text or "…"
+        if target_exchange.get("regeneration_reservation") != reservation_token:
+            return bool(
+                int(target_exchange.get("revision") or 1)
+                == int(receipt.get("revision") or 0)
+                and str(target_exchange.get("aura_sha256") or "")
+                == replacement_sha256
+            )
+        current_text = str(target_exchange.get("aura") or "")
+        current_sha256 = hashlib.sha256(current_text.encode("utf-8")).hexdigest()
+        current_revision = int(target_exchange.get("revision") or 1)
+        if (
+            current_revision != int(expected_revision)
+            or current_sha256 != expected_reply_sha256
+        ):
+            target_exchange.pop("regeneration_reservation", None)
+            target_exchange["regeneration_persistence_state"] = "memory_conflict"
+            return False
+        target_exchange["aura"] = replacement_text
+        target_exchange["aura_sha256"] = replacement_sha256
+        target_exchange["revision"] = int(receipt["revision"])
         target_exchange["regenerated"] = True
-        return True
+        target_exchange["regenerated_at"] = _utc_now_iso()
+        target_exchange["regeneration_persistence_state"] = "committed"
+        target_exchange.pop("regeneration_error", None)
+        target_exchange.pop("regeneration_reservation", None)
+        applied = True
+
+    if applied:
+        _replace_unified_transcript_aura_reply(
+            exchange_id=exchange_id,
+            session_id=session_id,
+            expected_content=str(receipt.get("previous_content") or ""),
+            replacement_content=replacement_text,
+            revision=int(receipt["revision"]),
+            fallback_expected_content_sha256=expected_reply_sha256,
+        )
+    return applied
+
+
+def _replace_unified_transcript_aura_reply(
+    *,
+    exchange_id: str,
+    session_id: str,
+    expected_content: str,
+    replacement_content: str,
+    revision: int,
+    fallback_expected_content_sha256: str = "",
+) -> None:
+    """Keep live referential context coherent with the durable CAS winner."""
+
+    try:
+        from core.conversation.unified_transcript import UnifiedTranscript
+
+        transcript = UnifiedTranscript.get_instance()
+        if not expected_content and fallback_expected_content_sha256:
+            candidates = transcript.entries_for_conversation(session_id or None)
+            matches = [
+                entry
+                for entry in candidates
+                if entry.role == "aura"
+                and str(entry.metadata.get("exchange_id") or "") == exchange_id
+                and hashlib.sha256(entry.content.encode("utf-8")).hexdigest()
+                == fallback_expected_content_sha256
+            ]
+            if len(matches) == 1:
+                expected_content = matches[0].content
+        replaced = transcript.replace_aura_reply(
+            exchange_id=exchange_id,
+            expected_content=expected_content,
+            replacement_content=replacement_content,
+            revision=revision,
+            conversation_id=session_id or None,
+        )
+        if not replaced:
+            logger.debug(
+                "Unified transcript did not contain the regenerated exchange %s",
+                exchange_id,
+            )
+    except _CHAT_RECOVERABLE_ERRORS as exc:
+        record_degradation(
+            "chat.unified_transcript",
+            exc,
+            severity="warning",
+            action="kept durable regeneration authoritative after live transcript update failed",
+            extra={"exchange_id": exchange_id, "revision": revision},
+        )
+
+
+def _schedule_late_regeneration_finalizer(
+    *,
+    record: _DurableConversationWrite,
+    exchange_id: str,
+    session_id: str,
+    expected_revision: int,
+    expected_reply_sha256: str,
+    replacement_text: str,
+    reservation_token: str,
+) -> None:
+    finalizer = _finalize_regenerated_reply_write(
+        record=record,
+        exchange_id=exchange_id,
+        session_id=session_id,
+        expected_revision=expected_revision,
+        expected_reply_sha256=expected_reply_sha256,
+        replacement_text=replacement_text,
+        reservation_token=reservation_token,
+    )
+    try:
+        get_task_tracker().create_task(
+            finalizer,
+            name=f"chat.regeneration.finalize:{exchange_id[:16]}",
+        )
+    except _CHAT_RECOVERABLE_ERRORS as exc:
+        finalizer.close()
+        record_degradation(
+            "chat.conversation_persistence",
+            exc,
+            severity="warning",
+            action="retained committed regeneration for durable restart recovery",
+            extra={"operation_id": record.operation_id},
+        )
+
+
+async def _apply_regenerated_reply(
+    *,
+    exchange_id: str,
+    session_id: str,
+    reply_text: str,
+    expected_revision: int,
+    expected_reply_sha256: str,
+) -> dict[str, Any]:
+    """Durably replace exactly the revision selected before model execution."""
+
+    safe_exchange_id = str(exchange_id or "")[:64]
+    safe_session_id = str(session_id or "")[:64]
+    replacement_text = str(reply_text or "…")
+    replacement_sha256 = hashlib.sha256(replacement_text.encode("utf-8")).hexdigest()
+    reservation_token = uuid.uuid4().hex
+    async with _get_convo_lock():
+        target_exchange = next(
+            (
+                entry
+                for entry in _conversation_log
+                if str(entry.get("id") or "") == safe_exchange_id
+                and str(entry.get("session_id") or "")[:64]
+                == safe_session_id
+            ),
+            None,
+        )
+        if target_exchange is None:
+            return {"applied": False, "state": "conflict", "reason": "target_missing"}
+        current_text = str(target_exchange.get("aura") or "")
+        current_sha256 = hashlib.sha256(current_text.encode("utf-8")).hexdigest()
+        current_revision = int(target_exchange.get("revision") or 1)
+        if (
+            current_revision != int(expected_revision)
+            or current_sha256 != str(expected_reply_sha256 or "")
+            or target_exchange.get("regeneration_reservation")
+        ):
+            return {"applied": False, "state": "conflict", "reason": "source_changed"}
+        target_exchange["regeneration_reservation"] = reservation_token
+        target_exchange["regeneration_persistence_state"] = "pending"
+
+    persistence = ServiceContainer.get("persistence", default=None)
+    replace_aura_turn = getattr(persistence, "replace_aura_turn", None)
+    if not callable(replace_aura_turn):
+        async with _get_convo_lock():
+            target_exchange.pop("regeneration_reservation", None)
+            target_exchange["regeneration_persistence_state"] = "failed"
+        return {
+            "applied": False,
+            "state": "failed",
+            "reason": "canonical_persistence_unavailable",
+        }
+
+    scope_kwargs = _chat_principal_scope_kwargs()
+    operation_id = (
+        f"{safe_exchange_id}:regeneration:{int(expected_revision)}:"
+        f"{replacement_sha256[:16]}"
+    )
+    try:
+        record = _start_durable_conversation_write(
+            operation_id=operation_id,
+            payload={
+                "kind": "regeneration",
+                "exchange_id": safe_exchange_id,
+                "session_id": safe_session_id,
+                "expected_revision": int(expected_revision),
+                "expected_reply_sha256": str(expected_reply_sha256 or ""),
+                "replacement_sha256": replacement_sha256,
+                "scope": scope_kwargs,
+            },
+            operation=lambda: replace_aura_turn(
+                exchange_id=safe_exchange_id,
+                session_id=safe_session_id or None,
+                replacement_content=replacement_text,
+                expected_revision=int(expected_revision),
+                expected_content_sha256=str(expected_reply_sha256 or ""),
+                origin="desktop_ui_regenerate",
+                **scope_kwargs,
+            ),
+        )
+    except _CHAT_RECOVERABLE_ERRORS as exc:
+        async with _get_convo_lock():
+            target_exchange.pop("regeneration_reservation", None)
+            target_exchange["regeneration_persistence_state"] = "failed"
+            target_exchange["regeneration_error"] = f"{type(exc).__name__}:{exc}"
+        return {"applied": False, "state": "failed", "reason": str(exc)}
+
+    record.task.add_done_callback(
+        lambda _completed: _schedule_late_regeneration_finalizer(
+            record=record,
+            exchange_id=safe_exchange_id,
+            session_id=safe_session_id,
+            expected_revision=int(expected_revision),
+            expected_reply_sha256=str(expected_reply_sha256 or ""),
+            replacement_text=replacement_text,
+            reservation_token=reservation_token,
+        )
+    )
+    state = await _await_durable_conversation_write(record)
+    if state == "committed":
+        applied = await _finalize_regenerated_reply_write(
+            record=record,
+            exchange_id=safe_exchange_id,
+            session_id=safe_session_id,
+            expected_revision=int(expected_revision),
+            expected_reply_sha256=str(expected_reply_sha256 or ""),
+            replacement_text=replacement_text,
+            reservation_token=reservation_token,
+        )
+        receipt = record.task.result()
+        return {
+            "applied": applied,
+            "state": "committed" if applied else "conflict",
+            "revision": int(receipt.get("revision") or 0)
+            if isinstance(receipt, dict)
+            else 0,
+            "content_sha256": replacement_sha256,
+        }
+    if state == "pending":
+        return {
+            "applied": False,
+            "state": "pending",
+            "operation_id": record.operation_id,
+        }
+    error = record.error or "regeneration persistence failed"
+    terminal_error: BaseException | None = None
+    if not record.task.cancelled():
+        try:
+            terminal_error = record.task.exception()
+        except (asyncio.InvalidStateError, asyncio.CancelledError):
+            terminal_error = None
+    conflict = isinstance(terminal_error, ConversationRevisionConflict)
+    return {
+        "applied": False,
+        "state": "conflict" if conflict else "failed",
+        "reason": error,
+    }
 
 
 @router.post("/chat/regenerate")
@@ -23105,7 +23395,7 @@ async def api_chat_regenerate(
                 entry
                 for entry in _conversation_log
                 if str(entry.get("status") or "complete").strip().lower()
-                != "pending"
+                == "complete"
             ]
             if requested_session_id:
                 completed_exchanges = [
@@ -23136,6 +23426,11 @@ async def api_chat_regenerate(
             regen_exchange_id = str(last_exchange.get("id") or "")
             user_msg = last_exchange["user"]
             regen_session_id = str(last_exchange.get("session_id") or "")[:64]
+            regen_expected_reply = str(last_exchange.get("aura") or "")
+            regen_expected_reply_sha256 = hashlib.sha256(
+                regen_expected_reply.encode("utf-8")
+            ).hexdigest()
+            regen_expected_revision = int(last_exchange.get("revision") or 1)
 
         from core.kernel.kernel_interface import KernelInterface
         ki = KernelInterface.get_instance()
@@ -23353,11 +23648,39 @@ async def api_chat_regenerate(
                 )
             response_data["live_turn_contract"] = final_regen_contract
 
-        if not await _apply_regenerated_reply(
+        regeneration = await _apply_regenerated_reply(
             exchange_id=regen_exchange_id,
             session_id=regen_session_id,
             reply_text=str(reply_text or ""),
-        ):
+            expected_revision=regen_expected_revision,
+            expected_reply_sha256=regen_expected_reply_sha256,
+        )
+        if not bool(regeneration.get("applied")):
+            if regeneration.get("state") == "pending":
+                return JSONResponse(
+                    {
+                        "status": "regeneration_persistence_pending",
+                        "message": (
+                            "The new reply is still being committed and has not replaced "
+                            "the existing answer yet."
+                        ),
+                        "operation_id": regeneration.get("operation_id"),
+                        "regenerated": False,
+                    },
+                    status_code=202,
+                )
+            if regeneration.get("state") == "failed":
+                return JSONResponse(
+                    {
+                        "error": "regeneration_persistence_failed",
+                        "message": (
+                            "The replacement could not be committed, so the existing "
+                            "answer was left unchanged."
+                        ),
+                        "regenerated": False,
+                    },
+                    status_code=503,
+                )
             return JSONResponse(
                 {
                     "error": "regeneration_target_changed",
@@ -23370,6 +23693,9 @@ async def api_chat_regenerate(
                 status_code=409,
             )
 
+        response_data["revision"] = regeneration.get("revision")
+        response_data["content_sha256"] = regeneration.get("content_sha256")
+        response_data["persistence_state"] = regeneration.get("state")
         return JSONResponse(response_data)
     except TimeoutError:
         return JSONResponse({"response": "Regeneration timed out.", "regenerated": False}, status_code=504)

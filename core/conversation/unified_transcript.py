@@ -266,6 +266,40 @@ class UnifiedTranscript:
         return self.add("system", content, channel="system", modality="system_event",
                         **kwargs)
 
+    def replace_aura_reply(
+        self,
+        *,
+        exchange_id: str,
+        expected_content: str,
+        replacement_content: str,
+        revision: int,
+        conversation_id: str | None = None,
+    ) -> bool:
+        """CAS-replace one delivered Aura reply in the bounded live transcript."""
+
+        safe_exchange_id = str(exchange_id or "").strip()
+        if not safe_exchange_id or int(revision) < 2:
+            return False
+        identity = self._conversation_id(conversation_id)
+        with self._lock:
+            matches = [
+                entry
+                for entry in self._entries
+                if entry.conversation_id == identity
+                and entry.role == "aura"
+                and str(entry.metadata.get("exchange_id") or "") == safe_exchange_id
+            ]
+            if len(matches) != 1 or matches[0].content != expected_content:
+                return False
+            entry = matches[0]
+            entry.content = str(replacement_content)
+            entry.metadata = {
+                **entry.metadata,
+                "regenerated": True,
+                "revision": int(revision),
+            }
+        return True
+
     # ------------------------------------------------------------------
     # Read
     # ------------------------------------------------------------------

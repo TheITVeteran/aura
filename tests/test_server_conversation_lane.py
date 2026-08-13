@@ -1,4 +1,5 @@
 import asyncio
+import hashlib
 import json
 import tempfile
 import threading
@@ -1966,8 +1967,23 @@ async def test_protected_foreground_history_is_scoped_to_exact_session():
 
 
 @pytest.mark.asyncio
-async def test_regenerated_reply_updates_selected_exchange_not_newer_turn():
+async def test_regenerated_reply_updates_selected_exchange_not_newer_turn(
+    monkeypatch,
+    tmp_path,
+):
     from interface.routes import chat as chat_routes
+    from core.conversation.persistence import ConversationPersistence
+
+    persistence = ConversationPersistence(tmp_path / "regeneration-chat.db")
+    monkeypatch.setattr(
+        chat_routes.ServiceContainer,
+        "get",
+        staticmethod(
+            lambda name, default=None: persistence
+            if name == "persistence"
+            else default
+        ),
+    )
 
     selected_id = await chat_routes._begin_logged_exchange(
         "Regenerate me",
@@ -1988,18 +2004,174 @@ async def test_regenerated_reply_updates_selected_exchange_not_newer_turn():
         "Newer answer",
     )
 
-    applied = await chat_routes._apply_regenerated_reply(
+    result = await chat_routes._apply_regenerated_reply(
         exchange_id=selected_id,
         session_id="session-a",
         reply_text="Replacement answer",
+        expected_revision=1,
+        expected_reply_sha256=hashlib.sha256(b"Original answer").hexdigest(),
     )
 
-    assert applied is True
+    assert result["applied"] is True
+    assert result["state"] == "committed"
+    assert result["revision"] == 2
     by_id = {entry["id"]: entry for entry in chat_routes._conversation_log}
     assert by_id[selected_id]["aura"] == "Replacement answer"
     assert by_id[selected_id]["regenerated"] is True
+    assert by_id[selected_id]["revision"] == 2
     assert by_id[newer_id]["aura"] == "Newer answer"
     assert "regenerated" not in by_id[newer_id]
+    persisted = persistence.get_session_history("session-a")
+    persisted_selected = next(
+        row for row in persisted if row["cid"] == f"{selected_id}:aura"
+    )
+    assert persisted_selected["content"] == "Replacement answer"
+    assert persisted_selected["revision"] == 2
+    from core.conversation.unified_transcript import UnifiedTranscript
+
+    transcript_matches = [
+        entry
+        for entry in UnifiedTranscript.get_instance().entries_for_conversation(
+            "session-a"
+        )
+        if entry.role == "aura"
+        and entry.metadata.get("exchange_id") == selected_id
+    ]
+    assert len(transcript_matches) == 1
+    assert transcript_matches[0].content == "Replacement answer"
+    assert transcript_matches[0].metadata["revision"] == 2
+
+
+@pytest.mark.asyncio
+async def test_concurrent_regenerations_have_exactly_one_durable_winner(
+    monkeypatch,
+    tmp_path,
+):
+    from core.conversation.persistence import ConversationPersistence
+    from interface.routes import chat as chat_routes
+
+    persistence = ConversationPersistence(tmp_path / "regeneration-race.db")
+    monkeypatch.setattr(
+        chat_routes.ServiceContainer,
+        "get",
+        staticmethod(
+            lambda name, default=None: persistence
+            if name == "persistence"
+            else default
+        ),
+    )
+    exchange_id = await chat_routes._begin_logged_exchange(
+        "Race this answer",
+        session_id="race-session",
+    )
+    await chat_routes._complete_logged_exchange(
+        exchange_id,
+        "Race this answer",
+        "Original race answer",
+        record_experience=False,
+    )
+    original_sha = hashlib.sha256(b"Original race answer").hexdigest()
+
+    results = await asyncio.gather(
+        chat_routes._apply_regenerated_reply(
+            exchange_id=exchange_id,
+            session_id="race-session",
+            reply_text="Candidate A",
+            expected_revision=1,
+            expected_reply_sha256=original_sha,
+        ),
+        chat_routes._apply_regenerated_reply(
+            exchange_id=exchange_id,
+            session_id="race-session",
+            reply_text="Candidate B",
+            expected_revision=1,
+            expected_reply_sha256=original_sha,
+        ),
+    )
+
+    assert sum(bool(result["applied"]) for result in results) == 1
+    assert {result["state"] for result in results} == {"committed", "conflict"}
+    winner = next(
+        candidate
+        for candidate, result in zip(("Candidate A", "Candidate B"), results)
+        if result["applied"]
+    )
+    aura = next(
+        row
+        for row in persistence.get_session_history("race-session")
+        if row["role"] == "aura"
+    )
+    assert aura["content"] == winner
+    assert aura["revision"] == 2
+
+
+@pytest.mark.asyncio
+async def test_late_regeneration_write_stays_owned_and_publishes_after_commit(
+    monkeypatch,
+    tmp_path,
+):
+    from core.conversation.persistence import ConversationPersistence
+    from interface.routes import chat as chat_routes
+
+    persistence = ConversationPersistence(tmp_path / "regeneration-late.db")
+    replace = persistence.replace_aura_turn
+
+    def _slow_replace(**kwargs):
+        time.sleep(0.05)
+        return replace(**kwargs)
+
+    persistence.replace_aura_turn = _slow_replace
+    monkeypatch.setattr(
+        chat_routes.ServiceContainer,
+        "get",
+        staticmethod(
+            lambda name, default=None: persistence
+            if name == "persistence"
+            else default
+        ),
+    )
+    monkeypatch.setattr(chat_routes, "_DURABLE_CONVERSATION_WRITE_TIMEOUT_S", 0.001)
+    exchange_id = await chat_routes._begin_logged_exchange(
+        "Retain the late write",
+        session_id="late-session",
+    )
+    await chat_routes._complete_logged_exchange(
+        exchange_id,
+        "Retain the late write",
+        "Original late answer",
+        record_experience=False,
+    )
+    original_sha = hashlib.sha256(b"Original late answer").hexdigest()
+
+    result = await chat_routes._apply_regenerated_reply(
+        exchange_id=exchange_id,
+        session_id="late-session",
+        reply_text="Committed after the HTTP budget",
+        expected_revision=1,
+        expected_reply_sha256=original_sha,
+    )
+
+    assert result["state"] == "pending"
+    assert result["applied"] is False
+    assert next(
+        entry for entry in chat_routes._conversation_log if entry["id"] == exchange_id
+    )["aura"] == "Original late answer"
+
+    await asyncio.sleep(0.15)
+
+    in_memory = next(
+        entry for entry in chat_routes._conversation_log if entry["id"] == exchange_id
+    )
+    assert in_memory["aura"] == "Committed after the HTTP budget"
+    assert in_memory["revision"] == 2
+    assert in_memory["regeneration_persistence_state"] == "committed"
+    aura = next(
+        row
+        for row in persistence.get_session_history("late-session")
+        if row["role"] == "aura"
+    )
+    assert aura["content"] == "Committed after the HTTP budget"
+    assert aura["revision"] == 2
 
 
 @pytest.mark.asyncio
@@ -13012,9 +13184,22 @@ async def test_api_chat_regenerate_desktop_stabilizer_keeps_protected_flags(monk
         stabilize_calls.append(kwargs)
         return reply
 
+    async def _fake_apply_regeneration(**_kwargs):
+        return {
+            "applied": True,
+            "state": "committed",
+            "revision": 2,
+            "content_sha256": "a" * 64,
+        }
+
     monkeypatch.setattr(chat_routes, "_restore_owner_session_from_request", lambda *_args, **_kwargs: None)
     monkeypatch.setattr(chat_routes, "_run_cognitive_engine_chat_turn", _fake_cognitive_turn)
     monkeypatch.setattr(chat_routes, "_stabilize_user_facing_reply", _fake_stabilize)
+    monkeypatch.setattr(
+        chat_routes,
+        "_apply_regenerated_reply",
+        _fake_apply_regeneration,
+    )
     _force_full_mind_runtime(monkeypatch, chat_routes)
     monkeypatch.setattr(
         chat_routes,

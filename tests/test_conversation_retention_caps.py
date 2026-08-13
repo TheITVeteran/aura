@@ -21,6 +21,43 @@ def test_unified_transcript_retains_more_than_legacy_window() -> None:
     assert transcript.get_summary()["max_history"] >= 500
 
 
+def test_unified_transcript_regeneration_is_exchange_scoped_cas() -> None:
+    transcript = UnifiedTranscript()
+    transcript.add_text_output(
+        "Original answer",
+        conversation_id="session-a",
+        metadata={"exchange_id": "exchange-a"},
+    )
+    transcript.add_text_output(
+        "Newer answer",
+        conversation_id="session-a",
+        metadata={"exchange_id": "exchange-b"},
+    )
+
+    assert transcript.replace_aura_reply(
+        exchange_id="exchange-a",
+        expected_content="Original answer",
+        replacement_content="Replacement answer",
+        revision=2,
+        conversation_id="session-a",
+    )
+    assert not transcript.replace_aura_reply(
+        exchange_id="exchange-a",
+        expected_content="Original answer",
+        replacement_content="Stale overwrite",
+        revision=3,
+        conversation_id="session-a",
+    )
+
+    entries = transcript.entries_for_conversation("session-a")
+    assert [entry.content for entry in entries] == [
+        "Replacement answer",
+        "Newer answer",
+    ]
+    assert entries[0].metadata["regenerated"] is True
+    assert entries[0].metadata["revision"] == 2
+
+
 def test_conversation_context_retains_more_than_old_rolling_window() -> None:
     context = ConversationContext("retention-test")
 

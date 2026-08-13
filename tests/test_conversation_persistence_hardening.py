@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
+import sqlite3
 import sys
 import types
 from concurrent.futures import ThreadPoolExecutor
@@ -8,7 +10,10 @@ from concurrent.futures import ThreadPoolExecutor
 import pytest
 
 from core.conversation import persistence as persistence_module
-from core.conversation.persistence import ConversationPersistence
+from core.conversation.persistence import (
+    ConversationPersistence,
+    ConversationRevisionConflict,
+)
 
 
 def _install_event_bus(monkeypatch, bus):
@@ -74,6 +79,144 @@ def test_conversation_persistence_records_exchange_atomically(monkeypatch, tmp_p
         "exchange-42:aura",
     ]
     assert len(published) == 2
+
+
+def test_conversation_regeneration_is_atomic_and_append_only(monkeypatch, tmp_path):
+    published: list[tuple[str, dict[str, object]]] = []
+
+    class Bus:
+        def publish_threadsafe(self, topic, payload):
+            published.append((topic, payload))
+
+    _install_event_bus(monkeypatch, Bus())
+    db_path = tmp_path / "regeneration.db"
+    store = ConversationPersistence(db_path)
+    session_id = store.start_session()
+    store.record_exchange(
+        "Explain the result.",
+        "Original answer",
+        origin="desktop_ui",
+        cid="regen-42",
+        session_id=session_id,
+    )
+    original_sha = hashlib.sha256(b"Original answer").hexdigest()
+
+    receipt = store.replace_aura_turn(
+        exchange_id="regen-42",
+        session_id=session_id,
+        replacement_content="Stronger replacement",
+        expected_revision=1,
+        expected_content_sha256=original_sha,
+    )
+
+    assert receipt["applied"] is True
+    assert receipt["previous_revision"] == 1
+    assert receipt["revision"] == 2
+    history = store.get_session_history(session_id)
+    aura = next(row for row in history if row["role"] == "aura")
+    assert aura["content"] == "Stronger replacement"
+    assert aura["revision"] == 2
+    assert aura["content_sha256"] == hashlib.sha256(
+        b"Stronger replacement"
+    ).hexdigest()
+
+    with sqlite3.connect(db_path) as con:
+        revisions = con.execute(
+            "SELECT revision, content, previous_content_sha256, content_sha256, "
+            "origin, actor_principal_id, actor_principal_surface "
+            "FROM turn_revisions ORDER BY revision"
+        ).fetchall()
+    assert revisions == [
+        (1, "Original answer", "", original_sha, "initial_delivery", "", ""),
+        (
+            2,
+            "Stronger replacement",
+            original_sha,
+            hashlib.sha256(b"Stronger replacement").hexdigest(),
+            "regenerate",
+            "",
+            "",
+        ),
+    ]
+    event = next(payload for topic, payload in published if topic == "turn_regenerated")
+    assert event["exchange_id"] == "regen-42"
+    assert event["previous_revision"] == 1
+    assert event["revision"] == 2
+    assert event["previous_content_sha256"] == original_sha
+    assert event["content_sha256"] == hashlib.sha256(
+        b"Stronger replacement"
+    ).hexdigest()
+
+
+def test_conversation_regeneration_rejects_stale_revision_without_mutation(tmp_path):
+    store = ConversationPersistence(tmp_path / "stale-regeneration.db")
+    session_id = store.start_session()
+    store.record_exchange(
+        "Question",
+        "Original",
+        cid="regen-stale",
+        session_id=session_id,
+    )
+    original_sha = hashlib.sha256(b"Original").hexdigest()
+    store.replace_aura_turn(
+        exchange_id="regen-stale",
+        session_id=session_id,
+        replacement_content="First replacement",
+        expected_revision=1,
+        expected_content_sha256=original_sha,
+    )
+
+    with pytest.raises(ConversationRevisionConflict, match="source revision changed"):
+        store.replace_aura_turn(
+            exchange_id="regen-stale",
+            session_id=session_id,
+            replacement_content="Stale overwrite",
+            expected_revision=1,
+            expected_content_sha256=original_sha,
+        )
+
+    aura = next(
+        row
+        for row in store.get_session_history(session_id)
+        if row["role"] == "aura"
+    )
+    assert aura["content"] == "First replacement"
+    assert aura["revision"] == 2
+
+
+def test_conversation_regeneration_enforces_principal_binding(tmp_path):
+    store = ConversationPersistence(tmp_path / "principal-regeneration.db")
+    session_id = "paired-regeneration"
+    store.record_exchange(
+        "Private question",
+        "Private answer",
+        cid="regen-private",
+        session_id=session_id,
+        principal_id="paired-device:a",
+        principal_surface="paired_device",
+    )
+
+    with pytest.raises(PermissionError, match="principal mismatch"):
+        store.replace_aura_turn(
+            exchange_id="regen-private",
+            session_id=session_id,
+            replacement_content="Unauthorized replacement",
+            expected_revision=1,
+            expected_content_sha256=hashlib.sha256(b"Private answer").hexdigest(),
+            principal_id="paired-device:b",
+            principal_surface="paired_device",
+        )
+
+    aura = next(
+        row
+        for row in store.get_session_history(
+            session_id,
+            principal_id="paired-device:a",
+            principal_surface="paired_device",
+        )
+        if row["role"] == "aura"
+    )
+    assert aura["content"] == "Private answer"
 
 
 def test_conversation_persistence_deduplicates_turn_by_cid(monkeypatch, tmp_path):

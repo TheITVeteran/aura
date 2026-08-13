@@ -5,6 +5,8 @@ Persists every turn to SQLite so any crash can be recovered from.
 from __future__ import annotations
 
 import asyncio
+import hashlib
+import hmac
 import json
 import logging
 import sqlite3
@@ -68,6 +70,19 @@ CREATE TABLE IF NOT EXISTS turns (
 CREATE INDEX IF NOT EXISTS idx_turns_session ON turns(session_id, created_at);
 CREATE INDEX IF NOT EXISTS idx_turns_session_cid ON turns(session_id, cid);
 CREATE INDEX IF NOT EXISTS idx_sessions_active ON sessions(last_active DESC);
+
+CREATE TABLE IF NOT EXISTS turn_revisions (
+    turn_id         TEXT NOT NULL REFERENCES turns(id) ON DELETE CASCADE,
+    revision        INTEGER NOT NULL CHECK (revision >= 1),
+    content         TEXT NOT NULL,
+    previous_content_sha256 TEXT NOT NULL,
+    content_sha256  TEXT NOT NULL,
+    origin          TEXT NOT NULL,
+    actor_principal_id TEXT NOT NULL,
+    actor_principal_surface TEXT NOT NULL,
+    updated_at      REAL NOT NULL,
+    PRIMARY KEY (turn_id, revision)
+);
 """
 
 
@@ -171,6 +186,14 @@ def _validated_existing_turn_id(
     ):
         raise ValueError(f"conversation turn cid conflict: {cid}")
     return str(row["id"])
+
+
+def _content_sha256(content: str) -> str:
+    return hashlib.sha256(content.encode("utf-8")).hexdigest()
+
+
+class ConversationRevisionConflict(RuntimeError):
+    """The durable answer changed after regeneration selected its source."""
 
 
 class ConversationPersistence:
@@ -495,6 +518,227 @@ class ConversationPersistence:
             )
         return user_turn_id, aura_turn_id
 
+    def replace_aura_turn(
+        self,
+        *,
+        exchange_id: str,
+        replacement_content: str,
+        expected_revision: int,
+        expected_content_sha256: str,
+        session_id: str | None = None,
+        principal_id: str = "",
+        principal_surface: str = "",
+        origin: str = "regenerate",
+    ) -> dict[str, Any]:
+        """Atomically replace one Aura turn if its selected revision is current.
+
+        Original turns have logical revision 1 without requiring a migration
+        rewrite. The first successful replacement creates the revision row at
+        2; subsequent replacements advance it transactionally.
+        """
+
+        safe_exchange_id = _safe_text(exchange_id, max_chars=64).strip()
+        if not safe_exchange_id:
+            raise ValueError("conversation regeneration requires an exchange id")
+        aura_cid = _safe_text(
+            f"{safe_exchange_id}:aura",
+            max_chars=MAX_CID_CHARS,
+        )
+        safe_session_id = _safe_text(session_id, max_chars=64).strip()
+        safe_replacement = _safe_text(
+            replacement_content,
+            max_chars=MAX_CONTENT_CHARS,
+        )
+        if not safe_replacement:
+            raise ValueError("conversation regeneration requires replacement content")
+        try:
+            expected_revision_value = int(expected_revision)
+        except (TypeError, ValueError, OverflowError) as exc:
+            raise ValueError("conversation regeneration revision must be an integer") from exc
+        if expected_revision_value < 1:
+            raise ValueError("conversation regeneration revision must be positive")
+        expected_sha = _safe_text(
+            expected_content_sha256,
+            max_chars=64,
+        ).strip().lower()
+        if len(expected_sha) != 64 or any(
+            char not in "0123456789abcdef" for char in expected_sha
+        ):
+            raise ValueError("conversation regeneration requires a SHA-256 content identity")
+        principal, surface = _principal_binding(principal_id, principal_surface)
+        safe_origin = _safe_text(origin, max_chars=MAX_ORIGIN_CHARS)
+        now = time.time()
+
+        with self._write_lock, connecting(self._connect()) as con:
+            con.execute("BEGIN IMMEDIATE")
+            if safe_session_id:
+                rows = con.execute(
+                    "SELECT t.id, t.session_id, t.role, t.content, t.cid, t.created_at, "
+                    "s.metadata, r.revision, r.content_sha256 "
+                    "FROM turns t JOIN sessions s ON s.id = t.session_id "
+                    "LEFT JOIN turn_revisions r ON r.turn_id = t.id AND "
+                    "r.revision = (SELECT MAX(r2.revision) FROM turn_revisions r2 "
+                    "WHERE r2.turn_id = t.id) "
+                    "WHERE t.session_id = ? AND t.cid = ? "
+                    "ORDER BY t.created_at ASC, t.rowid ASC",
+                    (safe_session_id, aura_cid),
+                ).fetchall()
+            else:
+                rows = con.execute(
+                    "SELECT t.id, t.session_id, t.role, t.content, t.cid, t.created_at, "
+                    "s.metadata, r.revision, r.content_sha256 "
+                    "FROM turns t JOIN sessions s ON s.id = t.session_id "
+                    "LEFT JOIN turn_revisions r ON r.turn_id = t.id AND "
+                    "r.revision = (SELECT MAX(r2.revision) FROM turn_revisions r2 "
+                    "WHERE r2.turn_id = t.id) "
+                    "WHERE t.cid = ? ORDER BY t.created_at ASC, t.rowid ASC",
+                    (aura_cid,),
+                ).fetchall()
+            if len(rows) != 1:
+                raise ConversationRevisionConflict(
+                    "conversation regeneration target is missing or ambiguous"
+                )
+            row = rows[0]
+            if str(row["role"] or "") != "aura":
+                raise ConversationRevisionConflict(
+                    "conversation regeneration target is not an Aura turn"
+                )
+            if principal:
+                bound_principal, bound_surface = _metadata_principal_binding(
+                    row["metadata"]
+                )
+                if bound_principal:
+                    if (bound_principal, bound_surface) != (principal, surface):
+                        raise PermissionError("conversation session principal mismatch")
+                elif surface != "owner":
+                    raise PermissionError(
+                        "unbound conversation history may only be regenerated by the owner surface"
+                    )
+
+            current_content = str(row["content"] or "")
+            current_sha = _content_sha256(current_content)
+            current_revision = int(row["revision"] or 1)
+            ledger_sha = str(row["content_sha256"] or "")
+            if ledger_sha and not hmac.compare_digest(ledger_sha, current_sha):
+                raise RuntimeError("conversation revision ledger/content drift")
+            if current_revision != expected_revision_value or not hmac.compare_digest(
+                current_sha,
+                expected_sha,
+            ):
+                raise ConversationRevisionConflict(
+                    "conversation regeneration source revision changed"
+                )
+
+            replacement_sha = _content_sha256(safe_replacement)
+            next_revision = current_revision + 1
+            if current_revision == 1 and not ledger_sha:
+                con.execute(
+                    "INSERT INTO turn_revisions("
+                    "turn_id, revision, content, previous_content_sha256, "
+                    "content_sha256, origin, actor_principal_id, "
+                    "actor_principal_surface, updated_at) VALUES(?,?,?,?,?,?,?,?,?)",
+                    (
+                        str(row["id"]),
+                        1,
+                        current_content,
+                        "",
+                        current_sha,
+                        "initial_delivery",
+                        "",
+                        "",
+                        float(row["created_at"]),
+                    ),
+                )
+            updated = con.execute(
+                "UPDATE turns SET content = ? WHERE id = ? AND content = ?",
+                (safe_replacement, str(row["id"]), current_content),
+            )
+            if int(updated.rowcount or 0) != 1:
+                raise ConversationRevisionConflict(
+                    "conversation regeneration lost its durable compare-and-swap"
+                )
+            con.execute(
+                "INSERT INTO turn_revisions("
+                "turn_id, revision, content, previous_content_sha256, "
+                "content_sha256, origin, actor_principal_id, "
+                "actor_principal_surface, updated_at) VALUES(?,?,?,?,?,?,?,?,?)",
+                (
+                    str(row["id"]),
+                    next_revision,
+                    safe_replacement,
+                    current_sha,
+                    replacement_sha,
+                    safe_origin,
+                    principal,
+                    surface,
+                    now,
+                ),
+            )
+            con.execute(
+                "UPDATE sessions SET last_active = ? WHERE id = ?",
+                (now, str(row["session_id"])),
+            )
+            con.commit()
+
+        self._publish_turn_regenerated(
+            exchange_id=safe_exchange_id,
+            session_id=str(row["session_id"]),
+            turn_id=str(row["id"]),
+            previous_revision=current_revision,
+            revision=next_revision,
+            previous_content_sha256=current_sha,
+            content_sha256=replacement_sha,
+            origin=safe_origin,
+            actor_principal_id=principal,
+            actor_principal_surface=surface,
+        )
+
+        return {
+            "exchange_id": safe_exchange_id,
+            "session_id": str(row["session_id"]),
+            "turn_id": str(row["id"]),
+            "previous_revision": current_revision,
+            "revision": next_revision,
+            "previous_content_sha256": current_sha,
+            "previous_content": current_content,
+            "content_sha256": replacement_sha,
+            "applied": True,
+        }
+
+    def _publish_turn_regenerated(
+        self,
+        **payload: object,
+    ) -> None:
+        try:
+            from core.event_bus import get_event_bus
+
+            bus = get_event_bus()
+            publish_threadsafe = getattr(bus, "publish_threadsafe", None)
+            if callable(publish_threadsafe):
+                publish_threadsafe("turn_regenerated", dict(payload))
+                return
+            publish_result = bus.publish("turn_regenerated", dict(payload))
+            if asyncio.iscoroutine(publish_result):
+                try:
+                    get_task_tracker().create_task(
+                        publish_result,
+                        name="conversation.turn_regenerated.publish",
+                    )
+                except _PERSISTENCE_ERRORS as schedule_exc:
+                    publish_result.close()
+                    raise schedule_exc
+        except _PERSISTENCE_ERRORS as exc:
+            self._last_persist_error_at = time.time()
+            _record_persistence_degradation(
+                exc,
+                action="persisted regeneration while event publication failed",
+                severity="warning",
+                extra={
+                    "exchange_id": payload.get("exchange_id", ""),
+                    "revision": payload.get("revision", 0),
+                },
+            )
+
     def _publish_turn_recorded(
         self,
         *,
@@ -572,12 +816,27 @@ class ConversationPersistence:
                     return []
             rows = con.execute(
                 "SELECT * FROM ("
-                "SELECT * FROM turns WHERE session_id = ? "
-                "ORDER BY created_at DESC, rowid DESC LIMIT ?"
+                "SELECT t.*, r.revision AS revision, "
+                "r.content_sha256 AS revision_content_sha256 "
+                "FROM turns t LEFT JOIN turn_revisions r "
+                "ON r.turn_id = t.id AND r.revision = ("
+                "SELECT MAX(r2.revision) FROM turn_revisions r2 "
+                "WHERE r2.turn_id = t.id) "
+                "WHERE t.session_id = ? "
+                "ORDER BY t.created_at DESC, t.rowid DESC LIMIT ?"
                 ") ORDER BY created_at ASC",
                 (sid, limit),
             ).fetchall()
-        return [dict(r) for r in rows]
+        history: list[dict[str, Any]] = []
+        for row in rows:
+            item = dict(row)
+            item["revision"] = int(item.get("revision") or 1)
+            item["content_sha256"] = str(
+                item.pop("revision_content_sha256", "")
+                or _content_sha256(str(item.get("content") or ""))
+            )
+            history.append(item)
+        return history
 
     def get_recent_sessions(
         self,
