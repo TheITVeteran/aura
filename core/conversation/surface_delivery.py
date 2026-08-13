@@ -37,7 +37,13 @@ from __future__ import annotations
 import re
 import threading
 import time
+from dataclasses import dataclass
 from typing import Any
+
+from core.conversation.session_scope import (
+    normalize_conversation_id,
+    normalize_conversation_turn_id,
+)
 
 __all__ = [
     "LATE_LANE_WINDOW_S",
@@ -60,26 +66,63 @@ LATE_LANE_WINDOW_S = 240.0
 #: a conversation.
 TURN_IN_FLIGHT_CEILING_S = 1_800.0
 
+@dataclass
+class _RouteDeliveryState:
+    conversation_id: str
+    turn_id: str
+    started_at: float = 0.0
+    last_reply: str = ""
+    last_route_at: float = 0.0
+
+
 _LOCK = threading.Lock()
-_LAST_ROUTE_REPLY: str = ""
-_LAST_ROUTE_AT: float = 0.0
-_TURN_STARTED_AT: float = 0.0
+_STATES: dict[tuple[str, str], _RouteDeliveryState] = {}
+_MAX_STATES = 256
 
 
 def _norm(text: Any) -> str:
     return re.sub(r"\s+", " ", str(text or "")).strip().lower()
 
 
-def reset_route_delivery() -> None:
-    """Forget the last delivery (tests, and a fresh conversation)."""
-    global _LAST_ROUTE_REPLY, _LAST_ROUTE_AT, _TURN_STARTED_AT
+def _identity(conversation_id: Any, turn_id: Any) -> tuple[str, str]:
+    conversation = normalize_conversation_id(conversation_id)
+    turn = normalize_conversation_turn_id(turn_id)
+    if not conversation or not turn:
+        raise ValueError("route delivery requires exact conversation and turn identities")
+    return conversation, turn
+
+
+def _prune_locked(now: float) -> None:
+    stale_after = max(TURN_IN_FLIGHT_CEILING_S, LATE_LANE_WINDOW_S)
+    stale = [
+        key
+        for key, state in _STATES.items()
+        if now - max(state.started_at, state.last_route_at) > stale_after
+    ]
+    for key in stale:
+        _STATES.pop(key, None)
+    if len(_STATES) > _MAX_STATES:
+        ordered = sorted(
+            _STATES,
+            key=lambda key: max(
+                _STATES[key].started_at,
+                _STATES[key].last_route_at,
+            ),
+        )
+        for key in ordered[: len(_STATES) - _MAX_STATES]:
+            _STATES.pop(key, None)
+
+
+def reset_route_delivery(*, conversation_id: Any = "", turn_id: Any = "") -> None:
+    """Forget all delivery state, or one exact session/turn pair."""
     with _LOCK:
-        _LAST_ROUTE_REPLY = ""
-        _LAST_ROUTE_AT = 0.0
-        _TURN_STARTED_AT = 0.0
+        if not conversation_id and not turn_id:
+            _STATES.clear()
+            return
+        _STATES.pop(_identity(conversation_id, turn_id), None)
 
 
-def note_turn_started() -> None:
+def note_turn_started(*, conversation_id: Any, turn_id: Any) -> None:
     """The person just said something and is waiting for the answer.
 
     Protection used to begin only when the route ANSWERED, which leaves the
@@ -91,23 +134,50 @@ def note_turn_started() -> None:
     her own idle interests, which she is supposed to have — just not in the
     middle of someone waiting on an answer.
     """
-    global _TURN_STARTED_AT
+    key = _identity(conversation_id, turn_id)
+    now = time.time()
     with _LOCK:
-        _TURN_STARTED_AT = time.time()
+        _prune_locked(now)
+        state = _STATES.get(key)
+        if state is None:
+            state = _RouteDeliveryState(*key)
+            _STATES[key] = state
+        state.started_at = now
+        state.last_reply = ""
+        state.last_route_at = 0.0
+        _prune_locked(now)
 
 
-def note_route_delivered(reply_text: Any) -> None:
+def note_route_delivered(
+    reply_text: Any,
+    *,
+    conversation_id: Any,
+    turn_id: Any,
+) -> None:
     """Record that the chat route just answered a turn, and with what."""
-    global _LAST_ROUTE_REPLY, _LAST_ROUTE_AT
     body = _norm(reply_text)
     if not body:
         return
+    key = _identity(conversation_id, turn_id)
+    now = time.time()
     with _LOCK:
-        _LAST_ROUTE_REPLY = body
-        _LAST_ROUTE_AT = time.time()
+        _prune_locked(now)
+        state = _STATES.get(key)
+        if state is None:
+            state = _RouteDeliveryState(*key)
+            _STATES[key] = state
+        state.last_reply = body
+        state.last_route_at = now
+        _prune_locked(now)
 
 
-def route_answer_supersedes(spoken_text: Any, *, unprompted: bool = True) -> bool:
+def route_answer_supersedes(
+    spoken_text: Any,
+    *,
+    conversation_id: Any = "",
+    turn_id: Any = "",
+    unprompted: bool = True,
+) -> bool:
     """True when this spoken message is a second lane answering a settled turn.
 
     False when the route has not answered recently, when the window has
@@ -117,32 +187,41 @@ def route_answer_supersedes(spoken_text: Any, *, unprompted: bool = True) -> boo
     body = _norm(spoken_text)
     if not body:
         return False
-    with _LOCK:
-        last_reply = _LAST_ROUTE_REPLY
-        last_at = _LAST_ROUTE_AT
-        started_at = _TURN_STARTED_AT
     now = time.time()
+    conversation = normalize_conversation_id(conversation_id)
+    turn = normalize_conversation_turn_id(turn_id)
+    scoped = bool(conversation or turn)
+    with _LOCK:
+        _prune_locked(now)
+        states = list(_STATES.values())
+        if conversation:
+            states = [state for state in states if state.conversation_id == conversation]
+        if turn:
+            states = [state for state in states if state.turn_id == turn]
 
-    # A turn is open: the person asked and has not been answered yet. Anything
-    # arriving now is either that answer (let it through, matched below) or
-    # something else entirely, which is an interruption.
-    # Only UNPROMPTED speech waits. The route's own answer travels this same
-    # bridge, and withholding it would trade a noisy window for a silent one —
-    # a reply lost is a certain loss, which is the more expensive mistake.
-    turn_open = (
-        unprompted
-        and started_at > 0.0
-        and started_at > last_at
-        and (now - started_at) <= TURN_IN_FLIGHT_CEILING_S
-    )
-    if turn_open:
+    for state in states:
+        # Only unprompted speech waits during an open turn. A direct route
+        # answer travels this same bridge and must never be swallowed.
+        turn_open = (
+            unprompted
+            and state.started_at > 0.0
+            and state.started_at > state.last_route_at
+            and (now - state.started_at) <= TURN_IN_FLIGHT_CEILING_S
+        )
+        if turn_open:
+            return True
+        # Every spoken EventBus publisher is required to pass OutputGate,
+        # which attaches the current conversation and turn. An unscoped
+        # autonomous message can still be held while any person is actively
+        # waiting, but after settlement it is not evidence of a late lane and
+        # must not be silenced merely because another session spoke recently.
+        if not scoped:
+            continue
+        if not state.last_reply or (now - state.last_route_at) > LATE_LANE_WINDOW_S:
+            continue
+        head = body[:160]
+        last_head = state.last_reply[:160]
+        if head in state.last_reply or last_head in body:
+            continue
         return True
-
-    if not last_reply or (now - last_at) > LATE_LANE_WINDOW_S:
-        return False
-    # The same answer, however it was trimmed or wrapped on the way here.
-    head = body[:160]
-    last_head = last_reply[:160]
-    if head in last_reply or last_head in body:
-        return False
-    return True
+    return False

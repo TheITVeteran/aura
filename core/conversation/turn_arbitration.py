@@ -264,7 +264,9 @@ def ledger_for(turn_id: str) -> TurnLedger:
     history. Keeping every one would make this the memory leak it exists to
     help diagnose.
     """
-    key = str(turn_id or "unknown")
+    key = str(turn_id or "").strip()
+    if not key:
+        raise ValueError("turn arbitration requires an exact turn identity")
     with _LOCK:
         ledger = _LEDGERS.get(key)
         if ledger is None:

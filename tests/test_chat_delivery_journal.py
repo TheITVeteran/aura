@@ -802,7 +802,11 @@ async def test_route_settles_surface_with_the_actual_sanitized_payload(
 
     _patch_route_identity(monkeypatch, journal)
     delivered: list[str] = []
-    monkeypatch.setattr(surface_delivery, "note_route_delivered", delivered.append)
+    monkeypatch.setattr(
+        surface_delivery,
+        "note_route_delivered",
+        lambda text, **_identity: delivered.append(text),
+    )
 
     @chat_mod._paired_chat_response_boundary
     async def handler(*, body, request):
@@ -833,7 +837,11 @@ async def test_route_settles_surface_after_terminal_receipt_substitution(
 
     _patch_route_identity(monkeypatch, journal)
     delivered: list[str] = []
-    monkeypatch.setattr(surface_delivery, "note_route_delivered", delivered.append)
+    monkeypatch.setattr(
+        surface_delivery,
+        "note_route_delivered",
+        lambda text, **_identity: delivered.append(text),
+    )
 
     async def fail_terminal_receipt(*_args, **_kwargs):
         raise ChatDeliveryJournalUnavailable("terminal receipt unavailable")

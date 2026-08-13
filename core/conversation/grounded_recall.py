@@ -408,16 +408,24 @@ def _entry_is_from_the_human(entry: dict) -> bool:
         return False
     origin = entry.get("origin")
     if origin is None:
-        # No origin recorded: trust the chat surface's own marker when present,
-        # and otherwise accept it — the chat route appends without an origin.
-        source = str((entry.get("metadata") or {}).get("source", "") or "")
-        return source in {"", "chat_api", "desktop-ui", "desktop_ui"}
+        # Legacy chat entries may carry the authenticated ingress marker but
+        # not the normalized origin. Absence of both is unknown provenance,
+        # not evidence that a person authored the text.
+        metadata = entry.get("metadata")
+        if not isinstance(metadata, dict):
+            return False
+        source = str(metadata.get("source", "") or "").strip().casefold()
+        return source in {"chat_api", "desktop-ui", "desktop_ui"}
     try:
         from core.state.aura_state import _origin_is_user_anchored
 
         return bool(_origin_is_user_anchored(origin))
-    except (ImportError, AttributeError, TypeError, ValueError):
-        return True
+    except (ImportError, AttributeError, TypeError, ValueError) as exc:
+        logger.warning(
+            "Grounded recall excluded an entry whose human origin could not be verified: %s",
+            exc,
+        )
+        return False
 
 
 def _within_current_conversation(history: Any) -> list[dict]:

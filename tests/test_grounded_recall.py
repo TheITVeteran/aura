@@ -367,3 +367,26 @@ def test_provenance_words_did_not_replace_the_recall_scorer():
     assert "sense" in gr._content_words("which of your senses")
     assert "sense" not in gr._provenance_words("which of your senses")
     assert "senses" in gr._provenance_words("which of your senses")
+
+
+def test_missing_origin_is_not_treated_as_human_without_ingress_provenance():
+    assert not gr._entry_is_from_the_human({"role": "user", "content": "internal"})
+    assert gr._entry_is_from_the_human(
+        {
+            "role": "user",
+            "content": "typed",
+            "metadata": {"source": "chat_api"},
+        }
+    )
+
+
+def test_origin_classifier_failure_excludes_the_entry(monkeypatch):
+    import core.state.aura_state as aura_state
+
+    def fail_classifier(_origin):
+        raise ValueError("classifier unavailable")
+
+    monkeypatch.setattr(aura_state, "_origin_is_user_anchored", fail_classifier)
+    assert not gr._entry_is_from_the_human(
+        {"role": "user", "content": "unverified", "origin": "user"}
+    )

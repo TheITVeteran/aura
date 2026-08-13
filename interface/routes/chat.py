@@ -44,7 +44,10 @@ from core.brain.llm.cloud_errors import cloud_call_error_types
 from core.brain.llm.latent_cortex.output_quality import evaluate_latent_output
 from core.container import ServiceContainer
 from core.conversation.session_scope import (
-    conversation_session_var as _CHAT_REQUEST_SESSION,
+    conversation_session_var as _CHAT_REQUEST_SESSION,  # noqa: N812
+)
+from core.conversation.session_scope import (
+    conversation_turn_var as _CHAT_DELIVERY_TURN_ID,  # noqa: N812
 )
 from core.memory.session_pin_cipher import (
     SESSION_PIN_ENVELOPE_SCHEMA,
@@ -158,10 +161,6 @@ _EXPRESSIVE_AFFORDANCES_FLAG = declare(
     owner="interface.routes.chat",
 )
 
-_CHAT_DELIVERY_TURN_ID: ContextVar[str] = ContextVar(
-    "aura_chat_delivery_turn_id",
-    default="",
-)
 _CHAT_DELIVERY_IDEMPOTENCY_KEY: ContextVar[str] = ContextVar(
     "aura_chat_delivery_idempotency_key",
     default="",
@@ -596,7 +595,12 @@ def _chat_delivery_state_for_response(
     return DeliveryState.COMPLETED
 
 
-def _note_chat_surface_delivery_response(response: JSONResponse) -> None:
+def _note_chat_surface_delivery_response(
+    response: JSONResponse,
+    *,
+    request: Request | None,
+    body: Any,
+) -> None:
     """Close the one-message/one-reply surface state with delivered text."""
 
     try:
@@ -606,9 +610,17 @@ def _note_chat_surface_delivery_response(response: JSONResponse) -> None:
         delivered = str(decoded.get("response") or decoded.get("message") or "").strip()
         if not delivered:
             return
+        turn_id = str(response.headers.get("X-Aura-Turn-ID") or "").strip()
+        if not turn_id:
+            return
+        conversation_id = _resolved_conversation_session(request, body)
         from core.conversation.surface_delivery import note_route_delivered
 
-        note_route_delivered(delivered)
+        note_route_delivered(
+            delivered,
+            conversation_id=conversation_id,
+            turn_id=turn_id,
+        )
     except (ImportError, AttributeError, RuntimeError, TypeError, ValueError, json.JSONDecodeError) as exc:
         record_degradation(
             "chat.surface_delivery",
@@ -1378,7 +1390,16 @@ def _paired_chat_response_boundary(handler: Callable[..., Any]) -> Callable[...,
     @wraps(handler)
     async def _surface_settled(*args: Any, **kwargs: Any) -> JSONResponse:
         response = await _wrapped(*args, **kwargs)
-        _note_chat_surface_delivery_response(response)
+        body = kwargs.get("body")
+        if body is None and args:
+            body = args[0]
+        request = kwargs.get("request")
+        if request is None and len(args) > 1:
+            request = args[1]
+        if isinstance(body, Request):
+            request = body
+            body = None
+        _note_chat_surface_delivery_response(response, request=request, body=body)
         return response
 
     return _surface_settled
@@ -2034,6 +2055,7 @@ async def _preserve_large_user_paste(user_msg: str) -> None:
                 "role": "user",
                 "content": content,
                 "timestamp": time.time(),
+                "origin": "api",
                 "metadata": {
                     "type": "large_user_paste",
                     "source": "chat_api",
@@ -6975,9 +6997,12 @@ def _append_turn_text_mutation(
     try:
         from core.conversation.turn_arbitration import ledger_for
 
-        ledger_for(
-            str(trace.get("turn_id") or trace.get("idempotency_key") or "unknown")
-        ).record_suppression(
+        turn_identity = str(
+            trace.get("turn_id") or trace.get("idempotency_key") or ""
+        ).strip()
+        if not turn_identity:
+            raise ValueError("text mutation has no exact turn identity")
+        ledger_for(turn_identity).record_suppression(
             stage,
             ",".join(str(item) for item in (reasons or ())) or method,
             before=str(before or ""),
@@ -13650,6 +13675,21 @@ def _conversation_session_id(host: str, *, now: float | None = None) -> str:
             epoch = uuid.uuid4().hex[:8]
         _conversation_epochs[key] = (epoch, at)
     return f"{key}:{_CONVERSATION_BOOT_ID}:{epoch}"
+
+
+def _resolved_conversation_session(request: Request | None, body: Any) -> str:
+    """Resolve the same conversation identity before, during, or after a turn."""
+
+    supplied_session = str(getattr(body, "session_id", "") or "").strip()
+    try:
+        paired_session = paired_device_session_id(request) if request is not None else None
+    except _CHAT_RECOVERABLE_ERRORS:
+        paired_session = None
+    conversation_session = str(paired_session or supplied_session or "").strip()
+    if conversation_session:
+        return conversation_session[:_CHAT_SESSION_ID_MAX_CHARS]
+    request_session = _chat_turn_session_key(request, body)
+    return _conversation_session_id(request_session)[:_CHAT_SESSION_ID_MAX_CHARS]
 
 
 def _resolve_live_aura_state() -> Any | None:
@@ -23073,20 +23113,13 @@ async def api_chat(
         _authenticated_chat_principal(request),
         request_session,
     )
-    supplied_session = str(body.session_id or "").strip()
-    try:
-        paired_session = paired_device_session_id(request)
-    except _CHAT_RECOVERABLE_ERRORS:
-        paired_session = None
-    conversation_session = str(paired_session or supplied_session or "").strip()
-    if not conversation_session:
-        conversation_session = _conversation_session_id(request_session)
+    conversation_session = _resolved_conversation_session(request, body)
     principal_token = _CHAT_REQUEST_PRINCIPAL.set(request_principal)
     surface_token = _CHAT_REQUEST_SURFACE.set(
         str(request_profile.get("surface") or "").strip().casefold()[:32]
     )
     session_token = _CHAT_REQUEST_SESSION.set(
-        conversation_session[:_CHAT_SESSION_ID_MAX_CHARS]
+        conversation_session
     )
     # How long a turn takes, measured where the user experiences it. Nothing in
     # the runtime timed this until 2026-08-10, which is why "what is your median
@@ -23271,7 +23304,10 @@ async def _api_chat_turn(body: ChatRequest, request: Request):
     try:
         from core.conversation.surface_delivery import note_turn_started
 
-        note_turn_started()
+        note_turn_started(
+            conversation_id=_CHAT_REQUEST_SESSION.get(),
+            turn_id=_CHAT_DELIVERY_TURN_ID.get(),
+        )
     except _CHAT_RECOVERABLE_ERRORS as _exc:
         record_degradation("chat", _exc, severity="info", action="turn start unrecorded")
 

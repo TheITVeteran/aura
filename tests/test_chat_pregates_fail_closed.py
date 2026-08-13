@@ -20,7 +20,10 @@ async def test_broken_defensive_preflight_never_reaches_cognition(monkeypatch):
     from interface import server as server_module
     from interface.routes import chat as chat_routes
 
-    delivered: list[str] = []
+    delivered: list[tuple[str, dict[str, str]]] = []
+
+    def capture_delivery(text: str, **identity: str) -> None:
+        delivered.append((text, identity))
 
     def unavailable(*_args, **_kwargs):
         raise RuntimeError("firewall internals must not leak")
@@ -31,7 +34,7 @@ async def test_broken_defensive_preflight_never_reaches_cognition(monkeypatch):
     )
     monkeypatch.setattr(
         "core.conversation.surface_delivery.note_route_delivered",
-        delivered.append,
+        capture_delivery,
     )
     monkeypatch.setattr(
         chat_routes,
@@ -52,7 +55,9 @@ async def test_broken_defensive_preflight_never_reaches_cognition(monkeypatch):
     assert payload["processed"] is False
     assert payload["retryable"] is True
     assert "firewall internals" not in response.body.decode()
-    assert delivered == [payload["response"]]
+    assert delivered[0][0] == payload["response"]
+    assert delivered[0][1]["conversation_id"]
+    assert delivered[0][1]["turn_id"] == response.headers["X-Aura-Turn-ID"]
 
 
 @pytest.mark.asyncio

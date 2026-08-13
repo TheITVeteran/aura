@@ -8,9 +8,14 @@ from contextlib import contextmanager
 from typing import Final
 
 MAX_CONVERSATION_ID_CHARS: Final = 128
+MAX_CONVERSATION_TURN_ID_CHARS: Final = 128
 
 conversation_session_var: contextvars.ContextVar[str] = contextvars.ContextVar(
     "aura_conversation_session",
+    default="",
+)
+conversation_turn_var: contextvars.ContextVar[str] = contextvars.ContextVar(
+    "aura_conversation_turn",
     default="",
 )
 
@@ -30,6 +35,19 @@ def current_conversation_session(default: str = "") -> str:
     )
 
 
+def normalize_conversation_turn_id(value: object) -> str:
+    normalized = " ".join(str(value or "").strip().split())
+    if any(ord(character) < 32 for character in normalized):
+        return ""
+    return normalized[:MAX_CONVERSATION_TURN_ID_CHARS]
+
+
+def current_conversation_turn(default: str = "") -> str:
+    return normalize_conversation_turn_id(
+        conversation_turn_var.get()
+    ) or normalize_conversation_turn_id(default)
+
+
 @contextmanager
 def conversation_session_scope(session_id: str) -> Iterator[str]:
     normalized = normalize_conversation_id(session_id)
@@ -45,8 +63,12 @@ def conversation_session_scope(session_id: str) -> Iterator[str]:
 __all__ = [
     "LOCAL_CONVERSATION_ID",
     "MAX_CONVERSATION_ID_CHARS",
+    "MAX_CONVERSATION_TURN_ID_CHARS",
     "conversation_session_scope",
     "conversation_session_var",
+    "conversation_turn_var",
     "current_conversation_session",
+    "current_conversation_turn",
     "normalize_conversation_id",
+    "normalize_conversation_turn_id",
 ]

@@ -162,6 +162,13 @@ def test_ledgers_are_bounded() -> None:
     assert len(turn_arbitration._LEDGERS) <= 64
 
 
+def test_anonymous_turns_cannot_share_one_ledger() -> None:
+    with pytest.raises(ValueError, match="exact turn identity"):
+        ledger_for("")
+    with pytest.raises(ValueError, match="exact turn identity"):
+        ledger_for(None)  # type: ignore[arg-type]
+
+
 def test_a_turn_can_be_forgotten() -> None:
     from core.conversation import turn_arbitration
 

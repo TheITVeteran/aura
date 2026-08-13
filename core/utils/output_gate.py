@@ -470,6 +470,25 @@ class AutonomousOutputGate:
             current_reply_session_id,
         )
         metadata = dict(metadata or {})
+        try:
+            from core.conversation.session_scope import (
+                current_conversation_session,
+                current_conversation_turn,
+            )
+
+            conversation_id = current_conversation_session()
+            conversation_turn_id = current_conversation_turn()
+            if conversation_id:
+                metadata.setdefault("conversation_id", conversation_id)
+            if conversation_turn_id:
+                metadata.setdefault("conversation_turn_id", conversation_turn_id)
+        except (ImportError, RuntimeError, TypeError, ValueError) as exc:
+            record_degradation(
+                "output_gate.conversation_custody",
+                exc,
+                severity="warning",
+                action="continued output delivery without conversation-turn metadata",
+            )
         accepted_sinks: list[str] = []
         orch = self.orchestrator or ServiceContainer.get("orchestrator", default=None)
         if orch and hasattr(orch, "reply_queue"):
