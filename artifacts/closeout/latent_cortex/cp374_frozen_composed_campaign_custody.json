@@ -1,0 +1,35 @@
+{
+  "schema": "aura.rlc.closeout_checkpoint.v1",
+  "checkpoint": "CP374",
+  "subject": "frozen composed campaign custody",
+  "controller": "tools/run_rlc_reconciliation_controller.py",
+  "recurrent_package": {
+    "package_id": "cp366-source-migrated-recurrent",
+    "manifest_sha256": "74f9fb3313a649b1bb6dcd2d838fd66d5ef7874eccbcef85cd466e58eade8085",
+    "activation_sha256": "ec30fd10b696842f660eda229b8938719cdbe1b8e2200714e59f04c3d806a16f",
+    "aggregate_input_sha256": "f1041608862c7a662bdcf134fefa59e7d72ec1ad1deeeda97f70d36703c22501",
+    "file_count": 12
+  },
+  "contracts": [
+    "every package file is size and SHA-256 bound",
+    "qualified activation receipt is embedded and revalidated before every retry",
+    "package and recurrent terminal-token budget are part of campaign config identity",
+    "recovery preserves the exact recurrent package contract",
+    "launchd controller forwards the frozen package only to the composed sweep"
+  ],
+  "verification": {
+    "controller_tests": "41 passed",
+    "sweep_and_producer_tests": "77 passed",
+    "smoke": "104 passed",
+    "ruff": "passed",
+    "compile": "passed",
+    "diff_check": "passed",
+    "real_package_reopen": "passed"
+  },
+  "claims": {
+    "campaign_launched": false,
+    "reasoning_gain_proven": false,
+    "fusion_authorized": false,
+    "wow_signal_authorized": false
+  }
+}

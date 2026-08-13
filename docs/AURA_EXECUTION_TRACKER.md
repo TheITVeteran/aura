@@ -48175,3 +48175,41 @@ Evidence is
 The independent CP368 campaign remains healthy at 15/28 durable candidates
 with zero restarts and was not modified. CP373 establishes how the complete
 engine will be judged; it does not supply the resident-32B result itself.
+
+## Checkpoint 2026-08-13-374: Composed Campaign Inputs Are Frozen
+
+The launchd reconciliation controller could already freeze source, model,
+optional latent adapter, task identity and lifecycle parameters, but it had no
+contract for CP373's external recurrent package. Launching through it would
+have omitted the package argument entirely; adding the argument without an
+identity check would have allowed a retry to consume different controller or
+activation bytes under the same campaign label.
+
+Campaign preparation now reopens the qualified recurrent package, embeds its
+activation receipt, and records every package file's relative path, byte size
+and SHA-256. The aggregate identity and recurrent terminal-token budget are
+inside the signed controller config. Every retry revalidates package custody,
+inventory, bytes, manifest, controller and qualified activation before model
+load. Recovery carries the exact same package contract, and the sweep command
+receives the package and budget only when that contract is present as a
+complete pair.
+
+The installed `cp366-source-migrated-recurrent` package passes this stronger
+freeze with 12 files, manifest
+`74f9fb3313a649b1bb6dcd2d838fd66d5ef7874eccbcef85cd466e58eade8085`,
+activation
+`ec30fd10b696842f660eda229b8938719cdbe1b8e2200714e59f04c3d806a16f`,
+and aggregate input digest
+`f1041608862c7a662bdcf134fefa59e7d72ec1ad1deeeda97f70d36703c22501`.
+The controller suite passes `41/41`; the producer and sweep surface passes
+`77/77`; canonical smoke passes `104/104`; Ruff, byte compilation and diff
+hygiene pass.
+
+CP368 remains independently alive and has advanced to 22/28 durable candidates
+with zero restarts. Its partial rows are not a verdict: they presently include
+one trained-over-initial lift also solved by base, several mutual failures, one
+mutual success, and an incomplete calibration block with an observed trained
+depth-four regression. The six missing rows can still change the final causal
+classification, so the source-frozen campaign is allowed to complete. CP374
+prepares custody for the next composed campaign; it does not launch a second
+resident model, prove gain, authorize fusion, or earn `WOW Signal`.

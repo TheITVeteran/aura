@@ -413,6 +413,68 @@ def _verified_adapter_input(
     }
 
 
+def _verified_integrated_recurrent_package_input(
+    package_root: Path,
+) -> dict[str, Any]:
+    """Freeze the complete recurrent package and its activation authority."""
+
+    supplied = package_root.expanduser()
+    if supplied.is_symlink():
+        raise ControllerError("integrated_recurrent_package_symlink_rejected")
+    root = supplied.resolve(strict=True)
+    from core.brain.llm.unified_recurrent_qualified_activation_store import (
+        read_qualified_activation,
+    )
+    from core.brain.llm.unified_recurrent_shadow import inspect_shadow_package
+
+    verified = inspect_shadow_package(root)
+    manifest = verified["manifest"]
+    activation = read_qualified_activation()
+    if (
+        activation.get("mode") != "qualified_typed_only"
+        or activation.get("serving_authority") is not True
+        or activation.get("package_id") != manifest.get("package_id")
+        or activation.get("manifest_sha256") != manifest.get("manifest_sha256")
+    ):
+        raise ControllerError("integrated_recurrent_package_activation_mismatch")
+    files: list[dict[str, Any]] = []
+    for path in sorted(
+        (candidate for candidate in root.rglob("*") if candidate.is_file()),
+        key=lambda candidate: os.fsencode(candidate.relative_to(root).as_posix()),
+    ):
+        if path.is_symlink():
+            raise ControllerError("integrated_recurrent_package_file_symlink_rejected")
+        files.append(
+            {
+                "path": path.relative_to(root).as_posix(),
+                "size": path.stat().st_size,
+                "sha256": _sha_file(path),
+            }
+        )
+    if not files:
+        raise ControllerError("integrated_recurrent_package_empty")
+    body = {
+        "root": str(root),
+        "package_id": str(manifest["package_id"]),
+        "manifest_sha256": str(manifest["manifest_sha256"]),
+        "controller_sha256": str(activation["controller_sha256"]),
+        "activation_sha256": str(activation["activation_sha256"]),
+        "activation": activation,
+        "files": files,
+    }
+    return {**body, "input_sha256": _sha(body)}
+
+
+def _verify_integrated_recurrent_package_input(
+    expected: Mapping[str, Any],
+) -> None:
+    if not isinstance(expected, Mapping) or not isinstance(expected.get("root"), str):
+        raise ControllerError("integrated_recurrent_package_identity_invalid")
+    observed = _verified_integrated_recurrent_package_input(Path(expected["root"]))
+    if observed != dict(expected):
+        raise ControllerError("integrated_recurrent_package_identity_drift")
+
+
 def _config_body(config: Mapping[str, Any]) -> dict[str, Any]:
     return {key: value for key, value in config.items() if key != "config_sha256"}
 
@@ -496,6 +558,20 @@ def load_config(path: Path) -> dict[str, Any]:
     present_adapter_fields = adapter_fields.intersection(config)
     if present_adapter_fields and present_adapter_fields != adapter_fields:
         raise ControllerError("controller_adapter_identity_incomplete")
+    recurrent_fields = {
+        "integrated_recurrent_package",
+        "integrated_recurrent_max_tokens",
+    }
+    present_recurrent_fields = recurrent_fields.intersection(config)
+    if present_recurrent_fields and present_recurrent_fields != recurrent_fields:
+        raise ControllerError("integrated_recurrent_package_identity_incomplete")
+    if present_recurrent_fields:
+        recurrent = config["integrated_recurrent_package"]
+        if not isinstance(recurrent, Mapping):
+            raise ControllerError("integrated_recurrent_package_identity_invalid")
+        budget = config["integrated_recurrent_max_tokens"]
+        if type(budget) is not int or not 16 <= budget <= 2048:
+            raise ControllerError("integrated_recurrent_budget_invalid")
     return config
 
 
@@ -522,6 +598,8 @@ def build_config(
     campaign_stage: str = "certificate",
     domains: Sequence[str] = (),
     adapter_root: Path | None = None,
+    integrated_recurrent_package: Path | None = None,
+    integrated_recurrent_max_tokens: int = 2048,
     task_registry_version: str = CLAIM_TASK_REGISTRY_VERSION,
     controller_program: Path | None = None,
 ) -> tuple[dict[str, Any], dict[str, Any], bytes]:
@@ -571,6 +649,22 @@ def build_config(
         if adapter_root is not None
         else {}
     )
+    if type(integrated_recurrent_max_tokens) is not int or not (
+        16 <= integrated_recurrent_max_tokens <= 2048
+    ):
+        raise ControllerError("integrated_recurrent_budget_invalid")
+    integrated_recurrent_input = (
+        {
+            "integrated_recurrent_package": (
+                _verified_integrated_recurrent_package_input(
+                    integrated_recurrent_package
+                )
+            ),
+            "integrated_recurrent_max_tokens": integrated_recurrent_max_tokens,
+        }
+        if integrated_recurrent_package is not None
+        else {}
+    )
     body = {
         "schema": SCHEMA,
         "campaign_id": campaign_id,
@@ -605,6 +699,7 @@ def build_config(
         "heartbeat_key_path": str(key_path),
         "launch_label": f"com.aura.rlc-reconciliation.{campaign_id}",
         **adapter_input,
+        **integrated_recurrent_input,
     }
     config = {**body, "config_sha256": _sha(body)}
     return config, manifest, key
@@ -747,6 +842,14 @@ def recover_campaign(
                 Path(str(previous_config["adapter_root"]))
                 if previous_config.get("adapter_root")
                 else None
+            ),
+            integrated_recurrent_package=(
+                Path(str(previous_config["integrated_recurrent_package"]["root"]))
+                if previous_config.get("integrated_recurrent_package")
+                else None
+            ),
+            integrated_recurrent_max_tokens=int(
+                previous_config.get("integrated_recurrent_max_tokens") or 2048
             ),
             controller_program=controller_program,
         )
@@ -975,6 +1078,15 @@ def _sweep_command(config: Mapping[str, Any]) -> list[str]:
                 str(config["adapter_manifest"]),
             ]
         )
+    if config.get("integrated_recurrent_package"):
+        command.extend(
+            [
+                "--integrated-recurrent-package",
+                str(config["integrated_recurrent_package"]["root"]),
+                "--integrated-recurrent-max-tokens",
+                str(config["integrated_recurrent_max_tokens"]),
+            ]
+        )
     return command
 
 
@@ -1049,6 +1161,10 @@ def _source_is_current(config: Mapping[str, Any]) -> None:
         }
         if observed_adapter != expected_adapter:
             raise ControllerError("adapter_identity_drift")
+    if config.get("integrated_recurrent_package"):
+        _verify_integrated_recurrent_package_input(
+            config["integrated_recurrent_package"]
+        )
 
 
 def _process_record(pid: int) -> tuple[int, str]:
@@ -1356,6 +1472,8 @@ def _parser() -> argparse.ArgumentParser:
     prepare.add_argument("--source-commit", required=True)
     prepare.add_argument("--model", type=Path, required=True)
     prepare.add_argument("--adapter-root", type=Path)
+    prepare.add_argument("--integrated-recurrent-package", type=Path)
+    prepare.add_argument("--integrated-recurrent-max-tokens", type=int, default=2048)
     prepare.add_argument("--out-dir", type=Path, required=True)
     prepare.add_argument("--python", type=Path, required=True)
     prepare.add_argument("--controller-program", type=Path)
@@ -1411,6 +1529,10 @@ def main(argv: Sequence[str] | None = None) -> int:
                 source_commit=args.source_commit,
                 model=args.model,
                 adapter_root=args.adapter_root,
+                integrated_recurrent_package=args.integrated_recurrent_package,
+                integrated_recurrent_max_tokens=(
+                    args.integrated_recurrent_max_tokens
+                ),
                 out_dir=args.out_dir,
                 python=args.python,
                 arms=args.arms,

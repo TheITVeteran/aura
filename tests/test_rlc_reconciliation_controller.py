@@ -704,6 +704,130 @@ def test_config_rejects_a_partial_adapter_identity(tmp_path: Path):
         controller.load_config(config_path)
 
 
+def test_recurrent_package_is_file_and_activation_bound(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    package = tmp_path / "recurrent-package"
+    package.mkdir(mode=0o700)
+    (package / "manifest.json").write_text("manifest-v1\n", encoding="utf-8")
+    activation = {
+        "mode": "qualified_typed_only",
+        "serving_authority": True,
+        "package_id": "fixture-package",
+        "manifest_sha256": "a" * 64,
+        "controller_sha256": "b" * 64,
+        "activation_sha256": "c" * 64,
+    }
+    monkeypatch.setattr(
+        "core.brain.llm.unified_recurrent_shadow.inspect_shadow_package",
+        lambda _root: {
+            "manifest": {
+                "package_id": "fixture-package",
+                "manifest_sha256": "a" * 64,
+            }
+        },
+    )
+    monkeypatch.setattr(
+        "core.brain.llm.unified_recurrent_qualified_activation_store.read_qualified_activation",
+        lambda: dict(activation),
+    )
+
+    first = controller._verified_integrated_recurrent_package_input(package)
+    assert first["activation"] == activation
+    assert first["files"][0]["sha256"] == hashlib.sha256(
+        b"manifest-v1\n"
+    ).hexdigest()
+    (package / "manifest.json").write_text("manifest-v2\n", encoding="utf-8")
+    second = controller._verified_integrated_recurrent_package_input(package)
+    assert first["input_sha256"] != second["input_sha256"]
+    with pytest.raises(
+        controller.ControllerError,
+        match="integrated_recurrent_package_identity_drift",
+    ):
+        controller._verify_integrated_recurrent_package_input(first)
+
+
+def test_controller_passes_frozen_recurrent_package_to_the_sweep(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    source = _source(tmp_path)
+    model = tmp_path / "model"
+    model.mkdir()
+    (model / "config.json").write_text("{}\n", encoding="utf-8")
+    (model / "model.safetensors").write_bytes(b"weights")
+    python = tmp_path / "python"
+    python.write_text("runtime", encoding="utf-8")
+    package = tmp_path / "recurrent-package"
+    package.mkdir()
+    identity = {
+        "root": str(package.resolve()),
+        "package_id": "fixture-package",
+        "manifest_sha256": "a" * 64,
+        "controller_sha256": "b" * 64,
+        "activation_sha256": "c" * 64,
+        "activation": {"receipt": "fixture"},
+        "files": [],
+        "input_sha256": "d" * 64,
+    }
+    monkeypatch.setattr(
+        controller,
+        "_verified_integrated_recurrent_package_input",
+        lambda _root: dict(identity),
+    )
+    config, manifest, key = controller.build_config(
+        source_root=source,
+        source_commit=_source_commit(source),
+        model=model,
+        out_dir=tmp_path / "campaign",
+        python=python,
+        arms="complete_system_recurrent_composed",
+        seed=7,
+        per_domain=1,
+        difficulty=2,
+        n_slots=4,
+        max_tokens=64,
+        memory_fraction=0.2,
+        episode_wall_s=20.0,
+        attempt_wall_s=60.0,
+        max_attempts=3,
+        poll_s=1.0,
+        stale_after_s=40.0,
+        retry_backoff_s=1.0,
+        integrated_recurrent_package=package,
+        integrated_recurrent_max_tokens=1024,
+    )
+    controller.write_prepared_campaign(
+        tmp_path / "campaign/controller_config.json",
+        config,
+        manifest,
+        key,
+    )
+    command = controller._sweep_command(config)
+
+    assert config["integrated_recurrent_package"] == identity
+    assert command[command.index("--integrated-recurrent-package") + 1] == str(
+        package.resolve()
+    )
+    assert command[command.index("--integrated-recurrent-max-tokens") + 1] == "1024"
+    controller._source_is_current(config)
+
+
+def test_config_rejects_partial_recurrent_package_identity(tmp_path: Path):
+    _source_root, _out, config_path, _config = _prepared(tmp_path)
+    document = json.loads(config_path.read_text(encoding="utf-8"))
+    document["integrated_recurrent_package"] = {"root": "/tmp/partial"}
+    document["config_sha256"] = controller._sha(controller._config_body(document))
+    config_path.write_text(json.dumps(document), encoding="utf-8")
+
+    with pytest.raises(
+        controller.ControllerError,
+        match="integrated_recurrent_package_identity_incomplete",
+    ):
+        controller.load_config(config_path)
+
+
 def test_fresh_retry_does_not_inherit_stale_progress_from_prior_attempt():
     snapshot = {"last_progress_unix": 100.0}
 
