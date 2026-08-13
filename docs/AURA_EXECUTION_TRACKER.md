@@ -48373,3 +48373,35 @@ The CP378 resident campaign remains source-frozen at `8d715596a` and is not
 modified by this checkpoint. Its composed adjudication remains the scientific
 authority even though its historical top-level field will use the older
 format. No result, gain, fusion, frontier or `WOW Signal` claim is made here.
+
+## Checkpoint 2026-08-13-380: The Causal Controls Now Differ Only Where Claimed
+
+The CP378 resident campaign was stopped after one durable vanilla cell and
+while the uncomposed complete-engine cell was in flight. No treatment,
+initialization-control or depth-lesion cell ran, so its partial journal has no
+learned-tissue result authority.
+
+Reviewing the exact configurations before those controls began exposed a
+material confound. `complete_closed_book_recurrent_initial_control` and
+`complete_closed_book_recurrent_depth_lesion` were omitted from
+`_build_config`'s complete-engine profile set. Their external recurrent
+candidates used the intended controller and depth, but their surrounding
+engines silently switched to fixed recurrence, disabled latent optimization,
+disabled fast weights, disabled the objective program and repair, repetition
+penalty `1.25`, unconditional latent output, and a different verifier budget.
+A treatment lift over either arm could not have been attributed to learned
+parameters or recurrent depth.
+
+Both causal controls now receive a `CortexConfig` exactly equal to the composed
+treatment. The only differences are produced outside that config and sealed in
+the integrated candidate receipts: trained versus deterministic-initial
+controller bytes, and package depth versus depth one. An equality regression
+checks the full dataclass and its load-bearing neural, decode and incumbent
+settings.
+
+The producer/sweep surface passes `86/86`, canonical smoke passes `104/104`,
+and Ruff, byte compilation and diff hygiene pass. Evidence is
+`artifacts/closeout/latent_cortex/cp380_matched_composed_outer_engine.json`.
+No resident comparison, gain, fusion, frontier result or `WOW Signal` is
+claimed. The next campaign must be frozen from CP380 and rerun from an empty
+causal journal.

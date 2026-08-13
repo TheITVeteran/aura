@@ -1,0 +1,49 @@
+{
+  "schema": "aura.rlc.closeout_checkpoint.v1",
+  "checkpoint": "CP380",
+  "subject": "composed causal controls share one outer neural engine",
+  "retired_campaign": {
+    "campaign": "cp378-monotonic-component-s41037613",
+    "source_commit": "8d715596ae6ca42d35486904cd94ae0ce2f9f86f",
+    "durable_cells": 1,
+    "durable_arms": [
+      "vanilla"
+    ],
+    "treatment_cells": 0,
+    "control_cells": 0,
+    "scientific_result_authority": false
+  },
+  "root_cause": "initialization and depth-lesion profiles were omitted from the complete-engine profile set and silently received ablation-like outer neural configurations",
+  "previous_unmatched_fields": [
+    "adaptive recurrence",
+    "latent optimization",
+    "temporary fast weights",
+    "objective program",
+    "local repair",
+    "answer replacement",
+    "incumbent policy",
+    "decode bridge",
+    "repetition penalty",
+    "verifier probe budget"
+  ],
+  "runtime_changes": [
+    "treatment, initialization control, and depth lesion now build equal complete-engine CortexConfig values",
+    "learned-parameter identity remains isolated in the integrated recurrent producer receipt",
+    "depth remains isolated in the integrated recurrent producer recurrence-depth receipt",
+    "the invalid run was stopped before any treatment or causal-control observation"
+  ],
+  "verification": {
+    "focused_tests": "86 passed",
+    "smoke": "104 passed",
+    "ruff": "passed",
+    "compile": "passed",
+    "diff_check": "passed"
+  },
+  "claims": {
+    "resident_32b_result_available": false,
+    "reasoning_gain_proven": false,
+    "fusion_authorized": false,
+    "wow_signal_authorized": false
+  },
+  "next": "freeze CP380 and relaunch the matched task-major component campaign"
+}

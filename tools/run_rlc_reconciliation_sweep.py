@@ -717,6 +717,8 @@ def _build_config(
     full_profiles = {
         "complete_closed_book",
         "complete_closed_book_recurrent_composed",
+        "complete_closed_book_recurrent_initial_control",
+        "complete_closed_book_recurrent_depth_lesion",
         "complete_closed_book_adaptation_ablation",
         "complete_closed_book_executable_ablation",
         "full",

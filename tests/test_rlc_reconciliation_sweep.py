@@ -714,6 +714,39 @@ def test_complete_system_config_runs_the_same_neural_pillars_as_full_stack():
     assert config.recurrence.fixed_depth is False
 
 
+def test_composed_causal_controls_share_the_exact_complete_engine_config():
+    treatment = sweep._build_config(
+        8,
+        16,
+        "suppressed",
+        512,
+        profile="complete_closed_book_recurrent_composed",
+    )
+    initialization = sweep._build_config(
+        8,
+        16,
+        "suppressed",
+        512,
+        profile="complete_closed_book_recurrent_initial_control",
+    )
+    depth_lesion = sweep._build_config(
+        8,
+        16,
+        "suppressed",
+        512,
+        profile="complete_closed_book_recurrent_depth_lesion",
+    )
+
+    assert initialization == treatment
+    assert depth_lesion == treatment
+    assert treatment.recurrence.fixed_depth is False
+    assert treatment.latent_opt.enabled is True
+    assert treatment.fast_weights.enabled is True
+    assert treatment.objective_program_enabled is True
+    assert treatment.decode_incumbent_policy == "vanilla_incumbent"
+    assert treatment.decode_repetition_penalty == 1.0
+
+
 def test_adaptation_ablation_preserves_the_outer_system_but_removes_neural_updates():
     config = sweep._build_config(
         8,
