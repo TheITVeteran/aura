@@ -51,6 +51,11 @@ from core.brain.llm.latent_cortex.output_quality import (
     evaluate_facet_coverage,
     request_facets,
 )
+from core.conversation.requested_reply_shape import reply_scope_text
+from core.conversation.arithmetic_check import (
+    ARITHMETIC_NUMBER_RE,
+    requested_arithmetic_result,
+)
 from core.conversation.ontology_grounding import detect_unsupported_embodiment_claim
 from core.dialogue.referents import borrowed_first_person_spans
 from core.dialogue.shared_history import has_fabricated_shared_history
@@ -2977,175 +2982,8 @@ _SCAFFOLD_KV_LINE_RE = re.compile(
 )
 
 
-# Arithmetic a reply can be CHECKED against. The 2026-07-25 probe asked
-# "What is 144 / 6 + 7? Just the number." and was answered "Will do. Searched
-# web for 'simple cognitive tasks aging'. Dementia affects simple cognitive
-# tasks first…" — retrieved memory served as the answer. Nothing caught it:
-# the topicality check needs topic anchors, and a bare sum has almost none, so
-# a short computable question was unjudgeable by every gate in the path.
-#
-# It does not have to be. An arithmetic question has one right answer and the
-# runtime can do the arithmetic itself, which turns "sounds plausible" into
-# "is correct" for the whole class — including the hijack, which contains no
-# number at all.
-_ARITHMETIC_QUESTION_RE = re.compile(
-    r"(?:what(?:'s| is)|calculate|compute|how much is|solve)\s*:?\s*"
-    r"([0-9][0-9\s\.\+\-\*/x×÷\(\)]{2,60})",
-    re.IGNORECASE,
-)
-_ARITHMETIC_NUMBER_RE = re.compile(r"-?\d+(?:\.\d+)?")
-
-#: People write arithmetic in words at least as often as in symbols.
-#:
-#: LIVE DEFECT, 2026-08-10: "what is 7919 times 6421? just the number." came
-#: back 50864799; the product is 50847899. The deterministic verifier that
-#: exists to catch exactly this returned None, because _ARITHMETIC_QUESTION_RE
-#: wanted a lead-in verb AND symbol operators. It computed nothing for "times",
-#: nothing for "multiply 7919 by 6421", and nothing for a bare "2+2" — so the
-#: check that knows the right answer never ran, on any phrasing a person is
-#: likely to use.
-_WORD_OPERATOR_SUBS: tuple[tuple[re.Pattern[str], str], ...] = (
-    (re.compile(r"\bmultiplied\s+by\b|\btimes\b", re.IGNORECASE), "*"),
-    (re.compile(r"\bdivided\s+by\b", re.IGNORECASE), "/"),
-    (re.compile(r"\bplus\b|\badded\s+to\b", re.IGNORECASE), "+"),
-    (re.compile(r"\bminus\b", re.IGNORECASE), "-"),
-    # "7919 x 6421" and the typographic signs. Bounded by digits so the letter
-    # x in ordinary words is untouched.
-    (re.compile(r"(?<=\d)\s*[x×]\s*(?=\d)", re.IGNORECASE), "*"),
-    (re.compile(r"(?<=\d)\s*÷\s*(?=\d)"), "/"),
-)
-#: "multiply 7919 by 6421", "add 12 and 30" — the operator leads the operands.
-_PREFIX_OPERATION_RES: tuple[tuple[re.Pattern[str], str], ...] = (
-    (
-        re.compile(
-            r"\bmultiply\s+([\d,.]+)\s+(?:by|and|with)\s+([\d,.]+)", re.IGNORECASE
-        ),
-        "*",
-    ),
-    (re.compile(r"\badd\s+([\d,.]+)\s+(?:to|and)\s+([\d,.]+)", re.IGNORECASE), "+"),
-    (
-        re.compile(r"\bdivide\s+([\d,.]+)\s+by\s+([\d,.]+)", re.IGNORECASE),
-        "/",
-    ),
-    (
-        re.compile(r"\bsubtract\s+([\d,.]+)\s+from\s+([\d,.]+)", re.IGNORECASE),
-        "rsub",
-    ),
-)
-#: A bare expression anywhere in the turn: "2+2", "7919 * 6421".
-_BARE_EXPRESSION_RE = re.compile(
-    r"\d[\d.]*(?:\s*[-+*/]\s*\d[\d.]*)+"
-)
-#: Only compute when the turn is actually ASKING for a computation. Numbers with
-#: operators between them appear in version strings, dates and ranges, and a
-#: wrong "computed" value injected as authoritative is worse than none.
-_ARITHMETIC_INTENT_RE = re.compile(
-    r"\b(?:what(?:'s| is| are)|calculate|compute|how much is|how many is|solve|"
-    r"multiply|multiplied|divide|divided|times|plus|minus|add|subtract|"
-    r"work\s+out|figure\s+out|product\s+of|sum\s+of)\b",
-    re.IGNORECASE,
-)
 
 
-def _arithmetic_expression_in(text: str) -> str | None:
-    """The arithmetic expression a turn is asking about, in symbol form."""
-    raw = str(text or "")
-    if not raw.strip():
-        return None
-    # A message that is nothing but an expression is a computation request even
-    # with no verb in front of it: people type "2+2".
-    bare_only = bool(
-        re.fullmatch(r"[\d\s.,+\-*/x×÷()]+[?=.]*", raw.strip())
-        and re.search(r"\d", raw)
-    )
-    if not bare_only and not _ARITHMETIC_INTENT_RE.search(raw):
-        return None
-
-    for pattern, operator in _PREFIX_OPERATION_RES:
-        match = pattern.search(raw)
-        if match:
-            left = match.group(1).replace(",", "")
-            right = match.group(2).replace(",", "")
-            if operator == "rsub":
-                # "subtract 5 from 20" is 20 - 5.
-                return f"{right}-{left}"
-            return f"{left}{operator}{right}"
-
-    normalized = raw
-    for pattern, symbol in _WORD_OPERATOR_SUBS:
-        normalized = pattern.sub(symbol, normalized)
-    # Thousands separators only, never the decimal comma: "1,000 * 2".
-    normalized = re.sub(r"(?<=\d),(?=\d{3}\b)", "", normalized)
-
-    candidates = _BARE_EXPRESSION_RE.findall(normalized)
-    if not candidates:
-        return None
-    return max(candidates, key=len)
-
-
-def _evaluate_arithmetic(expression: str) -> float | None:
-    """Evaluate a simple arithmetic expression, or None if it is not one."""
-    cleaned = (
-        str(expression or "")
-        .replace("x", "*").replace("X", "*")
-        .replace("×", "*").replace("÷", "/")
-        .strip().rstrip("?.=").strip()
-    )
-    if not cleaned or not re.fullmatch(r"[0-9\s\.\+\-\*/\(\)]+", cleaned):
-        return None
-    if not any(op in cleaned for op in "+-*/"):
-        return None
-    try:
-        tree = ast.parse(cleaned, mode="eval")
-    except (SyntaxError, ValueError):
-        return None
-
-    def _eval(node: ast.AST) -> float:
-        if isinstance(node, ast.Constant) and isinstance(node.value, int | float):
-            return float(node.value)
-        if isinstance(node, ast.UnaryOp) and isinstance(node.op, ast.UAdd | ast.USub):
-            value = _eval(node.operand)
-            return value if isinstance(node.op, ast.UAdd) else -value
-        if isinstance(node, ast.BinOp):
-            left, right = _eval(node.left), _eval(node.right)
-            if isinstance(node.op, ast.Add):
-                return left + right
-            if isinstance(node.op, ast.Sub):
-                return left - right
-            if isinstance(node.op, ast.Mult):
-                return left * right
-            if isinstance(node.op, ast.Div):
-                if right == 0:
-                    raise ZeroDivisionError
-                return left / right
-        raise ValueError("unsupported expression")
-
-    try:
-        result = _eval(tree.body)
-    except (ArithmeticError, ValueError, TypeError, RecursionError):
-        return None
-    if not math.isfinite(result):
-        return None
-    return float(result)
-
-
-# Word forms with exactly one mechanical answer. The bare-expression pattern
-# covered 2 of the 8 math questions the 2026-07-25 probe actually asks; these
-# two forms are the other computable ones. Everything left — rates, catch-up,
-# pages-per-day — needs reasoning and is deliberately NOT claimed here.
-_PERCENT_OF_RE = re.compile(
-    r"what(?:'s| is)\s+([0-9]+(?:\.[0-9]+)?)\s*%\s+of\s+([0-9]+(?:\.[0-9]+)?)",
-    re.IGNORECASE,
-)
-_POWER_RE = re.compile(
-    r"what(?:'s| is)\s+([0-9]+)\s+to\s+the\s+([0-9]+)(?:st|nd|rd|th)?\s+power",
-    re.IGNORECASE,
-)
-_RECTANGLE_AREA_RE = re.compile(
-    r"rectangle\s+is\s+([0-9]+(?:\.[0-9]+)?)\s*(?:by|x|\*)\s*([0-9]+(?:\.[0-9]+)?)"
-    r"(?s:.){0,60}?\barea\b",
-    re.IGNORECASE,
-)
 
 
 # A question with ONE right answer that this runtime CANNOT check itself.
@@ -3219,86 +3057,6 @@ _NUMERIC_REQUEST_CUE_RE = re.compile(
 )
 
 
-#: An explicit instruction about what the REPLY should contain: "reply with
-#: just the path", "tell me only the filename", "answer with nothing but the
-#: number".
-_REPLY_SHAPE_CONSTRAINT_RE = re.compile(
-    r"\b(?:reply|respond|answer|report(?:\s+back)?|tell\s+me|say)\s+"
-    r"(?:back\s+)?(?:with\s+|using\s+)?"
-    r"(?:just|only|nothing\s+but|solely|simply)\s+"
-    r"(?P<shape>[^.?!]{1,140})",
-    re.IGNORECASE,
-)
-
-#: A span describing what goes INSIDE a produced artifact, not what the answer
-#: is. "containing exactly three lines: line one the date, line two how many
-#: subsystems…" is a file specification; the numbers in it are content, not the
-#: question.
-_ARTIFACT_CONTENT_SPEC_RE = re.compile(
-    r"\b(?:containing|contains|with\s+the\s+(?:following|content|contents|text|lines)"
-    r"|whose\s+contents?|that\s+says|saying|that\s+reads)\b.*?"
-    r"(?=(?:\.\s+(?:then|and\s+then|after\s+that|finally|reply|respond|answer|tell)\b)|$)"
-    r"|\bline\s+(?:one|two|three|four|1|2|3|4)\b.*?"
-    r"(?=(?:\.\s+(?:then|and\s+then|reply|respond|answer|tell)\b)|$)",
-    re.IGNORECASE | re.DOTALL,
-)
-
-
-#: A reply constraint that is itself asking for a quantity. "reply with just the
-#: number" narrows the SHAPE without removing the numeric requirement.
-_REPLY_SHAPE_WANTS_QUANTITY_RE = re.compile(
-    r"\b(?:number|numbers|count|total|sum|quantity|amount|figure|digits?|"
-    r"value|result|answer|probability|fraction|percentage|average|how\s+many)\b",
-    re.IGNORECASE,
-)
-
-
-def _reply_scope_text(user_message: Any) -> str:
-    """The part of the turn that constrains the ANSWER, not the artifact.
-
-    LIVE DEFECT, 2026-08-10. Asked to write a file whose three lines were a
-    date, a subsystem count, and the word DONE, and to "reply with just the
-    path you wrote", the worker rejected six consecutive drafts with
-    ``numeric_answer_missing`` — 20 seconds of 32B generation — then the turn
-    died:
-
-        compact desktop generation returned no usable text
-        TurnOutcomeError: retryable_failure:retryable_error_and_nothing_served
-        CRITICAL SERVICE FAILURE: Subsystem 'cognitive_engine' … fail-closed
-        reply_reliability_gate_failed:runtime_boilerplate,missing_requested_line_count
-
-    and the person was handed "I couldn't get to an answer I'd stand behind on
-    that one … Ask me again in a moment."
-
-    The gate read "line two how many subsystems are heartbeating" and concluded
-    the REPLY could only be answered with a quantity. That number belonged in
-    the file. The reply had been specified explicitly, in the same sentence, as
-    just the path — which is what she produced and what was thrown away.
-
-    Two spans are therefore removed before judging what the answer must be: a
-    specification of artifact CONTENT, and everything outside an explicit
-    reply-shape constraint when one is present. A file is not an answer, and a
-    person who says what the reply should be has already answered the question
-    this predicate exists to guess.
-    """
-    text = str(user_message or "")
-    if not text.strip():
-        return ""
-    without_artifact = _ARTIFACT_CONTENT_SPEC_RE.sub(" ", text)
-    constraint = _REPLY_SHAPE_CONSTRAINT_RE.search(text)
-    if constraint is None:
-        return without_artifact
-    shape = constraint.group("shape")
-    # A constraint that names a quantity is a numeric reply constraint: "add 14
-    # and 9 and reply with just the number" must still be held to producing one.
-    # Narrowing to the shape alone would drop the operands and suppress the very
-    # guard the person asked for — the suppression cutting the wrong way.
-    if _REPLY_SHAPE_WANTS_QUANTITY_RE.search(shape):
-        return without_artifact
-    # Otherwise the person has said the reply is something that is not a
-    # quantity, and that outranks any number appearing elsewhere in the turn.
-    return shape
-
 
 def asks_for_a_number(user_message: Any) -> bool:
     """Whether this turn can only be answered with a quantity.
@@ -3308,10 +3066,10 @@ def asks_for_a_number(user_message: Any) -> bool:
     reply carrying no number at all cannot be one — which is the judgement
     :func:`numeric_answer_missing` is allowed to make.
     """
-    text = _reply_scope_text(user_message)
+    text = reply_scope_text(user_message)
     if not text.strip():
         return False
-    quantities = len(_ARITHMETIC_NUMBER_RE.findall(text)) + len(
+    quantities = len(ARITHMETIC_NUMBER_RE.findall(text)) + len(
         _NUMBER_WORD_RE.findall(text)
     )
     if quantities < 2:
@@ -3399,7 +3157,7 @@ def numeric_answer_missing(user_message: Any, reply_text: Any) -> bool:
     reply = str(reply_text or "")
     if not reply.strip():
         return True
-    if _ARITHMETIC_NUMBER_RE.search(reply):
+    if ARITHMETIC_NUMBER_RE.search(reply):
         return False
     return not _NUMBER_WORD_RE.search(reply)
 
@@ -3424,49 +3182,6 @@ def requires_reasoning_lane(user_message: Any) -> bool:
     )
 
 
-def requested_arithmetic_result(user_message: Any) -> float | None:
-    """The single correct answer to a computable arithmetic question, if any."""
-    text = str(user_message or "")
-
-    match = _PERCENT_OF_RE.search(text)
-    if match:
-        try:
-            return float(match.group(1)) / 100.0 * float(match.group(2))
-        except (ArithmeticError, ValueError):
-            return None
-
-    match = _POWER_RE.search(text)
-    if match:
-        try:
-            base, exponent = int(match.group(1)), int(match.group(2))
-        except ValueError:
-            return None
-        # Bounded: a runaway exponent must not become the check's own problem.
-        if not (0 <= exponent <= 64) or abs(base) > 10_000:
-            return None
-        try:
-            value = float(base**exponent)
-        except (ArithmeticError, OverflowError):
-            return None
-        return value if math.isfinite(value) else None
-
-    match = _RECTANGLE_AREA_RE.search(text)
-    if match:
-        try:
-            return float(match.group(1)) * float(match.group(2))
-        except (ArithmeticError, ValueError):
-            return None
-
-    match = _ARITHMETIC_QUESTION_RE.search(text)
-    if match:
-        result = _evaluate_arithmetic(match.group(1))
-        if result is not None:
-            return result
-
-    expression = _arithmetic_expression_in(text)
-    if expression is None:
-        return None
-    return _evaluate_arithmetic(expression)
 
 
 def _arithmetic_answer_missing(user_message: Any, reply_text: Any) -> bool:
@@ -3480,7 +3195,7 @@ def _arithmetic_answer_missing(user_message: Any, reply_text: Any) -> bool:
     reply = str(reply_text or "")
     if not reply.strip():
         return True
-    for token in _ARITHMETIC_NUMBER_RE.findall(reply.replace(",", "")):
+    for token in ARITHMETIC_NUMBER_RE.findall(reply.replace(",", "")):
         try:
             value = float(token)
         except ValueError:

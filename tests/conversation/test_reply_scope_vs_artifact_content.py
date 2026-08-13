@@ -85,7 +85,7 @@ def test_genuine_numeric_questions_still_require_a_number(message: str) -> None:
 
 
 def test_an_explicit_reply_constraint_defines_the_reply_scope() -> None:
-    from core.conversation.response_reliability import _reply_scope_text
+    from core.conversation.requested_reply_shape import reply_scope_text as _reply_scope_text
 
     scope = _reply_scope_text(LIVE_MESSAGE)
 
@@ -112,7 +112,7 @@ def test_a_reply_constraint_asking_for_a_number_still_requires_one() -> None:
 
 def test_messages_without_a_constraint_keep_their_whole_text() -> None:
     """Only an explicit constraint narrows the scope; nothing else is dropped."""
-    from core.conversation.response_reliability import _reply_scope_text
+    from core.conversation.requested_reply_shape import reply_scope_text as _reply_scope_text
 
     plain = "what is 17 minus 8, and then times 3"
 

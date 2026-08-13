@@ -1,0 +1,258 @@
+"""core/conversation/arithmetic_check.py — the answer this runtime can check itself.
+
+Extracted from ``response_reliability.py``, where it did not belong.
+
+That module's job — and the job the lexical-debt ratchet watches it for — is
+deciding what Aura may SAY. This code does something different in kind: it
+reads the arithmetic a person asked for, computes the answer, and hands back a
+number. It bans no phrase and suppresses no reply. It is the clearest example
+of what that module's own docstring calls the checks that are "genuinely
+causal — the arithmetic check recomputes the sum".
+
+Living in the watched file, seventeen compiled patterns of arithmetic PARSING
+were counted as output-filter debt, so a legitimate natural-language number
+parser pushed a gate red that exists to catch phrase-banning. Deleting working
+arithmetic to satisfy that count would have been optimising the measure
+instead of the thing. Moving it puts it where it belongs and lets the ratchet
+measure what it claims to.
+
+Why the parser is this elaborate:
+
+LIVE DEFECT, 2026-08-10. "what is 7919 times 6421? just the number." came back
+50864799; the product is 50847899. The deterministic verifier that exists to
+catch exactly this returned None, because the question pattern wanted a
+lead-in verb AND symbol operators. It computed nothing for "times", nothing
+for "multiply 7919 by 6421", and nothing for a bare "2+2" — so the check that
+knows the right answer never ran, on any phrasing a person actually uses.
+
+Bounded on purpose. Evaluation is an AST walk over a whitelisted node set, not
+``eval``; exponents are capped; division by zero and non-finite results return
+None. A wrong "computed" value injected as authoritative is worse than none,
+so intent is required before anything is computed — numbers with operators
+between them also appear in version strings, dates and ranges.
+"""
+
+from __future__ import annotations
+
+import ast
+import math
+import re
+from typing import Any
+
+__all__ = ["ARITHMETIC_NUMBER_RE", "requested_arithmetic_result"]
+
+
+# Arithmetic a reply can be CHECKED against. The 2026-07-25 probe asked
+# "What is 144 / 6 + 7? Just the number." and was answered "Will do. Searched
+# web for 'simple cognitive tasks aging'. Dementia affects simple cognitive
+# tasks first…" — retrieved memory served as the answer. Nothing caught it:
+# the topicality check needs topic anchors, and a bare sum has almost none, so
+# a short computable question was unjudgeable by every gate in the path.
+#
+# It does not have to be. An arithmetic question has one right answer and the
+# runtime can do the arithmetic itself, which turns "sounds plausible" into
+# "is correct" for the whole class — including the hijack, which contains no
+# number at all.
+_ARITHMETIC_QUESTION_RE = re.compile(
+    r"(?:what(?:'s| is)|calculate|compute|how much is|solve)\s*:?\s*"
+    r"([0-9][0-9\s\.\+\-\*/x×÷\(\)]{2,60})",
+    re.IGNORECASE,
+)
+ARITHMETIC_NUMBER_RE = re.compile(r"-?\d+(?:\.\d+)?")
+
+#: People write arithmetic in words at least as often as in symbols.
+#:
+#: LIVE DEFECT, 2026-08-10: "what is 7919 times 6421? just the number." came
+#: back 50864799; the product is 50847899. The deterministic verifier that
+#: exists to catch exactly this returned None, because _ARITHMETIC_QUESTION_RE
+#: wanted a lead-in verb AND symbol operators. It computed nothing for "times",
+#: nothing for "multiply 7919 by 6421", and nothing for a bare "2+2" — so the
+#: check that knows the right answer never ran, on any phrasing a person is
+#: likely to use.
+_WORD_OPERATOR_SUBS: tuple[tuple[re.Pattern[str], str], ...] = (
+    (re.compile(r"\bmultiplied\s+by\b|\btimes\b", re.IGNORECASE), "*"),
+    (re.compile(r"\bdivided\s+by\b", re.IGNORECASE), "/"),
+    (re.compile(r"\bplus\b|\badded\s+to\b", re.IGNORECASE), "+"),
+    (re.compile(r"\bminus\b", re.IGNORECASE), "-"),
+    # "7919 x 6421" and the typographic signs. Bounded by digits so the letter
+    # x in ordinary words is untouched.
+    (re.compile(r"(?<=\d)\s*[x×]\s*(?=\d)", re.IGNORECASE), "*"),
+    (re.compile(r"(?<=\d)\s*÷\s*(?=\d)"), "/"),
+)
+#: "multiply 7919 by 6421", "add 12 and 30" — the operator leads the operands.
+_PREFIX_OPERATION_RES: tuple[tuple[re.Pattern[str], str], ...] = (
+    (
+        re.compile(
+            r"\bmultiply\s+([\d,.]+)\s+(?:by|and|with)\s+([\d,.]+)", re.IGNORECASE
+        ),
+        "*",
+    ),
+    (re.compile(r"\badd\s+([\d,.]+)\s+(?:to|and)\s+([\d,.]+)", re.IGNORECASE), "+"),
+    (
+        re.compile(r"\bdivide\s+([\d,.]+)\s+by\s+([\d,.]+)", re.IGNORECASE),
+        "/",
+    ),
+    (
+        re.compile(r"\bsubtract\s+([\d,.]+)\s+from\s+([\d,.]+)", re.IGNORECASE),
+        "rsub",
+    ),
+)
+#: A bare expression anywhere in the turn: "2+2", "7919 * 6421".
+_BARE_EXPRESSION_RE = re.compile(
+    r"\d[\d.]*(?:\s*[-+*/]\s*\d[\d.]*)+"
+)
+#: Only compute when the turn is actually ASKING for a computation. Numbers with
+#: operators between them appear in version strings, dates and ranges, and a
+#: wrong "computed" value injected as authoritative is worse than none.
+_ARITHMETIC_INTENT_RE = re.compile(
+    r"\b(?:what(?:'s| is| are)|calculate|compute|how much is|how many is|solve|"
+    r"multiply|multiplied|divide|divided|times|plus|minus|add|subtract|"
+    r"work\s+out|figure\s+out|product\s+of|sum\s+of)\b",
+    re.IGNORECASE,
+)
+
+
+def _arithmetic_expression_in(text: str) -> str | None:
+    """The arithmetic expression a turn is asking about, in symbol form."""
+    raw = str(text or "")
+    if not raw.strip():
+        return None
+    # A message that is nothing but an expression is a computation request even
+    # with no verb in front of it: people type "2+2".
+    bare_only = bool(
+        re.fullmatch(r"[\d\s.,+\-*/x×÷()]+[?=.]*", raw.strip())
+        and re.search(r"\d", raw)
+    )
+    if not bare_only and not _ARITHMETIC_INTENT_RE.search(raw):
+        return None
+
+    for pattern, operator in _PREFIX_OPERATION_RES:
+        match = pattern.search(raw)
+        if match:
+            left = match.group(1).replace(",", "")
+            right = match.group(2).replace(",", "")
+            if operator == "rsub":
+                # "subtract 5 from 20" is 20 - 5.
+                return f"{right}-{left}"
+            return f"{left}{operator}{right}"
+
+    normalized = raw
+    for pattern, symbol in _WORD_OPERATOR_SUBS:
+        normalized = pattern.sub(symbol, normalized)
+    # Thousands separators only, never the decimal comma: "1,000 * 2".
+    normalized = re.sub(r"(?<=\d),(?=\d{3}\b)", "", normalized)
+
+    candidates = _BARE_EXPRESSION_RE.findall(normalized)
+    if not candidates:
+        return None
+    return max(candidates, key=len)
+
+
+def _evaluate_arithmetic(expression: str) -> float | None:
+    """Evaluate a simple arithmetic expression, or None if it is not one."""
+    cleaned = (
+        str(expression or "")
+        .replace("x", "*").replace("X", "*")
+        .replace("×", "*").replace("÷", "/")
+        .strip().rstrip("?.=").strip()
+    )
+    if not cleaned or not re.fullmatch(r"[0-9\s\.\+\-\*/\(\)]+", cleaned):
+        return None
+    if not any(op in cleaned for op in "+-*/"):
+        return None
+    try:
+        tree = ast.parse(cleaned, mode="eval")
+    except (SyntaxError, ValueError):
+        return None
+
+    def _eval(node: ast.AST) -> float:
+        if isinstance(node, ast.Constant) and isinstance(node.value, int | float):
+            return float(node.value)
+        if isinstance(node, ast.UnaryOp) and isinstance(node.op, ast.UAdd | ast.USub):
+            value = _eval(node.operand)
+            return value if isinstance(node.op, ast.UAdd) else -value
+        if isinstance(node, ast.BinOp):
+            left, right = _eval(node.left), _eval(node.right)
+            if isinstance(node.op, ast.Add):
+                return left + right
+            if isinstance(node.op, ast.Sub):
+                return left - right
+            if isinstance(node.op, ast.Mult):
+                return left * right
+            if isinstance(node.op, ast.Div):
+                if right == 0:
+                    raise ZeroDivisionError
+                return left / right
+        raise ValueError("unsupported expression")
+
+    try:
+        result = _eval(tree.body)
+    except (ArithmeticError, ValueError, TypeError, RecursionError):
+        return None
+    if not math.isfinite(result):
+        return None
+    return float(result)
+
+
+# Word forms with exactly one mechanical answer. The bare-expression pattern
+# covered 2 of the 8 math questions the 2026-07-25 probe actually asks; these
+# two forms are the other computable ones. Everything left — rates, catch-up,
+# pages-per-day — needs reasoning and is deliberately NOT claimed here.
+_PERCENT_OF_RE = re.compile(
+    r"what(?:'s| is)\s+([0-9]+(?:\.[0-9]+)?)\s*%\s+of\s+([0-9]+(?:\.[0-9]+)?)",
+    re.IGNORECASE,
+)
+_POWER_RE = re.compile(
+    r"what(?:'s| is)\s+([0-9]+)\s+to\s+the\s+([0-9]+)(?:st|nd|rd|th)?\s+power",
+    re.IGNORECASE,
+)
+_RECTANGLE_AREA_RE = re.compile(
+    r"rectangle\s+is\s+([0-9]+(?:\.[0-9]+)?)\s*(?:by|x|\*)\s*([0-9]+(?:\.[0-9]+)?)"
+    r"(?s:.){0,60}?\barea\b",
+    re.IGNORECASE,
+)
+
+
+def requested_arithmetic_result(user_message: Any) -> float | None:
+    """The single correct answer to a computable arithmetic question, if any."""
+    text = str(user_message or "")
+
+    match = _PERCENT_OF_RE.search(text)
+    if match:
+        try:
+            return float(match.group(1)) / 100.0 * float(match.group(2))
+        except (ArithmeticError, ValueError):
+            return None
+
+    match = _POWER_RE.search(text)
+    if match:
+        try:
+            base, exponent = int(match.group(1)), int(match.group(2))
+        except ValueError:
+            return None
+        # Bounded: a runaway exponent must not become the check's own problem.
+        if not (0 <= exponent <= 64) or abs(base) > 10_000:
+            return None
+        try:
+            value = float(base**exponent)
+        except (ArithmeticError, OverflowError):
+            return None
+        return value if math.isfinite(value) else None
+
+    match = _RECTANGLE_AREA_RE.search(text)
+    if match:
+        try:
+            return float(match.group(1)) * float(match.group(2))
+        except (ArithmeticError, ValueError):
+            return None
+
+    match = _ARITHMETIC_QUESTION_RE.search(text)
+    if match:
+        result = _evaluate_arithmetic(match.group(1))
+        if result is not None:
+            return result
+
+    expression = _arithmetic_expression_in(text)
+    if expression is None:
+        return None
+    return _evaluate_arithmetic(expression)

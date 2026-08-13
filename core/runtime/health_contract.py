@@ -1179,6 +1179,77 @@ def evaluate_health() -> HealthVerdict:
     )
 
 
+def _attach_causal_evidence(block: dict[str, Any]) -> None:
+    """Verdicts, decorative direct channels, and served-prose auditing.
+
+    A separate function because the integrity block is already one of the
+    outsized ones the method-size ratchet tracks, and growing it to add these
+    would have been paying for a measurement with the thing the measurement
+    is for.
+    """
+
+    # Which faculties have been shown to change the output, and which have only
+    # been shown to run. Attached here for the same reason as taint: the health
+    # verdict is green either way, and "the reply was produced by the full
+    # architecture" is a claim the verdict cannot express or refute.
+    try:
+        from core.verify.causal_influence import get_influence_ledger
+        from core.verify.lesion_registry import get_lesion_registry
+
+        influence = get_influence_ledger().snapshot()
+        lesions = get_lesion_registry().snapshot()
+        block["causal_influence"] = influence
+        block["lesionable_channels"] = lesions
+
+        # The consumer. Until this existed, no code anywhere branched on a
+        # verdict: `channel_is_influential()` was defined, exported, and called
+        # zero times, so a channel could be measured INERT and nothing would
+        # ever say so. Measurement without a consequence is an expensive way of
+        # keeping a secret.
+        #
+        # A channel measured INERT is not automatically a defect — a
+        # text-mediated channel may legitimately wash out. A channel declared
+        # DIRECT_ACTUATION and measured INERT is different: it claims to reach
+        # the sampler as a number, and the paired trials say removing it
+        # changes nothing. That is a faculty that is running and not working,
+        # which is exactly the condition this apparatus was built to surface.
+        decorative: list[dict[str, Any]] = []
+        registered = lesions.get("registered") or {}
+        for name, entry in (influence.get("channels") or {}).items():
+            if entry.get("verdict") != "inert":
+                continue
+            handle = registered.get(name) or {}
+            if not handle.get("direct_actuation"):
+                continue
+            decorative.append(
+                {
+                    "channel": name,
+                    "owner": handle.get("owner", ""),
+                    "neutral": handle.get("neutral", ""),
+                    "effect": entry.get("effect"),
+                    "noise_floor": entry.get("noise_floor"),
+                    "n_treatment": entry.get("n_treatment"),
+                    "n_null": entry.get("n_null"),
+                    "reason": entry.get("reason", ""),
+                }
+            )
+        block["decorative_direct_channels"] = decorative
+        if decorative:
+            block["decorative_direct_channel_count"] = len(decorative)
+    except Exception as exc:  # noqa: BLE001 — integrity reporting is additive
+        block["causal_influence_error"] = repr(exc)
+
+    # Served prose that outran the turn's own work record. The work ledger was
+    # written on every tool call and read by nothing outside the validation
+    # suite; this is the read, and it reports rather than decides.
+    try:
+        from core.verify.fabrication_watch import fabrication_snapshot
+
+        block["fabrication_watch"] = fabrication_snapshot()
+    except Exception as exc:  # noqa: BLE001 — integrity reporting is additive
+        block["fabrication_watch_error"] = repr(exc)
+
+
 def _runtime_integrity_block() -> dict[str, Any]:
     """Memory the health verdict does not otherwise have.
 
@@ -1313,67 +1384,7 @@ def _runtime_integrity_block() -> dict[str, Any]:
             block["admission_throughput"] = {"registered": False}
     except Exception as exc:  # noqa: BLE001 — integrity reporting is additive
         block["admission_throughput_error"] = repr(exc)
-
-    # Which faculties have been shown to change the output, and which have only
-    # been shown to run. Attached here for the same reason as taint: the health
-    # verdict is green either way, and "the reply was produced by the full
-    # architecture" is a claim the verdict cannot express or refute.
-    try:
-        from core.verify.causal_influence import get_influence_ledger
-        from core.verify.lesion_registry import get_lesion_registry
-
-        influence = get_influence_ledger().snapshot()
-        lesions = get_lesion_registry().snapshot()
-        block["causal_influence"] = influence
-        block["lesionable_channels"] = lesions
-
-        # The consumer. Until this existed, no code anywhere branched on a
-        # verdict: `channel_is_influential()` was defined, exported, and called
-        # zero times, so a channel could be measured INERT and nothing would
-        # ever say so. Measurement without a consequence is an expensive way of
-        # keeping a secret.
-        #
-        # A channel measured INERT is not automatically a defect — a
-        # text-mediated channel may legitimately wash out. A channel declared
-        # DIRECT_ACTUATION and measured INERT is different: it claims to reach
-        # the sampler as a number, and the paired trials say removing it
-        # changes nothing. That is a faculty that is running and not working,
-        # which is exactly the condition this apparatus was built to surface.
-        decorative: list[dict[str, Any]] = []
-        registered = lesions.get("registered") or {}
-        for name, entry in (influence.get("channels") or {}).items():
-            if entry.get("verdict") != "inert":
-                continue
-            handle = registered.get(name) or {}
-            if not handle.get("direct_actuation"):
-                continue
-            decorative.append(
-                {
-                    "channel": name,
-                    "owner": handle.get("owner", ""),
-                    "neutral": handle.get("neutral", ""),
-                    "effect": entry.get("effect"),
-                    "noise_floor": entry.get("noise_floor"),
-                    "n_treatment": entry.get("n_treatment"),
-                    "n_null": entry.get("n_null"),
-                    "reason": entry.get("reason", ""),
-                }
-            )
-        block["decorative_direct_channels"] = decorative
-        if decorative:
-            block["decorative_direct_channel_count"] = len(decorative)
-    except Exception as exc:  # noqa: BLE001 — integrity reporting is additive
-        block["causal_influence_error"] = repr(exc)
-
-    # Served prose that outran the turn's own work record. The work ledger was
-    # written on every tool call and read by nothing outside the validation
-    # suite; this is the read, and it reports rather than decides.
-    try:
-        from core.verify.fabrication_watch import fabrication_snapshot
-
-        block["fabrication_watch"] = fabrication_snapshot()
-    except Exception as exc:  # noqa: BLE001 — integrity reporting is additive
-        block["fabrication_watch_error"] = repr(exc)
+    _attach_causal_evidence(block)
 
     # Which path actually produced the recent replies. A demo showing a fluent
     # answer establishes nothing about the pipeline until this says the pipeline

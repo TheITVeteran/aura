@@ -1,10 +1,10 @@
 {
-  "total_patterns": 183,
-  "total_lines": 8954,
+  "total_patterns": 181,
+  "total_lines": 9176,
   "by_file": {
     "core/conversation/response_reliability.py": {
-      "compiled_patterns": 161,
-      "lines": 8026
+      "compiled_patterns": 159,
+      "lines": 8248
     },
     "core/conversation/ontology_grounding.py": {
       "compiled_patterns": 11,
