@@ -1617,6 +1617,7 @@ def unified_recurrent_hidden_states(
     action_teacher_values: Sequence[Sequence[int]] | None = None,
     initial_state_teacher_values: Sequence[int] | None = None,
     state_teacher_forcing_probability: float = 0.0,
+    caches: dict[str, Any] | None = None,
 ) -> tuple[Any, list[Any], UnifiedRecurrenceTelemetry]:
     """Run all Level-3 control mechanisms on one transformer trajectory."""
 
@@ -1626,6 +1627,33 @@ def unified_recurrent_hidden_states(
         raise TypeError("unified recurrence mode flags must be bools")
     if adaptive_halt and controller.config.minimum_iterations > plan.iterations:
         raise ValueError("minimum iterations exceed the recurrence plan")
+    if caches is not None:
+        if set(caches) != {"prelude", "window", "coda"}:
+            raise ValueError("caches must come from make_recurrent_caches")
+        if len(caches["window"]) != plan.iterations:
+            raise ValueError("cache iteration count does not match the plan")
+        expected_window_layers = plan.coda_start - plan.prelude_end
+        if (
+            len(caches["prelude"]) != plan.prelude_end
+            or any(
+                len(iteration_caches) != expected_window_layers
+                for iteration_caches in caches["window"]
+            )
+        ):
+            raise ValueError("cache layer topology does not match the plan")
+        if any(
+            value is not None
+            for value in (
+                memory_layout,
+                state_slot_start,
+                state_teacher_values,
+                action_teacher_values,
+                initial_state_teacher_values,
+            )
+        ) or adaptive_halt or soft_memory_writes:
+            raise ValueError(
+                "incremental recurrent caches require the untyped fixed-depth path"
+            )
     if state_teacher_values is not None and state_slot_start is None:
         raise ValueError("state teacher roll-in requires typed state slots")
     if initial_state_teacher_values is not None and state_slot_start is None:
@@ -1646,9 +1674,15 @@ def unified_recurrent_hidden_states(
     layers = getattr(inner, "layers", None)
     if not layers or plan.coda_start > len(layers):
         raise ValueError("model layers do not satisfy the recurrence plan")
+    if caches is not None and len(caches["coda"]) != len(layers) - plan.coda_start:
+        raise ValueError("cache layer topology does not match the plan")
 
     hidden = inner.embed_tokens(tokens)
-    hidden = _run(layers[: plan.prelude_end], hidden)
+    hidden = _run(
+        layers[: plan.prelude_end],
+        hidden,
+        caches["prelude"] if caches else None,
+    )
     if state_slot_start is not None:
         if (
             type(state_slot_start) is not int
@@ -1882,7 +1916,11 @@ def unified_recurrent_hidden_states(
         if recurrent_input_trajectory is not None:
             recurrent_input_trajectory.append(recurrent_input)
         with recurrent_iteration(iteration):
-            candidate = _run(window, recurrent_input)
+            candidate = _run(
+                window,
+                recurrent_input,
+                caches["window"][iteration] if caches else None,
+            )
             candidate = controller.correction(candidate, iteration)
             candidate, transport_gate = controller.transport(
                 prior_state,
@@ -1929,7 +1967,11 @@ def unified_recurrent_hidden_states(
             break
 
     final_source = last_decode_state if last_decode_state is not None else hidden
-    final = _run(layers[plan.coda_start :], final_source)
+    final = _run(
+        layers[plan.coda_start :],
+        final_source,
+        caches["coda"] if caches else None,
+    )
     final = inner.norm(final)
     retention = None
     residuals: tuple[float, ...] = ()

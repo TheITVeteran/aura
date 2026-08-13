@@ -235,6 +235,8 @@ def test_general_decode_uses_only_untyped_recurrent_hidden_channel(
         model_path=tmp_path,
     )
     observed: list[dict[str, object]] = []
+    caches = object()
+    monkeypatch.setattr(shadow, "make_recurrent_caches", lambda *_args: caches)
 
     def recurrent(_model, tokens, plan, controller, **kwargs):
         observed.append(
@@ -256,16 +258,16 @@ def test_general_decode_uses_only_untyped_recurrent_hidden_channel(
         [1, 2, 3],
         max_tokens=4,
         recurrence_depth=2,
-        completion_check=lambda generated: generated == (7,),
     )
 
-    assert tokens == (7,)
+    assert tokens == (7, 999)
     assert stopped is True
-    assert [row["token_count"] for row in observed] == [3]
+    assert [row["token_count"] for row in observed] == [3, 1]
     assert all(row["iterations"] == 2 for row in observed)
     assert all(row["controller"] is loaded.controller for row in observed)
     assert all(
-        row["kwargs"] == {"answer_digit_pointer_enabled": False}
+        row["kwargs"]
+        == {"answer_digit_pointer_enabled": False, "caches": caches}
         for row in observed
     )
 
@@ -283,6 +285,8 @@ def test_general_decode_accepts_initialization_matched_control(
     )
     control = UnifiedRecurrentController(loaded.controller.config)
     observed: list[object] = []
+    caches = object()
+    monkeypatch.setattr(shadow, "make_recurrent_caches", lambda *_args: caches)
 
     def recurrent(_model, _tokens, _plan, controller, **kwargs):
         observed.append((controller, kwargs))
@@ -300,7 +304,9 @@ def test_general_decode_accepts_initialization_matched_control(
 
     assert tokens == (999,)
     assert stopped is True
-    assert observed == [(control, {"answer_digit_pointer_enabled": False})]
+    assert observed == [
+        (control, {"answer_digit_pointer_enabled": False, "caches": caches})
+    ]
 
 
 @pytest.mark.parametrize("depth", [0, -1, True])

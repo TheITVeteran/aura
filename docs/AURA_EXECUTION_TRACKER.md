@@ -47890,3 +47890,38 @@ broad reasoning gain, frontier performance, static fusion or a `WOW Signal`.
 Those require fresh broader domains, equal-compute controls and powered
 replication. Regeneration CAS, memory-log worker ownership, `/api/think`
 admission, broader transfer and the remaining closeout programme remain open.
+
+## Checkpoint 2026-08-13-365: Broad Recurrent Decode Is Incremental
+
+The first source-bound broad resident canary exposed a launch-blocking execution
+defect rather than a scientific result. The ordinary control used a canonical
+KV cache after CP364, but each recurrent arm still recomputed the complete and
+ever-growing prefix through every recurrent pass for every generated token. The
+first control cell spent 836.963 seconds without committing a candidate, making
+the planned four-arm comparison quadratic and incapable of completing inside
+its bounded eight-hour envelope. The detached supervisor stopped the process
+group cleanly with no leaked descendants; no partial score or scientific verdict
+was inferred from that run.
+
+The untyped fixed-depth recurrent path now allocates one cache bank for the
+prelude, one independent bank per recurrent iteration, and one for the coda.
+It prefills the complete public prompt exactly once and then advances with one
+new token per decode step. Independent recurrent iterations never share cached
+keys. Stateful, adaptive, teacher-forced, memory-writing and malformed cache
+topologies fail before execution instead of silently reusing an invalid cache.
+
+Real tiny-Qwen coverage proves both single-token selection and a four-token
+generated sequence are preserved against complete-prefix recomputation. The
+shadow boundary proves the initial call receives the complete prompt, later
+calls receive exactly one token, and all calls retain one cache identity. The
+focused recurrence, shadow, broad-canary, source-migration and materialization
+surface passes `56/56`; canonical smoke passes `104/104`; compilation, Ruff and
+diff hygiene pass.
+
+Because this changes one source file covered by the promoted controller's
+training identity, the existing CP352 package is not silently accepted under
+the new tree. Next is an exact source-only checkpoint migration that preserves
+the controller bytes, records every changed source digest, materializes a new
+source-bound package, reopens typed-only qualification, and then relaunches the
+fresh broad four-arm canary. No broad reasoning, frontier, static fusion or
+`WOW Signal` claim follows from the stopped run or this execution repair.

@@ -37,6 +37,7 @@ from core.brain.llm.unified_recurrent_shadow_probe_contract import (
     shadow_probe_request_errors,
     token_sequence_sha256,
 )
+from core.learning.intrinsic_recurrence import make_recurrent_caches
 from core.learning.recurrent_answer_emission import (
     RecurrentAnswerEmissionContract,
     tokenizer_answer_emission_contract,
@@ -592,6 +593,7 @@ class LoadedUnifiedRecurrentShadow:
         generated: list[int] = []
         stopped = False
         plan = self.spec.plan_at(depth)
+        caches = make_recurrent_caches(model, plan)
         eos_token_id = self.answer_contract.eos_token_id
         started = time.perf_counter()
         from core.brain.llm.latent_cortex.recurrence_adapter import (
@@ -599,6 +601,7 @@ class LoadedUnifiedRecurrentShadow:
         )
 
         with recurrence_adapter_scope(start=None, stop=None):
+            next_tokens = tokens
             for _index in range(max_tokens):
                 if cancel_check is not None and cancel_check():
                     raise InterruptedError("unified_general_recurrent_decode_cancelled")
@@ -606,10 +609,11 @@ class LoadedUnifiedRecurrentShadow:
                     activity()
                 output, _telemetry = unified_recurrent_logits(
                     model,
-                    tokens,
+                    next_tokens,
                     plan,
                     selected,
                     answer_digit_pointer_enabled=False,
+                    caches=caches,
                 )
                 logits = (
                     output.logits
@@ -626,10 +630,7 @@ class LoadedUnifiedRecurrentShadow:
                 if completion_check is not None and completion_check(tuple(generated)):
                     stopped = True
                     break
-                tokens = mx.concatenate(
-                    [tokens, mx.array([[token_id]], dtype=tokens.dtype)],
-                    axis=1,
-                )
+                next_tokens = mx.array([[token_id]], dtype=tokens.dtype)
         elapsed_ms = max(0, int(round((time.perf_counter() - started) * 1000.0)))
         return tuple(generated), stopped, elapsed_ms
 

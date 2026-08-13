@@ -584,6 +584,83 @@ def test_trained_correction_changes_the_real_answer_path() -> None:
     assert telemetry.receipt()["solver_available"] is False
 
 
+def test_cached_unified_decode_preserves_the_selected_token() -> None:
+    from core.learning.intrinsic_recurrence import make_recurrent_caches
+
+    model = _model()
+    controller = _controller()
+    plan = RecurrentDepthPlan(2, 6, iterations=3, renormalize=True)
+    reference, _ = unified_recurrent_logits(model, TOKENS, plan, controller)
+    caches = make_recurrent_caches(model, plan)
+    stepwise = None
+    for index in range(TOKENS.shape[1]):
+        stepwise, _ = unified_recurrent_logits(
+            model,
+            TOKENS[:, index : index + 1],
+            plan,
+            controller,
+            caches=caches,
+        )
+
+    assert stepwise is not None
+    assert int(mx.argmax(reference[0, -1])) == int(mx.argmax(stepwise[0, -1]))
+
+
+def test_cached_unified_decode_preserves_a_generated_sequence() -> None:
+    from core.learning.intrinsic_recurrence import make_recurrent_caches
+
+    model = _model()
+    controller = _controller()
+    plan = RecurrentDepthPlan(2, 6, iterations=3, renormalize=True)
+
+    def decode(*, incremental: bool) -> tuple[int, ...]:
+        prefix = TOKENS
+        next_tokens = TOKENS
+        caches = make_recurrent_caches(model, plan) if incremental else None
+        generated: list[int] = []
+        for _index in range(4):
+            logits, _ = unified_recurrent_logits(
+                model,
+                next_tokens if incremental else prefix,
+                plan,
+                controller,
+                caches=caches,
+            )
+            token = int(mx.argmax(logits[0, -1]))
+            generated.append(token)
+            next_tokens = mx.array([[token]], dtype=TOKENS.dtype)
+            prefix = mx.concatenate([prefix, next_tokens], axis=1)
+        return tuple(generated)
+
+    assert decode(incremental=True) == decode(incremental=False)
+
+
+def test_cached_unified_decode_refuses_stateful_or_mismatched_modes() -> None:
+    from core.learning.intrinsic_recurrence import make_recurrent_caches
+
+    model = _model()
+    controller = _controller()
+    plan = RecurrentDepthPlan(2, 6, iterations=3)
+    caches = make_recurrent_caches(model, plan)
+
+    with pytest.raises(ValueError, match="untyped fixed-depth"):
+        unified_recurrent_logits(
+            model,
+            TOKENS,
+            plan,
+            controller,
+            caches=caches,
+            adaptive_halt=True,
+        )
+    wrong = make_recurrent_caches(model, RecurrentDepthPlan(2, 6, iterations=2))
+    with pytest.raises(ValueError, match="cache iteration count"):
+        unified_recurrent_logits(model, TOKENS, plan, controller, caches=wrong)
+    malformed = make_recurrent_caches(model, plan)
+    malformed["window"][0].pop()
+    with pytest.raises(ValueError, match="cache layer topology"):
+        unified_recurrent_logits(model, TOKENS, plan, controller, caches=malformed)
+
+
 def test_controller_cannot_rewrite_the_t1_semantic_anchor() -> None:
     model = _model()
     controller = _controller()
