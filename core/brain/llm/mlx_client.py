@@ -6462,7 +6462,42 @@ class MLXLocalClient:
         # a verdict rather than a timer, and the verdict is recorded so the
         # decision is auditable after the fact.
         verdict = self._classify_worker_liveness(now)
-        if verdict is not None and not verdict.kill_justified:
+        if verdict is None:
+            process = self._process
+            try:
+                directly_alive = bool(process and process.is_alive())
+            except (RuntimeError, AttributeError, TypeError, ValueError, OSError):
+                directly_alive = None
+            if directly_alive is False:
+                # No classifier is needed to retire a process that the process
+                # handle itself proves is absent. This also prevents an empty
+                # stale lane from remaining fenced forever.
+                if process is not None:
+                    _note_lane_worker_death(self, "lane_state_stale_worker_absent")
+                self._process = None
+                self._warmup_in_flight = False
+                self._set_lane_state("cold")
+                return
+            # Unknown is not dead. Preserve both the process and its non-cold
+            # lane state: killing would discard potentially healthy weights,
+            # while declaring the lane cold would permit a second worker to
+            # stack beside the first one.
+            _record_mlx_degradation(
+                RuntimeError(f"stale_lane_worker_liveness_unclassified:{self._lane_state}"),
+                action=(
+                    "preserved live worker and lane ownership because termination "
+                    "could not be justified"
+                ),
+                severity="error",
+            )
+            logger.error(
+                "[STABILITY] Lane '%s' is stale after %.0fs, but worker liveness "
+                "could not be classified; preserving process and ownership.",
+                self._lane_state,
+                stuck_duration,
+            )
+            return
+        if not verdict.kill_justified:
             if verdict.should_cancel_request:
                 # The REQUEST is what is stuck, not the model. Cancel it and
                 # leave the weights loaded.
@@ -6492,7 +6527,7 @@ class MLXLocalClient:
             "(%s). Force-resetting to 'cold' for clean recovery.",
             self._lane_state,
             stuck_duration,
-            verdict if verdict is not None else "unclassified",
+            verdict,
         )
         # The reset must not orphan a live worker: declaring the lane cold
         # while the old process survives lets the next spawn stack a second

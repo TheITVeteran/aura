@@ -89,6 +89,77 @@ class TestWorkerProgressIsBounded:
         assert "live" in client._latent_progress_by_request
 
 
+class TestStaleLaneWorkerTerminationNeedsAPositiveVerdict:
+    @staticmethod
+    def _make_stale(client: MLXLocalClient, process: SimpleNamespace) -> None:
+        client._process = process
+        client._lane_state = "recovering"
+        client._lane_transition_at = time.time() - 1_000.0
+        client._last_heartbeat = 0.0
+        client._last_progress_at = 0.0
+        client._last_ready_at = 0.0
+        client._last_token_progress_at = 0.0
+
+    def test_unavailable_classifier_preserves_process_and_lane(
+        self,
+        client: MLXLocalClient,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        process = SimpleNamespace(is_alive=lambda: True)
+        self._make_stale(client, process)
+        kills: list[object] = []
+        monkeypatch.setattr(client, "_classify_worker_liveness", lambda _now: None)
+        monkeypatch.setattr(client, "_kill_and_join_blocking", lambda item: kills.append(item))
+
+        client._check_lane_state_staleness()
+
+        assert kills == []
+        assert client._process is process
+        assert client._lane_state == "recovering"
+
+    def test_positive_kill_verdict_still_reaps_a_stale_worker(
+        self,
+        client: MLXLocalClient,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        process = SimpleNamespace(is_alive=lambda: True)
+        self._make_stale(client, process)
+        kills: list[object] = []
+        verdict = SimpleNamespace(kill_justified=True)
+        monkeypatch.setattr(client, "_classify_worker_liveness", lambda _now: verdict)
+        monkeypatch.setattr(client, "_kill_and_join_blocking", lambda item: kills.append(item))
+        monkeypatch.setattr(
+            "core.brain.llm.mlx_client._note_lane_worker_death",
+            lambda *_args, **_kwargs: None,
+        )
+
+        client._check_lane_state_staleness()
+
+        assert kills == [process]
+        assert client._process is None
+        assert client._lane_state == "cold"
+
+    def test_unavailable_classifier_can_retire_a_proven_dead_process(
+        self,
+        client: MLXLocalClient,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        process = SimpleNamespace(is_alive=lambda: False)
+        self._make_stale(client, process)
+        deaths: list[tuple[object, str]] = []
+        monkeypatch.setattr(client, "_classify_worker_liveness", lambda _now: None)
+        monkeypatch.setattr(
+            "core.brain.llm.mlx_client._note_lane_worker_death",
+            lambda owner, reason: deaths.append((owner, reason)),
+        )
+
+        client._check_lane_state_staleness()
+
+        assert deaths == [(client, "lane_state_stale_worker_absent")]
+        assert client._process is None
+        assert client._lane_state == "cold"
+
+
 class TestClockJumpIsNotHostSleep:
     def test_the_platform_offers_a_sleep_inclusive_clock(self):
         # Darwin: CLOCK_MONOTONIC counts suspend, time.monotonic() does not.
