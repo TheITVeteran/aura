@@ -634,6 +634,17 @@ class TurnOutcome:
             self._receipt = receipt
             self._finalized = True
 
+        # Audit the prose against what actually ran, outside the lock and
+        # after the answer is already served. The detector for Aura's
+        # confabulation shape ("I checked the file", "r = 0.83") existed with
+        # exactly one caller — the validation suite — so the work ledger was
+        # written on every turn and read on none. This is the read.
+        #
+        # It cannot change the reply and must not: a finding is a lead, and
+        # this codebase has already lost correct answers to a lexical gate
+        # that was allowed to decide. Reporting only.
+        _audit_served_prose(receipt)
+
         _report(receipt, subsystem=subsystem)
         return receipt
 
@@ -823,6 +834,29 @@ class TurnReceipt:
             "error_count": len(self.errors),
             "dropped_candidates": self.dropped_candidates,
         }
+
+
+def _audit_served_prose(receipt: TurnReceipt) -> None:
+    """Check the served text against the turn's work record. Never raises.
+
+    Imported lazily: a turn must be finalizable even if the audit module is
+    unavailable, and evidence collection must never be the reason an answer
+    cannot be completed.
+    """
+    served = getattr(receipt, "served_answer", None)
+    if not served:
+        return
+    try:
+        from core.verify.fabrication_watch import observe_served_turn
+
+        observe_served_turn(str(receipt.turn_id), str(served))
+    except Exception as exc:  # noqa: BLE001 — auditing may never break a turn
+        record_degradation(
+            "turn_outcome",
+            exc,
+            severity="debug",
+            action="served turn went unaudited for fabrication",
+        )
 
 
 def _report(receipt: TurnReceipt, *, subsystem: str) -> None:

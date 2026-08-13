@@ -27,6 +27,17 @@ from core.runtime.state_ownership import state_root
 JobFn = Callable[[], Awaitable[dict[str, Any]] | dict[str, Any]]
 logger = logging.getLogger("core.runtime.autonomy_conductor")
 
+#: Fixed stimulus for causal-influence trials. Held constant across all three
+#: arms of every trial — the probe varies exactly one thing and it is the
+#: lesion, so any variation here would be measured and blamed on the channel.
+#: Deliberately dull: it is an instrument input, not a prompt technique, and it
+#: must never be mistaken for one in a transcript.
+_INFLUENCE_PROBE_PROMPT = (
+    "Describe, in a few sentences, how you are approaching this moment."
+)
+_INFLUENCE_PROBE_TIMEOUT_S = 90.0
+_INFLUENCE_CAMPAIGN_DEADLINE_S = 600.0
+
 _AUTONOMY_RECOVERABLE_ERRORS = (
     ImportError,
     AttributeError,
@@ -175,6 +186,17 @@ class AutonomyConductor:
         )
         self.register(
             "architecture_auto_cycle", 600.0, self._job_architecture_auto, run_immediately=False
+        )
+        # One channel measured per run, rotating least-evidence-first. Hourly
+        # because a verdict needs samples to accumulate and the ledger now
+        # persists across boots; the admission check defers whenever the memory
+        # is not genuinely there.
+        self.register(
+            "influence_campaign",
+            3600.0,
+            self._job_influence_campaign,
+            run_immediately=False,
+            policy="research",
         )
         self.register(
             "overt_action_cycle",
@@ -464,6 +486,86 @@ class AutonomyConductor:
             "enabled": governor.enabled(),
             "active_lora_processes": governor.active_lora_processes(),
             "last_receipt": governor.last_receipt.to_dict() if governor.last_receipt else None,
+        }
+
+    async def _job_influence_campaign(self) -> dict[str, Any]:
+        """Measure whether one faculty actually changes the output.
+
+        This is the job that makes ``core/verify`` mean something. Every lesion
+        site on the live generation path, the null-arm refusal, the bootstrap
+        interval — all of it existed to answer "did this faculty matter?" and
+        nothing ever ran the trials, so on a live boot the answer was
+        permanently UNMEASURED.
+
+        ONE channel per run, rotating. A trial is three generations (intact,
+        lesioned, intact-again) and two thirds of that cost buys the right to
+        believe the other third. Measuring six channels at once would be an
+        hour of the model's day; measuring one is a few minutes, and evidence
+        accumulates across runs because the ledger is now persisted. Slow and
+        real beats fast and unpowered.
+
+        The probe stimulus is fixed and deliberately dull. It is a measurement
+        input, not a prompt technique: the probe varies exactly one thing and
+        it must be the lesion, so anything that differs between the three arms
+        gets attributed to the channel. Nothing here tries to make Aura answer
+        better — it only needs an identical input three times.
+        """
+        from core.container import ServiceContainer
+        from core.verify.causal_influence import get_influence_ledger
+        from core.verify.influence_campaign import (
+            campaign_admission_reason,
+            run_influence_campaign,
+        )
+        from core.verify.lesion_registry import get_lesion_registry
+
+        refusal = campaign_admission_reason()
+        if refusal:
+            return {"status": "deferred", "reason": refusal}
+
+        gate = ServiceContainer.get("inference_gate", default=None)
+        if gate is None or not hasattr(gate, "generate"):
+            return {"status": "unavailable", "reason": "inference_gate_not_registered"}
+
+        channels = list(get_lesion_registry().channels())
+        if not channels:
+            return {"status": "idle", "reason": "no_registered_lesions"}
+
+        # Rotate by least-evidence-first: the channel with the fewest null
+        # samples is the one whose verdict is furthest away, so it is the one
+        # worth the model time. Ties break on name for determinism.
+        ledger = get_influence_ledger()
+        channel = min(
+            channels,
+            key=lambda name: (ledger.verdict(name).n_null, name),
+        )
+
+        async def generate() -> str:
+            result = await gate.generate(
+                _INFLUENCE_PROBE_PROMPT,
+                {
+                    "origin": "influence_probe",
+                    "max_tokens": 96,
+                    "messages": [{"role": "user", "content": _INFLUENCE_PROBE_PROMPT}],
+                },
+                timeout=_INFLUENCE_PROBE_TIMEOUT_S,
+            )
+            return str(getattr(result, "text", result) or "")
+
+        report = await run_influence_campaign(
+            generate=generate,
+            channels=[channel],
+            trials=3,
+            per_generation_timeout_s=_INFLUENCE_PROBE_TIMEOUT_S,
+            deadline_s=_INFLUENCE_CAMPAIGN_DEADLINE_S,
+        )
+        verdict = ledger.verdict(channel)
+        return {
+            "status": "ran" if report.ran else "deferred",
+            "channel": channel,
+            "verdict": str(verdict.verdict),
+            "n_treatment": verdict.n_treatment,
+            "n_null": verdict.n_null,
+            "report": report.as_dict(),
         }
 
     async def _job_internal_deliberation(self) -> dict[str, Any]:

@@ -1365,6 +1365,16 @@ def _runtime_integrity_block() -> dict[str, Any]:
     except Exception as exc:  # noqa: BLE001 — integrity reporting is additive
         block["causal_influence_error"] = repr(exc)
 
+    # Served prose that outran the turn's own work record. The work ledger was
+    # written on every tool call and read by nothing outside the validation
+    # suite; this is the read, and it reports rather than decides.
+    try:
+        from core.verify.fabrication_watch import fabrication_snapshot
+
+        block["fabrication_watch"] = fabrication_snapshot()
+    except Exception as exc:  # noqa: BLE001 — integrity reporting is additive
+        block["fabrication_watch_error"] = repr(exc)
+
     # Which path actually produced the recent replies. A demo showing a fluent
     # answer establishes nothing about the pipeline until this says the pipeline
     # ran.
