@@ -15,6 +15,7 @@ from __future__ import annotations
 from core.runtime.errors import record_degradation
 
 import asyncio
+import contextvars
 import hashlib
 import heapq
 import json
@@ -29,6 +30,23 @@ from enum import Enum
 from typing import Any, Awaitable, Callable, Dict, Iterable, List, Optional, Sequence, Tuple
 
 logger = logging.getLogger("Aura.Reasoning.NativeSystem2")
+
+#: Per-search tally of where the default scorers' values came from. A
+#: ContextVar rather than an attribute because searches interleave on the event
+#: loop, and an attribute would attribute one search's provenance to another —
+#: the same reason the lesion registry scopes counterfactuals this way.
+_VALUE_EVIDENCE: "contextvars.ContextVar[Optional[Dict[str, int]]]" = (
+    contextvars.ContextVar("native_system2_value_evidence", default=None)
+)
+
+
+@dataclass(frozen=True)
+class ActionValueEstimate:
+    """An evidenced value and the declared risk that goes with it."""
+
+    value: float
+    risk: float
+    evidence: str
 
 
 class TreeCycleError(ValueError):
@@ -599,6 +617,9 @@ class NativeSystem2Engine:
         rng = random.Random(config.seed)
         search_id = "s2_" + uuid.uuid4().hex[:12]
         t0 = time.monotonic()
+        # Scoped to this search, so interleaved searches cannot inherit each
+        # other's provenance. Reset in _finish.
+        evidence_token = _VALUE_EVIDENCE.set({})
         will_receipt_id = self._consult_will(goal, source, algorithm, config, context or {})
 
         tree = NativeSearchTree()
@@ -625,7 +646,21 @@ class NativeSystem2Engine:
         selected_id = best_path[-1] if len(best_path) > 1 else None
         if selected_id and selected_id in tree.nodes:
             tree.nodes[selected_id].commitment_status = CommitmentStatus.SELECTED
-        return self._finish(search_id, algorithm, tree, root.id, selected_id, config, will_receipt_id, simulations)
+        try:
+            result = self._finish(
+                search_id, algorithm, tree, root.id, selected_id, config,
+                will_receipt_id, simulations,
+            )
+            # Only the default scorers tally here; a caller supplying its own
+            # world model and value scorer leaves this empty, which is correct
+            # — this records the provenance of THIS engine's defaults, not a
+            # claim about somebody else's model.
+            tally = _VALUE_EVIDENCE.get() or {}
+            if tally and not result.receipt.value_evidence:
+                result.receipt.value_evidence = dict(tally)
+            return result
+        finally:
+            _VALUE_EVIDENCE.reset(evidence_token)
 
     async def rank_actions(
         self,
@@ -1221,6 +1256,34 @@ class NativeSystem2Engine:
             System2Action("backtrack to an alternate plan", 0.16, "backtrack"),
         ][: config.branching_factor]
 
+    @staticmethod
+    def _estimate(action: System2Action, goal: str) -> "ActionValueEstimate":
+        """Value for an action on the generic path, from evidence or admitted absent.
+
+        These defaults are what every caller inherits who does not supply a
+        world model or value scorer, so they were the widest-reaching instance
+        of the same defect ``rank_actions`` had: reward 0.08 with +0.12 for a
+        name containing verify/test/simulate/source/constraint, and a value of
+        0.48 with +0.045 per matching token and -0.18 for delete/destructive.
+        A search whose caller supplied nothing was ranking on spelling, and
+        MCTS ran over it faithfully.
+
+        Risk still applies and the hazard floor still fills a vacuum, because
+        those are the safety channel rather than the value channel.
+        """
+        from core.reasoning.action_value import (
+            get_action_value_model,
+            lexical_hazard_floor,
+        )
+
+        model = get_action_value_model()
+        estimate = model.value_for(action.name, action.metadata, state=goal)
+        risk = action.risk if action.risk > 0.0 else lexical_hazard_floor(action.name)
+        counts = _VALUE_EVIDENCE.get()
+        if counts is not None:
+            counts[estimate.evidence] = counts.get(estimate.evidence, 0) + 1
+        return ActionValueEstimate(value=estimate.value, risk=risk, evidence=estimate.evidence)
+
     async def _default_world_model(
         self,
         state: Any,
@@ -1238,36 +1301,37 @@ class NativeSystem2Engine:
             "path": [*current_path, action.name],
             "depth": node.depth + 1,
         }
-        action_lower = action.name.lower()
-        reward = 0.08
-        if any(token in action_lower for token in ("verify", "test", "simulate", "source", "constraint")):
-            reward += 0.12
-        if "backtrack" in action_lower:
-            reward += 0.04
-        reward -= min(0.4, action.risk * 0.4)
-        uncertainty = 0.28 + min(0.35, (node.depth * 0.05)) + min(0.2, action.risk * 0.2)
+        goal = str(state.get("goal", "")) if isinstance(state, dict) else ""
+        estimate = self._estimate(action, goal)
+        # Reward is the evidenced value of taking this action, less its
+        # declared risk. Nothing here reads the action's spelling for merit.
+        reward = estimate.value - min(0.4, estimate.risk * 0.4)
+        uncertainty = 0.28 + min(0.35, (node.depth * 0.05)) + min(0.2, estimate.risk * 0.2)
+        if estimate.evidence in ("prior", "none"):
+            # Unevidenced values deserve wider error bars, and saying so in the
+            # uncertainty channel is what lets the commitment threshold refuse
+            # a confident-looking search over numbers nobody measured.
+            uncertainty += 0.15
         return SimulatedTransition(
             next_state=next_state,
             reward_estimate=reward,
             terminal_probability=0.0,
             uncertainty=_clamp01(uncertainty),
             changed_variables={"path": next_state["path"]},
-            trace=f"latent rollout: {action.name}",
+            trace=f"latent rollout: {action.name} [value={estimate.evidence}]",
         )
 
     async def _default_value_scorer(self, node: NativePlanNode, goal: str) -> float:
-        text = " ".join([goal, node.symbolic_summary, " ".join(node.action_sequence)]).lower()
-        score = 0.48
-        for token in ("verify", "test", "simulate", "constraint", "evidence", "source", "minimal", "rollback"):
-            if token in text:
-                score += 0.045
-        if "backtrack" in text:
-            score += 0.025
-        if "delete" in text or "destructive" in text:
-            score -= 0.18
-        score += min(0.12, max(0, len(node.action_sequence) - 1) * 0.02)
-        score -= node.uncertainty * 0.08
-        return _clamp01(score)
+        if node.action is None:
+            return 0.5
+        estimate = self._estimate(node.action, goal)
+        score = estimate.value
+        if not node.action.valid:
+            return 0.0
+        if node.action.external_side_effect:
+            score -= 0.08
+        score -= 0.20 * estimate.risk
+        return _clamp01(score - (node.uncertainty * 0.08))
 
     def _finish(
         self,
