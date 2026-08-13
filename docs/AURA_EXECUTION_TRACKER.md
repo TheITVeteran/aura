@@ -47373,3 +47373,28 @@ skill success, soak reliability or full Aura closure. The resident replication
 continues independently, with its third seed still producing fresh candidate
 artifacts and promotion waiting for final adjudication. No scientific verdict,
 frontier claim or `WOW Signal` is inferred from that partial progress.
+
+## Checkpoint 2026-08-13-337: Cognitive, Model-Lane and Resource Custody Is Current
+
+Six checked proofs passed atomically against exact pushed CP336 source
+`ec3b552342b3fc1a0d2e40e76a04c68b7c0cf14d`. They bind both cognitive-gate
+owners, the complete model-lane implementation and test contracts, and both
+resource-observation owners. Command durations were `2.666`, `0.291`,
+`18.633`, `50.088`, `2.824` and `18.098` seconds. Every proof returned zero
+inside its sanitized no-accelerator environment and retained its declared
+source manifest; the broad model-lane test command used one bounded low-memory
+pytest child and did not load or contend with the resident model.
+
+The structural gate confirms no remaining stale cognitive-gate, model-lane or
+resource-observation receipt. Aggregate stale-evidence defects fell from `36`
+to `8`, while unproven closures fell from `6` to `3`. The remaining unproven
+set is now exactly the external clean skill boot, the external full shutdown
+signal matrix and the skill parent that depends on the clean boot. Those are
+kept open until the resident model owner exits and the real process-boundary
+proofs can run without resource contamination.
+
+This evidence checkpoint does not grant promotion, runtime activation, general
+reasoning gain, release, soak or Aura 1.0 credit. At this checkpoint the third
+resident-32B replication seed had reached `140/216`; the first two complete
+seeds were strongly positive on the bounded executable family, but the signed
+three-seed adjudication remained unfinished and no `WOW Signal` was claimed.
