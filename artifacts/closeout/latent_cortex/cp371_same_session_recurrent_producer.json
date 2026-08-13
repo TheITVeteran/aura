@@ -1,0 +1,45 @@
+{
+  "schema": "aura.closeout.rlc.cp371.v1",
+  "checkpoint": "CP371",
+  "change": {
+    "producer": "tools/rlc_integrated_recurrent_producer.py",
+    "producer_schema": "aura.rlc.integrated_recurrent_producer.v1",
+    "same_session_decode": true,
+    "same_public_prompt": true,
+    "answer_key_used": false,
+    "score_observed": false,
+    "terminal_contract_required": true,
+    "qualified_package_identity_bound": true,
+    "task_identity_bound": true,
+    "prompt_and_token_identity_bound": true,
+    "generated_text_and_token_identity_bound": true,
+    "producer_receipt_embedded": true,
+    "resource_estimator": "unified_general_recurrent_structural_v1",
+    "incremental_cache_attention_accounted": true,
+    "controller_tensor_work_accounted": true,
+    "incomplete_accounting_refused": true
+  },
+  "verification": {
+    "producer_and_reconciliation_surface": {
+      "passed": 71,
+      "failed": 0,
+      "duration_s": 25.98
+    },
+    "canonical_smoke": {
+      "passed": 104,
+      "failed": 0,
+      "duration_s": 22.10
+    },
+    "ruff": "pass",
+    "py_compile": "pass",
+    "diff_check": "pass"
+  },
+  "claim_boundary": {
+    "producer_contract_proven": true,
+    "producer_wired_into_reconciliation_runner": false,
+    "active_cp368_campaign_modified": false,
+    "broad_reasoning_gain_proven": false,
+    "powered_replication_complete": false,
+    "wow_signal": false
+  }
+}

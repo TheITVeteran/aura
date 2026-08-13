@@ -85,6 +85,7 @@ def build_integrated_candidate(
     task_id: str,
     text: str,
     resource_accounting: Mapping[str, Any],
+    source_receipt: Mapping[str, Any],
     source_receipt_sha256: str,
 ) -> dict[str, Any]:
     """Bind one same-prompt candidate before complete-system composition."""
@@ -115,7 +116,37 @@ def build_integrated_candidate(
         or any(character not in "0123456789abcdef" for character in source_receipt_sha256)
     ):
         raise ValueError("integrated candidate source receipt is invalid")
+    if not isinstance(source_receipt, Mapping):
+        raise ValueError("integrated candidate source receipt is invalid")
+    source_receipt_value = dict(source_receipt)
+    source_receipt_body = {
+        key: value
+        for key, value in source_receipt_value.items()
+        if key != "receipt_sha256"
+    }
+    if (
+        source_receipt_value.get("receipt_sha256") != source_receipt_sha256
+        or _canonical_sha256(source_receipt_body) != source_receipt_sha256
+        or source_receipt_value.get("source") != normalized_source
+        or source_receipt_value.get("task_id") != normalized_task_id
+        or source_receipt_value.get("text_sha256")
+        != hashlib.sha256(normalized_text.encode("utf-8")).hexdigest()
+        or source_receipt_value.get("same_public_information") is not True
+        or source_receipt_value.get("answer_key_used") is not False
+    ):
+        raise ValueError("integrated candidate source receipt differs")
     resource = validate_resource_receipt(resource_accounting)
+    if (
+        resource.get("accounting_complete") is not True
+        or type(resource.get("estimated_flops")) is not int
+        or resource["estimated_flops"] < 1
+    ):
+        raise ValueError("integrated candidate resource accounting is incomplete")
+    if (
+        source_receipt_value.get("resource_accounting_sha256")
+        != resource["receipt_sha256"]
+    ):
+        raise ValueError("integrated candidate source resource receipt differs")
     body = {
         "schema": "aura.rlc.integrated_candidate.v1",
         "source": normalized_source,
@@ -123,6 +154,7 @@ def build_integrated_candidate(
         "text": normalized_text,
         "text_sha256": hashlib.sha256(normalized_text.encode("utf-8")).hexdigest(),
         "resource_accounting": resource,
+        "source_receipt": source_receipt_value,
         "source_receipt_sha256": source_receipt_sha256,
         "same_public_information": True,
         "answer_key_used": False,
@@ -149,6 +181,7 @@ def _normalize_integrated_candidates(
             task_id=str(value.get("task_id") or ""),
             text=str(value.get("text") or ""),
             resource_accounting=value.get("resource_accounting") or {},
+            source_receipt=value.get("source_receipt") or {},
             source_receipt_sha256=str(value.get("source_receipt_sha256") or ""),
         )
         if dict(value) != expected:

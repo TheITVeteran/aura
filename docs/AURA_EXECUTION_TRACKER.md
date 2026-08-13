@@ -48061,3 +48061,38 @@ still produce the recurrent candidate receipt and execute the complete engine
 on the same answer-blind task. The active CP368 broad campaign remains untouched;
 its incomplete observations do not establish broad gain, powered replication,
 frontier performance, static fusion or a `WOW Signal`.
+
+## Checkpoint 2026-08-13-371: Recurrent Tissue Has an Answer-Blind Producer
+
+The CP370 composition boundary could validate a supplied recurrent candidate,
+but it did not yet define how that candidate is generated inside a claim-grade
+full-engine run. Replaying text from a prior broad journal would couple the
+result to a different process, task blind and execution context. Supplying only
+a producer digest would also be non-replayable because the receipt behind the
+digest was absent.
+
+The new producer decodes through the qualified recurrent controller after the
+resident model is loaded, using the exact public prompt tokens for the current
+task. It observes neither the private answer nor the task score. A candidate is
+admitted only after reaching a valid terminal response contract; incomplete or
+invalid generations fail instead of entering the complete engine.
+
+Its embedded producer receipt binds package, manifest and controller identity;
+task and prompt digests; public and generated token digests; output text;
+recurrence depth; and a complete resource ledger. The ledger accounts the true
+incremental cache query lengths across prelude, repeated window and coda layers,
+then separately accounts correction, transport, normalization and halt tensor
+work. Unknown or zero-work accounting is now rejected by the CP370 candidate
+boundary. The complete candidate carries the full producer receipt as well as
+its digest, so independent evidence validation can reopen every binding.
+
+The producer plus reconciliation surface passes `71/71`, canonical smoke passes
+`104/104`, and Ruff, byte compilation and diff hygiene pass. Evidence is
+`artifacts/closeout/latent_cortex/cp371_same_session_recurrent_producer.json`.
+
+This proves the producer and provenance contracts, not their execution in a
+complete-system campaign. Next is a distinct composed treatment arm with an
+uncomposed full-engine control, exact package admission, source-frozen decode
+identity and paired adjudication. The active CP368 broad campaign remains
+untouched and no broad gain, powered replication, fusion or `WOW Signal` is
+claimed.

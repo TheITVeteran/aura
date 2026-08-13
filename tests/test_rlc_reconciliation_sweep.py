@@ -2774,12 +2774,32 @@ def test_complete_system_admits_a_bound_recurrent_candidate_without_answer_key()
         attention_query_key_pairs=20,
         output_head_tokens=2,
     )
+    source_body = {
+        "schema": "aura.rlc.integrated_recurrent_producer.v1",
+        "source": "unified_recurrent_controller",
+        "task_id": task.task_id,
+        "text_sha256": hashlib.sha256(correct.encode()).hexdigest(),
+        "resource_accounting_sha256": ledger.to_receipt()["receipt_sha256"],
+        "same_public_information": True,
+        "answer_key_used": False,
+    }
+    source_receipt = {
+        **source_body,
+        "receipt_sha256": hashlib.sha256(
+            json.dumps(
+                source_body,
+                sort_keys=True,
+                separators=(",", ":"),
+            ).encode("ascii")
+        ).hexdigest(),
+    }
     integrated = build_integrated_candidate(
         source="unified_recurrent_controller",
         task_id=task.task_id,
         text=correct,
         resource_accounting=ledger.to_receipt(),
-        source_receipt_sha256="a" * 64,
+        source_receipt=source_receipt,
+        source_receipt_sha256=source_receipt["receipt_sha256"],
     )
     assert _normalize_integrated_candidates(
         [integrated],
@@ -2821,6 +2841,7 @@ def test_complete_system_admits_a_bound_recurrent_candidate_without_answer_key()
                 task_id=task.task_id,
                 text=correct,
                 resource_accounting=ledger.to_receipt(),
+                source_receipt={},
                 source_receipt_sha256="a" * 64,
             )
 
