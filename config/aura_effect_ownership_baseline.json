@@ -4513,6 +4513,14 @@
       "scope": "<module>.InterpersonalStore.save"
     },
     {
+      "callee": "core.runtime.file_write_gateway.get_file_write_gateway().ensure_directory",
+      "canonical_owner": true,
+      "category": "file_write_gateway",
+      "count": 1,
+      "path": "core/memory/recall_observations.py",
+      "scope": "<module>.RecallObservationRing._persist_batch"
+    },
+    {
       "callee": "core.runtime.file_write_gateway.get_file_write_gateway().write_text",
       "canonical_owner": true,
       "category": "file_write_gateway",
@@ -16810,6 +16818,6 @@
     }
   ],
   "description": "Exact AST effect-ownership debt ratchet; refresh only after reviewed change",
-  "inventory_sha256": "f13114da324ed5a63e07bc2222647a88654377eb7c5e2637a1109475387f4147",
+  "inventory_sha256": "225867820787cfdf90756e69b395b8159e0bd2c1967af6daa05e11635f0a29a3",
   "schema_version": 1
 }

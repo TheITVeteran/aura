@@ -76,68 +76,94 @@ def _private_directory(path: Path, *, create: bool) -> Path:
     return resolved
 
 
-def _stable_copy(source: Path, destination: Path) -> dict[str, Any]:
+def _controller_only_copy(
+    source: Path,
+    destination: Path,
+    *,
+    checkpoint_sha256: str,
+) -> dict[str, Any]:
+    """Project a training checkpoint into the exact serving tensor inventory."""
+
     if source.is_symlink() or destination.exists() or destination.is_symlink():
-        _fail("shadow package artifact path is unsafe")
-    digest = hashlib.sha256()
+        _fail("shadow package controller artifact path is unsafe")
     try:
-        source_fd = os.open(
+        import mlx.core as mx
+
+        descriptor = os.open(
             source,
             os.O_RDONLY | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0),
         )
         try:
-            before = os.fstat(source_fd)
+            before = os.fstat(descriptor)
             if (
                 not stat.S_ISREG(before.st_mode)
                 or before.st_uid != os.geteuid()
                 or not 0 < before.st_size <= _MAX_COPY_BYTES
             ):
-                _fail("shadow package source artifact identity differs")
-            destination_fd = os.open(
-                destination,
-                os.O_WRONLY
-                | os.O_CREAT
-                | os.O_EXCL
-                | getattr(os, "O_CLOEXEC", 0)
-                | getattr(os, "O_NOFOLLOW", 0),
-                0o400,
-            )
+                _fail("shadow package controller source identity differs")
+            digest = hashlib.sha256()
+            remaining = before.st_size
+            while remaining:
+                chunk = os.read(descriptor, min(8 * 1024 * 1024, remaining))
+                if not chunk:
+                    break
+                digest.update(chunk)
+                remaining -= len(chunk)
+            if remaining or digest.hexdigest() != checkpoint_sha256:
+                _fail("shadow package controller source checkpoint differs")
+            os.lseek(descriptor, 0, os.SEEK_SET)
             try:
-                remaining = before.st_size
-                while remaining:
-                    chunk = os.read(source_fd, min(8 * 1024 * 1024, remaining))
-                    if not chunk:
-                        break
-                    digest.update(chunk)
-                    view = memoryview(chunk)
-                    while view:
-                        written = os.write(destination_fd, view)
-                        if written <= 0:
-                            _fail("shadow package artifact write was short")
-                        view = view[written:]
-                    remaining -= len(chunk)
-                os.fsync(destination_fd)
-            finally:
-                os.close(destination_fd)
-            after = os.fstat(source_fd)
+                with os.fdopen(descriptor, "rb", closefd=False) as handle:
+                    tensors = mx.load(handle, format="safetensors")
+            except (RuntimeError, TypeError, ValueError) as exc:
+                raise UnifiedIntrinsicShadowPackageError(
+                    "shadow package controller source payload differs"
+                ) from exc
+            if not isinstance(tensors, dict):
+                _fail("shadow package controller source payload differs")
+            prefix = "bundle.controller."
+            controller = {
+                name: value for name, value in tensors.items() if name.startswith(prefix)
+            }
+            unexpected_bundle = {
+                name for name in tensors if name.startswith("bundle.") and name not in controller
+            }
+            if not controller or unexpected_bundle:
+                _fail("shadow package controller source tensor inventory differs")
+            mx.eval(*controller.values())
+            after = os.fstat(descriptor)
         finally:
-            os.close(source_fd)
+            os.close(descriptor)
     except OSError as exc:
         destination.unlink(missing_ok=True)
-        raise UnifiedIntrinsicShadowPackageError("shadow package artifact copy failed") from exc
+        raise UnifiedIntrinsicShadowPackageError(
+            "shadow package controller projection failed"
+        ) from exc
     if (
-        remaining
-        or (before.st_dev, before.st_ino, before.st_size, before.st_mtime_ns)
+        (before.st_dev, before.st_ino, before.st_size, before.st_mtime_ns)
         != (after.st_dev, after.st_ino, after.st_size, after.st_mtime_ns)
-        or destination.stat().st_size != before.st_size
     ):
+        _fail("shadow package controller source changed while projecting")
+
+    scratch = destination.with_name(
+        f".{destination.stem}.{uuid.uuid4().hex}.tmp.safetensors"
+    )
+    try:
+        mx.save_safetensors(str(scratch), controller)
+        payload = scratch.read_bytes()
+        atomic_write_bytes(destination, payload, mode=0o400)
+    except (OSError, RuntimeError, TypeError, ValueError) as exc:
         destination.unlink(missing_ok=True)
-        _fail("shadow package source changed while copying")
+        raise UnifiedIntrinsicShadowPackageError(
+            "shadow package controller projection failed"
+        ) from exc
+    finally:
+        scratch.unlink(missing_ok=True)
     destination.chmod(0o400)
     return {
         "path": destination.name,
-        "sha256": digest.hexdigest(),
-        "size_bytes": before.st_size,
+        "sha256": hashlib.sha256(payload).hexdigest(),
+        "size_bytes": len(payload),
     }
 
 
@@ -558,9 +584,10 @@ def materialize(
     stage.mkdir(mode=0o700)
     try:
         artifacts = {
-            "controller": _stable_copy(
+            "controller": _controller_only_copy(
                 checkpoint.weights_path,
                 stage / "controller.safetensors",
+                checkpoint_sha256=checkpoint.receipt["checkpoint_sha256"],
             ),
             "checkpoint": _write_document(
                 stage / "checkpoint-complete.json",

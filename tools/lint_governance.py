@@ -179,6 +179,11 @@ CANONICAL_PRIMITIVE_OWNERS: dict[str, frozenset[str]] = {
             # scope; runtime callers cannot select a filename or plaintext
             # payload.
             "core/memory/session_pin_ledger.py",
+            # Recall observations own one fixed, bounded SQLite schema beneath
+            # Aura's configured memory root. The payload contains only numeric
+            # activation/rank evidence, accepts no caller-selected filename or
+            # memory content, and writes inside its named internal scope.
+            "core/memory/recall_observations.py",
             # External-effect transactions are digest-sealed, path-derived
             # records under Aura's data directory. The coordinator accepts no
             # caller-selected file path and writes only from its named scope.

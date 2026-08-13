@@ -47398,3 +47398,41 @@ reasoning gain, release, soak or Aura 1.0 credit. At this checkpoint the third
 resident-32B replication seed had reached `140/216`; the first two complete
 seeds were strongly positive on the bounded executable family, but the signed
 three-seed adjudication remained unfinished and no `WOW Signal` was claimed.
+
+## Checkpoint 2026-08-13-345: Serving Packages Exclude Training Optimizer State
+
+The first CP344 promotion lifecycle correctly failed closed after loading the
+resident model because the shadow package's `controller.safetensors` contained
+the complete training checkpoint: `51` `bundle.controller.*` tensors plus
+`104` optimizer tensors. The production loader requires the exact controller
+inventory and rejected the package before accepting work. The immutable failed
+package, lifecycle log and retired launch agent remain evidence; the exact
+launchd job was removed and its active pointer was retired with a compare-and-
+swap against pointer digest
+`97c9611d4aff056d4a72a39a97f5f8f32591cf9dce649dcd9ab5511231a4bd6e`.
+
+Materialization now reopens the source checkpoint through one no-follow file
+descriptor, hashes it against the admitted checkpoint identity, projects only
+the `bundle.controller.*` inventory, refuses any other `bundle.*` tissue,
+checks the source inode and metadata remained stable, and publishes a new
+read-only safetensors artifact. The real `182,287,199`-byte checkpoint was
+projected to `60,762,135` bytes containing exactly `51` controller tensors and
+zero optimizer tensors. Tests now use a real training-shaped safetensors
+fixture containing both controller and optimizer state, so byte-copying the
+training checkpoint can no longer pass by construction.
+
+The durable recall observer's directory write is also classified as a reviewed
+canonical owner rather than silently added to migration debt. It owns one
+fixed bounded SQLite schema below Aura's configured memory root, accepts no
+caller-selected filename or memory content, and writes inside its named
+internal governance scope. Its exact bucket is now ratcheted as canonical.
+
+Validation under Aura's Python 3.12 runtime is green: the materializer, runtime
+loader and promotion pipeline surface passes `46/46`; the governance scanner
+and durable recall surface passes `25/25`; canonical smoke passes `104/104`;
+Ruff, compilation, governance lint, layering and diff hygiene pass. This
+checkpoint repairs package construction only. A fresh immutable promotion must
+still complete lifecycle, qualified canary and activation before runtime
+authority advances. The powered replication remains the same bounded positive
+result; no broad reasoning gain, frontier claim, static fusion or `WOW Signal`
+is inferred.

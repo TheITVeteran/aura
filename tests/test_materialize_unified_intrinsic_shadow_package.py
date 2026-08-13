@@ -5,6 +5,7 @@ import json
 from pathlib import Path
 from types import SimpleNamespace
 
+import mlx.core as mx
 import mlx_lm.utils
 import pytest
 
@@ -22,7 +23,14 @@ def _fixture(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> tuple[Path, Pat
     training_output.mkdir(parents=True, mode=0o700)
     campaign.chmod(0o700)
     weights = campaign / "controller-source.safetensors"
-    weights.write_bytes(b"controller-weights")
+    mx.save_safetensors(
+        str(weights),
+        {
+            "bundle.controller.fixture_weight": mx.array([1.0]),
+            "optimizer.controller.fixture_weight.m": mx.array([2.0]),
+            "optimizer.step": mx.array(3, dtype=mx.uint64),
+        },
+    )
     weights.chmod(0o400)
 
     checkpoint_sha256 = __import__("hashlib").sha256(weights.read_bytes()).hexdigest()
@@ -137,6 +145,11 @@ def test_materializes_and_reopens_shadow_only_package(
         "canary_battery"
     ]["battery_sha256"]
     assert "global_activation" in manifest["claims_not_supported"]
+    controller_tensors = mx.load(str(package / "controller.safetensors"))
+    assert set(controller_tensors) == {"bundle.controller.fixture_weight"}
+    assert manifest["checkpoint_sha256"] != manifest["artifacts"]["controller"][
+        "sha256"
+    ]
     assert set(path.name for path in package.iterdir()) == {
         "PACKAGE_COMPLETE.json",
         "campaign-completion.json",
@@ -150,6 +163,33 @@ def test_materializes_and_reopens_shadow_only_package(
         "replication-verdict.json",
         "shadow-canary-battery.json",
     }
+
+
+def test_controller_projection_refuses_noncontroller_training_tissue(
+    tmp_path: Path,
+) -> None:
+    source = tmp_path / "source.safetensors"
+    destination = tmp_path / "controller.safetensors"
+    mx.save_safetensors(
+        str(source),
+        {
+            "bundle.controller.fixture_weight": mx.array([1.0]),
+            "bundle.unexpected.fixture_weight": mx.array([2.0]),
+        },
+    )
+    source.chmod(0o400)
+
+    with pytest.raises(
+        materializer.UnifiedIntrinsicShadowPackageError,
+        match="source tensor inventory differs",
+    ):
+        materializer._controller_only_copy(  # noqa: SLF001
+            source,
+            destination,
+            checkpoint_sha256=hashlib.sha256(source.read_bytes()).hexdigest(),
+        )
+
+    assert not destination.exists()
 
 
 def test_materialize_forwards_explicit_replication_evidence_root(

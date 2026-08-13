@@ -308,6 +308,7 @@ def test_storage_migrations_are_canonical_file_gateway_owners() -> None:
     migrated = {
         "core/agency/self_repair_backlog.py",
         "core/brain/llm/latent_cortex/persistence.py",
+        "core/memory/recall_observations.py",
         "core/runtime/flight_recorder.py",
         "core/security/tls_local.py",
         "core/self_improvement/program_dna.py",
