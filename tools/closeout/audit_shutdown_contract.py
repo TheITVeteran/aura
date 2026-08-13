@@ -15,7 +15,10 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from core.runtime.shutdown_coordinator import SHUTDOWN_PHASES  # noqa: E402
-from tools.shutdown_signal_matrix import CASE_SPECS  # noqa: E402
+from tools.shutdown_signal_matrix import (  # noqa: E402
+    CASE_SPECS,
+    COORDINATOR_PHASE_CASES,
+)
 
 _EXPECTED_PHASES = (
     "output_flush",
@@ -31,8 +34,9 @@ _EXPECTED_SIGNAL_CASES = frozenset(
         "launcher_bootstrap",
         "orchestrator_boot_repeated",
         "ready_repeated",
-        "state_vault_repeated",
-        "model_runtime_repeated",
+        "model_warmup_signal",
+        "model_recovery_signal",
+        *(f"{phase}_repeated" for phase in _EXPECTED_PHASES),
         "container_repeated",
         "root_finalization_repeated",
         "active_foreground_repeated",
@@ -155,6 +159,20 @@ def audit(root: Path) -> dict[str, Any]:
             f"expected={sorted(_EXPECTED_SIGNAL_CASES)!r} "
             f"actual={sorted(CASE_SPECS)!r}"
         )
+    expected_phase_cases = tuple(f"{phase}_repeated" for phase in _EXPECTED_PHASES)
+    if tuple(COORDINATOR_PHASE_CASES) != expected_phase_cases:
+        issues.append(
+            "coordinator phase signal coverage drifted: "
+            f"expected={expected_phase_cases!r} actual={tuple(COORDINATOR_PHASE_CASES)!r}"
+        )
+    for phase in _EXPECTED_PHASES:
+        name = f"{phase}_repeated"
+        spec = CASE_SPECS.get(name)
+        expected_target = f"coordinator:{phase}"
+        if spec is None or spec.probe_target != expected_target:
+            issues.append(
+                f"signal matrix case {name} does not wedge {expected_target}"
+            )
     for name, spec in CASE_SPECS.items():
         if "repeated" in name and spec.repeat_signal is None:
             issues.append(f"signal matrix case {name} no longer injects a repeat signal")

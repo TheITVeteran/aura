@@ -55,6 +55,16 @@ PHASE_MARKER = "ShutdownCoordinator: phase started (phase={phase} "
 READY_MARKER = "Registry Locked. Aura Ready (Desktop)."
 FOREGROUND_MARKER = "Foreground chat reservation acquired"
 PROBE_START_MARKER = "Lifecycle probe hold started (target={target} "
+MODEL_WARMUP_START_MARKER = "Primary 32B cortex is cold. Starting warmup"
+MODEL_WARMUP_COMPLETE_MARKER = "Primary 32B cortex warmup complete."
+MODEL_RECOVERY_START_MARKER = "Primary 32B cortex is dead. Triggering background respawn"
+MODEL_OWNER_SCRIPT_MARKERS = (
+    "evaluate_unified_intrinsic_decoding.py",
+    "mlx_worker.py",
+    "resident_recurrent_sft.py",
+    "train_recurrent",
+    "train_and_fuse.py",
+)
 
 FAILURE_MARKERS = (
     "Traceback (most recent call last)",
@@ -78,11 +88,14 @@ class CaseSpec:
     repeat_delay_s: float = 0.2
     probe_target: str | None = None
     start_foreground_chat: bool = False
+    boot_mode: str = "desktop"
+    kill_model_worker_after_trigger: bool = False
+    post_kill_marker: str | None = None
     trigger_timeout_s: float = 180.0
     shutdown_timeout_s: float = 140.0
 
 
-CASE_SPECS: dict[str, CaseSpec] = {
+_BOUNDARY_CASE_SPECS: dict[str, CaseSpec] = {
     "launcher_bootstrap": CaseSpec(
         name="launcher_bootstrap",
         trigger_marker="Instance lock acquired: orchestrator",
@@ -101,21 +114,23 @@ CASE_SPECS: dict[str, CaseSpec] = {
         first_signal=signal.SIGINT,
         repeat_signal=signal.SIGTERM,
     ),
-    "state_vault_repeated": CaseSpec(
-        name="state_vault_repeated",
-        trigger_marker=READY_MARKER,
+    "model_warmup_signal": CaseSpec(
+        name="model_warmup_signal",
+        trigger_marker=MODEL_WARMUP_START_MARKER,
         first_signal=signal.SIGTERM,
-        repeat_signal=signal.SIGINT,
-        repeat_marker=PROBE_START_MARKER.format(target="coordinator:state_vault"),
-        probe_target="coordinator:state_vault",
+        boot_mode="headless",
+        trigger_timeout_s=600.0,
+        shutdown_timeout_s=180.0,
     ),
-    "model_runtime_repeated": CaseSpec(
-        name="model_runtime_repeated",
-        trigger_marker=READY_MARKER,
+    "model_recovery_signal": CaseSpec(
+        name="model_recovery_signal",
+        trigger_marker=MODEL_WARMUP_COMPLETE_MARKER,
         first_signal=signal.SIGINT,
-        repeat_signal=signal.SIGTERM,
-        repeat_marker=PROBE_START_MARKER.format(target="coordinator:model_runtime"),
-        probe_target="coordinator:model_runtime",
+        boot_mode="headless",
+        kill_model_worker_after_trigger=True,
+        post_kill_marker=MODEL_RECOVERY_START_MARKER,
+        trigger_timeout_s=600.0,
+        shutdown_timeout_s=180.0,
     ),
     "container_repeated": CaseSpec(
         name="container_repeated",
@@ -142,6 +157,40 @@ CASE_SPECS: dict[str, CaseSpec] = {
         repeat_delay_s=0.25,
         trigger_timeout_s=300.0,
     ),
+}
+
+
+def _coordinator_phase_case(phase: str, index: int) -> CaseSpec:
+    """Inject a second signal while one exact shutdown owner group is wedged."""
+
+    name = f"{phase}_repeated"
+    target = f"coordinator:{phase}"
+    first_signal = signal.SIGTERM if index % 2 == 0 else signal.SIGINT
+    repeat_signal = signal.SIGINT if first_signal is signal.SIGTERM else signal.SIGTERM
+    return CaseSpec(
+        name=name,
+        trigger_marker=READY_MARKER,
+        first_signal=first_signal,
+        repeat_signal=repeat_signal,
+        repeat_marker=PROBE_START_MARKER.format(target=target),
+        probe_target=target,
+    )
+
+
+COORDINATOR_PHASE_CASES = tuple(f"{phase}_repeated" for phase in SHUTDOWN_PHASES)
+CASE_SPECS: dict[str, CaseSpec] = {
+    "launcher_bootstrap": _BOUNDARY_CASE_SPECS["launcher_bootstrap"],
+    "orchestrator_boot_repeated": _BOUNDARY_CASE_SPECS["orchestrator_boot_repeated"],
+    "ready_repeated": _BOUNDARY_CASE_SPECS["ready_repeated"],
+    "model_warmup_signal": _BOUNDARY_CASE_SPECS["model_warmup_signal"],
+    "model_recovery_signal": _BOUNDARY_CASE_SPECS["model_recovery_signal"],
+    **{
+        f"{phase}_repeated": _coordinator_phase_case(phase, index)
+        for index, phase in enumerate(SHUTDOWN_PHASES)
+    },
+    "container_repeated": _BOUNDARY_CASE_SPECS["container_repeated"],
+    "root_finalization_repeated": _BOUNDARY_CASE_SPECS["root_finalization_repeated"],
+    "active_foreground_repeated": _BOUNDARY_CASE_SPECS["active_foreground_repeated"],
 }
 
 DEFAULT_CASES = tuple(CASE_SPECS)
@@ -200,6 +249,25 @@ def _running_aura_main_pids(
         process.pid
         for process in table.processes
         if _is_aura_main_process(process.cmdline)
+    )
+
+
+def _is_competing_model_owner(cmdline: list[str] | tuple[str, ...]) -> bool:
+    command = " ".join(str(item) for item in cmdline).lower()
+    return any(marker.lower() in command for marker in MODEL_OWNER_SCRIPT_MARKERS)
+
+
+def _running_competing_model_pids(
+    *,
+    observer: ResourceObserver | None = None,
+) -> list[int]:
+    table = (observer or get_resource_observer()).process_table()
+    if not table.available:
+        raise RuntimeError(f"process table observation unavailable: {table.error}")
+    return sorted(
+        process.pid
+        for process in table.processes
+        if _is_competing_model_owner(process.cmdline)
     )
 
 
@@ -315,6 +383,7 @@ class SignalMatrixCase:
         self.chat_thread: threading.Thread | None = None
         self.chat_result: dict[str, Any] = {}
         self.signal_events: list[dict[str, Any]] = []
+        self.recovery_injection: dict[str, Any] = {}
 
     def record(self, event: str, **detail: Any) -> None:
         payload = {
@@ -425,8 +494,60 @@ class SignalMatrixCase:
         self.chat_thread.start()
         self.record("foreground_chat_started", summary="POST /api/chat dispatched")
 
+    def kill_owned_model_worker(self, timeout_s: float = 30.0) -> None:
+        if self.proc is None:
+            raise RuntimeError("cannot inject recovery without a root process")
+        deadline = time.monotonic() + max(0.1, timeout_s)
+        while time.monotonic() < deadline:
+            table = self.resource_observer.process_table()
+            if not table.available:
+                raise RuntimeError(
+                    f"process table observation unavailable: {table.error}"
+                )
+            candidates = [
+                process
+                for process in table.processes
+                if self.proc.pid in process.ancestor_pids
+                and any(
+                    Path(str(arg)).name == "mlx_worker.py"
+                    for arg in process.cmdline[1:]
+                )
+            ]
+            if len(candidates) > 1:
+                raise RuntimeError(
+                    "recovery injection found multiple owned MLX workers: "
+                    f"{sorted(item.pid for item in candidates)}"
+                )
+            if candidates:
+                candidate = candidates[0]
+                current = self.resource_observer.process(candidate.pid)
+                if (
+                    current is None
+                    or abs(current.create_time - candidate.create_time) > 0.001
+                    or self.proc.pid not in current.ancestor_pids
+                ):
+                    time.sleep(0.05)
+                    continue
+                self._capture_identity(current)
+                os.kill(current.pid, signal.SIGKILL)
+                self.recovery_injection = {
+                    "worker_pid": current.pid,
+                    "worker_create_time": current.create_time,
+                    "signal": "SIGKILL",
+                    "at_unix": time.time(),
+                }
+                self.record(
+                    "owned_model_worker_killed",
+                    summary=f"pid={current.pid} identity-bound recovery injection",
+                    **self.recovery_injection,
+                )
+                return
+            self.sample_process_tree()
+            time.sleep(0.1)
+        raise TimeoutError("owned MLX worker was not observed for recovery injection")
+
     def spawn(self) -> None:
-        env = build_safe_boot_env(os.environ, mode="desktop")
+        env = build_safe_boot_env(os.environ, mode=self.spec.boot_mode)
         env["PYTHONUNBUFFERED"] = "1"
         env["AURA_SHUTDOWN_REPORT_PATH"] = str(self.report_path)
         env["AURA_ARTIFACTS_DIR"] = str(self.artifact_dir / "runtime_artifacts")
@@ -448,7 +569,7 @@ class SignalMatrixCase:
         command = [
             resolve_launch_python(),
             "aura_main.py",
-            "--desktop",
+            "--desktop" if self.spec.boot_mode == "desktop" else "--headless",
             "--port",
             str(self.port),
         ]
@@ -606,6 +727,14 @@ class SignalMatrixCase:
                 and isinstance(chat_body, dict)
                 and chat_body.get("status") == "runtime_shutdown"
             )
+        if self.spec.kill_model_worker_after_trigger:
+            external_checks.update(
+                model_worker_recovery_injected=bool(self.recovery_injection),
+                recovery_boundary_observed=bool(
+                    self.spec.post_kill_marker
+                    and self.spec.post_kill_marker in self.cursor.text
+                ),
+            )
         if self.spec.probe_target:
             external_checks.update(
                 probe_hold_started_once=probe_window.get("started_count") == 1,
@@ -631,6 +760,7 @@ class SignalMatrixCase:
             "lock_detail": lock_detail,
             "failure_lines": failure_lines,
             "chat_result": self.chat_result,
+            "recovery_injection": self.recovery_injection,
             "shutdown_report_path": str(self.report_path),
             "stdout_path": str(self.stdout_path),
             "history_paths": [str(path) for path in history],
@@ -666,6 +796,19 @@ class SignalMatrixCase:
                 trigger_seen = self.wait_for_marker(FOREGROUND_MARKER, 180.0)
                 if not trigger_seen:
                     raise TimeoutError(f"foreground marker not observed: {FOREGROUND_MARKER}")
+
+            if self.spec.kill_model_worker_after_trigger:
+                self.kill_owned_model_worker()
+                if not self.spec.post_kill_marker:
+                    raise RuntimeError("recovery injection has no post-kill marker")
+                trigger_seen = self.wait_for_marker(
+                    self.spec.post_kill_marker,
+                    self.spec.trigger_timeout_s,
+                )
+                if not trigger_seen:
+                    raise TimeoutError(
+                        f"recovery marker not observed: {self.spec.post_kill_marker}"
+                    )
 
             self.send_signal(self.spec.first_signal, role="first")
             if self.spec.repeat_signal is not None:
@@ -760,6 +903,18 @@ def main(argv: list[str] | None = None) -> int:
             file=sys.stderr,
         )
         return 2
+    try:
+        model_owners = _running_competing_model_pids(observer=observer)
+    except RuntimeError as exc:
+        print(f"Cannot verify competing model owners: {exc}", file=sys.stderr)
+        return 2
+    if model_owners:
+        print(
+            "Refusing to run beside an existing resident model owner "
+            f"(pids={model_owners}).",
+            file=sys.stderr,
+        )
+        return 2
     occupied = [args.base_port + index for index in range(len(selected)) if not _port_is_free(args.base_port + index)]
     if occupied:
         print(f"Refusing shutdown matrix because ports are occupied: {occupied}", file=sys.stderr)
@@ -803,6 +958,10 @@ def main(argv: list[str] | None = None) -> int:
         "schema": "aura.shutdown_signal_matrix.v1",
         "passed": matrix_passed,
         "selected_cases": selected,
+        "coordinator_phase_cases": list(COORDINATOR_PHASE_CASES),
+        "coordinator_phase_coverage_complete": all(
+            case_name in selected for case_name in COORDINATOR_PHASE_CASES
+        ),
         "completed_cases": results,
         "duration_seconds": round(time.monotonic() - started, 3),
         "artifact_root": str(artifact_root),

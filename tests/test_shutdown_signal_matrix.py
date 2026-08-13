@@ -4,8 +4,10 @@ from typing import Any
 
 from tools.shutdown_signal_matrix import (
     CASE_SPECS,
+    COORDINATOR_PHASE_CASES,
     SHUTDOWN_PHASES,
     _is_aura_main_process,
+    _is_competing_model_owner,
     _parse_cases,
     evaluate_terminal_report,
 )
@@ -83,6 +85,12 @@ def test_aura_process_classifier_matches_argv_not_shell_text() -> None:
     assert not _is_aura_main_process(
         ["/opt/homebrew/bin/python3.12", "/repo/tools/shutdown_signal_matrix.py"]
     )
+    assert _is_competing_model_owner(
+        ["python", "/repo/tools/evaluate_unified_intrinsic_decoding.py"]
+    )
+    assert not _is_competing_model_owner(
+        ["python", "/repo/tools/closeout/audit_shutdown_contract.py"]
+    )
 
 
 def test_case_selection_is_deduplicated_and_unknown_names_fail() -> None:
@@ -101,24 +109,27 @@ def test_case_selection_is_deduplicated_and_unknown_names_fail() -> None:
 
 
 def test_matrix_covers_boot_ready_active_and_late_finalization_boundaries() -> None:
-    assert {
+    expected_boundary_cases = {
         "launcher_bootstrap",
         "orchestrator_boot_repeated",
         "ready_repeated",
-        "state_vault_repeated",
-        "model_runtime_repeated",
+        "model_warmup_signal",
+        "model_recovery_signal",
         "container_repeated",
         "root_finalization_repeated",
         "active_foreground_repeated",
-    } == set(CASE_SPECS)
+    }
+    expected_phase_cases = {f"{phase}_repeated" for phase in SHUTDOWN_PHASES}
 
-    assert CASE_SPECS["state_vault_repeated"].probe_target == (
-        "coordinator:state_vault"
+    assert expected_boundary_cases | expected_phase_cases == set(CASE_SPECS)
+    assert tuple(COORDINATOR_PHASE_CASES) == tuple(
+        f"{phase}_repeated" for phase in SHUTDOWN_PHASES
     )
-    assert CASE_SPECS["model_runtime_repeated"].probe_target == (
-        "coordinator:model_runtime"
-    )
+    for phase in SHUTDOWN_PHASES:
+        assert CASE_SPECS[f"{phase}_repeated"].probe_target == f"coordinator:{phase}"
     assert CASE_SPECS["container_repeated"].probe_target == "container"
     assert CASE_SPECS["root_finalization_repeated"].probe_target == (
         "root_finalization"
     )
+    assert CASE_SPECS["model_warmup_signal"].boot_mode == "headless"
+    assert CASE_SPECS["model_recovery_signal"].kill_model_worker_after_trigger is True

@@ -1,5 +1,5 @@
 {
-  "content_sha256": "463d1a29134c2b4ef01e1927f7b935447196757304078186ed2790b6d29d039f",
+  "content_sha256": "707366668f8d721b130291aa6ff67594fd5c4e5dd512282cb573bbb49dd619d4",
   "schema_version": 1,
   "specs": [
     {
@@ -317,7 +317,8 @@
           "acceptance_ids": [
             "A1",
             "A2",
-            "A3"
+            "A3",
+            "A4"
           ],
           "evidence_class": "implementation",
           "requirement_id": "PASSF-03"
@@ -845,8 +846,7 @@
           "acceptance_ids": [
             "A1",
             "A2",
-            "A3",
-            "A4"
+            "A3"
           ],
           "evidence_class": "implementation",
           "requirement_id": "ADDENDUM-32"
@@ -901,6 +901,64 @@
     {
       "command": [
         "{python}",
+        "tools/shutdown_signal_matrix.py",
+        "--case",
+        "all",
+        "--base-port",
+        "8810"
+      ],
+      "cwd": ".",
+      "evidence_targets": [
+        {
+          "acceptance_ids": [
+            "A4"
+          ],
+          "evidence_class": "test",
+          "requirement_id": "ADDENDUM-32"
+        },
+        {
+          "acceptance_ids": [
+            "A1"
+          ],
+          "evidence_class": "test",
+          "requirement_id": "CTX2-SHUTDOWN-001"
+        },
+        {
+          "acceptance_ids": [
+            "A1"
+          ],
+          "evidence_class": "test",
+          "requirement_id": "CTX2-SHUTDOWN-002"
+        },
+        {
+          "acceptance_ids": [
+            "A1"
+          ],
+          "evidence_class": "test",
+          "requirement_id": "CTX2-SHUTDOWN-003"
+        }
+      ],
+      "id": "shutdown-contract-live-signal-matrix",
+      "max_output_bytes": 1048576,
+      "source_globs": [],
+      "source_paths": [
+        "aura_main.py",
+        "core/brain/inference_gate.py",
+        "core/ops/graceful_shutdown.py",
+        "core/runtime/lifecycle_probe.py",
+        "core/runtime/root_signal_owner.py",
+        "core/runtime/runtime_hygiene.py",
+        "core/runtime/shutdown_coordinator.py",
+        "core/runtime/subprocess_gateway.py",
+        "core/runtime/task_ownership.py",
+        "tests/test_shutdown_signal_matrix.py",
+        "tools/shutdown_signal_matrix.py"
+      ],
+      "timeout_seconds": 3600
+    },
+    {
+      "command": [
+        "{python}",
         "-m",
         "pytest",
         "-q",
@@ -920,8 +978,7 @@
           "acceptance_ids": [
             "A1",
             "A2",
-            "A3",
-            "A4"
+            "A3"
           ],
           "evidence_class": "test",
           "requirement_id": "ADDENDUM-32"
@@ -1167,7 +1224,9 @@
     {
       "command": [
         "{python}",
-        "tools/closeout/audit_skill_readiness_surface.py"
+        "tools/closeout/prove_clean_live_skill_boot.py",
+        "--port",
+        "8791"
       ],
       "cwd": ".",
       "evidence_targets": [
@@ -1184,6 +1243,45 @@
             "A1"
           ],
           "evidence_class": "live",
+          "requirement_id": "CTX2-SKILL-002"
+        }
+      ],
+      "id": "skill-readiness-live-clean-boot",
+      "max_output_bytes": 1048576,
+      "source_globs": [
+        "core/skills/**/*.py",
+        "skills/**/*.py"
+      ],
+      "source_paths": [
+        "aura_main.py",
+        "core/capability_engine.py",
+        "interface/routes/subsystems.py",
+        "interface/routes/system.py",
+        "tests/test_clean_live_skill_boot_proof.py",
+        "tools/closeout/prove_clean_live_skill_boot.py"
+      ],
+      "timeout_seconds": 900
+    },
+    {
+      "command": [
+        "{python}",
+        "tools/closeout/audit_skill_readiness_surface.py"
+      ],
+      "cwd": ".",
+      "evidence_targets": [
+        {
+          "acceptance_ids": [
+            "A4",
+            "A5"
+          ],
+          "evidence_class": "test",
+          "requirement_id": "ADDENDUM-23"
+        },
+        {
+          "acceptance_ids": [
+            "A1"
+          ],
+          "evidence_class": "test",
           "requirement_id": "CTX2-SKILL-002"
         }
       ],

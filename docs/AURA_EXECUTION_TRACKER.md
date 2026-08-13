@@ -47184,3 +47184,48 @@ this checkpoint its third seed advanced from candidate `50` to `53` with the
 controller heartbeat, resident evaluator, memory sentinel and sleep inhibitor
 alive. This checkpoint claims no replication verdict, tissue promotion
 authority, fusion authority, frontier gain or `WOW Signal`.
+
+## Checkpoint 2026-08-13-331: Live Closure Proofs Must Cross a Process Boundary
+
+Two proof-custody defects discovered after CP330 are repaired without granting
+either requirement premature credit. The skill-readiness surface audit still
+proves deterministic catalog construction, dry-run preflight and parity across
+the production route functions, but it is now classified as test evidence: an
+in-process function call is not a clean live boot. A separate checked proof
+owner starts a fresh headless `aura_main.py` process group, waits for the real
+registry-ready marker, reads `/api/tools/catalog`, `/api/skills` and
+`/api/ui/bootstrap` over HTTP, and requires one non-empty identical ready
+catalog with no missing or quarantined skill and a complete execution
+preflight. It then requires Aura's terminal shutdown receipt, zero exit, no
+observed descendant, a released port and a clean runtime stream. The runner
+refuses before spawn when another Aura or resident model owner exists and can
+hard-kill only the process group it created after a bounded failure.
+
+The shutdown proof now exercises fifteen external cases rather than sampling
+two coordinator phases. Every canonical phase (`output_flush`,
+`memory_commit`, `state_vault`, `actors`, `model_runtime`, `event_bus` and
+`task_supervisor`) receives an identity-named probe hold and a second signal
+inside that hold. Independent cases cover launcher and orchestrator boot,
+ready-state repeated stop, active foreground execution, container shutdown and
+root finalization. Two model-bearing cases close the remaining acceptance
+boundaries: one signals during the primary cortex warmup; the other waits for a
+completed warmup, binds the exact descendant MLX worker by PID and creation
+time, kills only that worker, observes the runtime enter background recovery,
+and signals during recovery. Every case still requires ordered phases, one
+terminal receipt, no post-latch resurrection, no descendant, free listener
+port, released singleton lock and a clean root verdict.
+
+The bounded non-model validation surface passes `51/51`; the static shutdown
+contract audit passes with all fifteen external cases; focused Ruff and Python
+compilation are green. Both external runners were also asked to start while the
+resident-32B replication evaluator owned the model. They correctly refused
+before spawn and named PID `15478`; no competing runtime or model was loaded.
+Their source-bound live receipts remain intentionally unrecorded until that
+campaign releases the resident model, at which point both checked proof specs
+must run against the same clean pushed commit before stale custody is refreshed.
+
+The resident replication remains separately supervised and is still partial:
+seed `20260812295` had reached candidate `80` while its controller heartbeat,
+evaluator and sentinel remained alive. No replication verdict, promotion,
+fusion authority, general reasoning gain, frontier claim or `WOW Signal` is
+inferred here.
