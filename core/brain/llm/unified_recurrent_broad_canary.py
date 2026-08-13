@@ -20,6 +20,7 @@ ARMS: Final = (
 )
 SUPPORTED: Final = "broad_general_channel_canary_supported"
 REFUTED: Final = "broad_general_channel_canary_refuted"
+INCONCLUSIVE: Final = "broad_general_channel_canary_inconclusive"
 CLAIM_BOUNDARY: Final = (
     "A supported canary is exploratory evidence that the frozen trained recurrent "
     "controller improves fresh broad-task exact correctness over initialization-"
@@ -276,9 +277,15 @@ def seal_broad_canary_result(
     base_gain, base_regression = transitions("base_greedy", "trained_t4")
     depth_gain, depth_regression = transitions("trained_t1", "trained_t4")
     task_count = len(task_rows)
+    terminal_complete = complete and all(
+        observed[(task_id, arm)]["stopped"] is True
+        for task_id, arm in expected
+    )
+    qualified_base_band = 0 < counts["base_greedy"] < task_count
     checks = {
         "complete_candidate_matrix": complete,
-        "base_is_not_floor_or_ceiling": 0 < counts["base_greedy"] < task_count,
+        "all_candidates_reached_terminal_contract": terminal_complete,
+        "base_is_not_floor_or_ceiling": qualified_base_band,
         "trained_beats_initial_matched_control": (
             counts["trained_t4"] > counts["initial_t4"] and initial_gain > 0
         ),
@@ -290,7 +297,9 @@ def seal_broad_canary_result(
             and depth_regression == 0
         ),
     }
+    conclusive = complete and terminal_complete and qualified_base_band
     supported = all(checks.values())
+    verdict_name = SUPPORTED if supported else REFUTED if conclusive else INCONCLUSIVE
     body = {
         "schema": RESULT_SCHEMA,
         "plan_sha256": plan["plan_sha256"],
@@ -315,8 +324,9 @@ def seal_broad_canary_result(
         },
         "checks": checks,
         "candidate_errors": sorted(candidate_errors),
+        "conclusive": conclusive,
         "supported": supported,
-        "verdict": SUPPORTED if supported else REFUTED,
+        "verdict": verdict_name,
         "serving_authority": False,
         "claim_boundary": CLAIM_BOUNDARY,
     }
@@ -342,11 +352,24 @@ def broad_canary_result_errors(
         or value.get("package_id") != plan.get("package_id")
         or value.get("controller_sha256") != plan.get("controller_sha256")
         or value.get("result_sha256") != _sha(body)
+        or value.get("conclusive")
+        is not (
+            value.get("checks", {}).get("complete_candidate_matrix") is True
+            and value.get("checks", {}).get("all_candidates_reached_terminal_contract")
+            is True
+            and value.get("checks", {}).get("base_is_not_floor_or_ceiling") is True
+        )
         or value.get("supported") is not all(
             item is True for item in value.get("checks", {}).values()
         )
         or value.get("verdict")
-        != (SUPPORTED if value.get("supported") is True else REFUTED)
+        != (
+            SUPPORTED
+            if value.get("supported") is True
+            else REFUTED
+            if value.get("conclusive") is True
+            else INCONCLUSIVE
+        )
         or value.get("serving_authority") is not False
         or value.get("claim_boundary") != CLAIM_BOUNDARY
     ):
@@ -357,6 +380,7 @@ def broad_canary_result_errors(
 __all__ = [
     "ARMS",
     "CLAIM_BOUNDARY",
+    "INCONCLUSIVE",
     "PLAN_SCHEMA",
     "REFUTED",
     "RESULT_SCHEMA",

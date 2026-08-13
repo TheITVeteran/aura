@@ -47966,3 +47966,33 @@ observable broad execution. The active four-arm run must complete before any
 broad-transfer conclusion. Powered replication, full RLC-system comparison,
 frontier performance, static fusion and `WOW Signal` remain locked behind that
 result.
+
+## Checkpoint 2026-08-13-368: Insufficient Decode Is Inconclusive
+
+The first observable broad run showed that the prior 256-token budget was not a
+scientific test of the controller. All four arms on the first fresh
+novel-algorithms task reached exactly 256 tokens without the required terminal
+contract. The supervisor stopped the source-bound run after the complete first
+block, preserving four raw candidates and cleaning the process group. No score
+was interpreted as evidence against recurrence.
+
+A source-fresh 512-token calibration then reached the same boundary. Its first
+initialization-matched recurrent arm spent all 512 tokens and remained midway
+through the public algorithm. That run was likewise stopped through its
+authenticated supervisor after the first durable candidate; its terminal
+receipt proves the process group empty. The next frozen run uses the contract's
+2,048-token ceiling and still terminates immediately when the final-answer
+contract appears.
+
+The adjudicator previously collapsed three distinct states into `refuted`: an
+incomplete arm matrix, one or more candidates that never reached a terminal
+contract, and a base panel at floor or ceiling. Those conditions now produce
+`broad_general_channel_canary_inconclusive`. A mechanism refutation requires a
+complete terminal matrix in a nonsaturated base band; only then can failed gain,
+regression or depth-value checks produce `refuted`. Supported evidence still
+requires every check.
+
+Focused plan, runner, saturation and verdict-state coverage passes `16/16`;
+canonical smoke passes `104/104`; Ruff, compilation and diff hygiene pass. No
+reasoning result follows from either calibration. The next source-bound run is
+the first one eligible to return a broad mechanism verdict.

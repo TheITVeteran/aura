@@ -80,6 +80,7 @@ def test_support_requires_gain_without_regression_and_recurrence_value() -> None
     result = broad.seal_broad_canary_result(_plan(), _candidates())
 
     assert result["supported"] is True
+    assert result["conclusive"] is True
     assert result["verdict"] == broad.SUPPORTED
     assert result["counts"] == {
         "base_greedy": 3,
@@ -107,14 +108,45 @@ def test_refutes_one_base_regression() -> None:
     result = broad.seal_broad_canary_result(_plan(), candidates)
 
     assert result["supported"] is False
+    assert result["conclusive"] is True
+    assert result["verdict"] == broad.REFUTED
     assert result["checks"]["trained_preserves_base_successes"] is False
 
 
-def test_refutes_missing_candidate_arm() -> None:
+def test_missing_candidate_arm_is_inconclusive() -> None:
     result = broad.seal_broad_canary_result(_plan(), _candidates()[:-1])
 
     assert result["supported"] is False
+    assert result["conclusive"] is False
+    assert result["verdict"] == broad.INCONCLUSIVE
     assert result["checks"]["complete_candidate_matrix"] is False
+
+
+def test_token_ceiling_is_inconclusive_not_a_mechanism_refutation() -> None:
+    candidates = _candidates()
+    candidates[0]["generated_tokens"] = _plan()["max_tokens"]
+    candidates[0]["stopped"] = False
+
+    result = broad.seal_broad_canary_result(_plan(), candidates)
+
+    assert result["supported"] is False
+    assert result["conclusive"] is False
+    assert result["verdict"] == broad.INCONCLUSIVE
+    assert result["checks"]["all_candidates_reached_terminal_contract"] is False
+
+
+def test_saturated_base_band_is_inconclusive_not_a_mechanism_refutation() -> None:
+    candidates = _candidates()
+    for candidate in candidates:
+        if candidate["arm"] == "base_greedy":
+            candidate["correct"] = False
+
+    result = broad.seal_broad_canary_result(_plan(), candidates)
+
+    assert result["supported"] is False
+    assert result["conclusive"] is False
+    assert result["verdict"] == broad.INCONCLUSIVE
+    assert result["checks"]["base_is_not_floor_or_ceiling"] is False
 
 
 def test_rejects_plan_tampering() -> None:
