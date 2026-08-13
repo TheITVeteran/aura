@@ -12,6 +12,67 @@ from typing import Any
 ROOT = Path(__file__).resolve().parents[2]
 
 _REQUIRED_CALLS: dict[str, dict[str, frozenset[str]]] = {
+    "core/ops/graceful_shutdown.py": {
+        "GracefulShutdown.trigger_shutdown": frozenset(
+            {
+                "request_shutdown",
+                "shutdown",
+                "get_container",
+                "stop",
+                "publish_shutdown_verdict",
+            }
+        ),
+    },
+    "core/runtime/runtime_hygiene.py": {
+        "RuntimeHygieneManager.start": frozenset(
+            {
+                "install_loop_hygiene",
+                "_patch_asyncio_new_event_loop",
+                "_patch_threading",
+                "_patch_subprocess",
+                "_patch_multiprocessing",
+                "_adopt_active_child_processes",
+            }
+        ),
+        "RuntimeHygieneManager._execute_stop_sweep": frozenset(
+            {
+                "_cleanup_shutdown_resources",
+                "_cleanup_child_processes",
+                "_join_non_daemon_threads",
+                "shutdown",
+                "restore_loop_hygiene",
+                "_restore_patches",
+                "_shutdown_default_executor",
+                "_native_resource_summary",
+            }
+        ),
+        "RuntimeHygieneManager._patch_threading": frozenset(
+            {"_shutdown_blocks_resource_start", "_register_thread"}
+        ),
+        "RuntimeHygieneManager._patch_subprocess": frozenset(
+            {
+                "_shutdown_blocks_resource_start",
+                "_register_subprocess",
+                "_reap_crossed_subprocess",
+            }
+        ),
+        "RuntimeHygieneManager._patch_multiprocessing": frozenset(
+            {
+                "_shutdown_blocks_resource_start",
+                "_register_multiprocessing_process",
+                "_reap_crossed_multiprocessing",
+            }
+        ),
+        "RuntimeHygieneManager.register_shutdown_resource": frozenset(
+            {"is_shutdown_requested", "_record_resource_boundary"}
+        ),
+        "RuntimeHygieneManager.get_root_exit_resource_report": frozenset(
+            {"_native_resource_summary"}
+        ),
+        "RuntimeHygieneManager.close_root_exit_sockets": frozenset(
+            {"_native_resource_summary"}
+        ),
+    },
     "core/tasks/managed_command.py": {
         "_run_async_blocking": frozenset({"Thread", "start", "join", "run"}),
         "_run_project_command_async": frozenset(
@@ -283,6 +344,16 @@ def audit(root: Path) -> dict[str, Any]:
             next(iter(_REQUIRED_NONE_ASSIGNMENTS.values()))
         ),
         "natural_interpreter_exit_required_by_test": True,
+        "runtime_owner_classes": [
+            "process",
+            "thread",
+            "task",
+            "listener",
+            "sentinel",
+            "actor",
+            "model_worker",
+            "lock",
+        ],
         "issues": issues,
     }
 

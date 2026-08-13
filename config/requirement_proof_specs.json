@@ -1,5 +1,5 @@
 {
-  "content_sha256": "707366668f8d721b130291aa6ff67594fd5c4e5dd512282cb573bbb49dd619d4",
+  "content_sha256": "03572f3dca7e14ac93f3ec0e4c96578f5f75ac0a5cf1826463c23c19c80cd087",
   "schema_version": 1,
   "specs": [
     {
@@ -197,7 +197,9 @@
       "source_globs": [],
       "source_paths": [
         "core/container.py",
+        "core/ops/graceful_shutdown.py",
         "core/runtime/process_identity.py",
+        "core/runtime/runtime_hygiene.py",
         "core/runtime/service_registry.py",
         "core/state/state_repository.py",
         "core/tasks/managed_command.py",
@@ -237,7 +239,9 @@
       "source_globs": [],
       "source_paths": [
         "core/container.py",
+        "core/ops/graceful_shutdown.py",
         "core/runtime/process_identity.py",
+        "core/runtime/runtime_hygiene.py",
         "core/runtime/service_registry.py",
         "core/runtime/subprocess_gateway.py",
         "core/state/state_repository.py",
@@ -317,8 +321,7 @@
           "acceptance_ids": [
             "A1",
             "A2",
-            "A3",
-            "A4"
+            "A3"
           ],
           "evidence_class": "implementation",
           "requirement_id": "PASSF-03"
@@ -846,7 +849,8 @@
           "acceptance_ids": [
             "A1",
             "A2",
-            "A3"
+            "A3",
+            "A4"
           ],
           "evidence_class": "implementation",
           "requirement_id": "ADDENDUM-32"

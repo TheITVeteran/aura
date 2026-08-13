@@ -5,10 +5,12 @@ from typing import Any
 from tools.shutdown_signal_matrix import (
     CASE_SPECS,
     COORDINATOR_PHASE_CASES,
+    REQUIRED_OWNER_CLASSES,
     SHUTDOWN_PHASES,
     _is_aura_main_process,
     _is_competing_model_owner,
     _parse_cases,
+    aggregate_owner_class_witnesses,
     evaluate_terminal_report,
 )
 
@@ -133,3 +135,55 @@ def test_matrix_covers_boot_ready_active_and_late_finalization_boundaries() -> N
     )
     assert CASE_SPECS["model_warmup_signal"].boot_mode == "headless"
     assert CASE_SPECS["model_recovery_signal"].kill_model_worker_after_trigger is True
+
+
+def test_owner_class_coverage_requires_observed_and_clean_terminal_owners() -> None:
+    report = _clean_terminal_report()
+    report["components"]["runtime_hygiene"] = {
+        "before": {
+            "processes": {"active_registered": 1},
+            "threads": {"active": 2},
+            "tasks": {"total_observed": 4},
+        },
+        "after": {
+            "processes": {
+                "active_registered": 0,
+                "active_subprocesses": 0,
+                "active_multiprocessing": 0,
+                "owned_descendant_processes": 0,
+                "rogue_child_processes": 0,
+            },
+            "threads": {
+                "active": 0,
+                "active_non_daemon": 0,
+                "stale_non_daemon": 0,
+            },
+            "tasks": {"active": 0, "shutdown_critical_active": 0},
+            "native_resources": {"listening_socket_count": 0},
+        },
+    }
+    report["components"]["coordinator"]["handler_statuses"] = {
+        "task_supervisor:memory_sentinel_supervisor": "completed"
+    }
+    report["components"]["container"] = {
+        "clean": True,
+        "completed_services": ["actor_bus"],
+    }
+    verdict = {
+        "checks": {"port_free": True, "singleton_lock_available": True},
+        "pre_signal_evidence": {
+            "port_listening": True,
+            "singleton_lock_held": True,
+            "model_worker_observed": True,
+        },
+        "shutdown_report": report,
+    }
+
+    witnesses = aggregate_owner_class_witnesses([verdict])
+
+    assert tuple(witnesses) == REQUIRED_OWNER_CLASSES
+    assert all(witnesses.values())
+
+    verdict["pre_signal_evidence"]["model_worker_observed"] = False
+    witnesses = aggregate_owner_class_witnesses([verdict])
+    assert witnesses["model_worker"] is False

@@ -8,18 +8,11 @@ import textwrap
 import time
 from pathlib import Path
 
-from tools.closeout.audit_lifecycle_ownership import ROOT, audit
+from tools.closeout.audit_lifecycle_ownership import ROOT, _REQUIRED_CALLS, audit
 
 
 def _copy_contract_sources(tmp_path: Path) -> None:
-    for relative in (
-        "core/tasks/managed_command.py",
-        "core/container.py",
-        "core/runtime/service_registry.py",
-        "core/state/state_repository.py",
-        "core/runtime/process_identity.py",
-        "scripts/one_off/aura_cleanup.py",
-    ):
+    for relative in _REQUIRED_CALLS:
         target = tmp_path / relative
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_text((ROOT / relative).read_text(encoding="utf-8"), encoding="utf-8")
@@ -32,6 +25,16 @@ def test_repository_lifecycle_ownership_contract_is_complete() -> None:
     assert report["issues"] == []
     assert report["checked_functions"] >= 13
     assert report["natural_interpreter_exit_required_by_test"] is True
+    assert report["runtime_owner_classes"] == [
+        "process",
+        "thread",
+        "task",
+        "listener",
+        "sentinel",
+        "actor",
+        "model_worker",
+        "lock",
+    ]
 
 
 def test_audit_rejects_diagnostic_cold_construction(tmp_path: Path) -> None:

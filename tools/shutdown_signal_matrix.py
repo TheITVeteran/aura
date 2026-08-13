@@ -65,6 +65,16 @@ MODEL_OWNER_SCRIPT_MARKERS = (
     "train_recurrent",
     "train_and_fuse.py",
 )
+REQUIRED_OWNER_CLASSES = (
+    "process",
+    "thread",
+    "task",
+    "listener",
+    "sentinel",
+    "actor",
+    "model_worker",
+    "lock",
+)
 
 FAILURE_MARKERS = (
     "Traceback (most recent call last)",
@@ -353,6 +363,111 @@ def evaluate_terminal_report(
     }
 
 
+def evaluate_owner_class_witnesses(
+    report: dict[str, Any],
+    case_verdict: dict[str, Any],
+) -> dict[str, bool]:
+    """Project one case onto the owner classes required by CTX2-SHUTDOWN-002."""
+
+    components = _nested_dict(report, "components")
+    hygiene = _nested_dict(components, "runtime_hygiene")
+    before = _nested_dict(hygiene, "before")
+    after = _nested_dict(hygiene, "after")
+    before_processes = _nested_dict(before, "processes")
+    before_threads = _nested_dict(before, "threads")
+    before_tasks = _nested_dict(before, "tasks")
+    after_processes = _nested_dict(after, "processes")
+    after_threads = _nested_dict(after, "threads")
+    after_tasks = _nested_dict(after, "tasks")
+    after_native = _nested_dict(after, "native_resources")
+    coordinator = _nested_dict(components, "coordinator")
+    handler_statuses = _nested_dict(coordinator, "handler_statuses")
+    container = _nested_dict(components, "container")
+    pre_signal = _nested_dict(case_verdict, "pre_signal_evidence")
+    checks = _nested_dict(case_verdict, "checks")
+
+    process_observed = any(
+        int(before_processes.get(key, 0) or 0) > 0
+        for key in (
+            "active_registered",
+            "active_subprocesses",
+            "active_multiprocessing",
+            "owned_descendant_processes",
+        )
+    ) or bool(case_verdict.get("recovery_injection"))
+    process_clean = all(
+        int(after_processes.get(key, 0) or 0) == 0
+        for key in (
+            "active_registered",
+            "active_subprocesses",
+            "active_multiprocessing",
+            "owned_descendant_processes",
+            "rogue_child_processes",
+        )
+    )
+    thread_observed = int(before_threads.get("active", 0) or 0) > 0
+    thread_clean = (
+        int(after_threads.get("active", 0) or 0) == 0
+        and int(after_threads.get("active_non_daemon", 0) or 0) == 0
+        and int(after_threads.get("stale_non_daemon", 0) or 0) == 0
+    )
+    task_observed = any(
+        int(before_tasks.get(key, 0) or 0) > 0
+        for key in ("total_observed", "total_tracked", "active")
+    )
+    task_clean = (
+        int(after_tasks.get("active", 0) or 0) == 0
+        and int(after_tasks.get("shutdown_critical_active", 0) or 0) == 0
+    )
+    sentinel_observed = any("sentinel" in str(name) for name in handler_statuses)
+    sentinel_clean = all(
+        str(status) == "completed"
+        for name, status in handler_statuses.items()
+        if "sentinel" in str(name)
+    )
+    completed_phases = list(coordinator.get("completed_phases") or ())
+    completed_services = list(container.get("completed_services") or ())
+
+    return {
+        "process": process_observed and process_clean,
+        "thread": thread_observed and thread_clean,
+        "task": task_observed and task_clean,
+        "listener": (
+            pre_signal.get("port_listening") is True
+            and int(after_native.get("listening_socket_count", 0) or 0) == 0
+            and checks.get("port_free") is True
+        ),
+        "sentinel": sentinel_observed and sentinel_clean,
+        "actor": (
+            bool(completed_services)
+            and "actors" in completed_phases
+            and container.get("clean") is True
+        ),
+        "model_worker": (
+            pre_signal.get("model_worker_observed") is True
+            and process_clean
+        ),
+        "lock": (
+            pre_signal.get("singleton_lock_held") is True
+            and checks.get("singleton_lock_available") is True
+        ),
+    }
+
+
+def aggregate_owner_class_witnesses(
+    case_verdicts: list[dict[str, Any]],
+) -> dict[str, bool]:
+    aggregate = {name: False for name in REQUIRED_OWNER_CLASSES}
+    for verdict in case_verdicts:
+        report = verdict.get("shutdown_report")
+        if not isinstance(report, dict):
+            continue
+        observed = evaluate_owner_class_witnesses(report, verdict)
+        for name in aggregate:
+            aggregate[name] = aggregate[name] or observed.get(name, False)
+    return aggregate
+
+
 class SignalMatrixCase:
     def __init__(
         self,
@@ -384,6 +499,7 @@ class SignalMatrixCase:
         self.chat_result: dict[str, Any] = {}
         self.signal_events: list[dict[str, Any]] = []
         self.recovery_injection: dict[str, Any] = {}
+        self.pre_signal_evidence: dict[str, Any] = {}
 
     def record(self, event: str, **detail: Any) -> None:
         payload = {
@@ -638,6 +754,35 @@ class SignalMatrixCase:
                 lines.append(line[:1000])
         return lines[:50]
 
+    def capture_pre_signal_evidence(self) -> None:
+        self.sample_process_tree()
+        lock_available, lock_detail = _orchestrator_lock_available()
+        model_workers = sorted(
+            identity.pid
+            for identity in self.seen_identities.values()
+            if any(
+                Path(str(arg)).name == "mlx_worker.py"
+                for arg in identity.cmdline[1:]
+            )
+        )
+        self.pre_signal_evidence = {
+            "port_listening": not _port_is_free(self.port),
+            "singleton_lock_held": not lock_available,
+            "singleton_lock_detail": lock_detail,
+            "owned_process_identity_count": len(self.seen_identities),
+            "model_worker_observed": bool(model_workers),
+            "model_worker_pids": model_workers,
+        }
+        self.record(
+            "pre_signal_evidence",
+            summary=(
+                f"port_listening={self.pre_signal_evidence['port_listening']} "
+                f"lock_held={self.pre_signal_evidence['singleton_lock_held']} "
+                f"model_worker={self.pre_signal_evidence['model_worker_observed']}"
+            ),
+            **self.pre_signal_evidence,
+        )
+
     def _probe_window(self) -> dict[str, Any]:
         target = self.spec.probe_target
         if not target:
@@ -761,6 +906,8 @@ class SignalMatrixCase:
             "failure_lines": failure_lines,
             "chat_result": self.chat_result,
             "recovery_injection": self.recovery_injection,
+            "pre_signal_evidence": self.pre_signal_evidence,
+            "shutdown_report": report,
             "shutdown_report_path": str(self.report_path),
             "stdout_path": str(self.stdout_path),
             "history_paths": [str(path) for path in history],
@@ -810,6 +957,7 @@ class SignalMatrixCase:
                         f"recovery marker not observed: {self.spec.post_kill_marker}"
                     )
 
+            self.capture_pre_signal_evidence()
             self.send_signal(self.spec.first_signal, role="first")
             if self.spec.repeat_signal is not None:
                 if self.spec.repeat_marker:
@@ -928,6 +1076,7 @@ def main(argv: list[str] | None = None) -> int:
     artifact_root.mkdir(parents=True, exist_ok=True)
     started = time.monotonic()
     results: list[dict[str, object]] = []
+    case_verdicts: list[dict[str, Any]] = []
     for index, name in enumerate(selected):
         case = SignalMatrixCase(
             spec=CASE_SPECS[name],
@@ -944,6 +1093,9 @@ def main(argv: list[str] | None = None) -> int:
                 "verdict_path": str(case.verdict_path),
             }
         )
+        verdict_payload = _read_json(case.verdict_path)
+        if verdict_payload:
+            case_verdicts.append(verdict_payload)
         try:
             contamination = _running_aura_main_pids(observer=observer)
         except RuntimeError as exc:
@@ -953,15 +1105,29 @@ def main(argv: list[str] | None = None) -> int:
             print("A case left an aura_main.py process; refusing to contaminate later cases.")
             break
 
-    matrix_passed = len(results) == len(selected) and all(bool(item["passed"]) for item in results)
+    phase_coverage_complete = all(
+        case_name in selected for case_name in COORDINATOR_PHASE_CASES
+    )
+    owner_class_witnesses = aggregate_owner_class_witnesses(case_verdicts)
+    full_matrix_requested = selected == list(DEFAULT_CASES)
+    owner_class_coverage_complete = all(owner_class_witnesses.values())
+    matrix_passed = (
+        len(results) == len(selected)
+        and all(bool(item["passed"]) for item in results)
+        and (
+            not full_matrix_requested
+            or (phase_coverage_complete and owner_class_coverage_complete)
+        )
+    )
     summary = {
         "schema": "aura.shutdown_signal_matrix.v1",
         "passed": matrix_passed,
         "selected_cases": selected,
         "coordinator_phase_cases": list(COORDINATOR_PHASE_CASES),
-        "coordinator_phase_coverage_complete": all(
-            case_name in selected for case_name in COORDINATOR_PHASE_CASES
-        ),
+        "coordinator_phase_coverage_complete": phase_coverage_complete,
+        "owner_class_witnesses": owner_class_witnesses,
+        "owner_class_coverage_complete": owner_class_coverage_complete,
+        "full_matrix_requested": full_matrix_requested,
         "completed_cases": results,
         "duration_seconds": round(time.monotonic() - started, 3),
         "artifact_root": str(artifact_root),

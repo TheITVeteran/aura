@@ -47229,3 +47229,42 @@ seed `20260812295` had reached candidate `80` while its controller heartbeat,
 evaluator and sentinel remained alive. No replication verdict, promotion,
 fusion authority, general reasoning gain, frontier claim or `WOW Signal` is
 inferred here.
+
+## Checkpoint 2026-08-13-332: Shutdown Proves Every Runtime Owner Class
+
+The lifecycle ownership proof no longer infers complete shutdown ownership
+from a small set of repository, cleanup-script and managed-command functions.
+Its checked implementation audit now covers `22` lifecycle functions across
+the global task factory, thread-start interception, subprocess and
+multiprocessing interception, explicit long-lived process registration,
+reverse-sequence resource cleanup, bounded child TERM-to-KILL handling,
+non-daemon thread joining, task-supervisor shutdown, default-executor closure,
+native listener census, container teardown and the terminal root verdict.
+Creation after the process-wide latch must still be suppressed or immediately
+reaped, and every cleanup layer remains in the one ordered
+coordinator-container-hygiene-root path.
+
+The external signal matrix now makes that implementation measurable. Before
+the first signal in each case it records whether the test port is listening,
+whether the singleton lock is held, every observed owned process identity and
+whether an MLX worker is present. The terminal report supplies pre/post task,
+thread, process, resource and native-listener censuses, named sentinel handler
+status, completed actor/container services and root cleanup. A full matrix is
+therefore ineligible to pass unless its cases collectively witness and clean
+all eight required owner classes: process, thread, task, listener, sentinel,
+actor, model worker and lock. Partial developer case selection remains useful
+for diagnosis but cannot produce the full owner-coverage verdict.
+
+The lifecycle and shutdown focused surface passes `12/12`, and both static
+audits report no issues. Historical July matrix artifacts were used only to
+validate field availability: they already demonstrate process, thread, task,
+sentinel and actor evidence, while correctly lacking the new pre-signal
+listener, lock and model-worker fields. They are not grandfathered into the
+new verdict. The source-bound fifteen-case run remains pending until the
+resident-32B evaluator releases the model; no old artifact receives current
+proof custody.
+
+The powered replication remains independent and partial. Its final seed had
+advanced to candidate `85` with a moving authenticated controller heartbeat;
+there is still no final adjudication, promotion authority, fusion authority,
+frontier result or `WOW Signal` to report.

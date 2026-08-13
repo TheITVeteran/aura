@@ -18,6 +18,7 @@ from core.runtime.shutdown_coordinator import SHUTDOWN_PHASES  # noqa: E402
 from tools.shutdown_signal_matrix import (  # noqa: E402
     CASE_SPECS,
     COORDINATOR_PHASE_CASES,
+    REQUIRED_OWNER_CLASSES,
 )
 
 _EXPECTED_PHASES = (
@@ -28,6 +29,16 @@ _EXPECTED_PHASES = (
     "model_runtime",
     "event_bus",
     "task_supervisor",
+)
+_EXPECTED_OWNER_CLASSES = (
+    "process",
+    "thread",
+    "task",
+    "listener",
+    "sentinel",
+    "actor",
+    "model_worker",
+    "lock",
 )
 _EXPECTED_SIGNAL_CASES = frozenset(
     {
@@ -173,6 +184,23 @@ def audit(root: Path) -> dict[str, Any]:
             issues.append(
                 f"signal matrix case {name} does not wedge {expected_target}"
             )
+    if tuple(REQUIRED_OWNER_CLASSES) != _EXPECTED_OWNER_CLASSES:
+        issues.append(
+            "shutdown owner-class coverage drifted: "
+            f"expected={_EXPECTED_OWNER_CLASSES!r} "
+            f"actual={tuple(REQUIRED_OWNER_CLASSES)!r}"
+        )
+    warmup_case = CASE_SPECS.get("model_warmup_signal")
+    if warmup_case is None or warmup_case.boot_mode != "headless":
+        issues.append("model warmup signal case no longer enters the resident model lane")
+    recovery_case = CASE_SPECS.get("model_recovery_signal")
+    if (
+        recovery_case is None
+        or recovery_case.boot_mode != "headless"
+        or recovery_case.kill_model_worker_after_trigger is not True
+        or not recovery_case.post_kill_marker
+    ):
+        issues.append("model recovery signal case no longer injects an owned worker loss")
     for name, spec in CASE_SPECS.items():
         if "repeated" in name and spec.repeat_signal is None:
             issues.append(f"signal matrix case {name} no longer injects a repeat signal")
@@ -228,6 +256,7 @@ def audit(root: Path) -> dict[str, Any]:
         "passed": not issues,
         "canonical_phases": list(SHUTDOWN_PHASES),
         "signal_matrix_cases": sorted(CASE_SPECS),
+        "required_owner_classes": list(REQUIRED_OWNER_CLASSES),
         "checked_functions": checked_functions,
         "request_snapshot_fields": sorted(_REQUEST_SNAPSHOT_FIELDS),
         "issues": issues,
