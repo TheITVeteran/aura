@@ -1556,6 +1556,29 @@ def _invoke_chat_blocking_with_slot(
         _chat_blocking_slots.release()
 
 
+def _start_bounded_chat_blocking_task(
+    operation: Callable[..., Any],
+    /,
+    *args: Any,
+    operation_name: str,
+    **kwargs: Any,
+) -> asyncio.Task[Any]:
+    """Start one owned blocking operation whose worker outlives waiter timeout."""
+    task = get_task_tracker().track(
+        asyncio.to_thread(
+            _invoke_chat_blocking_with_slot,
+            operation,
+            args,
+            kwargs,
+        ),
+        name=f"ChatBlocking:{operation_name}"[:120],
+        owner="interface.routes.chat",
+    )
+    _chat_blocking_tasks.add(task)
+    task.add_done_callback(_chat_blocking_tasks.discard)
+    return task
+
+
 async def _await_bounded_chat_blocking(
     operation: Callable[..., Any],
     /,
@@ -1575,18 +1598,12 @@ async def _await_bounded_chat_blocking(
     timeout or caller cancellation.
     """
 
-    task = get_task_tracker().track(
-        asyncio.to_thread(
-            _invoke_chat_blocking_with_slot,
-            operation,
-            args,
-            kwargs,
-        ),
-        name=f"ChatBlocking:{operation_name}"[:120],
-        owner="interface.routes.chat",
+    task = _start_bounded_chat_blocking_task(
+        operation,
+        *args,
+        operation_name=operation_name,
+        **kwargs,
     )
-    _chat_blocking_tasks.add(task)
-    task.add_done_callback(_chat_blocking_tasks.discard)
     try:
         primary_timeout = max(0.05, float(timeout_s))
         await asyncio.wait({task}, timeout=primary_timeout)
@@ -1810,6 +1827,26 @@ _CHAT_TURN_MEMORY_LOG_TIMEOUT_S = 20.0
 _CHAT_TURN_CONSCIOUSNESS_UPDATE_TIMEOUT_S = 8.0
 _CHAT_TURN_MEMORY_LOG_QUEUE: collections.deque[dict[str, str]] = collections.deque()
 _CHAT_TURN_MEMORY_LOG_QUEUE_LOCK = threading.RLock()
+_DURABLE_CONVERSATION_WRITE_TIMEOUT_S = _DURABLE_CONVERSATION_CONTEXT_TIMEOUT_S
+_DURABLE_CONVERSATION_WRITE_DRAIN_TIMEOUT_S = 12.0
+_DURABLE_CONVERSATION_WRITE_HISTORY_MAX = 1024
+
+
+@dataclasses.dataclass
+class _DurableConversationWrite:
+    operation_id: str
+    payload_sha256: str
+    task: asyncio.Task[Any]
+    state: str = "pending"
+    attempt: int = 1
+    error: str = ""
+    started_at: float = dataclasses.field(default_factory=time.monotonic)
+    finished_at: float | None = None
+
+
+_DURABLE_CONVERSATION_WRITES: dict[str, _DurableConversationWrite] = {}
+_DURABLE_CONVERSATION_WRITES_LOCK = threading.RLock()
+_DURABLE_CONVERSATION_SHUTDOWN_HANDLER = "chat.durable_conversation_writes"
 
 
 def _new_exchange_id() -> str:
@@ -1825,37 +1862,273 @@ def _trim_conversation_log_locked() -> None:
         _conversation_log.pop(0)
 
 
+def _durable_conversation_payload_sha256(payload: dict[str, Any]) -> str:
+    return hashlib.sha256(
+        json.dumps(
+            payload,
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+            default=str,
+        ).encode("utf-8")
+    ).hexdigest()
+
+
+def _settle_durable_conversation_write(
+    operation_id: str,
+    task: asyncio.Task[Any],
+) -> None:
+    terminal_state = ""
+    with _DURABLE_CONVERSATION_WRITES_LOCK:
+        record = _DURABLE_CONVERSATION_WRITES.get(operation_id)
+        if record is None or record.task is not task or record.state != "pending":
+            return
+        record.finished_at = time.monotonic()
+        if task.cancelled():
+            record.state = "failed"
+            record.error = "write_task_cancelled"
+        else:
+            try:
+                task.result()
+            except Exception as exc:  # noqa: BLE001 - retain exact terminal failure
+                record.state = "failed"
+                record.error = f"{type(exc).__name__}:{exc}"
+            else:
+                record.state = "committed"
+                record.error = ""
+        terminal_state = record.state
+
+    exchange_id, separator, operation_kind = operation_id.rpartition(":")
+    if not separator or operation_kind not in {"user", "exchange"}:
+        return
+    if operation_kind == "exchange" and terminal_state == "committed":
+        with _DURABLE_CONVERSATION_WRITES_LOCK:
+            user_record = _DURABLE_CONVERSATION_WRITES.get(f"{exchange_id}:user")
+            if user_record is not None and user_record.state == "failed":
+                user_record.state = "superseded"
+                user_record.error = "superseded_by_atomic_exchange"
+    # Completion callbacks execute on the owning event loop. Updating these
+    # scalar receipt fields in place lets operators see a late write settle;
+    # the registry above remains authoritative across log trimming.
+    for entry in reversed(_conversation_log):
+        if str(entry.get("id") or "") != exchange_id:
+            continue
+        if operation_kind == "user":
+            entry["user_persistence_state"] = terminal_state
+            entry["user_persisted"] = terminal_state == "committed"
+        else:
+            entry["durability_state"] = terminal_state
+        break
+
+
+def _prune_durable_conversation_writes_locked() -> None:
+    overflow = len(_DURABLE_CONVERSATION_WRITES) - _DURABLE_CONVERSATION_WRITE_HISTORY_MAX
+    if overflow <= 0:
+        return
+    terminal = sorted(
+        (
+            record
+            for record in _DURABLE_CONVERSATION_WRITES.values()
+            if record.state != "pending"
+        ),
+        key=lambda record: record.finished_at or record.started_at,
+    )
+    for record in terminal[:overflow]:
+        _DURABLE_CONVERSATION_WRITES.pop(record.operation_id, None)
+
+
+async def _drain_durable_conversation_writes() -> None:
+    """Finish every admitted transcript write during memory-commit shutdown."""
+    with _DURABLE_CONVERSATION_WRITES_LOCK:
+        pending = {
+            record.task
+            for record in _DURABLE_CONVERSATION_WRITES.values()
+            if record.state == "pending" and not record.task.done()
+        }
+    if pending:
+        _, remaining = await asyncio.wait(
+            pending,
+            timeout=_DURABLE_CONVERSATION_WRITE_DRAIN_TIMEOUT_S,
+        )
+        if remaining:
+            names = sorted(task.get_name() for task in remaining)
+            raise TimeoutError(
+                "durable conversation shutdown drain timed out: " + ", ".join(names[:8])
+            )
+    with _DURABLE_CONVERSATION_WRITES_LOCK:
+        records = list(_DURABLE_CONVERSATION_WRITES.values())
+    for record in records:
+        if record.task.done():
+            _settle_durable_conversation_write(record.operation_id, record.task)
+    failed = [
+        record
+        for record in records
+        if record.state == "failed" and record.finished_at is not None
+    ]
+    if failed:
+        raise RuntimeError(
+            "durable conversation write failure during shutdown: "
+            + ", ".join(f"{record.operation_id}={record.error}" for record in failed[-8:])
+        )
+
+
+def _ensure_durable_conversation_shutdown_handler() -> None:
+    from core.runtime.shutdown_coordinator import get_shutdown_coordinator
+
+    coordinator = get_shutdown_coordinator()
+    with _DURABLE_CONVERSATION_WRITES_LOCK:
+        if _DURABLE_CONVERSATION_SHUTDOWN_HANDLER in coordinator.handler_names(
+            "memory_commit"
+        ):
+            return
+        coordinator.register(
+            _drain_durable_conversation_writes,
+            phase="memory_commit",
+            name=_DURABLE_CONVERSATION_SHUTDOWN_HANDLER,
+            timeout=_DURABLE_CONVERSATION_WRITE_DRAIN_TIMEOUT_S + 1.0,
+        )
+
+
+def _start_durable_conversation_write(
+    *,
+    operation_id: str,
+    payload: dict[str, Any],
+    operation: Callable[[], Any],
+) -> _DurableConversationWrite:
+    """Start or reuse one idempotent durable write with retained ownership."""
+    safe_operation_id = str(operation_id or "")[:160]
+    if not safe_operation_id:
+        raise ValueError("durable conversation write requires an operation id")
+    payload_sha256 = _durable_conversation_payload_sha256(payload)
+    _ensure_durable_conversation_shutdown_handler()
+
+    with _DURABLE_CONVERSATION_WRITES_LOCK:
+        existing = _DURABLE_CONVERSATION_WRITES.get(safe_operation_id)
+        if existing is not None:
+            if existing.payload_sha256 != payload_sha256:
+                raise ValueError(
+                    f"durable conversation operation conflict: {safe_operation_id}"
+                )
+            if existing.state in {"pending", "committed"}:
+                return existing
+            attempt = existing.attempt + 1
+        else:
+            attempt = 1
+
+        task = _start_bounded_chat_blocking_task(
+            operation,
+            operation_name=f"conversation_persistence:{safe_operation_id}:attempt-{attempt}",
+        )
+        record = _DurableConversationWrite(
+            operation_id=safe_operation_id,
+            payload_sha256=payload_sha256,
+            task=task,
+            attempt=attempt,
+        )
+        _DURABLE_CONVERSATION_WRITES[safe_operation_id] = record
+        _prune_durable_conversation_writes_locked()
+        task.add_done_callback(
+            lambda completed, operation_id=safe_operation_id: (
+                _settle_durable_conversation_write(operation_id, completed)
+            )
+        )
+        return record
+
+
+async def _await_durable_conversation_write(
+    record: _DurableConversationWrite,
+    *,
+    timeout_s: float | None = None,
+) -> str:
+    if record.state != "pending":
+        return record.state
+    wait_budget = (
+        _DURABLE_CONVERSATION_WRITE_TIMEOUT_S
+        if timeout_s is None
+        else float(timeout_s)
+    )
+    await asyncio.wait({record.task}, timeout=max(0.01, wait_budget))
+    if record.task.done():
+        _settle_durable_conversation_write(record.operation_id, record.task)
+    return record.state
+
+
+def _durable_conversation_write_snapshot(operation_id: str) -> dict[str, Any] | None:
+    with _DURABLE_CONVERSATION_WRITES_LOCK:
+        record = _DURABLE_CONVERSATION_WRITES.get(str(operation_id or "")[:160])
+        if record is None:
+            return None
+        return {
+            "operation_id": record.operation_id,
+            "payload_sha256": record.payload_sha256,
+            "state": record.state,
+            "attempt": record.attempt,
+            "error": record.error,
+            "task_done": record.task.done(),
+        }
+
+
 async def _persist_pending_conversation_user(
     *,
     exchange_id: str,
     user_message: str,
     session_id: str = "",
-) -> bool:
+) -> str:
     """Commit the user side of a turn before foreground inference starts."""
     try:
         persistence = ServiceContainer.get("persistence", default=None)
         record_turn = getattr(persistence, "record_turn", None)
         if not callable(record_turn):
-            return False
+            return "failed"
 
+        safe_exchange_id = str(exchange_id or "")[:64]
+        safe_session_id = str(session_id or "")[:64]
+        safe_user_message = str(user_message or "")
         scope_kwargs = _chat_principal_scope_kwargs()
-        await asyncio.wait_for(
-            asyncio.to_thread(
-                record_turn,
+        record = _start_durable_conversation_write(
+            operation_id=f"{safe_exchange_id}:user",
+            payload={
+                "kind": "pending_user",
+                "exchange_id": safe_exchange_id,
+                "user_message": safe_user_message,
+                "session_id": safe_session_id,
+                "scope": scope_kwargs,
+            },
+            operation=lambda: record_turn(
                 "user",
-                str(user_message or ""),
+                safe_user_message,
                 origin="desktop_ui",
-                cid=f"{str(exchange_id or '')[:64]}:user",
-                session_id=str(session_id or "")[:64] or None,
+                cid=f"{safe_exchange_id}:user",
+                session_id=safe_session_id or None,
                 **scope_kwargs,
             ),
-            timeout=_DURABLE_CONVERSATION_CONTEXT_TIMEOUT_S,
         )
-        return True
-    except (TimeoutError, *_CHAT_RECOVERABLE_ERRORS) as exc:
+        state = await _await_durable_conversation_write(record)
+        if state == "pending":
+            timeout_error = TimeoutError(
+                f"pending conversation write retained after "
+                f"{_DURABLE_CONVERSATION_WRITE_TIMEOUT_S:.2f}s response budget"
+            )
+            record_degradation(
+                "chat.conversation_persistence",
+                timeout_error,
+                severity="warning",
+                action="retained late pending user-turn write under durable custody",
+                extra={"operation_id": record.operation_id, "attempt": record.attempt},
+            )
+            logger.warning(
+                "Durable pending user-turn write remains supervised: %s",
+                record.operation_id,
+            )
+        elif state == "failed":
+            raise RuntimeError(record.error or "pending user-turn write failed")
+        return state
+    except asyncio.CancelledError:
+        raise
+    except _CHAT_RECOVERABLE_ERRORS as exc:
         record_degradation("chat.conversation_persistence", exc)
         logger.warning("Durable pending user-turn commit failed: %s", exc)
-        return False
+        return "failed"
 
 
 async def _begin_logged_exchange(user_msg: str, *, session_id: str = "") -> str:
@@ -1874,11 +2147,13 @@ async def _begin_logged_exchange(user_msg: str, *, session_id: str = "") -> str:
                 "principal_id": principal_id,
                 "principal_surface": principal_surface,
                 "user_persisted": False,
+                "user_persistence_state": "pending",
+                "durability_state": "pending",
             }
         )
         _trim_conversation_log_locked()
 
-    user_persisted = await _persist_pending_conversation_user(
+    user_persistence_state = await _persist_pending_conversation_user(
         exchange_id=exchange_id,
         user_message=user_msg,
         session_id=session_id,
@@ -1886,7 +2161,8 @@ async def _begin_logged_exchange(user_msg: str, *, session_id: str = "") -> str:
     async with _get_convo_lock():
         for entry in reversed(_conversation_log):
             if str(entry.get("id") or "") == exchange_id:
-                entry["user_persisted"] = user_persisted
+                entry["user_persistence_state"] = user_persistence_state
+                entry["user_persisted"] = user_persistence_state == "committed"
                 break
     return exchange_id
 
@@ -1898,7 +2174,7 @@ async def _complete_logged_exchange(
     *,
     regenerated: bool = False,
     record_experience: bool = True,
-) -> None:
+) -> str:
     """Finalize a pending exchange in place so history is never duplicated."""
     final_response = aura_response or "…"
     recorded_user = str(user_msg or "")
@@ -1926,17 +2202,26 @@ async def _complete_logged_exchange(
         target["aura"] = final_response
         target["status"] = "complete"
         target["completed_at"] = _utc_now_iso()
+        target["durability_state"] = "pending"
         if regenerated:
             target["regenerated"] = True
         _trim_conversation_log_locked()
 
-    await _persist_completed_conversation_exchange(
+    durability_state = await _persist_completed_conversation_exchange(
         exchange_id=str(target.get("id") or exchange_id or ""),
         user_message=recorded_user,
         aura_response=final_response,
         session_id=str(target.get("session_id") or ""),
         user_already_persisted=bool(target.get("user_persisted")),
     )
+    user_write = _durable_conversation_write_snapshot(
+        f"{str(target.get('id') or exchange_id or '')[:64]}:user"
+    )
+    async with _get_convo_lock():
+        target["durability_state"] = durability_state
+        if user_write is not None:
+            target["user_persistence_state"] = str(user_write.get("state") or "failed")
+            target["user_persisted"] = user_write.get("state") == "committed"
 
     _record_unified_transcript_exchange(
         recorded_user,
@@ -1946,7 +2231,7 @@ async def _complete_logged_exchange(
     )
 
     if not record_experience:
-        return
+        return durability_state
 
     try:
         from core.runtime.conversation_support import record_conversation_experience
@@ -1955,6 +2240,7 @@ async def _complete_logged_exchange(
     except _CHAT_RECOVERABLE_ERRORS as exc:
         record_degradation('chat', exc)
         logger.debug("Conversation experience recording skipped: %s", exc)
+    return durability_state
 
 
 def _record_unified_transcript_exchange(
@@ -5074,43 +5360,45 @@ async def _persist_completed_conversation_exchange(
     aura_response: str,
     session_id: str = "",
     user_already_persisted: bool = False,
-) -> bool:
+) -> str:
     """Synchronously commit a bounded live exchange before returning it to the UI."""
     try:
         persistence = ServiceContainer.get("persistence", default=None)
         record_exchange = getattr(persistence, "record_exchange", None)
         record_turn = getattr(persistence, "record_turn", None)
         if not callable(record_exchange) and not callable(record_turn):
-            return False
+            return "failed"
 
         safe_exchange_id = str(exchange_id or uuid.uuid4().hex)[:64]
         safe_session_id = str(session_id or "")[:64]
+        safe_user_message = str(user_message or "")
+        safe_aura_response = str(aura_response or "")
         scope_kwargs = _chat_principal_scope_kwargs()
 
         def _commit() -> None:
-            if user_already_persisted and callable(record_turn):
-                record_turn(
-                    "aura",
-                    str(aura_response or ""),
-                    origin="desktop_ui",
-                    cid=f"{safe_exchange_id}:aura",
-                    session_id=safe_session_id or None,
-                    **scope_kwargs,
-                )
-                return
             if callable(record_exchange):
                 record_exchange(
-                    str(user_message or ""),
-                    str(aura_response or ""),
+                    safe_user_message,
+                    safe_aura_response,
                     origin="desktop_ui",
                     cid=safe_exchange_id,
                     session_id=safe_session_id or None,
                     **scope_kwargs,
                 )
                 return
+            if user_already_persisted:
+                record_turn(
+                    "aura",
+                    safe_aura_response,
+                    origin="desktop_ui",
+                    cid=f"{safe_exchange_id}:aura",
+                    session_id=safe_session_id or None,
+                    **scope_kwargs,
+                )
+                return
             record_turn(
                 "user",
-                str(user_message or ""),
+                safe_user_message,
                 origin="desktop_ui",
                 cid=f"{safe_exchange_id}:user",
                 session_id=safe_session_id or None,
@@ -5118,22 +5406,51 @@ async def _persist_completed_conversation_exchange(
             )
             record_turn(
                 "aura",
-                str(aura_response or ""),
+                safe_aura_response,
                 origin="desktop_ui",
                 cid=f"{safe_exchange_id}:aura",
                 session_id=safe_session_id or None,
                 **scope_kwargs,
             )
 
-        await asyncio.wait_for(
-            asyncio.to_thread(_commit),
-            timeout=_DURABLE_CONVERSATION_CONTEXT_TIMEOUT_S,
+        record = _start_durable_conversation_write(
+            operation_id=f"{safe_exchange_id}:exchange",
+            payload={
+                "kind": "completed_exchange",
+                "exchange_id": safe_exchange_id,
+                "user_message": safe_user_message,
+                "aura_response": safe_aura_response,
+                "session_id": safe_session_id,
+                "scope": scope_kwargs,
+            },
+            operation=_commit,
         )
-        return True
-    except (TimeoutError, *_CHAT_RECOVERABLE_ERRORS) as exc:
+        state = await _await_durable_conversation_write(record)
+        if state == "pending":
+            timeout_error = TimeoutError(
+                f"completed conversation write retained after "
+                f"{_DURABLE_CONVERSATION_WRITE_TIMEOUT_S:.2f}s response budget"
+            )
+            record_degradation(
+                "chat.conversation_persistence",
+                timeout_error,
+                severity="warning",
+                action="retained late completed exchange write under durable custody",
+                extra={"operation_id": record.operation_id, "attempt": record.attempt},
+            )
+            logger.warning(
+                "Durable completed exchange write remains supervised: %s",
+                record.operation_id,
+            )
+        elif state == "failed":
+            raise RuntimeError(record.error or "completed exchange write failed")
+        return state
+    except asyncio.CancelledError:
+        raise
+    except _CHAT_RECOVERABLE_ERRORS as exc:
         record_degradation("chat.conversation_persistence", exc)
         logger.warning("Durable conversation transcript commit failed: %s", exc)
-        return False
+        return "failed"
 
 
 async def _reanswer_when_the_runtime_contradicts_her(

@@ -1,6 +1,7 @@
 import asyncio
 import json
 import tempfile
+import threading
 import time
 from pathlib import Path
 from types import SimpleNamespace
@@ -10939,7 +10940,7 @@ async def test_recent_desktop_context_is_deep_but_strictly_bounded():
 
 
 @pytest.mark.asyncio
-async def test_chat_exchange_persists_user_before_reply_without_duplicate(monkeypatch):
+async def test_chat_exchange_persists_user_then_converges_through_atomic_exchange(monkeypatch):
     from interface.routes import chat as chat_routes
 
     calls = []
@@ -10990,9 +10991,12 @@ async def test_chat_exchange_persists_user_before_reply_without_duplicate(monkey
         record_experience=False,
     )
 
-    assert [call[0] for call in calls] == ["turn", "turn"]
-    assert calls[1][1] == "aura"
-    assert calls[1][3]["cid"] == f"{exchange_id}:aura"
+    assert [call[0] for call in calls] == ["turn", "exchange"]
+    assert calls[1][1:3] == (
+        "The desktop process exhausted memory.",
+        "I preserved this turn before reasoning and completed it afterward.",
+    )
+    assert calls[1][3]["cid"] == exchange_id
     assert calls[1][3]["session_id"] == "desktop-client-session"
 
 
@@ -11085,6 +11089,202 @@ async def test_chat_exchange_atomic_persistence_keeps_ui_session_id(monkeypatch)
                 "session_id": "desktop-ui-session-42",
             },
         )
+    ]
+
+
+@pytest.mark.asyncio
+async def test_pending_conversation_timeout_retains_write_custody(monkeypatch):
+    from interface.routes import chat as chat_routes
+
+    started = threading.Event()
+    release = threading.Event()
+    calls = []
+
+    class _SlowPersistence:
+        def record_turn(self, role, content, **kwargs):
+            started.set()
+            release.wait(2.0)
+            calls.append((role, content, dict(kwargs)))
+            return "slow-user-turn"
+
+    monkeypatch.setattr(chat_routes, "_DURABLE_CONVERSATION_WRITE_TIMEOUT_S", 0.02)
+    monkeypatch.setattr(
+        chat_routes.ServiceContainer,
+        "get",
+        staticmethod(
+            lambda name, default=None: _SlowPersistence()
+            if name == "persistence"
+            else default
+        ),
+    )
+
+    try:
+        exchange_id = await chat_routes._begin_logged_exchange(
+            "Preserve this even when the persistence budget expires."
+        )
+        assert started.is_set()
+        pending = chat_routes._durable_conversation_write_snapshot(f"{exchange_id}:user")
+        assert pending is not None
+        assert pending["state"] == "pending"
+        assert pending["task_done"] is False
+        async with chat_routes._get_convo_lock():
+            entry = next(row for row in chat_routes._conversation_log if row["id"] == exchange_id)
+            assert entry["user_persistence_state"] == "pending"
+            assert entry["user_persisted"] is False
+    finally:
+        release.set()
+        await chat_routes._drain_durable_conversation_writes()
+
+    settled = chat_routes._durable_conversation_write_snapshot(f"{exchange_id}:user")
+    assert settled is not None
+    assert settled["state"] == "committed"
+    assert len(calls) == 1
+    async with chat_routes._get_convo_lock():
+        entry = next(row for row in chat_routes._conversation_log if row["id"] == exchange_id)
+        assert entry["user_persistence_state"] == "committed"
+        assert entry["user_persisted"] is True
+
+
+@pytest.mark.asyncio
+async def test_completed_exchange_timeout_settles_after_response_budget(monkeypatch):
+    from interface.routes import chat as chat_routes
+
+    exchange_started = threading.Event()
+    release = threading.Event()
+    exchange_calls = []
+
+    class _SlowExchangePersistence:
+        def record_turn(self, role, content, **kwargs):
+            return f"{role}-turn"
+
+        def record_exchange(self, user, aura, **kwargs):
+            exchange_started.set()
+            release.wait(2.0)
+            exchange_calls.append((user, aura, dict(kwargs)))
+            return ("user-turn", "aura-turn")
+
+    persistence = _SlowExchangePersistence()
+    monkeypatch.setattr(chat_routes, "_DURABLE_CONVERSATION_WRITE_TIMEOUT_S", 0.02)
+    monkeypatch.setattr(
+        chat_routes.ServiceContainer,
+        "get",
+        staticmethod(
+            lambda name, default=None: persistence if name == "persistence" else default
+        ),
+    )
+
+    exchange_id = await chat_routes._begin_logged_exchange("Keep the terminal answer durable.")
+    try:
+        state = await chat_routes._complete_logged_exchange(
+            exchange_id,
+            "Keep the terminal answer durable.",
+            "This answer remains under write custody after the UI budget.",
+            record_experience=False,
+        )
+        assert exchange_started.is_set()
+        assert state == "pending"
+        pending = chat_routes._durable_conversation_write_snapshot(
+            f"{exchange_id}:exchange"
+        )
+        assert pending is not None
+        assert pending["state"] == "pending"
+        async with chat_routes._get_convo_lock():
+            entry = next(row for row in chat_routes._conversation_log if row["id"] == exchange_id)
+            assert entry["status"] == "complete"
+            assert entry["durability_state"] == "pending"
+    finally:
+        release.set()
+        await chat_routes._drain_durable_conversation_writes()
+
+    settled = chat_routes._durable_conversation_write_snapshot(
+        f"{exchange_id}:exchange"
+    )
+    assert settled is not None
+    assert settled["state"] == "committed"
+    assert len(exchange_calls) == 1
+    async with chat_routes._get_convo_lock():
+        entry = next(row for row in chat_routes._conversation_log if row["id"] == exchange_id)
+        assert entry["durability_state"] == "committed"
+
+
+@pytest.mark.asyncio
+async def test_partial_legacy_write_retries_without_duplicate_user_turn(monkeypatch):
+    from interface.routes import chat as chat_routes
+
+    rows_by_cid = {}
+    aura_attempts = 0
+
+    class _IdempotentLegacyPersistence:
+        def record_turn(self, role, content, **kwargs):
+            nonlocal aura_attempts
+            cid = kwargs["cid"]
+            if role == "aura":
+                aura_attempts += 1
+                if aura_attempts == 1:
+                    raise RuntimeError("injected aura-side write failure")
+            existing = rows_by_cid.get(cid)
+            if existing is not None:
+                assert existing == (role, content)
+                return cid
+            rows_by_cid[cid] = (role, content)
+            return cid
+
+    persistence = _IdempotentLegacyPersistence()
+    monkeypatch.setattr(
+        chat_routes.ServiceContainer,
+        "get",
+        staticmethod(
+            lambda name, default=None: persistence if name == "persistence" else default
+        ),
+    )
+
+    exchange_id = await chat_routes._begin_logged_exchange("Retry this exact exchange once.")
+    first = await chat_routes._complete_logged_exchange(
+        exchange_id,
+        "Retry this exact exchange once.",
+        "The retry preserves one user turn and one answer.",
+        record_experience=False,
+    )
+    second = await chat_routes._complete_logged_exchange(
+        exchange_id,
+        "Retry this exact exchange once.",
+        "The retry preserves one user turn and one answer.",
+        record_experience=False,
+    )
+
+    assert first == "failed"
+    assert second == "committed"
+    assert aura_attempts == 2
+    assert rows_by_cid == {
+        f"{exchange_id}:user": ("user", "Retry this exact exchange once."),
+        f"{exchange_id}:aura": (
+            "aura",
+            "The retry preserves one user turn and one answer.",
+        ),
+    }
+    receipt = chat_routes._durable_conversation_write_snapshot(
+        f"{exchange_id}:exchange"
+    )
+    assert receipt is not None
+    assert receipt["state"] == "committed"
+    assert receipt["attempt"] == 2
+
+
+def test_conversation_persistence_registers_memory_commit_shutdown_drain(monkeypatch):
+    from core.runtime.shutdown_coordinator import ShutdownCoordinator
+    from interface.routes import chat as chat_routes
+
+    coordinator = ShutdownCoordinator()
+    monkeypatch.setattr(
+        "core.runtime.shutdown_coordinator.get_shutdown_coordinator",
+        lambda: coordinator,
+    )
+
+    chat_routes._ensure_durable_conversation_shutdown_handler()
+    chat_routes._ensure_durable_conversation_shutdown_handler()
+
+    assert coordinator.handler_names("memory_commit") == [
+        chat_routes._DURABLE_CONVERSATION_SHUTDOWN_HANDLER
     ]
 
 

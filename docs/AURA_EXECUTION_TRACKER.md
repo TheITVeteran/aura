@@ -47804,3 +47804,49 @@ regeneration CAS, memory-log worker ownership and `/api/think` admission remain
 open. The detached CP352 resident promotion is still a separate source-bound
 transaction; its running canary evidence is not serving authority and does not
 establish broad reasoning, frontier performance, `WOW Signal`, soak or Aura 1.0.
+
+## Checkpoint 2026-08-13-356: Conversation Writes Retain Durable Custody
+
+Pending-user and completed-exchange persistence used
+`wait_for(to_thread(...))`. When the UI budget expired, cancellation stopped
+only the asyncio waiter; the synchronous write continued in an executor with no
+identity the route could inspect or drain. The pending write was treated as
+failed, completion could start a duplicate fallback, and the in-memory exchange
+was labelled complete without recording whether canonical durability was
+pending, committed or failed.
+
+Each admitted transcript write now has a stable operation identity, canonical
+payload digest, exact supervised task, attempt counter and terminal state. A
+wait-budget expiry returns `pending` while retaining the same worker under task
+ownership. Repeated calls with the same identity and payload reuse an active or
+committed transaction; a failed transaction can retry under the same identity;
+an identity/content collision is rejected. Late completion updates the bounded
+live exchange receipt from `pending` to `committed` or `failed` instead of
+silently disappearing.
+
+Completed turns now converge through `ConversationPersistence.record_exchange`
+even when the user half was pre-logged. That store's immediate transaction and
+correlation IDs atomically validate the existing user row and insert the Aura
+row without duplication. The compatibility path for older turn-only stores
+keeps an already committed user half and retries the Aura half with the same
+correlation ID. A successful atomic exchange supersedes an earlier failed user
+pre-log receipt.
+
+The first admitted write installs one idempotent `memory_commit` shutdown
+handler. Shutdown waits for every retained persistence task before the generic
+task supervisor can cancel wrappers and reports both drain timeout and terminal
+write failure. Regression coverage proves a timed-out user write stays owned and
+settles once, a timed-out completed exchange changes from pending to committed,
+an injected partial legacy failure retries without duplicating the user row,
+and shutdown registration cannot duplicate.
+
+The complete conversation lane passes `306/306`; live conversation persistence
+passes `12/12`; chat event-loop budget coverage passes `13/13`; canonical smoke
+passes `104/104`; compilation, Ruff, governance lint, layering and diff hygiene
+pass.
+
+This closes the durable-write-custody P2 semantic finding. Regeneration CAS,
+memory-log worker ownership and `/api/think` admission remain open. The CP352
+resident promotion has produced a terminal supported receipt, but pointer,
+hash, process-teardown and serving-package adjudication remain separate work;
+no broad reasoning, frontier, `WOW Signal`, soak or Aura 1.0 claim follows here.
