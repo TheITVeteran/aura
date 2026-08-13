@@ -35,6 +35,7 @@ import ast
 import json
 import re
 import sys
+import textwrap
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -86,7 +87,52 @@ def _is_structural(literal: str) -> bool:
     # will never parse, because it is half a statement. Leading keyword, not a
     # sentence.
     first = candidate.split(maxsplit=1)[0].rstrip(":")
-    return first in _CODE_OPENERS
+    if first in _CODE_OPENERS:
+        return True
+    # A call site named but not closed: ``_self_health_answer_or_empty(``,
+    # ``getUserMedia({``, ``replace(``. A structural test asserting "this call
+    # exists" writes exactly this, and it can never parse because it is half an
+    # expression. Judged by shape rather than by parseability: an identifier
+    # (dotted allowed) followed by an opening bracket, nothing else.
+    return bool(re.fullmatch(r"[A-Za-z_][\w.]*\s*[({\[][\s({\[]*", candidate))
+
+
+def _asserted_literals(window: str) -> list[str]:
+    """String literals a test asserts ON, excluding each assert's own message.
+
+    ``assert guard_index < register_index, "shutdown guard must precede service
+    registration"`` pins nothing. The second operand of an assert is the
+    explanation shown when it fails — the test's own prose, not production
+    wording — and counting it made a well-documented structural test look like
+    debt. The regex this replaced took the first literal on the line, which for
+    that shape is the message.
+
+    AST rather than another regex because the docstring above is already right
+    about which is the better discriminator, and because only ``node.test``
+    can be isolated correctly by parsing.
+    """
+    try:
+        tree = ast.parse(textwrap.dedent(window))
+    except SyntaxError:
+        # A window clipped mid-statement. Fall back to the line-wise regex,
+        # minus anything after a top-level comma on the assert.
+        out: list[str] = []
+        for line in window.splitlines():
+            if "assert" not in line:
+                continue
+            head = line.split(",")[0]
+            out.extend(_ASSERT_LITERAL.findall(head))
+        return out
+
+    literals: list[str] = []
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Assert):
+            continue
+        for inner in ast.walk(node.test):
+            if isinstance(inner, ast.Constant) and isinstance(inner.value, str):
+                if len(inner.value) >= 4:
+                    literals.append(inner.value)
+    return literals
 
 
 def _phrase_pins(source: str) -> int:
@@ -101,15 +147,27 @@ def _phrase_pins(source: str) -> int:
         if not any(hint in line for hint in _SOURCE_HINTS):
             continue
         window = "\n".join(lines[index : index + _WINDOW])
-        for literal in _ASSERT_LITERAL.findall(window):
+        for literal in _asserted_literals(window):
             if not _is_structural(literal):
                 pins += 1
     return pins
 
 
+#: This tool's own calibration fixtures. ``test_phrase_pin_classifier.py``
+#: holds one example of every shape this scanner must catch and every shape it
+#: must not, as string data — so scanning it counts the examples themselves and
+#: the instrument reports its own test bench as debt. Excluded by name rather
+#: than by contorting the fixtures into something the scanner cannot see, which
+#: would make the test less readable to buy the same result.
+_SELF_TEST = "tests/test_phrase_pin_classifier.py"
+
+
 def measure() -> dict[str, object]:
     by_file: dict[str, int] = {}
     for path in sorted((ROOT / "tests").rglob("test_*.py")):
+        relative = str(path.relative_to(ROOT))
+        if relative == _SELF_TEST:
+            continue
         try:
             source = path.read_text(encoding="utf-8")
         except (OSError, UnicodeDecodeError):
