@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import copy
 from types import SimpleNamespace
 
 import pytest
@@ -17,6 +18,53 @@ def test_sign_test_is_exact_and_refuses_ties() -> None:
     assert _sign_test_p_value([0.0, 0.0]) is None
     assert _sign_test_p_value([1.0] * 8) == 0.0078125
     assert _sign_test_p_value([1.0] * 4 + [-1.0] * 4) == 1.0
+
+
+def test_runtime_semantic_identity_preserves_interpreter_and_validates_commitment(
+    monkeypatch,
+) -> None:
+    monkeypatch.setattr(
+        evaluator,
+        "_dependency_runtime_semantic_identity",
+        lambda value: {"semantic": value["semantic"]},
+    )
+    body = {
+        "environment": {"semantic": "same", "cache": "old"},
+        "interpreter": {"sha256": "a" * 64},
+    }
+    runtime = {
+        **body,
+        "identity_sha256": evaluator._canonical_sha256(body),  # noqa: SLF001
+    }
+    changed_cache_body = copy.deepcopy(body)
+    changed_cache_body["environment"]["cache"] = "new"
+    changed_cache = {
+        **changed_cache_body,
+        "identity_sha256": evaluator._canonical_sha256(  # noqa: SLF001
+            changed_cache_body
+        ),
+    }
+
+    assert evaluator._runtime_semantic_identity(runtime) == (  # noqa: SLF001
+        evaluator._runtime_semantic_identity(changed_cache)  # noqa: SLF001
+    )
+
+    changed_interpreter = copy.deepcopy(runtime)
+    changed_interpreter["interpreter"]["sha256"] = "b" * 64
+    changed_interpreter["identity_sha256"] = evaluator._canonical_sha256(  # noqa: SLF001
+        {
+            "environment": changed_interpreter["environment"],
+            "interpreter": changed_interpreter["interpreter"],
+        }
+    )
+    assert evaluator._runtime_semantic_identity(runtime) != (  # noqa: SLF001
+        evaluator._runtime_semantic_identity(changed_interpreter)  # noqa: SLF001
+    )
+
+    tampered = copy.deepcopy(runtime)
+    tampered["identity_sha256"] = "0" * 64
+    with pytest.raises(RuntimeError, match="runtime commitment differs"):
+        evaluator._runtime_semantic_identity(tampered)  # noqa: SLF001
 
 
 def test_evaluation_layout_supports_legacy_colocation(tmp_path) -> None:

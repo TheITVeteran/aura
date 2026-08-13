@@ -22,6 +22,9 @@ import mlx.core as mx  # noqa: E402
 from mlx.utils import tree_unflatten  # noqa: E402
 
 from core.brain.canonical_json import canonical_json_bytes  # noqa: E402
+from core.brain.llm.latent_cortex.recurrence_adapter_identity_v2 import (  # noqa: E402
+    _runtime_semantic_identity as _dependency_runtime_semantic_identity,
+)
 from core.learning.intrinsic_recurrence_objective import (  # noqa: E402
     answer_cross_entropy,
 )
@@ -165,6 +168,27 @@ def _file_sha256(path: Path) -> str:
         for chunk in iter(lambda: handle.read(8 * 1024 * 1024), b""):
             digest.update(chunk)
     return digest.hexdigest()
+
+
+def _runtime_semantic_identity(value: Any) -> dict[str, Any]:
+    """Validate a campaign runtime while excluding only ephemeral bytecode caches."""
+
+    if not isinstance(value, dict) or set(value) != {
+        "environment",
+        "interpreter",
+        "identity_sha256",
+    }:
+        raise RuntimeError("unified campaign runtime identity is malformed")
+    body = {key: value[key] for key in ("environment", "interpreter")}
+    if value.get("identity_sha256") != _canonical_sha256(body):
+        raise RuntimeError("unified campaign runtime commitment differs")
+    interpreter = value.get("interpreter")
+    if not isinstance(interpreter, dict):
+        raise RuntimeError("unified campaign interpreter identity is malformed")
+    return {
+        "environment": _dependency_runtime_semantic_identity(value["environment"]),
+        "interpreter": interpreter,
+    }
 
 
 def _evaluation_source_sha256s() -> dict[str, str]:
@@ -570,7 +594,10 @@ def _load_checkpoint(
     ):
         raise RuntimeError("unified campaign model differs")
     runtime_identity = identity.get("runtime")
-    if not isinstance(runtime_identity, dict) or _runtime_identity() != runtime_identity:
+    observed_runtime_identity = _runtime_identity()
+    if not isinstance(runtime_identity, dict) or _runtime_semantic_identity(
+        runtime_identity
+    ) != _runtime_semantic_identity(observed_runtime_identity):
         raise RuntimeError("unified campaign runtime differs")
     dataset_identity = identity.get("dataset")
     dataset_name = dataset_identity.get("path") if isinstance(dataset_identity, dict) else None

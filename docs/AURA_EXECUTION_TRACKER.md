@@ -46496,3 +46496,27 @@ zero training-runtime mismatches. The failed attempt emitted no model load,
 decode candidate or scientific report. The completion envelope remains
 `915/920`; this is launch custody, not evidence of a reasoning gain. Next is a
 fresh immutable CP291 capsule and true-root resident diagnostic.
+
+## Checkpoint 2026-08-12-292: Runtime Custody Excludes Only Ephemeral Bytecode
+
+The CP291 retry passed source custody and then failed closed before model load
+because checkpoint evaluation compared the raw campaign runtime identity. CP275
+had committed dependency inventories containing 187 transient `__pycache__`
+and `.pyc` records; CP282 correctly stopped generating those records, but the
+checkpoint evaluator had not adopted CP282's semantic comparison.
+
+The evaluator now validates both raw runtime commitments independently, keeps
+the interpreter identity exact and compares dependency environments through
+the already-tested CP282 semantic normalizer. The measured CP275/current pair
+has the same interpreter and byte-identical non-cache MLX, MLX-LM and NumPy
+files; only transient cache records differ. Source changes, package-version
+changes, interpreter changes, malformed runtime objects and invalid raw
+commitments still fail closed.
+
+Validation is green under Aura's Python 3.12 runtime: `66/66` focused runtime,
+source, control, launcher, adjudication and replication tests pass; canonical
+smoke passes `104/104`; the live artifact-only check proves semantic runtime
+and interpreter equality; Ruff and diff hygiene pass. Both preceding launches
+stopped before model load and committed zero candidates, so they carry no
+scientific tissue verdict. The completion envelope remains `915/920`; next is
+the fresh CP292 immutable resident diagnostic.
