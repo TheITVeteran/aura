@@ -276,6 +276,53 @@ def test_replication_plan_rejects_evaluator_drift_across_seeds(
         replication._load_plan(arguments)  # noqa: SLF001
 
 
+def test_historical_four_file_plan_reopens_under_its_frozen_contract(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    expected: dict[str, str] = {}
+    for relative in replication.LEGACY_EVALUATOR_SOURCE_FILES:
+        path = tmp_path / relative
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(f"# frozen {relative}\n", encoding="ascii")
+        expected[relative] = hashlib.sha256(path.read_bytes()).hexdigest()
+
+    monkeypatch.setattr(
+        replication.launcher,
+        "_evaluator_source_sha256s",
+        lambda _root: pytest.fail("legacy plans must not be expanded retroactively"),
+    )
+
+    assert replication._observed_evaluator_source(tmp_path, expected) == expected  # noqa: SLF001
+
+
+def test_historical_four_file_plan_still_rejects_drift(tmp_path: Path) -> None:
+    expected: dict[str, str] = {}
+    for relative in replication.LEGACY_EVALUATOR_SOURCE_FILES:
+        path = tmp_path / relative
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(f"# frozen {relative}\n", encoding="ascii")
+        expected[relative] = hashlib.sha256(path.read_bytes()).hexdigest()
+    changed = tmp_path / sorted(replication.LEGACY_EVALUATOR_SOURCE_FILES)[0]
+    changed.write_text("# drift\n", encoding="ascii")
+
+    assert replication._observed_evaluator_source(tmp_path, expected) != expected  # noqa: SLF001
+
+
+def test_new_plan_shape_keeps_full_dependency_closure(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    closure = {"entry.py": "a" * 64, "dependency.py": "b" * 64}
+    monkeypatch.setattr(
+        replication.launcher,
+        "_evaluator_source_sha256s",
+        lambda root: closure if root == tmp_path else {},
+    )
+
+    assert replication._observed_evaluator_source(tmp_path, closure) == closure  # noqa: SLF001
+
+
 def _install_adjudication(
     campaign: Path,
     monkeypatch: pytest.MonkeyPatch,

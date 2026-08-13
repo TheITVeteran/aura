@@ -47,6 +47,14 @@ SUPPORTED: Final = "supported_powered_resident_replication"
 REFUTED: Final = "refuted_powered_resident_replication"
 DEFAULT_SEEDS: Final = (20260811261, 20260811262, 20260811263)
 LAUNCH_AGENTS_ROOT: Final = Path.home() / "Library/LaunchAgents"
+LEGACY_EVALUATOR_SOURCE_FILES: Final = frozenset(
+    {
+        "core/brain/llm/latent_cortex/recurrence_adapter_identity_v2.py",
+        "tools/evaluate_unified_intrinsic_checkpoint.py",
+        "tools/evaluate_unified_intrinsic_decoding.py",
+        "tools/unified_intrinsic_decode_journal.py",
+    }
+)
 
 
 class ResidentReplicationError(RuntimeError):
@@ -111,6 +119,41 @@ def _plan_path(arguments: argparse.Namespace, campaign: Path) -> Path:
 
 def _controller_status_path(arguments: argparse.Namespace, campaign: Path) -> Path:
     return _replication_root(arguments, campaign) / "controller-status.json"
+
+
+def _observed_evaluator_source(
+    source_root: Path,
+    expected: object,
+) -> dict[str, str]:
+    """Recompute evaluator identity under the plan's frozen identity version.
+
+    CP312 strengthened new plans from four explicit entry points to their full
+    local Python dependency closure. Replications preregistered before CP312
+    must remain reopenable under exactly their original four-file contract;
+    applying the expanded closure retroactively makes an immutable valid plan
+    impossible to adjudicate. Only the exact historical key set is accepted.
+    Every newer or malformed shape is evaluated under the closure contract.
+    """
+    if not isinstance(expected, dict):
+        _fail("replication evaluator source identity is malformed")
+    if set(expected) == LEGACY_EVALUATOR_SOURCE_FILES:
+        try:
+            return {
+                relative: hashlib.sha256(
+                    (source_root / relative).resolve(strict=True).read_bytes()
+                ).hexdigest()
+                for relative in sorted(LEGACY_EVALUATOR_SOURCE_FILES)
+            }
+        except OSError as exc:
+            raise ResidentReplicationError(
+                "replication evaluator source is unavailable"
+            ) from exc
+    try:
+        return launcher._evaluator_source_sha256s(source_root)  # noqa: SLF001
+    except launcher.ResidentEvaluationLaunchError as exc:
+        raise ResidentReplicationError(
+            "replication evaluator source is unavailable"
+        ) from exc
 
 
 def _launch_label(config: Mapping[str, Any]) -> str:
@@ -561,12 +604,11 @@ def _load_plan(arguments: argparse.Namespace) -> tuple[Path, dict[str, Any], dic
     ):
         _fail("replication plan identity differs")
     evaluator_source_root = Path(str(plan.get("evaluator_source_root") or ""))
-    try:
-        observed_evaluator_source = launcher._evaluator_source_sha256s(  # noqa: SLF001
-            evaluator_source_root
-        )
-    except launcher.ResidentEvaluationLaunchError as exc:
-        raise ResidentReplicationError("replication evaluator source is unavailable") from exc
+    expected_evaluator_source = plan.get("evaluator_source_sha256s")
+    observed_evaluator_source = _observed_evaluator_source(
+        evaluator_source_root,
+        expected_evaluator_source,
+    )
     if not evaluator_source_root.is_absolute() or observed_evaluator_source != plan.get(
         "evaluator_source_sha256s"
     ):
