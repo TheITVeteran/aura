@@ -146,6 +146,7 @@ class EpisodicDeltaLinear:
         self.input_summary_history = []
         self.last_input_features = None
         self.query_gate_keys = None
+        self.query_gate_active = False
         self.query_gate_threshold = 0.0
         self.query_gate_temperature = 1.0
         self.capture_input_positions = False
@@ -318,7 +319,7 @@ class EpisodicDeltaLinear:
             return base
         self.phase_delta_calls[phase] += 1
         delta = (x @ self.V.T) @ self.U.T
-        if self.query_gate_keys is not None:
+        if self.query_gate_keys is not None and self.query_gate_active:
             import mlx.core as mx
 
             width = int(x.shape[-1])
@@ -358,6 +359,7 @@ class EpisodicDeltaLinear:
         ):
             raise ValueError("fast-weight query-gate temperature must be inside (0, 1]")
         self.query_gate_keys = mx.stop_gradient(keys.astype(mx.float32) / norms)
+        self.query_gate_active = True
         self.query_gate_threshold = float(threshold)
         self.query_gate_temperature = float(temperature)
         mx.eval(self.query_gate_keys)
@@ -679,6 +681,25 @@ class EpisodicFastWeights:
         if changed:
             self._notify_function_change(
                 f"fast_weights_activation_policy:{policy}"
+            )
+
+    def set_query_gate_active(self, active: bool) -> None:
+        """Suspend query scoping only while fitting a private teacher loss."""
+
+        if type(active) is not bool:
+            raise TypeError("query gate active state must be boolean")
+        if not self.handles or any(
+            handle.wrapper.query_gate_keys is None for handle in self.handles
+        ):
+            raise RuntimeError("fast-weight query gate is not installed")
+        changed = False
+        for handle in self.handles:
+            if handle.wrapper.query_gate_active is not active:
+                handle.wrapper.query_gate_active = active
+                changed = True
+        if changed:
+            self._notify_function_change(
+                f"fast_weights_query_gate_active:{active}"
             )
 
     def activation_locality_receipt(self) -> dict[str, Any]:

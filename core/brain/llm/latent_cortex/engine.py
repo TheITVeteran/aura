@@ -67,6 +67,7 @@ from core.brain.llm.latent_cortex.schedules import LayerSchedule, ScheduleLibrar
 from core.brain.llm.latent_cortex.semantic_plasticity import (
     build_contrastive_semantic_seeds,
     build_layerwise_trajectory_directions,
+    build_teacher_forced_answer_loss,
 )
 from core.brain.llm.latent_cortex.teaching_events import (
     build_exact_objective_teaching_package,
@@ -2993,6 +2994,24 @@ class LatentCortexEngine:
             if self.config.fast_weights.enabled
             else 0
         )
+        fast_weight_teacher_forward_cost = (
+            max(
+                1,
+                min(
+                    _MAX_TEACHER_TRAJECTORY_TOKENS,
+                    len(tokens) + 256 + 32,
+                )
+                - 1,
+            )
+            * self.n_layers
+            if self.config.fast_weights.enabled
+            and self.config.verified_objective_teacher_enabled
+            else 0
+        )
+        fast_weight_optimization_forward_cost = max(
+            fast_weight_window_forward_cost,
+            fast_weight_teacher_forward_cost,
+        )
         fast_weight_associative_capture_cost = (
             fast_weight_window_forward_cost
             + (
@@ -3038,7 +3057,7 @@ class LatentCortexEngine:
             2
             * self.config.fast_weights.opt_steps
             * (3 + MATCHED_LINE_SEARCH_EVALUATIONS)
-            * fast_weight_window_forward_cost
+            * fast_weight_optimization_forward_cost
             + fast_weight_verifier_probe_cost
             + fast_weight_associative_capture_cost
             + output_memory_diagnostic_cost
@@ -6219,6 +6238,8 @@ class LatentCortexEngine:
         fw_query_input_features = None
         fw_treatment_output_corrections = None
         fw_sham_output_corrections = None
+        fw_treatment_context_tokens: list[int] = []
+        fw_sham_context_tokens: list[int] = []
         fw_sham_probe_tokens: list[int] = []
         fw_sham_score: float | None = None
         if self.config.fast_weights.enabled and not heterogeneous_finalized:
@@ -6539,6 +6560,8 @@ class LatentCortexEngine:
                             layer: sham_features[layer] - incumbent_features[layer]
                             for layer in sham_features
                         }
+                        fw_treatment_context_tokens = list(target_context_tokens)
+                        fw_sham_context_tokens = list(sham_context_tokens)
                         fast_weights.reseed_output_subspace_by_layer(
                             treatment_directions,
                             seed_source="verified_semantic_contrast",
@@ -6683,36 +6706,62 @@ class LatentCortexEngine:
                             f"{len(write_receipt['layers'])}"
                         )
                         receipt.flag("fast_weight_answer_decode_keys_compiled")
-                # The temporary synapses optimize only toward the exact
-                # evidence atoms admitted above. Prompt reconstruction remains
-                # the latent-state optimizer's objective; using it here would
-                # let unverified query text become a learning target.
-                loss_fn = build_proxy_loss(
-                    self.model,
-                    winner.anchor,
-                    fast_weight_target_tokens,
-                    self.config.latent_opt,
-                )
-
-                def fw_loss():
-                    z_pass = self._nocache_window_pass(
-                        winner.z,
-                        branch_index=winner.index,
+                if fast_weight_teaching_event and fw_treatment_context_tokens:
+                    fw_loss = build_teacher_forced_answer_loss(
+                        self.model,
+                        fw_treatment_context_tokens,
+                        answer_token_count=len(fast_weight_target_tokens),
                     )
-                    return loss_fn(z_pass)
+                    treatment_tokens_per_forward = (
+                        len(fw_treatment_context_tokens) - 1
+                    )
+                    treatment_layers_per_forward = self.n_layers
+                    receipt.flag("fast_weight_ordered_verified_answer_loss")
+                else:
+                    loss_fn = build_proxy_loss(
+                        self.model,
+                        winner.anchor,
+                        fast_weight_target_tokens,
+                        self.config.latent_opt,
+                    )
 
-                fast_weights.optimize(
-                    fw_loss,
-                    budget=budget,
-                    layer_apps_per_forward=(
-                        self.config.workspace.n_slots * (self.coda_start - self.prelude_end)
-                    ),
-                    tokens_per_forward=self.config.workspace.n_slots,
-                    layers_per_forward=(self.coda_start - self.prelude_end),
-                    reserve_layer_apps=safety_reserve,
-                    fixed_line_search_evaluations=(MATCHED_LINE_SEARCH_EVALUATIONS),
-                    operation_prefix="fast_weight_treatment",
+                    def fw_loss():
+                        z_pass = self._nocache_window_pass(
+                            winner.z,
+                            branch_index=winner.index,
+                        )
+                        return loss_fn(z_pass)
+
+                    treatment_tokens_per_forward = self.config.workspace.n_slots
+                    treatment_layers_per_forward = (
+                        self.coda_start - self.prelude_end
+                    )
+
+                query_gate_suspended = bool(
+                    fast_weight_teaching_event
+                    and self.config.fast_weights.query_gate_enabled
                 )
+                if query_gate_suspended:
+                    fast_weights.set_query_gate_active(False)
+                try:
+                    fast_weights.optimize(
+                        fw_loss,
+                        budget=budget,
+                        layer_apps_per_forward=(
+                            treatment_tokens_per_forward
+                            * treatment_layers_per_forward
+                        ),
+                        tokens_per_forward=treatment_tokens_per_forward,
+                        layers_per_forward=treatment_layers_per_forward,
+                        reserve_layer_apps=safety_reserve,
+                        fixed_line_search_evaluations=(
+                            MATCHED_LINE_SEARCH_EVALUATIONS
+                        ),
+                        operation_prefix="fast_weight_treatment",
+                    )
+                finally:
+                    if query_gate_suspended:
+                        fast_weights.set_query_gate_active(True)
                 fw_treatment_snapshot = fast_weights.snapshot_delta()
                 fw_treatment_trace = fast_weights.optimization_trace()
                 fast_weights.restore_delta(
@@ -6766,32 +6815,52 @@ class LatentCortexEngine:
                         vocab_size=vocab_size,
                         episode_id=receipt.episode_id,
                     )
-                sham_loss_fn = build_proxy_loss(
-                    self.model,
-                    winner.anchor,
-                    fw_sham_target_tokens,
-                    self.config.latent_opt,
-                )
-
-                def fw_sham_loss():
-                    z_pass = self._nocache_window_pass(
-                        winner.z,
-                        branch_index=winner.index,
+                if fast_weight_teaching_event and fw_sham_context_tokens:
+                    fw_sham_loss = build_teacher_forced_answer_loss(
+                        self.model,
+                        fw_sham_context_tokens,
+                        answer_token_count=len(fw_sham_target_tokens),
                     )
-                    return sham_loss_fn(z_pass)
+                    sham_tokens_per_forward = len(fw_sham_context_tokens) - 1
+                    sham_layers_per_forward = self.n_layers
+                else:
+                    sham_loss_fn = build_proxy_loss(
+                        self.model,
+                        winner.anchor,
+                        fw_sham_target_tokens,
+                        self.config.latent_opt,
+                    )
 
-                fast_weights.optimize(
-                    fw_sham_loss,
-                    budget=budget,
-                    layer_apps_per_forward=(
-                        self.config.workspace.n_slots * (self.coda_start - self.prelude_end)
-                    ),
-                    tokens_per_forward=self.config.workspace.n_slots,
-                    layers_per_forward=(self.coda_start - self.prelude_end),
-                    reserve_layer_apps=safety_reserve,
-                    fixed_line_search_evaluations=(MATCHED_LINE_SEARCH_EVALUATIONS),
-                    operation_prefix="fast_weight_sham",
-                )
+                    def fw_sham_loss():
+                        z_pass = self._nocache_window_pass(
+                            winner.z,
+                            branch_index=winner.index,
+                        )
+                        return sham_loss_fn(z_pass)
+
+                    sham_tokens_per_forward = self.config.workspace.n_slots
+                    sham_layers_per_forward = self.coda_start - self.prelude_end
+
+                if query_gate_suspended:
+                    fast_weights.set_query_gate_active(False)
+                try:
+                    fast_weights.optimize(
+                        fw_sham_loss,
+                        budget=budget,
+                        layer_apps_per_forward=(
+                            sham_tokens_per_forward * sham_layers_per_forward
+                        ),
+                        tokens_per_forward=sham_tokens_per_forward,
+                        layers_per_forward=sham_layers_per_forward,
+                        reserve_layer_apps=safety_reserve,
+                        fixed_line_search_evaluations=(
+                            MATCHED_LINE_SEARCH_EVALUATIONS
+                        ),
+                        operation_prefix="fast_weight_sham",
+                    )
+                finally:
+                    if query_gate_suspended:
+                        fast_weights.set_query_gate_active(True)
                 fw_sham_trace = fast_weights.optimization_trace()
                 if (
                     fast_weight_candidate_verifier is not None
@@ -6970,8 +7039,15 @@ class LatentCortexEngine:
                         safety_reserve=safety_reserve,
                         treatment_trace=fw_treatment_trace,
                         treatment_target_tokens=fast_weight_target_tokens,
+                        treatment_forward_layer_apps=(
+                            treatment_tokens_per_forward
+                            * treatment_layers_per_forward
+                        ),
                         sham_trace=fw_sham_trace,
                         sham_target_tokens=fw_sham_target_tokens,
+                        sham_forward_layer_apps=(
+                            sham_tokens_per_forward * sham_layers_per_forward
+                        ),
                         sham_probe_tokens=fw_sham_probe_tokens,
                         sham_score=fw_sham_score,
                     )
@@ -8507,8 +8583,10 @@ class LatentCortexEngine:
         safety_reserve: int,
         treatment_trace: Mapping[str, Any],
         treatment_target_tokens: list[int],
+        treatment_forward_layer_apps: int,
         sham_trace: Mapping[str, Any],
         sham_target_tokens: list[int],
+        sham_forward_layer_apps: int,
         sham_probe_tokens: list[int],
         sham_score: float | None,
     ) -> str:
@@ -8618,7 +8696,6 @@ class LatentCortexEngine:
             receipt.flag("fast_weight_verifier_erased")
             learning_state["disposition"] = "rejected_non_improvement"
             return "erased_nonfinite_score"
-        forward_layer_apps = self.config.workspace.n_slots * (self.coda_start - self.prelude_end)
         probe_layer_apps = self._verifier_probe_layer_apps(bridge_tokens)
 
         def arm_receipt(
@@ -8626,9 +8703,12 @@ class LatentCortexEngine:
             arm: str,
             trace: Mapping[str, Any],
             target_tokens: list[int],
+            forward_layer_apps: int,
             probe_tokens: list[int],
             score: float,
         ) -> dict[str, Any]:
+            if type(forward_layer_apps) is not int or forward_layer_apps <= 0:
+                raise ValueError("fast-weight forward accounting is invalid")
             gradients = int(trace["gradient_evaluations"])
             line_searches = int(trace["line_search_evaluations"])
             return {
@@ -8655,6 +8735,7 @@ class LatentCortexEngine:
                 arm="treatment",
                 trace=treatment_trace,
                 target_tokens=treatment_target_tokens,
+                forward_layer_apps=treatment_forward_layer_apps,
                 probe_tokens=probe,
                 score=post_score,
             ),
@@ -8662,6 +8743,7 @@ class LatentCortexEngine:
                 arm="sham",
                 trace=sham_trace,
                 target_tokens=sham_target_tokens,
+                forward_layer_apps=sham_forward_layer_apps,
                 probe_tokens=sham_probe_tokens,
                 score=float(sham_score),
             ),

@@ -14,6 +14,7 @@ from core.brain.llm.latent_cortex.fast_weights import (  # noqa: E402
 from core.brain.llm.latent_cortex.semantic_plasticity import (  # noqa: E402
     build_contrastive_semantic_seeds,
     build_layerwise_trajectory_directions,
+    build_teacher_forced_answer_loss,
 )
 from core.brain.llm.latent_cortex.types import FastWeightsConfig  # noqa: E402
 
@@ -357,6 +358,31 @@ def test_supervised_trajectory_map_rejects_non_query_keys():
         fast_weights.detach()
 
 
+def test_teacher_forced_answer_loss_trains_ordered_tokens_through_fast_weights():
+    model = _model()
+    fast_weights = EpisodicFastWeights(
+        FastWeightsConfig(enabled=True, rank=2, max_wrapped_layers=1, opt_steps=2)
+    )
+    fast_weights.attach(
+        model.model,
+        (1, 2),
+        seed_stat=0.5,
+        episode_id="teacher-forced-answer-loss",
+    )
+    try:
+        loss = build_teacher_forced_answer_loss(
+            model,
+            [1, 2, 3, 4, 5],
+            answer_token_count=2,
+        )
+        initial = float(loss())
+        fast_weights.optimize(loss, steps=2)
+        final = float(loss())
+        assert final < initial
+    finally:
+        fast_weights.detach()
+
+
 def test_query_gate_preserves_matching_write_and_suppresses_unrelated_context():
     layer = _model().model.layers[1].self_attn.o_proj
     wrapper = EpisodicDeltaLinear(
@@ -386,6 +412,11 @@ def test_query_gate_preserves_matching_write_and_suppresses_unrelated_context():
 
     assert float(mx.linalg.norm(matching_delta)) > 5.0
     assert float(mx.linalg.norm(unrelated_delta)) < 1e-5
+
+    wrapper.query_gate_active = False
+    ungated_unrelated_delta = wrapper(unrelated) - layer(unrelated)
+    mx.eval(ungated_unrelated_delta)
+    assert float(mx.linalg.norm(ungated_unrelated_delta)) > 5.0
 
 
 def test_manager_receipts_private_query_gate_commitments():
@@ -419,6 +450,10 @@ def test_manager_receipts_private_query_gate_commitments():
         assert receipt["layers"][0]["key_count"] == 2
         assert len(receipt["layers"][0]["keys_sha256"]) == 64
         assert wrapper.query_gate_keys.shape == (2, 32)
+        fast_weights.set_query_gate_active(False)
+        assert wrapper.query_gate_active is False
+        fast_weights.set_query_gate_active(True)
+        assert wrapper.query_gate_active is True
         assert fast_weights.effective_delta_metrics()["layers"][0][
             "query_conditioned"
         ] is True

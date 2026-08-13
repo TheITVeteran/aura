@@ -48669,3 +48669,47 @@ The semantic and receipt surface passes `31/31`; the engine file passes
 The next bounded action is to optimize ordered verified-answer likelihood
 through the query-addressed tissue. The current token-unigram reconstruction
 proxy discards sequence and position, making treatment/sham ties unsurprising.
+
+## Checkpoint 2026-08-13-388: Verified Semantics Train The Tissue Directly
+
+CP387 established causal neural efficacy but not semantic specificity. Its
+fast-weight optimizer reconstructed an unordered unigram distribution of the
+verified answer tokens from a pooled workspace state. That objective discarded
+token order, answer position and autoregressive transitions; a matched wrong
+answer could perturb the decoder just as productively as the verified answer.
+
+CP388 replaces that proxy for admitted teaching events with ordered
+teacher-forced next-token cross-entropy over the exact private answer span.
+The gradient traverses the real frozen checkpoint and attached temporary
+synapses. The teacher sequence never enters the later evaluation context. The
+query gate is suspended only while fitting the private trajectory and restored
+before every capability canary, gain-search arm and teacher-free causal probe.
+Treatment and deterministic sham receive the same optimizer, steps, line-search
+evaluations, token count and layer count. Resource receipts now charge the full
+sequence across all layers rather than the old 16-slot recurrent-window proxy.
+
+On the same frozen Qwen2.5-1.5B counterexample, treatment loss fell monotonically
+from `1.005094` to `0.248669`. The teacher-free neural probe changed tokens and
+rose from `0.25` to `0.502315`, while the equal-compute wrong-target sham reached
+`0.361875`. Both arms are charged exactly `224224` training layer applications;
+the incremental treatment advantage is `0.14044`. Protected canaries found no
+new regression, and the signed matched-control receipt accepted the treatment.
+This is the first bounded treatment-specific episodic-tissue effect in this
+programme.
+
+The boundary remains important. The adapted probe is improved but not task
+correct, so the disposition is
+`accepted_probe_not_output_under_incumbent_policy`. The complete system's final
+task answer still comes from independently verified executable reasoning;
+disabling adaptation preserves it and disabling the executable producer removes
+it. CP388 therefore proves ordered neural learning and a treatment-specific
+causal probe gain, not a task-level tissue lift, general reasoning gain, fusion,
+frontier result or `WOW Signal`.
+
+The semantic mechanism file passes `21/21`; engine and receipt contracts pass
+`72/72`; fast-weight contracts pass `48/48`. Final smoke and static evidence are
+recorded in
+`artifacts/closeout/latent_cortex/cp388_ordered_verified_answer_learning.json`.
+The next bounded action is to move this now-valid semantic objective to a
+decoder-effective plasticity site and require the teacher-free tissue decode to
+satisfy the task verifier outright.

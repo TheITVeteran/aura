@@ -132,7 +132,47 @@ def build_layerwise_trajectory_directions(
     return directions
 
 
+def build_teacher_forced_answer_loss(
+    model: Any,
+    context_tokens: Sequence[int],
+    *,
+    answer_token_count: int,
+):
+    """Return ordered next-token CE for a private verified answer trajectory."""
+
+    import mlx.core as mx
+    import mlx.nn as nn
+
+    context = [int(token) for token in context_tokens]
+    if (
+        type(answer_token_count) is not int
+        or answer_token_count <= 0
+        or answer_token_count >= len(context)
+    ):
+        raise ValueError("teacher-forced answer span is invalid")
+    vocab_size = int(model.model.embed_tokens.weight.shape[0])
+    if any(token < 0 or token >= vocab_size for token in context):
+        raise ValueError("teacher-forced context contains an invalid token")
+    model_inputs = mx.array([context[:-1]])
+    answer_targets = mx.array([context[-answer_token_count:]])
+    answer_start = len(context) - answer_token_count - 1
+
+    def loss():
+        logits = model(model_inputs)
+        predicted = logits[
+            :, answer_start : answer_start + answer_token_count, :
+        ]
+        return nn.losses.cross_entropy(
+            predicted.astype(mx.float32),
+            answer_targets,
+            reduction="mean",
+        )
+
+    return loss
+
+
 __all__ = [
     "build_contrastive_semantic_seeds",
     "build_layerwise_trajectory_directions",
+    "build_teacher_forced_answer_loss",
 ]

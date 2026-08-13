@@ -1,0 +1,68 @@
+{
+  "schema": "aura.closeout.latent_cortex_checkpoint.v1",
+  "checkpoint": "CP388",
+  "title": "Episodic tissue learns ordered verified-answer likelihood",
+  "source_parent": "6b1ee0a274738ecbae4455f5e48ab11209e5bdf1",
+  "implementation": {
+    "objective": "teacher_forced_ordered_next_token_cross_entropy",
+    "answer_sequence_and_position_preserved": true,
+    "teacher_removed_before_probe": true,
+    "query_gate_suspended_only_during_private_fit": true,
+    "query_gate_restored_before_canaries_and_probe": true,
+    "treatment_and_sham_compute_matched": true,
+    "full_sequence_full_layer_training_accounted": true,
+    "checkpoint_parameters_unchanged": true,
+    "exact_episodic_erase_preserved": true
+  },
+  "bounded_real_checkpoint_result": {
+    "model": "mlx-community/Qwen2.5-1.5B-Instruct-4bit",
+    "task_registry": "2026.08.06.1",
+    "domain": "novel_algorithms",
+    "difficulty": 2,
+    "seed": 41037613,
+    "ordered_loss_initial": 1.0050944089889526,
+    "ordered_loss_final": 0.24866905808448792,
+    "baseline_score": 0.25,
+    "treatment_score": 0.502315,
+    "matched_sham_score": 0.361875,
+    "incremental_gain_over_sham": 0.14044,
+    "treatment_training_layer_apps": 224224,
+    "sham_training_layer_apps": 224224,
+    "compute_matched": true,
+    "token_sequence_changed": true,
+    "protected_canary_regressions": [],
+    "canary_decision": "accepted",
+    "disposition": "accepted_probe_not_output_under_incumbent_policy",
+    "runtime_receipt_sha256": "c4927a0d87e7a686500e9909ee47b0d384c15b208c0454e9400588346fe913b3",
+    "learning_receipt_sha256": "073195fa1b136f5c7696cf927c9d5ff15c0c3b2e3690bee028166172603c33ff",
+    "matched_compute_receipt_sha256": "4ede588b381d233b6264bc2754f64a56dacd8f15cc78471173751addb7961e4e"
+  },
+  "system_result": {
+    "vanilla_correct": 0,
+    "complete_system_correct": 1,
+    "adaptation_ablation_correct": 1,
+    "executable_ablation_correct": 0,
+    "system_gain_source": "executable_reasoning",
+    "neural_probe_task_correct": false
+  },
+  "validation": {
+    "semantic_mechanism_file": "21 passed",
+    "engine_and_receipt_files": "72 passed",
+    "fast_weight_file": "48 passed",
+    "canonical_smoke": "104 passed",
+    "ruff": "pass",
+    "byte_compile": "pass",
+    "diff_check": "pass"
+  },
+  "claims": {
+    "ordered_neural_learning_mechanism_proven": true,
+    "treatment_specific_probe_gain_observed": true,
+    "task_level_neural_tissue_gain_proven": false,
+    "general_reasoning_gain_proven": false,
+    "fusion_authorized": false,
+    "ordinary_serving_authorized": false,
+    "frontier_reasoning_proven": false,
+    "wow_signal": false
+  },
+  "next_bounded_action": "Move the verified semantic correction to a decoder-effective plasticity site and require a teacher-free tissue decode to satisfy the task verifier, not merely improve its partial score."
+}
