@@ -361,7 +361,13 @@ class GlobalWorkspace:
         and forces genuine competition.
     """
 
-    _INHIBIT_TICKS: int = 1       # One refractory tick keeps competition moving without winner lock-in
+    _INHIBIT_TICKS: int = 1       # Retained for the safety-inhibition path; see _fatigue for the refractory
+    #: How much a win reduces that source's next effective priority, and how
+    #: fast it recovers. 0.15 is large enough to let a 0.02 priority gap rotate
+    #: and small enough that a 0.79 gap (urgent vs idle) still dominates.
+    _WINNER_FATIGUE: float = 0.15
+    _MAX_FATIGUE: float = 0.30
+    _FATIGUE_RECOVERY: float = 0.075
     _MAX_CANDIDATES: int = 20     # Hard cap — prevents memory leak if submissions pile up
     _IGNITION_THRESHOLD: float = 0.6  # Priority above which workspace "ignites"
     _PHI_PRIORITY_BOOST: float = 0.15  # Max priority bonus for high-Φ sources
@@ -371,6 +377,8 @@ class GlobalWorkspace:
         self._lock: asyncio.Lock | None = None
         self._candidates: list[CognitiveCandidate] = []
         self._inhibited: dict[str, int] = {}   # source -> ticks_remaining
+        #: source -> current adaptation penalty on effective priority.
+        self._fatigue: dict[str, float] = {}
         self._processors: list[ProcessorFn] = []
         # Retention comes from the shared working-history policy rather than a
         # hardcoded 100, and lives in a self-bounding buffer. Both were the
@@ -899,6 +907,12 @@ class GlobalWorkspace:
                 for src, count in self._inhibited.items()
                 if count > 1
             }
+            # Adaptation recovers whether or not the source bid this tick.
+            self._fatigue = {
+                src: value - self._FATIGUE_RECOVERY
+                for src, value in self._fatigue.items()
+                if value - self._FATIGUE_RECOVERY > 1e-9
+            }
             pending_count = len(self._candidates)
             inhibited_sources = set(self._inhibited)
 
@@ -939,14 +953,45 @@ class GlobalWorkspace:
             if not self._candidates:
                 return None
 
-            # Sort by effective priority (highest wins)
-            self._candidates.sort(key=lambda c: c.effective_priority, reverse=True)
+            # Sort by effective priority MINUS adaptation, so the coalition
+            # that just held the workspace has to out-bid the field by more
+            # than its fatigue to hold it again.
+            self._candidates.sort(
+                key=lambda c: c.effective_priority - self._fatigue.get(c.source, 0.0),
+                reverse=True,
+            )
             winner = self._candidates[0]
             losers = self._candidates[1:]
 
-            # Inhibit all losers
-            for loser in losers:
-                self._inhibited[loser.source] = self._INHIBIT_TICKS
+            # Adaptation on the winner, not exclusion of the losers.
+            #
+            # This used to inhibit every LOSER for a tick, and inhibition is
+            # checked in submit(), so the sources that had just lost could not
+            # bid on the next tick — leaving the winner unopposed, winning
+            # again, and inhibiting them again. Measured: four sources bidding
+            # every tick at 0.90 / 0.88 / 0.86 / 0.84 gave the top source 24
+            # wins out of 24 while the other three were refused half their
+            # submissions. A two-point priority difference bought a permanent
+            # monopoly of the broadcast — the exact thing the class docstring
+            # says this prevents ("stops the same subsystem from dominating
+            # every cycle and forces genuine competition").
+            #
+            # Hard-inhibiting the WINNER instead is worse in a subtler way. It
+            # was tried and measured: an urgent source at 0.99 and an idle one
+            # at 0.20 then alternated 50/50, because a hard block ignores how
+            # much stronger the bid was, and a source bidding ALONE won only
+            # half its ticks — silence with nothing else to attend to.
+            #
+            # So the recent winner is FATIGUED rather than excluded: its
+            # effective priority is reduced for a few ticks and recovers. This
+            # is spike-frequency adaptation, the mechanism the biology actually
+            # uses for the same job. Near-equal sources rotate, a genuinely
+            # urgent source still outbids a weak one through the penalty, and a
+            # lone source keeps the workspace because nothing outbids it.
+            self._fatigue[winner.source] = min(
+                self._MAX_FATIGUE,
+                self._fatigue.get(winner.source, 0.0) + self._WINNER_FATIGUE,
+            )
 
             # Clear candidate pool
             self._candidates = []
