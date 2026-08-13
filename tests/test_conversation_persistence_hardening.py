@@ -344,3 +344,89 @@ def test_recover_last_session_returns_none_when_nothing_was_ever_said(tmp_path):
     store = ConversationPersistence(tmp_path / "conversations.db")
     store.start_session({"kind": "boot"})
     assert store.recover_last_session() is None
+
+
+def test_conversation_persistence_enforces_exact_session_principal(tmp_path):
+    store = ConversationPersistence(tmp_path / "principal-bound.db")
+    session_id = "paired-session-a"
+    store.record_turn(
+        "user",
+        "principal A secret",
+        session_id=session_id,
+        principal_id="paired-device:a",
+        principal_surface="paired_device",
+    )
+
+    assert store.get_session_history(
+        session_id,
+        principal_id="paired-device:a",
+        principal_surface="paired_device",
+    )[0]["content"] == "principal A secret"
+    assert store.get_session_history(
+        session_id,
+        principal_id="paired-device:b",
+        principal_surface="paired_device",
+    ) == []
+    with pytest.raises(PermissionError, match="principal mismatch"):
+        store.record_turn(
+            "user",
+            "principal B takeover",
+            session_id=session_id,
+            principal_id="paired-device:b",
+            principal_surface="paired_device",
+        )
+
+
+def test_paired_surface_cannot_adopt_legacy_unbound_transcript(tmp_path):
+    store = ConversationPersistence(tmp_path / "legacy-binding.db")
+    session_id = "legacy-owner-session"
+    store.record_turn("user", "owner legacy history", session_id=session_id)
+
+    assert store.get_session_history(
+        session_id,
+        principal_id="paired-device:a",
+        principal_surface="paired_device",
+    ) == []
+    with pytest.raises(PermissionError, match="only be adopted by the owner"):
+        store.record_turn(
+            "user",
+            "paired claim",
+            session_id=session_id,
+            principal_id="paired-device:a",
+            principal_surface="paired_device",
+        )
+
+    store.record_turn(
+        "aura",
+        "owner continuity",
+        session_id=session_id,
+        principal_id="bryan",
+        principal_surface="owner",
+    )
+    assert len(
+        store.get_session_history(
+            session_id,
+            principal_id="bryan",
+            principal_surface="owner",
+        )
+    ) == 2
+
+
+def test_recent_sessions_are_principal_scoped(tmp_path):
+    store = ConversationPersistence(tmp_path / "principal-recent.db")
+    for suffix in ("a", "b"):
+        store.record_turn(
+            "user",
+            f"secret {suffix}",
+            session_id=f"session-{suffix}",
+            principal_id=f"paired-device:{suffix}",
+            principal_surface="paired_device",
+        )
+
+    visible = store.get_recent_sessions(
+        limit=10,
+        with_turns_only=True,
+        principal_id="paired-device:a",
+        principal_surface="paired_device",
+    )
+    assert [session["id"] for session in visible] == ["session-a"]

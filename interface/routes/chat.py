@@ -1826,6 +1826,7 @@ async def _persist_pending_conversation_user(
         if not callable(record_turn):
             return False
 
+        scope_kwargs = _chat_principal_scope_kwargs()
         await asyncio.wait_for(
             asyncio.to_thread(
                 record_turn,
@@ -1834,6 +1835,7 @@ async def _persist_pending_conversation_user(
                 origin="desktop_ui",
                 cid=f"{str(exchange_id or '')[:64]}:user",
                 session_id=str(session_id or "")[:64] or None,
+                **scope_kwargs,
             ),
             timeout=_DURABLE_CONVERSATION_CONTEXT_TIMEOUT_S,
         )
@@ -1847,6 +1849,7 @@ async def _persist_pending_conversation_user(
 async def _begin_logged_exchange(user_msg: str, *, session_id: str = "") -> str:
     """Create and durably pre-log an in-flight exchange."""
     exchange_id = _new_exchange_id()
+    principal_id, principal_surface = _chat_memory_identity()
     async with _get_convo_lock():
         _conversation_log.append(
             {
@@ -1856,6 +1859,8 @@ async def _begin_logged_exchange(user_msg: str, *, session_id: str = "") -> str:
                 "aura": "",
                 "status": "pending",
                 "session_id": str(session_id or "")[:64],
+                "principal_id": principal_id,
+                "principal_surface": principal_surface,
                 "user_persisted": False,
             }
         )
@@ -1895,10 +1900,13 @@ async def _complete_logged_exchange(
                     break
 
         if target is None:
+            principal_id, principal_surface = _chat_memory_identity()
             target = {
                 "id": exchange_id or _new_exchange_id(),
                 "timestamp": _utc_now_iso(),
                 "user": recorded_user,
+                "principal_id": principal_id,
+                "principal_surface": principal_surface,
             }
             _conversation_log.append(target)
 
@@ -2131,6 +2139,7 @@ async def _run_chat_turn_memory_log_item(payload: dict[str, str]) -> None:
     session_id = str(payload.get("session_id") or "")
     chat_origin = str(payload.get("chat_origin") or "unknown")
     user_id = str(payload.get("user_id") or "").strip()[:160]
+    principal_surface = str(payload.get("principal_surface") or "").strip().casefold()[:32]
     try:
         from core.conversation.response_reliability import (
             assess_conversation_learning_admission,
@@ -2160,6 +2169,8 @@ async def _run_chat_turn_memory_log_item(payload: dict[str, str]) -> None:
                     "conversation_lane": True,
                     "origin": chat_origin,
                     "user_id": user_id,
+                    "principal_id": user_id,
+                    "principal_surface": principal_surface,
                 },
             ),
             timeout=_CHAT_TURN_MEMORY_LOG_TIMEOUT_S,
@@ -2214,6 +2225,7 @@ def _schedule_chat_turn_memory_log(
     session_id: str,
     chat_origin: str,
     user_id: str,
+    principal_surface: str = "",
 ) -> bool:
     """Queue post-response memory logging without dropping turns under normal backpressure."""
     try:
@@ -2237,6 +2249,7 @@ def _schedule_chat_turn_memory_log(
                     "session_id": str(session_id or ""),
                     "chat_origin": str(chat_origin or "unknown"),
                     "user_id": str(user_id or "").strip()[:160],
+                    "principal_surface": str(principal_surface or "").strip().casefold()[:32],
                 }
             )
 
@@ -2962,6 +2975,20 @@ def _chat_memory_identity(
         principal_surface or _CHAT_REQUEST_SURFACE.get() or ""
     ).strip().casefold()[:32]
     return principal, surface
+
+
+def _chat_principal_scope_kwargs(
+    *,
+    principal_id: str = "",
+    principal_surface: str = "",
+) -> dict[str, str]:
+    principal, surface = _chat_memory_identity(
+        principal_id=principal_id,
+        principal_surface=principal_surface,
+    )
+    if not principal or not surface:
+        return {}
+    return {"principal_id": principal, "principal_surface": surface}
 
 
 def _cross_session_memory_recall_allowed(user_message: str) -> bool:
@@ -4800,6 +4827,38 @@ def _clip_conversation_text(text: Any, *, limit: int = 420) -> str:
     return clipped[: limit - 3].rstrip() + "..."
 
 
+def _conversation_record_visible_to_principal(
+    record: dict[str, Any],
+    *,
+    principal_id: str,
+    principal_surface: str,
+) -> bool:
+    """Authorize a personal conversation record before it becomes context.
+
+    Legacy unbound records predate principal-aware persistence. Only the local
+    owner may adopt or read those records; paired surfaces require an exact
+    principal and surface match.
+    """
+
+    if not principal_id or not principal_surface:
+        return True
+    record_principal = " ".join(
+        str(record.get("principal_id") or record.get("user_id") or "")
+        .strip()
+        .split()
+    )[:160]
+    record_surface = str(
+        record.get("principal_surface") or ""
+    ).strip().casefold()[:32]
+    if record_principal:
+        if record_principal != principal_id:
+            return False
+        if not record_surface:
+            return principal_surface == "owner"
+        return record_surface == principal_surface
+    return principal_surface == "owner"
+
+
 async def _recent_completed_conversation_exchanges(
     *,
     current_user_message: str,
@@ -4808,11 +4867,17 @@ async def _recent_completed_conversation_exchanges(
 ) -> list[dict[str, str]]:
     current = str(current_user_message or "").strip()
     safe_session_id = str(session_id or "")[:64]
+    principal_id, principal_surface = _chat_memory_identity()
     async with _get_convo_lock():
         completed = [
             entry
             for entry in _conversation_log
             if str(entry.get("status") or "complete").strip().lower() == "complete"
+            and _conversation_record_visible_to_principal(
+                entry,
+                principal_id=principal_id,
+                principal_surface=principal_surface,
+            )
             and (
                 not safe_session_id
                 or str(entry.get("session_id") or "")[:64] == safe_session_id
@@ -4914,6 +4979,7 @@ async def _persist_completed_conversation_exchange(
 
         safe_exchange_id = str(exchange_id or uuid.uuid4().hex)[:64]
         safe_session_id = str(session_id or "")[:64]
+        scope_kwargs = _chat_principal_scope_kwargs()
 
         def _commit() -> None:
             if user_already_persisted and callable(record_turn):
@@ -4923,6 +4989,7 @@ async def _persist_completed_conversation_exchange(
                     origin="desktop_ui",
                     cid=f"{safe_exchange_id}:aura",
                     session_id=safe_session_id or None,
+                    **scope_kwargs,
                 )
                 return
             if callable(record_exchange):
@@ -4932,6 +4999,7 @@ async def _persist_completed_conversation_exchange(
                     origin="desktop_ui",
                     cid=safe_exchange_id,
                     session_id=safe_session_id or None,
+                    **scope_kwargs,
                 )
                 return
             record_turn(
@@ -4940,6 +5008,7 @@ async def _persist_completed_conversation_exchange(
                 origin="desktop_ui",
                 cid=f"{safe_exchange_id}:user",
                 session_id=safe_session_id or None,
+                **scope_kwargs,
             )
             record_turn(
                 "aura",
@@ -4947,6 +5016,7 @@ async def _persist_completed_conversation_exchange(
                 origin="desktop_ui",
                 cid=f"{safe_exchange_id}:aura",
                 session_id=safe_session_id or None,
+                **scope_kwargs,
             )
 
         await asyncio.wait_for(
@@ -5274,10 +5344,23 @@ def _load_durable_conversation_exchanges_sync(
 
     safe_session_id = str(session_id or "")[:64]
     fetch_limit = max(8, limit * 6)
+    principal_id, principal_surface = _chat_memory_identity()
+    scope_kwargs = (
+        {
+            "principal_id": principal_id,
+            "principal_surface": principal_surface,
+        }
+        if principal_id and principal_surface
+        else {}
+    )
 
     current_rows: list[dict[str, Any]] = []
     if safe_session_id:
-        history = get_session_history(safe_session_id, limit=fetch_limit)
+        history = get_session_history(
+            safe_session_id,
+            limit=fetch_limit,
+            **scope_kwargs,
+        )
         current_rows = [item for item in list(history or []) if isinstance(item, dict)]
 
     # A restart mints a new session id, so the session a live turn belongs to is
@@ -5305,6 +5388,7 @@ def _load_durable_conversation_exchanges_sync(
                 get_recent_sessions(
                     limit=_DURABLE_CONVERSATION_SESSION_SCAN_LIMIT,
                     with_turns_only=True,
+                    **scope_kwargs,
                 )
                 or []
             )
@@ -5315,7 +5399,10 @@ def _load_durable_conversation_exchanges_sync(
             sessions = [
                 session
                 for session in (
-                    get_recent_sessions(limit=_DURABLE_CONVERSATION_SESSION_SCAN_LIMIT)
+                    get_recent_sessions(
+                        limit=_DURABLE_CONVERSATION_SESSION_SCAN_LIMIT,
+                        **scope_kwargs,
+                    )
                     or []
                 )
                 if isinstance(session, dict)
@@ -5329,7 +5416,11 @@ def _load_durable_conversation_exchanges_sync(
             durable_session_id = str(session.get("id") or "").strip()
             if not durable_session_id or durable_session_id == safe_session_id:
                 continue
-            history = get_session_history(durable_session_id, limit=fetch_limit)
+            history = get_session_history(
+                durable_session_id,
+                limit=fetch_limit,
+                **scope_kwargs,
+            )
             rows.extend(item for item in list(history or []) if isinstance(item, dict))
 
     rows.extend(current_rows)
@@ -5493,7 +5584,16 @@ async def _recall_durable_conversation_snippets(user_message: str, *, limit: int
         if not callable(search):
             return []
         query = f"recent conversation continuity {str(user_message or '').strip()[:160]}"
-        result = search(query, limit=max(1, int(limit)))
+        principal_id, principal_surface = _chat_memory_identity()
+        scope_kwargs = (
+            {
+                "principal_id": principal_id,
+                "principal_surface": principal_surface,
+            }
+            if principal_id and principal_surface
+            else {}
+        )
+        result = search(query, limit=max(1, int(limit)), **scope_kwargs)
         records = await result if hasattr(result, "__await__") else result
         snippets: list[str] = []
         for item in list(records or []):
@@ -5654,8 +5754,17 @@ async def _fetch_deep_memory_context(user_message: str) -> str:
     try:
         from core.memory.rag_bridge import fetch_deep_context
 
+        principal_id, principal_surface = _chat_memory_identity()
         return str(
-            await asyncio.wait_for(fetch_deep_context(user_message), timeout=2.5) or ""
+            await asyncio.wait_for(
+                fetch_deep_context(
+                    user_message,
+                    principal_id=principal_id,
+                    principal_surface=principal_surface,
+                ),
+                timeout=2.5,
+            )
+            or ""
         )
     except TimeoutError:
         logger.debug("Deep memory recall timed out for this turn (backpressure).")
@@ -24565,12 +24674,14 @@ async def _api_chat_turn(body: ChatRequest, request: Request):
 
             _record_recent_response(final_text, _semantic_user_message)
             
+            memory_principal, memory_surface = _chat_memory_identity()
             _schedule_chat_turn_memory_log(
                 user_message=_semantic_user_message,
                 aura_response=final_text,
                 session_id=_chat_session_id,
                 chat_origin=chat_origin,
-                user_id=_profile_user_id,
+                user_id=memory_principal,
+                principal_surface=memory_surface,
             )
             
             lane_status = (

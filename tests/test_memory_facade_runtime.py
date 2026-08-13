@@ -1,6 +1,6 @@
-import json
 import asyncio
 import hashlib
+import json
 import time
 from types import SimpleNamespace
 
@@ -120,6 +120,110 @@ async def test_memory_facade_search_supports_sync_vector_and_graph():
 
     assert any("vector memory about Bryan" == item["content"] for item in results)
     assert any("graph memory about Bryan" == item["content"] for item in results)
+
+
+@pytest.mark.asyncio
+async def test_memory_facade_scopes_personal_recall_but_keeps_general_knowledge():
+    facade = MemoryFacade()
+    facade._vector = SimpleNamespace(
+        search_similar=lambda _query, limit=5: [
+            {
+                "id": "general",
+                "content": "Octopuses have distributed neural control.",
+                "metadata": {"source": "encyclopedia"},
+            },
+            {
+                "id": "owner",
+                "content": "owner private conversation",
+                "metadata": {
+                    "conversation_lane": True,
+                    "principal_id": "bryan",
+                    "principal_surface": "owner",
+                },
+            },
+            {
+                "id": "paired-a",
+                "content": "paired A private conversation",
+                "metadata": {
+                    "conversation_lane": True,
+                    "principal_id": "paired-device:a",
+                    "principal_surface": "paired_device",
+                },
+            },
+            {
+                "id": "legacy",
+                "content": "legacy unbound personal conversation",
+                "metadata": {"conversation_lane": True},
+            },
+            {
+                "id": "profile-b",
+                "content": "paired B profile preference",
+                "metadata": {
+                    "user_id": "paired-device:b",
+                    "principal_surface": "paired_device",
+                    "source": "profile_learning",
+                },
+            },
+        ]
+    )
+
+    paired = await facade.search(
+        "conversation",
+        limit=10,
+        principal_id="paired-device:a",
+        principal_surface="paired_device",
+    )
+    assert {item["id"] for item in paired} == {"general", "paired-a"}
+
+    owner = await facade.search(
+        "conversation",
+        limit=10,
+        principal_id="bryan",
+        principal_surface="owner",
+    )
+    assert {item["id"] for item in owner} == {"general", "owner", "legacy"}
+
+
+@pytest.mark.asyncio
+async def test_scoped_memory_search_overfetches_past_foreign_ranked_results():
+    observed_limits = []
+    foreign = [
+        {
+            "id": f"foreign-{index}",
+            "content": f"foreign private record {index}",
+            "metadata": {
+                "conversation_lane": True,
+                "principal_id": "paired-device:b",
+                "principal_surface": "paired_device",
+            },
+        }
+        for index in range(8)
+    ]
+    own = {
+        "id": "own-after-foreign",
+        "content": "authorized record behind foreign ranks",
+        "metadata": {
+            "conversation_lane": True,
+            "principal_id": "paired-device:a",
+            "principal_surface": "paired_device",
+        },
+    }
+
+    def _search(_query, limit=5):
+        observed_limits.append(limit)
+        return (foreign + [own])[:limit]
+
+    facade = MemoryFacade()
+    facade._vector = SimpleNamespace(search_similar=_search)
+    results = await facade.search(
+        "private record",
+        limit=1,
+        principal_id="paired-device:a",
+        principal_surface="paired_device",
+    )
+
+    assert observed_limits == [32]
+    assert [item["id"] for item in results] == ["own-after-foreign"]
 
 
 @pytest.mark.asyncio

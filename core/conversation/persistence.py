@@ -29,6 +29,8 @@ MAX_CID_CHARS = 128
 MAX_CONTENT_CHARS = 2_000_000
 MAX_QUERY_LIMIT = 1000
 CONVERSATION_DB_BUSY_TIMEOUT_MS = 1000
+MAX_PRINCIPAL_CHARS = 160
+MAX_PRINCIPAL_SURFACE_CHARS = 32
 
 _PERSISTENCE_ERRORS = (
     AttributeError,
@@ -118,6 +120,40 @@ def _safe_limit(value: object, default: int) -> int:
     return max(1, min(MAX_QUERY_LIMIT, limit))
 
 
+def _principal_binding(
+    principal_id: object = "",
+    principal_surface: object = "",
+) -> tuple[str, str]:
+    principal = " ".join(
+        _safe_text(principal_id, max_chars=MAX_PRINCIPAL_CHARS).strip().split()
+    )
+    surface = _safe_text(
+        principal_surface,
+        max_chars=MAX_PRINCIPAL_SURFACE_CHARS,
+    ).strip().casefold()
+    if bool(principal) != bool(surface):
+        raise ValueError("conversation principal binding requires id and surface")
+    return principal, surface
+
+
+def _session_metadata(value: object) -> dict[str, Any]:
+    if isinstance(value, dict):
+        return dict(value)
+    try:
+        decoded = json.loads(str(value or "{}"))
+    except (TypeError, ValueError, json.JSONDecodeError):
+        return {}
+    return dict(decoded) if isinstance(decoded, dict) else {}
+
+
+def _metadata_principal_binding(metadata: object) -> tuple[str, str]:
+    payload = _session_metadata(metadata)
+    return _principal_binding(
+        payload.get("principal_id") or "",
+        payload.get("principal_surface") or "",
+    )
+
+
 def _validated_existing_turn_id(
     row: sqlite3.Row | None,
     *,
@@ -191,7 +227,14 @@ class ConversationPersistence:
         return session_id
 
     @staticmethod
-    def _ensure_session_row(con: sqlite3.Connection, session_id: str, now: float) -> None:
+    def _ensure_session_row(
+        con: sqlite3.Connection,
+        session_id: str,
+        now: float,
+        *,
+        principal_id: str = "",
+        principal_surface: str = "",
+    ) -> None:
         """Create an explicit UI session row before inserting turns.
 
         Desktop clients may send stable session ids that were not produced by
@@ -200,9 +243,46 @@ class ConversationPersistence:
         failing a foreign-key insert.
         """
 
+        principal, surface = _principal_binding(principal_id, principal_surface)
+        metadata = (
+            {"principal_id": principal, "principal_surface": surface}
+            if principal
+            else {}
+        )
         con.execute(
             "INSERT OR IGNORE INTO sessions VALUES (?,?,?,?)",
-            (session_id, now, now, "{}"),
+            (session_id, now, now, json.dumps(metadata, sort_keys=True)),
+        )
+
+        if not principal:
+            return
+        row = con.execute(
+            "SELECT metadata FROM sessions WHERE id = ?",
+            (session_id,),
+        ).fetchone()
+        existing_principal, existing_surface = _metadata_principal_binding(
+            row["metadata"] if row is not None else "{}"
+        )
+        if existing_principal:
+            if (existing_principal, existing_surface) != (principal, surface):
+                raise PermissionError("conversation session principal mismatch")
+            return
+
+        turn_count = int(
+            con.execute(
+                "SELECT COUNT(*) AS count FROM turns WHERE session_id = ?",
+                (session_id,),
+            ).fetchone()["count"]
+        )
+        if turn_count and surface != "owner":
+            raise PermissionError(
+                "unbound conversation history may only be adopted by the owner surface"
+            )
+        payload = _session_metadata(row["metadata"] if row is not None else "{}")
+        payload.update({"principal_id": principal, "principal_surface": surface})
+        con.execute(
+            "UPDATE sessions SET metadata = ? WHERE id = ?",
+            (json.dumps(payload, ensure_ascii=False, sort_keys=True), session_id),
         )
 
     def record_turn(
@@ -212,6 +292,8 @@ class ConversationPersistence:
         origin: str = "",
         cid: str | None = None,
         session_id: str | None = None,
+        principal_id: str = "",
+        principal_surface: str = "",
     ) -> str:
         sid = _safe_text(session_id or self._current_session_id, max_chars=64)
         if not sid:
@@ -226,7 +308,13 @@ class ConversationPersistence:
         inserted = False
         with self._write_lock, connecting(self._connect()) as con:
             con.execute("BEGIN IMMEDIATE")
-            self._ensure_session_row(con, sid, now)
+            self._ensure_session_row(
+                con,
+                sid,
+                now,
+                principal_id=principal_id,
+                principal_surface=principal_surface,
+            )
             if cid:
                 existing = con.execute(
                     "SELECT id, role, content FROM turns "
@@ -276,6 +364,8 @@ class ConversationPersistence:
         origin: str = "",
         cid: str | None = None,
         session_id: str | None = None,
+        principal_id: str = "",
+        principal_surface: str = "",
     ) -> tuple[str, str]:
         """Atomically persist a completed user/Aura exchange."""
 
@@ -305,7 +395,13 @@ class ConversationPersistence:
 
         with self._write_lock, connecting(self._connect()) as con:
             con.execute("BEGIN IMMEDIATE")
-            self._ensure_session_row(con, sid, now)
+            self._ensure_session_row(
+                con,
+                sid,
+                now,
+                principal_id=principal_id,
+                principal_surface=principal_surface,
+            )
             existing_user = (
                 con.execute(
                     "SELECT id, role, content FROM turns "
@@ -449,12 +545,31 @@ class ConversationPersistence:
         self,
         session_id: str | None = None,
         limit: int = 100,
+        *,
+        principal_id: str = "",
+        principal_surface: str = "",
     ) -> list[dict[str, Any]]:
         sid = _safe_text(session_id or self._current_session_id, max_chars=64)
         if not sid:
             return []
         limit = _safe_limit(limit, 100)
+        principal, surface = _principal_binding(principal_id, principal_surface)
         with connecting(self._connect()) as con:
+            if principal:
+                session = con.execute(
+                    "SELECT metadata FROM sessions WHERE id = ?",
+                    (sid,),
+                ).fetchone()
+                if session is None:
+                    return []
+                bound_principal, bound_surface = _metadata_principal_binding(
+                    session["metadata"]
+                )
+                if bound_principal:
+                    if (bound_principal, bound_surface) != (principal, surface):
+                        return []
+                elif surface != "owner":
+                    return []
             rows = con.execute(
                 "SELECT * FROM ("
                 "SELECT * FROM turns WHERE session_id = ? "
@@ -465,7 +580,12 @@ class ConversationPersistence:
         return [dict(r) for r in rows]
 
     def get_recent_sessions(
-        self, limit: int = 10, *, with_turns_only: bool = False
+        self,
+        limit: int = 10,
+        *,
+        with_turns_only: bool = False,
+        principal_id: str = "",
+        principal_surface: str = "",
     ) -> list[dict[str, Any]]:
         """Most recently active sessions, newest first.
 
@@ -475,15 +595,32 @@ class ConversationPersistence:
         cost in practice.
         """
         limit = _safe_limit(limit, 10)
+        principal, surface = _principal_binding(principal_id, principal_surface)
         having = "HAVING COUNT(t.id) > 0 " if with_turns_only else ""
         with connecting(self._connect()) as con:
             rows = con.execute(
                 "SELECT s.*, COUNT(t.id) as turn_count "
                 "FROM sessions s LEFT JOIN turns t ON t.session_id = s.id "
                 f"GROUP BY s.id {having}ORDER BY s.last_active DESC LIMIT ?",
-                (limit,),
+                (MAX_QUERY_LIMIT if principal else limit,),
             ).fetchall()
-        return [dict(r) for r in rows]
+        sessions = [dict(r) for r in rows]
+        if principal:
+            authorized: list[dict[str, Any]] = []
+            for session in sessions:
+                bound_principal, bound_surface = _metadata_principal_binding(
+                    session.get("metadata")
+                )
+                if bound_principal:
+                    if (bound_principal, bound_surface) != (principal, surface):
+                        continue
+                elif surface != "owner":
+                    continue
+                authorized.append(session)
+                if len(authorized) >= limit:
+                    break
+            return authorized
+        return sessions[:limit]
 
     def recover_last_session(self) -> str | None:
         """Return the most recent session that actually holds turns.

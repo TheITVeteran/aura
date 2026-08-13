@@ -8,20 +8,26 @@ kept counts, latency) so memory quality is a measured quantity, not a
 vibe — this is what makes "memory expands effective model capacity" a
 checkable claim.
 """
-from core.runtime.errors import record_degradation
 import asyncio
 import logging
 import time
-from typing import Optional
+
 from core.container import ServiceContainer
 from core.memory.recall_telemetry import get_recall_telemetry
 from core.memory.temporal_rag import TimeWeightedRetriever
+from core.runtime.errors import record_degradation
 
 logger = logging.getLogger("Aura.RAGBridge")
 
 temporal_retriever = TimeWeightedRetriever(decay_rate=0.012)
 
-async def fetch_deep_context(user_query: str, threshold_words: int = 4) -> str:
+async def fetch_deep_context(
+    user_query: str,
+    threshold_words: int = 4,
+    *,
+    principal_id: str = "",
+    principal_surface: str = "",
+) -> str:
     """
     Silently pulls vectorized memories related to the query.
     Bypasses short, meaningless interactions (like "hey") to save compute.
@@ -60,10 +66,23 @@ async def fetch_deep_context(user_query: str, threshold_words: int = 4) -> str:
         if search is None:
             _record(0, 0, skipped_reason="memory_facade_has_no_search")
             return ""
+        scope_kwargs = (
+            {
+                "principal_id": principal_id,
+                "principal_surface": principal_surface,
+            }
+            if principal_id and principal_surface
+            else {}
+        )
         if asyncio.iscoroutinefunction(search):
-            raw_results = await search(query=user_query, limit=10)
+            raw_results = await search(query=user_query, limit=10, **scope_kwargs)
         else:
-            raw_results = await asyncio.to_thread(search, query=user_query, limit=10)
+            raw_results = await asyncio.to_thread(
+                search,
+                query=user_query,
+                limit=10,
+                **scope_kwargs,
+            )
 
         if not raw_results:
             _record(0, 0)

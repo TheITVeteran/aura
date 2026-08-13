@@ -47585,3 +47585,44 @@ response never reached the comparer. A fresh CP349-bound case-zero diagnostic
 must pass before the full immutable lifecycle and two-stage qualified
 activation are retried. No broad reasoning, frontier, `WOW Signal`, soak or
 Aura 1.0 claim follows.
+
+## Checkpoint 2026-08-13-350: Conversation Recall Is Principal-Bound End to End
+
+The semantic review of the complete chat route found that authenticated paired
+devices could enter a conversation-only surface yet receive personal context
+from globally scanned transcript sessions, unscoped semantic-memory search or
+the deep RAG bridge. The response wire contract was least-privilege, but the
+context assembled before generation was not. This was a cross-principal data
+boundary defect, not a presentation issue.
+
+Conversation persistence now binds each new live session atomically to the
+authenticated relational principal and surface. A session cannot be rebound;
+paired devices cannot adopt historical unbound rows; scoped history and recent-
+session queries return only the exact binding. Trusted owner continuity remains
+available across pre-migration unbound history, and an owner write can adopt
+that legacy session without exposing it to another surface.
+
+The same principal and surface now travel through pending-turn persistence,
+completed exchange persistence, the in-memory transcript, asynchronous episodic
+logging, durable semantic recall and the deep RAG bridge. The unified memory
+facade authorizes personal records before they become cognitive context while
+leaving non-personal knowledge shared. Scoped retrieval overfetches within a
+fixed cap before filtering, so a different principal's high-ranked records
+cannot starve the caller's own authorized memory. Legacy personal vector rows
+without a surface remain owner-only.
+
+Regression coverage uses two independent paired principals and proves atomic
+write stamping, session-rebind refusal, legacy-adoption refusal, scoped recent-
+session scans, in-memory isolation, durable transcript isolation, semantic
+memory isolation, retained general knowledge, bounded overfetch and exact RAG
+scope propagation. The four primary affected suites pass `67/67`; the expanded
+chat/device/memory group passes `93/93`; the selected broader conversation-lane
+contracts pass `27/27`; canonical smoke passes `104/104`; Ruff, compilation,
+governance lint, layering and diff hygiene pass.
+
+This checkpoint closes the first P1 semantic-review finding. It does not claim
+that the remaining authenticity, forced-preemption, generation-memory guard,
+effect-proof, persistence-timeout, regeneration, queue-race or `/api/think`
+findings are closed. The detached CP349 resident promotion remains separately
+source-bound; its partial lifecycle evidence is not interpreted here as serving
+authority, broad reasoning, frontier performance or a `WOW Signal`.

@@ -1,5 +1,6 @@
 import pytest
 
+from core.conversation.persistence import ConversationPersistence
 from interface.routes import chat as chat_routes
 
 
@@ -372,3 +373,118 @@ def test_earlier_conversations_stay_earlier(monkeypatch):
     )
 
     assert [e["user"] for e in exchanges] == ["first question", "second question"]
+
+
+@pytest.mark.asyncio
+async def test_in_memory_recall_never_crosses_paired_principals():
+    async with chat_routes._get_convo_lock():
+        chat_routes._conversation_log[:] = [
+            {
+                "id": "a",
+                "user": "A private question",
+                "aura": "A private answer",
+                "status": "complete",
+                "principal_id": "paired-device:a",
+                "principal_surface": "paired_device",
+            },
+            {
+                "id": "b",
+                "user": "B private question",
+                "aura": "B private answer",
+                "status": "complete",
+                "principal_id": "paired-device:b",
+                "principal_surface": "paired_device",
+            },
+            {
+                "id": "legacy",
+                "user": "Legacy owner question",
+                "aura": "Legacy owner answer",
+                "status": "complete",
+            },
+        ]
+
+    principal_token = chat_routes._CHAT_REQUEST_PRINCIPAL.set("paired-device:a")
+    surface_token = chat_routes._CHAT_REQUEST_SURFACE.set("paired_device")
+    try:
+        exchanges = await chat_routes._recent_completed_conversation_exchanges(
+            current_user_message="recall",
+            limit=10,
+        )
+    finally:
+        chat_routes._CHAT_REQUEST_SURFACE.reset(surface_token)
+        chat_routes._CHAT_REQUEST_PRINCIPAL.reset(principal_token)
+        async with chat_routes._get_convo_lock():
+            chat_routes._conversation_log.clear()
+
+    assert [(item["user"], item["aura"]) for item in exchanges] == [
+        ("A private question", "A private answer")
+    ]
+
+
+def test_durable_loader_never_crosses_paired_principals(monkeypatch, tmp_path):
+    persistence = ConversationPersistence(tmp_path / "scoped-chat.db")
+    for suffix in ("a", "b"):
+        persistence.record_exchange(
+            f"{suffix} private question",
+            f"{suffix} private answer",
+            session_id=f"session-{suffix}",
+            cid=f"exchange-{suffix}",
+            principal_id=f"paired-device:{suffix}",
+            principal_surface="paired_device",
+        )
+    _install(monkeypatch, persistence)
+
+    principal_token = chat_routes._CHAT_REQUEST_PRINCIPAL.set("paired-device:a")
+    surface_token = chat_routes._CHAT_REQUEST_SURFACE.set("paired_device")
+    try:
+        exchanges = chat_routes._load_durable_conversation_exchanges_sync(
+            limit=10,
+            session_id="session-a",
+        )
+    finally:
+        chat_routes._CHAT_REQUEST_SURFACE.reset(surface_token)
+        chat_routes._CHAT_REQUEST_PRINCIPAL.reset(principal_token)
+
+    assert [(item["user"], item["aura"]) for item in exchanges] == [
+        ("a private question", "a private answer")
+    ]
+
+
+@pytest.mark.asyncio
+async def test_live_chat_logger_atomically_stamps_authenticated_principal(
+    monkeypatch,
+    tmp_path,
+):
+    persistence = ConversationPersistence(tmp_path / "chat-write-scope.db")
+    _install(monkeypatch, persistence)
+    principal_token = chat_routes._CHAT_REQUEST_PRINCIPAL.set("paired-device:a")
+    surface_token = chat_routes._CHAT_REQUEST_SURFACE.set("paired_device")
+    try:
+        exchange_id = await chat_routes._begin_logged_exchange(
+            "store this for principal A",
+            session_id="paired-session-a",
+        )
+        await chat_routes._complete_logged_exchange(
+            exchange_id,
+            "store this for principal A",
+            "principal A reply",
+            record_experience=False,
+        )
+    finally:
+        chat_routes._CHAT_REQUEST_SURFACE.reset(surface_token)
+        chat_routes._CHAT_REQUEST_PRINCIPAL.reset(principal_token)
+        async with chat_routes._get_convo_lock():
+            chat_routes._conversation_log.clear()
+
+    assert len(
+        persistence.get_session_history(
+            "paired-session-a",
+            principal_id="paired-device:a",
+            principal_surface="paired_device",
+        )
+    ) == 2
+    assert persistence.get_session_history(
+        "paired-session-a",
+        principal_id="paired-device:b",
+        principal_surface="paired_device",
+    ) == []

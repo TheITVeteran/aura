@@ -61,6 +61,36 @@ class TestBridgeFetch:
         finally:
             ServiceContainer.clear()
 
+    def test_bridge_forwards_exact_principal_scope(self):
+        from core.container import ServiceContainer
+        from core.memory.rag_bridge import fetch_deep_context
+
+        observed = {}
+
+        async def _search(query, limit=10, **kwargs):
+            observed.update(kwargs)
+            return []
+
+        ServiceContainer.clear()
+        try:
+            ServiceContainer.register_instance(
+                "memory_facade",
+                SimpleNamespace(search=_search),
+            )
+            asyncio.run(
+                fetch_deep_context(
+                    "what did we discuss in the prior conversation",
+                    principal_id="paired-device:a",
+                    principal_surface="paired_device",
+                )
+            )
+            assert observed == {
+                "principal_id": "paired-device:a",
+                "principal_surface": "paired_device",
+            }
+        finally:
+            ServiceContainer.clear()
+
 
 class TestTurnPathWiring:
     """Source-level pins: deleting the integration fails the build."""

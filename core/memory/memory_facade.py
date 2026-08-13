@@ -15,8 +15,8 @@ from typing import Any
 
 from core.container import ServiceContainer
 from core.runtime.errors import record_degradation
-from core.utils.task_tracker import get_task_tracker
 from core.runtime.state_ownership import state_root
+from core.utils.task_tracker import get_task_tracker
 
 logger = logging.getLogger("Aura.Memory")
 
@@ -98,6 +98,16 @@ class MemoryFacade:
         "voice_input",
         "websocket",
         "ws",
+    })
+    PRINCIPAL_SCOPED_MEMORY_TYPES = frozenset({
+        "conversation",
+        "user_input",
+    })
+    PRINCIPAL_SCOPED_MEMORY_SOURCES = frozenset({
+        "chat_turn_logger",
+        "conversation",
+        "conversation_identity",
+        "session_memory_pin",
     })
     
     # Significance markers for bonding/relational conversations
@@ -318,6 +328,55 @@ class MemoryFacade:
         if score is not None:
             payload["score"] = score
         return payload
+
+    @classmethod
+    def _memory_visible_to_principal(
+        cls,
+        metadata: dict[str, Any],
+        *,
+        principal_id: str,
+        principal_surface: str,
+    ) -> bool:
+        """Keep personal recall inside its authenticated relational boundary."""
+
+        principal = " ".join(str(principal_id or "").strip().split())[:160]
+        surface = str(principal_surface or "").strip().casefold()[:32]
+        if not principal or not surface:
+            return True
+
+        record_principal = " ".join(
+            str(
+                metadata.get("principal_id")
+                or metadata.get("user_id")
+                or ""
+            ).strip().split()
+        )[:160]
+        memory_type = str(
+            metadata.get("turn_type")
+            or metadata.get("message_type")
+            or metadata.get("memory_type")
+            or ""
+        ).strip().casefold()
+        personal = bool(
+            metadata.get("conversation_lane")
+            or record_principal
+            or memory_type in cls.PRINCIPAL_SCOPED_MEMORY_TYPES
+            or str(metadata.get("source") or "").strip().casefold()
+            in cls.PRINCIPAL_SCOPED_MEMORY_SOURCES
+        )
+        if not personal:
+            return True
+
+        record_surface = str(
+            metadata.get("principal_surface") or ""
+        ).strip().casefold()[:32]
+        if not record_principal:
+            return surface == "owner"
+        if record_principal != principal:
+            return False
+        if not record_surface:
+            return surface == "owner"
+        return record_surface == surface
 
     def _extract_candidate_path(self, metadata: dict[str, Any], content: str) -> str | None:
         for key in self.FILE_METADATA_KEYS:
@@ -1118,10 +1177,18 @@ class MemoryFacade:
         limit: int | None = 5,
         *,
         top_k: int | None = None,
+        principal_id: str = "",
+        principal_surface: str = "",
         **_: Any,
     ) -> list[Any]:
         """Search across all memory systems for relevance."""
         limit = self._normalize_search_limit(limit, top_k=top_k)
+        scoped = bool(principal_id and principal_surface)
+        # Backends rank before the principal boundary can discard foreign
+        # personal records. Overfetch within a fixed cap so another principal's
+        # high-scoring history cannot starve the caller's own lower-ranked
+        # memories after authorization.
+        backend_limit = min(100, max(limit, limit * 6, 32)) if scoped else limit
         results: list[dict[str, Any]] = []
         seen: set[str] = set()
 
@@ -1138,6 +1205,12 @@ class MemoryFacade:
             else:
                 normalized = self._normalize_memory_result(content=str(item or "").strip())
 
+            if not self._memory_visible_to_principal(
+                self._safe_metadata(normalized.get("metadata")),
+                principal_id=principal_id,
+                principal_surface=principal_surface,
+            ):
+                return
             key = f"{normalized.get('id', '')}::{normalized['content']}".lower()
             if not normalized["content"] or key in seen:
                 return
@@ -1161,7 +1234,14 @@ class MemoryFacade:
                     search_method = self.vector.search
 
                 if search_method is not None:
-                    for item in list(await self._call_maybe_async(search_method, query, limit=limit) or []):
+                    for item in list(
+                        await self._call_maybe_async(
+                            search_method,
+                            query,
+                            limit=backend_limit,
+                        )
+                        or []
+                    ):
                         _append(item)
             except (RuntimeError, AttributeError, TypeError) as e:
                 record_degradation('memory_facade', e)
@@ -1172,14 +1252,21 @@ class MemoryFacade:
             try:
                 search_method = self.graph.search_knowledge if hasattr(self.graph, "search_knowledge") else None
                 if search_method is not None:
-                    for item in list(await self._call_maybe_async(search_method, query, limit=limit) or []):
+                    for item in list(
+                        await self._call_maybe_async(
+                            search_method,
+                            query,
+                            limit=backend_limit,
+                        )
+                        or []
+                    ):
                         _append(item)
             except (RuntimeError, AttributeError, TypeError) as e:
                 record_degradation('memory_facade', e)
                 logger.debug("Graph search failed: %s", e)
 
         # 3. Strict-runtime gateway records
-        for item in await self._search_gateway_records(query, limit=limit):
+        for item in await self._search_gateway_records(query, limit=backend_limit):
             _append(item)
 
         verified_results: list[dict[str, Any]] = []
