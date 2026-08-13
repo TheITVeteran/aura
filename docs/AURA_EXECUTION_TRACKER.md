@@ -47018,3 +47018,35 @@ arithmetic checking, one chat-preflight boundary, choice consistency,
 conversational momentum and request mood. Powered resident-32B replication
 remains independent; no scientific verdict, runtime tissue qualification,
 fusion authority, frontier reasoning or `WOW Signal` is claimed here.
+
+## Checkpoint 2026-08-12-326: Terminal Fallback Owns Its Real I/O
+
+The three terminal-liveness findings are implemented as one lifecycle repair.
+Idle polling no longer starts a fresh blocking executor `readline` every twenty
+seconds. One event-loop-owned file-descriptor callback performs bounded
+`os.read`, incrementally decodes the stream, buffers partial lines and split
+multibyte characters, and is removed on EOF or deactivation. Deactivation
+cancels and joins the owned chat task, so no stale reader can consume a later
+command after the fallback closes.
+
+Output throttling is now an awaitable monotonic scheduler under a checked async
+lock. Concurrent autonomous and foreground terminal speech remains serialized,
+but waiting for the spam interval yields the event loop rather than calling
+`time.sleep`. The UI-presence check no longer scans process command lines or
+mistakes Aura's own server, uvicorn or an unrelated service for a visible
+window. It uses the authenticated WebSocket manager's actual owner-client count
+and excludes paired conversation-only sockets; existing heartbeat cleanup and
+the thirty-second gone confirmation bound transient disconnects.
+
+Validation under Aura's Python 3.12 runtime is green: the terminal, external
+chat and architecture lifecycle suites pass `113/113`; WebSocket-focused server
+contracts pass `21/21`; canonical smoke passes `104/104`; focused and
+repository Ruff, full Python compilation and diff hygiene pass. The three
+terminal findings remain open in the append-only ledger until this code is
+committed, published and hash-bound by the next evidence checkpoint.
+
+The powered resident-32B replication remains independent and undisturbed. At
+this checkpoint its second seed is actively decoding at `210/216`, its
+controller and resident evaluator are alive, and its final verdict remains
+unmeasured. No reasoning gain, promotion authority, frontier claim or
+`WOW Signal` is inferred from partial progress.

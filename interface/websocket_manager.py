@@ -588,6 +588,15 @@ class WebSocketManager:
     def count(self) -> int:
         return len(self.active_connections)
 
+    def owner_count(self) -> int:
+        """Count authenticated local owner UI clients, excluding paired chat."""
+
+        return sum(
+            1
+            for websocket in self.active_connections
+            if self._connection_scopes.get(websocket, "owner") == "owner"
+        )
+
     def heartbeat_payload(self, websocket: WebSocket, kind: str) -> dict[str, Any]:
         if self._connection_scopes.get(websocket, "owner") == "conversation":
             return conversation_heartbeat_payload(kind)

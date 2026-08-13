@@ -28,14 +28,17 @@ Deactivation:
 """
 
 import asyncio
+import codecs
 import collections
 import logging
+import os
 import subprocess
 import sys
 import time
 from typing import Any
 
 from core.runtime.errors import FallbackClassification, record_degradation
+from core.runtime.lockdep import LockRank, checked_async_lock
 from core.runtime.shutdown_coordinator import is_shutdown_requested
 from core.runtime.subprocess_gateway import get_subprocess_gateway
 from core.utils.task_tracker import get_task_tracker
@@ -102,6 +105,15 @@ class TerminalFallbackChat:
         self._last_output_at: float = 0.0
         self._last_activity_at: float = time.time()
         self._orch = None
+        self._output_lock = checked_async_lock(
+            f"terminal_chat.output.{id(self)}", rank=LockRank.LEAF
+        )
+        self._stdin_loop: asyncio.AbstractEventLoop | None = None
+        self._stdin_fd: int | None = None
+        self._stdin_reader_installed = False
+        self._stdin_lines: asyncio.Queue[str | None] = asyncio.Queue()
+        self._stdin_buffer = ""
+        self._stdin_decoder: codecs.IncrementalDecoder | None = None
 
         # Pending messages Aura wants to deliver autonomously
         self._pending: collections.deque[str] = collections.deque(maxlen=MAX_PENDING_MESSAGES)
@@ -246,8 +258,16 @@ class TerminalFallbackChat:
         if not self._active:
             return
         self._active = False
-        if self._chat_task and not self._chat_task.done():
-            self._chat_task.cancel()
+        self._stop_stdin_reader()
+        current_task = asyncio.current_task()
+        owned_task = self._chat_task
+        if (
+            owned_task
+            and owned_task is not current_task
+            and not owned_task.done()
+        ):
+            owned_task.cancel()
+            await asyncio.gather(owned_task, return_exceptions=True)
         self._chat_task = None
         self._orch = None
         if reason:
@@ -269,6 +289,94 @@ class TerminalFallbackChat:
 
     # ── Chat loop ─────────────────────────────────────────────────────────────
 
+    def _on_stdin_ready(self) -> None:
+        """Drain available bytes without ever blocking on a partial line."""
+
+        try:
+            chunk = os.read(self._stdin_fd, 4_096)
+        except BlockingIOError:
+            return
+        except (OSError, TypeError, ValueError):
+            chunk = b""
+        if not chunk:
+            if self._stdin_decoder is not None:
+                self._stdin_buffer += self._stdin_decoder.decode(b"", final=True)
+            self._stdin_loop.remove_reader(self._stdin_fd)
+            self._stdin_reader_installed = False
+            if self._stdin_buffer:
+                self._stdin_lines.put_nowait(self._stdin_buffer)
+                self._stdin_buffer = ""
+            self._stdin_lines.put_nowait(None)
+            return
+
+        if self._stdin_decoder is None:
+            self._stdin_decoder = codecs.getincrementaldecoder("utf-8")(
+                errors="replace"
+            )
+        self._stdin_buffer += self._stdin_decoder.decode(chunk)
+        while "\n" in self._stdin_buffer:
+            line, self._stdin_buffer = self._stdin_buffer.split("\n", 1)
+            self._stdin_lines.put_nowait(f"{line}\n")
+
+    def _start_stdin_reader(self) -> None:
+        """Install exactly one event-loop reader for the active terminal session."""
+
+        if self._stdin_reader_installed:
+            return
+        loop = asyncio.get_running_loop()
+        try:
+            fd = int(sys.stdin.fileno())
+            loop.add_reader(fd, self._on_stdin_ready)
+        except (AttributeError, NotImplementedError, OSError, TypeError, ValueError) as exc:
+            raise RuntimeError("terminal stdin does not support async fd readiness") from exc
+        self._stdin_loop = loop
+        self._stdin_fd = fd
+        encoding = str(getattr(sys.stdin, "encoding", "") or "utf-8")
+        try:
+            decoder_type = codecs.getincrementaldecoder(encoding)
+        except LookupError:
+            decoder_type = codecs.getincrementaldecoder("utf-8")
+        self._stdin_decoder = decoder_type(errors="replace")
+        self._stdin_buffer = ""
+        self._stdin_reader_installed = True
+
+    def _stop_stdin_reader(self) -> None:
+        """Remove the owned reader synchronously; no blocked executor survives."""
+
+        if self._stdin_reader_installed and self._stdin_loop is not None:
+            try:
+                self._stdin_loop.remove_reader(self._stdin_fd)
+            except (AttributeError, OSError, RuntimeError, TypeError, ValueError) as exc:
+                _record_terminal_degradation(
+                    exc,
+                    action="removed terminal stdin readiness reader during deactivation",
+                    severity="warning",
+                )
+        self._stdin_reader_installed = False
+        self._stdin_loop = None
+        self._stdin_fd = None
+        self._stdin_decoder = None
+        self._stdin_buffer = ""
+        while not self._stdin_lines.empty():
+            try:
+                self._stdin_lines.get_nowait()
+            except asyncio.QueueEmpty:
+                break
+
+    async def _read_stdin_line(self, *, wait_seconds: float = 20.0) -> str | None:
+        """Wait for one line without spawning or abandoning reader threads."""
+
+        self._start_stdin_reader()
+        try:
+            line = await asyncio.wait_for(
+                self._stdin_lines.get(), timeout=wait_seconds
+            )
+        except TimeoutError:
+            return None
+        if line is None:
+            raise EOFError
+        return line
+
     async def _chat_loop(self):
         """Main terminal I/O loop: flush pending, then accept input."""
         try:
@@ -277,8 +385,6 @@ class TerminalFallbackChat:
 
             # Flush any pending autonomous messages first
             await self._flush_pending()
-
-            loop = asyncio.get_running_loop()
 
             while self._active:
                 # Watch for main UI returning
@@ -305,21 +411,18 @@ class TerminalFallbackChat:
                 sys.stdout.flush()
 
                 try:
-                    user_input = await asyncio.wait_for(
-                        loop.run_in_executor(None, sys.stdin.readline),
-                        timeout=20.0,
-                    )
-                except TimeoutError:
+                    user_input = await self._read_stdin_line(wait_seconds=20.0)
+                except EOFError:
+                    sys.stdout.write("\n[Aura] Terminal session closed.\n\n")
+                    sys.stdout.flush()
+                    await self.deactivate("EOF")
+                    return
+                if user_input is None:
                     # No input yet — loop back to check for pending messages / UI return
                     # Erase the dangling prompt
                     sys.stdout.write("\r" + " " * len(INPUT_PREFIX) + "\r")
                     sys.stdout.flush()
                     continue
-                except (EOFError, KeyboardInterrupt):
-                    sys.stdout.write("\n[Aura] Terminal session closed.\n\n")
-                    sys.stdout.flush()
-                    await self.deactivate("EOF/keyboard interrupt")
-                    return
 
                 user_input = user_input.strip()
                 if not user_input:
@@ -339,7 +442,7 @@ class TerminalFallbackChat:
                     continue
 
                 response = await self._get_response(user_input)
-                self._write_output(response)
+                await self._write_output_scheduled(response)
 
         except asyncio.CancelledError as _exc:
             logger.debug("Suppressed asyncio.CancelledError: %s", _exc)
@@ -350,14 +453,19 @@ class TerminalFallbackChat:
             )
             logger.error("TerminalFallback chat loop error: %s", e)
             self._active = False
+        finally:
+            self._stop_stdin_reader()
+            self._active = False
+            if self._chat_task is asyncio.current_task():
+                self._chat_task = None
+            self._orch = None
 
     async def _flush_pending(self):
         """Deliver all pending autonomous messages to terminal."""
         while self._pending:
             msg = self._pending.popleft()
-            self._write_output(msg)
+            await self._write_output_scheduled(msg)
             self._last_activity_at = time.time()
-            await asyncio.sleep(0)  # yield
 
     def _validate_shell_command(self, cmd: str) -> tuple[bool, str]:
         if len(cmd) > 8_192:
@@ -429,7 +537,7 @@ class TerminalFallbackChat:
 
         allowed, reason = self._validate_shell_command(cmd)
         if not allowed:
-            self._write_output(f"[Aura] Blocked: {reason}.")
+            await self._write_output_scheduled(f"[Aura] Blocked: {reason}.")
             return
 
         sys.stdout.write(f"[Aura] Running: {cmd}\n")
@@ -455,7 +563,7 @@ class TerminalFallbackChat:
                     severity="degraded",
                     extra={"command_preview": cmd[:160]},
                 )
-                self._write_output(
+                await self._write_output_scheduled(
                     f"[Aura] Command timed out ({SHELL_COMMAND_TIMEOUT_SECS:.0f}s limit)."
                 )
                 return
@@ -485,7 +593,7 @@ class TerminalFallbackChat:
                         timeout=SHELL_COMMENT_TIMEOUT_SECS,
                     )
                     if comment and "[Terminal output" not in comment:
-                        self._write_output(comment)
+                        await self._write_output_scheduled(comment)
                 except TimeoutError as exc:
                     _record_terminal_degradation(
                         exc,
@@ -501,7 +609,7 @@ class TerminalFallbackChat:
                 severity="degraded",
                 extra={"command_preview": cmd[:160]},
             )
-            self._write_output(f"[Aura] Shell error: {e}")
+            await self._write_output_scheduled(f"[Aura] Shell error: {e}")
 
     async def _get_response(self, user_input: str) -> str:
         """Route user input through the orchestrator."""
@@ -528,12 +636,8 @@ class TerminalFallbackChat:
             return f"[error: {e}]"
         return "Message received but can't fully respond in this mode."
 
-    def _write_output(self, text: str):
-        """Write to stdout with spam guard."""
-        now = time.time()
-        since_last = now - self._last_output_at
-        if since_last < MIN_OUTPUT_INTERVAL:
-            time.sleep(MIN_OUTPUT_INTERVAL - since_last)
+    def _write_output(self, text: str) -> None:
+        """Format and write one output; scheduling belongs to the async caller."""
 
         lines = str(text).strip().splitlines()
         if lines:
@@ -541,33 +645,30 @@ class TerminalFallbackChat:
             for line in lines[1:]:
                 sys.stdout.write(f"       {line}\n")
         sys.stdout.flush()
-        self._last_output_at = time.time()
+        self._last_output_at = time.monotonic()
+
+    async def _write_output_scheduled(self, text: str) -> None:
+        """Serialize terminal speech and rate-limit it without blocking the loop."""
+
+        async with self._output_lock:
+            since_last = time.monotonic() - self._last_output_at
+            if since_last < MIN_OUTPUT_INTERVAL:
+                await asyncio.sleep(MIN_OUTPUT_INTERVAL - since_last)
+            self._write_output(text)
 
     # ── Environment detection ─────────────────────────────────────────────────
 
     def _is_main_ui_open(self) -> bool:
-        """True if the main Aura UI / WebSocket server process is running."""
-        try:
-            from core.runtime.resource_observation import get_resource_observer
+        """True only when this runtime has an authenticated owner UI client."""
 
-            for process in get_resource_observer().processes():
-                cmdline = " ".join(process.cmdline)
-                if any(
-                    keyword in cmdline
-                    for keyword in [
-                        "aura_main",
-                        "aura.server",
-                        "uvicorn",
-                        "gunicorn",
-                        "Aura.app",
-                        "aura_app",
-                    ]
-                ):
-                    return True
+        try:
+            from interface.websocket_manager import ws_manager
+
+            return ws_manager.owner_count() > 0
         except (ImportError, AttributeError, RuntimeError) as exc:
             _record_terminal_degradation(
                 exc,
-                action="treated main UI as unavailable after UI process probe failed",
+                action="treated main UI as unavailable after owner-client probe failed",
                 severity="warning",
             )
             logger.debug("Suppressed Exception: %s", exc)
@@ -605,8 +706,11 @@ class TerminalWatchdog:
 
     async def stop(self):
         self._running = False
-        if self._task and not self._task.done():
-            self._task.cancel()
+        task = self._task
+        self._task = None
+        if task and task is not asyncio.current_task() and not task.done():
+            task.cancel()
+            await asyncio.gather(task, return_exceptions=True)
 
     async def _watch_loop(self):
         while self._running:
