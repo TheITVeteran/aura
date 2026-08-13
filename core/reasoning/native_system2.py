@@ -255,6 +255,14 @@ class NativeSearchReceipt:
     #: collapsed to confirming it. A receipt that does not say this would
     #: present a one-node confirmation as if it were full deliberation.
     chunk_reused: bool = False
+    #: True when a Tier 2 generalized rule recognised this situation despite
+    #: the exact signature being new. Distinct from chunk_reused because the
+    #: two carry different risk: a chunk answered the same question again, a
+    #: rule answered a question it had never been asked.
+    rule_applied: bool = False
+    #: The conditions that rule fired on, so a reviewer can see what the
+    #: shortcut believed was causal rather than only that one was taken.
+    rule_conditions: List[str] = field(default_factory=list)
     #: Stable digest of the situation in which the selected action was ranked.
     #: The raw prompt is deliberately not retained in the value table.
     outcome_state_key: str = ""
@@ -857,6 +865,41 @@ class NativeSystem2Engine:
         match_cost = time.perf_counter() - match_started
         by_name = {a.name: a for a in candidate_actions}
 
+        # Tier 2. Tier 1 above only fires on an exact signature, so the same
+        # problem worded differently reruns the whole search. A promoted
+        # generalized rule can recognise it — but only after surviving lesion,
+        # contradiction search and a Wilson floor, and only ever as a PROPOSAL.
+        from core.cognition.procedural_generalization import (
+            DecisionEpisode,
+            decision_features,
+            get_procedural_generalizer,
+        )
+
+        generalizer = get_procedural_generalizer()
+        max_risk = max((a.risk for a in candidate_actions), default=0.0)
+        features = decision_features(
+            goal=context,
+            candidate_count=len(candidate_actions),
+            evidence=(
+                "learned"
+                if any(
+                    value_model.value_for(
+                        a.name, a.metadata, state=state_raw
+                    ).is_evidenced
+                    for a in candidate_actions
+                )
+                else "prior"
+            ),
+            max_risk=max_risk,
+            hazard_floored=bool(hazard_floored),
+            extra=(f"impasse={impasse.type.value}",),
+        )
+        rule_applied = None
+        if chunk is None:
+            proposed = generalizer.propose(features)
+            if proposed is not None and proposed.resolution in by_name:
+                rule_applied = proposed
+
         if chunk is not None and chunk.resolution in by_name:
             # The impasse is not re-entered. The compiled resolution supplies
             # the answer and the search collapses to confirming it, which is
@@ -877,6 +920,23 @@ class NativeSystem2Engine:
             )
             candidate_actions = [by_name[chunk.resolution]]
             chunk_applied = chunk
+        elif rule_applied is not None:
+            # Tier 2: a generalized rule recognised this situation even though
+            # the exact signature is new. It narrows the field to its proposed
+            # resolution and the search confirms it, exactly as Tier 1 does —
+            # the rule replaces deliberation, never the confirmation and never
+            # the authority downstream of it.
+            cfg = System2SearchConfig(
+                algorithm=cfg.algorithm,
+                budget=4,
+                max_depth=2,
+                branching_factor=1,
+                beam_width=1,
+            )
+            candidate_actions = [by_name[rule_applied.resolution]]
+            if typed is not None:
+                learner.record_impasse(impasse)
+            chunk_applied = None
         else:
             # Only a real impasse goes in the impasse log. A decision the value
             # model separated cleanly is not a deadlock, and counting it as one
@@ -933,6 +993,26 @@ class NativeSystem2Engine:
             )
             result.receipt.chunk_signature = signature
             result.receipt.chunk_reused = False
+
+        # Feed Tier 2. Every resolved deliberation becomes an episode recorded
+        # against the causal trace rather than the raw context. `correct` stays
+        # None: an episode is not evidence until an outcome grades it, which
+        # the ledger's resolution stream does. Derivation is attempted only
+        # once enough graded episodes agree, and a derived rule still has to
+        # survive lesion and contradiction search before it can propose.
+        if chosen is not None:
+            generalizer.record(
+                DecisionEpisode(
+                    features=features,
+                    resolution=chosen,
+                    correct=None,
+                    protected=max_risk >= 0.6,
+                )
+            )
+            result.receipt.rule_conditions = (
+                sorted(rule_applied.conditions) if rule_applied is not None else []
+            )
+            result.receipt.rule_applied = rule_applied is not None
 
         # Search is simulation, not action.  Persist only the provenance needed
         # by an execution owner to open a resolvable receipt later.  Opening a

@@ -76,6 +76,8 @@ __all__ = [
     "GeneralizedRule",
     "PromotionCriteria",
     "ProceduralGeneralizer",
+    "get_procedural_generalizer",
+    "decision_features",
     "wilson_lower_bound",
 ]
 
@@ -400,6 +402,20 @@ class ProceduralGeneralizer:
                 "rules": len(self._rules),
                 "by_tier": by_tier,
             }
+
+
+_generalizer: ProceduralGeneralizer | None = None
+_generalizer_lock = threading.Lock()
+
+
+def get_procedural_generalizer() -> ProceduralGeneralizer:
+    """The process-wide Tier 2 generalizer, shared by every deliberation."""
+    global _generalizer
+    if _generalizer is None:
+        with _generalizer_lock:
+            if _generalizer is None:
+                _generalizer = ProceduralGeneralizer()
+    return _generalizer
 
 
 def decision_features(
