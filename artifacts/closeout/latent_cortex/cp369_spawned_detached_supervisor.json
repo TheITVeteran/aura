@@ -1,0 +1,36 @@
+{
+  "schema": "aura.closeout.rlc.cp369.v1",
+  "checkpoint": "CP369",
+  "change": {
+    "launcher": "tools/run_detached_step.py",
+    "removed_primitive": "os.fork",
+    "replacement_primitive": "os.posix_spawn",
+    "fresh_interpreter": true,
+    "fresh_session": true,
+    "virtualenv_launcher_preserved": true,
+    "run_directory_identity_reopened": true,
+    "reservation_release_barrier_preserved": true,
+    "failure_receipt_path_preserved": true
+  },
+  "verification": {
+    "focused_detached_runtime": {
+      "passed": 50,
+      "failed": 0,
+      "duration_s": 181.88
+    },
+    "canonical_smoke": {
+      "passed": 104,
+      "failed": 0,
+      "duration_s": 18.86
+    },
+    "ruff": "pass",
+    "py_compile": "pass",
+    "diff_check": "pass"
+  },
+  "claim_boundary": {
+    "detached_launcher_multithreaded_fork_removed": true,
+    "active_cp368_campaign_modified": false,
+    "reasoning_gain_proven": false,
+    "wow_signal": false
+  }
+}

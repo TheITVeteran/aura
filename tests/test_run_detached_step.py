@@ -335,6 +335,12 @@ def _launch(
     return json.loads(result.stdout)
 
 
+def test_launcher_source_never_forks_the_importing_python_process() -> None:
+    source = Path(detached.__file__).read_text(encoding="utf-8")
+    assert "os.fork(" not in source
+    assert "os.posix_spawn(" in source
+
+
 def test_nonzero_target_runs_once_and_survives_launcher(tmp_path: Path) -> None:
     run_dir = tmp_path / "run"
     counter = tmp_path / "counter.txt"

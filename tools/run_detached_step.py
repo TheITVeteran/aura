@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
 """Run one crash-observable step independently of the launching terminal.
 
-The launcher double-forks before returning, so the supervisor is reparented
-and cannot receive the caller's terminal teardown. The supervisor starts the
+The launcher spawns a fresh session before returning, so the supervisor is
+independent of the caller's terminal teardown without forking a potentially
+multithreaded Python process. The supervisor starts the
 target in its own process group, publishes atomic heartbeat/status artifacts,
 enforces one wall-clock timeout, and writes exactly one terminal receipt. It
 never restarts a failed target: scientific verdicts and training failures are
@@ -20,7 +21,6 @@ import hmac
 import json
 import math
 import os
-import resource
 import secrets
 import shutil
 import signal
@@ -3130,60 +3130,44 @@ def _supervise(run_dir: Path, plan: dict[str, Any], attempt: int) -> None:
     )
 
 
-def _daemonize(run_dir: Path, plan: dict[str, Any], attempt: int) -> tuple[int, int]:
-    read_fd, write_fd = os.pipe()
-    release_read_fd, release_write_fd = os.pipe()
-    first_pid = os.fork()
-    if first_pid > 0:
-        os.close(write_fd)
-        os.close(release_read_fd)
-        with os.fdopen(read_fd, "rb", closefd=True) as reader:
-            raw_pid = reader.read(64)
-        _, status = os.waitpid(first_pid, 0)
-        if status != 0 or not raw_pid:
-            os.close(release_write_fd)
-            raise DetachedStepError("detached supervisor handoff failed")
-        try:
-            return int(raw_pid.decode("ascii")), release_write_fd
-        except (UnicodeDecodeError, ValueError) as exc:
-            os.close(release_write_fd)
-            raise DetachedStepError("detached supervisor returned an invalid pid") from exc
+def _supervisor_bootstrap(
+    release_fd_text: str,
+    run_dir_text: str,
+    attempt_text: str,
+    run_dir_identity_json: str,
+) -> int:
+    """Enter supervisor custody in a clean interpreter spawned by the kernel."""
 
-    os.close(read_fd)
-    os.close(release_write_fd)
     try:
-        os.setsid()
-        second_pid = os.fork()
-        if second_pid > 0:
-            os.close(release_read_fd)
-            os.write(write_fd, str(second_pid).encode("ascii"))
-            os.close(write_fd)
-            os._exit(0)
-        os.close(write_fd)
-        release = os.read(release_read_fd, 1)
-        os.close(release_read_fd)
-        if release != b"G":
-            os._exit(0)
-        os.chdir(plan["cwd"])
-        os.umask(0o077)
-        null_fd = os.open(os.devnull, os.O_RDWR)
-        try:
-            for descriptor in (0, 1, 2):
-                os.dup2(null_fd, descriptor)
-        finally:
-            if null_fd > 2:
-                os.close(null_fd)
-        soft_limit, _ = resource.getrlimit(resource.RLIMIT_NOFILE)
-        max_fd = 65_536 if soft_limit == resource.RLIM_INFINITY else min(int(soft_limit), 65_536)
-        preserved_fds = {custody.fileno() for custody in _ACTIVE_RUN_CUSTODIES.values()}
-        for descriptor in range(3, max_fd):
-            if descriptor in preserved_fds:
-                continue
+        release_fd = int(release_fd_text)
+        attempt = int(attempt_text)
+        identity_value = json.loads(run_dir_identity_json)
+        identity = validate_directory_identity(identity_value)
+    except (json.JSONDecodeError, TypeError, ValueError, SecurePathCustodyError):
+        return 126
+    if release_fd < 3 or attempt < 1:
+        return 126
+    run_dir = Path(run_dir_text).expanduser().absolute()
+    plan_path = run_dir / PLAN_FILE
+    plan: dict[str, Any] = {}
+    try:
+        with _run_directory_custody(
+            run_dir,
+            create=False,
+            expected_identity=identity,
+        ):
+            plan = _read_json(plan_path)
+            _verify_plan(plan, plan_path)
             try:
-                os.close(descriptor)
-            except OSError:
-                pass
-        _supervise(run_dir, plan, attempt)
+                release = os.read(release_fd, 1)
+            finally:
+                os.close(release_fd)
+            if release != b"G":
+                return 0
+            os.chdir(plan["cwd"])
+            os.umask(0o077)
+            _supervise(run_dir, plan, attempt)
+            return 0
     except BaseException as exc:  # noqa: BLE001 - supervisor last-resort: failure becomes status file
         supervisor_pid = os.getpid()
         supervisor_observation = _inspect_process(supervisor_pid)
@@ -3246,8 +3230,61 @@ def _daemonize(run_dir: Path, plan: dict[str, Any], attempt: int) -> tuple[int, 
             _publish_terminal_receipt(run_dir, plan, attempt, failure)
         except (OSError, DetachedStepError):
             pass
+        return 70
+
+
+def _daemonize(run_dir: Path, plan: dict[str, Any], attempt: int) -> tuple[int, int]:
+    """Spawn a detached supervisor without calling ``fork`` in this process."""
+
+    custody = _ACTIVE_RUN_CUSTODIES.get(run_dir)
+    if custody is None:
+        raise DetachedStepError("detached supervisor lacks run-directory custody")
+    release_read_fd, release_write_fd = os.pipe()
+    null_fd = os.open(os.devnull, os.O_RDWR | getattr(os, "O_CLOEXEC", 0))
+    # Preserve the virtualenv launcher path. Resolving its symlink would make
+    # the clean interpreter lose pyvenv.cfg discovery and its site-packages.
+    executable_path = Path(sys.executable).expanduser().absolute()
+    if not executable_path.is_file() or not os.access(executable_path, os.X_OK):
+        os.close(release_read_fd)
+        os.close(release_write_fd)
+        os.close(null_fd)
+        raise DetachedStepError("detached supervisor interpreter is unavailable")
+    executable = str(executable_path)
+    launcher = str(Path(__file__).resolve(strict=True))
+    argv = [
+        executable,
+        launcher,
+        "_supervise",
+        str(release_read_fd),
+        str(run_dir),
+        str(attempt),
+        _canonical_bytes(custody.identity).decode("ascii"),
+    ]
+    file_actions = (
+        (os.POSIX_SPAWN_DUP2, null_fd, 0),
+        (os.POSIX_SPAWN_DUP2, null_fd, 1),
+        (os.POSIX_SPAWN_DUP2, null_fd, 2),
+        (os.POSIX_SPAWN_CLOSE, null_fd),
+    )
+    try:
+        os.set_inheritable(release_read_fd, True)
+        supervisor_pid = os.posix_spawn(
+            executable,
+            argv,
+            os.environ.copy(),
+            file_actions=file_actions,
+            setsid=True,
+            setsigmask=(),
+            setsigdef=(signal.SIGINT, signal.SIGTERM, signal.SIGHUP),
+        )
+    except (OSError, NotImplementedError) as exc:
+        os.close(release_write_fd)
+        raise DetachedStepError("detached supervisor spawn failed") from exc
     finally:
-        os._exit(0)
+        os.set_inheritable(release_read_fd, False)
+        os.close(release_read_fd)
+        os.close(null_fd)
+    return supervisor_pid, release_write_fd
 
 
 def _normalize_command(parser: argparse.ArgumentParser, raw: list[str]) -> list[str]:
@@ -5290,6 +5327,10 @@ def main(argv: list[str] | None = None) -> int:
         except ValueError:
             return 126
         return _gated_exec(gate_fd, effective_argv[2:])
+    if effective_argv and effective_argv[0] == "_supervise":
+        if len(effective_argv) != 5:
+            return 126
+        return _supervisor_bootstrap(*effective_argv[1:])
     parser = build_parser()
     args = parser.parse_args(effective_argv)
     try:

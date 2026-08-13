@@ -47996,3 +47996,33 @@ Focused plan, runner, saturation and verdict-state coverage passes `16/16`;
 canonical smoke passes `104/104`; Ruff, compilation and diff hygiene pass. No
 reasoning result follows from either calibration. The next source-bound run is
 the first one eligible to return a broad mechanism verdict.
+
+## Checkpoint 2026-08-13-369: Detached Supervision Does Not Fork Python
+
+Every CP366 through CP368 launch emitted Python's macOS warning that
+`os.fork()` from a multithreaded process can deadlock the child. The target
+processes remained observable, but a warning at the exact unattended-custody
+boundary is not acceptable evidence that the next powered campaign can be left
+alone. Suppressing that warning would also preserve the unsafe primitive.
+
+The detached launcher now enters its supervisor through `os.posix_spawn` in a
+new session and clean interpreter. It preserves the virtualenv launcher path,
+passes only the release descriptor across `exec`, reopens the owner-private run
+directory against its exact device/inode identity, revalidates the frozen plan,
+and waits behind the existing durable launch-reservation barrier before it may
+start the target. Timeout, authenticated stop, target process-group containment,
+restart refusal, resumable-checkpoint admission, worker-origin custody, broker
+policy, crash reconciliation, terminal receipts and exact source bindings keep
+their prior contracts.
+
+The complete detached-runtime suite passes `50/50`, including both launch
+crash boundaries and the authenticated broker/worker-origin paths. Canonical
+smoke passes `104/104`; Ruff, byte compilation and diff hygiene pass. Evidence
+is `artifacts/closeout/latent_cortex/cp369_spawned_detached_supervisor.json`.
+
+The source-frozen CP368 resident canary was not restarted or modified. Its first
+two durable observations are initialization-matched depth four `0/1` and trained
+depth one `1/1` on the same fresh novel-algorithm task. That is a promising
+partial causal contrast, not a verdict. Trained depth four, ordinary decode, the
+other six domains, powered replication, complete-system comparison and the
+`WOW Signal` remain open.
