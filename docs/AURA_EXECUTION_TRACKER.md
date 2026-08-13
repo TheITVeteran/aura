@@ -47766,3 +47766,41 @@ durable-write custody, regeneration CAS, memory-log worker ownership and
 `/api/think` admission remain open. The detached CP352 promotion remains a
 separate resident proof transaction; no serving, frontier, `WOW Signal`, soak
 or Aura 1.0 claim follows from this checkpoint.
+
+## Checkpoint 2026-08-13-355: Live Proof Completion Requires Effect Evidence
+
+The explicit live-runtime proof route could report a completed desktop action
+from a top-level `ok=true` even when the executor supplied no step receipts.
+Its chained file/action proof checked only the file write and then claimed a
+successful local observation even when `computer_use` failed. The file helper
+also accepted mere path existence, so a pre-existing artifact or incorrect
+bytes could stand in for the requested write. These were claim-boundary defects:
+the governed executors could be honest while the chat surface overstated them.
+
+Desktop proof completion now uses the same step-level verifier as ordinary
+desktop objectives. Every requested critical step must be successful and carry
+explicit effect verification plus observable evidence. Aggregate-only success,
+missing receipts and audit identifiers without effect evidence fail closed with
+the precise verification reason preserved in the response data.
+
+Live proof file writes now require executor-bound effect evidence, an expected
+digest and observed digest matching the requested UTF-8 bytes, followed by an
+independent on-disk byte readback. The chained proof independently verifies that
+its governed `pwd` observation exited successfully, returned one resolvable
+path and agrees with the process's actual working directory. A verified write
+followed by a failed or mismatched observation is reported as partial failure,
+never completion.
+
+Regression coverage proves that bare desktop success, effect-unverified step
+receipts, an unbound file result despite a matching file on disk, and a failed
+chain observation cannot produce completion language; the fully evidenced
+desktop and chained paths still pass. The complete live-runtime surface passes
+`116/116`; the complete conversation lane passes `302/302`; canonical smoke
+passes `104/104`; compilation, Ruff, governance lint, layering and diff hygiene
+pass.
+
+This closes the runtime-effect-proof P1 semantic finding. Durable-write custody,
+regeneration CAS, memory-log worker ownership and `/api/think` admission remain
+open. The detached CP352 resident promotion is still a separate source-bound
+transaction; its running canary evidence is not serving authority and does not
+establish broad reasoning, frontier performance, `WOW Signal`, soak or Aura 1.0.

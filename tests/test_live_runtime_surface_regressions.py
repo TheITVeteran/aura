@@ -1,4 +1,5 @@
 import asyncio
+import hashlib
 import json
 import logging
 import re
@@ -2219,7 +2220,15 @@ async def test_api_chat_live_proof_receipt_survives_quality_repair(monkeypatch, 
             target = tmp_path / params["path"]
             target.parent.mkdir(parents=True, exist_ok=True)
             target.write_text(params["content"])
-            return {"ok": True, "path": params["path"], "context": context}
+            digest = hashlib.sha256(params["content"].encode("utf-8")).hexdigest()
+            return {
+                "ok": True,
+                "path": params["path"],
+                "context": context,
+                "effect_verified": True,
+                "expected_sha256": digest,
+                "sha256": digest,
+            }
 
     class FakeAgencyOrchestrator:
         async def run(self, proposal, *, perceive=None, simulate=None, execute=None, assess=None, **_kwargs):
@@ -2311,6 +2320,17 @@ async def test_chat_live_desktop_proof_routes_through_generic_desktop_task(monke
                 "summary": "Desktop task completed 6/6 governed computer-use steps.",
                 "steps_requested": 6,
                 "steps_completed": 6,
+                "receipts": [
+                    {
+                        "index": index,
+                        "action": "verified_desktop_step",
+                        "critical": True,
+                        "ok": True,
+                        "effect_verified": True,
+                        "effect_evidence": f"step={index};observable_effect=verified",
+                    }
+                    for index in range(1, 7)
+                ],
             }
 
     class FakeAgencyOrchestrator:
@@ -2372,6 +2392,142 @@ async def test_chat_live_desktop_proof_routes_through_generic_desktop_task(monke
     assert calls[0]["context"]["desktop_execution_contract"] is True
     assert calls[0]["context"]["allow_heuristic_desktop_plan"] is True
     assert "Completed 6/6" in result["response"] or "6/6 governed" in result["response"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("desktop_result", "expected_reason"),
+    [
+        (
+            {
+                "ok": True,
+                "steps_requested": 2,
+                "steps_completed": 2,
+                "summary": "Completed 2/2 steps.",
+            },
+            "missing_step_receipts",
+        ),
+        (
+            {
+                "ok": True,
+                "steps_requested": 1,
+                "steps_completed": 1,
+                "receipts": [
+                    {
+                        "ok": True,
+                        "critical": True,
+                        "effect_verified": False,
+                        "effect_evidence": "executor returned",
+                    }
+                ],
+            },
+            "step_1_effect_unverified",
+        ),
+    ],
+)
+async def test_chat_live_desktop_proof_rejects_shallow_success(
+    monkeypatch,
+    desktop_result,
+    expected_reason,
+):
+    from interface.routes import chat as chat_module
+
+    async def fake_execute(*_args, **_kwargs):
+        return desktop_result
+
+    monkeypatch.setattr(chat_module, "_execute_governed_live_skill", fake_execute)
+
+    result = await chat_module._execute_live_runtime_proof(
+        "Run a live proof: open Calculator and put the result in Notes."
+    )
+
+    assert result is not None
+    assert result["status"] == "live_proof_failed"
+    assert result["data"]["verification_reason"] == expected_reason
+    assert "effects were not all verified" in result["response"]
+    assert "I completed" not in result["response"]
+
+
+@pytest.mark.asyncio
+async def test_live_proof_file_rejects_unbound_success_even_when_file_exists(monkeypatch, tmp_path):
+    from interface.routes import chat as chat_module
+
+    async def shallow_write(_skill_name, params, **_kwargs):
+        target = tmp_path / params["path"]
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(params["content"], encoding="utf-8")
+        return {"ok": True, "path": params["path"]}
+
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(chat_module, "_execute_governed_live_skill", shallow_write)
+
+    result = await chat_module._write_live_proof_file(
+        "artifacts/live_runtime/generated/proof.txt",
+        "verified payload",
+        objective="Run a live proof.",
+    )
+
+    assert result["ok"] is False
+    assert result["verification_failure"] == "effect_unverified"
+
+
+@pytest.mark.asyncio
+async def test_chained_live_proof_rejects_failed_observation(monkeypatch, tmp_path):
+    from interface.routes import chat as chat_module
+
+    target = tmp_path / "artifacts/live_runtime/generated/chain_note.txt"
+
+    async def verified_write(_path, content, **_kwargs):
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(content, encoding="utf-8")
+        return {
+            "ok": True,
+            "absolute_path": str(target),
+            "bytes": len(content.encode("utf-8")),
+        }
+
+    async def failed_observation(*_args, **_kwargs):
+        return {"ok": False, "error": "computer_use unavailable"}
+
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(chat_module, "_write_live_proof_file", verified_write)
+    monkeypatch.setattr(chat_module, "_execute_governed_live_skill", failed_observation)
+
+    result = await chat_module._execute_live_runtime_proof("Run a chained live proof.")
+
+    assert result is not None
+    assert result["status"] == "live_proof_failed"
+    assert result["data"]["verification_reason"] == "observation_result_not_ok"
+    assert "I completed" not in result["response"]
+
+
+@pytest.mark.asyncio
+async def test_chained_live_proof_accepts_only_matching_pwd_observation(monkeypatch, tmp_path):
+    from interface.routes import chat as chat_module
+
+    target = tmp_path / "artifacts/live_runtime/generated/chain_note.txt"
+
+    async def verified_write(_path, content, **_kwargs):
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(content, encoding="utf-8")
+        return {
+            "ok": True,
+            "absolute_path": str(target),
+            "bytes": len(content.encode("utf-8")),
+        }
+
+    async def verified_observation(*_args, **_kwargs):
+        return {"ok": True, "output": str(tmp_path.resolve()), "exit_code": 0}
+
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(chat_module, "_write_live_proof_file", verified_write)
+    monkeypatch.setattr(chat_module, "_execute_governed_live_skill", verified_observation)
+
+    result = await chat_module._execute_live_runtime_proof("Run a chained live proof.")
+
+    assert result is not None
+    assert result["status"] == "live_proof_chain"
+    assert "I completed the chained live proof" in result["response"]
 
 
 def test_neural_bridge_reports_continuous_band_profile():

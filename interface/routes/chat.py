@@ -21402,14 +21402,75 @@ async def _write_live_proof_file(path: str, content: str, *, objective: str) -> 
     )
     if not result.get("ok"):
         return result
-    abs_path = (Path.cwd() / path).resolve()
-    if not abs_path.exists():
+    expected_bytes = content.encode("utf-8")
+    expected_sha256 = hashlib.sha256(expected_bytes).hexdigest()
+    if result.get("effect_verified") is not True:
         return {
+            **result,
             "ok": False,
-            "error": f"Governed file_operation reported success but {path} was not present on disk.",
-            "path": path,
+            "error": "Governed file_operation returned success without verified write evidence.",
+            "verification_failure": "effect_unverified",
         }
-    return dict(result, absolute_path=str(abs_path), bytes=len(content.encode("utf-8")))
+    if str(result.get("expected_sha256") or "") != expected_sha256:
+        return {
+            **result,
+            "ok": False,
+            "error": "Governed file_operation did not bind its evidence to the requested bytes.",
+            "verification_failure": "expected_digest_mismatch",
+        }
+    if str(result.get("sha256") or "") != expected_sha256:
+        return {
+            **result,
+            "ok": False,
+            "error": "Governed file_operation reported a digest that does not match the requested bytes.",
+            "verification_failure": "observed_digest_mismatch",
+        }
+    abs_path = (Path.cwd() / path).resolve()
+    try:
+        observed_bytes = abs_path.read_bytes()
+    except OSError as exc:
+        return {
+            **result,
+            "ok": False,
+            "error": f"Governed file_operation reported success but {path} could not be read back: {exc}",
+            "path": path,
+            "verification_failure": "readback_failed",
+        }
+    if observed_bytes != expected_bytes:
+        return {
+            **result,
+            "ok": False,
+            "error": f"Governed file_operation reported success but {path} did not contain the requested bytes.",
+            "path": path,
+            "verification_failure": "readback_content_mismatch",
+            "observed_sha256": hashlib.sha256(observed_bytes).hexdigest(),
+        }
+    return dict(
+        result,
+        absolute_path=str(abs_path),
+        bytes=len(expected_bytes),
+        verified_sha256=expected_sha256,
+    )
+
+
+def _verified_live_proof_pwd_result(result: dict[str, Any]) -> tuple[bool, str]:
+    """Verify the chained read-only observation against this process's cwd."""
+    if not isinstance(result, dict) or not bool(result.get("ok")):
+        return False, "observation_result_not_ok"
+    exit_code = result.get("exit_code")
+    if not isinstance(exit_code, int) or isinstance(exit_code, bool) or exit_code != 0:
+        return False, "observation_exit_code_not_zero"
+    output = str(result.get("output") or "").strip()
+    if not output or "\n" in output or "\r" in output:
+        return False, "observation_output_not_single_path"
+    try:
+        observed = Path(output).expanduser().resolve(strict=True)
+        expected = Path.cwd().resolve(strict=True)
+    except (OSError, RuntimeError):
+        return False, "observation_path_unresolvable"
+    if observed != expected:
+        return False, "observation_path_mismatch"
+    return True, "verified"
 
 
 def _build_glass_arithmetic_reply(user_message: str = "") -> str:
@@ -21506,15 +21567,21 @@ async def _execute_live_runtime_proof(user_message: str) -> dict[str, Any] | Non
         completed = int(result.get("steps_completed") or 0)
         requested = int(result.get("steps_requested") or 0)
         summary = str(result.get("summary") or "").strip()
-        if not result.get("ok"):
-            error = str(result.get("error") or result.get("status") or result).strip()
+        verified, verification_reason = _verified_desktop_task_result(result)
+        if not verified:
+            error = str(result.get("error") or result.get("status") or verification_reason).strip()
             return {
                 "response": (
                     "I routed the desktop proof through the governed generic desktop_task lane, "
-                    f"but it did not complete: {error}. Completed {completed}/{requested} steps."
+                    f"but its requested effects were not all verified: {error}. "
+                    f"Completed {completed}/{requested} steps."
                 ),
                 "status": "live_proof_failed",
-                "data": {"kind": kind, "desktop_task": result},
+                "data": {
+                    "kind": kind,
+                    "desktop_task": result,
+                    "verification_reason": verification_reason,
+                },
             }
         return {
             "response": (
@@ -21545,6 +21612,21 @@ async def _execute_live_runtime_proof(user_message: str) -> dict[str, Any] | Non
                 "response": f"The chained proof reached the action gate, but the file write failed: {write.get('error') or write}",
                 "status": "live_proof_failed",
                 "data": {"kind": kind, "write": write, "observation": observation},
+            }
+        observation_verified, observation_reason = _verified_live_proof_pwd_result(observation)
+        if not observation_verified:
+            return {
+                "response": (
+                    f"The chained proof verified the file write at `{target_path}`, but the governed "
+                    f"local observation was not verified: {observation_reason}."
+                ),
+                "status": "live_proof_failed",
+                "data": {
+                    "kind": kind,
+                    "write": write,
+                    "observation": observation,
+                    "verification_reason": observation_reason,
+                },
             }
         return {
             "response": (
