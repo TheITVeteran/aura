@@ -1,0 +1,35 @@
+{
+  "schema": "aura.rlc.closeout_checkpoint.v1",
+  "checkpoint": "CP381",
+  "subject": "independent composed-campaign verification and in-flight observability",
+  "runtime_changes": [
+    "a sweep publishes the exact arm, task, domain and matrix progress before entering each long model cell",
+    "a separate verifier reconstructs the hidden task battery from the committed registry identity",
+    "the verifier checks immutable source, model, package and implementation byte commitments",
+    "the verifier requires one unique fault-free cell for every member of the frozen seven-arm matrix",
+    "full runtime receipts and compact evidence summaries are independently reconstructed",
+    "strict public task scores and all four paired causal contrasts are recomputed from raw outputs",
+    "the frozen grader and independent verifier must agree before the component result is accepted"
+  ],
+  "verification": {
+    "focused_tests": "138 passed",
+    "smoke": "104 passed",
+    "ruff": "passed",
+    "compile": "passed",
+    "diff_check": "passed"
+  },
+  "campaign_observation_at_verification": {
+    "campaign": "cp380-matched-monotonic-component-s41037613",
+    "source_commit": "a3a01dfe2b8a44c76df2ed59c02fa915de98b5c2",
+    "status": "running_before_later_cp382_terminal_fault",
+    "modified_by_this_checkpoint": false,
+    "scientific_result_available": false
+  },
+  "claims": {
+    "reasoning_gain_proven": false,
+    "fusion_authorized": false,
+    "frontier_level_proven": false,
+    "wow_signal_authorized": false
+  },
+  "next": "apply the independent verifier to the completed CP380 campaign, then repair or replicate according to its paired causal verdict"
+}

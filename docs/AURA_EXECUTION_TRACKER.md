@@ -48405,3 +48405,43 @@ and Ruff, byte compilation and diff hygiene pass. Evidence is
 No resident comparison, gain, fusion, frontier result or `WOW Signal` is
 claimed. The next campaign must be frozen from CP380 and rerun from an empty
 causal journal.
+
+## Checkpoint 2026-08-13-381: The Campaign Has an Independent Judge
+
+At this checkpoint's verification boundary the CP380 component campaign was
+source-frozen at `a3a01dfe2` and was not modified by this checkpoint. Its
+launchd controller, assertion-holding
+`caffeinate` child, sweep process group and authenticated heartbeat remain the
+custody authority while the resident 32B model is loaded.
+
+The sweep previously wrote status only after a cell committed. A long decode
+therefore appeared to remain on the preceding arm even while process activity
+proved that the next cell was running. New sweeps now publish the exact arm,
+task identity, domain, matrix position and committed-cell count before model
+execution begins. Token-level recurrent progress continues to refine that
+record during composed decodes.
+
+The campaign no longer has to accept its own grader as the sole scientific
+judge. `tools/verify_rlc_reconciliation_campaign.py` independently binds the
+controller config, detached clean source commit, source manifest, complete
+model and recurrent-package file manifests, and the implementation files named
+by the decode contract. It regenerates the hidden frontier battery from the
+committed seed, registry, domains and difficulty, rejects missing, duplicate,
+faulted or superseded cells, reconstructs complete runtime evidence from raw
+receipts, and scores each raw answer with the committed public scorer.
+
+The verifier independently recomputes treatment contrasts against initialized
+tissue, the uncomposed complete engine, the trained depth-one lesion and
+ordinary decode. A lift with any paired regression is negative regardless of
+aggregate totals. The independent result must exactly agree with the frozen
+campaign's composed comparison matrix and top-level decision. Even a verified
+positive component canary explicitly authorizes only a fresh powered
+preregistered replication; it cannot authorize fusion, ordinary serving,
+frontier reasoning or `WOW Signal`.
+
+The expanded focused surface passes `138/138`, canonical smoke passes
+`104/104`, and Ruff, byte compilation and diff hygiene pass. Evidence is
+`artifacts/closeout/latent_cortex/cp381_independent_reconciliation_verifier.json`.
+The next bounded action is to apply this independent judge when CP380 reaches a
+complete or authenticated terminal verdict, then repair or replicate according
+to the measured paired causal result.

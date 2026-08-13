@@ -687,6 +687,32 @@ def _integrated_recurrent_progress_callback(
     return report
 
 
+def _mark_cell_started(
+    out_dir: Path,
+    *,
+    arm: str,
+    task: Any,
+    index: int,
+    task_count: int,
+    planned_cells: int,
+    committed_cells: int,
+    elapsed_s: float,
+) -> None:
+    """Publish the cell identity before potentially long model execution."""
+
+    _status(
+        out_dir,
+        phase="executing_cell",
+        arm=arm,
+        task_id=task.task_id,
+        domain=task.domain,
+        arm_progress=f"{index + 1}/{task_count}",
+        planned_cells=planned_cells,
+        committed_cells=committed_cells,
+        elapsed_s=elapsed_s,
+    )
+
+
 def _build_config(
     steps: int,
     n_slots: int,
@@ -3303,6 +3329,16 @@ def main() -> int:
                     flush=True,
                 )
                 return 4
+            _mark_cell_started(
+                out_dir,
+                arm=arm,
+                task=task,
+                index=index,
+                task_count=len(tasks),
+                planned_cells=planned,
+                committed_cells=len(journal.done),
+                elapsed_s=time.monotonic() - started,
+            )
             cell_started = time.monotonic()
             error = ""
             receipt: dict[str, Any] = {}

@@ -24,6 +24,29 @@ if str(TOOLS) not in sys.path:
 import run_rlc_reconciliation_sweep as sweep  # noqa: E402
 
 
+def test_cell_status_is_published_before_model_execution(tmp_path: Path) -> None:
+    task = SimpleNamespace(task_id="task-1", domain="mathematics")
+
+    sweep._mark_cell_started(
+        tmp_path,
+        arm="complete_system_recurrent_composed",
+        task=task,
+        index=2,
+        task_count=7,
+        planned_cells=49,
+        committed_cells=14,
+        elapsed_s=90.5,
+    )
+
+    status = json.loads((tmp_path / "status.json").read_text(encoding="utf-8"))
+    assert status["phase"] == "executing_cell"
+    assert status["arm"] == "complete_system_recurrent_composed"
+    assert status["task_id"] == "task-1"
+    assert status["domain"] == "mathematics"
+    assert status["arm_progress"] == "3/7"
+    assert status["committed_cells"] == 14
+
+
 def test_subset_self_test_binds_only_the_selected_domains(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
