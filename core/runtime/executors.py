@@ -31,7 +31,7 @@ import logging
 import threading
 import time
 from collections.abc import Callable
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import Future, ThreadPoolExecutor
 from typing import Any
 
 logger = logging.getLogger("Aura.Executors")
@@ -206,6 +206,35 @@ async def run_blocking_io[T](
             tag, elapsed, timeout_s * 1000,
         )
         raise
+
+
+def submit_blocking_io[T](
+    fn: Callable[..., T],
+    *args: Any,
+    label: str = "",
+    **kwargs: Any,
+) -> Future[T]:
+    """Submit bounded-owner blocking I/O from synchronous or worker code.
+
+    Unlike :func:`run_blocking_io`, this does not require a running asyncio
+    loop. The shared pool remains a registered shutdown resource, and callers
+    must bound their own submission rate. This is the correct path for sync
+    hot paths that enqueue one coalesced background flush.
+    """
+    pool = _live_pool("blocking_io")
+    _register_pool(pool, name="blocking_io_thread_pool")
+    tag = label or getattr(fn, "__qualname__", str(fn))
+
+    def _run() -> T:
+        started = time.monotonic()
+        try:
+            return fn(*args, **kwargs)
+        finally:
+            elapsed = (time.monotonic() - started) * 1000.0
+            if elapsed > 1000.0:
+                logger.info("Blocking IO '%s' completed in %.1f ms", tag, elapsed)
+
+    return pool.submit(_run)
 
 
 # ---------------------------------------------------------------------------

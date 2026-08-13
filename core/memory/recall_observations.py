@@ -1,41 +1,34 @@
-"""What recall actually did, recorded as it happens.
+"""Privacy-safe evidence of what live recall actually ranked and returned.
 
-The gap this closes
--------------------
-``tools/fit_actr_retrieval.py`` fitted the ACT-R retrieval curve by generating
-synthetic trace ages and importances, running Aura's own ``_static_rank`` over
-them, labelling the top-k as "recalled", and fitting to those labels. That is
-internal calibration of the ranker against itself on invented inputs. It is
-worth having and it is not evidence about Aura's memory, still less about human
-memory, and the distinction was not being drawn sharply enough.
+Every competitive recall contributes activation, rank, and candidate count.
+Those are sufficient to fit a retrieval curve and contain no memory content,
+keys, episode ids, query text, or user identifiers.
 
-The reason it had to be synthetic is that nothing observed real recalls. The
-outcome ledger in ``retrieval_outcomes.py`` records what happened to memories
-that *were* returned — retrieved, helpful, harmful — which cannot support a
-retrieval-probability curve, because the curve is about the candidates that
-were considered and NOT returned. Those were never written down anywhere.
-
-So this records them. Every ranked recall contributes one observation per
-candidate: its activation, the rank it came out at, and how many candidates it
-was competing against. From that, "was it recalled" is recoverable for any
-top-k the caller applied, over the real population rather than a generated one.
-
-Cost and safety
----------------
-This sits on the recall path, so it is bounded and cheap by construction: a
-fixed-size ring of plain floats, no content, no keys, no allocation beyond the
-ring. Nothing here can grow, and nothing here holds anything that could
-identify a memory — an activation and a rank are not a memory. Recording is
-best-effort and never raises into recall.
+The hot path is an in-memory bounded append. Persistence is micro-batched by
+one coalesced worker in Aura's shutdown-owned I/O pool, so SQLite never blocks
+the event loop, a recall, or a caller thread. The durable store is independently
+bounded and is what the standalone fitter reads; a process-local ring cannot
+be evidence for a tool launched in another process.
 """
 
 from __future__ import annotations
 
-import threading
+import concurrent.futures
+import logging
+import math
+import sqlite3
+import time
 from collections import deque
 from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any
+from urllib.parse import quote
+
+from core.runtime.lockdep import LockRank, checked_lock
+from core.runtime.sqlite_support import connecting
+
+logger = logging.getLogger("Aura.Memory.RecallObservations")
 
 __all__ = [
     "RecallObservation",
@@ -44,67 +37,343 @@ __all__ = [
     "record_ranking",
 ]
 
-#: Observations retained. One ranked recall of 40 candidates contributes 40, so
-#: this is a few thousand recalls' worth — enough to fit a two-parameter curve
-#: many times over, and small enough to be invisible in memory.
-_RING_CAPACITY = 20000
+_RING_CAPACITY = 20_000
+_PERSIST_BATCH_LIMIT = 2_048
+
+
+def _default_db_path() -> Path:
+    from core.config import config
+
+    return Path(config.paths.memory_dir) / "recall_observations.db"
 
 
 @dataclass(frozen=True, slots=True)
 class RecallObservation:
-    """One candidate's fate in one ranked recall."""
+    """One anonymous candidate's fate in one ranked recall."""
 
     activation: float
     rank: int
     candidates: int
-
-    def recalled_at(self, top_k: int) -> bool:
-        return self.rank < top_k
+    returned: bool
+    recorded_at: float = 0.0
 
 
 class RecallObservationRing:
-    """Bounded, thread-safe record of ranked recalls."""
+    """Bounded live ring plus a bounded, process-readable evidence store."""
 
-    def __init__(self, capacity: int = _RING_CAPACITY) -> None:
-        self._lock = threading.Lock()
-        self._ring: deque[RecallObservation] = deque(maxlen=capacity)
+    def __init__(
+        self,
+        capacity: int = _RING_CAPACITY,
+        *,
+        db_path: str | Path | None = None,
+        persistence: bool = True,
+        background_persistence: bool = True,
+    ) -> None:
+        self._lock = checked_lock(f"recall_observations.state.{id(self):x}", rank=LockRank.LEAF)
+        self._ring: deque[RecallObservation] = deque(maxlen=max(1, int(capacity)))
+        self._pending: deque[RecallObservation] = deque(maxlen=max(1, int(capacity)))
         self._rankings = 0
+        self._dropped_pending = 0
+        self._flush_failures = 0
+        self._schedule_failures = 0
+        self._persisted_observations = 0
+        self._inflight_observations = 0
+        self._last_flush_at = 0.0
+        self._flush_future: concurrent.futures.Future[int] | None = None
+        self._flush_scheduled = False
+        self._retry_not_before = 0.0
+        self._persistence = bool(persistence)
+        self._background_persistence = bool(background_persistence)
+        self._db_path = Path(db_path) if db_path is not None else _default_db_path()
 
-    def record(self, activations: Sequence[float]) -> None:
-        """Record one ranked recall. ``activations`` must be in ranked order."""
+    def record(self, activations: Sequence[float], *, returned_count: int) -> int:
+        """Append one ranked recall in memory; return valid observations added."""
         total = len(activations)
         if total < 2:
-            # A single candidate is not a competition and carries no
-            # information about a retrieval threshold.
-            return
-        with self._lock:
-            self._rankings += 1
-            for rank, activation in enumerate(activations):
-                if activation != activation:  # NaN
-                    continue
-                self._ring.append(
+            return 0
+        returned = max(0, min(total, int(returned_count)))
+        now = time.time()
+        observations: list[RecallObservation] = []
+        for rank, activation in enumerate(activations):
+            try:
+                numeric = float(activation)
+            except (TypeError, ValueError, OverflowError):
+                continue
+            if math.isfinite(numeric):
+                observations.append(
                     RecallObservation(
-                        activation=float(activation), rank=rank, candidates=total
+                        numeric,
+                        rank,
+                        total,
+                        rank < returned,
+                        recorded_at=now,
                     )
                 )
+        if not observations:
+            return 0
+        with self._lock:
+            self._rankings += 1
+            self._ring.extend(observations)
+            if self._persistence:
+                overflow = max(0, len(self._pending) + len(observations) - self._pending.maxlen)
+                self._dropped_pending += overflow
+                self._pending.extend(observations)
+        if self._persistence and self._background_persistence:
+            self._schedule_flush()
+        return len(observations)
+
+    def _schedule_flush(self) -> None:
+        """Own one coalesced flush in Aura's shutdown-owned I/O pool."""
+        try:
+            from core.runtime.executors import submit_blocking_io
+        except (ImportError, AttributeError) as exc:
+            self._note_schedule_failure(exc)
+            return
+
+        with self._lock:
+            current = self._flush_future
+            if self._flush_scheduled or (current is not None and not current.done()):
+                return
+            if time.monotonic() < self._retry_not_before:
+                return
+            # Reserve ownership before leaving the critical section. Without
+            # this flag, two caller threads can both observe no Future and
+            # enqueue two SQLite workers.
+            self._flush_scheduled = True
+        try:
+            future = submit_blocking_io(
+                self._flush_worker,
+                label="recall-observations-flush",
+            )
+        except (RuntimeError, AttributeError, TypeError, ValueError) as exc:
+            with self._lock:
+                self._flush_scheduled = False
+            self._note_schedule_failure(exc)
+            return
+        with self._lock:
+            self._flush_future = future
+        future.add_done_callback(self._flush_done)
+
+    def _flush_worker(self) -> int:
+        persisted = 0
+        while True:
+            with self._lock:
+                batch = [
+                    self._pending.popleft()
+                    for _ in range(min(len(self._pending), _PERSIST_BATCH_LIMIT))
+                ]
+                self._inflight_observations = len(batch)
+            if not batch:
+                return persisted
+            try:
+                written = self._persist_batch(batch)
+            except (sqlite3.Error, OSError, RuntimeError, TypeError, ValueError) as exc:
+                self._restore_failed_batch(batch)
+                self._note_flush_failure(exc)
+                return persisted
+            with self._lock:
+                self._persisted_observations = max(self._persisted_observations, written)
+                self._inflight_observations = 0
+                self._last_flush_at = time.time()
+                self._retry_not_before = 0.0
+            persisted = written
+
+    def _flush_done(self, future: concurrent.futures.Future[int]) -> None:
+        cancelled = future.cancelled()
+        try:
+            exc = future.exception()
+            if exc is not None:
+                self._note_flush_failure(exc)
+        except concurrent.futures.CancelledError:
+            cancelled = True
+        except (RuntimeError, AttributeError, TypeError, ValueError) as exc:
+            self._note_flush_failure(exc)
+        finally:
+            with self._lock:
+                if self._flush_future is future:
+                    self._flush_future = None
+                self._flush_scheduled = False
+                pending = bool(self._pending)
+            try:
+                from core.runtime.task_ownership import runtime_shutdown_requested
+
+                shutting_down = runtime_shutdown_requested()
+            except (ImportError, AttributeError, RuntimeError):
+                shutting_down = False
+            if pending and not cancelled and not shutting_down:
+                self._schedule_flush()
+
+    def flush(self) -> int:
+        """Synchronously flush queued observations; intended for tools/tests."""
+        if not self._background_persistence:
+            return self._flush_worker()
+
+        deadline = time.monotonic() + 10.0
+        self._schedule_flush()
+        while time.monotonic() < deadline:
+            with self._lock:
+                current = self._flush_future
+                pending = bool(self._pending)
+                persisted = self._persisted_observations
+                scheduled = self._flush_scheduled
+            if not pending and not scheduled:
+                return persisted
+            if current is None:
+                self._schedule_flush()
+                time.sleep(0.005)
+                continue
+            try:
+                current.result(timeout=max(0.01, deadline - time.monotonic()))
+            except concurrent.futures.TimeoutError:
+                break
+            except concurrent.futures.CancelledError:
+                break
+        with self._lock:
+            return self._persisted_observations
+
+    def _connect(self, *, readonly: bool = False) -> sqlite3.Connection:
+        if readonly:
+            uri = f"file:{quote(str(self._db_path), safe='/')}?mode=ro"
+            conn = sqlite3.connect(uri, uri=True, timeout=5.0)
+            conn.execute("PRAGMA busy_timeout=5000")
+            return conn
+        conn = sqlite3.connect(str(self._db_path), timeout=5.0)
+        conn.execute("PRAGMA journal_mode=WAL")
+        conn.execute("PRAGMA synchronous=NORMAL")
+        conn.execute("PRAGMA busy_timeout=5000")
+        return conn
+
+    def _persist_batch(self, batch: Sequence[RecallObservation]) -> int:
+        from core.governance_context import local_internal_governed_scope
+        from core.runtime.file_write_gateway import get_file_write_gateway
+
+        with local_internal_governed_scope("memory_recall_observations"):
+            get_file_write_gateway().ensure_directory(
+                self._db_path.parent,
+                source="memory.recall_observations.persist",
+            )
+            with connecting(self._connect()) as conn:
+                conn.execute(
+                    """CREATE TABLE IF NOT EXISTS recall_observations (
+                        sequence INTEGER PRIMARY KEY AUTOINCREMENT,
+                        activation REAL NOT NULL,
+                        rank INTEGER NOT NULL,
+                        candidates INTEGER NOT NULL,
+                        returned INTEGER NOT NULL,
+                        recorded_at REAL NOT NULL
+                    )"""
+                )
+                columns = {
+                    str(row[1])
+                    for row in conn.execute("PRAGMA table_info(recall_observations)").fetchall()
+                }
+                if "returned" not in columns:
+                    # Rows written by the pre-label prototype remain unknown,
+                    # not silently false. load_persisted excludes their NULLs.
+                    conn.execute("ALTER TABLE recall_observations ADD COLUMN returned INTEGER")
+                conn.executemany(
+                    "INSERT INTO recall_observations "
+                    "(activation, rank, candidates, returned, recorded_at) "
+                    "VALUES (?, ?, ?, ?, ?)",
+                    [
+                        (
+                            obs.activation,
+                            obs.rank,
+                            obs.candidates,
+                            int(obs.returned),
+                            obs.recorded_at,
+                        )
+                        for obs in batch
+                    ],
+                )
+                conn.execute(
+                    "DELETE FROM recall_observations WHERE sequence <= COALESCE(("
+                    "SELECT sequence FROM recall_observations ORDER BY sequence DESC "
+                    "LIMIT 1 OFFSET ?), 0)",
+                    (int(self._ring.maxlen),),
+                )
+                count = int(
+                    conn.execute(
+                        "SELECT COUNT(*) FROM recall_observations WHERE returned IN (0, 1)"
+                    ).fetchone()[0]
+                )
+        return count
+
+    def load_persisted(self, *, replace: bool = True) -> int:
+        """Load the durable tail. Safe for a standalone fitter process."""
+        if not self._db_path.exists():
+            return 0
+        with connecting(self._connect(readonly=True)) as conn:
+            exists = conn.execute(
+                "SELECT 1 FROM sqlite_master WHERE type='table' AND name='recall_observations'"
+            ).fetchone()
+            if not exists:
+                return 0
+            rows = conn.execute(
+                "SELECT activation, rank, candidates, returned, recorded_at "
+                "FROM recall_observations WHERE returned IN (0, 1) "
+                "ORDER BY sequence DESC LIMIT ?",
+                (int(self._ring.maxlen),),
+            ).fetchall()
+        loaded = [
+            RecallObservation(
+                float(a),
+                int(rank),
+                int(candidates),
+                bool(returned),
+                float(recorded_at),
+            )
+            for a, rank, candidates, returned, recorded_at in reversed(rows)
+        ]
+        with self._lock:
+            if replace:
+                self._ring.clear()
+                self._rankings = 0
+            self._ring.extend(loaded)
+            self._rankings += sum(1 for obs in loaded if obs.rank == 0)
+            self._persisted_observations = len(loaded)
+        return len(loaded)
+
+    def _restore_failed_batch(self, batch: Sequence[RecallObservation]) -> None:
+        with self._lock:
+            available = max(0, self._pending.maxlen - len(self._pending))
+            restored = list(batch[-available:]) if available else []
+            self._dropped_pending += len(batch) - len(restored)
+            self._pending.extendleft(reversed(restored))
+            self._inflight_observations = 0
+
+    def _note_flush_failure(self, exc: BaseException) -> None:
+        with self._lock:
+            self._flush_failures += 1
+            count = self._flush_failures
+            self._retry_not_before = time.monotonic() + min(60.0, float(2 ** min(count, 6)))
+        if count & (count - 1) == 0:
+            logger.warning(
+                "Recall observation persistence failed %d time(s); live recall "
+                "continues and %d observations remain buffered: %s",
+                count,
+                self.stats()["pending_persistence"],
+                exc,
+            )
+
+    def _note_schedule_failure(self, exc: BaseException) -> None:
+        with self._lock:
+            self._schedule_failures += 1
+            count = self._schedule_failures
+        if count & (count - 1) == 0:
+            logger.debug(
+                "Recall observation flush scheduling unavailable %d time(s); "
+                "evidence remains buffered: %s",
+                count,
+                exc,
+            )
 
     def observations(self) -> list[RecallObservation]:
         with self._lock:
             return list(self._ring)
 
-    def samples(self, *, top_k_fraction: float = 0.2) -> list[tuple[float, int]]:
-        """``(activation, recalled)`` pairs, using each recall's own top-k.
-
-        ``top_k_fraction`` reproduces the slice callers actually apply. It is
-        per-ranking rather than global, so a recall of 5 candidates and one of
-        50 each contribute their own notion of "returned" instead of being
-        forced onto one threshold.
-        """
-        out: list[tuple[float, int]] = []
-        for obs in self.observations():
-            top_k = max(1, int(obs.candidates * top_k_fraction))
-            out.append((obs.activation, int(obs.recalled_at(top_k))))
-        return out
+    def samples(self) -> list[tuple[float, int]]:
+        return [(obs.activation, int(obs.returned)) for obs in self.observations()]
 
     def stats(self) -> dict[str, Any]:
         with self._lock:
@@ -113,16 +382,45 @@ class RecallObservationRing:
                 "rankings": self._rankings,
                 "capacity": self._ring.maxlen,
                 "saturated": len(self._ring) == self._ring.maxlen,
+                "pending_persistence": len(self._pending) + self._inflight_observations,
+                "queued_persistence": len(self._pending),
+                "inflight_persistence": self._inflight_observations,
+                "persisted_observations": self._persisted_observations,
+                "dropped_pending": self._dropped_pending,
+                "flush_failures": self._flush_failures,
+                "schedule_failures": self._schedule_failures,
+                "flush_active": bool(
+                    self._flush_scheduled or (self._flush_future and not self._flush_future.done())
+                ),
+                "retry_in_s": max(0.0, self._retry_not_before - time.monotonic()),
+                "last_flush_at": self._last_flush_at or None,
+                "store": str(self._db_path),
+                "content_fields_stored": [],
             }
 
-    def clear(self) -> None:
+    def clear(self, *, persisted: bool = False) -> None:
         with self._lock:
             self._ring.clear()
+            self._pending.clear()
+            self._inflight_observations = 0
             self._rankings = 0
+            self._persisted_observations = 0
+        if persisted and self._db_path.exists():
+            from core.governance_context import local_internal_governed_scope
+
+            with local_internal_governed_scope("memory_recall_observations"):
+                with connecting(self._connect()) as conn:
+                    exists = conn.execute(
+                        "SELECT 1 FROM sqlite_master WHERE type='table' "
+                        "AND name='recall_observations'"
+                    ).fetchone()
+                    if exists:
+                        conn.execute("DELETE FROM recall_observations")
 
 
 _ring: RecallObservationRing | None = None
-_ring_lock = threading.Lock()
+_ring_lock = checked_lock("recall_observations.singleton", rank=LockRank.REGISTRY)
+_recording_failures = 0
 
 
 def get_recall_observations() -> RecallObservationRing:
@@ -134,11 +432,19 @@ def get_recall_observations() -> RecallObservationRing:
     return _ring
 
 
-def record_ranking(activations: Iterable[float]) -> None:
+def record_ranking(activations: Iterable[float], *, returned_count: int) -> None:
     """Best-effort record of one ranked recall. Never raises into recall."""
+    global _recording_failures
     try:
-        get_recall_observations().record(list(activations))
-    except (RuntimeError, ValueError, TypeError, MemoryError):
-        # Observation is diagnostics. It must never be able to fail a recall,
-        # and a degradation receipt per recall would be louder than the signal.
-        pass  # no-op: intentional
+        get_recall_observations().record(list(activations), returned_count=returned_count)
+    except (RuntimeError, ValueError, TypeError, MemoryError, OSError) as exc:
+        with _ring_lock:
+            _recording_failures += 1
+            count = _recording_failures
+        if count & (count - 1) == 0:
+            logger.warning(
+                "Recall observation recording failed %d time(s); recall itself "
+                "continues without this evidence: %s",
+                count,
+                exc,
+            )

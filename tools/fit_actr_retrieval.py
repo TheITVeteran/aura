@@ -236,7 +236,9 @@ def _fit_retrieval_curve(samples: list[tuple[float, float, int]]) -> dict[str, o
     }
 
 
-def _observed_samples() -> tuple[list[tuple[float, float, int]], dict[str, object]]:
+def _observed_samples(
+    db_path: Path | None = None,
+) -> tuple[list[tuple[float, float, int]], dict[str, object]]:
     """Real recalls: activation and whether the trace was actually returned.
 
     Latency is not available per candidate here — a ranking times the whole
@@ -244,9 +246,12 @@ def _observed_samples() -> tuple[list[tuple[float, float, int]], dict[str, objec
     such rather than filled with the batch time repeated, which would
     manufacture a correlation of exactly zero and look like a measurement.
     """
-    from core.memory.recall_observations import get_recall_observations
+    from core.memory.recall_observations import RecallObservationRing
 
-    ring = get_recall_observations()
+    # This command runs in a new process. Reading the process singleton would
+    # always return a fresh empty ring and make --source observed nonfunctional.
+    ring = RecallObservationRing(db_path=db_path, persistence=False)
+    ring.load_persisted()
     pairs = ring.samples()
     samples = [(activation, 0.0, recalled) for activation, recalled in pairs]
     return samples, ring.stats()
@@ -258,16 +263,22 @@ def main() -> int:
         "--source",
         choices=("observed", "synthetic"),
         default="synthetic",
-        help="observed = real recalls from the runtime ring; synthetic = generated",
+        help="observed = durable real runtime recalls; synthetic = generated",
     )
     parser.add_argument("--trials", type=int, default=200)
     parser.add_argument("--batch", type=int, default=40)
     parser.add_argument("--seed", type=int, default=20260812)
     parser.add_argument("--json", type=Path, default=None)
+    parser.add_argument(
+        "--observations-db",
+        type=Path,
+        default=None,
+        help="durable recall-observation database (defaults to Aura's memory dir)",
+    )
     args = parser.parse_args()
 
     if args.source == "observed":
-        samples, ring_stats = _observed_samples()
+        samples, ring_stats = _observed_samples(args.observations_db)
         if len(samples) < 100:
             print(
                 json.dumps(
@@ -288,7 +299,7 @@ def main() -> int:
             return 1
         measured = {
             "samples": samples,
-            "top_k": "per-ranking",
+            "top_k": "actual caller limit recorded per ranking",
             "batch": "varies",
             "trials": ring_stats.get("rankings", 0),
         }

@@ -20,10 +20,15 @@ def test_recall_similar_skips_keyword_fallback_when_vector_results_suffice(tmp_p
 
     memory._fetch_by_ids = lambda episode_ids: [ep for ep in episodes if ep.episode_id in episode_ids]
     memory._keyword_search = lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("keyword fallback should be skipped"))
+    observed = {}
+    memory._observe_ranked_recall = lambda ranked, *, returned_count: observed.update(
+        candidates=len(ranked), returned_count=returned_count
+    )
 
     result = memory.recall_similar("summarize our recent continuity work", limit=2)
 
     assert [ep.episode_id for ep in result] == ["ep-a", "ep-b"]
+    assert observed == {"candidates": 2, "returned_count": 2}
 
 
 def test_recall_similar_keeps_keyword_fallback_for_exact_recall_queries(tmp_path):

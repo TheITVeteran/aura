@@ -23,7 +23,6 @@ from pydantic import BaseModel, Field
 
 from core.cognition.actr_activation import base_level_activation
 from core.config import config
-from core.memory.recall_observations import record_ranking
 from core.health.degraded_events import record_degraded_event
 from core.memory.engram_association import (
     get_engram_association_field,
@@ -34,6 +33,7 @@ from core.memory.engram_plasticity import (
     is_engram_plasticity_enabled,
 )
 from core.memory.hippocampus import HippocampalIndex
+from core.memory.recall_observations import record_ranking
 from core.memory.reconsolidation import ReconsolidationEngine, ReconsolidationOutcome
 from core.memory.retention_policy import episodic_retention_policy
 from core.resilience.state_manager import _SafeEncoder
@@ -926,6 +926,7 @@ class EpisodicMemory:
         # Sort by strength (recency + importance + emotional salience)
         alive.sort(key=lambda e: e.current_strength(), reverse=True)
 
+        self._observe_ranked_recall(alive, returned_count=limit)
         return self._register_recall(alive[:limit])
 
     def recall_similar(self, query: str, limit: int = 5) -> list[Episode]:
@@ -993,6 +994,7 @@ class EpisodicMemory:
         # homeostatic bound stops one over-strong trace from swamping recall
         # (anti-confabulation). Falls back to the static importance+recency blend.
         ranked = self._competitive_rank(combined, query)
+        self._observe_ranked_recall(ranked, returned_count=limit)
         return self._register_recall(ranked[:limit])
 
     @staticmethod
@@ -1096,15 +1098,28 @@ class EpisodicMemory:
         # index breaks ties deterministically; Episode is not orderable.
         scored.sort(key=lambda item: (-item[0], item[1]))
 
-        # Record what this recall actually did. Nothing else in the stack
-        # observes the candidates that were considered and NOT returned, which
-        # is precisely the population a retrieval-probability curve is about —
-        # without this, any such curve can only be fitted by re-running this
-        # function over invented episodes. Bounded ring, floats only, never
-        # raises into recall.
-        record_ranking(activations[item[1]] for item in scored)
-
         return [ep for _, _, ep in scored]
+
+    def _observe_ranked_recall(
+        self,
+        episodes: list["Episode"],
+        *,
+        returned_count: int,
+        now: float | None = None,
+    ) -> None:
+        """Record ACT-R activation against the final live retrieval decision.
+
+        Observation belongs after every ranking stage. Emitting it inside the
+        static fallback mislabeled competitive-ranker decisions and could not
+        know the caller's actual limit.
+        """
+        if len(episodes) < 2:
+            return
+        moment = time.time() if now is None else now
+        record_ranking(
+            (self._recency_score(episode, moment) for episode in episodes),
+            returned_count=returned_count,
+        )
 
     def _competitive_rank(self, episodes: list["Episode"], query: str) -> list["Episode"]:
         """Re-rank candidates through the engram plasticity competition field.
