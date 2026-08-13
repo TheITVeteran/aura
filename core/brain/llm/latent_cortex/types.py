@@ -27,7 +27,11 @@ ABSOLUTE_MAX_RECURRENT_STEPS = 64
 ABSOLUTE_MAX_SLOTS = 128
 ABSOLUTE_MAX_BRANCHES = 8
 ABSOLUTE_MAX_LAYER_APPS = 500_000_000  # token-layer applications per episode
-ABSOLUTE_MAX_WALL_CLOCK_S = 900.0
+# Claim-grade resident-model episodes can legitimately need more than the
+# serving controller's 900-second default.  Keep a hard host-protection
+# ceiling, but do not silently truncate the explicit 1,800-second research
+# contract used by frozen campaigns.
+ABSOLUTE_MAX_WALL_CLOCK_S = 1_800.0
 
 # Default per-episode compute in token-layer applications. Sized so a 64-layer
 # model with a 2k prompt (prefill 2048*64 ≈ 131k) plus 32 slots recurring over

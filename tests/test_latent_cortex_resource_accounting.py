@@ -136,6 +136,11 @@ def test_budget_separates_admission_units_from_measured_work():
     assert accounting["totals"]["tensor_scalar_ops"] == 1_000
 
 
+def test_budget_honors_bounded_claim_grade_wall_clock_contract():
+    assert ComputeBudget(wall_clock_s=1_800).wall_clock_s == 1_800.0
+    assert ComputeBudget(wall_clock_s=3_600).wall_clock_s == 1_800.0
+
+
 def test_equal_accounting_and_information_admit_comparison():
     certificate = certify_comparison_accounting(
         treatment_resource=_resource(),

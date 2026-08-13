@@ -48445,3 +48445,42 @@ The expanded focused surface passes `138/138`, canonical smoke passes
 The next bounded action is to apply this independent judge when CP380 reaches a
 complete or authenticated terminal verdict, then repair or replicate according
 to the measured paired causal result.
+
+## Checkpoint 2026-08-13-382: Research Time and Failure Evidence Are No Longer Lost
+
+The CP380 campaign did not produce a learned-tissue result. It committed one
+ordinary cell and one faulted uncomposed complete-system cell; no composed
+treatment, initialization-matched control or depth lesion completed. The full
+cell faulted after `901.456s` even though the frozen controller explicitly
+requested an `1800s` episode. The reason was a second, hidden ceiling inside
+`ComputeBudget` that silently truncated every request above `900s`. This is a
+harness failure, not a negative reasoning observation, and the partial journal
+has no fusion, frontier or `WOW Signal` authority.
+
+Claim-grade episodes may now use the requested bounded 30-minute envelope.
+Serving defaults remain unchanged, and no episode can exceed that hard ceiling.
+When recurrence cannot begin another atomic window, its typed error now states
+whether wall time or layer-application capacity was exhausted instead of
+collapsing both causes into the same misleading message.
+
+The fault also exposed a Python module-identity defect. Running the sweep as a
+script created `__main__.EpisodeFault`, while the complete-system helper
+imported a second `tools.run_rlc_reconciliation_sweep.EpisodeFault`. The outer
+journal therefore failed its `isinstance` check and discarded the detailed
+causal receipt carried by the helper. Script, bare-module and package imports
+now resolve to one module object and one fault class, so a failed cell retains
+the evidence needed to diagnose it.
+
+Finally, complete-system research decodes again use the task's
+`final_answer_v1` termination contract. The current engine stops as soon as a
+valid terminal object is complete and retains incomplete text at the bounded
+token limit. This removes needless generation after a complete answer without
+turning unfinished output into an infrastructure fault or changing any hidden
+task, score, arm, verifier or causal comparison.
+
+The focused engine and sweep contracts pass `131/131`; controller, pipeline and
+independent-verifier contracts pass `59/59`; canonical smoke passes `104/104`.
+Ruff and diff hygiene pass. Evidence is
+`artifacts/closeout/latent_cortex/cp382_bounded_episode_fault_integrity.json`.
+The next bounded action is a fresh empty-journal seven-arm component campaign
+frozen from CP382. CP380 must not be resumed or graded.

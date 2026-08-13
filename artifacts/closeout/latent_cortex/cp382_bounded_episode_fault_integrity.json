@@ -1,0 +1,42 @@
+{
+  "schema": "aura.rlc.closeout_checkpoint.v1",
+  "checkpoint": "CP382",
+  "subject": "bounded research episodes preserve their requested budget and typed failure evidence",
+  "cp380_terminal_diagnosis": {
+    "campaign": "cp380-matched-monotonic-component-s41037613",
+    "source_commit": "a3a01dfe2b8a44c76df2ed59c02fa915de98b5c2",
+    "committed_cells": 2,
+    "ordinary_cells_completed": 1,
+    "full_system_cells_faulted": 1,
+    "learned_treatment_cells_completed": 0,
+    "matched_control_cells_completed": 0,
+    "fault_latency_s": 901.4562195839826,
+    "requested_episode_wall_s": 1800.0,
+    "effective_pre_repair_hard_ceiling_s": 900.0,
+    "scientific_result_available": false,
+    "reason": "the full-system cell exhausted a silently truncated wall-clock budget before any treatment-control comparison existed"
+  },
+  "runtime_changes": [
+    "the absolute episode ceiling is 1800 seconds, matching the explicit bounded claim-grade campaign contract",
+    "ordinary serving defaults remain unchanged and research episodes remain hard-bounded",
+    "recurrence faults distinguish wall-clock exhaustion from layer-application exhaustion",
+    "script, bare-module and package imports resolve to one sweep module and one EpisodeFault class",
+    "typed helper faults retain their causal receipts at the outer journal boundary",
+    "complete-system cells stop when a valid FINAL_ANSWER contract is complete",
+    "incomplete output remains a bounded policy observation rather than an infrastructure fault"
+  ],
+  "verification": {
+    "focused_engine_and_sweep_tests": "131 passed",
+    "controller_pipeline_and_independent_verifier_tests": "59 passed",
+    "smoke": "104 passed",
+    "ruff": "passed",
+    "diff_check": "passed"
+  },
+  "claims": {
+    "reasoning_gain_proven": false,
+    "fusion_authorized": false,
+    "frontier_level_proven": false,
+    "wow_signal_authorized": false
+  },
+  "next": "freeze a clean CP382 source capsule and run a new empty-journal seven-arm component campaign under launchd custody"
+}

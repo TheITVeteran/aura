@@ -500,8 +500,20 @@ class WindowRunner:
             # "broke mid-decode". Nothing has run in this window yet, so the
             # resident model is clean and the turn can still be answered by the
             # ordinary path.
+            if self._budget.remaining_wall_s <= 0.0:
+                reason = (
+                    "wall-clock budget exhausted "
+                    f"(limit={self._budget.wall_clock_s:.3f}s)"
+                )
+            else:
+                required = tokens * layers
+                reason = (
+                    "layer-application budget unavailable "
+                    f"(required={required} remaining={self._budget.remaining_layer_apps})"
+                )
             raise ComputeBudgetUnaffordable(
-                f"compute budget cannot afford window [{start}:{end}) for {tokens} slots"
+                f"compute budget cannot afford window [{start}:{end}) for {tokens} slots: "
+                f"{reason}"
             )
         # Reserve and account the whole atomic pass before execution. A layer
         # fault can consume partial compute, so failed work must not disappear

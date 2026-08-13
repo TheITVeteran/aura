@@ -40,6 +40,14 @@ from typing import Any, Final
 REPO_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO_ROOT))
 
+# This file is both an executable and an importable harness.  Without aliases,
+# executing it as ``__main__`` and then importing it from the complete-system
+# helper creates two EpisodeFault classes.  The outer runner then cannot
+# recognize the helper's typed fault and discards its causal receipt.
+_THIS_MODULE = sys.modules[__name__]
+sys.modules["run_rlc_reconciliation_sweep"] = _THIS_MODULE
+sys.modules["tools.run_rlc_reconciliation_sweep"] = _THIS_MODULE
+
 SWEEP_SCHEMA = "aura.rlc_reconciliation_sweep.v1"
 EVIDENCE_MANIFEST_SCHEMA = "aura.rlc.reconciliation_evidence_manifest.v3"
 CLAIM_TASK_REGISTRY_VERSION = "2026.08.06.1"
@@ -723,13 +731,10 @@ def _build_config(
     fast_weight_target: str = "o_proj",
     fast_weight_layer_placement: str = "early",
     output_memory_diagnostic: bool = False,
-    # NOTE: the product arm overrides decode_contract to "none" below, which
-    # is what the deployed system runs. Contract enforcement inside the engine
-    # does not merely stop generation the way the ordinary control does -- it
-    # can discard the produced answer entirely (measured: 576 generated tokens
-    # returned as an empty string under token_limit_contract_incomplete). An
-    # unfinished answer is a policy observation to be scored, never something
-    # to blank, and blanking it puts the arm below the floor by construction.
+    # Full-system research cells use the same explicit terminal contract as the
+    # task and verifier lane. The current engine retains incomplete output at
+    # its token limit, so contract-aware termination can stop a complete answer
+    # early without converting an unfinished answer into infrastructure loss.
 ):
     from core.brain.llm.latent_cortex.types import (
         BranchConfig,
@@ -891,7 +896,7 @@ def _build_config(
         # routing impossible -- at half the price. Verification needs enough of
         # the answer to find a claim, not all of it.
         verifier_probe_max_tokens=max(48, min(256, max_tokens // 2)) if full else 48,
-        decode_contract="none" if full else decode_contract,
+        decode_contract=("final_answer_v1" if full else decode_contract),
         # Candidate verification needs a complete, gradeable object even when
         # the public answer remains the byte-identical vanilla incumbent.
         # This contract is deliberately separate from decode_contract so the

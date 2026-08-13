@@ -24,6 +24,13 @@ if str(TOOLS) not in sys.path:
 import run_rlc_reconciliation_sweep as sweep  # noqa: E402
 
 
+def test_script_and_package_imports_share_typed_fault_identity() -> None:
+    from tools import run_rlc_reconciliation_sweep as packaged
+
+    assert packaged is sweep
+    assert packaged.EpisodeFault is sweep.EpisodeFault
+
+
 def test_cell_status_is_published_before_model_execution(tmp_path: Path) -> None:
     task = SimpleNamespace(task_id="task-1", domain="mathematics")
 
@@ -146,7 +153,8 @@ def test_the_full_stack_arm_enables_every_pillar_that_was_built():
     assert cfg.generative_verifier_enabled is True
     assert cfg.counterfactual_verifier_enabled is True
     assert cfg.prefix_stability_enabled is True
-    assert cfg.decode_contract == "none"
+    assert cfg.decode_contract == "final_answer_v1"
+    assert cfg.decode_contract_grace_tokens == 0
     assert cfg.verifier_probe_contract == "final_answer_v1"
     assert cfg.local_repair_max_attempts == 2
     assert cfg.verifier_accept_non_regression is True

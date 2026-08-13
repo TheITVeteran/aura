@@ -375,6 +375,16 @@ def test_budget_preflight_prevents_atomic_overshoot(tiny_model):
     assert budget.spent_layer_apps == 0
 
 
+def test_budget_preflight_identifies_wall_clock_exhaustion(tiny_model):
+    cache = _prefill(tiny_model, mx.array(PROMPT))
+    budget = ComputeBudget(wall_clock_s=1.0, started_monotonic=0.0)
+    runner = WindowRunner(tiny_model.model, budget)
+    z = tiny_model.model.embed_tokens(mx.array([[1, 2, 3, 4]]))
+    with pytest.raises(RuntimeError, match="wall-clock budget exhausted"):
+        runner.run(z, cache, P_END, C_START, persist=False)
+    assert budget.spent_layer_apps == 0
+
+
 # ── Causality: slots must matter to decode ──────────────────────────────
 
 
