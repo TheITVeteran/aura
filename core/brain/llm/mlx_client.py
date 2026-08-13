@@ -10839,6 +10839,7 @@ class MLXLocalClient:
                     "set_expert_adapter",
                     "nonparametric_ingest",
                     "unified_recurrent_shadow_probe",
+                    "unified_recurrent_qualified_decode",
                     "latent_reason",
                 ):
                     # Before routing: a terminal frame for a cancelled request

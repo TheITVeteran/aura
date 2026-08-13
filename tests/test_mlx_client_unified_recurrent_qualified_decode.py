@@ -1,8 +1,11 @@
 from __future__ import annotations
 
+import asyncio
+import contextlib
 import hashlib
 import json
 import os
+import queue
 from types import MethodType, SimpleNamespace
 
 import pytest
@@ -178,6 +181,37 @@ def test_client_status_refuses_mismatched_activation_identity() -> None:
 
     assert status["active"] is False
     assert status["reason"] == "qualified_activation_shadow_identity_differs"
+
+
+@pytest.mark.asyncio
+async def test_response_listener_routes_qualified_terminal_frame() -> None:
+    client, _request_queue, _activation_value = _client()
+    response_queue: queue.Queue[dict] = queue.Queue()
+    client._res_q = response_queue
+    client._response_queue_generation = 1
+    client._listener_stop_generation = -1
+    client._note_soft_cancel_acknowledgement = lambda _response: None
+    request_id = "qualified-listener-route"
+    future = mlx_client._new_shared_future()
+    client._pending_generations[request_id] = future
+    listener = asyncio.create_task(client._response_listener_loop())
+    response = {
+        "id": request_id,
+        "action": "unified_recurrent_qualified_decode",
+        "status": "ok",
+        "allocator_reclaimed": True,
+        "receipt": {"result_sha256": "a" * 64},
+    }
+    try:
+        response_queue.put(response)
+        observed = await mlx_client._await_shared_future(future, timeout_s=2.0)
+    finally:
+        listener.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await listener
+
+    assert observed == response
+    assert request_id not in client._pending_generations
 
 
 def test_client_factory_replaces_a_closed_registered_worker(

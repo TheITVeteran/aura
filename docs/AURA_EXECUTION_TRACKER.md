@@ -47553,3 +47553,35 @@ only if it passes, by fresh immutable lifecycle and activation evidence. The
 powered replication remains a bounded typed-family result; broad reasoning,
 frontier performance, static fusion, `WOW Signal`, soak and Aura 1.0 remain
 unproven.
+
+## Checkpoint 2026-08-13-349: Parent IPC Routes Qualified Decode Completion
+
+The first CP348 source-bound resident diagnostic proved that the canonical
+qualified decoder was no longer the stalled component: it cold-loaded the
+resident 32B, generated all `7/7` case-zero tokens in approximately 15
+seconds, reclaimed the worker state and returned the worker request loop to
+idle. The parent nevertheless waited without receiving a terminal result.
+Process sampling and response-loop tracing found the exact omission: the
+listener's terminal-action allowlist routed shadow probes but did not include
+`unified_recurrent_qualified_decode`. The valid response was consumed without
+resolving its pending future.
+
+Qualified decode is now an explicit terminal response action beside its
+shadow counterpart. A real response-listener regression installs a pending
+shared future, sends an exact qualified terminal frame through the queue, and
+proves that the matching future completes and is removed. This exercises the
+production queue-generation and correlation path rather than mocking the
+qualified caller's await directly.
+
+Validation under Aura's Python 3.12 runtime is green: the expanded six-suite
+affected surface passes `48/48`, canonical smoke passes `104/104`, and Ruff,
+compilation, governance lint, layering and diff hygiene pass. The interrupted
+diagnostic's exact process group was stopped, its resident worker exited, and
+both shadow and qualified authority pointers remain absent.
+
+This checkpoint repairs terminal IPC delivery only. The completed token trace
+is diagnostic evidence, not an exact-answer verdict, because the discarded
+response never reached the comparer. A fresh CP349-bound case-zero diagnostic
+must pass before the full immutable lifecycle and two-stage qualified
+activation are retried. No broad reasoning, frontier, `WOW Signal`, soak or
+Aura 1.0 claim follows.
