@@ -164,7 +164,16 @@ assume(
     discharged_by="tests/test_actr_fit.py::test_fitted_parameters_are_distinct_from_the_published_defaults",
     note=(
         "tau=-0.4666, s=2.0 by maximum likelihood over 6,000 samples; Brier skill "
-        "0.154 over base rate. Reproduce with tools/fit_actr_retrieval.py."
+        "0.154 over base rate. Reproduce with tools/fit_actr_retrieval.py. "
+        "IMPORTANT: those constants come from SYNTHETIC mode — Aura's ranker "
+        "calibrated against itself on generated episodes, which is a "
+        "self-consistency check rather than a measurement of Aura's memory, and "
+        "is not evidence about human ACT-R curves at all. --source observed fits "
+        "the same curve against real recalls recorded by "
+        "core/memory/recall_observations.py and gives materially different "
+        "answers (tau=1.50, s=2.1, skill 0.209 on an 80-ranking sample). The "
+        "observed path refuses rather than falling back, so the two claims can "
+        "never be confused."
     ),
 )
 

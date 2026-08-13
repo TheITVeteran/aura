@@ -23,6 +23,7 @@ from pydantic import BaseModel, Field
 
 from core.cognition.actr_activation import base_level_activation
 from core.config import config
+from core.memory.recall_observations import record_ranking
 from core.health.degraded_events import record_degraded_event
 from core.memory.engram_association import (
     get_engram_association_field,
@@ -1094,6 +1095,15 @@ class EpisodicMemory:
         ]
         # index breaks ties deterministically; Episode is not orderable.
         scored.sort(key=lambda item: (-item[0], item[1]))
+
+        # Record what this recall actually did. Nothing else in the stack
+        # observes the candidates that were considered and NOT returned, which
+        # is precisely the population a retrieval-probability curve is about —
+        # without this, any such curve can only be fitted by re-running this
+        # function over invented episodes. Bounded ring, floats only, never
+        # raises into recall.
+        record_ranking(activations[item[1]] for item in scored)
+
         return [ep for _, _, ep in scored]
 
     def _competitive_rank(self, episodes: list["Episode"], query: str) -> list["Episode"]:

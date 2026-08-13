@@ -149,18 +149,25 @@ class ActrParameters:
 
 DEFAULT_PARAMETERS = ActrParameters()
 
-#: Fitted to Aura's own recall behaviour by ``tools/fit_actr_retrieval.py``,
-#: 6,000 samples over 150 batches of 40 traces spanning 60s to one year of age
-#: with 0-30 rehearsals. Maximum likelihood on whether each trace was actually
-#: returned in the ranked top-k.
+#: Calibrated against Aura's own ranker by ``tools/fit_actr_retrieval.py`` in
+#: SYNTHETIC mode: 6,000 samples over 150 batches of 40 generated traces,
+#: maximum likelihood on whether each was returned in the ranked top-k.
 #:
-#: These are MEASURED, unlike :data:`DEFAULT_PARAMETERS`, and only the two
-#: parameters the measurement identifies are replaced. ``latency_factor`` is
-#: deliberately left at its published default and must not be read as fitted —
-#: see the module docstring for why it is not fittable here.
+#: Read that word carefully. This is the ranker calibrated against itself on
+#: invented inputs — a self-consistency check with a fitted curve attached. It
+#: is not a measurement of Aura's memory and it is emphatically not evidence
+#: that Aura reproduces human ACT-R retrieval curves; no human data is involved
+#: anywhere in the pipeline that produced these two numbers.
 #:
-#: Reproduce: ``python tools/fit_actr_retrieval.py --trials 150 --batch 40``
-#: Artifact:  ``artifacts/current/actr_fit/retrieval_fit.json``
+#: ``--source observed`` fits the same curve against REAL recalls recorded by
+#: ``core/memory/recall_observations.py``, which is the honest source and gives
+#: materially different answers — an 80-ranking sample measured tau=1.50,
+#: s=2.1, Brier skill 0.209 against the synthetic 0.154. These constants stay
+#: synthetic until enough live recall has accumulated to replace them, and the
+#: gap between the two is the reason the distinction is worth keeping.
+#:
+#: ``latency_factor`` is deliberately left at its published default and must
+#: not be read as fitted — see the module docstring for why it is not fittable.
 FITTED_PARAMETERS = ActrParameters(threshold=-0.4666, noise_s=2.0)
 
 #: Brier skill of :data:`FITTED_PARAMETERS` over predicting the base rate.

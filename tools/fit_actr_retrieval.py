@@ -1,5 +1,30 @@
 #!/usr/bin/env python3
-"""Fit ACT-R's retrieval parameters to Aura's own measured recall, and report what does not fit.
+"""Calibrate ACT-R's retrieval parameters against Aura's ranker, and report what does not fit.
+
+WHAT THIS IS AND IS NOT
+-----------------------
+This is internal calibration of Aura's own recall ranking. It is not evidence
+that Aura's memory behaves like human memory, and it is not independent
+cognitive-science validation. The distinction is easy to lose and worth stating
+in the first paragraph: ACT-R's parameters were fitted, over decades, against
+human reaction times and recall rates. Nothing here touches a human subject.
+
+There are two data sources and they are not equally good:
+
+``--source observed`` (preferred) fits against real recalls that actually
+happened. ``core/memory/recall_observations.py`` records, for every ranked
+recall, each candidate's activation and the rank it came out at — including the
+candidates that were NOT returned, which is the population the curve is about
+and which nothing else in the stack observes. Requires the runtime to have done
+some recalling.
+
+``--source synthetic`` generates trace ages, rehearsal counts and importances,
+runs them through the real ``_static_rank``, and labels the top-k as recalled.
+This calibrates the ranker against itself on invented inputs. It is a
+self-consistency check with a fitted curve attached, useful for regression and
+for exercising the estimator, and it should never be quoted as a measurement of
+Aura's memory. The report labels the source, and ``--source observed`` refuses
+rather than silently falling back.
 
 ``latency_model.unfitted_parameters`` was registered as an undischarged
 assumption: the module shipped published defaults for the latency factor F and
@@ -211,21 +236,84 @@ def _fit_retrieval_curve(samples: list[tuple[float, float, int]]) -> dict[str, o
     }
 
 
+def _observed_samples() -> tuple[list[tuple[float, float, int]], dict[str, object]]:
+    """Real recalls: activation and whether the trace was actually returned.
+
+    Latency is not available per candidate here — a ranking times the whole
+    batch, not each trace — so the latency arm is left empty and reported as
+    such rather than filled with the batch time repeated, which would
+    manufacture a correlation of exactly zero and look like a measurement.
+    """
+    from core.memory.recall_observations import get_recall_observations
+
+    ring = get_recall_observations()
+    pairs = ring.samples()
+    samples = [(activation, 0.0, recalled) for activation, recalled in pairs]
+    return samples, ring.stats()
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument(
+        "--source",
+        choices=("observed", "synthetic"),
+        default="synthetic",
+        help="observed = real recalls from the runtime ring; synthetic = generated",
+    )
     parser.add_argument("--trials", type=int, default=200)
     parser.add_argument("--batch", type=int, default=40)
     parser.add_argument("--seed", type=int, default=20260812)
     parser.add_argument("--json", type=Path, default=None)
     args = parser.parse_args()
 
-    measured = _measure(args.trials, args.batch, args.seed)
+    if args.source == "observed":
+        samples, ring_stats = _observed_samples()
+        if len(samples) < 100:
+            print(
+                json.dumps(
+                    {
+                        "source": "observed",
+                        "fitted": False,
+                        "reason": (
+                            f"only {len(samples)} recorded recall observations; "
+                            "the runtime has not done enough recalling to fit a "
+                            "curve. Refusing rather than falling back to "
+                            "synthetic, which would be a different claim."
+                        ),
+                        "ring": ring_stats,
+                    },
+                    indent=2,
+                )
+            )
+            return 1
+        measured = {
+            "samples": samples,
+            "top_k": "per-ranking",
+            "batch": "varies",
+            "trials": ring_stats.get("rankings", 0),
+        }
+    else:
+        measured = _measure(args.trials, args.batch, args.seed)
     samples = measured["samples"]  # type: ignore[index]
 
     latency = _fit_latency(samples)  # type: ignore[arg-type]
     curve = _fit_retrieval_curve(samples)  # type: ignore[arg-type]
 
     report = {
+        "source": args.source,
+        # Stated on the artifact itself, because the artifact is what gets
+        # quoted later and the distinction is the whole point.
+        "establishes": (
+            "Real recalls performed by this runtime: given Aura's implemented "
+            "ranking, these parameters summarise its retrieval probability."
+            if args.source == "observed"
+            else "Aura's ranker calibrated against itself on GENERATED episodes. "
+            "A self-consistency check, not a measurement of Aura's memory."
+        ),
+        "does_not_establish": (
+            "That Aura's memory reproduces empirically measured human ACT-R "
+            "retrieval curves. No human data is involved anywhere in this tool."
+        ),
         "measured": {
             "trials": measured["trials"],
             "batch": measured["batch"],
