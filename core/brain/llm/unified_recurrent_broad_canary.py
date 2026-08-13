@@ -64,6 +64,7 @@ def seal_broad_canary_plan(
     recurrence_depth: int,
     max_tokens: int,
     tasks: Sequence[Mapping[str, Any]],
+    source_binding: Mapping[str, Any],
 ) -> dict[str, Any]:
     """Freeze one answer-blind broad canary before model execution."""
 
@@ -79,6 +80,7 @@ def seal_broad_canary_plan(
         "arms": list(ARMS),
         "domains": list(FRONTIER_DOMAINS),
         "tasks": rows,
+        "source_binding": dict(source_binding),
         "typed_state_slots_enabled": False,
         "terminal_grammar_enabled": False,
         "answer_digit_pointer_enabled": False,
@@ -106,6 +108,7 @@ def broad_canary_plan_errors(value: Any) -> list[str]:
         "arms",
         "domains",
         "tasks",
+        "source_binding",
         "typed_state_slots_enabled",
         "terminal_grammar_enabled",
         "answer_digit_pointer_enabled",
@@ -173,6 +176,23 @@ def broad_canary_plan_errors(value: Any) -> list[str]:
         != set(FRONTIER_DOMAINS)
     ):
         errors.append("broad_canary_task_contract_invalid")
+    source = value.get("source_binding")
+    if (
+        not isinstance(source, Mapping)
+        or set(source) != {"git_commit", "implementation_sha256s"}
+        or not isinstance(source.get("git_commit"), str)
+        or len(source["git_commit"]) != 40
+        or any(character not in "0123456789abcdef" for character in source["git_commit"])
+        or not isinstance(source.get("implementation_sha256s"), Mapping)
+        or not source["implementation_sha256s"]
+        or any(
+            not isinstance(path, str)
+            or not path
+            or not _is_sha(digest)
+            for path, digest in source["implementation_sha256s"].items()
+        )
+    ):
+        errors.append("broad_canary_source_binding_invalid")
     if any(
         value.get(name) is not False
         for name in (

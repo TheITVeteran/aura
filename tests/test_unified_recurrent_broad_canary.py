@@ -31,6 +31,10 @@ def _plan():
             }
             for domain in FRONTIER_DOMAINS
         ],
+        source_binding={
+            "git_commit": "d" * 40,
+            "implementation_sha256s": {"tool.py": "e" * 64},
+        },
     )
 
 
