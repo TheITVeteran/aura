@@ -46623,3 +46623,29 @@ matched-root preparation, root mismatch, positive-only launch, negative stop,
 failed-controller rejection, exact frozen installer argv and launchd restart
 semantics. The completion envelope remains `915/920`; this closes unattended
 advancement infrastructure, not the still running canary's scientific verdict.
+
+## Checkpoint 2026-08-12-297: The True-Root Evidence Chain Is Detached
+
+The CP296 handoff is now installed from immutable source commit
+`5f4b62323f73fe7aa9ede4223bfddc4fbbc5c1ae`. Launchd owns authenticated
+controller PID `54752`; PID-bound sleep inhibitor `54790`; handoff config
+`157f045eee25c3e401c8c0013b4795d5fc4d65b1c89f3f7e35aaee08e8486bca`;
+CP292 canary plan `655436d5c21fea2b869c55a6d2f977881a6fa120e7537c5de4ab188a00636522`;
+and powered plan `e86ad0157107582792f635cd0fc08569b3158079036e16ea507df0feba3f7fb7`.
+Its HMAC status is moving in `waiting_for_canary` and binds immutable CP293's
+powered installer bytes.
+
+The already-hardened promotion transaction is independently installed from
+the same immutable CP296 capsule. Launchd owns authenticated controller PID
+`54975` and sleep inhibitor `55025`; promotion config
+`968438051f2601318d99ad9cc07face9a50ad13113162f81de1f97a2f3416571`
+binds the same powered replication plan and package id
+`cp296-true-root-recurrent`. It remains `waiting_for_replication`; it cannot
+materialize, activate or qualify tissue without independently recomputing a
+supported powered verdict.
+
+This is a live operational checkpoint, not a scientific one. The canary,
+handoff and promotion lineages are independently detached from Codex and each
+has a moving authenticated heartbeat and exact sleep inhibitor. The completion
+envelope remains `915/920` until the canary and powered evidence actually
+adjudicate.
