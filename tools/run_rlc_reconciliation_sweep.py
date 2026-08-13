@@ -695,6 +695,42 @@ def _integrated_recurrent_progress_callback(
     return report
 
 
+def _complete_system_progress_callback(
+    out_dir: Path,
+    *,
+    arm: str,
+    task_id: str,
+) -> Callable[[dict[str, Any]], None]:
+    """Publish useful liveness without exposing prompts or candidate content."""
+
+    allowed = {
+        "schema",
+        "phase",
+        "elapsed_s",
+        "phase_duration_s",
+        "engine_stage",
+        "engine_elapsed_s",
+        "spent_layer_apps",
+        "action",
+        "acquisition_status",
+        "generation_index",
+        "generation_calls",
+        "decision",
+    }
+
+    def report(payload: dict[str, Any]) -> None:
+        public = {key: payload[key] for key in allowed if key in payload}
+        _status(
+            out_dir,
+            phase="executing_cell",
+            arm=arm,
+            task_id=task_id,
+            complete_system_progress=public,
+        )
+
+    return report
+
+
 def _mark_cell_started(
     out_dir: Path,
     *,
@@ -2371,6 +2407,7 @@ def _run_rlc(
     runtime_identity: dict[str, Any] | None = None,
     domain: str = "general",
     cognitive_context: list[dict[str, Any]] | None = None,
+    progress: Callable[[dict[str, Any]], None] | None = None,
 ) -> tuple[str, dict[str, Any]]:
     from core.brain.llm.latent_cortex.engine import LatentCortexEngine
     from core.brain.llm.latent_cortex.types import ComputeBudget
@@ -2400,6 +2437,8 @@ def _run_rlc(
     kwargs["domain"] = str(domain or "general")
     if cognitive_context:
         kwargs["cognitive_context"] = cognitive_context
+    if progress is not None:
+        kwargs["progress"] = progress
     if objective:
         # The engine derives its verification objective from prompt/messages.
         # Passing token_ids alone -- which this harness did to control the
@@ -3493,6 +3532,11 @@ def main() -> int:
                                 spec.profile != "complete_closed_book_executable_ablation"
                             ),
                             integrated_candidates=integrated_candidates,
+                            progress=_complete_system_progress_callback(
+                                out_dir,
+                                arm=arm,
+                                task_id=task.task_id,
+                            ),
                         )
                         system_receipt = receipt.get("complete_system_closed_book") or {}
                         from core.brain.llm.latent_cortex.resource_accounting import (
@@ -3585,7 +3629,13 @@ def main() -> int:
                     # minutes has not been shown to be deployable.
                     "steps_taken": receipt.get("steps_taken"),
                     "halted_early": receipt.get("halted_early"),
-                    "phase_latency_s": receipt.get("phase_latency_s"),
+                    "phase_latency_s": (
+                        (receipt.get("complete_system_closed_book") or {}).get(
+                            "phase_latency_s"
+                        )
+                        if spec.profile in COMPLETE_SYSTEM_PROFILES
+                        else receipt.get("phase_latency_s")
+                    ),
                     # Whether the promotion chain actually fired, recorded
                     # per cell so the battery answers it directly. Every
                     # link in that chain has been zero at some point

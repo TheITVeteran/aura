@@ -12,8 +12,68 @@ import hashlib
 import json
 import math
 import time
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from typing import Any
+
+
+class _CompleteSystemPhaseTracker:
+    """Publish bounded progress while retaining attributable wall-clock cost."""
+
+    def __init__(self, progress: Callable[[dict[str, Any]], None] | None) -> None:
+        self._progress = progress
+        self._started = time.monotonic()
+        self._phase_started: dict[str, float] = {}
+        self.timings_s: dict[str, float] = {}
+
+    def _emit(self, phase: str, **detail: Any) -> None:
+        if self._progress is None:
+            return
+        payload = {
+            "schema": "aura.rlc.complete_system_progress.v1",
+            "phase": str(phase),
+            "elapsed_s": round(max(0.0, time.monotonic() - self._started), 6),
+            **detail,
+        }
+        try:
+            self._progress(payload)
+        except (AttributeError, OSError, RuntimeError, TypeError, ValueError):
+            # Progress is diagnostic. A broken observer cannot alter an episode.
+            return
+
+    def begin(self, phase: str, **detail: Any) -> None:
+        self._phase_started[str(phase)] = time.monotonic()
+        self._emit(f"{phase}_started", **detail)
+
+    def end(self, phase: str, **detail: Any) -> None:
+        now = time.monotonic()
+        started = self._phase_started.pop(str(phase), now)
+        duration_s = max(0.0, now - started)
+        self.timings_s[str(phase)] = round(
+            float(self.timings_s.get(str(phase), 0.0)) + duration_s,
+            6,
+        )
+        self._emit(
+            f"{phase}_completed",
+            phase_duration_s=round(duration_s, 6),
+            **detail,
+        )
+
+    def engine_progress(self, phase: str) -> Callable[[dict[str, Any]], None]:
+        def report(payload: dict[str, Any]) -> None:
+            self._emit(
+                f"{phase}_engine",
+                engine_stage=str(payload.get("stage") or "unknown"),
+                engine_elapsed_s=float(payload.get("elapsed_s") or 0.0),
+                spent_layer_apps=int(payload.get("spent_layer_apps") or 0),
+            )
+
+        return report
+
+    def receipt(self) -> dict[str, float]:
+        return {
+            **self.timings_s,
+            "total": round(max(0.0, time.monotonic() - self._started), 6),
+        }
 
 
 def _task_type_for_domain(domain: str) -> str:
@@ -838,6 +898,7 @@ def _run_complete_system_closed_book(
     campaign_seed: int,
     executable_reasoning_enabled: bool = True,
     integrated_candidates: Sequence[Mapping[str, Any]] = (),
+    progress: Callable[[dict[str, Any]], None] | None = None,
 ) -> tuple[str, dict[str, Any]]:
     """Measure the same-information RLC, acquisition, and amplifier composition."""
 
@@ -877,7 +938,9 @@ def _run_complete_system_closed_book(
         integrated_candidates,
         task_id=str(task.task_id),
     )
+    phases = _CompleteSystemPhaseTracker(progress)
 
+    phases.begin("first_rlc")
     first_verifier = EpisodeTaskVerifier(
         objective,
         response_contract=task.public.response_contract,
@@ -895,7 +958,9 @@ def _run_complete_system_closed_book(
         worker_identity=worker_identity,
         runtime_identity=runtime_identity,
         domain=domain,
+        progress=phases.engine_progress("first_rlc"),
     )
+    phases.end("first_rlc")
     final_rlc_text = first_text
     final_receipt = first_receipt
     acquisition_evidence: dict[str, Any] = {
@@ -917,6 +982,7 @@ def _run_complete_system_closed_book(
         if action in COGNITIVE_COMPUTE_ACTIONS:
             from core.brain.cortex_compute_acquisition import acquire_cognitive_compute
 
+            phases.begin("cognitive_acquisition", action=action.value)
             acquisition_started = time.monotonic()
             acquisition_timeout_s = min(12.0, max(0.1, wall_clock_s * 0.05))
             compute = asyncio.run(
@@ -953,6 +1019,10 @@ def _run_complete_system_closed_book(
                     "acquired_context": list(compute.context),
                 }
             )
+            phases.end(
+                "cognitive_acquisition",
+                acquisition_status=str(acquisition["status"]),
+            )
             if compute.context:
                 continuation_objective = _contextual_continuation_objective(
                     objective,
@@ -962,6 +1032,7 @@ def _run_complete_system_closed_book(
                     objective,
                     response_contract=task.public.response_contract,
                 )
+                phases.begin("continuation_rlc")
                 second_text, second_receipt = sweep._run_rlc(
                     model,
                     config,
@@ -975,7 +1046,9 @@ def _run_complete_system_closed_book(
                     worker_identity=worker_identity,
                     runtime_identity=runtime_identity,
                     domain=domain,
+                    progress=phases.engine_progress("continuation_rlc"),
                 )
+                phases.end("continuation_rlc")
                 final_rlc_text = second_text
                 final_receipt = second_receipt
                 acquisition_evidence.update(
@@ -1024,6 +1097,7 @@ def _run_complete_system_closed_book(
         nonlocal generation_calls
         index = generation_calls
         generation_calls += 1
+        phases.begin("amplifier_generation", generation_index=index + 1)
         text, resource = _run_closed_book_sample(
             model,
             tokenizer,
@@ -1037,6 +1111,7 @@ def _run_complete_system_closed_book(
             ),
         )
         amplifier_generation_resources.append(resource)
+        phases.end("amplifier_generation", generation_index=index + 1)
         return text
 
     amplifier_verifier = EpisodeTaskVerifier(
@@ -1053,6 +1128,7 @@ def _run_complete_system_closed_book(
         )
     )
     amplifier = ReasoningAmplifierV2(generate, verifier=verifier_registry)
+    phases.begin("reasoning_amplifier")
     amplified = asyncio.run(
         amplifier.amplify(
             AmplificationRequest(
@@ -1076,6 +1152,10 @@ def _run_complete_system_closed_book(
                 },
             )
         )
+    )
+    phases.end(
+        "reasoning_amplifier",
+        generation_calls=generation_calls,
     )
     amplifier_candidate = str(amplified.source_answer or "").strip()
     amplifier_candidate_verifier = EpisodeTaskVerifier(
@@ -1106,6 +1186,7 @@ def _run_complete_system_closed_book(
         and operation.get("candidate_sha256") == candidate_sha256
         and operation.get("strategy")
     }
+    phases.begin("promotion")
     promotion_candidate, candidate_selection = _select_complete_system_promotion_candidate(
         verifier=EpisodeTaskVerifier(
             objective,
@@ -1135,6 +1216,7 @@ def _run_complete_system_closed_book(
         ),
         authority=promotion_authority,
     )
+    phases.end("promotion", decision=str(promotion.get("decision") or ""))
     from core.brain.llm.latent_cortex.resource_accounting import (
         validate_information_receipt,
         validate_resource_receipt,
@@ -1236,6 +1318,7 @@ def _run_complete_system_closed_book(
         "resource_accounting": complete_resource_accounting,
         "information_accounting": complete_information_accounting,
         "promotion": promotion,
+        "phase_latency_s": phases.receipt(),
     }
     return final_text, final_receipt
 
@@ -1643,6 +1726,43 @@ def _complete_system_evidence(
         information_accounting.get("accounting_complete") is True,
         "complete_system_information_accounting_incomplete",
     )
+    phase_latency = system.get("phase_latency_s")
+    required_phases = {"first_rlc", "reasoning_amplifier", "promotion", "total"}
+    if status in {"completed_new_context", "completed_no_new_context"}:
+        required_phases.add("cognitive_acquisition")
+    if status == "completed_new_context":
+        required_phases.add("continuation_rlc")
+    if int(system.get("in_process_generation_calls") or 0) > 0:
+        required_phases.add("amplifier_generation")
+    if not isinstance(phase_latency, dict):
+        require(False, "complete_system_phase_latency_absent")
+        phase_latency = {}
+    for phase in required_phases:
+        value = phase_latency.get(phase)
+        require(
+            not isinstance(value, bool)
+            and isinstance(value, (int, float))
+            and math.isfinite(float(value))
+            and float(value) >= 0.0,
+            f"complete_system_phase_latency_invalid:{phase}",
+        )
+    non_nested_phases = {
+        "first_rlc",
+        "cognitive_acquisition",
+        "continuation_rlc",
+        "reasoning_amplifier",
+        "promotion",
+    }
+    measured_non_nested = sum(
+        float(phase_latency.get(phase) or 0.0)
+        for phase in non_nested_phases
+        if phase in required_phases
+    )
+    total_latency = float(phase_latency.get("total") or 0.0)
+    require(
+        total_latency + 0.01 >= measured_non_nested,
+        "complete_system_phase_latency_total_understates_work",
+    )
     if status == "completed_new_context" and information_accounting:
         require(
             {source.get("source_id") for source in information_accounting.get("sources", [])}
@@ -1677,6 +1797,7 @@ def _complete_system_evidence(
         "resource_accounting_sha256": str(resource_accounting.get("receipt_sha256") or ""),
         "information_accounting_sha256": str(information_accounting.get("receipt_sha256") or ""),
         "estimated_flops": resource_accounting.get("estimated_flops"),
+        "phase_latency_s": dict(phase_latency),
         "final_text_sha256": str(promotion.get("final_text_sha256") or ""),
     }
 

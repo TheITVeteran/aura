@@ -48551,3 +48551,44 @@ is
 `artifacts/closeout/latent_cortex/cp384_stage_complete_independent_verification.json`.
 The active CP382 component campaign and CP383 watcher are source-frozen and
 undisturbed by this checkpoint.
+
+## Checkpoint 2026-08-13-385: Complete-System Time Is Attributable
+
+CP382 crossed the repaired 900-second boundary and completed its first
+uncomposed complete-system cell in `1479.603s` without a harness fault. The
+ordinary incumbent was exactly refuted; the complete system generated an
+independently executable exact candidate and promoted it under the public
+objective with a no-regression receipt. This is one bounded positive
+system-level correction, not a neural-tissue, replication, fusion, frontier or
+`WOW Signal` result.
+
+The same receipt explains why continuing the entire 49-cell matrix would be
+wasteful before another implementation checkpoint. Of `1432.752s` inside the
+RLC episode, fast-weight optimization consumed `745.625s`, latent optimization
+`188.694s`, attachment `106.453s`, branch selection `100.688s`, incumbent
+restoration `93.758s`, recurrence `80.169s` and canaries `65.900s`. The
+teacher-specific temporary write lifted its public probe from `0.151718` to
+`0.296296`, above a matched sham at `0.229651`, but only at a gain that
+regressed protected capability and was correctly erased. The final cell gain
+came from the executable amplifier, not retained neural tissue. A `YIELD`
+request therefore stops CP382 at its next durable cell boundary; changing the
+neural implementation would invalidate any later mixed-source cells anyway.
+
+Future complete-system cells now expose sanitized phase starts, completions,
+engine stages, elapsed time and layer-application spend while they run. Only an
+explicit allowlist reaches `status.json`; prompts, candidate text, answer keys
+and verifier-private data cannot cross that boundary. Observer failures cannot
+alter an episode. The completed receipt retains finite, nonnegative timings for
+first RLC, acquisition when applicable, continuation when applicable,
+amplifier work, promotion and total wall time. Independent evidence rejects a
+missing, malformed or understated timing ledger, and the campaign journal now
+copies the correct nested complete-system timing object.
+
+The campaign, controller, verifier and watcher surface passes `140/140`;
+focused complete-system contracts pass `13/13`; canonical smoke passes
+`104/104`. Ruff, byte compilation and diff hygiene pass. Evidence is
+`artifacts/closeout/latent_cortex/cp385_complete_system_phase_observability.json`.
+The next bounded action is to make the verified neural correction spatially
+selective enough to survive capability canaries and to bypass redundant
+gradient/gain-search work only when the measured direct write already dominates
+it, then restart from a fresh immutable campaign identity.

@@ -54,6 +54,67 @@ def test_cell_status_is_published_before_model_execution(tmp_path: Path) -> None
     assert status["committed_cells"] == 14
 
 
+def test_complete_system_progress_status_is_live_and_content_blind(tmp_path: Path) -> None:
+    callback = sweep._complete_system_progress_callback(
+        tmp_path,
+        arm="complete_system_closed_book",
+        task_id="task-secret",
+    )
+
+    callback(
+        {
+            "schema": "aura.rlc.complete_system_progress.v1",
+            "phase": "first_rlc_engine",
+            "elapsed_s": 12.5,
+            "engine_stage": "recurrent_schedule",
+            "spent_layer_apps": 4096,
+            "objective": "must never be published",
+            "candidate_text": "must never be published",
+            "answer_key": {"value": 7},
+        }
+    )
+
+    status = json.loads((tmp_path / "status.json").read_text(encoding="utf-8"))
+    assert status["phase"] == "executing_cell"
+    assert status["arm"] == "complete_system_closed_book"
+    assert status["task_id"] == "task-secret"
+    progress = status["complete_system_progress"]
+    assert progress == {
+        "elapsed_s": 12.5,
+        "engine_stage": "recurrent_schedule",
+        "phase": "first_rlc_engine",
+        "schema": "aura.rlc.complete_system_progress.v1",
+        "spent_layer_apps": 4096,
+    }
+
+
+def test_complete_system_phase_tracker_times_work_and_is_observer_safe(
+    monkeypatch,
+) -> None:
+    from tools import rlc_complete_system_closed_book as complete_system
+
+    ticks = iter([10.0, 11.0, 12.0, 15.0, 16.0, 20.0])
+    monkeypatch.setattr(complete_system.time, "monotonic", lambda: next(ticks))
+    observed = []
+    tracker = complete_system._CompleteSystemPhaseTracker(observed.append)
+    tracker.begin("amplifier_generation", generation_index=1)
+    tracker.end("amplifier_generation", generation_index=1)
+
+    assert tracker.receipt() == {"amplifier_generation": 4.0, "total": 10.0}
+    assert [row["phase"] for row in observed] == [
+        "amplifier_generation_started",
+        "amplifier_generation_completed",
+    ]
+    assert observed[-1]["phase_duration_s"] == 4.0
+
+    monkeypatch.setattr(complete_system.time, "monotonic", lambda: 21.0)
+    failing = complete_system._CompleteSystemPhaseTracker(
+        lambda _payload: (_ for _ in ()).throw(RuntimeError("observer failed"))
+    )
+    failing.begin("promotion")
+    failing.end("promotion")
+
+
 def test_subset_self_test_binds_only_the_selected_domains(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
@@ -1695,6 +1756,9 @@ def test_run_rlc_passes_task_domain_and_cognitive_context_to_engine(monkeypatch)
     config = sweep._build_config(2, 4, "suppressed", 8, decode_contract="none")
     context = [{"source": "test", "text": "bounded observation"}]
 
+    def progress(_payload):
+        return None
+
     sweep._run_rlc(
         model,
         config,
@@ -1703,11 +1767,13 @@ def test_run_rlc_passes_task_domain_and_cognitive_context_to_engine(monkeypatch)
         objective="test objective",
         domain="scientific_inference",
         cognitive_context=context,
+        progress=progress,
     )
 
     assert captured["domain"] == "scientific_inference"
     assert captured["cognitive_context"] == context
     assert captured["messages"] == [{"role": "user", "content": "test objective"}]
+    assert captured["progress"] is progress
 
 
 def test_complete_system_promotion_preserves_incumbent_until_verified_improvement():
@@ -2926,6 +2992,13 @@ def test_complete_system_receipt_requires_acquisition_amplifier_and_promotion(
             "seed_candidate_count": 2,
             "resource_accounting": ledger.to_receipt(),
             "information_accounting": information,
+            "phase_latency_s": {
+                "first_rlc": 3.0,
+                "amplifier_generation": 2.0,
+                "reasoning_amplifier": 4.0,
+                "promotion": 0.1,
+                "total": 7.2,
+            },
             "promotion": {
                 "schema": "aura.rlc.closed_book_promotion.v1",
                 "decision": "replace",
@@ -2947,6 +3020,13 @@ def test_complete_system_receipt_requires_acquisition_amplifier_and_promotion(
     assert evidence["estimated_flops"] == ledger.estimated_flops()
     assert evidence["resource_accounting_sha256"] == ledger.to_receipt()["receipt_sha256"]
     assert evidence["information_accounting_sha256"] == information["receipt_sha256"]
+    assert evidence["phase_latency_s"]["total"] == 7.2
+
+    missing_latency = json.loads(json.dumps(receipt))
+    del missing_latency["complete_system_closed_book"]["phase_latency_s"]
+    assert "complete_system_phase_latency_absent" in sweep._complete_system_evidence(
+        missing_latency
+    )["issues"]
 
 
     from tools import rlc_reconciliation_evidence
@@ -3048,6 +3128,9 @@ def test_complete_system_receipt_requires_acquisition_amplifier_and_promotion(
     contextual_system["first_rlc_receipt"] = {}
     contextual_system["rlc_rounds"] = 2
     contextual_system["information_accounting"] = contextual_information
+    contextual_system["phase_latency_s"]["cognitive_acquisition"] = 0.1
+    contextual_system["phase_latency_s"]["continuation_rlc"] = 1.0
+    contextual_system["phase_latency_s"]["total"] = 8.3
     contextual_system["cognitive_acquisition"] = {
         "status": "completed_new_context",
         "request": request,

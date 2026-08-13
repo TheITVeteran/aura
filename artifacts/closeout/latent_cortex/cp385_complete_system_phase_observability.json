@@ -1,0 +1,68 @@
+{
+  "schema": "aura.closeout.latent_cortex_checkpoint.v1",
+  "checkpoint": "CP385",
+  "title": "Complete-system cells expose attributable phase progress and latency",
+  "source_parent": "438cfd0f6e92879833481341925d3c5312c9c833",
+  "live_campaign": {
+    "campaign_id": "cp382-bounded-contract-v2-component-s41037613",
+    "source_commit": "dd7da4cedbe320611e3fec4a5c594c23705837bb",
+    "config_sha256": "0afd59baec64397b696ba86eeac8c6abbc6f038f55c390ddaa2d533f52158232",
+    "committed_cells_at_observation": 2,
+    "complete_system_runtime_receipt_sha256": "18618ae37805768777913f2f2f9b960228fd69a5e0fbc50aea35e1e6c9d2a2dd",
+    "complete_system_incremental_latency_s": 1479.6028968329774,
+    "engine_stage_timings_s": {
+      "prefill": 1.042059,
+      "recurrence": 80.168696,
+      "branch_select": 100.688477,
+      "latent_optimization": 188.693973,
+      "fast_weight_attach": 106.452811,
+      "fast_weight_baseline": 49.080499,
+      "fast_weight_optimization": 745.625329,
+      "fast_weight_canaries": 65.899525,
+      "incumbent_restore": 93.757501,
+      "decode": 0.038477,
+      "total": 1432.752146
+    },
+    "bounded_observation": {
+      "ordinary_incumbent_exactly_refuted": true,
+      "complete_system_exact_candidate_promoted": true,
+      "promotion_authority": "public_objective_deterministic_execution",
+      "no_regression_guaranteed": true,
+      "fast_weight_disposition": "rejected_capability_regression",
+      "fast_weight_treatment_probe_score": 0.296296,
+      "fast_weight_sham_probe_score": 0.229651,
+      "fast_weight_baseline_probe_score": 0.151718,
+      "scientific_scope": "one bounded system-level cell; not a tissue or general-capability verdict"
+    },
+    "operator_action": "YIELD requested at the next durable cell boundary because neural latency repair changes implementation identity and would force a fresh campaign"
+  },
+  "implementation": {
+    "complete_system_progress_schema": "aura.rlc.complete_system_progress.v1",
+    "published_status_is_allowlisted": true,
+    "private_prompt_candidate_and_answer_fields_withheld": true,
+    "observer_failure_cannot_change_episode": true,
+    "nested_engine_stage_progress_forwarded": true,
+    "durable_phase_latency_receipted": true,
+    "independent_evidence_requires_finite_nonnegative_phase_timings": true,
+    "journal_reads_complete_system_nested_phase_timings": true
+  },
+  "validation": {
+    "focused_progress_contracts": "3 passed",
+    "complete_system_contracts": "13 passed",
+    "campaign_controller_verifier_watcher_contracts": "140 passed",
+    "canonical_smoke": "104 passed",
+    "ruff": "pass",
+    "byte_compile": "pass",
+    "diff_check": "pass"
+  },
+  "claims": {
+    "component_campaign_complete": false,
+    "neural_tissue_gain_proven": false,
+    "general_reasoning_gain_proven": false,
+    "fusion_authorized": false,
+    "ordinary_serving_authorized": false,
+    "frontier_reasoning_proven": false,
+    "wow_signal": false
+  },
+  "next_bounded_action": "Localize verified fast-weight correction so it survives capability canaries, remove redundant gradient and gain-search work only when a measured direct write dominates it, then launch a fresh immutable component campaign."
+}
