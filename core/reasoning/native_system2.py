@@ -23,6 +23,7 @@ import math
 import random
 import time
 import uuid
+from collections import OrderedDict
 from dataclasses import asdict, dataclass, field, replace as _dc_replace
 from enum import Enum
 from typing import Any, Awaitable, Callable, Dict, Iterable, List, Optional, Sequence, Tuple
@@ -236,12 +237,25 @@ class NativeSearchReceipt:
     #: collapsed to confirming it. A receipt that does not say this would
     #: present a one-node confirmation as if it were full deliberation.
     chunk_reused: bool = False
+    #: Stable digest of the situation in which the selected action was ranked.
+    #: The raw prompt is deliberately not retained in the value table.
+    outcome_state_key: str = ""
+    #: Canonical selected action whose eventual real outcome may teach Q(s,a).
+    outcome_action: str = ""
+    #: Expected quality committed before execution.  This is provenance only;
+    #: no outcome receipt is opened until an execution owner accepts the plan.
+    outcome_expected: float = 0.0
+    #: Durable-ledger id once an execution owner accepts this decision.
+    outcome_receipt_id: str = ""
+    outcome_opened_at: float = 0.0
 
     @property
     def value_is_evidenced(self) -> bool:
         """True when at least one estimate came from the caller or from data."""
         return bool(
-            self.value_evidence.get("caller", 0) or self.value_evidence.get("learned", 0)
+            self.value_evidence.get("caller", 0)
+            or self.value_evidence.get("learned", 0)
+            or self.value_evidence.get("learned_contextual", 0)
         )
 
     def to_dict(self) -> Dict[str, Any]:
@@ -542,6 +556,9 @@ class NativeSearchTree:
 
 
 class NativeSystem2Engine:
+    MAX_RECEIPTS = 4096
+    MAX_FAILED_BRANCHES = 4096
+
     """Governed hybrid MCTS/beam/best-first planner for Aura."""
 
     def __init__(
@@ -560,8 +577,10 @@ class NativeSystem2Engine:
         self.world_model = world_model or self._default_world_model
         self.value_scorer = value_scorer or self._default_value_scorer
         self.reflection_scorer = reflection_scorer
-        self._receipts: Dict[str, NativeSearchReceipt] = {}
-        self._failed_branch_memory: Dict[str, int] = {}
+        self._receipts: OrderedDict[str, NativeSearchReceipt] = OrderedDict()
+        self._failed_branch_memory: OrderedDict[str, int] = OrderedDict()
+        self._receipt_evictions = 0
+        self._failed_branch_evictions = 0
 
     async def search(
         self,
@@ -627,6 +646,9 @@ class NativeSystem2Engine:
         )
 
         value_model = get_action_value_model()
+        # Evidence refresh performs SQLite reads.  Do it once, off-loop, before
+        # search rather than inside the synchronous scorer for the first node.
+        await value_model.refresh_if_stale()
         evidence_counts: Dict[str, int] = {}
         # The situation this decision is being made in. Passing it is what
         # makes the estimate Q(s,a) rather than V(a) where the evidence
@@ -715,7 +737,9 @@ class NativeSystem2Engine:
             # explicitly unevidenced midpoint — and which one it was is
             # reported on the result rather than blended away here.
             selected = node.action.metadata.get("verifies") or node.action.name
-            estimate = value_model.value_for(selected, node.action.metadata)
+            estimate = value_model.value_for(
+                selected, node.action.metadata, state=state_raw
+            )
             score_hint = estimate.value
             if node.action.name.startswith("verify:"):
                 score_hint = max(score_hint, _clamp01(float(node.reward)))
@@ -837,19 +861,15 @@ class NativeSystem2Engine:
             result.receipt.chunk_signature = signature
             result.receipt.chunk_reused = False
 
-        # Open an outcome receipt tagged with the state and the chunk, so the
-        # ledger's resolution stream can grade both. This is the loop that was
-        # missing: ChunkStore.record_outcome had no caller, so p_correct stayed
-        # at its optimistic default and an over-general chunk could never
-        # accumulate the negative expected value that retracts it.
-        if chosen is not None and result.receipt.chunk_signature:
-            self._open_decision_receipt(
-                chosen,
-                expected=float(result.confidence),
-                state=state_raw,
-                chunk_signature=result.receipt.chunk_signature,
-                reused=result.receipt.chunk_reused,
-            )
+        # Search is simulation, not action.  Persist only the provenance needed
+        # by an execution owner to open a resolvable receipt later.  Opening a
+        # ledger row here created outcomes for counterfactual branches and plan
+        # rescoring that never executed, then discarded the only id capable of
+        # resolving them.
+        if chosen is not None:
+            result.receipt.outcome_state_key = state_descriptor
+            result.receipt.outcome_action = value_model.action_key(str(chosen))
+            result.receipt.outcome_expected = _clamp01(float(result.confidence))
         if not result.receipt.value_is_evidenced and candidate_actions:
             logger.info(
                 "rank_actions: no value evidence for any of %d candidates "
@@ -859,36 +879,43 @@ class NativeSystem2Engine:
             )
         return result
 
-    @staticmethod
-    def _open_decision_receipt(
-        action: str,
+    def open_outcome_receipt(
+        self,
+        search_id: str,
         *,
-        expected: float,
-        state: str,
-        chunk_signature: str,
-        reused: bool,
-    ) -> None:
-        """Register this decision so its real outcome can grade what produced it.
+        category: str = "deliberation",
+        horizon_s: float = 3600.0,
+    ) -> str | None:
+        """Commit the selected decision when an owner is about to execute it.
 
-        The receipt carries the state key and the chunk signature, which is
-        what lets one resolution update both the contextual action value and
-        the chunk's correctness. Best-effort: a ranking must not fail because
-        the ledger is unavailable, and an unopened receipt costs a learning
-        opportunity rather than a decision.
+        Ranking alone never calls this.  The owner that crosses from simulated
+        plan to real action must retain the returned id and resolve it from a
+        measured outcome.  That pairing prevents hypothetical searches from
+        polluting action values while preserving chunk grading and Q(s,a).
         """
+        receipt = self._receipts.get(search_id)
+        if receipt is None or not receipt.outcome_action:
+            return None
+        if receipt.outcome_receipt_id:
+            return receipt.outcome_receipt_id
         try:
             from core.cognition.outcome_ledger import get_outcome_ledger
 
-            get_outcome_ledger().open(
-                action,
-                _clamp01(expected),
-                category="deliberation",
+            outcome_id = get_outcome_ledger().open(
+                receipt.outcome_action,
+                receipt.outcome_expected,
+                category=category,
+                horizon_s=max(1.0, float(horizon_s)),
                 context={
-                    "state": state,
-                    "chunk_signature": chunk_signature,
-                    "chunk_reused": reused,
+                    "state": receipt.outcome_state_key,
+                    "chunk_signature": receipt.chunk_signature or "",
+                    "chunk_reused": bool(receipt.chunk_reused),
+                    "system2_search_id": search_id,
                 },
             )
+            receipt.outcome_receipt_id = outcome_id
+            receipt.outcome_opened_at = time.time()
+            return outcome_id
         except (ImportError, RuntimeError, OSError, AttributeError, ValueError) as exc:
             from core.runtime.errors import record_degradation
 
@@ -899,6 +926,28 @@ class NativeSystem2Engine:
                 action="decision receipt not opened; this ranking will not "
                 "contribute evidence to the action-value model",
             )
+            return None
+
+    @staticmethod
+    def resolve_outcome_receipt(receipt_id: str | None, observed: float, *, note: str = "") -> bool:
+        """Resolve a retained execution receipt from a measured outcome."""
+        if not receipt_id:
+            return False
+        try:
+            from core.cognition.outcome_ledger import get_outcome_ledger
+
+            return get_outcome_ledger().resolve(
+                receipt_id, _clamp01(float(observed)), note=str(note)[:240]
+            ) is not None
+        except (ImportError, RuntimeError, OSError, AttributeError, ValueError) as exc:
+            record_degradation(
+                "native_system2",
+                exc,
+                severity="warning",
+                action="decision outcome was measured but could not be resolved; "
+                "the receipt remains pending for recovery",
+            )
+            return False
 
     def get_receipt(self, search_id: str) -> Optional[NativeSearchReceipt]:
         return self._receipts.get(search_id)
@@ -908,6 +957,10 @@ class NativeSystem2Engine:
             "receipts": len(self._receipts),
             "governed": self.governed,
             "failed_branch_memory": len(self._failed_branch_memory),
+            "receipt_capacity": self.MAX_RECEIPTS,
+            "receipt_evictions": self._receipt_evictions,
+            "failed_branch_capacity": self.MAX_FAILED_BRANCHES,
+            "failed_branch_evictions": self._failed_branch_evictions,
             "algorithms": [a.value for a in SearchAlgorithm],
         }
 
@@ -1257,8 +1310,16 @@ class NativeSystem2Engine:
             will_receipt_id=will_receipt_id,
         )
         self._receipts[search_id] = receipt
+        self._receipts.move_to_end(search_id)
+        while len(self._receipts) > self.MAX_RECEIPTS:
+            self._receipts.popitem(last=False)
+            self._receipt_evictions += 1
         if selected and selected.mean_value < 0.2:
             self._failed_branch_memory[selected.state_hash] = self._failed_branch_memory.get(selected.state_hash, 0) + 1
+            self._failed_branch_memory.move_to_end(selected.state_hash)
+            while len(self._failed_branch_memory) > self.MAX_FAILED_BRANCHES:
+                self._failed_branch_memory.popitem(last=False)
+                self._failed_branch_evictions += 1
         return NativeSearchResult(
             search_id=search_id,
             algorithm=algorithm,

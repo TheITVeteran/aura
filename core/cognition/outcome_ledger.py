@@ -48,7 +48,7 @@ from core.runtime.sqlite_support import connecting
 logger = logging.getLogger("Cognition.OutcomeLedger")
 
 
-#: Identical (category, action) opens inside this window fold into the still-
+#: Identical (category, action, context) opens inside this window fold into the still-
 #: pending original instead of creating another row. Five minutes is long
 #: enough to absorb a stuck loop and short enough that genuinely repeated work
 #: an hour apart is still recorded separately.
@@ -140,7 +140,7 @@ class OutcomeLedger:
         self._unobserved_n = 0
         self._collapsed_opens = 0
         self._collapse_window = _DEFAULT_COLLAPSE_WINDOW_S
-        self._open_index: dict[tuple[str, str], tuple[str, float]] = {}
+        self._open_index: dict[tuple[str, str, str], tuple[str, float]] = {}
         self._resolution_observers: List[Callable[[OutcomeReceipt], None]] = []
         self._pending_db_count = 0
         self._startup_expired_count = 0
@@ -257,18 +257,22 @@ class OutcomeLedger:
                 limit = max(1, int(self.MAX_PENDING_LOAD))
                 rows = conn.execute(
                     "SELECT receipt_id, action, category, expected, sources_json, opened_at, "
-                    "horizon_s, context_json FROM outcome_receipts "
+                    "horizon_s, context_json, repeat_count FROM outcome_receipts "
                     "WHERE status = 'pending' ORDER BY opened_at DESC LIMIT ?",
                     (limit,),
                 ).fetchall()
             self._pending_load_truncated = self._pending_db_count > len(rows)
-            for rid, action, cat, exp, sj, opened, horizon, cj in rows:
+            for rid, action, cat, exp, sj, opened, horizon, cj, repeat_count in rows:
                 sources = [CreditSource(**s) for s in json.loads(sj or "[]")]
-                self._pending[rid] = OutcomeReceipt(
+                receipt = OutcomeReceipt(
                     receipt_id=rid, action=action, category=cat, expected=exp,
                     sources=sources, opened_at=opened, horizon_s=horizon,
-                    context=json.loads(cj or "{}"),
+                    context=json.loads(cj or "{}"), repeat_count=max(1, int(repeat_count or 1)),
                 )
+                self._pending[rid] = receipt
+                self._open_index[
+                    (cat, action, self._collapse_context_key(receipt.context))
+                ] = (rid, opened)
             if self._startup_expired_count:
                 logger.info(
                     "📒 [OutcomeLedger] expired %d stale pending receipts during startup compaction",
@@ -285,7 +289,7 @@ class OutcomeLedger:
             record_degradation("outcome_ledger", e)
 
     def _hydrate_receipt_row(self, row: tuple[Any, ...]) -> OutcomeReceipt:
-        rid, action, cat, exp, sj, opened, horizon, cj = row
+        rid, action, cat, exp, sj, opened, horizon, cj, repeat_count = row
         sources = [CreditSource(**s) for s in json.loads(sj or "[]")]
         return OutcomeReceipt(
             receipt_id=rid,
@@ -296,6 +300,7 @@ class OutcomeLedger:
             opened_at=opened,
             horizon_s=horizon,
             context=json.loads(cj or "{}"),
+            repeat_count=max(1, int(repeat_count or 1)),
         )
 
     def _fetch_pending_receipt(self, receipt_id: str) -> OutcomeReceipt | None:
@@ -303,7 +308,7 @@ class OutcomeLedger:
             with connecting(self._connect()) as conn:
                 row = conn.execute(
                     "SELECT receipt_id, action, category, expected, sources_json, opened_at, "
-                    "horizon_s, context_json FROM outcome_receipts "
+                    "horizon_s, context_json, repeat_count FROM outcome_receipts "
                     "WHERE status = 'pending' AND receipt_id = ?",
                     (receipt_id,),
                 ).fetchone()
@@ -341,7 +346,7 @@ class OutcomeLedger:
         now = time.time() if now is None else now
         window = self._collapse_window if collapse_window_s is None else float(collapse_window_s)
         if window > 0:
-            collapsed = self._collapse_open(action, category, now, window)
+            collapsed = self._collapse_open(action, category, context or {}, now, window)
             if collapsed is not None:
                 return collapsed
         receipt = OutcomeReceipt(
@@ -356,16 +361,23 @@ class OutcomeLedger:
         )
         with self._lock:
             self._pending[receipt.receipt_id] = receipt
-            self._open_index[(category, action)] = (receipt.receipt_id, now)
+            self._open_index[
+                (category, action, self._collapse_context_key(receipt.context))
+            ] = (receipt.receipt_id, now)
             self._persist(receipt)
             self._pending_db_count += 1
         return receipt.receipt_id
 
     def _collapse_open(
-        self, action: str, category: str, now: float, window: float
+        self,
+        action: str,
+        category: str,
+        context: Dict[str, Any],
+        now: float,
+        window: float,
     ) -> str | None:
         """Fold a repeat into its still-pending original, if there is one."""
-        key = (category, action)
+        key = (category, action, self._collapse_context_key(context))
         with self._lock:
             seen = self._open_index.get(key)
             if seen is None:
@@ -384,6 +396,17 @@ class OutcomeLedger:
             if receipt.repeat_count % 100 == 0:
                 self._persist(receipt)
             return receipt_id
+
+    @staticmethod
+    def _collapse_context_key(context: Dict[str, Any]) -> str:
+        """Stable identity for deduplication without retaining another raw copy."""
+        import hashlib
+
+        try:
+            canonical = json.dumps(context or {}, sort_keys=True, separators=(",", ":"), default=str)
+        except (TypeError, ValueError):
+            canonical = repr(context)
+        return hashlib.blake2s(canonical.encode("utf-8"), digest_size=8).hexdigest()
 
     def resolve(
         self,

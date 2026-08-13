@@ -937,6 +937,30 @@
       "scope": "<module>._save_last_activity"
     },
     {
+      "callee": "core.runtime.atomic_writer.ensure_private_directory",
+      "canonical_owner": false,
+      "category": "direct_atomic_file_write",
+      "count": 5,
+      "path": "core/conversation/external_chat_ipc.py",
+      "scope": "<module>.DurableChannelSpool.__init__"
+    },
+    {
+      "callee": "core.runtime.atomic_writer.atomic_write_text",
+      "canonical_owner": false,
+      "category": "direct_atomic_file_write",
+      "count": 1,
+      "path": "core/conversation/external_chat_ipc.py",
+      "scope": "<module>.DurableChannelSpool.write_frame"
+    },
+    {
+      "callee": "core.runtime.atomic_writer.ensure_private_directory",
+      "canonical_owner": false,
+      "category": "direct_atomic_file_write",
+      "count": 1,
+      "path": "core/conversation/external_chat_ipc.py",
+      "scope": "<module>.create_private_channel_directory"
+    },
+    {
       "callee": "core.runtime.atomic_writer.atomic_write_text",
       "canonical_owner": false,
       "category": "direct_atomic_file_write",
@@ -2689,6 +2713,38 @@
       "scope": "<module>.EmergencyProtocol._take_encrypted_snapshot"
     },
     {
+      "callee": "core.runtime.atomic_writer.atomic_write_bytes",
+      "canonical_owner": false,
+      "category": "direct_atomic_file_write",
+      "count": 1,
+      "path": "core/security/existence_guard.py",
+      "scope": "<module>.ExistenceGuard.build_ark"
+    },
+    {
+      "callee": "core.runtime.atomic_writer.atomic_write_text",
+      "canonical_owner": false,
+      "category": "direct_atomic_file_write",
+      "count": 1,
+      "path": "core/security/existence_guard.py",
+      "scope": "<module>.ExistenceGuard.build_ark"
+    },
+    {
+      "callee": "core.runtime.atomic_writer.atomic_write_bytes",
+      "canonical_owner": false,
+      "category": "direct_atomic_file_write",
+      "count": 1,
+      "path": "core/security/existence_guard.py",
+      "scope": "<module>.ExistenceGuard.restore_from_ark"
+    },
+    {
+      "callee": "core.runtime.atomic_writer.atomic_write_text",
+      "canonical_owner": false,
+      "category": "direct_atomic_file_write",
+      "count": 1,
+      "path": "core/security/existence_guard.py",
+      "scope": "<module>.ExistenceGuard.witness"
+    },
+    {
       "callee": "core.runtime.atomic_writer.atomic_write_text",
       "canonical_owner": false,
       "category": "direct_atomic_file_write",
@@ -3964,7 +4020,7 @@
       "callee": "<file_write_gateway>.write_text",
       "canonical_owner": false,
       "category": "file_write_gateway",
-      "count": 2,
+      "count": 1,
       "path": "core/conversation/external_chat.py",
       "scope": "<module>.TerminalChatWindow._create_chat_script"
     },
@@ -6383,6 +6439,14 @@
       "count": 1,
       "path": "core/consciousness/quantum_entropy.py",
       "scope": "<module>.QuantumEntropyBridge._try_refill_blocking"
+    },
+    {
+      "callee": "core.runtime.network_gateway.get_network_gateway().request",
+      "canonical_owner": false,
+      "category": "network_gateway",
+      "count": 1,
+      "path": "core/conversation/capability_preconditions.py",
+      "scope": "<module>._https_endpoint_reachable"
     },
     {
       "callee": "core.runtime.network_gateway.get_network_gateway().request_async",
@@ -9433,12 +9497,12 @@
       "scope": "<module>._demo_state_path"
     },
     {
-      "callee": "chat_dir.mkdir",
+      "callee": "shutil.rmtree",
       "canonical_owner": false,
       "category": "raw_file_mutation",
       "count": 1,
       "path": "core/conversation/external_chat.py",
-      "scope": "<module>.TerminalChatWindow._create_chat_script"
+      "scope": "<module>.ExternalChatManager.shutdown"
     },
     {
       "callee": "script_path.chmod",
@@ -9449,20 +9513,44 @@
       "scope": "<module>.TerminalChatWindow._create_chat_script"
     },
     {
-      "callee": "os.open",
-      "canonical_owner": false,
-      "category": "raw_file_mutation",
-      "count": 1,
-      "path": "core/conversation/external_chat.py",
-      "scope": "<module>.TerminalChatWindow._write_pipe_message"
-    },
-    {
-      "callee": "pipe.unlink",
+      "callee": "shutil.rmtree",
       "canonical_owner": false,
       "category": "raw_file_mutation",
       "count": 1,
       "path": "core/conversation/external_chat.py",
       "scope": "<module>.TerminalChatWindow.close"
+    },
+    {
+      "callee": "self._frame_path().unlink",
+      "canonical_owner": false,
+      "category": "raw_file_mutation",
+      "count": 1,
+      "path": "core/conversation/external_chat_ipc.py",
+      "scope": "<module>.DurableChannelSpool.acknowledge_inbound"
+    },
+    {
+      "callee": "ack_path.unlink",
+      "canonical_owner": false,
+      "category": "raw_file_mutation",
+      "count": 1,
+      "path": "core/conversation/external_chat_ipc.py",
+      "scope": "<module>.DurableChannelSpool.acknowledge_outbound"
+    },
+    {
+      "callee": "message_path.unlink",
+      "canonical_owner": false,
+      "category": "raw_file_mutation",
+      "count": 1,
+      "path": "core/conversation/external_chat_ipc.py",
+      "scope": "<module>.DurableChannelSpool.acknowledge_outbound"
+    },
+    {
+      "callee": "<pathlib.Path>.chmod",
+      "canonical_owner": false,
+      "category": "raw_file_mutation",
+      "count": 1,
+      "path": "core/conversation/external_chat_ipc.py",
+      "scope": "<module>.create_private_channel_directory"
     },
     {
       "callee": "pathlib.Path().parent.mkdir",
@@ -13193,22 +13281,6 @@
       "scope": "<module>.ExistenceGuard.build_ark"
     },
     {
-      "callee": "target.write_bytes",
-      "canonical_owner": false,
-      "category": "raw_file_mutation",
-      "count": 1,
-      "path": "core/security/existence_guard.py",
-      "scope": "<module>.ExistenceGuard.build_ark"
-    },
-    {
-      "callee": "write_text",
-      "canonical_owner": false,
-      "category": "raw_file_mutation",
-      "count": 1,
-      "path": "core/security/existence_guard.py",
-      "scope": "<module>.ExistenceGuard.build_ark"
-    },
-    {
       "callee": "live.parent.mkdir",
       "canonical_owner": false,
       "category": "raw_file_mutation",
@@ -13217,23 +13289,7 @@
       "scope": "<module>.ExistenceGuard.restore_from_ark"
     },
     {
-      "callee": "live.write_bytes",
-      "canonical_owner": false,
-      "category": "raw_file_mutation",
-      "count": 1,
-      "path": "core/security/existence_guard.py",
-      "scope": "<module>.ExistenceGuard.restore_from_ark"
-    },
-    {
       "callee": "root.mkdir",
-      "canonical_owner": false,
-      "category": "raw_file_mutation",
-      "count": 1,
-      "path": "core/security/existence_guard.py",
-      "scope": "<module>.ExistenceGuard.witness"
-    },
-    {
-      "callee": "write_text",
       "canonical_owner": false,
       "category": "raw_file_mutation",
       "count": 1,
@@ -14646,7 +14702,7 @@
       "category": "raw_network",
       "count": 1,
       "path": "core/conversation/capability_preconditions.py",
-      "scope": "<module>._probe_network"
+      "scope": "<module>._tcp_https_endpoint_reachable"
     },
     {
       "callee": "websockets.connect",
@@ -15247,14 +15303,6 @@
       "count": 1,
       "path": "core/collective/probe_manager.py",
       "scope": "<module>.ProbeManager.deploy_probe"
-    },
-    {
-      "callee": "core.runtime.subprocess_gateway.get_subprocess_gateway().run",
-      "canonical_owner": false,
-      "category": "subprocess_gateway",
-      "count": 1,
-      "path": "core/conversation/capability_preconditions.py",
-      "scope": "<module>._probe_accessibility_permission"
     },
     {
       "callee": "core.runtime.subprocess_gateway.get_subprocess_gateway().spawn",
@@ -16762,6 +16810,6 @@
     }
   ],
   "description": "Exact AST effect-ownership debt ratchet; refresh only after reviewed change",
-  "inventory_sha256": "7df4cacd067e77ac395f2001392955353c162a7236b2cabfcf9be81efa1ee774",
+  "inventory_sha256": "f13114da324ed5a63e07bc2222647a88654377eb7c5e2637a1109475387f4147",
   "schema_version": 1
 }

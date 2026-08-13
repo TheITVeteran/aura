@@ -92,6 +92,7 @@ class ImprovementPlan:
     system2_confidence: float = 0.0
     system2_reason: str = ""
     system2_receipt: dict[str, Any] = field(default_factory=dict)
+    system2_outcome_receipt_id: str = ""
 
 
 @dataclass
@@ -256,6 +257,30 @@ class RecursiveSelfImprovementLoop:
             self._append_ledger(result)
             return result
 
+        # Ranking produced provenance only.  The authorized cycle is the point
+        # where the selected plan becomes a real action, so commit its expected
+        # outcome here and retain the only id that can resolve it.
+        if plan.system2_search_id:
+            try:
+                from core.container import ServiceContainer
+
+                system2 = ServiceContainer.get("native_system2", default=None)
+                if system2 is not None:
+                    outcome_id = system2.open_outcome_receipt(
+                        plan.system2_search_id,
+                        category="recursive_self_improvement",
+                        horizon_s=7200.0,
+                    )
+                    if outcome_id:
+                        plan = replace(plan, system2_outcome_receipt_id=outcome_id)
+            except (ImportError, AttributeError, RuntimeError, OSError, ValueError) as exc:
+                _record_rsi_degradation(
+                    "recursive_self_improvement.outcome_open",
+                    exc,
+                    action="continued authorized cycle without an outcome receipt; "
+                    "the cycle remains auditable in the RSI ledger",
+                )
+
         action_results: dict[str, Any] = {}
         attempted: list[str] = []
         weight_action_ran = False
@@ -301,6 +326,28 @@ class RecursiveSelfImprovementLoop:
             score_delta=delta,
         )
         self._append_ledger(result)
+
+        if plan.system2_outcome_receipt_id:
+            try:
+                from core.container import ServiceContainer
+
+                system2 = ServiceContainer.get("native_system2", default=None)
+                if system2 is not None:
+                    system2.resolve_outcome_receipt(
+                        plan.system2_outcome_receipt_id,
+                        1.0 if promoted else 0.0,
+                        note=(
+                            f"RSI cycle promoted={promoted} delta={delta:.6f} "
+                            f"regressions={len(after.regressions)}"
+                        ),
+                    )
+            except (ImportError, AttributeError, RuntimeError, OSError, ValueError) as exc:
+                _record_rsi_degradation(
+                    "recursive_self_improvement.outcome_resolve",
+                    exc,
+                    action="kept measured RSI result in its ledger after the "
+                    "System 2 outcome receipt could not be resolved",
+                )
 
         if (
             promoted

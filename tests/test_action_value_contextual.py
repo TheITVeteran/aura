@@ -25,6 +25,7 @@ import pytest
 from core.cognition.impasse import ChunkStore, ImpasseLearner, classify
 from core.cognition.outcome_ledger import OutcomeLedger
 from core.reasoning.action_value import ActionValueModel, on_outcome_resolved
+from core.reasoning.native_system2 import NativeSystem2Engine
 
 pytestmark = pytest.mark.unit
 
@@ -90,6 +91,30 @@ def test_contextual_statistics_are_grouped_by_state():
         assert marginal["open notes"]["mean"] == pytest.approx(0.5, abs=0.01)
         assert contextual["writing|open notes"]["mean"] == pytest.approx(0.925, abs=0.01)
         assert contextual["debug|open notes"]["mean"] == pytest.approx(0.075, abs=0.01)
+
+
+def test_pending_collapse_is_scoped_by_context_and_survives_restart():
+    """Two situations are two facts; an identical retry remains one fact."""
+    with tempfile.TemporaryDirectory() as tmp:
+        path = os.path.join(tmp, "ledger.db")
+        first = OutcomeLedger(db_path=path)
+        writing = first.open(
+            "open notes", 0.7, category="deliberation", context={"state": "writing"}
+        )
+        assert first.open(
+            "open notes", 0.7, category="deliberation", context={"state": "writing"}
+        ) == writing
+        debugging = first.open(
+            "open notes", 0.7, category="deliberation", context={"state": "debug"}
+        )
+        assert debugging != writing
+
+        restarted = OutcomeLedger(db_path=path)
+        assert restarted.open(
+            "open notes", 0.7, category="deliberation", context={"state": "writing"}
+        ) == writing
+        pending = {row["receipt_id"]: row for row in restarted.pending()}
+        assert pending[writing]["repeat_count"] == 2
 
 
 def test_receipts_without_a_state_stay_out_of_the_contextual_table():
@@ -250,3 +275,71 @@ def test_the_model_learns_context_from_the_real_ledger():
         bad = model.value_for("open notes", state="debug")
         assert good.evidence == "learned_contextual"
         assert good.value > bad.value
+
+
+def test_real_acceptance_and_resolution_close_the_native_system2_loop(monkeypatch):
+    """Simulation emits provenance; only accepted execution opens evidence."""
+    with tempfile.TemporaryDirectory() as tmp:
+        ledger = _ledger(tmp)
+        monkeypatch.setattr(
+            "core.cognition.outcome_ledger.get_outcome_ledger", lambda: ledger
+        )
+
+        import asyncio
+
+        engine = NativeSystem2Engine()
+        result = asyncio.run(
+            engine.rank_actions(
+                context="Writing a note for Bryan",
+                actions=[
+                    {"name": "OPEN NOTES", "score_hint": 0.9},
+                    {"name": "do nothing", "score_hint": 0.1},
+                ],
+            )
+        )
+        assert ledger.pending() == [], "a simulated ranking created a phantom action"
+        assert result.receipt.outcome_state_key == ActionValueModel.state_key(
+            "Writing a note for Bryan"
+        )
+        assert result.receipt.outcome_action == "open notes"
+
+        outcome_id = engine.open_outcome_receipt(result.search_id)
+        assert outcome_id
+        assert engine.open_outcome_receipt(result.search_id) == outcome_id
+        assert len(ledger.pending()) == 1
+        assert engine.resolve_outcome_receipt(outcome_id, 1.0, note="verified")
+
+        contextual = ledger.measured_action_stats(by_state=True)
+        key = f"{result.receipt.outcome_state_key}|open notes"
+        assert contextual[key]["mean"] == pytest.approx(1.0)
+
+
+def test_value_lookup_never_refreshes_sqlite_synchronously():
+    model = ActionValueModel({"known": {"n": 2.0, "mean": 0.8, "m2": 0.1}})
+    model.mark_stale()
+
+    def fail_if_called(*_args, **_kwargs):
+        raise AssertionError("value_for performed database refresh")
+
+    model.refresh = fail_if_called  # type: ignore[method-assign]
+    assert model.value_for("known").value == pytest.approx(0.8)
+
+
+def test_native_receipt_cache_is_bounded_and_reports_eviction():
+    import asyncio
+
+    engine = NativeSystem2Engine()
+    engine.MAX_RECEIPTS = 2
+    for index in range(3):
+        asyncio.run(
+            engine.rank_actions(
+                context=f"bounded-{index}",
+                actions=[
+                    {"name": "a", "score_hint": 0.8},
+                    {"name": "b", "score_hint": 0.2},
+                ],
+            )
+        )
+    status = engine.get_status()
+    assert status["receipts"] == 2
+    assert status["receipt_evictions"] == 1

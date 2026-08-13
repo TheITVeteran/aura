@@ -60,6 +60,7 @@ class ActionCandidate:
     selected: bool = False
     system2_value: float = 0.0
     system2_receipt_id: str = ""
+    system2_outcome_receipt_id: str = ""
 
     def compute_score(self, hedonic_weight: float = 0.5,
                       alignment_weight: float = 0.5) -> float:
@@ -192,6 +193,10 @@ class CounterfactualEngine:
                 source="counterfactual_engine",
             )
             root = ranked.tree.nodes[ranked.root_id]
+            committed = ranked.committed_action
+            committed_index = (
+                committed.metadata.get("index") if committed is not None else None
+            )
             root_children = [ranked.tree.nodes[cid] for cid in root.children_ids if cid in ranked.tree.nodes]
             for child in root_children:
                 if not child.action:
@@ -205,7 +210,8 @@ class CounterfactualEngine:
                 if 0 <= int(idx) < len(candidates):
                     candidate = candidates[int(idx)]
                     candidate.system2_value = child.mean_value
-                    candidate.system2_receipt_id = ranked.search_id
+                    if committed_index is not None and int(idx) == int(committed_index):
+                        candidate.system2_receipt_id = ranked.search_id
                     candidate.expected_outcome = (
                         f"{candidate.expected_outcome} "
                         f"[System2 value={child.mean_value:.3f} receipt={ranked.search_id}]"
@@ -219,6 +225,19 @@ class CounterfactualEngine:
             return None
         best = candidates[0]
         best.selected = True
+        if best.system2_receipt_id:
+            try:
+                system2 = ServiceContainer.get("native_system2", default=None)
+                if system2 is not None:
+                    best.system2_outcome_receipt_id = str(
+                        system2.open_outcome_receipt(
+                            best.system2_receipt_id,
+                            category="counterfactual_action",
+                        )
+                        or ""
+                    )
+            except _RECOVERABLE_COUNTERFACTUAL_ERRORS as exc:
+                record_degradation("counterfactual_engine.outcome_open", exc)
         logger.debug("Counterfactual selected: %s (score=%.3f)", best.action_type, best.score)
         return best
 
@@ -258,6 +277,20 @@ class CounterfactualEngine:
             logger.debug("Counterfactual relief: %.3f — reinforcing confidence.", relief)
 
         self.feed_back_to_systems(record)
+        if selected.system2_outcome_receipt_id:
+            try:
+                system2 = ServiceContainer.get("native_system2", default=None)
+                if system2 is not None:
+                    # Hedonic change is centred at zero; map it to the ledger's
+                    # [0, 1] outcome scale without turning neutral into failure.
+                    observed = max(0.0, min(1.0, (float(actual_hedonic_change) + 1.0) / 2.0))
+                    system2.resolve_outcome_receipt(
+                        selected.system2_outcome_receipt_id,
+                        observed,
+                        note="measured counterfactual action hedonic outcome",
+                    )
+            except _RECOVERABLE_COUNTERFACTUAL_ERRORS as exc:
+                record_degradation("counterfactual_engine.outcome_resolve", exc)
 
     def feed_back_to_systems(self, record: CounterfactualRecord):
         """Propagate regret/relief signals to homeostasis and credit assignment."""

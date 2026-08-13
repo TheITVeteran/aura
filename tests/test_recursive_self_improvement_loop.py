@@ -139,6 +139,64 @@ async def test_recursive_loop_uses_native_system2_to_rank_rsi_actions(monkeypatc
 
 
 @pytest.mark.asyncio
+async def test_authorized_rsi_execution_resolves_the_system2_outcome(monkeypatch, tmp_path: Path):
+    """A ranked plan teaches only after it is authorized, run, and evaluated."""
+
+    class Receipt:
+        commitment_reason = "measured preference"
+        will_receipt_id = "will-rsi-outcome"
+
+        def to_dict(self):
+            return {"commitment_reason": self.commitment_reason}
+
+    class FakeSystem2:
+        def __init__(self):
+            self.opened: list[tuple[str, str]] = []
+            self.resolved: list[tuple[str, float, str]] = []
+
+        async def rank_actions(self, **_kwargs):
+            return SimpleNamespace(
+                search_id="s2-rsi-outcome",
+                confidence=0.8,
+                committed_action=SimpleNamespace(name="weight_update", metadata={}),
+                receipt=Receipt(),
+            )
+
+        def open_outcome_receipt(self, search_id, *, category, horizon_s):
+            self.opened.append((search_id, category))
+            assert horizon_s == 7200.0
+            return "outcome-rsi"
+
+        def resolve_outcome_receipt(self, receipt_id, observed, *, note):
+            self.resolved.append((receipt_id, observed, note))
+            return True
+
+    fake = FakeSystem2()
+    monkeypatch.setattr(ServiceContainer, "_services", dict(ServiceContainer._services))
+    monkeypatch.setattr(ServiceContainer, "_aliases", dict(ServiceContainer._aliases))
+    ServiceContainer.register_instance("native_system2", fake)
+
+    learner = FakeLearner([True])
+    scores = iter([0.2, 0.4])
+    loop = RecursiveSelfImprovementLoop(
+        live_learner=learner,
+        evaluator=lambda: ImprovementScorecard(score=next(scores)),
+        ledger_path=tmp_path / "rsi.jsonl",
+        min_score_delta=0.05,
+        auto_recurse=False,
+        require_will_authorization=False,
+    )
+    loop.record_signal("test", "training_data_ready", severity=0.8)
+
+    result = await loop.run_cycle("improve reasoning")
+
+    assert result.promoted is True
+    assert result.plan.system2_outcome_receipt_id == "outcome-rsi"
+    assert fake.opened == [("s2-rsi-outcome", "recursive_self_improvement")]
+    assert fake.resolved and fake.resolved[0][:2] == ("outcome-rsi", 1.0)
+
+
+@pytest.mark.asyncio
 async def test_code_refinement_falls_through_to_self_modifier_after_structural_error(tmp_path: Path):
     class BrokenStructuralImprover:
         def __init__(self):

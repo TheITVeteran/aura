@@ -57,6 +57,7 @@ value, and recorded so nobody mistakes it for reasoning.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import math
 import threading
@@ -129,7 +130,7 @@ class ActionValue:
     @property
     def is_evidenced(self) -> bool:
         """True when this number is about *this action*, from data or the caller."""
-        return self.evidence in ("caller", "learned")
+        return self.evidence in ("caller", "learned", "learned_contextual")
 
 
 class ActionValueModel:
@@ -195,11 +196,24 @@ class ActionValueModel:
             self._stale = False
         return len(self._stats)
 
-    def _refresh_if_stale(self) -> None:
+    def is_stale(self) -> bool:
+        """Whether evidence arrived after the current in-memory snapshot."""
         with self._lock:
-            stale = self._stale
-        if stale:
-            self.refresh()
+            return self._stale
+
+    async def refresh_if_stale(self) -> bool:
+        """Refresh outside the event loop when new measured evidence exists.
+
+        ``value_for`` is a synchronous scoring primitive used many times inside
+        one search.  Letting its first call after every outcome open SQLite on
+        the event-loop thread made a measured outcome capable of stalling the
+        entire cognition lane.  Search owners call this once before scoring;
+        every subsequent lookup is an in-memory read.
+        """
+        if not self.is_stale():
+            return False
+        await asyncio.to_thread(self.refresh)
+        return True
 
     def _install(
         self,
@@ -312,8 +326,6 @@ class ActionValueModel:
                 )
             except (TypeError, ValueError):
                 pass  # a malformed hint is no hint; fall through to evidence
-
-        self._refresh_if_stale()
 
         key = self.action_key(name)
         state_key = self.state_key(state) if state is not None else ""
