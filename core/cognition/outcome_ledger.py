@@ -39,7 +39,7 @@ import time
 import uuid
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional
 
 from core.config import config
 from core.runtime.errors import record_degradation
@@ -141,6 +141,7 @@ class OutcomeLedger:
         self._collapsed_opens = 0
         self._collapse_window = _DEFAULT_COLLAPSE_WINDOW_S
         self._open_index: dict[tuple[str, str], tuple[str, float]] = {}
+        self._resolution_observers: List[Callable[[OutcomeReceipt], None]] = []
         self._pending_db_count = 0
         self._startup_expired_count = 0
         self._pending_load_truncated = False
@@ -181,6 +182,16 @@ class OutcomeLedger:
                 columns = {
                     row[1] for row in conn.execute("PRAGMA table_info(outcome_receipts)").fetchall()
                 }
+                if "repeat_count" not in columns:
+                    # repeat_count has been a dataclass field since collapsing
+                    # was added, incremented in memory and never persisted, so
+                    # every restart forgot how many opens had folded into a
+                    # receipt and any query naming the column failed outright.
+                    conn.execute(
+                        "ALTER TABLE outcome_receipts ADD COLUMN repeat_count "
+                        "INTEGER NOT NULL DEFAULT 1"
+                    )
+                    logger.info("outcome_ledger: added missing repeat_count column")
                 if "observation" not in columns:
                     # Backfill honestly: every historical 'expired' row is an
                     # assumed zero, not a measurement, and there are a million
@@ -209,14 +220,14 @@ class OutcomeLedger:
                     """INSERT OR REPLACE INTO outcome_receipts
                        (receipt_id, action, category, expected, sources_json, opened_at,
                         horizon_s, context_json, observed, resolved_at, status,
-                        prediction_error, observation)
-                       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                        prediction_error, observation, repeat_count)
+                       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
                     (
                         r.receipt_id, r.action, r.category, r.expected,
                         json.dumps([s.as_dict() for s in r.sources]),
                         r.opened_at, r.horizon_s, json.dumps(r.context or {}),
                         r.observed, r.resolved_at, r.status, r.prediction_error,
-                        r.observation,
+                        r.observation, r.repeat_count,
                     ),
                 )
                 conn.commit()
@@ -406,7 +417,41 @@ class OutcomeLedger:
             self._calib_n += 1
         # Credit distribution happens outside the lock (it calls into other subsystems).
         self._distribute_credit(receipt)
+        self._notify_resolution(receipt)
         return receipt
+
+    def add_resolution_observer(
+        self, observer: "Callable[[OutcomeReceipt], None]"
+    ) -> None:
+        """Call ``observer`` whenever a receipt closes with a MEASURED outcome.
+
+        This is the seam that lets learners be updated by evidence arriving
+        rather than by a timer. A model refreshed on a schedule is stale for
+        the whole interval and does redundant work when nothing happened; one
+        refreshed on resolution is exactly as current as the evidence.
+
+        Only ``resolve`` notifies. ``sweep`` deliberately does not: an expired
+        receipt's zero is an accountability convention, and waking a learner to
+        tell it that nobody looked would teach it that the action failed.
+        """
+        with self._lock:
+            if observer not in self._resolution_observers:
+                self._resolution_observers.append(observer)
+
+    def _notify_resolution(self, receipt: OutcomeReceipt) -> None:
+        with self._lock:
+            observers = list(self._resolution_observers)
+        for observer in observers:
+            try:
+                observer(receipt)
+            except (RuntimeError, TypeError, ValueError, AttributeError, KeyError) as exc:
+                record_degradation(
+                    "outcome_ledger",
+                    exc,
+                    severity="warning",
+                    action="resolution observer failed; the receipt is still "
+                    "resolved and credit was still assigned",
+                )
 
     def sweep(self, *, now: Optional[float] = None) -> List[OutcomeReceipt]:
         """Expire pending receipts past their horizon.
@@ -550,7 +595,7 @@ class OutcomeLedger:
         return {k: round(v, 4) for k, v in out.items()}
 
     def measured_action_stats(
-        self, *, limit: int = 20000
+        self, *, limit: int = 20000, by_state: bool = False
     ) -> Dict[str, Dict[str, float]]:
         """Per-action outcome statistics over MEASURED receipts only.
 
@@ -567,24 +612,55 @@ class OutcomeLedger:
         Returns ``{action: {"n": weight, "mean": .., "m2": ..}}`` where ``m2``
         is the weighted sum of squared deviations, so a caller can compute
         within-group variance without a second pass over the table.
+
+        ``by_state=True`` keys on ``"<state>|<action>"`` instead, using the
+        ``state`` field a caller stored in the receipt context. That is the
+        difference between learning "opening Notes tends to succeed" and
+        "opening Notes succeeds in this situation and not that one" — V(a)
+        versus Q(s,a). Contextual buckets are necessarily thinner, which is
+        exactly why the consumer backs off to the marginal estimate rather
+        than trusting a bucket of one.
         """
         out: Dict[str, Dict[str, float]] = {}
+        columns = "action, observed, repeat_count" + (", context_json" if by_state else "")
         try:
             with connecting(self._connect()) as conn:
                 rows = conn.execute(
-                    "SELECT action, observed, repeat_count FROM outcome_receipts "
+                    f"SELECT {columns} FROM outcome_receipts "  # noqa: S608 - fixed literals
                     "WHERE observation = 'measured' AND observed IS NOT NULL "
                     "ORDER BY resolved_at DESC LIMIT ?",
                     (int(limit),),
                 ).fetchall()
         except (sqlite3.Error, OSError, ValueError) as e:
-            record_degradation("outcome_ledger", e, severity="debug")
+            # Not debug. An empty return here is indistinguishable from "no
+            # evidence exists", so every learned action value silently becomes
+            # a prior — which is exactly how this method spent its first hours
+            # returning nothing at all against a schema with no repeat_count
+            # column.
+            record_degradation(
+                "outcome_ledger",
+                e,
+                severity="warning",
+                action="action-value statistics unavailable; learned values "
+                "degrade to the global prior",
+            )
             return out
 
-        for action, observed, repeat in rows:
+        for row in rows:
+            action, observed, repeat = row[0], row[1], row[2]
             if observed is None:
                 continue
             key = str(action)
+            if by_state:
+                state = ""
+                try:
+                    ctx = json.loads(row[3] or "{}")
+                    state = str(ctx.get("state") or "")
+                except (ValueError, TypeError):
+                    state = ""
+                if not state:
+                    continue  # no state recorded: it belongs in the marginal table
+                key = f"{state}|{key}"
             weight = max(1.0, float(repeat or 1))
             value = float(observed)
             bucket = out.setdefault(key, {"n": 0.0, "mean": 0.0, "m2": 0.0})

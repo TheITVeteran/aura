@@ -135,15 +135,35 @@ class ActionValue:
 class ActionValueModel:
     """Learned action values with hierarchical shrinkage, refreshed from the ledger."""
 
-    def __init__(self, stats: Mapping[str, Mapping[str, float]] | None = None) -> None:
+    def __init__(
+        self,
+        stats: Mapping[str, Mapping[str, float]] | None = None,
+        contextual: Mapping[str, Mapping[str, float]] | None = None,
+    ) -> None:
         self._lock = threading.Lock()
         self._stats: dict[str, dict[str, float]] = {}
+        self._contextual: dict[str, dict[str, float]] = {}
         self._global_mean: float | None = None
         self._shrinkage_k: float = 0.0
-        if stats is not None:
-            self._install(dict(stats))
+        self._contextual_k: float = math.inf
+        self._stale = True
+        if stats is not None or contextual is not None:
+            self._install(dict(stats or {}), dict(contextual or {}))
+            self._stale = False
 
     # -- evidence base ---------------------------------------------------
+
+    def mark_stale(self) -> None:
+        """Note that new evidence exists; the next query refreshes.
+
+        Refresh is driven by evidence arriving rather than by a timer. A model
+        refreshed on a schedule is stale for the whole interval and burns work
+        when nothing happened; one refreshed on resolution is exactly as
+        current as the data. Setting a flag rather than refreshing inline keeps
+        the ledger's resolve path off the hook for a database read.
+        """
+        with self._lock:
+            self._stale = True
 
     def refresh(self, ledger: Any | None = None) -> int:
         """Pull measured outcome statistics. Returns the number of actions known."""
@@ -153,6 +173,10 @@ class ActionValueModel:
 
                 ledger = get_outcome_ledger()
             stats = ledger.measured_action_stats()
+            try:
+                contextual = ledger.measured_action_stats(by_state=True)
+            except TypeError:
+                contextual = {}  # older ledger without contextual grouping
         except (ImportError, AttributeError, RuntimeError, OSError, ValueError) as exc:
             from core.runtime.errors import record_degradation
 
@@ -163,24 +187,50 @@ class ActionValueModel:
                 action="kept the previous action-value evidence base; new rankings "
                 "fall back to caller scores or report themselves unevidenced",
             )
+            with self._lock:
+                self._stale = False  # do not spin on a broken ledger
             return len(self._stats)
-        self._install(stats)
+        self._install(stats, contextual)
+        with self._lock:
+            self._stale = False
         return len(self._stats)
 
-    def _install(self, stats: Mapping[str, Mapping[str, float]]) -> None:
-        cleaned = {
-            key: {
-                "n": float(row.get("n", 0.0)),
-                "mean": float(row.get("mean", 0.0)),
-                "m2": float(row.get("m2", 0.0)),
+    def _refresh_if_stale(self) -> None:
+        with self._lock:
+            stale = self._stale
+        if stale:
+            self.refresh()
+
+    def _install(
+        self,
+        stats: Mapping[str, Mapping[str, float]],
+        contextual: Mapping[str, Mapping[str, float]] | None = None,
+    ) -> None:
+        def _clean(source: Mapping[str, Mapping[str, float]]) -> dict[str, dict[str, float]]:
+            return {
+                key: {
+                    "n": float(row.get("n", 0.0)),
+                    "mean": float(row.get("mean", 0.0)),
+                    "m2": float(row.get("m2", 0.0)),
+                }
+                for key, row in source.items()
+                if float(row.get("n", 0.0)) > 0.0
             }
-            for key, row in stats.items()
-            if float(row.get("n", 0.0)) > 0.0
-        }
+
+        cleaned = _clean(stats)
+        cleaned_ctx = _clean(contextual or {})
         with self._lock:
             self._stats = cleaned
+            self._contextual = cleaned_ctx
             self._global_mean = self._compute_global_mean(cleaned)
             self._shrinkage_k = self._compute_shrinkage(cleaned, self._global_mean)
+            # The contextual hierarchy needs its own shrinkage weight. Reusing
+            # the marginal one was wrong and silently disabling: with a single
+            # marginal action the marginal k is infinite, which collapsed every
+            # contextual bucket onto the marginal mean and made Q(s,a)
+            # indistinguishable from V(a) exactly when it mattered most.
+            ctx_mean = self._compute_global_mean(cleaned_ctx)
+            self._contextual_k = self._compute_shrinkage(cleaned_ctx, ctx_mean)
 
     @staticmethod
     def _compute_global_mean(stats: Mapping[str, Mapping[str, float]]) -> float | None:
@@ -236,9 +286,21 @@ class ActionValueModel:
     # -- queries ---------------------------------------------------------
 
     def value_for(
-        self, name: str, metadata: Mapping[str, Any] | None = None
+        self,
+        name: str,
+        metadata: Mapping[str, Any] | None = None,
+        *,
+        state: str | Mapping[str, Any] | None = None,
     ) -> ActionValue:
-        """The best available estimate for this action, labelled by its source."""
+        """The best available estimate for this action, labelled by its source.
+
+        ``state`` makes this Q(s,a) rather than V(a) where the evidence
+        supports it. The lookup backs off: a contextual bucket for this exact
+        situation is preferred, then the action's marginal history, then the
+        global prior. Backing off matters because contextual buckets are thin —
+        without it, "this action succeeded once here" would outrank "this
+        action has succeeded two hundred times overall".
+        """
         meta = metadata or {}
         hint = meta.get("score_hint")
         if hint is not None:
@@ -251,11 +313,37 @@ class ActionValueModel:
             except (TypeError, ValueError):
                 pass  # a malformed hint is no hint; fall through to evidence
 
+        self._refresh_if_stale()
+
         key = self.action_key(name)
+        state_key = self.state_key(state) if state is not None else ""
         with self._lock:
+            contextual = (
+                self._contextual.get(f"{state_key}|{key}") if state_key else None
+            )
             stats = self._stats.get(key)
             global_mean = self._global_mean
             k = self._shrinkage_k
+            ctx_k = self._contextual_k
+
+        if contextual is not None and global_mean is not None:
+            # Shrink the contextual estimate toward this action's own marginal
+            # mean when it has one, rather than toward the global mean: the
+            # right question for "does this work HERE" is how far it departs
+            # from how the action behaves generally.
+            fallback = stats["mean"] if stats is not None else global_mean
+            n = contextual["n"]
+            shrunk = (
+                fallback
+                if math.isinf(ctx_k)
+                else (n * contextual["mean"] + ctx_k * fallback) / (n + ctx_k)
+            )
+            return ActionValue(
+                value=_clamp01(shrunk),
+                evidence="learned_contextual",
+                observations=n,
+                action_key=f"{state_key}|{key}",
+            )
 
         if stats is not None and global_mean is not None:
             n = stats["n"]
@@ -287,13 +375,40 @@ class ActionValueModel:
         """
         return " ".join(name.strip().lower().split())
 
+    @staticmethod
+    def state_key(state: str | Mapping[str, Any] | None) -> str:
+        """A stable, bounded identifier for the situation an action was taken in.
+
+        A digest rather than the raw context, for three reasons: contexts carry
+        content that has no business in a value table, they vary in ways that
+        would fragment the buckets to uselessness, and an unbounded key would
+        make the table unbounded. Sorted keys make it order-independent, so the
+        same situation described twice hashes the same both times.
+        """
+        if state is None:
+            return ""
+        if isinstance(state, str):
+            raw = state.strip().lower()
+        else:
+            raw = "|".join(f"{k}={state[k]!r}" for k in sorted(state))
+        if not raw:
+            return ""
+        import hashlib
+
+        return hashlib.blake2s(raw.encode("utf-8"), digest_size=8).hexdigest()
+
     def snapshot(self) -> dict[str, Any]:
         with self._lock:
             return {
                 "actions_known": len(self._stats),
+                "contexts_known": len(self._contextual),
                 "global_mean": self._global_mean,
                 "shrinkage_k": None if math.isinf(self._shrinkage_k) else self._shrinkage_k,
+                "contextual_k": (
+                    None if math.isinf(self._contextual_k) else self._contextual_k
+                ),
                 "total_observations": sum(r["n"] for r in self._stats.values()),
+                "stale": self._stale,
             }
 
 
@@ -303,8 +418,83 @@ def _clamp01(value: float) -> float:
     return max(0.0, min(1.0, value))
 
 
+def on_outcome_resolved(receipt: Any) -> None:
+    """Close two loops when a real outcome lands.
+
+    Registered against the outcome ledger, so both updates are driven by
+    evidence arriving rather than by a timer.
+
+    1. The value model is marked stale, so the next ranking sees the new
+       observation. Without this the singleton loads its statistics once at
+       construction and a long-running process ranks forever on the evidence
+       that happened to exist at boot.
+
+    2. If the decision was answered by a compiled chunk, the chunk is graded.
+       ``ChunkStore.record_outcome`` had no caller, which left ``p_correct``
+       pinned at its optimistic default — so an over-general chunk could never
+       accumulate the negative expected value that retracts it. Grading closes
+       the only loop that can retire a confidently wrong chunk.
+    """
+    try:
+        get_action_value_model().mark_stale()
+    except (RuntimeError, ImportError, AttributeError):
+        pass  # no-op: a stale model still answers, it just answers with old data
+
+    signature = ""
+    correct = False
+    try:
+        context = getattr(receipt, "context", None) or {}
+        signature = str(context.get("chunk_signature") or "")
+        if not signature:
+            return
+        observed = getattr(receipt, "observed", None)
+        expected = getattr(receipt, "expected", None)
+        if observed is None or expected is None:
+            return
+        # "Correct" means the compiled choice did at least as well as the
+        # deliberation that produced it predicted. Grading against the
+        # expectation rather than against a fixed bar keeps the judgement
+        # scaled to the decision instead of calling every hard problem a
+        # failure.
+        correct = float(observed) >= float(expected)
+    except (TypeError, ValueError, AttributeError):
+        return
+
+    try:
+        from core.cognition.impasse import get_impasse_learner
+
+        get_impasse_learner().record_outcome(signature, correct=correct)
+    except (RuntimeError, ImportError, AttributeError) as exc:
+        from core.runtime.errors import record_degradation
+
+        record_degradation(
+            "action_value",
+            exc,
+            severity="warning",
+            action="chunk outcome not graded; the chunk keeps its previous "
+            "correctness estimate and stays subject to pruning",
+        )
+
+
 _model: ActionValueModel | None = None
 _model_lock = threading.Lock()
+_observers_installed = False
+
+
+def _install_observers() -> None:
+    global _observers_installed
+    if _observers_installed:
+        return
+    try:
+        from core.cognition.outcome_ledger import get_outcome_ledger
+
+        get_outcome_ledger().add_resolution_observer(on_outcome_resolved)
+        _observers_installed = True
+    except (ImportError, RuntimeError, OSError, AttributeError):
+        # The ledger may not be constructible yet (early boot, or a test with
+        # no writable home). Leave the flag down so a later call retries; a
+        # model that never gets refreshed is worse than one that retries.
+        pass  # no-op: intentional
 
 
 def get_action_value_model() -> ActionValueModel:
@@ -314,4 +504,5 @@ def get_action_value_model() -> ActionValueModel:
             if _model is None:
                 _model = ActionValueModel()
                 _model.refresh()
+    _install_observers()
     return _model

@@ -628,6 +628,19 @@ class NativeSystem2Engine:
 
         value_model = get_action_value_model()
         evidence_counts: Dict[str, int] = {}
+        # The situation this decision is being made in. Passing it is what
+        # makes the estimate Q(s,a) rather than V(a) where the evidence
+        # supports it: "this action works here" instead of "this action tends
+        # to work". The model backs off to the marginal history when the
+        # contextual bucket is empty, which it usually is at first.
+        #
+        # Exactly one hashing site. The raw situation goes to value_for, which
+        # hashes it; the digest goes on the receipt, so the key the writer
+        # stores is the key the reader computes. Passing the digest to
+        # value_for instead would hash it twice and every contextual lookup
+        # would miss — silently, degrading straight back to V(a).
+        state_raw = context.strip()[:512]
+        state_descriptor = value_model.state_key(state_raw)
 
         # A bare string action arrives with risk=0.0 because _coerce_action has
         # nothing better to go on. Apply the lexical floor BEFORE search so the
@@ -667,7 +680,9 @@ class NativeSystem2Engine:
 
         async def _world(state: Any, action: System2Action, node: NativePlanNode) -> SimulatedTransition:
             selected = action.metadata.get("verifies") or action.name
-            estimate = value_model.value_for(selected, action.metadata)
+            estimate = value_model.value_for(
+                selected, action.metadata, state=state_raw
+            )
             evidence_counts[estimate.evidence] = (
                 evidence_counts.get(estimate.evidence, 0) + 1
             )
@@ -821,6 +836,20 @@ class NativeSystem2Engine:
             )
             result.receipt.chunk_signature = signature
             result.receipt.chunk_reused = False
+
+        # Open an outcome receipt tagged with the state and the chunk, so the
+        # ledger's resolution stream can grade both. This is the loop that was
+        # missing: ChunkStore.record_outcome had no caller, so p_correct stayed
+        # at its optimistic default and an over-general chunk could never
+        # accumulate the negative expected value that retracts it.
+        if chosen is not None and result.receipt.chunk_signature:
+            self._open_decision_receipt(
+                chosen,
+                expected=float(result.confidence),
+                state=state_raw,
+                chunk_signature=result.receipt.chunk_signature,
+                reused=result.receipt.chunk_reused,
+            )
         if not result.receipt.value_is_evidenced and candidate_actions:
             logger.info(
                 "rank_actions: no value evidence for any of %d candidates "
@@ -829,6 +858,47 @@ class NativeSystem2Engine:
                 evidence_counts or {"none": 0},
             )
         return result
+
+    @staticmethod
+    def _open_decision_receipt(
+        action: str,
+        *,
+        expected: float,
+        state: str,
+        chunk_signature: str,
+        reused: bool,
+    ) -> None:
+        """Register this decision so its real outcome can grade what produced it.
+
+        The receipt carries the state key and the chunk signature, which is
+        what lets one resolution update both the contextual action value and
+        the chunk's correctness. Best-effort: a ranking must not fail because
+        the ledger is unavailable, and an unopened receipt costs a learning
+        opportunity rather than a decision.
+        """
+        try:
+            from core.cognition.outcome_ledger import get_outcome_ledger
+
+            get_outcome_ledger().open(
+                action,
+                _clamp01(expected),
+                category="deliberation",
+                context={
+                    "state": state,
+                    "chunk_signature": chunk_signature,
+                    "chunk_reused": reused,
+                },
+            )
+        except (ImportError, RuntimeError, OSError, AttributeError, ValueError) as exc:
+            from core.runtime.errors import record_degradation
+
+            record_degradation(
+                "native_system2",
+                exc,
+                severity="debug",
+                action="decision receipt not opened; this ranking will not "
+                "contribute evidence to the action-value model",
+            )
 
     def get_receipt(self, search_id: str) -> Optional[NativeSearchReceipt]:
         return self._receipts.get(search_id)
