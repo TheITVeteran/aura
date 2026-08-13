@@ -46520,3 +46520,34 @@ and interpreter equality; Ruff and diff hygiene pass. Both preceding launches
 stopped before model load and committed zero candidates, so they carry no
 scientific tissue verdict. The completion envelope remains `915/920`; next is
 the fresh CP292 immutable resident diagnostic.
+
+## Checkpoint 2026-08-12-293: Powered Replication Freezes the True Root
+
+The powered multi-seed controller can now preregister an explicit deterministic
+pre-training root instead of silently reverting each seed to the evaluated
+campaign's immediate recovery parent. Plan schema v4 freezes the authenticated
+root-control binding at preparation, revalidates the immutable controller and
+binding whenever the plan is reopened, propagates the same campaign and stem
+to every source-bound resident evaluator, and rejects any completed report
+that omits or substitutes that root. This makes the canary and any subsequent
+powered replication answer the same scientific question: total learned tissue
+gain relative to CP254's true pre-training controller, not merely the marginal
+effect of CP275's last two updates.
+
+The active CP292 immutable diagnostic uses evaluation seed `20260812291`, nine
+fresh typed tasks, eight matched and lesion arms and recurrence depth four. Its
+first completed task is preliminary positive evidence only: ordinary decode
+and the true-root untrained controller were wrong on the fresh register-trace
+cell, while trained depth one and trained depth four exactly matched the public
+objective. The remaining lesion arms and eight tasks are still required before
+adjudication; no causal verdict, powered effect, package authority, broader
+reasoning gain, fusion or `WOW Signal` is claimed from that partial stream.
+
+Validation is green under Aura's Python 3.12 runtime: `61/61` focused
+replication, adjudication, evaluator and root-identity tests pass, including
+missing and substituted report bindings; canonical smoke passes `104/104`;
+focused Ruff, compilation and diff hygiene pass. The completion envelope
+remains `915/920`. A supported completed canary may advance to the frozen
+three-seed replication under this exact v4 root contract; a refutation must
+return to measured controller repair rather than consuming the powered
+campaign.

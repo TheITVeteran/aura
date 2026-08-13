@@ -19,6 +19,8 @@ def _arguments(campaign: Path, **overrides: object) -> argparse.Namespace:
         "campaign": campaign,
         "output": None,
         "evaluator_source_root": None,
+        "matched_control_campaign": None,
+        "matched_control_stem": "checkpoint_latest",
         "verdict_output": None,
         "seeds": SEEDS,
         "per_cell": 1,
@@ -40,9 +42,7 @@ def _config(campaign: Path) -> dict:
         "campaign_id": "resident-full",
         "config_sha256": "c" * 64,
         "paths": {"campaign_root": str(campaign)},
-        "source": {
-            "git": {"commit": "d" * 40, "root": str(replication.REPO_ROOT)}
-        },
+        "source": {"git": {"commit": "d" * 40, "root": str(replication.REPO_ROOT)}},
         "runtime": {
             "interpreter": {
                 "executable": str(executable),
@@ -154,6 +154,7 @@ def _installed_plan(campaign: Path) -> dict:
         "evaluator_source_sha256s": replication.launcher._evaluator_source_sha256s(  # noqa: SLF001
             replication.REPO_ROOT
         ),
+        "matched_control": None,
         "checkpoint_contract": "exact_terminal_answer_bridge_admitted_checkpoint",
         "seeds": list(SEEDS),
         "per_cell": 1,
@@ -213,6 +214,43 @@ def test_prepare_freezes_powered_plan_and_is_idempotent(
     ).stat().st_mode & 0o777 == 0o400
 
 
+def test_prepare_freezes_and_propagates_an_explicit_root_control(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    campaign = tmp_path / "campaign"
+    campaign.mkdir()
+    control = tmp_path / "root-control"
+    control.mkdir()
+    config = _config(campaign)
+    monkeypatch.setattr(replication, "_campaign", lambda _args: (campaign, config))
+    binding = {
+        "schema": "aura.unified_intrinsic.root_control_binding.v1",
+        "mode": "deterministic_pretraining_root",
+        "campaign_root": str(control),
+        "stem": "checkpoint_latest",
+        "controller_sha256": "a" * 64,
+        "binding_sha256": "b" * 64,
+    }
+    monkeypatch.setattr(
+        replication.launcher,
+        "root_control_binding",
+        lambda *_args, **_kwargs: binding,
+    )
+    arguments = _arguments(campaign, matched_control_campaign=control)
+
+    plan = replication.prepare(arguments)
+    evaluation = replication._evaluation_arguments(  # noqa: SLF001
+        campaign,
+        plan,
+        plan["evaluations"][0],
+    )
+
+    assert plan["matched_control"] == binding
+    assert evaluation.matched_control_campaign == control
+    assert evaluation.matched_control_stem == "checkpoint_latest"
+
+
 def test_replication_plan_rejects_evaluator_drift_across_seeds(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -242,8 +280,11 @@ def _install_adjudication(
     campaign: Path,
     monkeypatch: pytest.MonkeyPatch,
     reports: dict[int, dict],
+    *,
+    matched_control: dict | None = None,
 ) -> None:
     plan_body = _installed_plan(campaign)
+    plan_body["matched_control"] = matched_control
     plan = {**plan_body, "plan_sha256": canonical_sha256(plan_body)}
     config = _config(campaign)
     monkeypatch.setattr(
@@ -265,6 +306,15 @@ def _install_adjudication(
         return {"state": "completed", "report": reports[arguments.evaluation_seed]}
 
     monkeypatch.setattr(replication.launcher, "status", fake_status)
+
+
+def _with_matched_control(report: dict, matched_control: dict) -> dict:
+    changed = copy.deepcopy(report)
+    changed["schema"] = "aura.unified_intrinsic_decode_evaluation.v2"
+    changed["matched_control"] = matched_control
+    body = {key: value for key, value in changed.items() if key != "report_sha256"}
+    changed["report_sha256"] = canonical_sha256(body)
+    return changed
 
 
 def test_adjudicate_supports_disjoint_three_seed_replication(
@@ -293,6 +343,42 @@ def test_adjudicate_rejects_cross_seed_task_or_prompt_reuse(
     _install_adjudication(tmp_path, monkeypatch, reports)
 
     with pytest.raises(replication.ResidentReplicationError, match="overlap"):
+        replication.adjudicate(_arguments(tmp_path))
+
+
+@pytest.mark.parametrize("failure", ["missing", "substituted"])
+def test_adjudicate_rejects_report_root_control_drift(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    failure: str,
+) -> None:
+    binding = {
+        "schema": "aura.unified_intrinsic.root_control_binding.v1",
+        "mode": "deterministic_pretraining_root",
+        "campaign_root": str(tmp_path / "root-control"),
+        "stem": "checkpoint_latest",
+        "controller_sha256": "a" * 64,
+        "binding_sha256": "b" * 64,
+    }
+    reports = {seed: _with_matched_control(_report(seed), binding) for seed in SEEDS}
+    if failure == "missing":
+        reports[SEEDS[0]].pop("matched_control")
+    else:
+        reports[SEEDS[0]]["matched_control"] = {
+            **binding,
+            "controller_sha256": "f" * 64,
+        }
+    report = reports[SEEDS[0]]
+    body = {key: value for key, value in report.items() if key != "report_sha256"}
+    report["report_sha256"] = canonical_sha256(body)
+    _install_adjudication(
+        tmp_path,
+        monkeypatch,
+        reports,
+        matched_control=binding,
+    )
+
+    with pytest.raises(replication.ResidentReplicationError, match="report identity differs"):
         replication.adjudicate(_arguments(tmp_path))
 
 
@@ -330,9 +416,7 @@ def test_adjudicate_seals_decisive_early_refutation_without_inventing_aggregate(
     assert verdict["evaluations_planned"] == 3
     assert verdict["total_tasks"] == 9
     assert verdict["planned_total_tasks"] == 27
-    assert verdict["irreversible_failures"] == [
-        "every_seed_positive_matched_control_gain"
-    ]
+    assert verdict["irreversible_failures"] == ["every_seed_positive_matched_control_gain"]
     assert verdict["checks"]["all_evaluations_present"] is False
     assert verdict["checks"]["pooled_exact_p_at_most_one_percent"] is None
     assert verdict_path.stat().st_mode & 0o777 == 0o400
@@ -362,9 +446,7 @@ def test_adjudicate_rejects_mutating_an_existing_verdict(
     verdict_path.write_bytes(canonical_bytes({"different": True}) + b"\n")
 
     with pytest.raises(replication.ResidentReplicationError, match="already differs"):
-        replication.adjudicate(
-            _arguments(tmp_path, verdict_output=verdict_path)
-        )
+        replication.adjudicate(_arguments(tmp_path, verdict_output=verdict_path))
 
 
 def test_launch_next_rejects_stopped_or_unknown_evaluator_state(
@@ -611,9 +693,10 @@ def test_launchd_contract_runs_process_capable_controller_with_failure_restart(
     assert "--launchd-supervised" in plist["ProgramArguments"]
     assert plist["ProgramArguments"][2:4] == ["run", str(campaign)]
     assert intent["plan_sha256"] == plan["plan_sha256"]
-    assert intent["controller_source_sha256"] == replication.hashlib.sha256(
-        Path(replication.__file__).read_bytes()
-    ).hexdigest()
+    assert (
+        intent["controller_source_sha256"]
+        == replication.hashlib.sha256(Path(replication.__file__).read_bytes()).hexdigest()
+    )
     assert intent["interpreter"]["sys_prefix"] == str(Path(sys.prefix).absolute())
 
 

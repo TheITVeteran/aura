@@ -38,7 +38,7 @@ from tools.unified_intrinsic_resident_identity import (  # noqa: E402
     canonical_sha256,
 )
 
-PLAN_SCHEMA: Final = "aura.unified_intrinsic.resident_replication_plan.v3"
+PLAN_SCHEMA: Final = "aura.unified_intrinsic.resident_replication_plan.v4"
 VERDICT_SCHEMA: Final = "aura.unified_intrinsic.resident_replication_verdict.v2"
 CONTROLLER_STATUS_SCHEMA: Final = "aura.unified_intrinsic.resident_replication_controller_status.v1"
 LAUNCH_INTENT_SCHEMA: Final = "aura.unified_intrinsic.resident_replication_launch_intent.v1"
@@ -143,9 +143,7 @@ def _runtime_python(config: Mapping[str, Any]) -> tuple[Path, dict[str, Any]]:
         real_executable = executable.resolve(strict=True)
         digest = hashlib.sha256(real_executable.read_bytes()).hexdigest()
     except OSError as exc:
-        raise ResidentReplicationError(
-            "replication runtime interpreter is unavailable"
-        ) from exc
+        raise ResidentReplicationError("replication runtime interpreter is unavailable") from exc
     if (
         not isinstance(real_value, str)
         or real_executable != Path(real_value)
@@ -490,6 +488,14 @@ def prepare(arguments: argparse.Namespace) -> dict[str, Any]:
         if arguments.evaluator_source_root is not None
         else Path(config["source"]["git"]["root"]).resolve(strict=True)
     )
+    matched_control = (
+        launcher.root_control_binding(
+            arguments.matched_control_campaign,
+            stem=arguments.matched_control_stem,
+        )
+        if arguments.matched_control_campaign is not None
+        else None
+    )
     body = {
         "schema": PLAN_SCHEMA,
         "campaign_id": config["campaign_id"],
@@ -500,6 +506,7 @@ def prepare(arguments: argparse.Namespace) -> dict[str, Any]:
         "evaluator_source_sha256s": launcher._evaluator_source_sha256s(  # noqa: SLF001
             evaluator_source_root
         ),
+        "matched_control": matched_control,
         "checkpoint_contract": "exact_terminal_answer_bridge_admitted_checkpoint",
         "seeds": list(seeds),
         "per_cell": arguments.per_cell,
@@ -559,14 +566,24 @@ def _load_plan(arguments: argparse.Namespace) -> tuple[Path, dict[str, Any], dic
             evaluator_source_root
         )
     except launcher.ResidentEvaluationLaunchError as exc:
-        raise ResidentReplicationError(
-            "replication evaluator source is unavailable"
-        ) from exc
-    if (
-        not evaluator_source_root.is_absolute()
-        or observed_evaluator_source != plan.get("evaluator_source_sha256s")
+        raise ResidentReplicationError("replication evaluator source is unavailable") from exc
+    if not evaluator_source_root.is_absolute() or observed_evaluator_source != plan.get(
+        "evaluator_source_sha256s"
     ):
         _fail("replication evaluator source differs")
+    matched_control = plan.get("matched_control")
+    if matched_control is not None:
+        if not isinstance(matched_control, dict):
+            _fail("replication matched control is malformed")
+        try:
+            observed_control = launcher.root_control_binding(
+                Path(str(matched_control.get("campaign_root") or "")),
+                stem=str(matched_control.get("stem") or ""),
+            )
+        except (OSError, RuntimeError, ValueError) as exc:
+            raise ResidentReplicationError("replication matched control is unavailable") from exc
+        if observed_control != matched_control:
+            _fail("replication matched control differs")
     return campaign, config, plan
 
 
@@ -578,6 +595,16 @@ def _evaluation_arguments(
         campaign=campaign,
         output=Path(str(row["output"])),
         evaluator_source_root=Path(str(plan["evaluator_source_root"])),
+        matched_control_campaign=(
+            Path(str(plan["matched_control"]["campaign_root"]))
+            if plan.get("matched_control") is not None
+            else None
+        ),
+        matched_control_stem=(
+            str(plan["matched_control"]["stem"])
+            if plan.get("matched_control") is not None
+            else "checkpoint_latest"
+        ),
         stem="checkpoint_answer_bridge_admitted",
         per_cell=int(plan["per_cell"]),
         evaluation_seed=int(row["seed"]),
@@ -700,9 +727,7 @@ def _collect_evidence(
     for evaluation in plan["evaluations"]:
         output = Path(str(evaluation["output"]))
         if (output / "evaluation-plan.json").exists():
-            evaluation_status = launcher.status(
-                _evaluation_arguments(campaign, plan, evaluation)
-            )
+            evaluation_status = launcher.status(_evaluation_arguments(campaign, plan, evaluation))
         else:
             evaluation_status = {"state": "pending"}
         state = str(evaluation_status.get("state") or "unknown")
@@ -726,8 +751,11 @@ def _collect_evidence(
             or report.get("task_depths") != plan["task_depths"]
             or report.get("recurrence_depths") != plan["recurrence_depths"]
             or report.get("task_count") != plan["task_count_per_seed"]
-            or report.get("evaluation_source_sha256s")
-            != plan["evaluator_source_sha256s"]
+            or report.get("evaluation_source_sha256s") != plan["evaluator_source_sha256s"]
+            or (
+                plan.get("matched_control") is not None
+                and report.get("matched_control") != plan["matched_control"]
+            )
         ):
             _fail(f"replication report identity differs: seed={evaluation['seed']}")
         try:
@@ -823,10 +851,7 @@ def adjudicate(arguments: argparse.Namespace) -> dict[str, Any]:
         and evidence["every_seed_positive"] is not True
     ):
         irreversible_failures.append("every_seed_positive_matched_control_gain")
-    if (
-        decision_rule.get("zero_pooled_right_to_wrong") is True
-        and right_to_wrong > 0
-    ):
+    if decision_rule.get("zero_pooled_right_to_wrong") is True and right_to_wrong > 0:
         irreversible_failures.append("zero_right_to_wrong")
     if (
         decision_rule.get("compiled_exact_every_seed") is True
@@ -856,21 +881,13 @@ def adjudicate(arguments: argparse.Namespace) -> dict[str, Any]:
         "every_seed_positive_matched_control_gain": evidence["every_seed_positive"],
         "zero_right_to_wrong": right_to_wrong == 0,
         "pooled_exact_p_at_most_one_percent": pvalue <= alpha if all_present else None,
-        "pooled_effect_at_least_twenty_percent": effect >= minimum_effect
-        if all_present
-        else None,
-        "treatment_beats_base": totals["treatment"] > totals["base"]
-        if all_present
-        else None,
+        "pooled_effect_at_least_twenty_percent": effect >= minimum_effect if all_present else None,
+        "treatment_beats_base": totals["treatment"] > totals["base"] if all_present else None,
         "recurrence_beats_trained_t1": totals["treatment"] > totals["trained_t1"]
         if all_present
         else None,
-        "grammar_lesion_loses": totals["treatment"] > totals["grammar"]
-        if all_present
-        else None,
-        "pointer_lesion_loses": totals["treatment"] > totals["pointer"]
-        if all_present
-        else None,
+        "grammar_lesion_loses": totals["treatment"] > totals["grammar"] if all_present else None,
+        "pointer_lesion_loses": totals["treatment"] > totals["pointer"] if all_present else None,
     }
     supported = all_present and all(value is True for value in checks.values())
     body = {
@@ -1016,9 +1033,7 @@ def run(arguments: argparse.Namespace) -> dict[str, Any]:
                             **training,
                             "verdict": verdict["verdict"],
                             "verdict_sha256": verdict["verdict_sha256"],
-                            "adjudication_scope": verdict.get(
-                                "adjudication_scope", "complete"
-                            ),
+                            "adjudication_scope": verdict.get("adjudication_scope", "complete"),
                         },
                     )
                     return {
@@ -1069,6 +1084,8 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("campaign", type=Path)
     parser.add_argument("--output", type=Path)
     parser.add_argument("--evaluator-source-root", type=Path)
+    parser.add_argument("--matched-control-campaign", type=Path)
+    parser.add_argument("--matched-control-stem", default="checkpoint_latest")
     parser.add_argument("--verdict-output", type=Path)
     parser.add_argument(
         "--seeds",
