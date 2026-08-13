@@ -17,7 +17,7 @@
     "source_validation": "8ca62217f5d7e1f414e3e2b591689689a8727eaf0279952475609093ba660f3f",
     "inventory_status": "9871e1055897763e7ac4a0b53df4bab0175472e2195549485b3c71cb95e92f8a",
     "adjudication": "69e47b6365a65cde8e89f7efc82d3d6d72de198e4496ad3f820cc57de5153803",
-    "remediation_ledger": "c03997fc3016096e1504e8a41fd82f66f37ef550c161f8efec34fac36c3e6cfd"
+    "remediation_ledger": "0a8f9e5a64d5ad8463f7ad6ffb9ed17a650bbf35176b659f9515dd0e8f80a627"
   },
   "validation": {
     "exact_source_campaign_passed": true,
@@ -46,14 +46,15 @@
     "stale": 4
   },
   "remediation": {
-    "recorded_closed": 33,
-    "remaining_open": 25,
+    "recorded_closed": 37,
+    "remaining_open": 21,
     "closure_checkpoints": [
       "929cf62ae7143c5db23587538802e31815796d91",
       "da0c0af466b770ec5875d3435b9746f44b14c471",
       "aa49b3763bbce6153dce749b80eea690c132199e",
       "0351916ab0329f15da2072f0184674d496cc0581",
-      "5abfe58162719d4d2397f44acd57a7d857ac8b30"
+      "5abfe58162719d4d2397f44acd57a7d857ac8b30",
+      "a4e5a4a6170dce4941f51a9fc6513f60ef557901"
     ]
   },
   "claim_supported": [
@@ -63,7 +64,8 @@
     "accepted_findings_grouped_in_dependency_order",
     "session_turn_custody_findings_remediated",
     "evidence_claim_binding_findings_remediated",
-    "pending_retry_custody_findings_remediated"
+    "pending_retry_custody_findings_remediated",
+    "external_chat_ipc_findings_remediated"
   ],
   "claim_not_supported": [
     "all_accepted_findings_remediated",

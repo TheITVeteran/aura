@@ -46930,3 +46930,26 @@ advances to `semantic-content-reliability`. Powered resident-32B replication
 remains separate and undisturbed; at this checkpoint seed `20260812293` is
 complete, seed `20260812294` is actively decoding, and no scientific verdict,
 fusion authority, frontier gain or `WOW Signal` is claimed.
+
+## Checkpoint 2026-08-12-323: External Chat Closure Is Commit-Bound
+
+The four external-chat findings are closed in the append-only semantic
+remediation ledger against CP322's published implementation commit
+`a4e5a4a6170dce4941f51a9fc6513f60ef557901`. The ledger now reports `37/58`
+findings closed (`63.8%`) with `21` open: `8/8` inventory-critical, `27/40`
+inventory-high and `2/10` inventory-medium findings are closed. Verification
+reports zero unknown finding IDs and zero changed files among the latest
+closure records.
+
+The evidence binds the repaired external-chat source to the exact commit and
+to authenticated transport, exact round-trip, cross-surface identity and boot
+lifecycle tests. The scoped manifest records the resulting ledger digest
+`0a8f9e5a64d5ad8463f7ad6ffb9ed17a650bbf35176b659f9515dd0e8f80a627`.
+This is an evidence checkpoint rather than a new runtime implementation.
+
+The next dependency-ordered group is `semantic-content-reliability`. The
+remaining scoped findings after that group cover response reliability,
+terminal chat, capability preconditions and smaller subject/momentum/mood
+boundaries. Powered resident-32B replication remains independent; this closure
+does not claim its verdict, runtime tissue qualification, fusion authority,
+frontier reasoning or a `WOW Signal`.
