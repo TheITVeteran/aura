@@ -12,6 +12,8 @@ from tools.closeout.run_codebase_closeout_audit import (
 )
 from tools.closeout.semantic_review_ledger import (
     SEMANTIC_CAMPAIGN_SCHEMA,
+    _read_json_artifact,
+    _write_json_artifact,
     append_entries,
     build_arg_parser,
     build_review_entry,
@@ -47,6 +49,67 @@ def test_audit_file_hashes_every_text_line(tmp_path):
     records = [json.loads(line) for line in ledger.read_text(encoding="utf-8").splitlines()]
     assert [record["line"] for record in records] == [1, 2, 3]
     assert all(record["sha256"] for record in records)
+
+
+@pytest.mark.parametrize("name", ("campaign.json", "campaign.json.gz"))
+def test_semantic_json_artifact_round_trips_the_named_format(tmp_path, name):
+    path = tmp_path / name
+    payload = {"schema": "fixture", "rows": [1, 2, 3]}
+
+    _write_json_artifact(path, payload)
+
+    assert _read_json_artifact(path) == payload
+    assert path.stat().st_mode & 0o777 == 0o444
+    if name.endswith(".gz"):
+        assert path.read_bytes().startswith(b"\x1f\x8b")
+        assert json.loads(gzip.decompress(path.read_bytes())) == payload
+
+
+def test_semantic_json_artifact_never_replaces_existing_evidence(tmp_path):
+    path = tmp_path / "campaign.json.gz"
+    _write_json_artifact(path, {"version": 1})
+    before = path.read_bytes()
+
+    with pytest.raises(ValueError, match="already exists"):
+        _write_json_artifact(path, {"version": 2})
+
+    assert path.read_bytes() == before
+
+
+def test_semantic_plan_cli_emits_gzip_that_validate_cli_can_reopen(
+    tmp_path,
+    monkeypatch,
+    capsys,
+):
+    campaign = {
+        "schema": SEMANTIC_CAMPAIGN_SCHEMA,
+        "campaign_sha256": "frozen-campaign",
+        "source_commit": "frozen-source",
+        "source_clean": True,
+        "planned_file_count": 1,
+        "planned_span_count": 1,
+        "planned_line_count": 1,
+        "batch_count": 1,
+        "batches": [],
+    }
+    observed: list[dict[str, object]] = []
+    monkeypatch.setattr(
+        "tools.closeout.semantic_review_ledger.build_semantic_review_campaign",
+        lambda **_kwargs: campaign,
+    )
+    monkeypatch.setattr(
+        "tools.closeout.semantic_review_ledger.validate_semantic_review_campaign",
+        lambda decoded: observed.append(decoded) or {"passed": decoded == campaign},
+    )
+    output = tmp_path / "campaign.json.gz"
+
+    assert semantic_review_main(["plan", "--out", str(output)]) == 0
+    capsys.readouterr()
+    assert output.read_bytes().startswith(b"\x1f\x8b")
+    assert semantic_review_main(["validate-plan", str(output)]) == 0
+
+    assert observed == [campaign]
+    assert json.loads(capsys.readouterr().out)["passed"] is True
 
 
 def test_closeout_audit_writes_checkpoint_bundle(tmp_path):

@@ -47475,3 +47475,38 @@ canary, rollback/absence proof and activation transaction before any typed
 serving authority advances. The powered replication remains a bounded positive
 result only; broad reasoning, frontier performance, static fusion and
 `WOW Signal` remain unproven.
+
+## Checkpoint 2026-08-13-347: Semantic Campaign Artifacts Match Their Declared Format
+
+The semantic-review CLI previously accepted output names ending in `.json.gz`
+while delegating publication to a plain-JSON writer. The corresponding reader
+correctly treated the extension as a gzip contract, so a campaign created by
+`plan --out campaign.json.gz` immediately failed reopening with
+`gzip.BadGzipFile`; `export-batch` had the same defect. A planner-emitted
+artifact therefore could not survive the next command in its own workflow.
+
+Semantic campaign and batch publication now share one format-aware writer. It
+uses deterministic gzip bytes when the destination says `.gz`, plain UTF-8 JSON
+otherwise, fsyncs the complete payload, makes the evidence read-only, and
+publishes with an atomic no-replace hard link before fsyncing the parent
+directory. Existing evidence cannot be overwritten. Regression coverage proves
+plain and gzip round trips, gzip framing and decompression, read-only mode,
+no-replace behavior, and the exact `plan -> validate-plan` CLI handoff.
+
+The real scoped planner also reopened a fresh two-batch campaign covering all
+`28,282` lines and `36` spans of `interface/routes/chat.py`. Validation observed
+the exact file, span and line totals and rejected only the expected
+`campaign_source_not_clean` and `source_worktree_dirty` conditions because this
+repair had not yet been committed. That is the intended fail-closed result; a
+new immutable campaign must be frozen from the clean pushed checkpoint.
+
+Validation under Aura's Python 3.12 runtime is green: the complete closeout
+audit test file passes `28/28`, the focused artifact surface passes `4/4`,
+canonical smoke passes `104/104`, and Ruff, compilation, governance lint,
+layering and diff hygiene pass. This checkpoint does not claim that the chat
+route has been semantically reviewed or remediated, and it does not advance
+resident recurrent serving authority. CP346 independently passed both
+nine-case shadow lifecycle cold loads, but its first qualified-serving canary
+timed out without cancellation acknowledgement; that activation failure is
+preserved and remains the next implementation blocker. No broad reasoning,
+frontier, `WOW Signal`, soak or Aura 1.0 claim follows.

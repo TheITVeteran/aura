@@ -16,7 +16,7 @@ import os
 import sys
 import tempfile
 import time
-from collections.abc import Iterable
+from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -226,6 +226,49 @@ def _read_json_artifact(path: Path) -> Any:
         return json.loads(_read_text_artifact(path))
     except json.JSONDecodeError as exc:
         raise ValueError(f"invalid JSON artifact: {path}") from exc
+
+
+def _write_json_artifact(path: Path, payload: Mapping[str, Any]) -> None:
+    """Publish one immutable JSON artifact in the format named by its path.
+
+    Campaign readers intentionally use ``.gz`` as the compression contract.
+    The old CLI delegated to the closeout report writer, which always emitted
+    plain text; a freshly planned ``campaign.json.gz`` therefore could not be
+    reopened by ``validate-plan``. Evidence artifacts are also immutable, so
+    publication uses an atomic hard-link rather than replacing existing bytes.
+    """
+
+    path = path.expanduser().absolute()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    rendered = json.dumps(
+        dict(payload),
+        indent=2,
+        sort_keys=True,
+        default=str,
+    ).encode("utf-8")
+    encoded = gzip.compress(rendered, mtime=0) if path.suffix == ".gz" else rendered
+    fd, raw_tmp = tempfile.mkstemp(prefix=f".{path.name}.", dir=str(path.parent))
+    tmp = Path(raw_tmp)
+    try:
+        with os.fdopen(fd, "wb") as handle:
+            handle.write(encoded)
+            handle.flush()
+            os.fchmod(handle.fileno(), 0o444)
+            os.fsync(handle.fileno())
+        try:
+            os.link(tmp, path)
+        except FileExistsError as exc:
+            raise ValueError(
+                f"semantic artifact already exists: {path}"
+            ) from exc
+        directory_fd = os.open(path.parent, os.O_RDONLY)
+        try:
+            os.fsync(directory_fd)
+        finally:
+            os.close(directory_fd)
+    finally:
+        if tmp.exists():
+            tmp.unlink()
 
 
 def read_entries(ledger_path: Path) -> list[dict[str, Any]]:
@@ -1639,10 +1682,8 @@ def main(argv: list[str] | None = None) -> int:
             path_prefixes=args.path_prefix,
         )
         if args.out:
-            from tools.closeout.run_codebase_closeout_audit import _write_json
-
             output_path = Path(args.out)
-            _write_json(output_path, payload)
+            _write_json_artifact(output_path, payload)
             payload = semantic_campaign_receipt(payload, output_path=output_path)
     elif args.command == "validate-plan":
         campaign = _read_json_artifact(Path(args.campaign))
@@ -1655,10 +1696,8 @@ def main(argv: list[str] | None = None) -> int:
             inventory_path=Path(args.inventory),
             pending_only=args.pending_only,
         )
-        from tools.closeout.run_codebase_closeout_audit import _write_json
-
         output_path = Path(args.out)
-        _write_json(output_path, batch)
+        _write_json_artifact(output_path, batch)
         payload = semantic_inventory_batch_receipt(batch, output_path=output_path)
     elif args.command == "record-inventory":
         campaign = _read_json_artifact(Path(args.campaign))
