@@ -381,6 +381,11 @@ class GlobalWorkspace:
         self._inhibited: dict[str, int] = {}   # source -> ticks_remaining
         #: source -> current adaptation penalty on effective priority.
         self._fatigue: dict[str, float] = {}
+        #: Decisions settled by list order because nothing discriminated. A
+        #: rising count means the priority scheme has stopped separating its
+        #: producers, which is invisible from the winners alone.
+        self._tie_impasses: int = 0
+        self._last_tie: tuple[str, ...] = ()
         self._processors: list[ProcessorFn] = []
         # Retention comes from the shared working-history policy rather than a
         # hardcoded 100, and lives in a self-bounding buffer. Both were the
@@ -1001,12 +1006,56 @@ class GlobalWorkspace:
             # Sort by effective priority MINUS adaptation, so the coalition
             # that just held the workspace has to out-bid the field by more
             # than its fatigue to hold it again.
-            self._candidates.sort(
-                key=lambda c: c.effective_priority - self._fatigue.get(c.source, 0.0),
-                reverse=True,
-            )
+            def _adjusted(candidate: CognitiveCandidate) -> float:
+                return candidate.effective_priority - self._fatigue.get(
+                    candidate.source, 0.0
+                )
+
+            self._candidates.sort(key=_adjusted, reverse=True)
             winner = self._candidates[0]
             losers = self._candidates[1:]
+
+            # Soar's tie impasse: several candidates that nothing actually
+            # discriminates. Taking [0] resolves it silently, and until now
+            # nothing recorded that the choice had been arbitrary.
+            #
+            # Testing for EXACT equality finds nothing, and the reason matters
+            # more than the tie would have. effective_priority multiplies base
+            # salience by (1 - 0.03·age) inside the recency window, so four
+            # sources bidding an identical 0.70 came out ~2e-6 apart purely
+            # from being submitted microseconds apart: measured over 12 ticks
+            # of four identical bids, exact ties were 0 of 12. The workspace
+            # was settling those decisions by sub-microsecond arrival time
+            # while presenting it as a priority difference, which is strictly
+            # worse than a visible tie because it looks principled.
+            #
+            # So the comparison is against the noise floor that mechanism
+            # creates rather than against zero. Two candidates of identical
+            # salience submitted `spread` seconds apart differ by at most
+            # 0.03·spread, and base salience is clamped to 1.0, so that bounds
+            # the whole timing artefact. Anything closer than that is a tie in
+            # substance whatever the float says.
+            if losers:
+                stamps = [c.submitted_at for c in self._candidates]
+                noise_floor = 0.03 * (max(stamps) - min(stamps))
+                top = _adjusted(winner)
+                tied = tuple(
+                    sorted(
+                        c.source
+                        for c in self._candidates
+                        if top - _adjusted(c) <= noise_floor
+                    )
+                )
+                if len(tied) > 1:
+                    self._tie_impasses += 1
+                    self._last_tie = tied
+                    logger.debug(
+                        "GW tie impasse: %d sources within the %.3g timing noise "
+                        "floor %s",
+                        len(tied),
+                        noise_floor,
+                        tied,
+                    )
 
             # Adaptation on the winner, not exclusion of the losers.
             #
@@ -1218,6 +1267,12 @@ class GlobalWorkspace:
             "last_priority": round(last.effective_priority, 3) if last else 0.0,
             "pending_candidates": len(self._candidates),
             "inhibited_sources": list(self._inhibited.keys()),
+            # Decisions that were settled by list order rather than by any
+            # preference. Reported because the rate is the diagnostic: winners
+            # alone cannot show that the choice was arbitrary.
+            "tie_impasses": self._tie_impasses,
+            "last_tie": list(self._last_tie),
+            "fatigue_recovery_rate": round(self._fatigue_recovery(), 5),
             "broadcast_history_len": len(self._history),
             "ignition_level": round(self.ignition_level, 3),
             "ignited": self.ignited,

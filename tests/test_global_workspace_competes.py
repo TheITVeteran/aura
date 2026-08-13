@@ -130,6 +130,55 @@ def test_arbitration_does_not_lock_into_a_short_cycle():
     assert not findings, "\n".join(str(f) for f in findings)
 
 
+def test_identical_bids_are_recorded_as_a_tie_impasse():
+    """A decision nothing discriminates must be counted, not just made.
+
+    Exact-equality detection finds nothing here, and why is the point:
+    effective_priority scales salience by (1 - 0.03*age), so four sources
+    bidding an identical 0.70 came out ~2e-6 apart purely from submission
+    timing — measured, 0 exact ties in 12 ticks. The workspace was settling
+    those by sub-microsecond arrival order while presenting it as a priority
+    difference. Detection compares against that mechanism's own noise floor.
+    """
+
+    async def scenario():
+        workspace = GlobalWorkspace()
+        for tick in range(TICKS):
+            for name in ("a", "b", "c", "d"):
+                await workspace.submit(
+                    CognitiveCandidate(
+                        content=f"{name}@{tick}", source=name, priority=0.70
+                    )
+                )
+            await workspace.run_competition()
+        return workspace.get_snapshot()
+
+    snapshot = asyncio.run(scenario())
+    assert snapshot["tie_impasses"] > 0, (
+        "four identical bids produced no recorded tie; the impasse is being "
+        "resolved by arrival order and reported as a decision"
+    )
+    assert len(snapshot["last_tie"]) > 1
+
+
+def test_genuinely_different_bids_are_not_called_ties():
+    """The noise floor must not swallow real differences."""
+
+    async def scenario():
+        workspace = GlobalWorkspace()
+        for tick in range(TICKS):
+            for name, priority in (("a", 0.90), ("b", 0.70), ("c", 0.50)):
+                await workspace.submit(
+                    CognitiveCandidate(
+                        content=f"{name}@{tick}", source=name, priority=priority
+                    )
+                )
+            await workspace.run_competition()
+        return workspace.get_snapshot()
+
+    assert asyncio.run(scenario())["tie_impasses"] == 0
+
+
 def test_losing_a_bid_does_not_silence_the_next_one():
     """Being outbid is a reason to bid again, not to be excluded."""
     _, refused, _seq = _sync({"a": 0.90, "b": 0.88, "c": 0.86})
