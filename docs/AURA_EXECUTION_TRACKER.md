@@ -46551,3 +46551,27 @@ remains `915/920`. A supported completed canary may advance to the frozen
 three-seed replication under this exact v4 root contract; a refutation must
 return to measured controller repair rather than consuming the powered
 campaign.
+
+## Checkpoint 2026-08-12-294: Powered Root Replication Is Pre-Registered
+
+The next powered campaign is frozen before the CP292 canary verdict rather
+than chosen after observing its final tasks. Replication plan
+`e86ad0157107582792f635cd0fc08569b3158079036e16ea507df0feba3f7fb7`
+binds immutable CP293 evaluator source `cbadb8b381f2`, CP254's authenticated
+deterministic pre-training controller, three fresh seeds, three examples per
+family/depth cell, 81 total tasks and 648 eight-arm candidates. Reopening the
+plan reproduces the exact digest, and all three seed evaluations remain
+pending until the canary earns admission.
+
+The launchd transport already carries a non-default replication root into the
+detached controller. A dedicated regression now makes that behavior explicit:
+the `--output` argument, controller stdout and controller stderr must all name
+the same strict campaign child committed by the frozen plan. This prevents a
+future refactor from launching a valid custom preregistration against an old
+default evidence directory.
+
+Validation is green under Aura's Python 3.12 runtime: the replication
+controller suite passes `21/21`; focused Ruff, compilation and diff hygiene
+pass. The completion envelope remains `915/920`; preregistration is not a
+decoded result and the powered model run remains gated on the completed CP292
+canary.

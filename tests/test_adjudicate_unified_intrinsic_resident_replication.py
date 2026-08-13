@@ -700,6 +700,36 @@ def test_launchd_contract_runs_process_capable_controller_with_failure_restart(
     assert intent["interpreter"]["sys_prefix"] == str(Path(sys.prefix).absolute())
 
 
+def test_launchd_contract_preserves_custom_replication_root(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    campaign = tmp_path / "campaign"
+    campaign.mkdir()
+    output = campaign / "powered-root-control-replication"
+    config = _config(campaign)
+    plan_body = _installed_plan(campaign)
+    plan = {**plan_body, "plan_sha256": canonical_sha256(plan_body)}
+    monkeypatch.setattr(replication, "LAUNCH_AGENTS_ROOT", tmp_path / "agents")
+
+    _, plist_bytes, intent = replication._launch_contract(  # noqa: SLF001
+        _arguments(campaign, output=output),
+        campaign,
+        config,
+        plan,
+    )
+
+    import plistlib
+
+    plist = plistlib.loads(plist_bytes)
+    command = plist["ProgramArguments"]
+    output_index = command.index("--output")
+    assert command[output_index + 1] == str(output)
+    assert plist["StandardOutPath"] == str(output / "controller-launchd.log")
+    assert plist["StandardErrorPath"] == str(output / "controller-launchd.log")
+    assert intent["program_arguments"] == command
+
+
 def test_launchd_contract_rejects_base_interpreter_in_place_of_virtualenv(
     tmp_path: Path,
 ) -> None:
