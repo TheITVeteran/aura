@@ -411,6 +411,51 @@ def test_semantic_campaign_freezes_every_missing_span_before_remediation(tmp_pat
     )["passed"] is True
 
 
+def test_semantic_campaign_scope_is_explicit_and_hash_bound(tmp_path):
+    runtime = tmp_path / "core" / "runtime" / "service.py"
+    runtime.parent.mkdir(parents=True)
+    runtime.write_text("first\nsecond\n", encoding="utf-8")
+    brain = tmp_path / "core" / "brain" / "engine.py"
+    brain.parent.mkdir(parents=True)
+    brain.write_text("brain\n", encoding="utf-8")
+    note = tmp_path / "core" / "runtime" / "README.md"
+    note.write_text("documentation\n", encoding="utf-8")
+
+    campaign = build_semantic_review_campaign(
+        ledger_path=tmp_path / "ledger.jsonl",
+        tracked_paths=[runtime, brain, note],
+        root=tmp_path,
+        source_commit="scoped-commit",
+        source_clean=True,
+        active_code_only=True,
+        path_prefixes=["core/runtime"],
+    )
+
+    assert campaign["scope"] == {
+        "active_code_only": True,
+        "path_prefixes": ["core/runtime"],
+        "scoped": True,
+    }
+    assert campaign["scoped_tracked_text_file_count"] == 1
+    assert campaign["scoped_tracked_text_line_count"] == 2
+    assert campaign["planned_file_count"] == 1
+    assert campaign["planned_line_count"] == 2
+    assert campaign["batches"][0]["spans"][0]["file"] == "core/runtime/service.py"
+    assert (
+        "full_repository_semantic_review_from_scoped_campaign"
+        in campaign["completion_contract"]["claim_not_supported"]
+    )
+    original_hash = campaign["campaign_sha256"]
+    campaign["scope"]["path_prefixes"] = ["core/brain"]
+    validation = validate_semantic_review_campaign(
+        campaign,
+        root=tmp_path,
+        source_commit="scoped-commit",
+    )
+    assert original_hash != campaign["campaign_sha256"] or validation["passed"] is False
+    assert "campaign_hash_mismatch" in validation["issues"]
+
+
 def test_semantic_campaign_validation_detects_source_drift(tmp_path):
     source = tmp_path / "core" / "service.py"
     source.parent.mkdir(parents=True)

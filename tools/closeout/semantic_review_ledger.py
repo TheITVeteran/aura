@@ -637,6 +637,7 @@ def semantic_campaign_receipt(
         "campaign_sha256": campaign.get("campaign_sha256", ""),
         "source_commit": campaign.get("source_commit", ""),
         "source_clean": campaign.get("source_clean", False),
+        "scope": campaign.get("scope", {}),
         "planned_file_count": campaign.get("planned_file_count", 0),
         "planned_span_count": campaign.get("planned_span_count", 0),
         "planned_line_count": campaign.get("planned_line_count", 0),
@@ -653,12 +654,34 @@ def build_semantic_review_campaign(
     max_span_lines: int = 2_000,
     source_commit: str | None = None,
     source_clean: bool | None = None,
+    active_code_only: bool = False,
+    path_prefixes: Iterable[str] = (),
 ) -> dict[str, Any]:
-    """Freeze every missing semantic span before remediation begins."""
+    """Freeze every missing semantic span in an explicit review scope."""
     if batch_line_budget <= 0 or max_span_lines <= 0:
         raise ValueError("semantic campaign line budgets must be positive")
     if max_span_lines > batch_line_budget:
         raise ValueError("max_span_lines cannot exceed batch_line_budget")
+
+    normalized_prefixes = tuple(
+        sorted(
+            {
+                str(prefix).strip().strip("/")
+                for prefix in path_prefixes
+                if str(prefix).strip().strip("/")
+            }
+        )
+    )
+
+    def _in_scope(info: CurrentFile) -> bool:
+        if active_code_only and not info.active_code:
+            return False
+        if not normalized_prefixes:
+            return True
+        return any(
+            info.path == prefix or info.path.startswith(prefix + "/")
+            for prefix in normalized_prefixes
+        )
 
     resolved_paths = (
         tracked_paths if tracked_paths is not None else _run_git_ls_files(root)
@@ -676,6 +699,9 @@ def build_semantic_review_campaign(
         info = current_file(path, root=root)
         if info.text:
             current_by_path[info.path] = info
+    scoped_files = {
+        path: info for path, info in current_by_path.items() if _in_scope(info)
+    }
 
     if source_commit is None or source_clean is None:
         if root.resolve() == ROOT.resolve():
@@ -694,6 +720,8 @@ def build_semantic_review_campaign(
     for row in summary["unreviewed_files"]:
         file_name = str(row["file"])
         info = current_by_path[file_name]
+        if not _in_scope(info):
+            continue
         reviewed = summary["reviewed_files"].get(file_name, {})
         for missing_first, missing_last in _missing_spans(
             info.line_count,
@@ -754,11 +782,20 @@ def build_semantic_review_campaign(
         "source_clean": bool(source_clean),
         "ledger_path": str(ledger_path),
         "review_mode": "read_only_inventory_then_grouped_remediation",
+        "scope": {
+            "active_code_only": bool(active_code_only),
+            "path_prefixes": list(normalized_prefixes),
+            "scoped": bool(active_code_only or normalized_prefixes),
+        },
         "edits_permitted_before_inventory_complete": False,
         "batch_line_budget": batch_line_budget,
         "max_span_lines": max_span_lines,
         "tracked_text_file_count": summary["tracked_text_file_count"],
         "tracked_text_line_count": summary["tracked_text_line_count"],
+        "scoped_tracked_text_file_count": len(scoped_files),
+        "scoped_tracked_text_line_count": sum(
+            info.line_count for info in scoped_files.values()
+        ),
         "fully_reviewed_text_file_count": summary[
             "fully_reviewed_text_file_count"
         ],
@@ -776,6 +813,11 @@ def build_semantic_review_campaign(
             "claim_not_supported": [
                 "semantic_review_from_mechanical_scanning_only",
                 "all_findings_fixed_before_grouped_remediation",
+                *(
+                    ["full_repository_semantic_review_from_scoped_campaign"]
+                    if active_code_only or normalized_prefixes
+                    else []
+                ),
                 "full_closeout_complete",
             ],
         },
@@ -1515,6 +1557,8 @@ def build_arg_parser() -> argparse.ArgumentParser:
     )
     plan.add_argument("--batch-lines", type=int, default=12_000)
     plan.add_argument("--span-lines", type=int, default=2_000)
+    plan.add_argument("--active-code-only", action="store_true")
+    plan.add_argument("--path-prefix", action="append", default=[])
     plan.add_argument("--out", default="")
 
     validate = subparsers.add_parser(
@@ -1591,6 +1635,8 @@ def main(argv: list[str] | None = None) -> int:
             ledger_path=Path(args.ledger),
             batch_line_budget=args.batch_lines,
             max_span_lines=args.span_lines,
+            active_code_only=args.active_code_only,
+            path_prefixes=args.path_prefix,
         )
         if args.out:
             from tools.closeout.run_codebase_closeout_audit import _write_json
