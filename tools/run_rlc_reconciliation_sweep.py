@@ -46,6 +46,7 @@ CLAIM_TASK_REGISTRY_VERSION = "2026.08.06.1"
 COMPLETION_BUDGET_POLICY = "semantic_completion_floor.v1"
 CAMPAIGN_STAGES: Final[tuple[str, ...]] = ("component", "pilot", "certificate")
 NEXT_STAGE_ALPHA: Final[float] = 0.05
+TERMINAL_FUTILITY_SCHEMA: Final = "aura.rlc.composed_terminal_futility.v1"
 
 
 # (name, recurrent steps or None for ordinary decode, terminal-instruction
@@ -417,6 +418,18 @@ def _expand_requested_arms(
 
 def _now() -> float:
     return time.time()
+
+
+def _canonical_sha256(value: Any) -> str:
+    return hashlib.sha256(
+        json.dumps(
+            value,
+            sort_keys=True,
+            separators=(",", ":"),
+            ensure_ascii=True,
+            allow_nan=False,
+        ).encode("ascii")
+    ).hexdigest()
 
 
 def _atomic_write(path: Path, payload: str) -> None:
@@ -2619,6 +2632,86 @@ def _adjudicate_composed_recurrent_tissue(
     }
 
 
+def _execution_schedule(
+    selected: list[Arm],
+    tasks: tuple[Any, ...],
+) -> list[tuple[Arm, int, Any]]:
+    """Keep legacy campaigns arm-major; make causal blocks task-major.
+
+    Composed campaigns need vanilla, uncomposed, trained, initialization and
+    lesion results for the same task before another task adds hours of work.
+    The ordering changes no task, arm, seed, budget or fingerprint.
+    """
+
+    if any(arm.name in RECURRENT_COMPOSED_ARMS for arm in selected):
+        return [
+            (arm, task_index, task)
+            for task_index, task in enumerate(tasks)
+            for arm in selected
+        ]
+    return [
+        (arm, task_index, task)
+        for arm in selected
+        for task_index, task in enumerate(tasks)
+    ]
+
+
+def _composed_task_terminal_futility(
+    *,
+    task: Any,
+    cells: list[dict[str, Any]],
+) -> dict[str, Any] | None:
+    """Return a terminal receipt only when zero regression is impossible.
+
+    This is a conservative negative-only sequential boundary. It cannot award
+    a gain and does not stop for missing, faulted, tied, or merely weak cells.
+    """
+
+    from core.brain.llm.latent_cortex import frontier_tasks as ft
+
+    treatment = "complete_system_recurrent_composed"
+    controls = {
+        "vanilla_floor": "vanilla",
+        "learned_parameters": "complete_system_recurrent_initial_control",
+        "marginal_composition": "complete_system_closed_book",
+        "recurrent_depth": "complete_system_recurrent_depth_lesion",
+    }
+    by_arm = {
+        str(cell.get("arm") or ""): cell
+        for cell in cells
+        if cell.get("task_id") == task.task_id
+    }
+    required = {treatment, *controls.values()}
+    if not required.issubset(by_arm) or any(by_arm[arm].get("error") for arm in required):
+        return None
+    scores = {
+        arm: bool(ft.score_task(task, str(by_arm[arm].get("text") or "")).correct)
+        for arm in required
+    }
+    regressions = [
+        name
+        for name, control_arm in controls.items()
+        if scores[control_arm] and not scores[treatment]
+    ]
+    if not regressions:
+        return None
+    body = {
+        "schema": TERMINAL_FUTILITY_SCHEMA,
+        "terminal": True,
+        "decision": "terminal_preregistered_zero_regression_futility",
+        "criterion": "composed_treatment_must_not_regress_any_paired_control",
+        "task_id": str(task.task_id),
+        "domain": str(task.domain),
+        "required_arms": sorted(required),
+        "correctness": scores,
+        "fatal_regression_contrasts": regressions,
+        "positive_claim_authority": False,
+        "fusion_authorized": False,
+        "wow_signal_authorized": False,
+    }
+    return {**body, "receipt_sha256": _canonical_sha256(body)}
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--model", required=True)
@@ -3146,377 +3239,394 @@ def main() -> int:
         )
         runtime_identity = collect_latent_runtime_identity(REPO_ROOT)
 
-        for spec in selected:
+        for spec, index, task in _execution_schedule(selected, tasks):
             arm, steps, policy = spec.name, spec.steps, spec.policy
-            for index, task in enumerate(tasks):
-                tokens = task_tokens[arm][task.task_id]
-                config = (
-                    None
-                    if steps is None
-                    else _build_config(
-                        steps,
-                        args.n_slots,
-                        policy,
-                        tokens,
-                        profile=spec.profile,
-                        fast_weight_target=args.fast_weight_target,
-                        fast_weight_layer_placement=(
-                            args.fast_weight_layer_placement
-                        ),
-                        output_memory_diagnostic=args.output_memory_diagnostic,
-                    )
+            tokens = task_tokens[arm][task.task_id]
+            config = (
+                None
+                if steps is None
+                else _build_config(
+                    steps,
+                    args.n_slots,
+                    policy,
+                    tokens,
+                    profile=spec.profile,
+                    fast_weight_target=args.fast_weight_target,
+                    fast_weight_layer_placement=(
+                        args.fast_weight_layer_placement
+                    ),
+                    output_memory_diagnostic=args.output_memory_diagnostic,
                 )
-                key = (arm, task.task_id)
-                if key in journal.done:
-                    continue
-                if time.monotonic() - started > args.max_wall_s:
-                    _status(out_dir, phase="wall_budget_reached", arm=arm)
-                    print("wall budget reached; exiting for clean resume", flush=True)
-                    return 3
-                if yield_requested(out_dir):
-                    _status(out_dir, phase="yielded", arm=arm)
-                    print(
-                        f"yield requested: released the model after "
-                        f"{len(journal.done)} committed cells. Re-running the "
-                        f"launch script resumes here; delete the YIELD file "
-                        f"first.",
-                        flush=True,
-                    )
-                    return 4
-                cell_started = time.monotonic()
-                error = ""
-                receipt: dict[str, Any] = {}
-                text = ""
-                cell_incumbent = None
-                cell_resource_accounting = None
-                cell_information_accounting = None
-                cell_resource_dominance_certificate = None
-                cell_control_samples = None
-                cell_decode_generated_tokens = None
-                try:
-                    if config is None and spec.profile == "ordinary_best_of_3":
-                        text = _run_vanilla_best_of(
-                            model,
-                            tokenizer,
-                            _render_prompt_text(tokenizer, task),
-                            tokens,
-                            samples=3,
-                            campaign_seed=args.seed,
-                            task_id=task.task_id,
-                        )
-                    elif config is None and spec.profile == "ordinary_resource_dominating":
-                        target_resource = complete_resource_by_task.get(task.task_id)
-                        target_information = complete_information_by_task.get(task.task_id)
-                        target_prompt = complete_prompt_by_task.get(task.task_id)
-                        paired_incumbent = incumbent_by_task.get(task.task_id)
-                        if (
-                            target_resource is None
-                            or target_information is None
-                            or target_prompt is None
-                            or paired_incumbent is None
-                        ):
-                            raise RuntimeError(
-                                "resource-dominating control treatment prerequisite is absent"
-                            )
-                        (
-                            text,
-                            cell_resource_accounting,
-                            cell_information_accounting,
-                            cell_resource_dominance_certificate,
-                            cell_control_samples,
-                            cell_decode_generated_tokens,
-                            receipt,
-                        ) = _run_vanilla_resource_dominating(
-                            model,
-                            tokenizer,
-                            target_prompt,
-                            tokens,
-                            task=task,
-                            target_resource=target_resource,
-                            target_information=target_information,
-                            treatment_acquisition=complete_acquisition_by_task.get(task.task_id),
-                            campaign_seed=args.seed,
-                            incumbent_text=str(
-                                incumbent_artifact_to_value(paired_incumbent).get("text") or ""
-                            ),
-                        )
-                    elif config is None:
-                        prompt_tokens = _render_prompt(tokenizer, task)
-                        (
-                            text,
-                            output_tokens,
-                            termination,
-                            cell_resource_accounting,
-                        ) = _run_vanilla(
-                            model,
-                            tokenizer,
-                            prompt_tokens,
-                            tokens,
-                        )
-                        if arm == "vanilla":
-                            cell_incumbent = build_incumbent_artifact(
-                                input_tokens=prompt_tokens,
-                                output_tokens=output_tokens,
-                                output_text=text,
-                                checkpoint_fingerprint=checkpoint["fingerprint"],
-                                checkpoint_fingerprint_method=checkpoint["method"],
-                                max_tokens=tokens,
-                                n_layers=len(model.model.layers),
-                                termination=termination,
-                            )
-                            incumbent_by_task[task.task_id] = cell_incumbent
-                            incumbent_resource_by_task[task.task_id] = cell_resource_accounting
-                    else:
-                        # The verifier ablation. An oracle arm is a
-                        # diagnostic ceiling that separates a generation
-                        # limit from a selection limit; it is never a
-                        # capability claim and never promotable, which the
-                        # arm name carries so no downstream reader can lose
-                        # track of which one produced a number.
-                        verifier = None
-                        if spec.profile in COMPLETE_SYSTEM_PROFILES | {"full"}:
-                            verifier = _episode_verifier(task)
-                        elif spec.profile == "full_oracle":
-                            verifier = _oracle_verifier(task)
-                        incumbent = (
-                            incumbent_by_task.get(task.task_id)
-                            if spec.profile in COMPLETE_SYSTEM_PROFILES | {"full", "full_oracle"}
-                            else None
-                        )
-                        if (
-                            spec.profile in COMPLETE_SYSTEM_PROFILES | {"full", "full_oracle"}
-                            and incumbent is None
-                        ):
-                            raise EpisodeFault(
-                                "paired canonical ordinary-decode incumbent is absent"
-                        )
-                        if spec.profile in COMPLETE_SYSTEM_PROFILES:
-                            integrated_candidates = _integrated_candidates_for_profile(
-                                profile=spec.profile,
-                                loaded=loaded_integrated_recurrent,
-                                model=model,
-                                tokenizer=tokenizer,
-                                task=task,
-                                public_tokens=_render_prompt(tokenizer, task),
-                                max_tokens=args.integrated_recurrent_max_tokens,
-                                initial_controller=(
-                                    initial_integrated_recurrent_controller
-                                ),
-                                activity=(
-                                    _integrated_recurrent_progress_callback(
-                                        out_dir,
-                                        arm=arm,
-                                        task_id=task.task_id,
-                                    )
-                                    if spec.profile in RECURRENT_COMPOSED_PROFILES
-                                    else None
-                                ),
-                            )
-                            text, receipt = _run_complete_system_closed_book(
-                                model,
-                                config,
-                                _render_prompt(tokenizer, task),
-                                tokenizer,
-                                task=task,
-                                max_tokens=tokens,
-                                wall_clock_s=args.episode_wall_s,
-                                model_path=args.model,
-                                incumbent_artifact=incumbent,
-                                incumbent_resource_accounting=incumbent_resource_by_task.get(
-                                    task.task_id
-                                ),
-                                worker_identity=worker_identity,
-                                runtime_identity=runtime_identity,
-                                campaign_seed=args.seed,
-                                executable_reasoning_enabled=(
-                                    spec.profile != "complete_closed_book_executable_ablation"
-                                ),
-                                integrated_candidates=integrated_candidates,
-                            )
-                            system_receipt = receipt.get("complete_system_closed_book") or {}
-                            from core.brain.llm.latent_cortex.resource_accounting import (
-                                validate_information_receipt,
-                                validate_resource_receipt,
-                            )
-
-                            cell_resource_accounting = validate_resource_receipt(
-                                system_receipt.get("resource_accounting")
-                            )
-                            cell_information_accounting = validate_information_receipt(
-                                system_receipt.get("information_accounting")
-                            )
-                            if arm == resource_dominating_target_arm:
-                                complete_resource_by_task[task.task_id] = cell_resource_accounting
-                                complete_information_by_task[task.task_id] = (
-                                    cell_information_accounting
-                                )
-                            acquisition = dict(system_receipt.get("cognitive_acquisition") or {})
-                            if arm == resource_dominating_target_arm:
-                                complete_acquisition_by_task[task.task_id] = acquisition
-                            continuation_objective = str(
-                                acquisition.get("continuation_objective") or ""
-                            )
-                            if arm == resource_dominating_target_arm:
-                                complete_prompt_by_task[task.task_id] = (
-                                    _render_objective(tokenizer, continuation_objective)
-                                    if acquisition.get("status") == "completed_new_context"
-                                    and continuation_objective
-                                    else _render_prompt(tokenizer, task)
-                                )
-                        else:
-                            text, receipt = _run_rlc(
-                                model,
-                                config,
-                                _render_prompt(tokenizer, task),
-                                tokenizer,
-                                wall_clock_s=args.episode_wall_s,
-                                verifier=verifier,
-                                model_path=args.model,
-                                incumbent_artifact=incumbent,
-                                worker_identity=worker_identity,
-                                runtime_identity=runtime_identity,
-                                domain=task.domain,
-                                objective=(
-                                    task.public.prompt
-                                    if spec.profile in {"full", "full_oracle"}
-                                    else ""
-                                ),
-                            )
-                except Exception as exc:  # noqa: BLE001 - recorded, never silent
-                    # A harness fault must be visible as a fault. It is never
-                    # scored as a wrong answer.
-                    if isinstance(exc, EpisodeFault):
-                        receipt = exc.receipt
-                    error = f"{type(exc).__name__}: {exc}"
-                    print(f"  !! {arm} {task.domain} {error}", flush=True)
-                receipt_path = ""
-                receipt_sha256 = ""
-                if receipt:
-                    receipt_path, receipt_sha256 = _persist_runtime_receipt(
-                        out_dir,
-                        arm=arm,
-                        task_id=task.task_id,
-                        receipt=receipt,
-                    )
-                incremental_latency_s = time.monotonic() - cell_started
-                if arm == "vanilla" and not error:
-                    vanilla_latency_by_task[task.task_id] = incremental_latency_s
-                paired_incumbent_latency_s = (
-                    vanilla_latency_by_task.get(task.task_id, 0.0)
-                    if spec.profile in COMPLETE_SYSTEM_PROFILES | {"full", "full_oracle"}
-                    else 0.0
-                )
-                journal.append(
-                    {
-                        "event": "CELL",
-                        "arm": arm,
-                        "task_id": task.task_id,
-                        "domain": task.domain,
-                        "decode_fingerprint": fingerprints[arm],
-                        "decode_max_tokens": tokens,
-                        "recurrent_steps": steps,
-                        "arm_profile": spec.profile,
-                        "runtime_receipt_path": receipt_path,
-                        "runtime_receipt_sha256": receipt_sha256,
-                        "terminal_instruction_policy": policy,
-                        # Latency is a first-class result, not a footnote:
-                        # a unified system that answers better but takes ten
-                        # minutes has not been shown to be deployable.
-                        "steps_taken": receipt.get("steps_taken"),
-                        "halted_early": receipt.get("halted_early"),
-                        "phase_latency_s": receipt.get("phase_latency_s"),
-                        # Whether the promotion chain actually fired, recorded
-                        # per cell so the battery answers it directly. Every
-                        # link in that chain has been zero at some point
-                        # tonight -- probe budget, routing, verifier
-                        # allowlists, dispute-only repair -- and diagnosing it
-                        # meant separate 32B probe runs each time.
-                        "route_counts": _route_counts(receipt),
-                        "repair_requests": len(
-                            (receipt.get("local_repair") or {}).get("requests") or []
-                        ),
-                        "answer_replacement_decision": (
-                            (
-                                (receipt.get("complete_system_closed_book") or {})
-                                .get("promotion", {})
-                                .get("decision")
-                            )
-                            if spec.profile in COMPLETE_SYSTEM_PROFILES
-                            else (receipt.get("answer_replacement") or {}).get("decision")
-                        ),
-                        "answer_replacement_reason": (
-                            (
-                                (receipt.get("complete_system_closed_book") or {})
-                                .get("promotion", {})
-                                .get("reason")
-                            )
-                            if spec.profile in COMPLETE_SYSTEM_PROFILES
-                            else (receipt.get("answer_replacement") or {}).get("reason")
-                        ),
-                        "full_stack_evidence": (
-                            _full_stack_evidence(
-                                receipt,
-                                adaptive_neural_expected=(
-                                    spec.profile
-                                    != "complete_closed_book_adaptation_ablation"
-                                ),
-                            )
-                            if spec.profile in COMPLETE_SYSTEM_PROFILES | {"full", "full_oracle"}
-                            else None
-                        ),
-                        "complete_system_evidence": (
-                            _complete_system_evidence(receipt)
-                            if spec.profile in COMPLETE_SYSTEM_PROFILES
-                            else None
-                        ),
-                        "incumbent_artifact": (
-                            incumbent_artifact_to_value(cell_incumbent)
-                            if cell_incumbent is not None
-                            else None
-                        ),
-                        "resource_accounting": cell_resource_accounting,
-                        "information_accounting": cell_information_accounting,
-                        "resource_dominance_certificate": (cell_resource_dominance_certificate),
-                        "control_samples": cell_control_samples,
-                        "text": text,
-                        "error": error,
-                        # A product request pays for the ordinary incumbent and
-                        # the incremental full-stack search. The experiment
-                        # reuses the exact paired artifact for causal identity,
-                        # but does not pretend that generating it was free.
-                        "latency_s": (incremental_latency_s + paired_incumbent_latency_s),
-                        "incremental_latency_s": incremental_latency_s,
-                        "paired_incumbent_latency_s": paired_incumbent_latency_s,
-                        "decode_prefix_token_count": receipt.get("decode_prefix_token_count"),
-                        "decode_prefix_composition": receipt.get("decode_prefix_composition"),
-                        "decode_termination": receipt.get("decode_termination"),
-                        "decode_generated_tokens": (
-                            cell_decode_generated_tokens
-                            if cell_decode_generated_tokens is not None
-                            else receipt.get("decode_generated_tokens")
-                        ),
-                        "halting_reason": receipt.get("halting_reason"),
-                        "committed_unix": _now(),
-                    }
-                )
-                journal.done.add(key)
-                # A twelve-hour run reclaims or it dies. The envelope refused
-                # an unguarded eval that reached 103GB once already.
-                envelope.reclaim(force=True)
-                _status(
-                    out_dir,
-                    phase="executing",
-                    arm=arm,
-                    arm_progress=f"{index + 1}/{len(tasks)}",
-                    planned_cells=planned,
-                    committed_cells=len(journal.done),
-                    elapsed_s=time.monotonic() - started,
-                )
+            )
+            key = (arm, task.task_id)
+            if key in journal.done:
+                continue
+            if time.monotonic() - started > args.max_wall_s:
+                _status(out_dir, phase="wall_budget_reached", arm=arm)
+                print("wall budget reached; exiting for clean resume", flush=True)
+                return 3
+            if yield_requested(out_dir):
+                _status(out_dir, phase="yielded", arm=arm)
                 print(
-                    f"  {arm} {index + 1}/{len(tasks)} {task.domain} "
-                    f"{time.monotonic() - cell_started:.0f}s",
+                    f"yield requested: released the model after "
+                    f"{len(journal.done)} committed cells. Re-running the "
+                    f"launch script resumes here; delete the YIELD file "
+                    f"first.",
                     flush=True,
                 )
+                return 4
+            cell_started = time.monotonic()
+            error = ""
+            receipt: dict[str, Any] = {}
+            text = ""
+            cell_incumbent = None
+            cell_resource_accounting = None
+            cell_information_accounting = None
+            cell_resource_dominance_certificate = None
+            cell_control_samples = None
+            cell_decode_generated_tokens = None
+            try:
+                if config is None and spec.profile == "ordinary_best_of_3":
+                    text = _run_vanilla_best_of(
+                        model,
+                        tokenizer,
+                        _render_prompt_text(tokenizer, task),
+                        tokens,
+                        samples=3,
+                        campaign_seed=args.seed,
+                        task_id=task.task_id,
+                    )
+                elif config is None and spec.profile == "ordinary_resource_dominating":
+                    target_resource = complete_resource_by_task.get(task.task_id)
+                    target_information = complete_information_by_task.get(task.task_id)
+                    target_prompt = complete_prompt_by_task.get(task.task_id)
+                    paired_incumbent = incumbent_by_task.get(task.task_id)
+                    if (
+                        target_resource is None
+                        or target_information is None
+                        or target_prompt is None
+                        or paired_incumbent is None
+                    ):
+                        raise RuntimeError(
+                            "resource-dominating control treatment prerequisite is absent"
+                        )
+                    (
+                        text,
+                        cell_resource_accounting,
+                        cell_information_accounting,
+                        cell_resource_dominance_certificate,
+                        cell_control_samples,
+                        cell_decode_generated_tokens,
+                        receipt,
+                    ) = _run_vanilla_resource_dominating(
+                        model,
+                        tokenizer,
+                        target_prompt,
+                        tokens,
+                        task=task,
+                        target_resource=target_resource,
+                        target_information=target_information,
+                        treatment_acquisition=complete_acquisition_by_task.get(task.task_id),
+                        campaign_seed=args.seed,
+                        incumbent_text=str(
+                            incumbent_artifact_to_value(paired_incumbent).get("text") or ""
+                        ),
+                    )
+                elif config is None:
+                    prompt_tokens = _render_prompt(tokenizer, task)
+                    (
+                        text,
+                        output_tokens,
+                        termination,
+                        cell_resource_accounting,
+                    ) = _run_vanilla(
+                        model,
+                        tokenizer,
+                        prompt_tokens,
+                        tokens,
+                    )
+                    if arm == "vanilla":
+                        cell_incumbent = build_incumbent_artifact(
+                            input_tokens=prompt_tokens,
+                            output_tokens=output_tokens,
+                            output_text=text,
+                            checkpoint_fingerprint=checkpoint["fingerprint"],
+                            checkpoint_fingerprint_method=checkpoint["method"],
+                            max_tokens=tokens,
+                            n_layers=len(model.model.layers),
+                            termination=termination,
+                        )
+                        incumbent_by_task[task.task_id] = cell_incumbent
+                        incumbent_resource_by_task[task.task_id] = cell_resource_accounting
+                else:
+                    # The verifier ablation. An oracle arm is a
+                    # diagnostic ceiling that separates a generation
+                    # limit from a selection limit; it is never a
+                    # capability claim and never promotable, which the
+                    # arm name carries so no downstream reader can lose
+                    # track of which one produced a number.
+                    verifier = None
+                    if spec.profile in COMPLETE_SYSTEM_PROFILES | {"full"}:
+                        verifier = _episode_verifier(task)
+                    elif spec.profile == "full_oracle":
+                        verifier = _oracle_verifier(task)
+                    incumbent = (
+                        incumbent_by_task.get(task.task_id)
+                        if spec.profile in COMPLETE_SYSTEM_PROFILES | {"full", "full_oracle"}
+                        else None
+                    )
+                    if (
+                        spec.profile in COMPLETE_SYSTEM_PROFILES | {"full", "full_oracle"}
+                        and incumbent is None
+                    ):
+                        raise EpisodeFault(
+                            "paired canonical ordinary-decode incumbent is absent"
+                    )
+                    if spec.profile in COMPLETE_SYSTEM_PROFILES:
+                        integrated_candidates = _integrated_candidates_for_profile(
+                            profile=spec.profile,
+                            loaded=loaded_integrated_recurrent,
+                            model=model,
+                            tokenizer=tokenizer,
+                            task=task,
+                            public_tokens=_render_prompt(tokenizer, task),
+                            max_tokens=args.integrated_recurrent_max_tokens,
+                            initial_controller=(
+                                initial_integrated_recurrent_controller
+                            ),
+                            activity=(
+                                _integrated_recurrent_progress_callback(
+                                    out_dir,
+                                    arm=arm,
+                                    task_id=task.task_id,
+                                )
+                                if spec.profile in RECURRENT_COMPOSED_PROFILES
+                                else None
+                            ),
+                        )
+                        text, receipt = _run_complete_system_closed_book(
+                            model,
+                            config,
+                            _render_prompt(tokenizer, task),
+                            tokenizer,
+                            task=task,
+                            max_tokens=tokens,
+                            wall_clock_s=args.episode_wall_s,
+                            model_path=args.model,
+                            incumbent_artifact=incumbent,
+                            incumbent_resource_accounting=incumbent_resource_by_task.get(
+                                task.task_id
+                            ),
+                            worker_identity=worker_identity,
+                            runtime_identity=runtime_identity,
+                            campaign_seed=args.seed,
+                            executable_reasoning_enabled=(
+                                spec.profile != "complete_closed_book_executable_ablation"
+                            ),
+                            integrated_candidates=integrated_candidates,
+                        )
+                        system_receipt = receipt.get("complete_system_closed_book") or {}
+                        from core.brain.llm.latent_cortex.resource_accounting import (
+                            validate_information_receipt,
+                            validate_resource_receipt,
+                        )
+
+                        cell_resource_accounting = validate_resource_receipt(
+                            system_receipt.get("resource_accounting")
+                        )
+                        cell_information_accounting = validate_information_receipt(
+                            system_receipt.get("information_accounting")
+                        )
+                        if arm == resource_dominating_target_arm:
+                            complete_resource_by_task[task.task_id] = cell_resource_accounting
+                            complete_information_by_task[task.task_id] = (
+                                cell_information_accounting
+                            )
+                        acquisition = dict(system_receipt.get("cognitive_acquisition") or {})
+                        if arm == resource_dominating_target_arm:
+                            complete_acquisition_by_task[task.task_id] = acquisition
+                        continuation_objective = str(
+                            acquisition.get("continuation_objective") or ""
+                        )
+                        if arm == resource_dominating_target_arm:
+                            complete_prompt_by_task[task.task_id] = (
+                                _render_objective(tokenizer, continuation_objective)
+                                if acquisition.get("status") == "completed_new_context"
+                                and continuation_objective
+                                else _render_prompt(tokenizer, task)
+                            )
+                    else:
+                        text, receipt = _run_rlc(
+                            model,
+                            config,
+                            _render_prompt(tokenizer, task),
+                            tokenizer,
+                            wall_clock_s=args.episode_wall_s,
+                            verifier=verifier,
+                            model_path=args.model,
+                            incumbent_artifact=incumbent,
+                            worker_identity=worker_identity,
+                            runtime_identity=runtime_identity,
+                            domain=task.domain,
+                            objective=(
+                                task.public.prompt
+                                if spec.profile in {"full", "full_oracle"}
+                                else ""
+                            ),
+                        )
+            except Exception as exc:  # noqa: BLE001 - recorded, never silent
+                # A harness fault must be visible as a fault. It is never
+                # scored as a wrong answer.
+                if isinstance(exc, EpisodeFault):
+                    receipt = exc.receipt
+                error = f"{type(exc).__name__}: {exc}"
+                print(f"  !! {arm} {task.domain} {error}", flush=True)
+            receipt_path = ""
+            receipt_sha256 = ""
+            if receipt:
+                receipt_path, receipt_sha256 = _persist_runtime_receipt(
+                    out_dir,
+                    arm=arm,
+                    task_id=task.task_id,
+                    receipt=receipt,
+                )
+            incremental_latency_s = time.monotonic() - cell_started
+            if arm == "vanilla" and not error:
+                vanilla_latency_by_task[task.task_id] = incremental_latency_s
+            paired_incumbent_latency_s = (
+                vanilla_latency_by_task.get(task.task_id, 0.0)
+                if spec.profile in COMPLETE_SYSTEM_PROFILES | {"full", "full_oracle"}
+                else 0.0
+            )
+            journal.append(
+                {
+                    "event": "CELL",
+                    "arm": arm,
+                    "task_id": task.task_id,
+                    "domain": task.domain,
+                    "decode_fingerprint": fingerprints[arm],
+                    "decode_max_tokens": tokens,
+                    "recurrent_steps": steps,
+                    "arm_profile": spec.profile,
+                    "runtime_receipt_path": receipt_path,
+                    "runtime_receipt_sha256": receipt_sha256,
+                    "terminal_instruction_policy": policy,
+                    # Latency is a first-class result, not a footnote:
+                    # a unified system that answers better but takes ten
+                    # minutes has not been shown to be deployable.
+                    "steps_taken": receipt.get("steps_taken"),
+                    "halted_early": receipt.get("halted_early"),
+                    "phase_latency_s": receipt.get("phase_latency_s"),
+                    # Whether the promotion chain actually fired, recorded
+                    # per cell so the battery answers it directly. Every
+                    # link in that chain has been zero at some point
+                    # tonight -- probe budget, routing, verifier
+                    # allowlists, dispute-only repair -- and diagnosing it
+                    # meant separate 32B probe runs each time.
+                    "route_counts": _route_counts(receipt),
+                    "repair_requests": len(
+                        (receipt.get("local_repair") or {}).get("requests") or []
+                    ),
+                    "answer_replacement_decision": (
+                        (
+                            (receipt.get("complete_system_closed_book") or {})
+                            .get("promotion", {})
+                            .get("decision")
+                        )
+                        if spec.profile in COMPLETE_SYSTEM_PROFILES
+                        else (receipt.get("answer_replacement") or {}).get("decision")
+                    ),
+                    "answer_replacement_reason": (
+                        (
+                            (receipt.get("complete_system_closed_book") or {})
+                            .get("promotion", {})
+                            .get("reason")
+                        )
+                        if spec.profile in COMPLETE_SYSTEM_PROFILES
+                        else (receipt.get("answer_replacement") or {}).get("reason")
+                    ),
+                    "full_stack_evidence": (
+                        _full_stack_evidence(
+                            receipt,
+                            adaptive_neural_expected=(
+                                spec.profile
+                                != "complete_closed_book_adaptation_ablation"
+                            ),
+                        )
+                        if spec.profile in COMPLETE_SYSTEM_PROFILES | {"full", "full_oracle"}
+                        else None
+                    ),
+                    "complete_system_evidence": (
+                        _complete_system_evidence(receipt)
+                        if spec.profile in COMPLETE_SYSTEM_PROFILES
+                        else None
+                    ),
+                    "incumbent_artifact": (
+                        incumbent_artifact_to_value(cell_incumbent)
+                        if cell_incumbent is not None
+                        else None
+                    ),
+                    "resource_accounting": cell_resource_accounting,
+                    "information_accounting": cell_information_accounting,
+                    "resource_dominance_certificate": (cell_resource_dominance_certificate),
+                    "control_samples": cell_control_samples,
+                    "text": text,
+                    "error": error,
+                    # A product request pays for the ordinary incumbent and
+                    # the incremental full-stack search. The experiment
+                    # reuses the exact paired artifact for causal identity,
+                    # but does not pretend that generating it was free.
+                    "latency_s": (incremental_latency_s + paired_incumbent_latency_s),
+                    "incremental_latency_s": incremental_latency_s,
+                    "paired_incumbent_latency_s": paired_incumbent_latency_s,
+                    "decode_prefix_token_count": receipt.get("decode_prefix_token_count"),
+                    "decode_prefix_composition": receipt.get("decode_prefix_composition"),
+                    "decode_termination": receipt.get("decode_termination"),
+                    "decode_generated_tokens": (
+                        cell_decode_generated_tokens
+                        if cell_decode_generated_tokens is not None
+                        else receipt.get("decode_generated_tokens")
+                    ),
+                    "halting_reason": receipt.get("halting_reason"),
+                    "committed_unix": _now(),
+                }
+            )
+            journal.done.add(key)
+            if any(candidate.name in RECURRENT_COMPOSED_ARMS for candidate in selected):
+                futility = _composed_task_terminal_futility(
+                    task=task,
+                    cells=journal.cells(),
+                )
+                if futility is not None:
+                    _atomic_write(
+                        out_dir / "terminal_futility.json",
+                        json.dumps(futility, indent=1, sort_keys=True) + "\n",
+                    )
+                    _status(
+                        out_dir,
+                        phase="terminal_futility",
+                        committed_cells=len(journal.done),
+                        decision=futility["decision"],
+                    )
+                    print(json.dumps(futility, indent=2), flush=True)
+                    return 0
+            # A twelve-hour run reclaims or it dies. The envelope refused
+            # an unguarded eval that reached 103GB once already.
+            envelope.reclaim(force=True)
+            _status(
+                out_dir,
+                phase="executing",
+                arm=arm,
+                arm_progress=f"{index + 1}/{len(tasks)}",
+                planned_cells=planned,
+                committed_cells=len(journal.done),
+                elapsed_s=time.monotonic() - started,
+            )
+            print(
+                f"  {arm} {index + 1}/{len(tasks)} {task.domain} "
+                f"{time.monotonic() - cell_started:.0f}s",
+                flush=True,
+            )
 
     _status(out_dir, phase="grading", committed_cells=len(journal.done))
     verdict = grade(out_dir, tasks)

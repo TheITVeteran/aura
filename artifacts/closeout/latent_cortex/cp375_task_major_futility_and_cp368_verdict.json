@@ -1,0 +1,51 @@
+{
+  "schema": "aura.rlc.closeout_checkpoint.v1",
+  "checkpoint": "CP375",
+  "subject": "task-major causal execution and terminal futility",
+  "runtime_changes": [
+    "composed campaigns execute complete causal blocks task by task",
+    "legacy noncomposed campaigns retain arm-major resume order",
+    "a fatal paired regression emits a hash-bound negative-only terminal receipt",
+    "missing, faulted, tied, or merely underpowered cells cannot stop the run",
+    "controller accepts only an authenticated no-claim futility receipt"
+  ],
+  "cp368_result": {
+    "candidate_count": 28,
+    "task_count": 7,
+    "counts": {
+      "base_greedy": 4,
+      "initial_t4": 2,
+      "trained_t1": 4,
+      "trained_t4": 3
+    },
+    "base_to_trained": {
+      "wrong_to_right": 0,
+      "right_to_wrong": 1
+    },
+    "initial_to_trained": {
+      "wrong_to_right": 1,
+      "right_to_wrong": 0
+    },
+    "trained_t1_to_t4": {
+      "wrong_to_right": 0,
+      "right_to_wrong": 1
+    },
+    "verdict": "broad_general_channel_canary_refuted",
+    "result_sha256": "b59af1f3e6ef311a0643c4ffbbc6943c05589365eded6d00762fe6598669152d",
+    "run_sha256": "75c39437b3f5f42d1194c8143e12d8ee390ac7aad1923a765439b18fb9e5ec78"
+  },
+  "verification": {
+    "focused_tests": "80 passed",
+    "smoke": "104 passed",
+    "ruff": "passed",
+    "compile": "passed",
+    "diff_check": "passed"
+  },
+  "claims": {
+    "broad_controller_gain_proven": false,
+    "reasoning_gain_proven": false,
+    "fusion_authorized": false,
+    "wow_signal_authorized": false
+  },
+  "next": "retain trained depth-one and depth-four candidates inside one monotonic composed treatment"
+}

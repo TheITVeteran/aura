@@ -48213,3 +48213,43 @@ depth-four regression. The six missing rows can still change the final causal
 classification, so the source-frozen campaign is allowed to complete. CP374
 prepares custody for the next composed campaign; it does not launch a second
 resident model, prove gain, authorize fusion, or earn `WOW Signal`.
+
+## Checkpoint 2026-08-13-375: Causal Blocks Fail Fast and CP368 Is Negative
+
+The composed reconciliation schedule was arm-major. It could finish every task
+for ordinary decode and multiple complete-engine arms before producing the
+first fully paired trained, initialization, lesion and uncomposed comparison.
+Composed campaigns now execute every preregistered arm for one task before
+moving to the next. Existing noncomposed campaigns preserve their arm-major
+resume order, and no task, seed, budget, fingerprint or criterion changes.
+
+After a task's trained, initialization, depth-one, uncomposed and vanilla rows
+are all durable and fault-free, a negative-only sequential boundary checks the
+already-preregistered zero-regression requirement. A paired right-to-wrong
+transition makes a passing result mathematically impossible regardless of all
+remaining tasks. It emits a hash-bound terminal futility receipt that explicitly
+denies positive claims, fusion and `WOW Signal`; the lifecycle controller
+accepts only that exact receipt. Missing cells, harness faults, ties, lack of a
+gain, and underpowered margins cannot trigger early termination.
+
+CP368 completed all 28 candidates under its original source and process with
+zero restarts. Its result is scientifically conclusive and negative:
+ordinary decode `4/7`, trained depth one `4/7`, trained depth four `3/7`, and
+initialization-matched depth four `2/7`. Training lifted one initialization
+failure with no initialization regression, but trained depth four created no
+new success over base, regressed one base success, and regressed one depth-one
+success. The signed result is
+`b59af1f3e6ef311a0643c4ffbbc6943c05589365eded6d00762fe6598669152d`;
+the completed run is
+`75c39437b3f5f42d1194c8143e12d8ee390ac7aad1923a765439b18fb9e5ec78`.
+
+This does not say training was inert: trained depth four beat its exact
+initialization control `3/7` to `2/7`. It says the current fixed-depth serving
+choice discards a shallower success and therefore cannot be admitted as broad
+reasoning improvement. The next implementation retains trained depth-one and
+trained depth-four outputs inside the same composed treatment, making deeper
+recurrence an additional candidate rather than a destructive replacement.
+
+The changed sweep/controller surface passes `80/80`, canonical smoke passes
+`104/104`, and Ruff, byte compilation and diff hygiene pass. No gain, fusion,
+activation, frontier, or `WOW Signal` claim is authorized.

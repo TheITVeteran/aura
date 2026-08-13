@@ -43,6 +43,7 @@ CONFIG_SUFFIXES: Final = frozenset({".json", ".toml", ".yaml", ".yml", ".jinja"}
 GLOBAL_MODEL_LOCK: Final = Path.home() / ".aura/state/rlc-reconciliation-model.lock"
 CLAIM_TASK_REGISTRY_VERSION: Final = "2026.08.06.1"
 CAMPAIGN_STAGES: Final = frozenset({"component", "pilot", "certificate"})
+COMPOSED_RECURRENT_ARM: Final = "complete_system_recurrent_composed"
 
 
 class ControllerError(RuntimeError):
@@ -107,6 +108,26 @@ def _terminal_verdict(path: Path) -> dict[str, Any] | None:
     evidence is available, not that the campaign is complete.
     """
 
+    futility_path = path.with_name("terminal_futility.json")
+    if futility_path.is_file():
+        futility = _read_json(futility_path, role="terminal_futility")
+        body = {
+            key: value for key, value in futility.items() if key != "receipt_sha256"
+        }
+        if (
+            futility.get("schema")
+            != "aura.rlc.composed_terminal_futility.v1"
+            or futility.get("receipt_sha256") != _sha(body)
+            or futility.get("terminal") is not True
+            or futility.get("decision")
+            != "terminal_preregistered_zero_regression_futility"
+            or futility.get("positive_claim_authority") is not False
+            or futility.get("fusion_authorized") is not False
+            or futility.get("wow_signal_authorized") is not False
+            or not futility.get("fatal_regression_contrasts")
+        ):
+            raise ControllerError("terminal_futility_receipt_invalid")
+        return futility
     if not path.is_file():
         return None
     verdict = _read_json(path, role="sweep_verdict")
@@ -572,6 +593,11 @@ def load_config(path: Path) -> dict[str, Any]:
         budget = config["integrated_recurrent_max_tokens"]
         if type(budget) is not int or not 16 <= budget <= 2048:
             raise ControllerError("integrated_recurrent_budget_invalid")
+    requested_arms = {
+        value.strip() for value in str(config["arms"]).split(",") if value.strip()
+    }
+    if (COMPOSED_RECURRENT_ARM in requested_arms) != bool(present_recurrent_fields):
+        raise ControllerError("integrated_recurrent_arm_package_contract_mismatch")
     return config
 
 
@@ -617,6 +643,11 @@ def build_config(
         raise ControllerError("controller_domains_invalid")
     if task_registry_version != CLAIM_TASK_REGISTRY_VERSION:
         raise ControllerError("controller_task_registry_not_contamination_safe")
+    requested_arms = {value.strip() for value in arms.split(",") if value.strip()}
+    if (COMPOSED_RECURRENT_ARM in requested_arms) != (
+        integrated_recurrent_package is not None
+    ):
+        raise ControllerError("integrated_recurrent_arm_package_contract_mismatch")
     source_root = source_root.expanduser().resolve(strict=True)
     source_commit = str(source_commit).strip().lower()
     model = model.expanduser().resolve(strict=True)

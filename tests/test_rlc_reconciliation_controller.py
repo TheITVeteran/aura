@@ -828,6 +828,55 @@ def test_config_rejects_partial_recurrent_package_identity(tmp_path: Path):
         controller.load_config(config_path)
 
 
+@pytest.mark.parametrize(
+    ("arms", "package_supplied"),
+    [
+        ("complete_system_recurrent_composed", False),
+        ("complete_system_closed_book", True),
+    ],
+)
+def test_prepare_rejects_a_recurrent_arm_package_mismatch(
+    tmp_path: Path,
+    arms: str,
+    package_supplied: bool,
+):
+    source = _source(tmp_path)
+    model = tmp_path / "model"
+    model.mkdir()
+    (model / "config.json").write_text("{}\n", encoding="utf-8")
+    (model / "model.safetensors").write_bytes(b"weights")
+    python = tmp_path / "python"
+    python.write_text("runtime", encoding="utf-8")
+    package = tmp_path / "package"
+    package.mkdir()
+
+    with pytest.raises(
+        controller.ControllerError,
+        match="integrated_recurrent_arm_package_contract_mismatch",
+    ):
+        controller.build_config(
+            source_root=source,
+            source_commit=_source_commit(source),
+            model=model,
+            out_dir=tmp_path / "campaign",
+            python=python,
+            arms=arms,
+            seed=7,
+            per_domain=1,
+            difficulty=2,
+            n_slots=4,
+            max_tokens=64,
+            memory_fraction=0.2,
+            episode_wall_s=20.0,
+            attempt_wall_s=60.0,
+            max_attempts=3,
+            poll_s=1.0,
+            stale_after_s=40.0,
+            retry_backoff_s=1.0,
+            integrated_recurrent_package=(package if package_supplied else None),
+        )
+
+
 def test_fresh_retry_does_not_inherit_stale_progress_from_prior_attempt():
     snapshot = {"last_progress_unix": 100.0}
 
@@ -1014,3 +1063,35 @@ def test_interim_verdict_is_not_terminal(tmp_path: Path):
     assert controller._terminal_verdict(verdict)["decision"] == (
         "proceed_to_checkpoint_phase"
     )
+
+
+def test_authenticated_preregistered_futility_is_terminal(tmp_path: Path):
+    verdict = tmp_path / "verdict.json"
+    body = {
+        "schema": "aura.rlc.composed_terminal_futility.v1",
+        "terminal": True,
+        "decision": "terminal_preregistered_zero_regression_futility",
+        "criterion": "composed_treatment_must_not_regress_any_paired_control",
+        "task_id": "task-a",
+        "domain": "mathematics",
+        "required_arms": ["vanilla"],
+        "correctness": {"vanilla": True},
+        "fatal_regression_contrasts": ["vanilla_floor"],
+        "positive_claim_authority": False,
+        "fusion_authorized": False,
+        "wow_signal_authorized": False,
+    }
+    receipt = {**body, "receipt_sha256": controller._sha(body)}
+    (tmp_path / "terminal_futility.json").write_text(
+        json.dumps(receipt),
+        encoding="utf-8",
+    )
+
+    assert controller._terminal_verdict(verdict) == receipt
+    receipt["positive_claim_authority"] = True
+    (tmp_path / "terminal_futility.json").write_text(
+        json.dumps(receipt),
+        encoding="utf-8",
+    )
+    with pytest.raises(controller.ControllerError, match="terminal_futility_receipt_invalid"):
+        controller._terminal_verdict(verdict)

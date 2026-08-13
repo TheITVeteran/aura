@@ -413,6 +413,119 @@ def test_composed_adjudication_does_not_mislabel_architecture_only_gain_as_learn
     assert result["decision"] == "no_bounded_learned_tissue_gain"
 
 
+def test_composed_schedule_finishes_each_causal_task_block_before_the_next():
+    selected = sweep._expand_requested_arms(
+        {"complete_system_recurrent_composed"},
+        campaign_stage="component",
+    )
+    tasks = (SimpleNamespace(task_id="one"), SimpleNamespace(task_id="two"))
+    schedule = sweep._execution_schedule(selected, tasks)
+
+    first_task_arms = [arm.name for arm, _index, task in schedule if task.task_id == "one"]
+    assert first_task_arms == [arm.name for arm in selected]
+    assert [task.task_id for _arm, _index, task in schedule[: len(selected)]] == [
+        "one"
+    ] * len(selected)
+    assert schedule[len(selected)][2].task_id == "two"
+
+
+def test_noncomposed_schedule_preserves_arm_major_resume_order():
+    selected = sweep._expand_requested_arms(
+        {"complete_system_closed_book"},
+        campaign_stage="component",
+    )
+    tasks = (SimpleNamespace(task_id="one"), SimpleNamespace(task_id="two"))
+    schedule = sweep._execution_schedule(selected, tasks)
+
+    assert [(arm.name, task.task_id) for arm, _index, task in schedule[:2]] == [
+        (selected[0].name, "one"),
+        (selected[0].name, "two"),
+    ]
+
+
+def test_composed_futility_stops_only_on_a_fully_paired_regression(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    task = SimpleNamespace(task_id="task-a", domain="mathematics")
+    correctness = {
+        "trained": False,
+        "initial": True,
+        "uncomposed": False,
+        "lesion": False,
+        "vanilla": True,
+    }
+    monkeypatch.setattr(
+        "core.brain.llm.latent_cortex.frontier_tasks.score_task",
+        lambda _task, text: SimpleNamespace(correct=correctness[text]),
+    )
+    cells = [
+        {
+            "task_id": task.task_id,
+            "arm": "complete_system_recurrent_composed",
+            "text": "trained",
+            "error": "",
+        },
+        {
+            "task_id": task.task_id,
+            "arm": "complete_system_recurrent_initial_control",
+            "text": "initial",
+            "error": "",
+        },
+        {
+            "task_id": task.task_id,
+            "arm": "complete_system_closed_book",
+            "text": "uncomposed",
+            "error": "",
+        },
+        {
+            "task_id": task.task_id,
+            "arm": "complete_system_recurrent_depth_lesion",
+            "text": "lesion",
+            "error": "",
+        },
+        {
+            "task_id": task.task_id,
+            "arm": "vanilla",
+            "text": "vanilla",
+            "error": "",
+        },
+    ]
+
+    assert sweep._composed_task_terminal_futility(task=task, cells=cells[:-1]) is None
+    receipt = sweep._composed_task_terminal_futility(task=task, cells=cells)
+    assert receipt is not None
+    assert receipt["fatal_regression_contrasts"] == [
+        "vanilla_floor",
+        "learned_parameters",
+    ]
+    assert receipt["positive_claim_authority"] is False
+    assert receipt["receipt_sha256"] == sweep._canonical_sha256(
+        {key: value for key, value in receipt.items() if key != "receipt_sha256"}
+    )
+
+
+def test_composed_futility_does_not_stop_on_ties_or_positive_lifts(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    task = SimpleNamespace(task_id="task-a", domain="mathematics")
+    monkeypatch.setattr(
+        "core.brain.llm.latent_cortex.frontier_tasks.score_task",
+        lambda _task, text: SimpleNamespace(correct=text == "trained"),
+    )
+    cells = [
+        {"task_id": task.task_id, "arm": arm, "text": text, "error": ""}
+        for arm, text in (
+            ("complete_system_recurrent_composed", "trained"),
+            ("complete_system_recurrent_initial_control", "initial"),
+            ("complete_system_closed_book", "uncomposed"),
+            ("complete_system_recurrent_depth_lesion", "lesion"),
+            ("vanilla", "vanilla"),
+        )
+    ]
+
+    assert sweep._composed_task_terminal_futility(task=task, cells=cells) is None
+
+
 def test_staged_campaigns_do_not_pay_for_the_full_certificate_early():
     component = {
         arm.name
