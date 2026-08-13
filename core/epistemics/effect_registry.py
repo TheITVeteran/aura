@@ -300,7 +300,7 @@ _SPECS: tuple[EffectSpec, ...] = (
         evidence_fields=("path",),
         recognizer=_rx(
             rf"(?:{_DID})(?:written|wrote|saved|created)\s+"
-            r"(?:the\s+|a\s+|that\s+|your\s+|it\b)?[^.!?]{0,30}?\b(?:file|note|document|text)\b"
+            r"(?:the\s+|a\s+|that\s+|your\s+|it\b)?[^.!?]{0,30}?\b(?:file|note|document|report|text)\b"
             # Stative completion: "the file is on your Desktop now" asserts a
             # finished write with no verb of hers in it.
             r"|\b(?:the\s+)?(?:file|note|document)\s+(?:is|was)\s+(?:now\s+)?"
@@ -450,7 +450,7 @@ _SPECS: tuple[EffectSpec, ...] = (
             rf"(?:{_DID})(?:changed|set|adjusted|turned\s+(?:up|down|on|off)|"
             r"muted|unmuted|increased|decreased|lowered|raised)\s+"
             r"(?:the\s+|your\s+)?(?:volume|brightness|wifi|wi-fi|bluetooth|"
-            r"do\s+not\s+disturb|dark\s+mode|setting|system\s+\w+)\b"
+            r"do\s+not\s+disturb|dark\s+mode|wallpaper|background|setting|system\s+\w+)\b"
         ),
         claim_description="changed a system setting",
     ),

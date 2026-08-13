@@ -165,9 +165,39 @@ MINESWEEPER = (
 
 def _guard(reply: str, records):
     from core.conversation.grounded_claim_guard import verify_grounded_claims
+    from core.conversation.surface_disposition import record_tool_receipt
+    from core.conversation.turn_evidence_custody import bind_turn_evidence_custody
 
     loop = SimpleNamespace(_completed_intentions=records)
-    with patch("core.agency.intention_loop.get_intention_loop", return_value=loop):
+    with (
+        patch("core.agency.intention_loop.get_intention_loop", return_value=loop),
+        bind_turn_evidence_custody(session_id="claim-tests", turn_id="turn-1"),
+    ):
+        for record in records:
+            if "autonomous" in str(getattr(record, "drive", "")).casefold():
+                continue
+            intention = str(getattr(record, "intention", "") or "")
+            lowered = intention.casefold()
+            if any(word in lowered for word in ("wallpaper", "background")):
+                action, object_ref = "system_control", "desktop background"
+            elif any(word in lowered for word in ("build", "reconstruct")):
+                action, object_ref = "build_artifact", intention
+            elif any(word in lowered for word in ("save", "write")):
+                action, object_ref = "write_text_file", intention
+            else:
+                action, object_ref = str(
+                    getattr((getattr(record, "actions_taken", None) or [None])[0], "tool_name", "")
+                    or "unknown"
+                ), intention
+            actions = list(getattr(record, "actions_taken", None) or [])
+            succeeded = bool(actions) and all(bool(getattr(item, "success", False)) for item in actions)
+            record_tool_receipt(
+                "desktop_task",
+                action=action,
+                object_ref=object_ref,
+                ok=succeeded,
+                effect_observed=succeeded,
+            )
         return verify_grounded_claims(reply)
 
 
@@ -455,7 +485,7 @@ def test_a_receipt_recorded_in_a_child_context_cannot_reach_the_parent_turn() ->
         return turn_tool_receipts()
 
     inside = contextvars.copy_context().run(a_child_context_records_something)
-    assert len(inside) == 1, "the child context should see its own receipt"
+    assert inside == (), "work outside exact turn custody must not create a receipt"
     assert turn_tool_receipts() == (), (
         "a receipt recorded in a child context reached back into the parent "
         "turn, so one turn's work can vouch for another's claims"

@@ -32,11 +32,15 @@ from __future__ import annotations
 
 import hashlib
 import re
-from collections import OrderedDict
+import contextvars
+import time
 from dataclasses import dataclass
 from enum import Enum
 
-from core.runtime.lockdep import LockRank, checked_lock
+from core.conversation.session_scope import (
+    current_conversation_session,
+    current_conversation_turn,
+)
 
 
 class ReplyProvenance(str, Enum):
@@ -214,9 +218,11 @@ def admission_defects(user_message: str, reply_text: str) -> AdmissionCheck:
 #: of defect this file exists to close. So the declaration travels with the
 #: TEXT: whoever composes it says once what it is, and every assessor inherits
 #: that without being modified.
-_DECLARED: "OrderedDict[str, str]" = OrderedDict()
-_DECLARED_LIMIT = 512
-_DECLARED_LOCK = checked_lock("conversation.reply_provenance", rank=LockRank.LEAF)
+_DECLARED: contextvars.ContextVar[tuple[tuple[str, str, str, str, float], ...]] = (
+    contextvars.ContextVar("conversation_reply_provenance", default=())
+)
+_DECLARED_LIMIT = 64
+_DECLARED_TTL_SECONDS = 600.0
 
 
 def _key(text: str) -> str:
@@ -233,11 +239,16 @@ def declare_provenance(text: str, provenance: ReplyProvenance | str) -> None:
     value = str(getattr(provenance, "value", provenance) or "")
     if not value:
         return
-    with _DECLARED_LOCK:
-        _DECLARED[key] = value
-        _DECLARED.move_to_end(key)
-        while len(_DECLARED) > _DECLARED_LIMIT:
-            _DECLARED.popitem(last=False)
+    session_id = current_conversation_session()
+    turn_id = current_conversation_turn()
+    now = time.time()
+    rows = tuple(
+        row
+        for row in _DECLARED.get()
+        if not (row[0] == key and row[2] == session_id and row[3] == turn_id)
+        and now - row[4] <= _DECLARED_TTL_SECONDS
+    )
+    _DECLARED.set((*rows, (key, value, session_id, turn_id, now))[-_DECLARED_LIMIT:])
 
 
 def declared_provenance(text: str) -> str:
@@ -246,15 +257,21 @@ def declared_provenance(text: str) -> str:
     key = _key(text)
     if not key:
         return ""
-    with _DECLARED_LOCK:
-        return _DECLARED.get(key, "")
+    session_id = current_conversation_session()
+    turn_id = current_conversation_turn()
+    now = time.time()
+    for row_key, value, row_session, row_turn, declared_at in reversed(_DECLARED.get()):
+        if now - declared_at > _DECLARED_TTL_SECONDS:
+            continue
+        if (row_key, row_session, row_turn) == (key, session_id, turn_id):
+            return value
+    return ""
 
 
 def forget_declared_provenance() -> None:
     """Drop every declaration. For tests and for process-level resets."""
 
-    with _DECLARED_LOCK:
-        _DECLARED.clear()
+    _DECLARED.set(())
 
 
 __all__ = [

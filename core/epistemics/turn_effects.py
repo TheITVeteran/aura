@@ -67,6 +67,44 @@ def record_verified_effects(receipts: Any, *, lane: str = "desktop_task") -> int
             continue
         name = f"{lane}:{action}:{receipt.get('index', index)}"
         evidence = str(receipt.get("effect_evidence") or "").strip()
+        result = receipt.get("result") if isinstance(receipt.get("result"), dict) else {}
+        try:
+            from core.epistemics.effect_registry import effect_spec
+
+            spec = effect_spec(action)
+            fields = tuple(spec.evidence_fields) if spec is not None else ()
+        except (ImportError, AttributeError, TypeError, ValueError):
+            fields = ()
+        object_ref = ""
+        for field in fields:
+            candidate = result.get(field, receipt.get(field))
+            if candidate not in (None, "", [], {}):
+                object_ref = str(candidate)
+                break
+        observed_content = ""
+        if action in {"read_screen_text", "inspect_screen"}:
+            observed_content = str(
+                result.get("text")
+                or result.get("summary")
+                or receipt.get("text")
+                or receipt.get("summary")
+                or ""
+            )
+        try:
+            from core.conversation.surface_disposition import record_tool_receipt
+
+            record_tool_receipt(
+                lane,
+                action=action,
+                object_ref=object_ref,
+                ok=bool(receipt.get("ok")),
+                effect_observed=bool(receipt.get("ok")),
+                verification="postcondition_verified" if receipt.get("ok") else "failed",
+                evidence=evidence or str(receipt.get("error") or ""),
+                observed_content=observed_content,
+            )
+        except (ImportError, AttributeError, RuntimeError, TypeError, ValueError) as exc:
+            logger.debug("turn surface receipt unavailable for %s: %s", action, exc)
         try:
             if receipt.get("ok"):
                 # ok is the conjunction: the tool returned success AND the

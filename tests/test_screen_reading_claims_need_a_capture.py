@@ -36,6 +36,8 @@ and refusing all pass untouched.
 
 from __future__ import annotations
 
+import time
+
 import pytest
 
 from core.conversation.screen_reading_claim import (
@@ -124,11 +126,50 @@ class TestTheClaimNeedsEvidence:
     def test_a_real_capture_licenses_the_quotation(self):
         evidence = ScreenReadingEvidence(
             captured=True,
-            text="Show Closed Captions on supported websites",
+            text=(
+                "Show Closed Captions on supported websites Analysis: Codebase has 15% "
+                "unused imports, 8% redundant code blocks. Suggestion: Refactor global "
+                "scope to reduce cognitive load."
+            ),
             source="screen",
         )
         assert evidence.supports_a_quotation is True
         assert screen_reading_claim_is_unsupported(READ_REQUEST, CONFABULATED, evidence) is False
+
+    def test_unrelated_ocr_does_not_license_a_quotation(self):
+        evidence = ScreenReadingEvidence(
+            captured=True,
+            text="A completely different browser page about weather",
+            source="screen",
+        )
+        assert screen_reading_claim_is_unsupported(READ_REQUEST, CONFABULATED, evidence) is True
+
+    def test_screen_evidence_is_bound_to_its_exact_turn_and_age(self):
+        from core.conversation.session_scope import conversation_session_var, conversation_turn_var
+
+        session_token = conversation_session_var.set("screen-session")
+        turn_token = conversation_turn_var.set("turn-b")
+        try:
+            wrong_turn = ScreenReadingEvidence(
+                captured=True,
+                text="Show Closed Captions on supported websites",
+                session_id="screen-session",
+                turn_id="turn-a",
+                captured_at=time.time(),
+            )
+            stale = ScreenReadingEvidence(
+                captured=True,
+                text="Show Closed Captions on supported websites",
+                session_id="screen-session",
+                turn_id="turn-b",
+                captured_at=time.time() - 500,
+            )
+            quote = 'The screen says "Show Closed Captions on supported websites".'
+            assert screen_reading_claim_is_unsupported(READ_REQUEST, quote, wrong_turn)
+            assert screen_reading_claim_is_unsupported(READ_REQUEST, quote, stale)
+        finally:
+            conversation_turn_var.reset(turn_token)
+            conversation_session_var.reset(session_token)
 
     def test_the_honest_reply_is_never_blocked(self):
         for evidence in (None, ScreenReadingEvidence(captured=False)):
@@ -212,7 +253,9 @@ class TestAnInventedScreenReport:
 
     def test_a_real_capture_licenses_it(self):
         evidence = ScreenReadingEvidence(
-            captured=True, text="New Chat | Skills and Connectors", source="test"
+            captured=True,
+            text="New Chat | Skills and Connectors | Projects | landlord rent increase",
+            source="test",
         )
         assert (
             screen_reading_claim_is_unsupported(

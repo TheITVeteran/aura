@@ -19430,7 +19430,15 @@ async def _collect_desktop_required_search_evidence(
     try:
         from core.conversation.surface_disposition import record_tool_receipt
 
-        record_tool_receipt("web_search", ok=bool(result.get("ok")))
+        record_tool_receipt(
+            "web_search",
+            action="web_search",
+            object_ref=tool_query or query or user_message,
+            ok=bool(result.get("ok")),
+            effect_observed=bool(result.get("ok")),
+            verification="result_received" if result.get("ok") else "failed",
+            evidence=evidence_text,
+        )
     except Exception as exc:  # bookkeeping must never break a collected search
         # `pass` here meant a receipt path broken forever looked exactly like
         # one that never needed to fire. The search still returns; the
@@ -23001,7 +23009,8 @@ def _bound_http_turn(body: Any):
     try:
         from core.runtime.turn_outcome import TurnOutcome, bind_turn
 
-        outcome = TurnOutcome(origin="user_chat")
+        delivery_turn_id = str(_CHAT_DELIVERY_TURN_ID.get() or "").strip()
+        outcome = TurnOutcome(turn_id=delivery_turn_id or None, origin="user_chat")
     except _CHAT_RECOVERABLE_ERRORS as exc:
         record_degradation("chat.turn_outcome", exc, severity="warning")
         yield None
@@ -23105,6 +23114,7 @@ async def api_chat(
     already been dealt with two turns ago.
     """
     from core.conversation.failure_context import bind_failure_ledger
+    from core.conversation.turn_evidence_custody import bind_turn_evidence_custody
 
     request_profile = request_access_profile(request)
     request_session = _chat_turn_session_key(request, body)
@@ -23139,10 +23149,25 @@ async def api_chat(
         # they matter. think() now joins this turn instead of opening its own,
         # and this owns the finalize because only here is it known what the
         # person actually received.
-        with bind_failure_ledger(), _bound_http_turn(body) as _turn_outcome:
-            _served = _apply_recorded_answer(body.message, await _api_chat_turn(body, request))
-            _mark_http_turn_served(_turn_outcome, _served)
-            return _served
+        with _bound_http_turn(body) as _turn_outcome:
+            exact_turn_id = str(
+                getattr(_turn_outcome, "turn_id", "")
+                or _CHAT_DELIVERY_TURN_ID.get()
+                or uuid.uuid4().hex
+            ).strip()
+            with (
+                bind_turn_evidence_custody(
+                    session_id=conversation_session,
+                    turn_id=exact_turn_id,
+                ),
+                bind_failure_ledger(),
+            ):
+                _served = _apply_recorded_answer(
+                    body.message,
+                    await _api_chat_turn(body, request),
+                )
+                _mark_http_turn_served(_turn_outcome, _served)
+                return _served
     finally:
         try:
             from core.observability.histograms import record as _record_histogram
@@ -26506,8 +26531,15 @@ async def _api_chat_turn(body: ChatRequest, request: Request):
             logger.debug("REST: Awaiting constitutional processing from Sovereign Kernel...")
             try:
                 kernel_timeout = _remaining_foreground_budget()
+                from core.conversation.turn_evidence_custody import (
+                    run_as_turn_evidence_participant,
+                )
+
                 kernel_task = get_task_tracker().create_task(
-                    ki.process(effective_user_message, origin=chat_origin, priority=True),
+                    run_as_turn_evidence_participant(
+                        ki.process(effective_user_message, origin=chat_origin, priority=True),
+                        purpose="foreground sovereign kernel",
+                    ),
                     name="Aura.Server.Chat.kernel_foreground",
                 )
                 # [STABILITY v53] Two-phase timeout:

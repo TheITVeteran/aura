@@ -42,6 +42,8 @@ from __future__ import annotations
 
 import contextvars
 import re
+import time
+import uuid
 from enum import Enum
 from typing import Any, Iterable
 
@@ -112,73 +114,69 @@ def clear_preserved_draft() -> None:
 # execution, and its result, were written by the language model.
 #
 # A claim about the world needs something in the world behind it, and for
-# "I ran it" that something is a receipt. The holder is a mutable list rather
-# than a scalar because asyncio copies the context into child tasks: a tool
-# executed inside the turn's task tree appends to the same list the route
-# reads afterwards, while the autonomous loops — whose tasks do not descend
-# from this turn — cannot reach it. That distinction is the whole point.
-#
-# The default is None, not []. A ContextVar default is ONE object shared by
-# every context that never set it, so `default=[]` meant a receipt recorded
-# outside a turn — a background loop, a boot probe, anything that never called
-# begin_turn_tool_receipts — was appended to that shared list and stayed there
-# for the life of the process. An `ok: True` landing in it silently vouched for
-# every completed-action claim in every later turn that had not begun its own
-# list, which is the exact fail-open this whole mechanism exists to prevent,
-# and it handed the autonomous loops the reach the comment above denies them.
-#
-# And the value is a tuple, not a list, for the same reason one level in: a
-# copied context shares the reference, so appending to a list reached back
-# into the parent turn. Immutable value plus rebinding is what actually makes
-# a ContextVar isolate.
-_TURN_TOOL_RECEIPTS: contextvars.ContextVar[tuple[dict[str, Any], ...] | None] = (
-    contextvars.ContextVar("aura_turn_tool_receipts", default=None)
-)
-
-
+# "I ran it" that something is a receipt. ContextVar alone cannot hold that
+# invariant: an immutable tuple hides legitimate child-task receipts from the
+# parent, while a mutable list lets every ambient inherited task write into the
+# foreground turn. The exact-turn custody object resolves both. It is shared
+# and synchronized, but only the owner execution and explicit one-use child
+# leases may mutate it; every receipt carries session and turn identity.
 def begin_turn_tool_receipts() -> None:
     """Start a turn having executed nothing."""
-    _TURN_TOOL_RECEIPTS.set(())
+    from core.conversation.turn_evidence_custody import current_turn_evidence_custody
+
+    custody = current_turn_evidence_custody()
+    if custody is not None:
+        custody.clear_receipts()
 
 
-def record_tool_receipt(tool_name: Any, *, ok: bool) -> None:
-    """Record that a tool really ran in this turn, and whether it worked.
+def record_tool_receipt(
+    tool_name: Any,
+    *,
+    ok: bool,
+    action: Any = "",
+    object_ref: Any = "",
+    effect_observed: bool = False,
+    verification: Any = "",
+    evidence: Any = "",
+    observed_content: Any = "",
+) -> bool:
+    """Record one structured effect under the exact active turn custody.
 
-    Outside a turn there is nothing to record against, and inventing a list
-    here would be writing into whatever context happens to be current.
-
-    The value is a TUPLE and this rebinds it, rather than a list this appends
-    to. A ContextVar copy shares the *reference*, so a mutable value defeats
-    the isolation the ContextVar exists to provide: a receipt recorded inside
-    a copied context — a task, a thread pool hop, a `copy_context().run` —
-    reached back and appended to the parent turn's list. An `ok: True` from
-    one turn's background work could therefore vouch for a completed-action
-    claim in a different turn, which is the same fail-open that made the
-    default `[]` wrong, one level further in. Rebinding cannot escape the
-    context that did it.
+    A successful dispatch is not automatically proof that the claimed world
+    change happened. ``effect_observed`` therefore remains independent from
+    ``ok``. Outside an admitted turn participant this is a no-op; intentional
+    child tasks must join with a parent-issued evidence lease.
     """
     name = str(tool_name or "").strip()
     if not name:
-        return
-    try:
-        receipts = _TURN_TOOL_RECEIPTS.get()
-    except LookupError:
-        return
-    if not isinstance(receipts, tuple):
-        return
-    # Bounded: a turn that fires hundreds of tools does not need all of them
-    # to answer the only question asked here — did anything run?
-    if len(receipts) < 64:
-        _TURN_TOOL_RECEIPTS.set((*receipts, {"tool": name, "ok": bool(ok)}))
+        return False
+    from core.conversation.turn_evidence_custody import current_turn_evidence_custody
+
+    custody = current_turn_evidence_custody()
+    if custody is None:
+        return False
+    return custody.append_receipt(
+        {
+            "receipt_id": uuid.uuid4().hex,
+            "tool": name[:128],
+            "action": str(action or name).strip()[:128],
+            "object_ref": " ".join(str(object_ref or "").split())[:500],
+            "ok": bool(ok),
+            "effect_observed": bool(effect_observed),
+            "verification": " ".join(str(verification or "").split())[:160],
+            "evidence": " ".join(str(evidence or "").split())[:1000],
+            "observed_content": str(observed_content or "")[:16000],
+            "recorded_at": time.time(),
+        }
+    )
 
 
 def turn_tool_receipts() -> tuple[dict[str, Any], ...]:
     """Tools that really executed during this turn."""
-    try:
-        receipts = _TURN_TOOL_RECEIPTS.get()
-    except LookupError:
-        return ()
-    return receipts if isinstance(receipts, tuple) else ()
+    from core.conversation.turn_evidence_custody import current_turn_evidence_custody
+
+    custody = current_turn_evidence_custody()
+    return custody.receipts() if custody is not None else ()
 
 
 # The bare model's own answer, before any of this runs.

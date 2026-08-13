@@ -42,6 +42,14 @@ from core.conversation.surface_disposition import (
 
 pytestmark = pytest.mark.unit
 
+
+@pytest.fixture(autouse=True)
+def _exact_turn_custody():
+    from core.conversation.turn_evidence_custody import bind_turn_evidence_custody
+
+    with bind_turn_evidence_custody(session_id="receipt-tests", turn_id="turn-1"):
+        yield
+
 RECEIPT = ({"tool": "web_search", "ok": True},)
 
 # (label, reply, receipts, is_an_unfounded_claim)

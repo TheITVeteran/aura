@@ -39,6 +39,7 @@ from core.epistemics.effect_registry import EFFECT_REGISTRY
 
 __all__ = [
     "ClaimedWrite",
+    "claimed_effect_actions",
     "find_unaddressed_write_claims",
     "unverified_effect_claims",
     "unverified_effect_correction",
@@ -257,6 +258,24 @@ _CLAIMED_EFFECT_PATTERNS: tuple[tuple[str, Any, str], ...] = tuple(
     for spec in EFFECT_REGISTRY.values()
     if spec.observable_action and spec.recognizer is not None
 )
+
+
+def claimed_effect_actions(reply: Any) -> tuple[str, ...]:
+    """Declared runtime actions that ``reply`` says already happened."""
+
+    text = str(reply or "")
+    if not text.strip():
+        return ()
+    claimed: list[str] = []
+    for action, pattern, _description in _CLAIMED_EFFECT_PATTERNS:
+        for sentence in re.split(r"(?<=[.!?])\s+|\n+", text):
+            stripped = sentence.strip()
+            if not stripped or _HYPOTHETICAL_RE.search(stripped):
+                continue
+            if pattern.search(stripped):
+                claimed.append(action)
+                break
+    return tuple(dict.fromkeys(claimed))
 
 
 

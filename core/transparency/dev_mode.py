@@ -194,7 +194,29 @@ class DevMode:
             try:
                 from core.conversation.surface_disposition import record_tool_receipt
 
-                record_tool_receipt(trace.tool_name, ok=bool(result.get("ok", False)))
+                params = trace.params if isinstance(trace.params, dict) else {}
+                object_ref = next(
+                    (
+                        str(params[key])
+                        for key in ("path", "app", "url", "query", "target", "name")
+                        if params.get(key) not in (None, "")
+                    ),
+                    "",
+                )
+                effect_observed = bool(
+                    result.get("effect_verified")
+                    or result.get("postcondition_verified")
+                    or result.get("verification") in {"observed", "verified", "postcondition_verified"}
+                )
+                record_tool_receipt(
+                    trace.tool_name,
+                    action=str(result.get("action") or trace.tool_name),
+                    object_ref=object_ref,
+                    ok=bool(result.get("ok", False)),
+                    effect_observed=effect_observed,
+                    verification=str(result.get("verification") or "tool_result"),
+                    evidence=str(result.get("evidence") or result.get("error") or ""),
+                )
             except Exception as exc:  # never let bookkeeping break a tool result
                 # The tool result stands. A receipt recorder that throws on
                 # every call is a real fault, and `pass` was hiding it.

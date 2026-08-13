@@ -31,8 +31,10 @@ def test_the_route_binds_a_turn_around_the_whole_request() -> None:
     assert "_bound_http_turn(body)" in source, (
         "the HTTP turn opens no ledger, so the delivery path cannot see one"
     )
-    assert "bind_failure_ledger(), _bound_http_turn(body)" in source, (
-        "the turn must be bound around _api_chat_turn, not inside it"
+    assert "with _bound_http_turn(body) as _turn_outcome" in source
+    assert "bind_turn_evidence_custody(" in source
+    assert "bind_failure_ledger()," in source, (
+        "the exact outcome, evidence custody, and failure ledger must surround _api_chat_turn"
     )
 
 

@@ -6203,7 +6203,6 @@ def _quotes_a_screen_it_did_not_read(prompt: Any, reply_text: Any) -> bool:
             ScreenReadingEvidence,
             screen_reading_claim_is_unsupported,
         )
-        from core.perception.screen_blueprint import capture_blueprint
     except ImportError as exc:  # pragma: no cover - import wiring failure
         record_degradation("response_reliability.screen_claim", exc, severity="warning")
         return False
@@ -6211,17 +6210,40 @@ def _quotes_a_screen_it_did_not_read(prompt: Any, reply_text: Any) -> bool:
     if not screen_reading_claim_is_unsupported(prompt, reply_text, None):
         return False
 
-    # A quotation was made. The only thing that can license it is a capture
-    # that actually returned text on this turn.
+    # A quotation was made. The only thing that can license it is the exact
+    # text returned by a verified screen-reading receipt in this turn. Taking
+    # a fresh post-hoc blueprint proves neither what generation saw nor what it
+    # quoted, and the blueprint does not contain OCR text in the first place.
     try:
-        blueprint = capture_blueprint()
-        text = str(getattr(blueprint, "readable_text", "") or "")
-        evidence = ScreenReadingEvidence(
-            captured=not bool(getattr(blueprint, "unavailable", True)),
-            text=text,
-            source="screen_blueprint",
-            unavailable_reason=str(getattr(blueprint, "unavailable_reason", "") or ""),
+        from core.conversation.session_scope import (
+            current_conversation_session,
+            current_conversation_turn,
         )
+        from core.conversation.surface_disposition import turn_tool_receipts
+
+        matching = [
+            receipt
+            for receipt in turn_tool_receipts()
+            if str(receipt.get("action") or "") in {"read_screen_text", "inspect_screen"}
+            and bool(receipt.get("ok"))
+            and bool(receipt.get("effect_observed"))
+            and str(receipt.get("observed_content") or "").strip()
+        ]
+        receipt = matching[-1] if matching else {}
+        evidence = ScreenReadingEvidence(
+            captured=bool(receipt),
+            text=str(receipt.get("observed_content") or ""),
+            source=str(receipt.get("tool") or "turn_receipt"),
+            unavailable_reason="" if receipt else "no verified screen text receipt",
+            capture_id=str(receipt.get("receipt_id") or ""),
+            session_id=str(receipt.get("session_id") or ""),
+            turn_id=str(receipt.get("turn_id") or ""),
+            captured_at=float(receipt.get("recorded_at") or 0.0),
+        )
+        if evidence.session_id != current_conversation_session():
+            evidence = ScreenReadingEvidence(unavailable_reason="screen receipt session mismatch")
+        elif evidence.turn_id != current_conversation_turn():
+            evidence = ScreenReadingEvidence(unavailable_reason="screen receipt turn mismatch")
     except (AttributeError, ImportError, OSError, RuntimeError, TypeError, ValueError) as exc:
         record_degradation("response_reliability.screen_claim", exc, severity="warning")
         evidence = ScreenReadingEvidence(captured=False, unavailable_reason=str(exc)[:120])

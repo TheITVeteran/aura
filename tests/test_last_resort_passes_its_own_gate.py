@@ -137,6 +137,24 @@ class TestTheDeclarationTravelsWithTheText:
         reasons = [str(item) for item in (assessment.reasons or ())]
         assert "runtime_boilerplate" not in reasons
 
+    def test_identical_text_in_another_turn_does_not_inherit_provenance(self):
+        from core.conversation.reply_provenance import (
+            declare_provenance,
+            declared_provenance,
+        )
+        from core.conversation.session_scope import conversation_session_var, conversation_turn_var
+
+        session_token = conversation_session_var.set("provenance-session")
+        turn_token = conversation_turn_var.set("turn-a")
+        try:
+            declare_provenance(SHIPPED_LIVE, ReplyProvenance.HONEST_FAILURE)
+            assert declared_provenance(SHIPPED_LIVE) == ReplyProvenance.HONEST_FAILURE.value
+            conversation_turn_var.set("turn-b")
+            assert declared_provenance(SHIPPED_LIVE) == ""
+        finally:
+            conversation_turn_var.reset(turn_token)
+            conversation_session_var.reset(session_token)
+
     def test_the_live_gate_that_recorded_the_defect_now_agrees(self):
         """``_looks_semantically_glitched`` is the frame that produced the
         recorded ``assessment=runtime_boilerplate`` on both live turns."""

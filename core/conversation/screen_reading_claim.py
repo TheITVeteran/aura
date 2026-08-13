@@ -35,6 +35,7 @@ runtime applies to a tool it did not run.
 from __future__ import annotations
 
 import re
+import time
 from dataclasses import dataclass
 from typing import Any
 
@@ -254,11 +255,58 @@ class ScreenReadingEvidence:
     text: str = ""
     source: str = ""
     unavailable_reason: str = ""
+    capture_id: str = ""
+    session_id: str = ""
+    turn_id: str = ""
+    captured_at: float = 0.0
+    entities: tuple[str, ...] = ()
 
     @property
     def supports_a_quotation(self) -> bool:
         """A capture that returned no text supports no quotation."""
         return bool(self.captured and self.text.strip())
+
+    def supports_claim(self, reply_text: Any, *, max_age_seconds: float = 120.0) -> bool:
+        """Whether this exact capture contains the content the reply attributes to it."""
+
+        if not self.supports_a_quotation:
+            return False
+        try:
+            from core.conversation.session_scope import (
+                current_conversation_session,
+                current_conversation_turn,
+            )
+
+            active_session = current_conversation_session()
+            active_turn = current_conversation_turn()
+        except (ImportError, RuntimeError):
+            active_session = active_turn = ""
+        if self.session_id and self.session_id != active_session:
+            return False
+        if self.turn_id and self.turn_id != active_turn:
+            return False
+        if self.captured_at and time.time() - self.captured_at > max_age_seconds:
+            return False
+
+        corpus = _normalize_screen_text(" ".join((self.text, *self.entities)))
+        quoted = [
+            _normalize_screen_text(match.group(0).strip('"“”\''))
+            for match in _QUOTED_TEXT_RE.finditer(str(reply_text or ""))
+        ]
+        quoted = [fragment for fragment in quoted if fragment]
+        if quoted:
+            return all(fragment in corpus for fragment in quoted)
+
+        # Unquoted display descriptions must still share substantive observed
+        # entities with the capture; the mere fact that OCR returned something
+        # cannot authorize an unrelated description.
+        claimed = {
+            token
+            for token in re.findall(r"[a-z0-9][a-z0-9._-]{2,}", str(reply_text or "").casefold())
+            if token not in _SCREEN_CLAIM_STOP_WORDS
+        }
+        observed = set(re.findall(r"[a-z0-9][a-z0-9._-]{2,}", corpus))
+        return bool(claimed and claimed & observed)
 
     def as_metrics(self) -> dict[str, Any]:
         return {
@@ -266,7 +314,26 @@ class ScreenReadingEvidence:
             "screen_text_chars": len(self.text.strip()),
             "screen_source": self.source,
             "screen_unavailable_reason": self.unavailable_reason,
+            "screen_capture_id": self.capture_id,
+            "screen_session_id": self.session_id,
+            "screen_turn_id": self.turn_id,
         }
+
+
+def _normalize_screen_text(value: Any) -> str:
+    # OCR punctuation and whitespace are unstable; lexical order is the
+    # evidence-bearing part. This remains exact after normalization, so a
+    # merely related capture cannot license a different quotation.
+    return " ".join(re.findall(r"[a-z0-9]+", str(value or "").casefold()))
+
+
+_SCREEN_CLAIM_STOP_WORDS = frozenset(
+    {
+        "actual", "also", "another", "behind", "both", "browser", "desktop",
+        "display", "front", "frontmost", "open", "screen", "showing", "that",
+        "there", "these", "this", "visible", "window", "windows", "with", "your",
+    }
+)
 
 
 def screen_reading_claim_is_unsupported(
@@ -296,7 +363,7 @@ def screen_reading_claim_is_unsupported(
         return False
     if evidence is None:
         return True
-    return not evidence.supports_a_quotation
+    return not evidence.supports_claim(reply_text)
 
 
 def honest_unread_screen_reply(evidence: ScreenReadingEvidence | None = None) -> str:

@@ -249,40 +249,42 @@ def _claims_an_action_completed(text: str) -> bool:
     return bool(_completion_claim_sentences(text))
 
 
-# Lanes that act because the person asked for something.
-#
-# The autonomous loops run continuously and fail routinely — that is what a
-# scan is for. Their records share one global ledger with the work done on the
-# user's behalf, and the guard read the newest entry of either kind. On
-# 2026-07-30 the newest was "Autonomous self-development scan", declared 145
-# seconds before the reply it contradicted, which is why a recency window
-# would not have helped and provenance is the only thing that separates them.
-#
-# surface_disposition already states this principle exactly: a turn's receipts
-# live in a contextvar precisely so "the autonomous loops — whose tasks do not
-# descend from this turn — cannot reach it." The ledger fallback walked around
-# that wall. A background loop's failure is not evidence about a sentence
-# spoken in a conversation.
-_USER_FACING_DRIVES = (
-    "desktop_ui",
-    "desktop_task",
-    "user",
-    "api",
-    "chat",
+_OBJECT_STOP_WORDS = frozenset(
+    {
+        "about", "added", "app", "been", "called", "changed",
+        "created", "document", "done", "downloaded", "exported",
+        "file", "folder", "have", "into", "launched", "made", "opened",
+        "placed", "saved", "sent", "that", "there", "this", "updated",
+        "with", "written", "wrote", "your",
+    }
 )
 
 
-def _is_user_lane(record: object) -> bool:
-    """Was this attempt made because the person asked for something?"""
-    drive = str(getattr(record, "drive", "") or "").strip().lower()
-    if not drive:
-        # No provenance recorded is not the same as background provenance.
-        # Persisted rows always carry a drive; fixtures and older rows may not.
+def _object_tokens(value: object) -> set[str]:
+    return {
+        token.strip("._-")
+        for token in re.findall(r"[a-z0-9][a-z0-9._-]{2,}", str(value or "").casefold())
+        if token.strip("._-") and token.strip("._-") not in _OBJECT_STOP_WORDS
+    }
+
+
+def _receipt_matches_claim(receipt: dict, sentence: str) -> bool:
+    claim_tokens = _object_tokens(sentence)
+    object_ref = str(receipt.get("object_ref") or "").strip()
+    if not claim_tokens:
         return True
-    return any(token in drive for token in _USER_FACING_DRIVES)
+    receipt_tokens = _object_tokens(object_ref)
+    if not receipt_tokens:
+        return False
+    specific_claim_tokens = {
+        token for token in claim_tokens if "." in token or "/" in token or "~" in token
+    }
+    if specific_claim_tokens:
+        return bool(specific_claim_tokens & receipt_tokens)
+    return bool(claim_tokens & receipt_tokens)
 
 
-def _completion_claim_support() -> tuple[bool, str]:
+def _completion_claim_support(sentence: str) -> tuple[bool, str]:
     """Is a completed-action claim contradicted by what actually ran?
 
     Returns (claim_is_unsupported, what_was_attempted). Absence of evidence
@@ -298,71 +300,65 @@ def _completion_claim_support() -> tuple[bool, str]:
     except _RECOVERABLE:
         receipts = ()
 
-    # THIS turn's receipts outrank any ledger entry. A tool that really ran
-    # and worked is the closest record of what happened.
-    if any(bool(receipt.get("ok")) for receipt in receipts):
-        return False, ""
-
     try:
-        from core.agency.intention_loop import get_intention_loop
+        from core.conversation.claimed_effect import claimed_effect_actions
 
-        completed = list(
-            getattr(get_intention_loop(), "_completed_intentions", None) or []
-        )
+        actions = set(claimed_effect_actions(sentence))
     except _RECOVERABLE:
         return False, ""
-
-    # Newest first, user lane only. A success anywhere in the user's own
-    # history supports "I saved that earlier" — the claim need not be about
-    # work done in this turn.
-    failed_attempt = ""
-    for record in reversed(completed):
-        if not _is_user_lane(record):
-            continue
-        actions = list(getattr(record, "actions_taken", None) or [])
-        if not actions:
-            continue
-        if all(bool(getattr(action, "success", False)) for action in actions):
-            return False, ""
-        failed_attempt = str(getattr(record, "intention", ""))[:80]
-        break
-
-    # Only a failed attempt made on the person's behalf refutes the claim.
-    # A failed ANCILLARY receipt does not: a web_search leg can fail on a turn
-    # whose consequential work went through by another path, and treating that
-    # as a refutation reintroduced the false confession from the other side.
-    return (bool(failed_attempt), failed_attempt)
+    lowered = sentence.casefold()
+    if not actions and re.search(r"\b(?:set|changed)\b", lowered) and re.search(
+        r"\b(?:wallpaper|background)\b", lowered
+    ):
+        actions.add("system_control")
+    if not actions:
+        return False, ""
+    matching = [
+        receipt
+        for receipt in receipts
+        if str(receipt.get("action") or "").strip() in actions
+        and _receipt_matches_claim(receipt, sentence)
+    ]
+    if not matching:
+        # An unrelated receipt says nothing about this claim. Absence remains
+        # unknown rather than becoming an invented confession.
+        return False, ""
+    if any(
+        bool(receipt.get("ok")) and bool(receipt.get("effect_observed"))
+        for receipt in matching
+    ):
+        return False, ""
+    attempted = str(matching[-1].get("object_ref") or matching[-1].get("action") or "attempt")
+    return True, attempted[:80]
 
 
 def _last_build_failed() -> tuple[bool, str]:
-    """Did the most recent build-shaped attempt fail? From the user's lane."""
+    """Did a matching build-shaped action fail in this exact turn?"""
     try:
         from core.conversation.surface_disposition import turn_tool_receipts
 
-        if any(bool(receipt.get("ok")) for receipt in turn_tool_receipts()):
-            return False, ""
-    except _RECOVERABLE:
-        pass
-    try:
-        from core.agency.intention_loop import get_intention_loop
-
-        completed = list(
-            getattr(get_intention_loop(), "_completed_intentions", None) or []
-        )
+        receipts = tuple(turn_tool_receipts())
     except _RECOVERABLE:
         return False, ""
     build_words = ("build", "reconstruct", "create", "write", "make", "generate", "place")
-    for record in reversed(completed):
-        if not _is_user_lane(record):
-            continue
-        intention = str(getattr(record, "intention", "") or "").lower()
-        if not any(word in intention for word in build_words):
-            continue
-        actions = list(getattr(record, "actions_taken", None) or [])
-        succeeded = bool(actions) and all(
-            bool(getattr(action, "success", False)) for action in actions
+    build_receipts = [
+        receipt
+        for receipt in receipts
+        if any(
+            word in " ".join(
+                (
+                    str(receipt.get("action") or ""),
+                    str(receipt.get("tool") or ""),
+                    str(receipt.get("object_ref") or ""),
+                )
+            ).casefold()
+            for word in build_words
         )
-        return (not succeeded), str(getattr(record, "intention", ""))[:80]
+    ]
+    for receipt in reversed(build_receipts):
+        if bool(receipt.get("ok")) and bool(receipt.get("effect_observed")):
+            return False, ""
+        return True, str(receipt.get("object_ref") or receipt.get("action") or "build")[:80]
     return False, ""
 
 
@@ -490,14 +486,13 @@ def verify_grounded_claims(reply: str, *, now: datetime | None = None) -> Ground
             corrections.append(reason)
             text = repaired
 
-    claim_sentences = _completion_claim_sentences(text)
-    if claim_sentences:
-        unsupported, attempted = _completion_claim_support()
+    for claim_sentence in _completion_claim_sentences(text):
+        unsupported, attempted = _completion_claim_support(claim_sentence)
         if unsupported:
             corrections.append(
                 f"claimed an action completed after {attempted or 'the attempt'} did not"
             )
-            text = _repair_sentences(text, claim_sentences, _UNSUPPORTED_ACTION_NOTE)
+            text = _repair_sentences(text, (claim_sentence,), _UNSUPPORTED_ACTION_NOTE)
 
     behaviour_sentences = tuple(
         sentence for sentence in _sentences(text) if _ARTIFACT_BEHAVIOUR_RE.search(sentence)

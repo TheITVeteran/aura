@@ -45,6 +45,8 @@ background task cannot inject context into a live user's turn.
 from __future__ import annotations
 
 import logging
+import asyncio
+import threading
 import time
 from collections.abc import Iterator, Sequence
 from contextlib import contextmanager
@@ -121,26 +123,66 @@ class CapabilityFailure:
 class FailureLedger:
     """Everything that failed while serving one turn."""
 
-    __slots__ = ("_records",)
+    __slots__ = ("_closed", "_lock", "_owner", "_records")
 
     def __init__(self) -> None:
         self._records: list[CapabilityFailure] = []
+        self._lock = threading.RLock()
+        self._owner = _execution_identity()
+        self._closed = False
 
-    def record(self, failure: CapabilityFailure) -> None:
-        self._records.append(failure)
-        del self._records[:-_MAX_RECORDS_PER_TURN]
+    def admits_current_execution(self) -> bool:
+        try:
+            from core.conversation.turn_evidence_custody import (
+                current_turn_evidence_custody,
+            )
+
+            custody = current_turn_evidence_custody()
+        except (ImportError, RuntimeError):
+            custody = None
+        if custody is not None:
+            return custody.admits_current_execution()
+        return _execution_identity() == self._owner
+
+    def record(self, failure: CapabilityFailure) -> bool:
+        if not self.admits_current_execution():
+            return False
+        with self._lock:
+            if self._closed:
+                return False
+            self._records.append(failure)
+            del self._records[:-_MAX_RECORDS_PER_TURN]
+            return True
 
     def drain(self) -> list[CapabilityFailure]:
-        records = list(self._records)
-        self._records.clear()
-        return records
+        if not self.admits_current_execution():
+            return []
+        with self._lock:
+            records = list(self._records)
+            self._records.clear()
+            return records
 
     @property
     def records(self) -> tuple[CapabilityFailure, ...]:
-        return tuple(self._records)
+        if not self.admits_current_execution():
+            return ()
+        with self._lock:
+            return tuple(self._records)
 
     def __bool__(self) -> bool:
-        return bool(self._records)
+        return bool(self.records)
+
+    def close(self) -> None:
+        with self._lock:
+            self._closed = True
+
+
+def _execution_identity() -> tuple[int, int]:
+    try:
+        task = asyncio.current_task()
+    except RuntimeError:
+        task = None
+    return (threading.get_ident(), id(task) if task is not None else 0)
 
 
 _ACTIVE_LEDGER: ContextVar[FailureLedger | None] = ContextVar(
@@ -156,6 +198,7 @@ def bind_failure_ledger(ledger: FailureLedger | None = None) -> Iterator[Failure
     try:
         yield active
     finally:
+        active.close()
         _ACTIVE_LEDGER.reset(token)
 
 
@@ -199,7 +242,8 @@ def record_capability_failure(
             severity="debug",
         )
         return None
-    ledger.record(failure)
+    if not ledger.record(failure):
+        return None
     logger.debug("capability failure recorded: %s", failure.as_facts())
     return failure
 
