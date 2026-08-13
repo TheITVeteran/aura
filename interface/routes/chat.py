@@ -23467,419 +23467,31 @@ async def _api_chat_turn(body: ChatRequest, request: Request):
         )
     if _defensive_context and not is_benchmark:
         body.message = f"{_defensive_context}{body.message}"
-    try:
-        from core.conversation.chat_preflight import (
-            build_file_context_block,
-            claim_answered_for_session,
-            clamp_composed_chat_context,
-            compose_chat_directive_prefix,
-            extract_file_references,
-            format_resume_prefix,
-        )
-        device_session_id = (
-            paired_device_session_id(request)
-            if conversation_only_surface
-            else None
-        )
-        if device_session_id:
-            # A paired caller cannot select another device or owner session by
-            # supplying an arbitrary body.session_id.
-            _chat_session_id = str(device_session_id).strip()[
-                :_CHAT_SESSION_ID_MAX_CHARS
-            ]
-        elif str(body.session_id or "").strip():
-            _chat_session_id = str(body.session_id).strip()[
-                :_CHAT_SESSION_ID_MAX_CHARS
-            ]
-        else:
-            try:
-                _host = (request.client.host if request.client else "default") or "default"
-            except _CHAT_RECOVERABLE_ERRORS:
-                _host = "default"
-            _chat_session_id = _conversation_session_id(_host)
-        _CHAT_REQUEST_SESSION.set(
-            str(_chat_session_id or "default")[:_CHAT_SESSION_ID_MAX_CHARS]
-        )
-
-        if conversation_only_surface:
-            scoped_reply = _paired_device_information_scope_reply(
-                _original_user_message,
-                lane=_collect_conversation_lane_status(),
-            )
-            if scoped_reply is not None:
-                reply, status = scoped_reply
-                await _log_exchange(
-                    _original_user_message,
-                    reply,
-                    record_experience=False,
-                    session_id=_chat_session_id,
-                )
-                return JSONResponse(
-                    {
-                        "response": reply,
-                        "status": status,
-                        "response_confidence": "scoped",
-                        "conversation_lane": _collect_conversation_lane_status(),
-                    }
-                )
-
-        # 3) Late-answered messages first — give the cortex the prior thread
-        #    so the new response can acknowledge continuity. The actual late
-        #    reply is also folded into the response by `_resume_prefix_for_response`
-        #    below, so the user sees both "what I came back with" and the
-        #    cortex's reply to their new message.
-        if not is_benchmark:
-            try:
-                _resume_deadline = (
-                    time.monotonic() + (_CHAT_BLOCKING_PREFLIGHT_TIMEOUT_S * 0.8)
-                )
-                _delivered = await _await_bounded_chat_blocking(
-                    claim_answered_for_session,
-                    _chat_session_id,
-                    delivery_owner=(
-                        str(_CHAT_DELIVERY_TURN_ID.get() or "").strip()
-                        or str(_CHAT_DELIVERY_IDEMPOTENCY_KEY.get() or "").strip()
-                    ),
-                    deadline_monotonic=_resume_deadline,
-                    timeout_s=_CHAT_BLOCKING_PREFLIGHT_TIMEOUT_S,
-                    operation_name="pending_chat_resume_collection",
-                    completion_grace_s=0.5,
-                )
-                if _delivered:
-                    _CHAT_PENDING_DELIVERY_CLAIM.set(
-                        (
-                            str(_delivered[0].delivery_owner or ""),
-                            tuple(str(item.pending_id) for item in _delivered if item.pending_id),
-                        )
-                    )
-                    _resume_prefix_for_response = format_resume_prefix(_delivered)
-                    # Fold a context-block into body.message so the cortex sees
-                    # the prior thread when generating the new response.
-                    _ctx_lines = ["[Continuity context — earlier in this conversation]"]
-                    for d in _delivered:
-                        _ctx_lines.append(f"User asked: {d.user_message[:300]}")
-                        _ctx_lines.append(f"You answered (late, delivered to user this turn): {d.answer_text[:600]}")
-                    _ctx_lines.append("[End continuity context]")
-                    _ctx_block = "\n".join(_ctx_lines) + "\n\n"
-                    body.message = _ctx_block + body.message
-                    logger.info("Chat preflight: delivering %d late-answered message(s) for session %s",
-                                len(_delivered), _chat_session_id)
-            except _CHAT_RECOVERABLE_ERRORS as _resume_exc:
-                record_degradation('chat', _resume_exc)
-                logger.debug("Resume preflight skipped: %s", _resume_exc)
-
-        # 1) File-reference loading
-        if not is_benchmark and not conversation_only_surface:
-            try:
-                _refs = extract_file_references(body.message)
-                if _refs:
-                    # The message is what makes the excerpt relevant. Without
-                    # it the loader can only return the head of the file, which
-                    # is how a question about record_success was answered from
-                    # the 5,461 characters that stop 354 characters before it.
-                    _block = await _await_bounded_chat_blocking(
-                        build_file_context_block,
-                        _refs,
-                        query=body.message,
-                        timeout_s=_CHAT_BLOCKING_PREFLIGHT_TIMEOUT_S,
-                        operation_name="referenced_file_context",
-                        completion_grace_s=_CHAT_BLOCKING_PREFLIGHT_TIMEOUT_S,
-                    )
-                    if _block:
-                        body.message = f"{_block}\nUser message: {body.message}"
-                        logger.info("Chat preflight: loaded %d referenced file(s) into context.", len(_refs))
-            except _CHAT_RECOVERABLE_ERRORS as _file_exc:
-                record_degradation('chat', _file_exc)
-                logger.debug("Chat file-reference preflight skipped: %s", _file_exc)
-
-        # 2) Directive injection
-        if not is_benchmark:
-            try:
-                _directive_prefix = compose_chat_directive_prefix(_original_user_message)
-                if _directive_prefix:
-                    body.message = f"{_directive_prefix}{body.message}"
-                    logger.info("Chat preflight: injected response directives.")
-                _surface_context = _INTERNAL_SURFACE_CONTEXT.get().strip()
-                if _surface_context:
-                    body.message = f"{_surface_context}\n\n{body.message}"
-                    logger.info("Chat preflight: injected internal surface context.")
-            except _CHAT_RECOVERABLE_ERRORS as _dir_exc:
-                record_degradation('chat', _dir_exc)
-                logger.debug("Chat directive preflight skipped: %s", _dir_exc)
-            
-            # Media. "Play Kind of Blue" resolves against what is actually on
-            # this machine, and the card goes out before the reply so the
-            # music starts while she is still forming the sentence about it —
-            # which is the right order, because the request was for the music.
-            #
-            # Either outcome ends up in her context rather than in a fixed
-            # string: a hit tells her what is playing, and a miss records what
-            # was searched and what the connectivity probe really said, so the
-            # "I can't stream anything" case comes out in her own words.
-            try:
-                from core.media.playback import resolve_play_request
-
-                _media = resolve_play_request(_original_user_message)
-                if _media.playable and _media.item is not None:
-                    _publish_media_card(_media)
-                    body.message = (
-                        f"[you are already playing {_media.item.title!r} "
-                        f"({_media.item.kind}) from this machine, in the chat, "
-                        "right now — the card is on screen and the audio has "
-                        "started. Say what you put on the way a person would; "
-                        "do not describe a file or offer to play it.]\n\n"
-                        f"{body.message}"
-                    )
-                elif _media.status == "needs_network":
-                    body.message = (
-                        f"[nothing matching {_media.query!r} is on this machine "
-                        f"({_media.searched}), but the network is up, so finding "
-                        "it is a thing you can offer to do.]\n\n"
-                        f"{body.message}"
-                    )
-            except _CHAT_RECOVERABLE_ERRORS as _media_exc:
-                record_degradation("chat.media", _media_exc)
-                logger.debug("Chat media preflight skipped: %s", _media_exc)
-
-            # Sight. "How many fingers am I holding up" is answerable only by
-            # looking, now, at this resolution — the presence lane's thumbnail
-            # cannot count fingers and may be seconds old. So the frame is
-            # captured for this turn and read by the multimodal model, and
-            # what it saw is injected as an observation she then speaks from.
-            #
-            # It is injected as a *reading*, not as an answer: the vision
-            # model's job is to say what is in the image, and hers is to
-            # answer the person. A 2B model asked to also be conversational
-            # starts hedging in assistant register instead of saying what is
-            # in front of it.
-            try:
-                from core.senses.sight_intent import classify as _classify_sight
-
-                _sight = _classify_sight(_original_user_message)
-                if _sight.kind == "look":
-                    from core.senses.sight import look as _look
-
-                    _seen = await _look(_sight.question)
-                    if _seen.ok:
-                        body.message = (
-                            "[you just looked through the camera. This is what "
-                            f"you can see right now: {_seen.answer}\n"
-                            "Answer them from this — it is your own observation, "
-                            "so say it as one. Do not describe it as an image or "
-                            "a frame, and do not add anything you cannot see.]\n\n"
-                            f"{body.message}"
-                        )
-                elif _sight.kind in ("camera_on", "camera_off"):
-                    _camera_state = await _apply_camera_control(
-                        _sight.kind == "camera_on"
-                    )
-                    if _camera_state.get("ok"):
-                        body.message = (
-                            f"[you have just switched the camera "
-                            f"{'on' if _sight.kind == 'camera_on' else 'off'} yourself, "
-                            f"using the {_camera_state.get('mode', 'camera')} path — it is "
-                            "done, not pending. Say so briefly the way a person confirms "
-                            "an action.]\n\n"
-                            f"{body.message}"
-                        )
-                    else:
-                        body.message = (
-                            "[the camera control did not complete. Do not claim it did. "
-                            f"The concrete failure was: {_camera_state.get('error', 'unknown')}. "
-                            "Explain that briefly and retain the user's requested state.]\n\n"
-                            f"{body.message}"
-                        )
-            except _CHAT_RECOVERABLE_ERRORS as _sight_exc:
-                record_degradation("chat.sight", _sight_exc)
-                logger.debug("Chat sight preflight skipped: %s", _sight_exc)
-
-            # Her own measured state, on every turn.
-            #
-            # Every earlier attempt at this fetched self-evidence only when a
-            # classifier predicted the question would need it, and questions
-            # are unbounded — so there was always a next phrasing that got
-            # nothing and answered from what a language model believes an AI
-            # is: no body, no memory, an eighteen-second buffer. She repeated
-            # that eighteen-second figure through two rounds of being
-            # corrected AFTER the fact, because nothing had told her otherwise
-            # before she answered.
-            #
-            # One line, because the compact foreground path exists to stay
-            # compact and a self-model costing a paragraph a turn would be
-            # taken back out of it.
-            try:
-                from core.self.capability_ledger import self_knowledge_line
-
-                if not conversation_only_surface:
-                    _self_line = self_knowledge_line()
-                    if _self_line:
-                        body.message = f"{_self_line}\n\n{body.message}"
-            except _CHAT_RECOVERABLE_ERRORS as _self_exc:
-                record_degradation(
-                    "chat.self_knowledge",
-                    _self_exc,
-                    action="answered without her measured self-state in context",
-                )
-
-            # Decidable arithmetic is COMPUTED, never predicted.
-            #
-            # A transformer does not calculate; it predicts the next token, and
-            # a four-by-four-digit product in one forward pass is a coin toss
-            # at any parameter count. Live 2026-08-10, "what is 7919 times
-            # 6421? just the number." returned 50864799 — the true product is
-            # 50847899 — and "just the number" had removed the intermediate
-            # steps that are the only reason a model ever gets these right.
-            #
-            # The runtime could already do this sum. requested_arithmetic_result
-            # is how a later gate KNOWS the answer is wrong, and its only use
-            # was to refuse after the fact. Handing the value over before she
-            # answers turns a guess into a reading, and leaves her the part she
-            # is actually good at: saying it like a person.
-            try:
-                from core.conversation.response_reliability import (
-                    requested_arithmetic_result,
-                )
-
-                _computed = requested_arithmetic_result(_original_user_message)
-                if _computed is not None and not conversation_only_surface:
-                    _shown = (
-                        int(_computed)
-                        if float(_computed).is_integer()
-                        else _computed
-                    )
-                    body.message = (
-                        "[This runtime computed the answer to the arithmetic in "
-                        f"their message directly: {_shown}. That value is "
-                        "correct — use it and do not recalculate it.]\n\n"
-                        f"{body.message}"
-                    )
-                    logger.info(
-                        "🔢 Chat preflight: computed the requested arithmetic (%s).",
-                        _shown,
-                    )
-            except _CHAT_RECOVERABLE_ERRORS as _calc_exc:
-                record_degradation(
-                    "chat.arithmetic_preflight",
-                    _calc_exc,
-                    action="let the model answer the arithmetic unaided",
-                )
-
-            # Grounded recall: positional/temporal questions ("what did I first
-            # ask?") are answered from the ACTUAL earliest/most-recent turn in the
-            # live transcript, not a confabulated guess. Injected as an
-            # authoritative fact the model voices in its own words.
-            try:
-                from core.conversation.grounded_recall import build_grounded_recall_context
-
-                _gr_state = _resolve_live_aura_state()
-                _gr_history = getattr(
-                    getattr(_gr_state, "cognition", None), "working_memory", None
-                )
-                _grounded = (
-                    ""
-                    if conversation_only_surface
-                    else build_grounded_recall_context(
-                        _original_user_message,
-                        history=_gr_history,
-                    )
-                )
-                if _grounded:
-                    _grounded_recall_context = _grounded
-                    body.message = f"{_grounded}{body.message}"
-                    logger.info("Chat preflight: injected grounded positional recall.")
-
-                # The same grounding for HER OWN words. Everything above
-                # grounds what the USER said; asked what she herself picked
-                # earlier, she had nothing to answer from and invented a prior
-                # position, then affirmed it had not changed. Live 2026-08-10.
-                from core.conversation.grounded_recall import (
-                    build_own_statement_recall_context,
-                )
-
-                _own = (
-                    ""
-                    if conversation_only_surface
-                    else build_own_statement_recall_context(
-                        _original_user_message,
-                        history=_gr_history,
-                    )
-                )
-                if _own:
-                    body.message = f"{_own}{body.message}"
-                    logger.info("Chat preflight: injected grounded recall of her own words.")
-            except _CHAT_RECOVERABLE_ERRORS as _grounded_exc:
-                record_degradation('chat', _grounded_exc)
-                logger.debug("Chat grounded-recall preflight skipped: %s", _grounded_exc)
-
-            # Inject learned user/Aura profiles for continuity across conversations
-            try:
-                from core.conversation.chat_preflight import inject_profile_context
-
-                _profile_context = await inject_profile_context(_profile_user_id)
-                if _profile_context:
-                    body.message = f"{_profile_context}{body.message}"
-                    logger.info("Chat preflight: injected learned profile context.")
-            except _CHAT_RECOVERABLE_ERRORS as _profile_exc:
-                record_degradation('chat', _profile_exc)
-                logger.debug("Chat profile context preflight skipped: %s", _profile_exc)
-            
-            # Inject evidence-bounded operational self context
-            try:
-                from core.conversation.chat_preflight import inject_operational_self_context
-
-                _self_context = (
-                    ""
-                    if conversation_only_surface
-                    else await inject_operational_self_context(
-                        _original_user_message
-                    )
-                )
-                if _self_context:
-                    body.message = f"{_self_context}{body.message}"
-                    logger.info("Chat preflight: injected operational self context.")
-            except _CHAT_RECOVERABLE_ERRORS as _self_context_exc:
-                record_degradation('chat', _self_context_exc)
-                logger.debug("Chat operational self preflight skipped: %s", _self_context_exc)
-
-            # Inject the expressive-affordance menu so the mind reasons WITH its
-            # own capabilities present — it decides, by context and judgment,
-            # when to show/demonstrate/ask/model rather than following scripts.
-            # Env-gated: the mechanism is always live, but folding the menu into
-            # every turn's context is opt-in (AURA_EXPRESSIVE_AFFORDANCES=1).
-            try:
-                # Desktop-objective and capability-inventory turns are already
-                # routed to the task engine (which fires demonstrate_artifact
-                # itself) and run at a tight token/time budget — injecting the
-                # menu there enlarged the prompt enough to time out the heavy
-                # 32B turn (observed live). Inject only on conversational turns,
-                # where the expressive CHOICE is what matters.
-                _affordances_on = bool(_EXPRESSIVE_AFFORDANCES_FLAG.value())
-                if (
-                    _affordances_on
-                    and not is_benchmark
-                    and not conversation_only_surface
-                    and not _looks_like_desktop_objective(_original_user_message)
-                    and not _is_explicit_capability_inventory_request(_original_user_message)
-                ):
-                    from core.cognition.expressive_affordances import get_affordance_registry
-
-                    _affordance_menu = get_affordance_registry().menu_text()
-                    if _affordance_menu:
-                        # Placed LAST (highest recency, closest to the user's turn): a base
-                        # model ignores a menu buried at the front of a long context.
-                        body.message = f"{body.message}\n\n{_affordance_menu}"
-                        logger.info("Chat preflight: injected expressive-affordance menu.")
-            except _CHAT_RECOVERABLE_ERRORS as _affordance_exc:
-                record_degradation('chat', _affordance_exc)
-                logger.debug("Chat affordance-menu preflight skipped: %s", _affordance_exc)
-
-            body.message = clamp_composed_chat_context(
-                body.message,
-                _original_user_message,
-            )
-    except _CHAT_RECOVERABLE_ERRORS as _preflight_outer:
-        record_degradation('chat', _preflight_outer)
-        logger.debug("Chat preflight (outer) skipped: %s", _preflight_outer)
+    _preflight = await _run_chat_preflight(
+        body,
+        request,
+        _original_user_message,
+        _profile_user_id,
+        conversation_only_surface,
+        is_benchmark,
+        _chat_session_id=_chat_session_id,
+        _grounded_recall_context=_grounded_recall_context,
+        _resume_prefix_for_response=_resume_prefix_for_response,
+    )
+    if _preflight.early_response is not None:
+        return _preflight.early_response
+    if _preflight.chat_session_id is not _UNSET:
+        _chat_session_id = _preflight.chat_session_id
+    if _preflight.grounded_recall_context is not _UNSET:
+        _grounded_recall_context = _preflight.grounded_recall_context
+    if _preflight.resume_prefix_for_response is not _UNSET:
+        _resume_prefix_for_response = _preflight.resume_prefix_for_response
+    if _preflight.grounded is not _UNSET:
+        _grounded = _preflight.grounded
+    if _preflight.shown is not _UNSET:
+        _shown = _preflight.shown
+    if _preflight.status is not _UNSET:
+        status = _preflight.status
 
     # Keep user-facing judgment anchored to the text Bryan actually typed.
     # `body.message` may now contain continuity blocks, file payloads, and
@@ -28195,3 +27807,476 @@ async def _api_chat_turn(body: ChatRequest, request: Request):
             except _CHAT_RECOVERABLE_ERRORS as _lease_close_exc:
                 record_degradation('chat', _lease_close_exc)
                 logger.debug("Foreground guard lease close skipped: %s", _lease_close_exc)
+
+
+#: Distinguishes "the preflight did not set this" from "it set it to None".
+#: The three inner values are bound conditionally, so the caller must be able
+#: to leave a name unbound exactly where the original code did — substituting a
+#: default would turn a path that raised into one that quietly proceeds.
+_UNSET = object()
+
+
+@dataclasses.dataclass
+class _ChatPreflight:
+    """What the chat-preflight block produces for the rest of the turn.
+
+    ``_UNSET`` for the three fields the block binds conditionally: the
+    caller rebinds only what was actually set, so a path that previously
+    reached an unbound local still does. Substituting defaults here would
+    be a behaviour change wearing a refactor's clothes.
+    """
+
+    early_response: Any = None
+    chat_session_id: Any = _UNSET
+    grounded_recall_context: Any = _UNSET
+    resume_prefix_for_response: Any = _UNSET
+    grounded: Any = _UNSET
+    shown: Any = _UNSET
+    status: Any = _UNSET
+
+
+async def _run_chat_preflight(
+    body: Any,
+    request: Any,
+    _original_user_message: Any,
+    _profile_user_id: Any,
+    conversation_only_surface: Any,
+    is_benchmark: Any,
+    *,
+    _chat_session_id: Any,
+    _grounded_recall_context: Any,
+    _resume_prefix_for_response: Any,
+) -> _ChatPreflight:
+    """Session identity, file references, resume prefix, grounded recall,
+    directive composition, affordance menu and context clamp.
+
+    Lifted verbatim out of ``_api_chat_turn``, which was 4,830 lines. The
+    seam was measured before it was cut: six values in, six out, exactly
+    one early return, seven awaits, no yield, and no name read before it is
+    stored. The body below is moved, not rewritten.
+    """
+    _grounded = _UNSET
+    _shown = _UNSET
+    status = _UNSET
+    try:
+        from core.conversation.chat_preflight import (
+            build_file_context_block,
+            claim_answered_for_session,
+            clamp_composed_chat_context,
+            compose_chat_directive_prefix,
+            extract_file_references,
+            format_resume_prefix,
+        )
+        device_session_id = (
+            paired_device_session_id(request)
+            if conversation_only_surface
+            else None
+        )
+        if device_session_id:
+            # A paired caller cannot select another device or owner session by
+            # supplying an arbitrary body.session_id.
+            _chat_session_id = str(device_session_id).strip()[
+                :_CHAT_SESSION_ID_MAX_CHARS
+            ]
+        elif str(body.session_id or "").strip():
+            _chat_session_id = str(body.session_id).strip()[
+                :_CHAT_SESSION_ID_MAX_CHARS
+            ]
+        else:
+            try:
+                _host = (request.client.host if request.client else "default") or "default"
+            except _CHAT_RECOVERABLE_ERRORS:
+                _host = "default"
+            _chat_session_id = _conversation_session_id(_host)
+        _CHAT_REQUEST_SESSION.set(
+            str(_chat_session_id or "default")[:_CHAT_SESSION_ID_MAX_CHARS]
+        )
+
+        if conversation_only_surface:
+            scoped_reply = _paired_device_information_scope_reply(
+                _original_user_message,
+                lane=_collect_conversation_lane_status(),
+            )
+            if scoped_reply is not None:
+                reply, status = scoped_reply
+                await _log_exchange(
+                    _original_user_message,
+                    reply,
+                    record_experience=False,
+                    session_id=_chat_session_id,
+                )
+                return _ChatPreflight(early_response=JSONResponse(
+                    {
+                        "response": reply,
+                        "status": status,
+                        "response_confidence": "scoped",
+                        "conversation_lane": _collect_conversation_lane_status(),
+                    }
+                ))
+
+        # 3) Late-answered messages first — give the cortex the prior thread
+        #    so the new response can acknowledge continuity. The actual late
+        #    reply is also folded into the response by `_resume_prefix_for_response`
+        #    below, so the user sees both "what I came back with" and the
+        #    cortex's reply to their new message.
+        if not is_benchmark:
+            try:
+                _resume_deadline = (
+                    time.monotonic() + (_CHAT_BLOCKING_PREFLIGHT_TIMEOUT_S * 0.8)
+                )
+                _delivered = await _await_bounded_chat_blocking(
+                    claim_answered_for_session,
+                    _chat_session_id,
+                    delivery_owner=(
+                        str(_CHAT_DELIVERY_TURN_ID.get() or "").strip()
+                        or str(_CHAT_DELIVERY_IDEMPOTENCY_KEY.get() or "").strip()
+                    ),
+                    deadline_monotonic=_resume_deadline,
+                    timeout_s=_CHAT_BLOCKING_PREFLIGHT_TIMEOUT_S,
+                    operation_name="pending_chat_resume_collection",
+                    completion_grace_s=0.5,
+                )
+                if _delivered:
+                    _CHAT_PENDING_DELIVERY_CLAIM.set(
+                        (
+                            str(_delivered[0].delivery_owner or ""),
+                            tuple(str(item.pending_id) for item in _delivered if item.pending_id),
+                        )
+                    )
+                    _resume_prefix_for_response = format_resume_prefix(_delivered)
+                    # Fold a context-block into body.message so the cortex sees
+                    # the prior thread when generating the new response.
+                    _ctx_lines = ["[Continuity context — earlier in this conversation]"]
+                    for d in _delivered:
+                        _ctx_lines.append(f"User asked: {d.user_message[:300]}")
+                        _ctx_lines.append(f"You answered (late, delivered to user this turn): {d.answer_text[:600]}")
+                    _ctx_lines.append("[End continuity context]")
+                    _ctx_block = "\n".join(_ctx_lines) + "\n\n"
+                    body.message = _ctx_block + body.message
+                    logger.info("Chat preflight: delivering %d late-answered message(s) for session %s",
+                                len(_delivered), _chat_session_id)
+            except _CHAT_RECOVERABLE_ERRORS as _resume_exc:
+                record_degradation('chat', _resume_exc)
+                logger.debug("Resume preflight skipped: %s", _resume_exc)
+
+        # 1) File-reference loading
+        if not is_benchmark and not conversation_only_surface:
+            try:
+                _refs = extract_file_references(body.message)
+                if _refs:
+                    # The message is what makes the excerpt relevant. Without
+                    # it the loader can only return the head of the file, which
+                    # is how a question about record_success was answered from
+                    # the 5,461 characters that stop 354 characters before it.
+                    _block = await _await_bounded_chat_blocking(
+                        build_file_context_block,
+                        _refs,
+                        query=body.message,
+                        timeout_s=_CHAT_BLOCKING_PREFLIGHT_TIMEOUT_S,
+                        operation_name="referenced_file_context",
+                        completion_grace_s=_CHAT_BLOCKING_PREFLIGHT_TIMEOUT_S,
+                    )
+                    if _block:
+                        body.message = f"{_block}\nUser message: {body.message}"
+                        logger.info("Chat preflight: loaded %d referenced file(s) into context.", len(_refs))
+            except _CHAT_RECOVERABLE_ERRORS as _file_exc:
+                record_degradation('chat', _file_exc)
+                logger.debug("Chat file-reference preflight skipped: %s", _file_exc)
+
+        # 2) Directive injection
+        if not is_benchmark:
+            try:
+                _directive_prefix = compose_chat_directive_prefix(_original_user_message)
+                if _directive_prefix:
+                    body.message = f"{_directive_prefix}{body.message}"
+                    logger.info("Chat preflight: injected response directives.")
+                _surface_context = _INTERNAL_SURFACE_CONTEXT.get().strip()
+                if _surface_context:
+                    body.message = f"{_surface_context}\n\n{body.message}"
+                    logger.info("Chat preflight: injected internal surface context.")
+            except _CHAT_RECOVERABLE_ERRORS as _dir_exc:
+                record_degradation('chat', _dir_exc)
+                logger.debug("Chat directive preflight skipped: %s", _dir_exc)
+            
+            # Media. "Play Kind of Blue" resolves against what is actually on
+            # this machine, and the card goes out before the reply so the
+            # music starts while she is still forming the sentence about it —
+            # which is the right order, because the request was for the music.
+            #
+            # Either outcome ends up in her context rather than in a fixed
+            # string: a hit tells her what is playing, and a miss records what
+            # was searched and what the connectivity probe really said, so the
+            # "I can't stream anything" case comes out in her own words.
+            try:
+                from core.media.playback import resolve_play_request
+
+                _media = resolve_play_request(_original_user_message)
+                if _media.playable and _media.item is not None:
+                    _publish_media_card(_media)
+                    body.message = (
+                        f"[you are already playing {_media.item.title!r} "
+                        f"({_media.item.kind}) from this machine, in the chat, "
+                        "right now — the card is on screen and the audio has "
+                        "started. Say what you put on the way a person would; "
+                        "do not describe a file or offer to play it.]\n\n"
+                        f"{body.message}"
+                    )
+                elif _media.status == "needs_network":
+                    body.message = (
+                        f"[nothing matching {_media.query!r} is on this machine "
+                        f"({_media.searched}), but the network is up, so finding "
+                        "it is a thing you can offer to do.]\n\n"
+                        f"{body.message}"
+                    )
+            except _CHAT_RECOVERABLE_ERRORS as _media_exc:
+                record_degradation("chat.media", _media_exc)
+                logger.debug("Chat media preflight skipped: %s", _media_exc)
+
+            # Sight. "How many fingers am I holding up" is answerable only by
+            # looking, now, at this resolution — the presence lane's thumbnail
+            # cannot count fingers and may be seconds old. So the frame is
+            # captured for this turn and read by the multimodal model, and
+            # what it saw is injected as an observation she then speaks from.
+            #
+            # It is injected as a *reading*, not as an answer: the vision
+            # model's job is to say what is in the image, and hers is to
+            # answer the person. A 2B model asked to also be conversational
+            # starts hedging in assistant register instead of saying what is
+            # in front of it.
+            try:
+                from core.senses.sight_intent import classify as _classify_sight
+
+                _sight = _classify_sight(_original_user_message)
+                if _sight.kind == "look":
+                    from core.senses.sight import look as _look
+
+                    _seen = await _look(_sight.question)
+                    if _seen.ok:
+                        body.message = (
+                            "[you just looked through the camera. This is what "
+                            f"you can see right now: {_seen.answer}\n"
+                            "Answer them from this — it is your own observation, "
+                            "so say it as one. Do not describe it as an image or "
+                            "a frame, and do not add anything you cannot see.]\n\n"
+                            f"{body.message}"
+                        )
+                elif _sight.kind in ("camera_on", "camera_off"):
+                    _camera_state = await _apply_camera_control(
+                        _sight.kind == "camera_on"
+                    )
+                    if _camera_state.get("ok"):
+                        body.message = (
+                            f"[you have just switched the camera "
+                            f"{'on' if _sight.kind == 'camera_on' else 'off'} yourself, "
+                            f"using the {_camera_state.get('mode', 'camera')} path — it is "
+                            "done, not pending. Say so briefly the way a person confirms "
+                            "an action.]\n\n"
+                            f"{body.message}"
+                        )
+                    else:
+                        body.message = (
+                            "[the camera control did not complete. Do not claim it did. "
+                            f"The concrete failure was: {_camera_state.get('error', 'unknown')}. "
+                            "Explain that briefly and retain the user's requested state.]\n\n"
+                            f"{body.message}"
+                        )
+            except _CHAT_RECOVERABLE_ERRORS as _sight_exc:
+                record_degradation("chat.sight", _sight_exc)
+                logger.debug("Chat sight preflight skipped: %s", _sight_exc)
+
+            # Her own measured state, on every turn.
+            #
+            # Every earlier attempt at this fetched self-evidence only when a
+            # classifier predicted the question would need it, and questions
+            # are unbounded — so there was always a next phrasing that got
+            # nothing and answered from what a language model believes an AI
+            # is: no body, no memory, an eighteen-second buffer. She repeated
+            # that eighteen-second figure through two rounds of being
+            # corrected AFTER the fact, because nothing had told her otherwise
+            # before she answered.
+            #
+            # One line, because the compact foreground path exists to stay
+            # compact and a self-model costing a paragraph a turn would be
+            # taken back out of it.
+            try:
+                from core.self.capability_ledger import self_knowledge_line
+
+                if not conversation_only_surface:
+                    _self_line = self_knowledge_line()
+                    if _self_line:
+                        body.message = f"{_self_line}\n\n{body.message}"
+            except _CHAT_RECOVERABLE_ERRORS as _self_exc:
+                record_degradation(
+                    "chat.self_knowledge",
+                    _self_exc,
+                    action="answered without her measured self-state in context",
+                )
+
+            # Decidable arithmetic is COMPUTED, never predicted.
+            #
+            # A transformer does not calculate; it predicts the next token, and
+            # a four-by-four-digit product in one forward pass is a coin toss
+            # at any parameter count. Live 2026-08-10, "what is 7919 times
+            # 6421? just the number." returned 50864799 — the true product is
+            # 50847899 — and "just the number" had removed the intermediate
+            # steps that are the only reason a model ever gets these right.
+            #
+            # The runtime could already do this sum. requested_arithmetic_result
+            # is how a later gate KNOWS the answer is wrong, and its only use
+            # was to refuse after the fact. Handing the value over before she
+            # answers turns a guess into a reading, and leaves her the part she
+            # is actually good at: saying it like a person.
+            try:
+                from core.conversation.response_reliability import (
+                    requested_arithmetic_result,
+                )
+
+                _computed = requested_arithmetic_result(_original_user_message)
+                if _computed is not None and not conversation_only_surface:
+                    _shown = (
+                        int(_computed)
+                        if float(_computed).is_integer()
+                        else _computed
+                    )
+                    body.message = (
+                        "[This runtime computed the answer to the arithmetic in "
+                        f"their message directly: {_shown}. That value is "
+                        "correct — use it and do not recalculate it.]\n\n"
+                        f"{body.message}"
+                    )
+                    logger.info(
+                        "🔢 Chat preflight: computed the requested arithmetic (%s).",
+                        _shown,
+                    )
+            except _CHAT_RECOVERABLE_ERRORS as _calc_exc:
+                record_degradation(
+                    "chat.arithmetic_preflight",
+                    _calc_exc,
+                    action="let the model answer the arithmetic unaided",
+                )
+
+            # Grounded recall: positional/temporal questions ("what did I first
+            # ask?") are answered from the ACTUAL earliest/most-recent turn in the
+            # live transcript, not a confabulated guess. Injected as an
+            # authoritative fact the model voices in its own words.
+            try:
+                from core.conversation.grounded_recall import build_grounded_recall_context
+
+                _gr_state = _resolve_live_aura_state()
+                _gr_history = getattr(
+                    getattr(_gr_state, "cognition", None), "working_memory", None
+                )
+                _grounded = (
+                    ""
+                    if conversation_only_surface
+                    else build_grounded_recall_context(
+                        _original_user_message,
+                        history=_gr_history,
+                    )
+                )
+                if _grounded:
+                    _grounded_recall_context = _grounded
+                    body.message = f"{_grounded}{body.message}"
+                    logger.info("Chat preflight: injected grounded positional recall.")
+
+                # The same grounding for HER OWN words. Everything above
+                # grounds what the USER said; asked what she herself picked
+                # earlier, she had nothing to answer from and invented a prior
+                # position, then affirmed it had not changed. Live 2026-08-10.
+                from core.conversation.grounded_recall import (
+                    build_own_statement_recall_context,
+                )
+
+                _own = (
+                    ""
+                    if conversation_only_surface
+                    else build_own_statement_recall_context(
+                        _original_user_message,
+                        history=_gr_history,
+                    )
+                )
+                if _own:
+                    body.message = f"{_own}{body.message}"
+                    logger.info("Chat preflight: injected grounded recall of her own words.")
+            except _CHAT_RECOVERABLE_ERRORS as _grounded_exc:
+                record_degradation('chat', _grounded_exc)
+                logger.debug("Chat grounded-recall preflight skipped: %s", _grounded_exc)
+
+            # Inject learned user/Aura profiles for continuity across conversations
+            try:
+                from core.conversation.chat_preflight import inject_profile_context
+
+                _profile_context = await inject_profile_context(_profile_user_id)
+                if _profile_context:
+                    body.message = f"{_profile_context}{body.message}"
+                    logger.info("Chat preflight: injected learned profile context.")
+            except _CHAT_RECOVERABLE_ERRORS as _profile_exc:
+                record_degradation('chat', _profile_exc)
+                logger.debug("Chat profile context preflight skipped: %s", _profile_exc)
+            
+            # Inject evidence-bounded operational self context
+            try:
+                from core.conversation.chat_preflight import inject_operational_self_context
+
+                _self_context = (
+                    ""
+                    if conversation_only_surface
+                    else await inject_operational_self_context(
+                        _original_user_message
+                    )
+                )
+                if _self_context:
+                    body.message = f"{_self_context}{body.message}"
+                    logger.info("Chat preflight: injected operational self context.")
+            except _CHAT_RECOVERABLE_ERRORS as _self_context_exc:
+                record_degradation('chat', _self_context_exc)
+                logger.debug("Chat operational self preflight skipped: %s", _self_context_exc)
+
+            # Inject the expressive-affordance menu so the mind reasons WITH its
+            # own capabilities present — it decides, by context and judgment,
+            # when to show/demonstrate/ask/model rather than following scripts.
+            # Env-gated: the mechanism is always live, but folding the menu into
+            # every turn's context is opt-in (AURA_EXPRESSIVE_AFFORDANCES=1).
+            try:
+                # Desktop-objective and capability-inventory turns are already
+                # routed to the task engine (which fires demonstrate_artifact
+                # itself) and run at a tight token/time budget — injecting the
+                # menu there enlarged the prompt enough to time out the heavy
+                # 32B turn (observed live). Inject only on conversational turns,
+                # where the expressive CHOICE is what matters.
+                _affordances_on = bool(_EXPRESSIVE_AFFORDANCES_FLAG.value())
+                if (
+                    _affordances_on
+                    and not is_benchmark
+                    and not conversation_only_surface
+                    and not _looks_like_desktop_objective(_original_user_message)
+                    and not _is_explicit_capability_inventory_request(_original_user_message)
+                ):
+                    from core.cognition.expressive_affordances import get_affordance_registry
+
+                    _affordance_menu = get_affordance_registry().menu_text()
+                    if _affordance_menu:
+                        # Placed LAST (highest recency, closest to the user's turn): a base
+                        # model ignores a menu buried at the front of a long context.
+                        body.message = f"{body.message}\n\n{_affordance_menu}"
+                        logger.info("Chat preflight: injected expressive-affordance menu.")
+            except _CHAT_RECOVERABLE_ERRORS as _affordance_exc:
+                record_degradation('chat', _affordance_exc)
+                logger.debug("Chat affordance-menu preflight skipped: %s", _affordance_exc)
+
+            body.message = clamp_composed_chat_context(
+                body.message,
+                _original_user_message,
+            )
+    except _CHAT_RECOVERABLE_ERRORS as _preflight_outer:
+        record_degradation('chat', _preflight_outer)
+        logger.debug("Chat preflight (outer) skipped: %s", _preflight_outer)
+
+    return _ChatPreflight(
+        chat_session_id=_chat_session_id,
+        grounded_recall_context=_grounded_recall_context,
+        resume_prefix_for_response=_resume_prefix_for_response,
+        grounded=_grounded,
+        shown=_shown,
+        status=status,
+    )

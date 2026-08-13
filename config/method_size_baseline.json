@@ -1,7 +1,7 @@
 {
   "threshold_lines": 400,
-  "tracked": 75,
-  "total_lines": 70123,
+  "tracked": 76,
+  "total_lines": 70244,
   "functions": {
     "core/brain/cognitive_engine.py::CognitiveEngine._direct_desktop_quick_reply": {
       "lines": 975,
@@ -119,7 +119,7 @@
       "returns": 17
     },
     "core/brain/llm/mlx_client.py::MLXLocalClient._generate_inner": {
-      "lines": 665,
+      "lines": 668,
       "complexity": 105,
       "returns": 20
     },
@@ -134,7 +134,7 @@
       "returns": 9
     },
     "core/brain/llm_health_router.py::HealthAwareLLMRouter._call_endpoint": {
-      "lines": 514,
+      "lines": 515,
       "complexity": 116,
       "returns": 19
     },
@@ -169,7 +169,7 @@
       "returns": 1
     },
     "core/conversation/response_reliability.py::_assess_user_facing_reply": {
-      "lines": 498,
+      "lines": 488,
       "complexity": 85,
       "returns": 4
     },
@@ -234,8 +234,8 @@
       "returns": 5
     },
     "core/orchestrator/mixins/boot/boot_autonomy.py::BootAutonomyMixin._init_salvaged_subsystems": {
-      "lines": 506,
-      "complexity": 54,
+      "lines": 516,
+      "complexity": 55,
       "returns": 0
     },
     "core/orchestrator/mixins/incoming_logic.py::IncomingLogicMixin._original_handle_incoming_logic": {
@@ -339,8 +339,8 @@
       "returns": 1
     },
     "interface/routes/chat.py::_api_chat_turn": {
-      "lines": 4799,
-      "complexity": 735,
+      "lines": 4442,
+      "complexity": 684,
       "returns": 116
     },
     "interface/routes/chat.py::_build_live_turn_contract_payload": {
@@ -349,14 +349,19 @@
       "returns": 3
     },
     "interface/routes/chat.py::_paired_chat_response_boundary": {
-      "lines": 416,
-      "complexity": 53,
+      "lines": 445,
+      "complexity": 61,
       "returns": 12
     },
     "interface/routes/chat.py::_repair_final_degraded_reply": {
       "lines": 409,
       "complexity": 95,
       "returns": 18
+    },
+    "interface/routes/chat.py::_run_chat_preflight": {
+      "lines": 445,
+      "complexity": 64,
+      "returns": 2
     },
     "interface/routes/chat.py::_run_cognitive_engine_chat_turn": {
       "lines": 2697,
