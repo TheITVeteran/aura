@@ -46596,3 +46596,30 @@ adjudicator and resident-evaluation launcher tests pass; focused Ruff,
 compilation and diff hygiene pass. The completion envelope remains `915/920`;
 the interface repair enables honest automated handoff but is not itself a
 canary verdict or reasoning gain.
+
+## Checkpoint 2026-08-12-296: Canary Advancement No Longer Depends on Codex
+
+A dedicated source-bound handoff controller now owns the gap between a named
+true-root canary and its preregistered powered replication. Its immutable
+configuration binds the campaign, canary plan, powered plan, deterministic
+root-control identity, canonical interpreter, single-seed adjudicator,
+resident launcher and exact powered-controller bytes. Canary and powered
+evidence roots must be distinct strict campaign children and cannot overlap
+the controller's state directory.
+
+The controller polls only the frozen evaluator status, independently
+recomputes and immutably stores the canary verdict, stops successfully on any
+negative or inconclusive result, and invokes the exact CP293 powered installer
+only when every single-seed causal requirement is supported. Existing powered
+work is reopened only from an authenticated non-failed controller state. A
+launchd job restarts infrastructure failures, HMAC-authenticates its moving
+status, and owns a PID-bound `caffeinate` process so sleep cannot create a gap
+between canary completion and powered custody.
+
+Validation is green under Aura's Python 3.12 runtime: `41/41` focused handoff,
+single-seed and powered-replication tests pass; canonical smoke passes
+`104/104`; focused Ruff, compilation and diff hygiene pass. Tests cover
+matched-root preparation, root mismatch, positive-only launch, negative stop,
+failed-controller rejection, exact frozen installer argv and launchd restart
+semantics. The completion envelope remains `915/920`; this closes unattended
+advancement infrastructure, not the still running canary's scientific verdict.
