@@ -47850,3 +47850,43 @@ memory-log worker ownership and `/api/think` admission remain open. The CP352
 resident promotion has produced a terminal supported receipt, but pointer,
 hash, process-teardown and serving-package adjudication remain separate work;
 no broad reasoning, frontier, `WOW Signal`, soak or Aura 1.0 claim follows here.
+
+## Checkpoint 2026-08-13-357: Typed Recurrent Authority Is Durably Active
+
+The immutable CP352 promotion capsule completed under launchd with terminal
+exit code zero. Its exact source-bound status verifier reopens sequence 270 as
+`completed`, bound to config
+`8bedba4d0be0377d632a958ffc01142a75d85ed8a135d2e4a45fb8da8edc6b56`,
+activation `ce522abbf52c20646ceb21db9363fe3168d419740cb2a2881fc2964c2eff89a5`
+and completion `a618a0d2d498f609feb506b2d2bcca0982406c39e92d9563b0f4ad2034f54470`.
+The capsule remains clean at commit `648d0ccd72945d71b0f61667e956b02b339179c4`;
+all eleven source-file digests match its signed config.
+
+The shadow lifecycle independently cold-loaded the resident 32B twice. Both
+nine-case batteries were supported, the durable pointer reopened, rollback
+completed, the post-rollback worker was inactive, and the restarted package
+identity was stable. Candidate activation then decoded all `9/9` typed cases
+exactly under request-scoped non-serving authority. After persisting
+`qualified_typed_pending`, a fresh worker repeated all `9/9` cases exactly.
+Both canary authorities expired after their requests and exposed no token
+outputs.
+
+The manager subsequently CAS-published durable `qualified_typed_only`
+authority. Independent status inspection reopens the shadow pointer, package
+manifest and qualified activation together and confirms package
+`cp352-pending-cold-recurrent`, pointer
+`172b437c792dd598a093338a825daa0d018eb0da2e8086ef886b1cf8b415d3a7`,
+families `khop`, `modular`, `register_trace`, task depths `1,2,4`, recurrence
+depth four and `serving_authority=true`. Launchd is stopped, its last exit is
+zero, and no controller, sleep inhibitor, worker or resident model process
+remains. The complete promotion/activation/qualified-decode contract surface
+passes `99/99` on the current tree.
+
+This establishes durable resident-32B serving authority only for the powered,
+typed recurrent battery already supported by the frozen replication.
+`ordinary_chat_authorized=false`, `arbitrary_reasoning_authorized=false` and
+the completion receipt's claim boundary remain authoritative. It does not show
+broad reasoning gain, frontier performance, static fusion or a `WOW Signal`.
+Those require fresh broader domains, equal-compute controls and powered
+replication. Regeneration CAS, memory-log worker ownership, `/api/think`
+admission, broader transfer and the remaining closeout programme remain open.
