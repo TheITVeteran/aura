@@ -55,6 +55,8 @@ ROOT = Path(__file__).resolve().parents[2]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
+from core.runtime.atomic_writer import atomic_append_text  # noqa: E402
+
 SEMANTIC_DIR = ROOT / "artifacts" / "closeout" / "semantic_review"
 DEFAULT_LEDGER = SEMANTIC_DIR / "cp126" / "REMEDIATION_LEDGER.jsonl"
 DEFAULT_INVENTORY = SEMANTIC_DIR / "cp126" / "inventory_through_batch0037.jsonl.gz"
@@ -146,24 +148,51 @@ def _resolve_finding_id(token: str, inventory: dict[str, dict[str, Any]]) -> str
     return None
 
 
-def _git_head() -> str:
+def _resolve_commit(ref: str) -> str:
+    """Return the canonical commit SHA for ``ref`` or an empty string."""
+
     try:
-        return subprocess.run(
-            ["git", "rev-parse", "HEAD"],
+        proc = subprocess.run(
+            ["git", "rev-parse", "--verify", f"{ref}^{{commit}}"],
             cwd=str(ROOT),
             capture_output=True,
             text=True,
             timeout=10,
             check=False,
-        ).stdout.strip()
+        )
     except (OSError, subprocess.SubprocessError):
         return ""
+    resolved = proc.stdout.strip().lower()
+    if proc.returncode != 0 or len(resolved) != 40:
+        return ""
+    try:
+        int(resolved, 16)
+    except ValueError:
+        return ""
+    return resolved
+
+
+def _git_file_sha256(commit: str, path: str) -> str | None:
+    """Hash ``path`` exactly as stored by ``commit``; None means absent."""
+
+    try:
+        proc = subprocess.run(
+            ["git", "show", f"{commit}:{path}"],
+            cwd=str(ROOT),
+            capture_output=True,
+            timeout=30,
+            check=False,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None
+    if proc.returncode != 0:
+        return None
+    return hashlib.sha256(proc.stdout).hexdigest()
 
 
 def cmd_record(args: argparse.Namespace) -> int:
     inventory = load_inventory(Path(args.inventory))
     ledger_path = Path(args.ledger)
-    ledger_path.parent.mkdir(parents=True, exist_ok=True)
 
     if args.status not in VALID_STATUSES:
         print(f"error: --status must be one of {sorted(VALID_STATUSES)}", file=sys.stderr)
@@ -176,49 +205,79 @@ def cmd_record(args: argparse.Namespace) -> int:
         )
         return 2
 
-    commit = args.commit or _git_head()
-    now = time.time()
-    written = 0
+    commit_ref = str(args.commit or "HEAD").strip()
+    commit = _resolve_commit(commit_ref)
+    if not commit:
+        print(
+            f"error: --commit does not resolve to a git commit: {commit_ref!r}",
+            file=sys.stderr,
+        )
+        return 2
+
+    resolved_findings: list[tuple[str, dict[str, Any]]] = []
     unknown: list[str] = []
-
-    with ledger_path.open("a", encoding="utf-8") as handle:
-        for token in args.finding:
-            finding_id = _resolve_finding_id(token, inventory)
-            if finding_id is None:
-                unknown.append(token)
-                continue
-            meta = inventory[finding_id]
-            entry = {
-                "schema": REMEDIATION_ENTRY_SCHEMA,
-                "finding_id": finding_id,
-                "file": meta["file"],
-                "severity": meta["severity"],
-                "title": meta["title"],
-                "repair_group": meta["repair_group"],
-                "status": args.status,
-                "commit": commit,
-                "agent": args.agent,
-                "evidence": list(args.evidence),
-                "note": args.note.strip(),
-                # Hash at closure: if the file later changes, a verify pass can
-                # tell that the fix may no longer be present (a concurrent
-                # merge reverted two whole batches during this campaign).
-                "file_sha256_at_close": _sha256_file(ROOT / meta["file"]),
-                "inventory_file_sha256": meta["inventory_file_sha256"],
-                "recorded_at_unix": now,
-                "claim_supported": "finding_remediation_recorded_by_agent",
-                "claim_not_supported": [
-                    "independent_verification",
-                    "full_closeout_complete",
-                ],
-            }
-            handle.write(json.dumps(entry, sort_keys=True) + "\n")
-            written += 1
-
-    print(f"recorded {written} finding(s) as {args.status}")
+    for token in args.finding:
+        finding_id = _resolve_finding_id(token, inventory)
+        if finding_id is None:
+            unknown.append(token)
+        else:
+            resolved_findings.append((finding_id, inventory[finding_id]))
     if unknown:
-        print(f"WARNING: {len(unknown)} unknown finding id(s): {', '.join(unknown)}", file=sys.stderr)
-        return 1
+        print(
+            f"error: {len(unknown)} unknown finding id(s): {', '.join(unknown)}",
+            file=sys.stderr,
+        )
+        return 2
+
+    file_hashes: dict[str, str] = {}
+    for _finding_id, meta in resolved_findings:
+        path = str(meta["file"])
+        if path in file_hashes:
+            continue
+        current_hash = _sha256_file(ROOT / path)
+        committed_hash = _git_file_sha256(commit, path) or ""
+        if current_hash != committed_hash:
+            print(
+                "error: finding source is not the source stored by closure commit: "
+                f"{path} (current={current_hash or 'absent'}, "
+                f"commit={committed_hash or 'absent'}, commit_sha={commit})",
+                file=sys.stderr,
+            )
+            return 2
+        file_hashes[path] = current_hash
+
+    now = time.time()
+    entries: list[str] = []
+    for finding_id, meta in resolved_findings:
+        entry = {
+            "schema": REMEDIATION_ENTRY_SCHEMA,
+            "finding_id": finding_id,
+            "file": meta["file"],
+            "severity": meta["severity"],
+            "title": meta["title"],
+            "repair_group": meta["repair_group"],
+            "status": args.status,
+            "commit": commit,
+            "agent": args.agent,
+            "evidence": list(args.evidence),
+            "note": args.note.strip(),
+            # Hash at closure: if the file later changes, a verify pass can
+            # tell that the fix may no longer be present (a concurrent
+            # merge reverted two whole batches during this campaign).
+            "file_sha256_at_close": file_hashes[str(meta["file"])],
+            "inventory_file_sha256": meta["inventory_file_sha256"],
+            "recorded_at_unix": now,
+            "claim_supported": "finding_remediation_recorded_by_agent",
+            "claim_not_supported": [
+                "independent_verification",
+                "full_closeout_complete",
+            ],
+        }
+        entries.append(json.dumps(entry, sort_keys=True) + "\n")
+
+    if entries:
+        atomic_append_text(ledger_path, "".join(entries))
+    print(f"recorded {len(entries)} finding(s) as {args.status}")
     return 0
 
 

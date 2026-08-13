@@ -15,6 +15,7 @@ codebase: the absence of a check reported as a passed check.
 """
 from __future__ import annotations
 
+import hashlib
 import json
 import subprocess
 import sys
@@ -40,12 +41,14 @@ def _run(*args: str, cwd: Path) -> subprocess.CompletedProcess:
 @pytest.fixture
 def ledger_world(tmp_path):
     """An inventory of three findings and a ledger we control."""
+    source_path = "core/conversation/claimed_effect.py"
+    source_sha = hashlib.sha256((ROOT / source_path).read_bytes()).hexdigest()
     inventory = tmp_path / "inventory.jsonl"
     inventory.write_text(
         json.dumps(
             {
-                "file": "core/example.py",
-                "file_sha256": "0" * 64,
+                "file": source_path,
+                "file_sha256": source_sha,
                 "findings": [
                     {
                         "finding_id": f"semantic-{n:016x}",
@@ -60,6 +63,47 @@ def ledger_world(tmp_path):
         encoding="utf-8",
     )
     return tmp_path, inventory, tmp_path / "LEDGER.jsonl"
+
+
+def test_record_rejects_a_nonexistent_commit_without_writing(ledger_world):
+    tmp_path, inventory, ledger = ledger_world
+    result = _run(
+        "record",
+        "--finding", "semantic-0000000000000001",
+        "--status", "remediated",
+        "--commit", "5abfe5816dfb3311060342b35849e8228f805f92",
+        "--ledger", str(ledger),
+        "--inventory", str(inventory),
+        cwd=ROOT,
+    )
+
+    assert result.returncode != 0
+    assert "does not resolve to a git commit" in result.stderr
+    assert not ledger.exists()
+
+
+def test_record_canonicalizes_commit_to_full_sha(ledger_world):
+    tmp_path, inventory, ledger = ledger_world
+    result = _run(
+        "record",
+        "--finding", "semantic-0000000000000001",
+        "--status", "remediated",
+        "--commit", "HEAD",
+        "--ledger", str(ledger),
+        "--inventory", str(inventory),
+        cwd=ROOT,
+    )
+
+    assert result.returncode == 0, result.stderr
+    entry = json.loads(ledger.read_text(encoding="utf-8"))
+    assert len(entry["commit"]) == 40
+    assert entry["commit"] == subprocess.run(
+        ["git", "rev-parse", "HEAD"],
+        cwd=ROOT,
+        capture_output=True,
+        text=True,
+        check=True,
+    ).stdout.strip()
 
 
 def _status(world, *extra: str) -> str:

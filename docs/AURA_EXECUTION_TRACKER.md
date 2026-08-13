@@ -46852,3 +46852,37 @@ hash-bound. After the independent runtime-boundary repair, the next evidence
 checkpoint records those four closures and advances to `external-chat-ipc`.
 Powered resident-32B replication remains separate and undisturbed; no reasoning
 gain or `WOW Signal` is claimed here.
+
+## Checkpoint 2026-08-12-321: Pending-Custody Closure Is Commit-Bound
+
+The four `pending-retry-custody` findings are now closed in the append-only
+semantic remediation ledger against CP320's repository-resolved commit
+`5abfe58162719d4d2397f44acd57a7d857ac8b30`. The ledger reports `33/58`
+findings closed (`56.9%`) with `25` open: `8/8` inventory-critical, `24/40`
+inventory-high and `1/10` inventory-medium findings are closed. This severity
+view intentionally follows the frozen source inventory used by the ledger;
+the later adjudication's corrected severities remain preserved separately.
+Verification reports zero unknown finding IDs and zero changed files among the
+latest closure records.
+
+While recording the evidence, the remediation tool accepted a manually typed
+40-character SHA that did not identify any git object. The invalid history was
+not erased: four corrected append-only records supersede it. The writer now
+resolves every commit reference through git, stores the canonical full commit
+SHA, rejects the entire batch if any finding ID is unknown, verifies that each
+finding file's current bytes are exactly the bytes stored by the cited commit,
+and writes the complete batch through Aura's locked durable append primitive.
+Its focused contract suite passes `12/12`. A closure receipt can therefore no
+longer cite a nonexistent commit, bind an edited file to stale source, or leave
+a partial batch when one requested finding is invalid.
+
+The separate runtime-boundary defect found during CP320 verification is also
+retired on `main`: affect-circumplex lesion registration now fails visibly
+instead of silently booting an unmeasurable actuator. Its focused contracts
+pass `32/32` and canonical smoke remains `104/104`.
+
+This closes the third semantic repair group, not the scoped slice or the whole
+repository. The next dependency-ordered group is `external-chat-ipc`, followed
+by the remaining five repair groups. Powered resident-32B replication remains
+independent; this evidence checkpoint does not claim a powered reasoning gain,
+runtime tissue qualification, fusion authority, or `WOW Signal`.
