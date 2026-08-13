@@ -35,6 +35,7 @@ import numpy as np
 
 from core.runtime.errors import record_degradation
 from core.voice.duplex.config import CAPTURE_RATE, AsrConfig
+from core.runtime.lockdep import LockRank, checked_async_lock, checked_lock
 
 logger = logging.getLogger("Aura.Voice.Asr")
 
@@ -42,7 +43,7 @@ logger = logging.getLogger("Aura.Voice.Asr")
 # restoring it, alternating a small partial model and a large final model
 # reloads weights on every transition. The lock also prevents independent
 # voice sessions from swapping the holder while another decode is in flight.
-_MLX_HOLDER_LOCK = threading.Lock()
+_MLX_HOLDER_LOCK = checked_lock("voice.asr.mlx_holder", rank=LockRank.LEAF)
 
 # Whisper's canonical outputs for "the mic was on but nobody spoke". It
 # produces these confidently on silence, so they must never become a turn.
@@ -141,11 +142,11 @@ class _WhisperBackend:
         self._mlx_holder: Any = None
         self._mlx_models: dict[str, Any] = {}
         self._cache: dict[str, Any] = {}
-        self._cache_lock = threading.Lock()
-        self._usage_lock = threading.Lock()
-        self._warm_lock = threading.Lock()
+        self._cache_lock = checked_lock("voice.asr.cache", rank=LockRank.LEAF)
+        self._usage_lock = checked_lock("voice.asr.usage", rank=LockRank.LEAF)
+        self._warm_lock = checked_lock("voice.asr.warm", rank=LockRank.LEAF)
         self._warmed_repos: set[str] = set()
-        self._lane_lock = threading.Lock()
+        self._lane_lock = checked_lock("voice.asr.lane", rank=LockRank.LEAF)
         self._lane_lease: Any = None
         self._model_lane_controller = model_lane_controller
         self._parakeet: Any = None
@@ -500,7 +501,7 @@ class StreamingAsr:
         self._stable_words: list[str] = []
         self._tentative_words: list[str] = []
         self._last_partial_at = 0.0
-        self._decode_lock = asyncio.Lock()
+        self._decode_lock = checked_async_lock("voice.asr.decode", rank=LockRank.LEAF)
         self._warmed = False
 
     @property

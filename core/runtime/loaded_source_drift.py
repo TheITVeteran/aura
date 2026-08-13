@@ -51,6 +51,7 @@ import sys
 import threading
 from pathlib import Path
 from typing import Any, Iterable
+from core.runtime.lockdep import LockRank, checked_lock
 
 #: Path components that mean "not this project's source".
 _VENDOR_PARTS = frozenset({".venv", "venv", "site-packages", "dist-packages", "node_modules", ".git"})
@@ -218,7 +219,7 @@ def _drift_reason(module_name: str, source: Path, cache: Path | None) -> str | N
 
 
 _BASELINE: dict[str, tuple[int, int]] = {}
-_BASELINE_LOCK = threading.Lock()
+_BASELINE_LOCK = checked_lock("loaded_source_drift.baseline", rank=LockRank.LEAF)
 
 
 def _loaded_project_modules(root: Path) -> Iterable[tuple[str, Path, Path | None]]:

@@ -1,7 +1,7 @@
 {
-  "raw_lock_calls": 714,
-  "files_with_raw_locks": 446,
-  "files_using_checked_locks": 93,
+  "raw_lock_calls": 706,
+  "files_with_raw_locks": 444,
+  "files_using_checked_locks": 110,
   "raw_by_file": {
     "core/actuation/world_actuator.py": 2,
     "core/actuators/actuator_registry.py": 3,
@@ -431,8 +431,6 @@
     "core/utils/task_tracker.py": 2,
     "core/values/value_model.py": 2,
     "core/verify/invariants.py": 1,
-    "core/voice/duplex/streaming_asr.py": 4,
-    "core/voice/duplex/tts_stream.py": 4,
     "core/voice/duplex/vad_gate.py": 1,
     "core/workspace/markdown_workspace.py": 1,
     "core/world_model/belief_graph.py": 2,

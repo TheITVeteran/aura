@@ -59,7 +59,7 @@ import time
 from dataclasses import dataclass, field
 from typing import Any
 
-from core.runtime.lockdep import checked_lock
+from core.runtime.lockdep import LockRank, checked_lock
 from core.runtime.turn_outcome import VerificationGrade, current_turn
 
 __all__ = [
@@ -490,7 +490,7 @@ class CustodySet:
             }
 
 
-_REGISTRY_LOCK = threading.RLock()
+_REGISTRY_LOCK = checked_lock("fact_custody.registry", rank=LockRank.LEAF, reentrant=True)
 _SETS: dict[str, CustodySet] = {}
 
 

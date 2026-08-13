@@ -1,0 +1,60 @@
+name: Ratchets
+
+# The only-shrink gates, enforced.
+#
+# Every one of these already existed as a make target and none of them ran in
+# CI. Two of 110 targets did (`make lint`, `make smoke`), so the gates written
+# specifically to stop slow decay were the ones nothing checked — and four of
+# them were red simultaneously: lexical-debt 183->201, phrase-pins 412->454,
+# lock-coverage 714->724, and method-size. A ratchet nobody runs is a comment.
+#
+# These are hard gates. Each tool prints what rose and by how much, and each
+# refuses rather than guessing. When a number legitimately falls, refresh that
+# tool's baseline in the same commit that earned it.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  ratchets:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      # Every ratchet here is pure AST/regex over tracked source. None of them
+      # import Aura, so none of them need the runtime dependency set — which is
+      # also why they are cheap enough to gate every push.
+      - name: Architectural layering (DEPS include rules)
+        run: python tools/check_layering.py
+
+      - name: Guarded imports
+        run: python tools/lint_guarded_imports.py
+
+      - name: Lockdep coverage (raw locks only shrink)
+        run: python tools/lint_lock_coverage.py
+
+      - name: Governance effect ownership
+        run: python tools/lint_governance.py
+
+      - name: Output-filter patterns (lexical debt only shrinks)
+        run: python tools/lint_lexical_debt.py
+
+      - name: Phrase-pinned tests (only shrink)
+        run: python tools/lint_phrase_pinned_tests.py
+
+      - name: Outsized functions (only shrink)
+        run: python tools/lint_method_size.py

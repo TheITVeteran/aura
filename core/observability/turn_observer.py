@@ -42,6 +42,7 @@ from typing import Any, Callable
 
 from core.runtime.stuck_detector import AgentStep, StuckDetector, StuckVerdict
 from core.runtime.turn_budget import Budget, BudgetLedger
+from core.runtime.lockdep import LockRank, checked_lock
 
 logger = logging.getLogger("Aura.TurnObserver")
 
@@ -97,7 +98,7 @@ class TurnObserver:
         self._budget = budget or Budget.unlimited()
         self._detector = detector or StuckDetector()
         self._clock = clock
-        self._lock = threading.Lock()
+        self._lock = checked_lock("turn_observer.state", rank=LockRank.LEAF)
         self._history: deque[TurnSummary] = deque(maxlen=history)
         self._current: TurnSummary | None = None
         self._ledger: BudgetLedger | None = None
@@ -212,7 +213,7 @@ def _distribution(values: list[float]) -> dict[str, float]:
 
 
 _instance: TurnObserver | None = None
-_install_lock = threading.Lock()
+_install_lock = checked_lock("turn_observer.install", rank=LockRank.LEAF)
 #: Which instrumentations already carry the hook. Weak so a discarded
 #: instrumentation does not pin itself in memory, and per-instrumentation
 #: because idempotence is a property of the *pairing*: a bare "already

@@ -18,6 +18,7 @@ from typing import Any
 from core.voice.duplex.config import DuplexConfig
 from core.voice.duplex.streaming_asr import StreamingAsr, _WhisperBackend
 from core.voice.duplex.tts_stream import StreamingTts
+from core.runtime.lockdep import LockRank, checked_lock
 
 logger = logging.getLogger("Aura.Voice.ModelRuntime")
 
@@ -51,7 +52,7 @@ class VoiceModelRuntime:
             model_lane_controller=model_lane_controller,
         )
         self._closed = False
-        self._lock = threading.Lock()
+        self._lock = checked_lock("voice.model_runtime.state", rank=LockRank.LEAF)
 
     @property
     def config_identity(self) -> str:
@@ -96,7 +97,7 @@ class VoiceModelRuntime:
 
 
 _RUNTIME: VoiceModelRuntime | None = None
-_RUNTIME_LOCK = threading.Lock()
+_RUNTIME_LOCK = checked_lock("voice.model_runtime.singleton", rank=LockRank.LEAF)
 
 
 def get_voice_model_runtime(config: DuplexConfig | None = None) -> VoiceModelRuntime:

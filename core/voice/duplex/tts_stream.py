@@ -36,6 +36,7 @@ from core.runtime.errors import record_degradation
 from core.utils.task_tracker import get_task_tracker
 from core.voice.duplex.config import OUTPUT_RATE, TtsConfig
 from core.voice.duplex.prosody import ProsodySpec
+from core.runtime.lockdep import LockRank, checked_async_lock, checked_lock
 
 logger = logging.getLogger("Aura.Voice.Tts")
 
@@ -80,7 +81,7 @@ class _KokoroEngine:
     def __init__(self, config: TtsConfig) -> None:
         self._config = config
         self._kokoro: Any = None
-        self._lock = threading.Lock()
+        self._lock = checked_lock("voice.tts.__kokoro_engine", rank=LockRank.LEAF)
         self._rate = 24_000
         self._available = False
         self._voices: frozenset[str] = frozenset()
@@ -150,7 +151,7 @@ class _PiperEngine:
     def __init__(self, config: TtsConfig) -> None:
         self._config = config
         self._voice: Any = None
-        self._lock = threading.Lock()
+        self._lock = checked_lock("voice.tts.__piper_engine", rank=LockRank.LEAF)
         self._rate = 22_050
         self._available = False
 
@@ -212,7 +213,7 @@ class _ClonedVoiceEngine:
     def __init__(self, config: TtsConfig) -> None:
         self._config = config
         self._tts: Any = None
-        self._lock = threading.Lock()
+        self._lock = checked_lock("voice.tts.__cloned_voice_engine", rank=LockRank.LEAF)
         self._rate = 24_000
         self._available = False
         self._reference: Path | None = None
@@ -322,12 +323,12 @@ class StreamingTts:
         self._state = _EngineState()
         self._model_lane_controller = model_lane_controller
         self._lane_lease: Any = None
-        self._lifecycle_lock = threading.Lock()
+        self._lifecycle_lock = checked_lock("voice.tts.lifecycle", rank=LockRank.LEAF)
         self._active_syntheses = 0
         self._accepting_synthesis = False
         self._closing = False
         self._load_retry_after = 0.0
-        self._warm_lock = asyncio.Lock()
+        self._warm_lock = checked_async_lock("voice.tts.warm", rank=LockRank.LEAF)
         self._warmed = False
         self._pool = ThreadPoolExecutor(
             max_workers=max(1, self._config.workers),

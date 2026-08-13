@@ -8,6 +8,7 @@ import time
 from collections import deque
 from dataclasses import asdict, dataclass
 from typing import Any
+from core.runtime.lockdep import LockRank, checked_lock
 
 #: How far above the room's own noise floor speech has to sit before it counts
 #: as coming from someone AT the machine.
@@ -46,7 +47,7 @@ _RMS_HISTORY_MIN = 12
 _ABSOLUTE_NEAR_FIELD_DB = -22.0
 
 _rms_history: deque[float] = deque(maxlen=_RMS_HISTORY_MAX)
-_rms_lock = threading.Lock()
+_rms_lock = checked_lock("audio_attention.rms", rank=LockRank.LEAF)
 
 
 def observe_room_loudness(rms_db: float) -> None:
