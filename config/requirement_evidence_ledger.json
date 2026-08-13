@@ -1,5 +1,5 @@
 {
-  "content_sha256": "034185d589ad400f1d46b96080afe2b7628dc0e014777a0e9e6d82440310fedf",
+  "content_sha256": "a4fc426090f906cb0e56caeaa9150d2579b5383149e85ea67269e5ec05a84ee1",
   "entries": [
     {
       "acceptance_ids": [
@@ -618,23 +618,23 @@
       "acceptance_ids": [
         "A1"
       ],
-      "commit": "c4c0bc4ac39fddc00527d7f40ee7258add59630c",
+      "commit": "deb089f5d8b78dd92c962c0bbabdf9edaa11ee89",
       "evidence_class": "implementation",
-      "recorded_at": "2026-08-07",
-      "ref": "artifacts/reqproof/evidence/reqproof-progress-engine-audit/c4c0bc4ac39fddc00527d7f40ee7258add59630c.json",
+      "recorded_at": "2026-08-13",
+      "ref": "artifacts/reqproof/evidence/reqproof-progress-engine-audit/deb089f5d8b78dd92c962c0bbabdf9edaa11ee89.json",
       "requirement_id": "PROGRESS-CONTROL-001",
-      "sha256": "4b738082cfec3313e234086d595db983a3eb8e0fa11ba93d5e986a995bc20d44"
+      "sha256": "de0a9239feef28ac501766a5c5deb12b0128151c8c985e96e5938a0a5a7a018b"
     },
     {
       "acceptance_ids": [
         "A1"
       ],
-      "commit": "e1a02eea9cdb0dcd81eed0e103fd3e24fa691428",
+      "commit": "deb089f5d8b78dd92c962c0bbabdf9edaa11ee89",
       "evidence_class": "test",
-      "recorded_at": "2026-08-07",
-      "ref": "artifacts/reqproof/evidence/reqproof-control-plane-contract-tests/e1a02eea9cdb0dcd81eed0e103fd3e24fa691428.json",
+      "recorded_at": "2026-08-13",
+      "ref": "artifacts/reqproof/evidence/reqproof-control-plane-contract-tests/deb089f5d8b78dd92c962c0bbabdf9edaa11ee89.json",
       "requirement_id": "PROGRESS-CONTROL-001",
-      "sha256": "508479b8ea3d7fce55f15ac9b8063baab3626c5c343112cbea4678fa912edac9"
+      "sha256": "1f3ca7df5366015f149f0097489489c810bc8b7022cb80ed43850ad5c6a4b2fc"
     },
     {
       "acceptance_ids": [
@@ -673,12 +673,12 @@
       "acceptance_ids": [
         "A1"
       ],
-      "commit": "e1a02eea9cdb0dcd81eed0e103fd3e24fa691428",
+      "commit": "deb089f5d8b78dd92c962c0bbabdf9edaa11ee89",
       "evidence_class": "test",
-      "recorded_at": "2026-08-07",
-      "ref": "artifacts/reqproof/evidence/reqproof-control-plane-contract-tests/e1a02eea9cdb0dcd81eed0e103fd3e24fa691428.json",
+      "recorded_at": "2026-08-13",
+      "ref": "artifacts/reqproof/evidence/reqproof-control-plane-contract-tests/deb089f5d8b78dd92c962c0bbabdf9edaa11ee89.json",
       "requirement_id": "SCOPE-001",
-      "sha256": "508479b8ea3d7fce55f15ac9b8063baab3626c5c343112cbea4678fa912edac9"
+      "sha256": "1f3ca7df5366015f149f0097489489c810bc8b7022cb80ed43850ad5c6a4b2fc"
     },
     {
       "acceptance_ids": [
@@ -728,12 +728,12 @@
       "acceptance_ids": [
         "A1"
       ],
-      "commit": "b48ed527d88ae798983391f1444700955b7fa246",
+      "commit": "deb089f5d8b78dd92c962c0bbabdf9edaa11ee89",
       "evidence_class": "implementation",
-      "recorded_at": "2026-08-07",
-      "ref": "artifacts/reqproof/evidence/production-surface-ownership-audit/b48ed527d88ae798983391f1444700955b7fa246.json",
+      "recorded_at": "2026-08-13",
+      "ref": "artifacts/reqproof/evidence/production-surface-ownership-audit/deb089f5d8b78dd92c962c0bbabdf9edaa11ee89.json",
       "requirement_id": "STORAGE-GATEWAY-001",
-      "sha256": "ca770c5cf8a6feb8dd82053b27706f73e85d38da8c0e49d7dd40e3c3b11dc229"
+      "sha256": "f039c4743d8a002758df53bcc2e1b69fb8b5f6345e1a78df4a21b2a3d84598cd"
     },
     {
       "acceptance_ids": [
