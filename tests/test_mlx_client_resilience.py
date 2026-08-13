@@ -2139,6 +2139,40 @@ class TestIPCWriterThread(unittest.TestCase):
 
         mp_queue.put.assert_called_once_with(item, block=True, timeout=5.0)
 
+    def test_terminal_message_displaces_progress_when_buffer_full(self):
+        mp_queue = SimpleNamespace(put=SyncCallProbe())
+        writer = IPCWriterThread(mp_queue)
+        writer.local_queue = queue.Queue(maxsize=1)
+        writer.local_queue.put({"status": "progress", "tokens_generated": 8})
+
+        terminal = {"status": "ok", "action": "generate", "text": "done"}
+        writer.put(terminal)
+
+        assert writer.local_queue.get_nowait() == terminal
+        mp_queue.put.assert_not_called()
+
+    def test_progress_cannot_displace_terminal_message(self):
+        mp_queue = SimpleNamespace(put=SyncCallProbe())
+        writer = IPCWriterThread(mp_queue)
+        writer.local_queue = queue.Queue(maxsize=1)
+        terminal = {"status": "ok", "action": "generate", "text": "done"}
+        writer.local_queue.put(terminal)
+
+        writer.put({"status": "progress", "tokens_generated": 8})
+
+        assert writer.local_queue.get_nowait() == terminal
+        mp_queue.put.assert_not_called()
+
+    def test_undeliverable_terminal_marks_response_pipe_broken(self):
+        mp_queue = SimpleNamespace(put=SyncCallProbe(side_effect=queue.Full()))
+        writer = IPCWriterThread(mp_queue)
+        writer.local_queue = queue.Queue(maxsize=1)
+        writer.local_queue.put({"status": "error", "message": "earlier failure"})
+
+        writer.put({"status": "ok", "action": "generate", "text": "done"})
+
+        assert writer.broken.is_set()
+
     def test_heartbeat_is_dropped_when_buffer_full(self):
         mp_queue = SimpleNamespace(put=SyncCallProbe())
         writer = IPCWriterThread(mp_queue)

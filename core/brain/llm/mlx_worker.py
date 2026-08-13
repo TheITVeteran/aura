@@ -2927,14 +2927,24 @@ class IPCWriterThread(threading.Thread):
 
     @staticmethod
     def _is_essential(item: Any) -> bool:
-        if not isinstance(item, dict):
-            return True
-        status = item.get("status")
-        return status not in {"heartbeat", "token"}
+        return IPCWriterThread._delivery_priority(item) > 0
 
-    def _shed_one_nonessential(self) -> bool:
+    @staticmethod
+    def _delivery_priority(item: Any) -> int:
+        """Return 0=telemetry, 1=progress, 2=terminal/control."""
+        if not isinstance(item, dict):
+            return 2
+        status = item.get("status")
+        if status in {"heartbeat", "token"}:
+            return 0
+        if status == "progress":
+            return 1
+        return 2
+
+    def _shed_one_lower_priority(self, incoming: Any) -> bool:
         retained: list[Any] = []
         dropped = False
+        incoming_priority = self._delivery_priority(incoming)
         # Explicit boundary: one full buffer is the most this drain can hold
         # (this file forbids open-ended loops — a wedged feeder here starves
         # IPC and kills the parent's WebSocket).
@@ -2943,7 +2953,7 @@ class IPCWriterThread(threading.Thread):
                 queued = self.local_queue.get_nowait()
             except queue.Empty:
                 break
-            if not dropped and not self._is_essential(queued):
+            if not dropped and self._delivery_priority(queued) < incoming_priority:
                 dropped = True
                 continue
             retained.append(queued)
@@ -2971,21 +2981,24 @@ class IPCWriterThread(threading.Thread):
                                 action="dropped essential IPC message during shed requeue",
                                 severity="critical",
                             )
+                            if self._delivery_priority(leftover) >= 2:
+                                self.broken.set()
                 break
         return dropped
 
     def put(self, item):
-        essential = self._is_essential(item)
+        priority = self._delivery_priority(item)
         try:
             self.local_queue.put(item, block=False)
         except queue.Full:
-            if essential:
-                if self._shed_one_nonessential():
+            if priority > 0:
+                if self._shed_one_lower_priority(item):
                     try:
                         self.local_queue.put(item, block=False)
                         return
                     except queue.Full:
                         pass
+            if priority >= 2:
                 try:
                     # Never silently drop init/generation/error messages; bypass
                     # the local buffer when it is saturated with telemetry.
@@ -2996,8 +3009,10 @@ class IPCWriterThread(threading.Thread):
                         action="dropped essential IPC message after parent queue write failed",
                         severity="critical",
                     )
+                    self.broken.set()
                     logger.debug("Suppressed Exception: %s", _exc)
-            # Drop non-essential telemetry if buffer is full.
+            # Drop telemetry/progress if an equal-or-higher-priority buffer is
+            # full. Terminal/control frames either land or break the pipe.
 
     def stop(self):
         self._stop_event.set()
@@ -3060,20 +3075,25 @@ class IPCWriterThread(threading.Thread):
                 # first; essential messages are requeued so generation/init
                 # replies survive transient parent-side stalls.
                 if not self._stop_event.is_set() and self._is_essential(item):
-                    if self._shed_one_nonessential():
+                    requeued = False
+                    if self._shed_one_lower_priority(item):
                         try:
                             self.local_queue.put(item, block=False)
+                            requeued = True
                         except queue.Full:
-                            self.local_queue.put(item, block=True, timeout=5.0)
-                    else:
+                            pass
+                    if not requeued:
                         try:
                             self.local_queue.put(item, block=True, timeout=5.0)
+                            requeued = True
                         except queue.Full:
                             _record_mlx_degradation(
                                 exc,
                                 action="dropped essential IPC message after parent queue stayed full",
                                 severity="critical",
                             )
+                            if self._delivery_priority(item) >= 2:
+                                self.broken.set()
                     time.sleep(0.05)
                 continue
             except (OSError, ConnectionError, TimeoutError) as pipe_exc:
@@ -7665,9 +7685,9 @@ def _mlx_worker_loop(
                                         # tokens) ... 107.7s" on an ~800-token prompt,
                                         # and a healthy generation was cancelled.
                                         #
-                                        # `progress` carries no text, and unlike
-                                        # `token` it is essential, so the signal cannot
-                                        # be shed under IPC backpressure either.
+                                        # `progress` carries no text and is retained
+                                        # ahead of token/heartbeat telemetry. A terminal
+                                        # answer may still preempt it under backpressure.
                                         ipc_writer.put(
                                             {
                                                 "id": job.get("id"),
