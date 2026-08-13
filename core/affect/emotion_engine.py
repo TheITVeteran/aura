@@ -1,95 +1,66 @@
-import asyncio
-import logging
-from dataclasses import dataclass
-from enum import Enum, auto
+"""core/affect/emotion_engine.py — retired shim over a second affect engine.
+
+Aura had two affect engines. One of them ran.
+
+    core/affect/damasio_v2.py::AffectEngineV2   the canonical engine. Registered
+                                                as the `affect_engine` service
+                                                (required=True), constructed by
+                                                consciousness_provider and by
+                                                boot_cognitive, read by the
+                                                metabolic coordinator, vector
+                                                memory, self_object, runtime
+                                                tools, spiking active inference.
+
+    core/affect/__init__.py::AffectEngine       a PAD engine documented as the
+                                                "lightweight fallback when
+                                                DamasioV2 is unavailable". Its
+                                                only constructor in the entire
+                                                tree was this module, and this
+                                                module had ZERO importers. The
+                                                fallback had no path to it and
+                                                could never have run.
+
+So the second engine was not a redundancy, it was an unreachable one — and
+worse, it was scored as covered: two tests in tests/test_e2e_pipeline.py
+exercised its decay, which is coverage spent on an engine with no construction
+path. They now exercise AffectEngineV2's decay instead.
+
+Wiring the fallback up was the other option and it is the wrong one, by this
+codebase's own rule. CP126 established that "no engine must never look like a
+calm engine": when affect is unavailable the facade must SAY unavailable rather
+than emit plausible neutral numbers. A silent fallback to a different affect
+model does exactly what that rule forbids — it would answer with confident PAD
+values from a model nothing else in the system reads, and no caller could tell
+which engine produced them. Unavailability is the honest output; a second
+opinion presented as the first is not.
+
+This module also constructed its engine at import time
+(``emotion_engine = EmotionEngine()`` at module scope), so importing it for any
+reason would have instantiated the shadow engine as a side effect.
+
+Retirement follows the pattern core/global_workspace.py used over the duplicate
+workspace: keep the module importable, re-export the canonical names, let one
+implementation exist. tests/test_one_canonical_affect_engine.py pins it.
+"""
+
+from __future__ import annotations
+
 from typing import Any
 
-from core.runtime.errors import record_degradation
-from core.runtime.shutdown_coordinator import is_shutdown_requested
-from core.utils.task_tracker import get_task_tracker
+from core.affect import AffectState
+from core.affect.damasio_v2 import AffectEngineV2
 
-from core.affect import AffectEngine, AffectState
-
-logger = logging.getLogger("Aura.EmotionShim")
+__all__ = ["AffectEngineV2", "AffectState", "get_emotion_engine"]
 
 
-_RECOVERABLE_EMOTION_ERRORS = (RuntimeError, TypeError, ValueError, AttributeError)
+def get_emotion_engine() -> Any:
+    """The one affect engine, from the container rather than a fresh instance.
 
+    Constructing an engine here is what created the second one. Callers that
+    want affect want the registered singleton the rest of the runtime reads,
+    and if it is not registered they want to know that rather than be handed a
+    private engine whose state nothing else shares.
+    """
+    from core.container import ServiceContainer
 
-class EmotionType(Enum):
-    # Mapping legacy enum to new PAD state is approximate
-    JOY = auto()
-    TRUST = auto()
-    FEAR = auto()
-    SURPRISE = auto()
-    SADNESS = auto()
-    DISGUST = auto()
-    ANGER = auto()
-    ANTICIPATION = auto()
-    NEUTRAL = auto()
-
-
-@dataclass(frozen=True)
-class LegacyEmotionState:
-    """Read-only view expected by older callers of the emotion engine."""
-
-    primary: str
-    intensity: float
-    mood: str
-    last_update: float
-
-    @classmethod
-    def from_affect(cls, pad: AffectState) -> "LegacyEmotionState":
-        mood = pad.dominant_emotion or "neutral"
-        return cls(
-            primary=mood.upper(),
-            intensity=pad.arousal,
-            mood=mood,
-            last_update=pad.last_update,
-        )
-
-
-class EmotionEngine:
-    """Compatibility layer from the legacy emotion API to AffectEngine PAD state."""
-
-    def __init__(self):
-        self.engine = AffectEngine()
-
-    @property
-    def state(self) -> LegacyEmotionState:
-        return LegacyEmotionState.from_affect(self.engine.state)
-
-    def get_state(self) -> dict[str, Any]:
-        s = self.engine.state
-        return {
-            "primary": s.dominant_emotion,
-            "intensity": round(s.arousal, 2),
-            "mood": s.dominant_emotion,
-            "valence": round(s.valence, 2),
-            "engagement": round(s.engagement, 2),
-        }
-
-    def react(self, trigger: str, context: dict[str, Any] | None = None) -> None:
-        """Forward react call."""
-        if is_shutdown_requested():
-            return
-        try:
-            try:
-                loop = asyncio.get_running_loop()
-            except RuntimeError:
-                asyncio.run(self.engine.react(trigger, context))
-                return
-
-            if loop.is_running():
-                get_task_tracker().create_task(
-                    self.engine.react(trigger, context),
-                    name="emotion_engine.react",
-                )
-
-        except _RECOVERABLE_EMOTION_ERRORS as exc:
-            record_degradation("emotion_engine", exc)
-            logger.error("Failed to forward reaction: %s", exc)
-
-
-# Global Instance (Legacy)
-emotion_engine = EmotionEngine()
+    return ServiceContainer.get("affect_engine", default=None)

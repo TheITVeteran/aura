@@ -5,13 +5,27 @@ FIX: AffectState was defined here AND in core/affect/damasio_v2.py.
 This caused ambiguity about which AffectState was being instantiated
 by which component. Canonical definition lives here. damasio_v2 imports
 from here.
+
+A PAD ``AffectEngine`` also lived here, documented as the "lightweight fallback
+when DamasioV2 is unavailable". It was unreachable: its only constructor in the
+whole tree was core/affect/emotion_engine.py, and that module had zero
+importers. Aura therefore shipped two affect engines of which one could never
+run, while two tests spent coverage on it.
+
+It was removed rather than wired up, because wiring it would break CP126's
+rule that "no engine must never look like a calm engine" — a silent fallback to
+a different affect model emits confident numbers from a model nothing else
+reads, and no caller could tell which engine answered. The canonical engine is
+core/affect/damasio_v2.py::AffectEngineV2, registered as the `affect_engine`
+service; tests/test_one_canonical_affect_engine.py pins that there is one.
+
+The decay baselines below are retained: they are the PAD reference points, and
+AffectState is still the canonical state type used across the codebase.
 """
 
-import asyncio
 import logging
 import time
 from dataclasses import dataclass, field
-from typing import Any, Dict, Optional
 
 logger = logging.getLogger("Aura.Affect")
 
@@ -38,99 +52,6 @@ BASELINE_VALENCE    = 0.1
 BASELINE_AROUSAL    = 0.3
 BASELINE_ENGAGEMENT = 0.5
 DECAY_RATE          = 0.02
-
-
-class AffectEngine:
-    """
-    PAD-based Affective Dynamics Engine.
-    Decays toward baseline. Used as lightweight fallback
-    when DamasioV2 (full Plutchik model) is unavailable.
-    """
-
-    def __init__(self, brain: Optional[Any] = None):
-        self.state = AffectState()
-        self.brain = brain
-        self._lock = asyncio.Lock()
-        self._last_decay_time: float = time.time()
-        logger.info("Affect Engine (PAD + decay) initialized.")
-
-    def is_ready(self) -> bool:
-        """Synchronous liveness probe for the runtime health contract."""
-        state = getattr(self, "state", None)
-        return (
-            isinstance(state, AffectState)
-            and getattr(self, "_lock", None) is not None
-            and isinstance(getattr(self, "_last_decay_time", None), (int, float))
-            and -1.0 <= float(state.valence) <= 1.0
-            and 0.0 <= float(state.arousal) <= 1.0
-            and 0.0 <= float(state.engagement) <= 1.0
-        )
-
-    async def modify(
-        self,
-        dv: float,
-        da: float,
-        de: float,
-        source: str = "internal"
-    ):
-        async with self._lock:
-            old_v = self.state.valence
-            old_a = self.state.arousal
-            self.state.valence = max(-1.0, min(1.0, self.state.valence + dv))
-            self.state.arousal = max(0.0, min(1.0, self.state.arousal + da))
-            self.state.engagement = max(0.0, min(1.0, self.state.engagement + de))
-            self.state.last_update = time.time()
-            self._update_label()
-            if abs(self.state.valence - old_v) > 0.1 or abs(self.state.arousal - old_a) > 0.1:
-                logger.debug(
-                    "Affect shift (%s): V=%.2f A=%.2f → %s",
-                    source, self.state.valence, self.state.arousal,
-                    self.state.dominant_emotion
-                )
-
-    async def decay_tick(self):
-        """Decay toward baseline, scaled by wall-clock elapsed time.
-
-        DECAY_RATE is calibrated for a ~60-second tick interval.  If the
-        tick fires faster or slower (CPU load, sleep/wake), we scale the
-        decay proportionally so emotional momentum is tied to real time,
-        not tick rate.
-        """
-        async with self._lock:
-            now = time.time()
-            elapsed_s = now - self._last_decay_time
-            self._last_decay_time = now
-            # Normalise: DECAY_RATE assumes a 60-second tick; scale linearly.
-            tick_scale = elapsed_s / 60.0
-            effective_rate = DECAY_RATE * tick_scale
-            self.state.valence    += (BASELINE_VALENCE    - self.state.valence)    * effective_rate
-            self.state.arousal    += (BASELINE_AROUSAL    - self.state.arousal)    * effective_rate
-            self.state.engagement += (BASELINE_ENGAGEMENT - self.state.engagement) * effective_rate
-            self.state.valence = max(-1.0, min(1.0, self.state.valence))
-            self.state.arousal = max(0.0, min(1.0, self.state.arousal))
-            self.state.engagement = max(0.0, min(1.0, self.state.engagement))
-            self.state.last_update = now
-            self._update_label()
-
-    def _update_label(self):
-        v = self.state.valence
-        a = self.state.arousal
-        if a < 0.2:
-            self.state.dominant_emotion = "Calm" if v >= 0 else "Bored"
-        elif v > 0.5 and a > 0.5:
-            self.state.dominant_emotion = "Joyful"
-        elif v > 0.0 and a > 0.5:
-            self.state.dominant_emotion = "Excited"
-        elif v < -0.5 and a > 0.5:
-            self.state.dominant_emotion = "Distressed"
-        elif v < 0.0 and a > 0.5:
-            self.state.dominant_emotion = "Anxious"
-        elif v > 0.5:
-            self.state.dominant_emotion = "Content"
-        elif v < -0.5:
-            self.state.dominant_emotion = "Sad"
-        else:
-            self.state.dominant_emotion = "Neutral"
 
 
 # Phenomenal Substrate Integration

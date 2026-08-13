@@ -233,56 +233,75 @@ class TestPipeline:
 # ============================================================================
 
 class TestAffectEngine:
-    """Verify AffectEngine.decay_tick uses wall-clock time correctly."""
+    """Verify decay_tick on the affect engine that actually runs.
+
+    These two cases used to exercise ``core.affect.AffectEngine``, a PAD engine
+    documented as the fallback for when DamasioV2 is unavailable. It was
+    unreachable — its only constructor anywhere was
+    core/affect/emotion_engine.py, which had zero importers — so the coverage
+    was being spent on an engine with no construction path while the engine
+    every consumer actually reads went untested here. Repointed at
+    AffectEngineV2, which is what the `affect_engine` service resolves to.
+
+    V2 decays emotions toward their mood baselines with exponential
+    convergence, alpha = 1 - exp(-elapsed/180), driven by a monotonic clock.
+    """
 
     @pytest.mark.asyncio
     async def test_decay_toward_baseline(self):
-        from core.affect import (
-            AffectEngine,
-        )
+        from core.affect.damasio_v2 import AffectEngineV2
 
-        engine = AffectEngine()
-        # Push state far from baselines
-        engine.state.valence = 0.9
-        engine.state.arousal = 0.9
-        engine.state.engagement = 0.1
-        # Set last decay time to 60 seconds ago to simulate one full tick
-        engine._last_decay_time = time.time() - 60.0
+        engine = AffectEngineV2()
+        emotion = next(iter(engine.markers.emotions))
+        baseline = engine.markers.mood_baselines.get(emotion, 0.0)
+        # Push one emotion far from its baseline, in whichever direction is
+        # available given the [0, 1] clamp.
+        far = 1.0 if baseline < 0.5 else 0.0
+        engine.markers.emotions[emotion] = far
+        # One full time-constant of elapsed time on the monotonic clock.
+        engine._last_pulse_monotonic = time.monotonic() - 180.0
 
         await engine.decay_tick()
 
-        # After decay, values should move toward baselines
-        assert engine.state.valence < 0.9, "Valence should have decayed toward baseline"
-        assert engine.state.arousal < 0.9, "Arousal should have decayed toward baseline"
-        assert engine.state.engagement > 0.1, "Engagement should have risen toward baseline"
+        moved = engine.markers.emotions[emotion]
+        assert abs(moved - baseline) < abs(far - baseline), (
+            f"{emotion} did not move toward its baseline: {far} -> {moved} "
+            f"(baseline {baseline})"
+        )
 
     @pytest.mark.asyncio
     async def test_decay_proportional_to_elapsed_time(self):
-        from core.affect import AffectEngine
+        from core.affect.damasio_v2 import AffectEngineV2
 
-        engine_short = AffectEngine()
-        engine_long = AffectEngine()
+        engine_short = AffectEngineV2()
+        engine_long = AffectEngineV2()
 
-        # Same starting state
+        emotion = next(iter(engine_short.markers.emotions))
+        baseline = engine_short.markers.mood_baselines.get(emotion, 0.0)
+        far = 1.0 if baseline < 0.5 else 0.0
         for eng in (engine_short, engine_long):
-            eng.state.valence = 0.8
-            eng.state.arousal = 0.8
-            eng.state.engagement = 0.2
+            eng.markers.emotions[emotion] = far
 
-        # Short elapsed (10 seconds)
-        engine_short._last_decay_time = time.time() - 10.0
+        now = time.monotonic()
+        engine_short._last_pulse_monotonic = now - 10.0
+        engine_long._last_pulse_monotonic = now - 240.0
         await engine_short.decay_tick()
-        short_delta = abs(0.8 - engine_short.state.valence)
-
-        # Long elapsed (120 seconds)
-        engine_long._last_decay_time = time.time() - 120.0
         await engine_long.decay_tick()
-        long_delta = abs(0.8 - engine_long.state.valence)
 
-        # Longer elapsed time should produce larger decay
+        short_delta = abs(far - engine_short.markers.emotions[emotion])
+        long_delta = abs(far - engine_long.markers.emotions[emotion])
         assert long_delta > short_delta, (
-            f"Decay should be proportional to elapsed time: "
-            f"long_delta={long_delta:.6f} should be > short_delta={short_delta:.6f}"
+            "a longer gap must decay further: "
+            f"10s moved {short_delta:.4f}, 240s moved {long_delta:.4f}"
+        )
+
+    @pytest.mark.asyncio
+    async def test_legacy_decay_case_is_not_silently_dropped(self):
+        """The retired PAD engine must stay gone rather than come back unnoticed."""
+        import core.affect as affect
+
+        assert not hasattr(affect, "AffectEngine"), (
+            "a second affect engine reappeared in core.affect; there must be one"
         )
 
 

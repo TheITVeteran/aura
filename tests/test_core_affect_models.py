@@ -5,7 +5,6 @@ from types import ModuleType, SimpleNamespace
 import pytest
 
 from core.affect import AffectState
-from core.affect.emotion_engine import EmotionEngine
 from core.affect.emotional_coloring import EmotionalColoring
 from core.identity.narrative_thread import NarrativeThread
 from core.runtime.models import ExecutionPlan
@@ -22,23 +21,30 @@ def test_execution_plan_accepts_structured_tool_payloads():
     assert plan.metadata == {}
 
 
-def test_emotion_engine_legacy_state_tracks_affect_state():
-    engine = EmotionEngine()
-    engine.engine.state = AffectState(
+def test_affect_state_is_the_one_canonical_state_type():
+    """Replaces a test of ``EmotionEngine``, which wrapped a second affect engine.
+
+    That engine — the PAD ``core.affect.AffectEngine`` — was documented as a
+    fallback for when DamasioV2 is unavailable and had no construction path
+    anywhere outside the shim this test used, so the case was covering code
+    that could never run. The shim is retired; what still matters is that
+    AffectState remains the single state type both the engine and its
+    consumers agree on. See tests/test_one_canonical_affect_engine.py.
+    """
+    from core.affect.damasio_v2 import AffectState as EngineFacing
+
+    assert EngineFacing is AffectState
+
+    state = AffectState(
         valence=0.4,
         arousal=0.7,
         engagement=0.8,
         dominant_emotion="Joy",
         last_update=123.0,
     )
-
-    state = engine.state
-
-    assert state.primary == "JOY"
-    assert state.intensity == 0.7
-    assert state.mood == "Joy"
+    assert (state.valence, state.arousal, state.engagement) == (0.4, 0.7, 0.8)
+    assert state.dominant_emotion == "Joy"
     assert state.last_update == 123.0
-    assert engine.get_state()["engagement"] == 0.8
 
 
 def test_narrative_thread_pending_snapshot_is_explicit():
