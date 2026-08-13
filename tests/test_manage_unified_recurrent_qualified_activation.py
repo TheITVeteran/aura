@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import threading
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -170,6 +171,53 @@ def test_status_refuses_orphaned_qualified_authority(tmp_path: Path) -> None:
         match="without a shadow pointer",
     ):
         command._status(arguments)
+
+
+def test_promotion_and_revocation_share_one_transaction_lock(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    package = tmp_path / "package"
+    package.mkdir()
+    lifecycle_path, _lifecycle_value = _lifecycle(tmp_path)
+    arguments = _arguments(tmp_path, package, lifecycle_path)
+    promotion_entered = threading.Event()
+    release_promotion = threading.Event()
+    revocation_entered = threading.Event()
+    failures: list[BaseException] = []
+
+    def fake_activate(_arguments, *, paths):
+        promotion_entered.set()
+        assert release_promotion.wait(timeout=5.0)
+        return {"action": "activate_verified", "paths": paths}
+
+    def fake_deactivate(_arguments, *, paths):
+        revocation_entered.set()
+        return {"action": "deactivate", "paths": paths}
+
+    monkeypatch.setattr(command, "_activate_verified_locked", fake_activate)
+    monkeypatch.setattr(command, "_deactivate_locked", fake_deactivate)
+
+    def run(operation):
+        try:
+            operation(arguments)
+        except BaseException as exc:  # noqa: BLE001 - preserve thread failure
+            failures.append(exc)
+
+    promotion = threading.Thread(target=run, args=(command._activate_verified,))
+    revocation = threading.Thread(target=run, args=(command._deactivate,))
+    promotion.start()
+    assert promotion_entered.wait(timeout=5.0)
+    revocation.start()
+    assert not revocation_entered.wait(timeout=0.1)
+    release_promotion.set()
+    promotion.join(timeout=5.0)
+    revocation.join(timeout=5.0)
+
+    assert not promotion.is_alive()
+    assert not revocation.is_alive()
+    assert revocation_entered.is_set()
+    assert failures == []
 
 
 @pytest.mark.asyncio

@@ -48,7 +48,9 @@ from core.brain.llm.unified_recurrent_shadow_pointer import (  # noqa: E402
     publish_shadow_pointer,
     read_shadow_pointer,
     resolve_shadow_pointer,
+    shadow_pointer_publication_lock_path,
 )
+from core.runtime.atomic_writer import interprocess_file_lock  # noqa: E402
 from core.runtime.file_read_gateway import read_stable_bytes  # noqa: E402
 
 MAX_LIFECYCLE_BYTES: Final = 4 * 1024 * 1024
@@ -429,9 +431,22 @@ def _quarantine_existing_canary(path: Path) -> None:
 
 
 def _activate_verified(arguments: argparse.Namespace) -> dict[str, Any]:
+    """Serialize the complete verified promotion as one custody transaction."""
+
+    paths = _paths(arguments)
+    pointer_path, _releases_root, _activation_path = paths
+    with interprocess_file_lock(shadow_pointer_publication_lock_path(pointer_path)):
+        return _activate_verified_locked(arguments, paths=paths)
+
+
+def _activate_verified_locked(
+    arguments: argparse.Namespace,
+    *,
+    paths: tuple[Path, Path, Path],
+) -> dict[str, Any]:
     """Prove request-scoped IPC before publishing durable serving authority."""
 
-    pointer_path, releases_root, activation_path = _paths(arguments)
+    pointer_path, releases_root, activation_path = paths
     package = arguments.package.expanduser().absolute()
     verified = inspect_shadow_package(package)
     manifest = verified.get("manifest")
@@ -604,7 +619,18 @@ def _activate_verified(arguments: argparse.Namespace) -> dict[str, Any]:
 
 
 def _deactivate(arguments: argparse.Namespace) -> dict[str, Any]:
-    pointer_path, releases_root, activation_path = _paths(arguments)
+    paths = _paths(arguments)
+    pointer_path, _releases_root, _activation_path = paths
+    with interprocess_file_lock(shadow_pointer_publication_lock_path(pointer_path)):
+        return _deactivate_locked(arguments, paths=paths)
+
+
+def _deactivate_locked(
+    arguments: argparse.Namespace,
+    *,
+    paths: tuple[Path, Path, Path],
+) -> dict[str, Any]:
+    pointer_path, releases_root, activation_path = paths
     activation = deactivate_qualified_activation(
         activation_path=activation_path,
         expected_current_sha256=arguments.expected_current_activation_sha256,
@@ -629,7 +655,18 @@ def _deactivate(arguments: argparse.Namespace) -> dict[str, Any]:
 
 
 def _status(arguments: argparse.Namespace) -> dict[str, Any]:
-    pointer_path, releases_root, activation_path = _paths(arguments)
+    paths = _paths(arguments)
+    pointer_path, _releases_root, _activation_path = paths
+    with interprocess_file_lock(shadow_pointer_publication_lock_path(pointer_path)):
+        return _status_locked(arguments, paths=paths)
+
+
+def _status_locked(
+    arguments: argparse.Namespace,
+    *,
+    paths: tuple[Path, Path, Path],
+) -> dict[str, Any]:
+    pointer_path, releases_root, activation_path = paths
     has_pointer = pointer_path.exists() or pointer_path.is_symlink()
     has_activation = activation_path.exists() or activation_path.is_symlink()
     if not has_activation:
