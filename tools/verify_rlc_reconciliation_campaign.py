@@ -18,6 +18,11 @@ if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
 from core.brain.llm.latent_cortex import frontier_tasks as ft  # noqa: E402
+from core.brain.llm.latent_cortex.resource_accounting import (  # noqa: E402
+    validate_control_resource_dominance_certificate,
+    validate_information_receipt,
+    validate_resource_receipt,
+)
 from core.runtime.atomic_writer import atomic_write_bytes  # noqa: E402
 from core.runtime.file_read_gateway import read_stable_bytes  # noqa: E402
 from tools.rlc_complete_system_closed_book import (  # noqa: E402
@@ -29,7 +34,7 @@ SCHEMA = "aura.rlc.reconciliation_independent_verification.v1"
 CONTROLLER_SCHEMA = "aura.rlc_reconciliation_controller.v1"
 FINGERPRINT_SCHEMA = "aura.rlc.reconciliation_evidence_manifest.v3"
 EXPECTED_REQUESTED_ARMS = ("complete_system_recurrent_composed",)
-EXPECTED_REQUIRED_ARMS = (
+COMPONENT_REQUIRED_ARMS = (
     "vanilla",
     "complete_system_closed_book",
     "complete_system_recurrent_composed",
@@ -38,7 +43,18 @@ EXPECTED_REQUIRED_ARMS = (
     "complete_system_adaptation_ablation",
     "complete_system_executable_ablation",
 )
-RUNTIME_ARMS = frozenset(EXPECTED_REQUIRED_ARMS[1:])
+PILOT_REQUIRED_ARMS = (
+    "vanilla",
+    "vanilla_equal_compute",
+    *COMPONENT_REQUIRED_ARMS[1:],
+)
+CERTIFICATE_REQUIRED_ARMS = (
+    *PILOT_REQUIRED_ARMS,
+    "vanilla_resource_dominating",
+)
+# Compatibility names retained for callers constructing component fixtures.
+EXPECTED_REQUIRED_ARMS = COMPONENT_REQUIRED_ARMS
+RUNTIME_ARMS = frozenset(COMPONENT_REQUIRED_ARMS[1:])
 RECURRENT_ARMS = frozenset(
     {
         "complete_system_recurrent_composed",
@@ -48,6 +64,16 @@ RECURRENT_ARMS = frozenset(
 )
 TREATMENT_ARM = "complete_system_recurrent_composed"
 MAX_JSON_BYTES = 512 * 1024 * 1024
+
+
+def _required_arms_for_stage(stage: Any) -> tuple[str, ...]:
+    if stage == "component":
+        return COMPONENT_REQUIRED_ARMS
+    if stage == "pilot":
+        return PILOT_REQUIRED_ARMS
+    if stage == "certificate":
+        return CERTIFICATE_REQUIRED_ARMS
+    _fail("campaign_stage_invalid")
 
 
 class ReconciliationVerificationError(RuntimeError):
@@ -460,6 +486,7 @@ def _verify_decode_contract(
     fingerprint: Mapping[str, Any],
     tasks: Sequence[Any],
     implementation_sha256: str,
+    required_arms: Sequence[str],
 ) -> Mapping[str, str]:
     if (
         config.get("seed") != fingerprint.get("seed", config.get("seed"))
@@ -493,13 +520,13 @@ def _verify_decode_contract(
         not isinstance(arm_tokens, Mapping)
         or not isinstance(task_tokens, Mapping)
         or not isinstance(fingerprints, Mapping)
-        or set(arm_tokens) != set(EXPECTED_REQUIRED_ARMS)
-        or set(task_tokens) != set(EXPECTED_REQUIRED_ARMS)
-        or set(fingerprints) != set(EXPECTED_REQUIRED_ARMS)
+        or set(arm_tokens) != set(required_arms)
+        or set(task_tokens) != set(required_arms)
+        or set(fingerprints) != set(required_arms)
     ):
         _fail("decode_fingerprint_matrix_invalid")
     expected_task_ids = {task.task_id for task in tasks}
-    for arm in EXPECTED_REQUIRED_ARMS:
+    for arm in required_arms:
         if type(arm_tokens[arm]) is not int or arm_tokens[arm] != config["max_tokens"]:
             _fail("arm_token_contract_mismatch")
         expected_task_tokens = {
@@ -601,7 +628,10 @@ def _paired(
 
 
 def _independent_adjudication(
-    scored: Mapping[str, Mapping[str, bool]], task_ids: Sequence[str]
+    scored: Mapping[str, Mapping[str, bool]],
+    task_ids: Sequence[str],
+    *,
+    resource_target_control_proven: bool = False,
 ) -> dict[str, Any]:
     comparisons = {
         "learned_parameters": _paired(
@@ -627,10 +657,21 @@ def _independent_adjudication(
         and floor["regressions"] == 0
     )
     depth_positive = bool(depth["lifts"] > 0 and depth["regressions"] == 0)
+    powered = bool(
+        bounded
+        and depth_positive
+        and resource_target_control_proven
+        and all(
+            row["one_sided_exact_sign_p"] <= 0.05
+            for row in (learned, marginal, depth)
+        )
+    )
     if not bounded:
         decision = "no_bounded_learned_tissue_gain"
     elif not depth_positive:
         decision = "learned_tissue_gain_without_depth_causality"
+    elif powered:
+        decision = "powered_causal_result_requires_independent_replication"
     else:
         decision = "bounded_causal_canary_positive_replication_required"
     return {
@@ -640,8 +681,8 @@ def _independent_adjudication(
         "comparisons": comparisons,
         "bounded_learned_tissue_positive": bounded,
         "recurrent_depth_positive": depth_positive,
-        "resource_target_control_proven": False,
-        "powered_causal_result": False,
+        "resource_target_control_proven": resource_target_control_proven,
+        "powered_causal_result": powered,
         "independent_replication_required": True,
         "wow_signal_authorized": False,
         "fusion_authorized": False,
@@ -649,9 +690,48 @@ def _independent_adjudication(
     }
 
 
+def _verify_resource_target_controls(
+    unique: Mapping[tuple[str, str], Mapping[str, Any]],
+    task_ids: Sequence[str],
+) -> bool:
+    for task_id in task_ids:
+        treatment = unique[(TREATMENT_ARM, task_id)]
+        control = unique[("vanilla_resource_dominating", task_id)]
+        try:
+            treatment_resource = validate_resource_receipt(
+                treatment.get("resource_accounting")
+            )
+            treatment_information = validate_information_receipt(
+                treatment.get("information_accounting")
+            )
+            control_resource = validate_resource_receipt(control.get("resource_accounting"))
+            control_information = validate_information_receipt(
+                control.get("information_accounting")
+            )
+            certificate = validate_control_resource_dominance_certificate(
+                control.get("resource_dominance_certificate")
+            )
+        except (TypeError, ValueError) as exc:
+            raise ReconciliationVerificationError(
+                "resource_dominance_evidence_invalid"
+            ) from exc
+        bindings = {
+            "treatment_resource_sha256": treatment_resource["receipt_sha256"],
+            "control_resource_sha256": control_resource["receipt_sha256"],
+            "treatment_information_sha256": treatment_information["receipt_sha256"],
+            "control_information_sha256": control_information["receipt_sha256"],
+        }
+        if certificate.get("admitted") is not True or any(
+            certificate.get(name) != digest for name, digest in bindings.items()
+        ):
+            _fail("resource_dominance_evidence_invalid")
+    return True
+
+
 def verify(*, config_path: Path, campaign_dir: Path) -> dict[str, Any]:
     custody = _verify_controller(config_path)
     config = custody["config"]
+    required_arms = _required_arms_for_stage(config.get("campaign_stage"))
     expected_campaign_dir = Path(str(config.get("out_dir") or "")).resolve(strict=True)
     campaign_dir = campaign_dir.expanduser().resolve(strict=True)
     if campaign_dir != expected_campaign_dir:
@@ -660,7 +740,7 @@ def verify(*, config_path: Path, campaign_dir: Path) -> dict[str, Any]:
     if (
         fingerprint.get("schema") != FINGERPRINT_SCHEMA
         or tuple(fingerprint.get("requested_arms") or ()) != EXPECTED_REQUESTED_ARMS
-        or tuple(fingerprint.get("required_arms") or ()) != EXPECTED_REQUIRED_ARMS
+        or tuple(fingerprint.get("required_arms") or ()) != required_arms
         or fingerprint.get("campaign_stage") != config.get("campaign_stage")
         or fingerprint.get("resource_dominating_target_arm") != TREATMENT_ARM
     ):
@@ -684,6 +764,7 @@ def verify(*, config_path: Path, campaign_dir: Path) -> dict[str, Any]:
         fingerprint=fingerprint,
         tasks=tasks,
         implementation_sha256=implementation_sha,
+        required_arms=required_arms,
     )
     records = _read_journal(campaign_dir / "journal.jsonl")
     unique: dict[tuple[str, str], dict[str, Any]] = {}
@@ -692,7 +773,7 @@ def verify(*, config_path: Path, campaign_dir: Path) -> dict[str, Any]:
         arm = str(cell.get("arm") or "")
         task_id = str(cell.get("task_id") or "")
         key = (arm, task_id)
-        if arm not in EXPECTED_REQUIRED_ARMS or task_id not in task_by_id:
+        if arm not in required_arms or task_id not in task_by_id:
             _fail("journal_cell_outside_matrix")
         if key in unique:
             _fail("journal_duplicate_cell")
@@ -703,22 +784,39 @@ def verify(*, config_path: Path, campaign_dir: Path) -> dict[str, Any]:
         if arm in RUNTIME_ARMS:
             runtime_receipt_shas.append(_reconstruct_runtime_evidence(campaign_dir, cell))
         unique[key] = cell
-    expected_keys = {(arm, task_id) for task_id in task_ids for arm in EXPECTED_REQUIRED_ARMS}
+    expected_keys = {(arm, task_id) for task_id in task_ids for arm in required_arms}
     if set(unique) != expected_keys:
         _fail("campaign_incomplete")
-    scored: dict[str, dict[str, bool]] = {arm: {} for arm in EXPECTED_REQUIRED_ARMS}
-    score_reasons: dict[str, dict[str, str]] = {arm: {} for arm in EXPECTED_REQUIRED_ARMS}
+    scored: dict[str, dict[str, bool]] = {arm: {} for arm in required_arms}
+    score_reasons: dict[str, dict[str, str]] = {arm: {} for arm in required_arms}
     for (arm, task_id), cell in unique.items():
         result = ft.score_task(task_by_id[task_id], str(cell.get("text") or ""))
         scored[arm][task_id] = bool(result.correct)
         score_reasons[arm][task_id] = str(result.reason or "correct")
-    adjudication = _independent_adjudication(scored, task_ids)
+    resource_target_control_proven = (
+        _verify_resource_target_controls(unique, task_ids)
+        if config.get("campaign_stage") == "certificate"
+        else False
+    )
+    adjudication = _independent_adjudication(
+        scored,
+        task_ids,
+        resource_target_control_proven=resource_target_control_proven,
+    )
     frozen_verdict = _read_json(campaign_dir / "verdict.json", role="frozen_verdict")
     if (
         frozen_verdict.get("primary_claim_target") != "composed_recurrent_tissue"
         or frozen_verdict.get("decision") != adjudication["decision"]
         or frozen_verdict.get("composed_recurrent_adjudication", {}).get("comparisons")
         != adjudication["comparisons"]
+        or frozen_verdict.get("composed_recurrent_adjudication", {}).get(
+            "resource_target_control_proven"
+        )
+        is not adjudication["resource_target_control_proven"]
+        or frozen_verdict.get("composed_recurrent_adjudication", {}).get(
+            "powered_causal_result"
+        )
+        is not adjudication["powered_causal_result"]
         or frozen_verdict.get("claims", {}).get("reasoning_gain_proven") is not False
         or frozen_verdict.get("claims", {}).get("fusion_authorized") is not False
         or frozen_verdict.get("claims", {}).get("frontier_level_proven") is not False
@@ -727,7 +825,7 @@ def verify(*, config_path: Path, campaign_dir: Path) -> dict[str, Any]:
     material = {
         "schema": SCHEMA,
         "campaign_id": config["campaign_id"],
-        "claim_scope": "resident_32b_composed_component_canary_only",
+        "claim_scope": f"resident_32b_composed_{config['campaign_stage']}_only",
         "verified": True,
         "source_commit": config["source_commit"],
         "source_manifest_sha256": custody["source_manifest_sha256"],
@@ -737,14 +835,14 @@ def verify(*, config_path: Path, campaign_dir: Path) -> dict[str, Any]:
         "implementation_sha256": implementation_sha,
         "task_commitment_sha256": commitment_sha,
         "task_count": len(tasks),
-        "required_arms": list(EXPECTED_REQUIRED_ARMS),
+        "required_arms": list(required_arms),
         "cell_count": len(unique),
         "journal_sha256": hashlib.sha256(
             _read_bytes(campaign_dir / "journal.jsonl", role="journal")
         ).hexdigest(),
         "runtime_receipts_sha256": _sha(sorted(runtime_receipt_shas)),
         "scores": {
-            arm: sum(scored[arm].values()) for arm in EXPECTED_REQUIRED_ARMS
+            arm: sum(scored[arm].values()) for arm in required_arms
         },
         "score_reasons": score_reasons,
         "adjudication": adjudication,

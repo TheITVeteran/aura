@@ -1,0 +1,29 @@
+{
+  "schema": "aura.rlc.closeout_checkpoint.v1",
+  "checkpoint": "CP384",
+  "subject": "independent verification covers the full component-to-certificate causal path",
+  "runtime_changes": [
+    "component verification requires the exact seven-arm causal matrix",
+    "pilot verification additionally requires the best-of-three preliminary control",
+    "certificate verification additionally requires the resource-dominating ordinary control",
+    "the required arm matrix is derived from the frozen campaign stage rather than a component-only constant",
+    "certificate verification reconstructs every per-task resource and information receipt",
+    "resource-dominance certificates must bind the exact treatment and control receipts and independently validate as admitted",
+    "a powered decision requires positive no-regression learned, composition and depth contrasts at one-sided p <= 0.05 plus proven resource dominance",
+    "all stages continue to deny fusion, ordinary serving, frontier reasoning and WOW Signal pending independent replication"
+  ],
+  "verification": {
+    "stage_sweep_and_watcher_tests": "91 passed",
+    "resource_binding_tests": "7 passed",
+    "ruff": "passed",
+    "compile": "passed",
+    "diff_check": "passed"
+  },
+  "claims": {
+    "reasoning_gain_proven": false,
+    "fusion_authorized": false,
+    "frontier_level_proven": false,
+    "wow_signal_authorized": false
+  },
+  "next": "freeze this stage-complete verifier for any admitted pilot or certificate campaign while the CP382 component matrix continues"
+}

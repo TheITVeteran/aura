@@ -48519,3 +48519,35 @@ authorize only the already-declared powered replication. The focused watcher,
 controller and independent-verifier contracts pass `55/55`; Ruff, byte
 compilation and diff hygiene pass. Evidence is
 `artifacts/closeout/latent_cortex/cp383_unattended_independent_adjudication.json`.
+
+## Checkpoint 2026-08-13-384: Every Replication Stage Has an Independent Judge
+
+The sweep already defined three distinct causal stages, but the independent
+verifier accepted only the seven-arm component matrix. A positive component
+canary could therefore advance to a pilot or resource-controlled certificate
+that the independent trust root was structurally unable to verify. That gap is
+closed before any later campaign is launched.
+
+The verifier now derives its exact matrix from the frozen controller stage.
+`component` requires seven arms. `pilot` additionally requires the
+best-of-three preliminary ordinary control. `certificate` additionally
+requires the per-task resource-dominating ordinary control. Unknown stages,
+extra cells, missing cells, duplicates, mismatched token contracts and
+fingerprint drift remain fatal.
+
+Certificate verification does not infer compute parity from arm names. It
+independently validates each treatment and control resource receipt, each
+information-boundary receipt, and the resource-dominance certificate joining
+their four exact digests. Every certificate must reconstruct as admitted. A
+powered causal decision then requires no-regression positive learned-parameter,
+marginal-composition and recurrent-depth contrasts, one-sided exact
+`p <= 0.05` for all three, and proven resource dominance. Even that result
+requires a fresh independent replication and cannot authorize fusion,
+ordinary serving, frontier reasoning or `WOW Signal`.
+
+The stage, sweep and watcher surface passes `91/91`; direct resource-binding
+contracts pass `7/7`; Ruff, byte compilation and diff hygiene pass. Evidence
+is
+`artifacts/closeout/latent_cortex/cp384_stage_complete_independent_verification.json`.
+The active CP382 component campaign and CP383 watcher are source-frozen and
+undisturbed by this checkpoint.

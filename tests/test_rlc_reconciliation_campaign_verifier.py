@@ -184,7 +184,13 @@ def _write_complete_campaign(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
                 "primary_claim_target": "composed_recurrent_tissue",
                 "decision": adjudication["decision"],
                 "composed_recurrent_adjudication": {
-                    "comparisons": adjudication["comparisons"]
+                    "comparisons": adjudication["comparisons"],
+                    "resource_target_control_proven": adjudication[
+                        "resource_target_control_proven"
+                    ],
+                    "powered_causal_result": adjudication[
+                        "powered_causal_result"
+                    ],
                 },
                 "claims": {
                     "reasoning_gain_proven": False,
@@ -213,6 +219,95 @@ def test_independent_verifier_reconstructs_positive_component_canary(
     assert result["reasoning_gain_proven"] is False
     assert result["fusion_authorized"] is False
     assert result["wow_signal_authorized"] is False
+
+
+def test_stage_contract_expands_independent_matrix_exactly() -> None:
+    assert verifier._required_arms_for_stage("component") == (
+        verifier.COMPONENT_REQUIRED_ARMS
+    )
+    assert verifier._required_arms_for_stage("pilot") == (
+        verifier.PILOT_REQUIRED_ARMS
+    )
+    assert verifier.PILOT_REQUIRED_ARMS == (
+        "vanilla",
+        "vanilla_equal_compute",
+        *verifier.COMPONENT_REQUIRED_ARMS[1:],
+    )
+    assert verifier.CERTIFICATE_REQUIRED_ARMS == (
+        *verifier.PILOT_REQUIRED_ARMS,
+        "vanilla_resource_dominating",
+    )
+    with pytest.raises(
+        verifier.ReconciliationVerificationError, match="campaign_stage_invalid"
+    ):
+        verifier._required_arms_for_stage("unknown")
+
+
+def test_powered_decision_requires_resource_control_and_significant_causal_contrasts() -> None:
+    task_ids = [str(index) for index in range(5)]
+    scored = {
+        arm: {task_id: False for task_id in task_ids}
+        for arm in verifier.CERTIFICATE_REQUIRED_ARMS
+    }
+    scored[verifier.TREATMENT_ARM] = {task_id: True for task_id in task_ids}
+
+    without_resource = verifier._independent_adjudication(scored, task_ids)
+    with_resource = verifier._independent_adjudication(
+        scored,
+        task_ids,
+        resource_target_control_proven=True,
+    )
+
+    assert without_resource["powered_causal_result"] is False
+    assert with_resource["powered_causal_result"] is True
+    assert with_resource["decision"] == (
+        "powered_causal_result_requires_independent_replication"
+    )
+    assert with_resource["wow_signal_authorized"] is False
+
+
+def test_resource_control_is_bound_to_each_treatment_and_control_receipt(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(verifier, "validate_resource_receipt", lambda value: value)
+    monkeypatch.setattr(verifier, "validate_information_receipt", lambda value: value)
+    monkeypatch.setattr(
+        verifier,
+        "validate_control_resource_dominance_certificate",
+        lambda value: value,
+    )
+    task_id = "task"
+    treatment_resource = {"receipt_sha256": "1" * 64}
+    treatment_information = {"receipt_sha256": "2" * 64}
+    control_resource = {"receipt_sha256": "3" * 64}
+    control_information = {"receipt_sha256": "4" * 64}
+    certificate = {
+        "admitted": True,
+        "treatment_resource_sha256": "1" * 64,
+        "treatment_information_sha256": "2" * 64,
+        "control_resource_sha256": "3" * 64,
+        "control_information_sha256": "4" * 64,
+    }
+    unique = {
+        (verifier.TREATMENT_ARM, task_id): {
+            "resource_accounting": treatment_resource,
+            "information_accounting": treatment_information,
+        },
+        ("vanilla_resource_dominating", task_id): {
+            "resource_accounting": control_resource,
+            "information_accounting": control_information,
+            "resource_dominance_certificate": certificate,
+        },
+    }
+
+    assert verifier._verify_resource_target_controls(unique, [task_id]) is True
+
+    certificate["treatment_resource_sha256"] = "9" * 64
+    with pytest.raises(
+        verifier.ReconciliationVerificationError,
+        match="resource_dominance_evidence_invalid",
+    ):
+        verifier._verify_resource_target_controls(unique, [task_id])
 
 
 def test_independent_verifier_rejects_incomplete_matrix(
