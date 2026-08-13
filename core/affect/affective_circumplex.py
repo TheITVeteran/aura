@@ -359,3 +359,35 @@ def get_circumplex() -> "AffectiveCircumplex":
     if _circumplex is None:
         _circumplex = AffectiveCircumplex()
     return _circumplex
+
+
+# ── Measurability ─────────────────────────────────────────────────────────────
+# The circumplex reaches live user-facing generation as numbers — sampling
+# temperature and the token budget, via core/brain/inference_gate.py — which
+# makes it a DIRECT actuator rather than a sentence in a prompt. It was the
+# only such actuator in the system with no registered lesion, so the paired
+# trials in core/verify could not ask whether the faculty with the largest
+# visible swing (temperature 0.500..0.858, budget 472..768) actually changes
+# what gets said.
+#
+# Registered here, at import, because this module is on the live path: the gate
+# imports it to read the parameters, so the channel exists exactly when the
+# thing it measures does. The neutral is no affective modulation at all — the
+# caller's own budget and the default temperature.
+try:  # pragma: no cover - registration must never break an affect read
+    from core.verify import influence_channels as _influence_channels
+    from core.verify.lesion_registry import register_flag_lesion as _register_flag_lesion
+
+    _register_flag_lesion(
+        _influence_channels.AFFECT_CIRCUMPLEX_SAMPLING,
+        owner="core/affect/affective_circumplex.py",
+        neutral="no affective modulation: caller's token budget, default temperature",
+        direct_actuation=True,
+    )
+except Exception as _lesion_exc:  # noqa: BLE001
+    record_degradation(
+        "affective_circumplex",
+        _lesion_exc,
+        severity="debug",
+        action="circumplex sampling left unmeasurable by the influence apparatus",
+    )

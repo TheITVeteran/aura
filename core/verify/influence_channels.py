@@ -24,6 +24,7 @@ __all__ = [
     "LIVE_MIND_RECURRENT_LOOPS",
     "LIVE_MIND_CONTEXT_BLOCK",
     "AFFECT_GENERATION_CONTROLS",
+    "AFFECT_CIRCUMPLEX_SAMPLING",
     "SPIKING_SAMPLING_BIAS",
     "IMAGINATION_SAMPLING_BIAS",
     "BICAMERAL_SAMPLING_BIAS",
@@ -45,7 +46,24 @@ LIVE_MIND_STEERING_ALPHA: Final = "live_mind.steering_alpha"
 LIVE_MIND_RECURRENT_LOOPS: Final = "live_mind.recurrent_loops"
 
 #: Affective control_effects → temperature/token-budget/repetition modulation.
+#: Owned by core/being/affective_valence.py.
 AFFECT_GENERATION_CONTROLS: Final = "affect.generation_controls"
+
+#: The affective circumplex's temperature and token budget, as consumed by
+#: core/brain/inference_gate.py on user-facing generations.
+#:
+#: A SEPARATE id from AFFECT_GENERATION_CONTROLS on purpose, because it is a
+#: separate faculty: that one is the AffectiveValenceEngine in core/being, this
+#: one is the circumplex in core/affect, and only this one is on the path a
+#: person's turn actually takes. Reusing the id would make two different
+#: measurements look like one channel across boots.
+#:
+#: This is the largest measured direct actuation in the system — driving the
+#: circumplex across its range moves sampling temperature 0.500 -> 0.858 and the
+#: token budget 472 -> 768 — and until now it was the one live actuator with no
+#: lesion, so the apparatus built to ask "does this faculty change the output?"
+#: could not ask it of the faculty with the biggest visible swing.
+AFFECT_CIRCUMPLEX_SAMPLING: Final = "affect.circumplex_sampling"
 
 #: Spiking active-inference sampling bias.
 SPIKING_SAMPLING_BIAS: Final = "spiking.sampling_bias"
@@ -74,6 +92,7 @@ DIRECT_ACTUATION_CHANNELS: Final = frozenset(
         LIVE_MIND_STEERING_ALPHA,
         LIVE_MIND_RECURRENT_LOOPS,
         AFFECT_GENERATION_CONTROLS,
+        AFFECT_CIRCUMPLEX_SAMPLING,
         SPIKING_SAMPLING_BIAS,
         IMAGINATION_SAMPLING_BIAS,
         BICAMERAL_SAMPLING_BIAS,

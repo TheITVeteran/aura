@@ -8210,19 +8210,49 @@ class InferenceGate:
         ):
             try:
                 from core.affect.affective_circumplex import get_circumplex
+                from core.verify import influence_channels
+                from core.verify.lesion_registry import apply_channel
 
                 circumplex_params = get_circumplex().get_llm_params()
+                # Wrapped so a paired trial can run this exact code with the
+                # affect contribution removed. This is the largest direct
+                # actuation in the system — the circumplex moves temperature
+                # across 0.500..0.858 and the token budget across 472..768 —
+                # and it was the only live actuator with no lesion, so the one
+                # faculty with a visibly large effect was the one the influence
+                # apparatus could not ask about. Neutral is "no affective
+                # modulation": the caller's own budget and the default
+                # temperature, which is what this block would produce if the
+                # circumplex were flat.
                 if not context.get("max_tokens"):
                     max_tokens = max(
                         384,
-                        min(max_tokens, int(circumplex_params["max_tokens"])),
+                        min(
+                            max_tokens,
+                            int(
+                                apply_channel(
+                                    influence_channels.AFFECT_CIRCUMPLEX_SAMPLING,
+                                    circumplex_params["max_tokens"],
+                                    neutral=max_tokens,
+                                )
+                            ),
+                        ),
                     )
-                somatic_temperature = circumplex_params["temperature"]
+                somatic_temperature = apply_channel(
+                    influence_channels.AFFECT_CIRCUMPLEX_SAMPLING,
+                    circumplex_params["temperature"],
+                    neutral=None,
+                )
                 logger.debug(
-                    "💓 Circumplex: V=%.2f A=%.2f → temp=%.2f tokens=%d",
+                    "💓 Circumplex: V=%.2f A=%.2f → temp=%s tokens=%d",
                     circumplex_params["valence"],
                     circumplex_params["arousal"],
-                    somatic_temperature,
+                    # %s, not %.2f: under a paired trial this channel is
+                    # lesioned to None and a float format would raise inside
+                    # the logging call.
+                    "lesioned"
+                    if somatic_temperature is None
+                    else f"{somatic_temperature:.2f}",
                     max_tokens,
                 )
             except _INFERENCE_RECOVERABLE_ERRORS as _ce:
