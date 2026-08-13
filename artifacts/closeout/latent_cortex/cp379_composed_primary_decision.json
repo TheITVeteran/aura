@@ -1,0 +1,31 @@
+{
+  "schema": "aura.rlc.closeout_checkpoint.v1",
+  "checkpoint": "CP379",
+  "subject": "composed recurrent tissue is the primary campaign decision",
+  "runtime_changes": [
+    "campaigns that select composed recurrent arms publish the composed causal adjudication as their top-level decision",
+    "the older uncomposed complete engine can no longer advance or reject a learned-tissue campaign by proxy",
+    "legacy campaigns without composed arms retain their existing decision contract",
+    "the verdict records which claim target supplied the primary decision"
+  ],
+  "verification": {
+    "focused_tests": "78 passed",
+    "decision_tests": "3 passed",
+    "smoke": "104 passed",
+    "ruff": "passed",
+    "compile": "passed",
+    "diff_check": "passed"
+  },
+  "active_campaign": {
+    "campaign": "cp378-monotonic-component-s41037613",
+    "source_commit": "8d715596ae6ca42d35486904cd94ae0ce2f9f86f",
+    "scientific_design_changed": false,
+    "campaign_source_modified": false
+  },
+  "claims": {
+    "resident_32b_result_available": false,
+    "reasoning_gain_proven": false,
+    "fusion_authorized": false,
+    "wow_signal_authorized": false
+  }
+}

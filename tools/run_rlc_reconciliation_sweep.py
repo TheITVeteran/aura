@@ -2642,6 +2642,22 @@ def _adjudicate_composed_recurrent_tissue(
     }
 
 
+def _primary_campaign_decision(
+    *,
+    generic_decision: str,
+    selected_arm_names: set[str],
+    composed_adjudication: dict[str, Any],
+) -> tuple[str, str]:
+    """Make the preregistered treatment, not a companion arm, authoritative."""
+
+    if selected_arm_names & RECURRENT_COMPOSED_ARMS:
+        decision = str(composed_adjudication.get("decision") or "").strip()
+        if not decision:
+            return "inconclusive_composed_adjudication_absent", "composed_recurrent_tissue"
+        return decision, "composed_recurrent_tissue"
+    return generic_decision, "legacy_reconciliation_engine"
+
+
 def _execution_schedule(
     selected: list[Arm],
     tasks: tuple[Any, ...],
@@ -4111,6 +4127,11 @@ def grade(out_dir: Path, tasks) -> dict[str, Any]:
         decision = "proceed_to_checkpoint_phase"
     else:
         decision = "recurrent_path_below_ordinary_decode"
+    decision, primary_claim_target = _primary_campaign_decision(
+        generic_decision=decision,
+        selected_arm_names=set(arms),
+        composed_adjudication=composed_recurrent_adjudication,
+    )
     vanilla_latency = arms.get("vanilla", {}).get("latency_median_s") or 0.0
     verdict = {
         "schema": SWEEP_SCHEMA,
@@ -4184,6 +4205,7 @@ def grade(out_dir: Path, tasks) -> dict[str, Any]:
             "unpromoted_byte_divergences": sorted(incumbent_byte_violations),
         },
         "next_stage_admission": next_stage_admission,
+        "primary_claim_target": primary_claim_target,
         "decision": decision,
         "claims": {
             "reasoning_gain_proven": False,

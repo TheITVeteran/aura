@@ -48346,3 +48346,30 @@ Ruff, byte compilation and diff hygiene pass. Evidence is
 Both rejected launches remain useful control-plane evidence and contain zero
 scientific observations. The causal design, seed and qualified recurrent
 package remain unchanged for the CP378 relaunch.
+
+## Checkpoint 2026-08-13-379: The Tissue Verdict Cannot Be Replaced by Its Companion
+
+The reconciliation grader already computed a dedicated composed-tissue causal
+adjudication, but its top-level `decision` still came from the older uncomposed
+complete-engine comparison. A composed campaign could therefore produce a
+negative learned-tissue result while publishing `proceed_to_checkpoint_phase`,
+or a positive tissue result while the companion engine supplied a rejection.
+The detailed evidence remained available, but the campaign's primary routing
+signal named the wrong experimental object.
+
+Whenever any composed recurrent arm is selected, the top-level decision now
+comes from `composed_recurrent_adjudication`. The verdict records
+`primary_claim_target=composed_recurrent_tissue`. Campaigns that do not select
+those arms retain the legacy reconciliation decision unchanged. This modifies
+no candidate, task, score, gate or active campaign byte; it makes downstream
+control flow honor the preregistered treatment actually being tested.
+
+The sweep suite passes `78/78`, the focused decision matrix passes `3/3`, and
+Ruff, byte compilation and diff hygiene pass. Canonical smoke passes `104/104`.
+Evidence is
+`artifacts/closeout/latent_cortex/cp379_composed_primary_decision.json`.
+
+The CP378 resident campaign remains source-frozen at `8d715596a` and is not
+modified by this checkpoint. Its composed adjudication remains the scientific
+authority even though its historical top-level field will use the older
+format. No result, gain, fusion, frontier or `WOW Signal` claim is made here.

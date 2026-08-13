@@ -410,6 +410,26 @@ def test_composed_adjudication_requires_learned_parameters_and_recurrent_depth()
     assert result["fusion_authorized"] is False
 
 
+def test_composed_campaign_decision_cannot_be_replaced_by_legacy_engine():
+    decision, target = sweep._primary_campaign_decision(
+        generic_decision="proceed_to_checkpoint_phase",
+        selected_arm_names={"complete_system_recurrent_composed", "vanilla"},
+        composed_adjudication={"decision": "no_bounded_learned_tissue_gain"},
+    )
+    assert decision == "no_bounded_learned_tissue_gain"
+    assert target == "composed_recurrent_tissue"
+
+
+def test_legacy_campaign_keeps_its_own_decision():
+    decision, target = sweep._primary_campaign_decision(
+        generic_decision="proceed_to_checkpoint_phase",
+        selected_arm_names={"complete_system_closed_book", "vanilla"},
+        composed_adjudication={"decision": "no_bounded_learned_tissue_gain"},
+    )
+    assert decision == "proceed_to_checkpoint_phase"
+    assert target == "legacy_reconciliation_engine"
+
+
 def test_composed_adjudication_does_not_mislabel_architecture_only_gain_as_learning():
     task_ids = {"task-a", "task-b"}
     correct = {task_id: {"correct": True} for task_id in task_ids}
