@@ -4069,6 +4069,16 @@ class MLXLocalClient:
 
         # Concurrency Hardening
         self._listener_task: asyncio.Task | None = None
+        # A response listener owns one immutable queue generation.  Recovery
+        # replaces queues before it replaces a listener; allowing a cancelling
+        # listener to follow ``self._res_q`` let it steal init/completion frames
+        # from the next worker.  Keep both identities explicit so a second
+        # consumer can never be installed on the same queue without proof that
+        # the first one terminated.
+        self._response_queue_generation = 0
+        self._listener_queue_generation = -1
+        self._listener_response_queue: Any | None = None
+        self._retired_listener_tasks: set[asyncio.Task] = set()
         self._last_heartbeat = 0.0
         # Once-per-episode reporting latches for worker self-reported health
         # evidence (heartbeat loop_stalled / ipc_broken frames).
@@ -6356,6 +6366,10 @@ class MLXLocalClient:
             )
 
     async def _ensure_listener_task(self) -> None:
+        response_queue = self._res_q
+        queue_generation = self._response_queue_generation
+        if response_queue is None:
+            raise RuntimeError("response_listener_queue_unavailable")
         task = self._listener_task
         if task is not None and not task.done():
             # Reusable only if its loop is genuinely serving AND the task is
@@ -6372,7 +6386,11 @@ class MLXLocalClient:
             except (RuntimeError, AttributeError) as exc:
                 logger.debug("MLX listener task loop unavailable during reuse check: %s", exc)
             if loop_serving and not cancelling:
-                return
+                if (
+                    self._listener_response_queue is response_queue
+                    and self._listener_queue_generation == queue_generation
+                ):
+                    return
             _cancel_task_threadsafe(task)
             # CP126 bd5dea11: cancellation is ASYNCHRONOUS. Creating the
             # replacement immediately left two listeners briefly draining the
@@ -6380,6 +6398,11 @@ class MLXLocalClient:
             # init/generation frames. Prove the old listener is gone (bounded —
             # a wedged listener must not block worker recovery forever) and
             # drop the handle before installing a replacement.
+            distinct_queue_generation = (
+                self._listener_response_queue is not None
+                and self._listener_response_queue is not response_queue
+                and self._listener_queue_generation != queue_generation
+            )
             if task.get_loop() is asyncio.get_running_loop():
                 try:
                     await asyncio.wait_for(asyncio.shield(task), timeout=5.0)
@@ -6391,14 +6414,30 @@ class MLXLocalClient:
                     _record_mlx_degradation(
                         TimeoutError("listener_cancel_unconfirmed"),
                         action=(
-                            "installed a replacement response listener before the "
-                            "prior one confirmed termination"
+                            "retained the prior response listener because its "
+                            "termination was not confirmed"
                         ),
                         severity="warning",
                     )
+            if not task.done() and not distinct_queue_generation:
+                # Two readers on one queue can route a valid response to the
+                # wrong lifecycle. Unknown ownership is equally unsafe: a
+                # second reader is admitted only when a distinct retired queue
+                # generation is positively identified.
+                raise RuntimeError("response_listener_retirement_unconfirmed")
+            if not task.done():
+                # A retired listener may still be unwinding an executor poll on
+                # its old immutable queue.  Retain it until completion; the new
+                # generation is safe because it owns a different queue object.
+                self._retired_listener_tasks.add(task)
+                task.add_done_callback(self._retired_listener_tasks.discard)
             self._listener_task = None
 
-        self._listener_task = get_task_tracker().create_task(self._response_listener_loop())
+        self._listener_response_queue = response_queue
+        self._listener_queue_generation = queue_generation
+        self._listener_task = get_task_tracker().create_task(
+            self._response_listener_loop(response_queue, queue_generation)
+        )
 
     def note_lane_failed(self, reason: str) -> None:
         self._warmup_in_flight = False
@@ -6654,6 +6693,7 @@ class MLXLocalClient:
         _safe_close_queue(self._res_q)
         self._req_q = self._mp_context.Queue(maxsize=maxsize)
         self._res_q = self._mp_context.Queue(maxsize=maxsize)
+        self._response_queue_generation += 1
         try:
             _register_runtime_queue(self._req_q, name="mlx.request_queue")
             _register_runtime_queue(self._res_q, name="mlx.response_queue")
@@ -6668,6 +6708,7 @@ class MLXLocalClient:
         _safe_close_queue(self._res_q)
         self._req_q = None
         self._res_q = None
+        self._response_queue_generation += 1
 
     async def _generate_batch_response_async(
         self,
@@ -10436,7 +10477,11 @@ class MLXLocalClient:
             raise RuntimeError("runtime_shutdown")
         return await asyncio.get_running_loop().run_in_executor(None, self._spawn_worker_blocking)
 
-    async def _response_listener_loop(self):
+    async def _response_listener_loop(
+        self,
+        response_queue: Any | None = None,
+        queue_generation: int | None = None,
+    ):
         """
         [v7.8] Background task to constantly drain the worker response queue.
         Prevents IPC deadlocks by ensuring heartbeats and telemetry are ALWAYS consumed.
@@ -10445,17 +10490,29 @@ class MLXLocalClient:
 
         from core.container import ServiceContainer
 
+        owned_queue = self._res_q if response_queue is None else response_queue
+        owned_generation = (
+            self._response_queue_generation if queue_generation is None else queue_generation
+        )
+        if owned_queue is None:
+            return
         _consecutive_errors = 0
         # Fresh pipe, fresh reporting state: a new worker must not inherit a
         # previous worker's stall/broken-pipe report latches.
         self._worker_loop_stall_reported = False
         self._worker_ipc_broken_reported = False
         while not _runtime_shutdown_requested():
-            if self._res_q is None:
+            # A listener never follows a mutable queue pointer across worker
+            # generations.  Once its queue is retired, it exits without
+            # touching futures belonging to the replacement worker.
+            if (
+                owned_queue is not self._res_q
+                or owned_generation != self._response_queue_generation
+            ):
                 break
             try:
                 # Use polling instead of infinite block to avoid executor thread leaks and zombie stealing
-                res = await run_io_bound(self._res_q.get, True, 0.5)
+                res = await run_io_bound(owned_queue.get, True, 0.5)
                 _consecutive_errors = 0
             except queue.Empty:
                 continue
@@ -10486,6 +10543,15 @@ class MLXLocalClient:
 
             if not res:
                 continue
+
+            if (
+                owned_queue is not self._res_q
+                or owned_generation != self._response_queue_generation
+            ):
+                # The queue changed while the executor poll was in flight.  The
+                # frame belongs to the retired worker generation and must not
+                # complete a future created for the replacement.
+                break
 
             try:
                 status = res.get("status")

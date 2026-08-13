@@ -1338,6 +1338,78 @@ class TestMLXClientResilience(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result["action"], "init")
         self.assertEqual(result["message"], "Init failed: boom")
 
+    async def test_listener_replacement_refuses_second_reader_on_same_queue(self):
+        client = MLXLocalClient(model_path=TEST_MODEL)
+        response_queue = queue.Queue()
+        client._res_q = response_queue
+        client._response_queue_generation = 7
+        client._listener_response_queue = response_queue
+        client._listener_queue_generation = 7
+        release = asyncio.Event()
+
+        async def cancellation_resistant_listener():
+            while not release.is_set():
+                try:
+                    await asyncio.sleep(0)
+                except asyncio.CancelledError:
+                    continue
+
+        listener = asyncio.create_task(cancellation_resistant_listener())
+        client._listener_task = listener
+        await asyncio.sleep(0)
+        listener.cancel()
+        await asyncio.sleep(0)
+
+        async def timeout_immediately(_awaitable, **kwargs):
+            self.assertEqual(kwargs["timeout"], 5.0)
+            raise TimeoutError
+
+        try:
+            with replace_dotted(
+                "core.brain.llm.mlx_client.asyncio.wait_for",
+                timeout_immediately,
+            ):
+                with self.assertRaisesRegex(
+                    RuntimeError,
+                    "response_listener_retirement_unconfirmed",
+                ):
+                    await client._ensure_listener_task()
+            self.assertIs(client._listener_task, listener)
+            self.assertIs(client._listener_response_queue, response_queue)
+        finally:
+            release.set()
+            await asyncio.sleep(0)
+            if not listener.done():
+                listener.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await listener
+
+    async def test_retired_listener_cannot_complete_replacement_generation(self):
+        client = MLXLocalClient(model_path=TEST_MODEL)
+        old_queue = queue.Queue()
+        new_queue = queue.Queue()
+        client._res_q = old_queue
+        client._response_queue_generation = 3
+
+        listener = asyncio.create_task(client._response_listener_loop(old_queue, 3))
+        await asyncio.sleep(0.05)
+
+        client._res_q = new_queue
+        client._response_queue_generation = 4
+        client._current_request_id = "replacement-request"
+        client._current_gen_future = asyncio.get_running_loop().create_future()
+        old_queue.put(
+            {
+                "status": "ok",
+                "action": "generate",
+                "id": "replacement-request",
+                "text": "stale worker answer",
+            }
+        )
+
+        await asyncio.wait_for(listener, timeout=2.0)
+        self.assertFalse(client._current_gen_future.done())
+
     async def test_generation_waiter_flags_first_token_sla_breach(self):
         client = MLXLocalClient(model_path=QWEN32_MODEL)
         proc = ProcessProbe(alive=True)
