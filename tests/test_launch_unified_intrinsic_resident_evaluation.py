@@ -43,6 +43,13 @@ def test_cli_defaults_to_admitted_checkpoint_and_all_trained_task_depths(
     assert arguments.task_depths == (1, 2, 4)
 
 
+def test_evaluation_source_manifest_freezes_the_runtime_identity_repair() -> None:
+    assert (
+        "core/brain/llm/latent_cortex/recurrence_adapter_identity_v2.py"
+        in launcher.EVALUATION_SOURCE_FILES
+    )
+
+
 def _terminal_fixture(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -59,14 +66,14 @@ def _terminal_fixture(
         path.chmod(0o700)
     python = tmp_path / "venv/bin/python"
     python.parent.mkdir(parents=True)
+    source_files = tuple(source / relative for relative in launcher.EVALUATION_SOURCE_FILES)
     for path in (
         python,
-        source / "tools/evaluate_unified_intrinsic_checkpoint.py",
-        source / "tools/evaluate_unified_intrinsic_decoding.py",
-        source / "tools/unified_intrinsic_decode_journal.py",
+        *source_files,
         source / "tools/unified_intrinsic_preload_barrier.py",
         source / "tools/memory_sentinel.py",
     ):
+        path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text("pass\n", encoding="utf-8")
     key = root / "heartbeat.key"
     key.write_bytes(b"k" * 32)
@@ -247,14 +254,14 @@ def test_prepare_binds_repaired_evaluator_source_root(
     repaired = tmp_path / "repaired-capsule"
     (repaired / "tools").mkdir(parents=True)
     training_source = Path(config["source"]["git"]["root"])
-    for name in (
-        "evaluate_unified_intrinsic_checkpoint.py",
-        "evaluate_unified_intrinsic_decoding.py",
-        "unified_intrinsic_decode_journal.py",
-        "unified_intrinsic_preload_barrier.py",
-        "memory_sentinel.py",
+    for relative in (
+        *launcher.EVALUATION_SOURCE_FILES,
+        "tools/unified_intrinsic_preload_barrier.py",
+        "tools/memory_sentinel.py",
     ):
-        (repaired / "tools" / name).write_bytes((training_source / "tools" / name).read_bytes())
+        destination = repaired / relative
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        destination.write_bytes((training_source / relative).read_bytes())
     arguments.evaluator_source_root = repaired
 
     plan = launcher.prepare(arguments)

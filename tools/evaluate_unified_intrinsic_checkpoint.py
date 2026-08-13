@@ -77,6 +77,7 @@ from tools.unified_intrinsic_tokenization_contract import (  # noqa: E402
 
 EVALUATION_SCHEMA = "aura.unified_intrinsic_independent_evaluation.v1"
 EVALUATION_SOURCE_FILES = (
+    "core/brain/llm/latent_cortex/recurrence_adapter_identity_v2.py",
     "tools/evaluate_unified_intrinsic_checkpoint.py",
     "tools/evaluate_unified_intrinsic_decoding.py",
     "tools/unified_intrinsic_decode_journal.py",

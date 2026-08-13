@@ -30,6 +30,7 @@ from core.runtime.mlx_memory_guard import host_pressure  # noqa: E402
 from tools import run_detached_step as detached  # noqa: E402
 from tools import run_unified_intrinsic_resident_campaign as resident  # noqa: E402
 from tools.evaluate_unified_intrinsic_checkpoint import (  # noqa: E402
+    EVALUATION_SOURCE_FILES,
     campaign_initial_control_binding,
     root_control_binding,
 )
@@ -51,11 +52,6 @@ STATUS_SCHEMA: Final = "aura.unified_intrinsic.resident_evaluation_status.v1"
 DEFAULT_STARTUP_LETHAL_MB: Final = 54.0 * 1024.0
 DEFAULT_STEADY_LETHAL_MB: Final = 48.0 * 1024.0
 PRELOAD_TIMEOUT_S: Final = 300.0
-EVALUATION_SOURCE_FILES: Final = (
-    "tools/evaluate_unified_intrinsic_checkpoint.py",
-    "tools/evaluate_unified_intrinsic_decoding.py",
-    "tools/unified_intrinsic_decode_journal.py",
-)
 
 
 class ResidentEvaluationLaunchError(RuntimeError):

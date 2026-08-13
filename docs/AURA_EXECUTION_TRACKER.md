@@ -46470,3 +46470,29 @@ broader reasoning result, fusion or `WOW Signal` is claimed. Next is the
 source-bound resident diagnostic comparing CP275's trained controller with the
 true CP254 pre-training root on fresh cells; only a positive differential may
 advance to powered replication.
+
+## Checkpoint 2026-08-12-291: Repaired Evaluation Source Is Explicit Evidence
+
+The first CP290 resident launch failed closed before model load because the
+source-custody boundary still classified
+`recurrence_adapter_identity_v2.py` as training-semantic code. That file had
+changed after CP275 only to exclude ephemeral Python bytecode caches from
+runtime package identity; decoded evaluation does not import it. Treating the
+change as training drift made an otherwise valid source-repaired evaluator
+reject itself.
+
+The runtime-identity repair is now an explicit member of the independently
+hashed evaluation-source manifest shared by evaluator and launcher. It is not
+silently ignored: its exact digest is committed into the v3 plan, experiment
+journal and v2 report along with the evaluator, decoder and journal sources.
+All remaining training-runtime source digests match CP275 exactly. Fixture
+capsules now exercise the complete nested source manifest so future additions
+cannot pass tests while remaining absent from a real immutable capsule.
+
+Validation is green under Aura's Python 3.12 runtime: `65/65` focused source,
+control, launcher, adjudication and replication tests pass; canonical smoke
+passes `104/104`; Ruff and the real artifact-only source comparison pass with
+zero training-runtime mismatches. The failed attempt emitted no model load,
+decode candidate or scientific report. The completion envelope remains
+`915/920`; this is launch custody, not evidence of a reasoning gain. Next is a
+fresh immutable CP291 capsule and true-root resident diagnostic.
