@@ -362,12 +362,14 @@ class GlobalWorkspace:
     """
 
     _INHIBIT_TICKS: int = 1       # Retained for the safety-inhibition path; see _fatigue for the refractory
-    #: How much a win reduces that source's next effective priority, and how
-    #: fast it recovers. 0.15 is large enough to let a 0.02 priority gap rotate
-    #: and small enough that a 0.79 gap (urgent vs idle) still dominates.
+    #: How much a win reduces that source's next effective priority. 0.15 is
+    #: large enough to let a 0.02 priority gap rotate and small enough that a
+    #: 0.79 gap (urgent vs idle) still dominates.
     _WINNER_FATIGUE: float = 0.15
+    #: Safety bound on accumulated adaptation: two wins' worth. Adaptation is
+    #: self-limiting (see _fatigue_recovery), so this only caps a pathological
+    #: run; it is not the mechanism.
     _MAX_FATIGUE: float = 0.30
-    _FATIGUE_RECOVERY: float = 0.075
     _MAX_CANDIDATES: int = 20     # Hard cap — prevents memory leak if submissions pile up
     _IGNITION_THRESHOLD: float = 0.6  # Priority above which workspace "ignites"
     _PHI_PRIORITY_BOOST: float = 0.15  # Max priority bonus for high-Φ sources
@@ -409,6 +411,48 @@ class GlobalWorkspace:
         self._gate_rejections: list[dict[str, Any]] = []
         
         logger.info("GlobalWorkspace initialized (ignition_threshold=%.2f).", self._IGNITION_THRESHOLD)
+
+    def _fatigue_recovery(self) -> float:
+        """Per-tick adaptation recovery, derived from the size of the field.
+
+        This rate is not a tuning knob, and getting it wrong does not degrade
+        the competition gracefully — it caps how many sources can share the
+        broadcast *at all*.
+
+        Adaptation here is a leaky integrator: a win adds ``g``
+        (``_WINNER_FATIGUE``) and every tick sheds ``r``. A source is in
+        equilibrium when what it accrues equals what it sheds, so if it wins a
+        fraction ``f`` of ticks, ``g·f = r`` and its steady-state share is::
+
+            f* = r / g
+
+        A FIXED ``r`` therefore fixes the sustainable share of every source in
+        the running, and the number of sources that can rotate is ``g/r`` no
+        matter how many are actually bidding. With the constants this replaced
+        (g=0.15, r=0.075) that number was exactly two.
+
+        Measured, four sources bidding every tick at 0.90/0.88/0.86/0.84: the
+        top two split the broadcast 12/12 in a strict a-b-a-b alternation and
+        the other two won nothing in 24 ticks. The monopoly the previous fix
+        removed had come back as a cartel of two, and it passed that fix's own
+        regression test, which asked only for ``top_share < 0.75`` and two
+        distinct winners — both true of a perfect duopoly. The top two leapfrog
+        because while one is fatigued the other is fresh, and the fresh one
+        still outbids everyone below it.
+
+        Deriving ``r = g/n`` makes ``f* = 1/n``: the rotation widens to exactly
+        as many sources as are genuinely competing, and the two boundary cases
+        fall out rather than needing special cases. A lone source (n=1) recovers
+        a full win's worth every tick and so is never silenced, and a large gap
+        (urgent 0.99 vs idle 0.20) is untouched because 0.79 exceeds
+        ``_MAX_FATIGUE``.
+
+        ``n`` counts the sources bidding now, plus any still carrying
+        adaptation from a recent win, so a source that skips a single tick is
+        not written out of the field.
+        """
+        competitors = {c.source for c in self._candidates} | set(self._fatigue)
+        return self._WINNER_FATIGUE / max(1, len(competitors))
 
     def _record_degradation(
         self,
@@ -908,10 +952,11 @@ class GlobalWorkspace:
                 if count > 1
             }
             # Adaptation recovers whether or not the source bid this tick.
+            recovery = self._fatigue_recovery()
             self._fatigue = {
-                src: value - self._FATIGUE_RECOVERY
+                src: value - recovery
                 for src, value in self._fatigue.items()
-                if value - self._FATIGUE_RECOVERY > 1e-9
+                if value - recovery > 1e-9
             }
             pending_count = len(self._candidates)
             inhibited_sources = set(self._inhibited)
