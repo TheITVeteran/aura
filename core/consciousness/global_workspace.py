@@ -417,6 +417,45 @@ class GlobalWorkspace:
         
         logger.info("GlobalWorkspace initialized (ignition_threshold=%.2f).", self._IGNITION_THRESHOLD)
 
+    def _resolve_tie(self, tied: tuple[str, ...]) -> CognitiveCandidate:
+        """Choose among candidates that nothing distinguishes, without using arrival order.
+
+        Sorting and taking ``[0]`` settled these by whoever submitted first,
+        which is not arbitration — and worse, it did not *look* like arrival
+        order, because ``effective_priority`` scales salience by
+        ``(1 - 0.03·age)`` and so turned submission microseconds into a
+        priority difference. Four sources bidding an identical 0.70 came out
+        ~2e-6 apart. The decision was being made by the scheduler and reported
+        as a judgement.
+
+        Two rules, in order, and neither can see when a bid arrived:
+
+        1. **Least fatigued wins.** Fatigue already encodes how recently and
+           how often a source held the broadcast, so among equals this hands it
+           to whoever has waited longest. It is the same quantity the
+           competition already uses, so tie-breaking cannot pull against
+           arbitration.
+        2. **Rotate on the tick.** When fatigue is level too — the common case
+           at startup, when everything is zero — the tick index selects from
+           the sources in a stable order. Deterministic, reproducible, and fair
+           over time, where a fixed order would hand every genuine tie to
+           whichever source sorts first, forever.
+        """
+        by_source = {c.source: c for c in self._candidates}
+        contenders = [by_source[s] for s in tied if s in by_source]
+        if not contenders:
+            return self._candidates[0]
+
+        least = min(self._fatigue.get(c.source, 0.0) for c in contenders)
+        # Float fatigue values are produced by repeated subtraction, so compare
+        # against the noise they accumulate rather than for exact equality.
+        freshest = [
+            c for c in contenders if self._fatigue.get(c.source, 0.0) - least <= 1e-9
+        ]
+        if len(freshest) == 1:
+            return freshest[0]
+        return freshest[self._tick % len(freshest)]
+
     def _fatigue_recovery(self) -> float:
         """Per-tick adaptation recovery, derived from the size of the field.
 
@@ -1056,6 +1095,8 @@ class GlobalWorkspace:
                         noise_floor,
                         tied,
                     )
+                    winner = self._resolve_tie(tied)
+                    losers = [c for c in self._candidates if c is not winner]
 
             # Adaptation on the winner, not exclusion of the losers.
             #

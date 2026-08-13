@@ -161,6 +161,60 @@ def test_identical_bids_are_recorded_as_a_tie_impasse():
     assert len(snapshot["last_tie"]) > 1
 
 
+def test_a_tie_is_not_settled_by_who_submitted_first():
+    """The outcome of indistinguishable bids must not depend on arrival order.
+
+    This is the property, and it is stronger than "the shares look fair": the
+    same four sources are submitted in a fixed order and in a rotating one, and
+    the resulting distribution has to be the same. Under the previous
+    arrival-order resolution it could not have been, because arrival order was
+    the entire input.
+    """
+
+    async def scenario(rotate: bool):
+        workspace = GlobalWorkspace()
+        names = ["a", "b", "c", "d"]
+        wins: collections.Counter[str] = collections.Counter()
+        for tick in range(48):
+            order = names[tick % 4 :] + names[: tick % 4] if rotate else names
+            for name in order:
+                await workspace.submit(
+                    CognitiveCandidate(
+                        content=f"{name}@{tick}", source=name, priority=0.70
+                    )
+                )
+            winner = await workspace.run_competition()
+            if winner is not None:
+                wins[winner.source] += 1
+        total = sum(wins.values())
+        return {name: wins.get(name, 0) / total for name in names}
+
+    fixed = asyncio.run(scenario(rotate=False))
+    rotated = asyncio.run(scenario(rotate=True))
+    assert fixed == rotated, (
+        f"submission order changed the outcome: fixed={fixed} rotated={rotated}"
+    )
+
+
+def test_identical_bids_share_the_broadcast_evenly():
+    """Nothing distinguishes these sources, so nothing should favour one."""
+    bids = {"a": 0.70, "b": 0.70, "c": 0.70, "d": 0.70}
+    wins, _, sequence = _sync(bids, ticks=48)
+    total = sum(wins.values())
+    shares = {name: wins.get(name, 0) / total for name in bids}
+    findings = competition_health(
+        shares,
+        bids,
+        subject="global_workspace/tied",
+        min_share=0.15,
+        min_normalised_entropy=0.95,
+        # Every bid is equal, so no ordering is being asserted here.
+        order_tolerance=1.0,
+    )
+    findings += no_limit_cycle(sequence, max_period=1, min_repeats=8)
+    assert not findings, "\n".join(str(f) for f in findings)
+
+
 def test_genuinely_different_bids_are_not_called_ties():
     """The noise floor must not swallow real differences."""
 
@@ -237,8 +291,8 @@ def test_ignition_fires_above_the_threshold():
     assert asyncio.run(scenario()) is True
 
 
-def _sync(sources: dict[str, float]):
-    return asyncio.run(_run(sources))
+def _sync(sources: dict[str, float], ticks: int = TICKS):
+    return asyncio.run(_run(sources, ticks))
 
 
 @pytest.mark.parametrize(

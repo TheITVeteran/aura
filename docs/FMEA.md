@@ -4,7 +4,7 @@
 > (`make fmea-doc`). Do not edit by hand — a drift test regenerates
 > and compares this file on every suite run.
 
-Registry version: `1.1` — 25 modes (2 catastrophic, 12 critical, 9 major, 2 minor); 2 open mitigation gap(s), 0 open detection gap(s).
+Registry version: `1.1` — 25 modes (2 catastrophic, 12 critical, 9 major, 2 minor); 1 open mitigation gap(s), 0 open detection gap(s).
 
 Every entry is REAL: it either occurred live (occurrences cite when)
 or is a structurally-reachable state found by analysis. Gaps are
@@ -291,10 +291,11 @@ explicit and pinned by an allowlist test that only shrinks.
 - **Cause:** effective_priority scales salience by (1 - 0.03*age), so candidates of identical salience differ by ~0.03*spread purely from when they were submitted
 - **Effect:** Arbitrary arbitration that looks principled. Measured: four sources bidding an identical 0.70 produced 0 exact ties in 12 ticks and were separated by ~2e-6
 - **Detection:** Tie impasses counted against the timing noise floor that mechanism creates rather than against exact equality; surfaced in get_snapshot()
-- **Mitigation:** GAP
+- **Mitigation:** _resolve_tie decides among indistinguishable bids on two rules that cannot see arrival time: least-fatigued first (the same quantity arbitration already uses, so it hands the slot to whoever waited longest), then rotation on the tick index when fatigue is level too
 - **Detection modules:** `core.consciousness.global_workspace`, `core.cognition.impasse`
+- **Mitigation modules:** `core.consciousness.global_workspace`
 - **Recorded occurrences:** 2026-08-12 identical-bid probe: 3 tie impasses in 12 ticks
-- **Notes:** A visible tie would have been better than this. Pinned as a mitigation GAP rather than described as fixed: selection is genuinely unchanged, and the rate being measurable is the precondition for deciding whether it needs a fix, not the fix itself.
+- **Notes:** Closed. Four sources bidding an identical 0.70 over 48 ticks now take 0.25 each, and the distribution is byte-identical whether they are submitted in a fixed order or a rotating one — which is the actual property, since arrival order used to be the whole input. Rotation rather than a fixed order matters: a stable sort would hand every genuine tie to whichever source sorts first, forever.
 
 ## FM-COG-003 — A ranking term silently decays to a constant
 
@@ -312,4 +313,3 @@ explicit and pinned by an allowlist test that only shrinks.
 ## Open gaps (the work queue)
 
 - **FM-MEM-001** (mitigation gap): Linear memory growth ~242MB/h under sustained conversation
-- **FM-COG-002** (mitigation gap): Decisions settled by submission timing while presented as priority

@@ -27,12 +27,10 @@ pytestmark = pytest.mark.unit
 # The pinned gap allowlist: adding a gap is a conscious act (extend here
 # WITH a note in the entry); closing one shrinks this set forever.
 #
-# FM-COG-002 is a deliberate addition, not a regression. The workspace settles
-# near-equal bids by sub-microsecond submission timing while presenting the
-# result as a priority difference. Detection now exists and measures the rate;
-# no mitigation has been applied, because whether arbitration should change is
-# a decision that needs the rate first. Declaring it a gap is the honest state.
-KNOWN_MITIGATION_GAPS = {"FM-MEM-001", "FM-COG-002"}
+# FM-COG-002 was briefly listed here — the workspace settling near-equal bids
+# by sub-microsecond submission timing — and was closed in the same session by
+# _resolve_tie. The set shrinks back.
+KNOWN_MITIGATION_GAPS = {"FM-MEM-001"}
 KNOWN_DETECTION_GAPS: set[str] = set()
 
 
