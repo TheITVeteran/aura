@@ -52,6 +52,7 @@ from core.learning.unified_intrinsic_recurrence import (  # noqa: E402
 from core.runtime.atomic_writer import atomic_write_bytes  # noqa: E402
 from core.runtime.mlx_memory_guard import host_pressure, mlx_memory_envelope  # noqa: E402
 from core.runtime.model_lane_control import standalone_model_lane  # noqa: E402
+from tools.python_source_closure import local_python_source_sha256s  # noqa: E402
 from tools.resident_recurrent_sft_bootstrap_identity import (  # noqa: E402
     resident_bootstrap_tokenizer_identity,
 )
@@ -191,8 +192,14 @@ def _runtime_semantic_identity(value: Any) -> dict[str, Any]:
     }
 
 
+def evaluation_source_sha256s(source_root: Path = REPO_ROOT) -> dict[str, str]:
+    """Bind the evaluator entry points and every reachable local dependency."""
+
+    return local_python_source_sha256s(source_root, EVALUATION_SOURCE_FILES)
+
+
 def _evaluation_source_sha256s() -> dict[str, str]:
-    return {relative: _file_sha256(REPO_ROOT / relative) for relative in EVALUATION_SOURCE_FILES}
+    return evaluation_source_sha256s()
 
 
 def _evaluation_preload_evidence(

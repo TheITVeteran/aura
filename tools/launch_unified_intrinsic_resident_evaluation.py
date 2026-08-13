@@ -30,8 +30,9 @@ from core.runtime.mlx_memory_guard import host_pressure  # noqa: E402
 from tools import run_detached_step as detached  # noqa: E402
 from tools import run_unified_intrinsic_resident_campaign as resident  # noqa: E402
 from tools.evaluate_unified_intrinsic_checkpoint import (  # noqa: E402
-    EVALUATION_SOURCE_FILES,
+    EVALUATION_SOURCE_FILES,  # noqa: F401 - compatibility re-export
     campaign_initial_control_binding,
+    evaluation_source_sha256s,
     root_control_binding,
 )
 from tools.unified_intrinsic_checkpoint import (  # noqa: E402
@@ -129,11 +130,8 @@ def _file_sha256(path: Path) -> str:
 
 def _evaluator_source_sha256s(source_root: Path) -> dict[str, str]:
     try:
-        return {
-            relative: _file_sha256((source_root / relative).resolve(strict=True))
-            for relative in EVALUATION_SOURCE_FILES
-        }
-    except OSError as exc:
+        return evaluation_source_sha256s(source_root)
+    except (OSError, RuntimeError, ValueError) as exc:
         raise ResidentEvaluationLaunchError("resident evaluation source is unavailable") from exc
 
 
