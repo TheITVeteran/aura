@@ -46779,3 +46779,40 @@ in changed files were reverified, and the ledger reports zero drifted closure
 hashes. This is one completed dependency group, not whole-slice or whole-repo
 semantic closeout. The next group is `evidence-claim-binding` (six accepted
 findings), followed by pending/retry custody and the remaining grouped repairs.
+
+## Checkpoint 2026-08-12-319: Claims Are Bound to Exact Turn Evidence
+
+The second dependency-ordered semantic repair group is complete. CP318 replaces
+the incompatible receipt choices of immutable child-invisible tuples and
+mutable background-contaminable lists with one synchronized custody object per
+exact conversation session and turn. Only the owner execution and deliberate
+children carrying one-use leases can record evidence. The live foreground
+kernel task joins through that lease; autonomous, heartbeat and incidental
+child tasks cannot authorize or poison the person's reply. Capability-failure
+facts use the same execution ownership and close when the turn closes.
+
+Receipts now carry action, object, independent effect-observation state,
+verification evidence, observed content, receipt identity and exact
+session/turn identity. Completion claims are checked sentence by sentence
+against the same declared action and object; an unrelated success, a success
+for another file, or a dispatch whose postcondition was never observed cannot
+support the claim. Process-global intention history no longer vouches for a
+current completion. Screen quotations require the quoted normalized content in
+the current turn's actual screen-reading receipt, and stale or cross-turn OCR
+is rejected. Reply-provenance exemptions are context-local, expiring and keyed
+by exact session, turn and text rather than by a process-global text hash.
+
+Validation is green under Aura's Python 3.12 runtime: the coordinated evidence
+and active-route contract set passes `287/287`; a supplemental failure, effect,
+claim and delivery set passes `168/168`; canonical smoke passes `104/104`; Ruff,
+full Python compilation and diff hygiene pass. CP318 is published on `main` as
+`0351916ab0329f15da2072f0184674d496cc0581`.
+
+The scoped semantic ledger now records `29/58` findings closed (`50.0%`) with
+`29` open: `7/8` critical, `21/40` high and `1/10` medium findings are closed,
+and all six `evidence-claim-binding` findings have hash-bound remediation
+receipts. This does not claim whole-slice, whole-repository or aggregate Aura
+closeout. The next bounded group is `pending-retry-custody` (four accepted
+findings), followed by external-chat IPC and the remaining five grouped repairs.
+The separate Spark completion envelope remains `915/920`; this semantic repair
+does not manufacture powered reasoning evidence or a `WOW Signal`.
