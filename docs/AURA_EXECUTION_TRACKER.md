@@ -46682,3 +46682,27 @@ evaluator, replication and promotion tests pass; canonical smoke passes
 `104/104`; focused Ruff, compilation and diff hygiene pass. The completion
 envelope remains `915/920` pending the powered replication; the canary result
 is real evidence but not the powered replication gate.
+
+## Checkpoint 2026-08-12-299: Corrected Promotion Custody Is Singular
+
+The CP298 launch-visibility repair is published on `main` and frozen in
+immutable promotion capsule `f1b7d1766634`. Launchd owns authenticated
+controller PID `57423` and PID-bound sleep inhibitor `57489` under target
+`com.aura.unified-recurrent-promotion.193688ac522ea5b0`. Promotion config
+`193688ac522ea5b09c1b76c91bf9cafb07c1560216437822cfc3c81e5176b039`
+binds the preregistered powered plan
+`e86ad0157107582792f635cd0fc08569b3158079036e16ea507df0feba3f7fb7`
+and package id `cp298-true-root-recurrent`.
+
+The replacement reached an authenticated `waiting_for_replication` state
+before the older CP296 launchd target was booted out. Its controller and sleep
+inhibitor are both gone, leaving exactly one transaction authorized to
+materialize or activate tissue after a supported powered verdict. The
+resident-32B replication itself was not restarted or disturbed during this
+custody migration; seed `20260812293` is actively publishing candidate
+artifacts and the remaining two frozen seeds remain pending.
+
+This is operational continuity, not additional scientific evidence. The
+completion envelope remains `915/920`; powered replication, runtime
+qualification, broad reasoning evidence, fusion authority and `WOW Signal`
+remain open.
