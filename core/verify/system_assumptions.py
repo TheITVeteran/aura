@@ -141,24 +141,48 @@ assume(
 )
 
 assume(
-    "latency_model.unfitted_parameters",
+    "memory.retrieval_curve_is_fitted",
     scope="memory",
     owner="core/cognition/actr_activation.py",
-    status=S.UNDISCHARGED,
+    status=S.DISCHARGED,
     statement=(
-        "The ACT-R latency factor F and retrieval threshold tau carry published "
-        "defaults rather than values fit to Aura's measured retrieval times."
+        "The retrieval threshold tau and noise s are fit to Aura's own measured "
+        "recall, not carried from published defaults."
     ),
     breaks=(
-        "Any ABSOLUTE latency prediction. Relative orderings — this trace is "
-        "predicted faster than that one — do not depend on the fit and stand; a "
-        "prediction in seconds does not."
+        "Any claim that activation predicts WHICH memories come back. Unfitted "
+        "parameters would make that a statement about ACT-R rather than about Aura."
     ),
+    discharged_by="tests/test_actr_fit.py::test_fitted_parameters_are_distinct_from_the_published_defaults",
     note=(
-        "Discharging it means logging measured retrieval wall-times against "
-        "predicted activation, fitting F and tau, and reporting the residuals with "
-        "the sensitivity band from latency_sensitivity(). The machinery is present "
-        "and unrun; no absolute latency has been claimed anywhere in the meantime."
+        "tau=-0.4666, s=2.0 by maximum likelihood over 6,000 samples; Brier skill "
+        "0.154 over base rate. Reproduce with tools/fit_actr_retrieval.py."
+    ),
+)
+
+assume(
+    "memory.latency_equation_does_not_transfer",
+    scope="memory",
+    owner="core/cognition/actr_activation.py",
+    status=S.DISCHARGED,
+    statement=(
+        "No absolute retrieval latency is predicted from activation, because "
+        "measured latency does not depend on activation here."
+    ),
+    breaks=(
+        "Nothing, as stated — but the inverse would break a great deal. F is a "
+        "pure multiplicative scale and would absorb any timing at all, so a fitted "
+        "F over an absent relationship would be a confident number with no "
+        "mechanism under it."
+    ),
+    discharged_by="tests/test_actr_fit.py::test_the_latency_null_still_holds_on_the_live_ranking_path",
+    note=(
+        "Measured r^2 = 0.000037 regressing ln(T) on -A over 6,000 samples. "
+        "T = F*e^-A earns its shape in ACT-R because retrieval is a race between "
+        "activations; Aura's recall is a ranked scan whose cost tracks candidate "
+        "count and store behaviour. The fitting tool refuses to emit an F below "
+        "r^2=0.10, and the bound test fails if retrieval ever becomes "
+        "activation-driven — at which point F becomes worth fitting."
     ),
 )
 

@@ -37,10 +37,36 @@ Retrieval probability and — the part Aura has never had — predicted latency:
     P(retrieve) = 1 / (1 + exp(-(A_i - τ) / s))
     T_i         = F · exp(-A_i)
 
-``T_i`` is a falsifiable per-retrieval time prediction. It is what lets a
-cognitive architecture be checked against measured behaviour instead of only
-against its own logs, and it is the specific currency in which Soar and ACT-R
-are validated and Aura previously was not.
+Both were then fitted against Aura's own measured recall, and they came out
+differently. That result is the important part of this docstring.
+
+**The retrieval curve fits.** Maximum likelihood over 6,000 samples — 150
+batches of 40 traces, ages from one minute to a year, 0 to 30 rehearsals,
+scored on whether each trace actually came back in the ranked top-k — gives
+``tau = -0.4666``, ``s = 2.0`` (:data:`FITTED_PARAMETERS`), with a Brier skill
+of 0.154 over the base rate. Modest by construction: activation carries 0.4 of
+the ranking blend against 0.6 for importance, so activation alone should
+explain some of recall and not most of it.
+
+**The latency equation does not transfer, and F is therefore not fitted.**
+Regressing ``ln T`` on ``-A`` across the same 6,000 samples gives
+``r^2 = 0.000037``. There is no relationship, and there is no reason there
+should be: ``T = F·e^-A`` earns its shape in ACT-R because retrieval there is a
+race between activations, whereas Aura's recall is a ranked scan whose cost
+tracks how many candidates exist and what the store does, not how strong the
+winning trace is.
+
+This is worth stating plainly because F is a pure multiplicative scale and
+would have absorbed any timing whatsoever. Fitting it would have produced a
+confident number with no mechanism under it — the exact failure
+``RETRACTION.json`` is about. ``tools/fit_actr_retrieval.py`` refuses to emit
+an F below an r^2 of 0.10 for that reason, and a test pins the null so that if
+retrieval ever does become activation-driven, someone finds out.
+
+So Aura can now predict *which* memories return, with fitted parameters and a
+reported skill score. It cannot predict *how long* recall takes from
+activation, and that is a property of its retrieval architecture rather than a
+gap in the model.
 
 On ACT-R's own main criticism
 -----------------------------
@@ -122,6 +148,27 @@ class ActrParameters:
 
 
 DEFAULT_PARAMETERS = ActrParameters()
+
+#: Fitted to Aura's own recall behaviour by ``tools/fit_actr_retrieval.py``,
+#: 6,000 samples over 150 batches of 40 traces spanning 60s to one year of age
+#: with 0-30 rehearsals. Maximum likelihood on whether each trace was actually
+#: returned in the ranked top-k.
+#:
+#: These are MEASURED, unlike :data:`DEFAULT_PARAMETERS`, and only the two
+#: parameters the measurement identifies are replaced. ``latency_factor`` is
+#: deliberately left at its published default and must not be read as fitted —
+#: see the module docstring for why it is not fittable here.
+#:
+#: Reproduce: ``python tools/fit_actr_retrieval.py --trials 150 --batch 40``
+#: Artifact:  ``artifacts/current/actr_fit/retrieval_fit.json``
+FITTED_PARAMETERS = ActrParameters(threshold=-0.4666, noise_s=2.0)
+
+#: Brier skill of :data:`FITTED_PARAMETERS` over predicting the base rate.
+#: Modest on purpose: activation carries 0.4 of the ranking blend against 0.6
+#: for importance, so activation alone should explain some of recall and not
+#: most of it. A number near 1.0 here would mean importance had stopped
+#: mattering.
+FITTED_BRIER_SKILL = 0.154
 
 
 def _ages(presentations: Sequence[float], now: float) -> list[float]:
