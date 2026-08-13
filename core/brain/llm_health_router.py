@@ -21,8 +21,8 @@ import json
 import logging
 import math
 import os
-import threading
 import re
+import threading
 import time
 from collections.abc import Mapping
 from contextvars import ContextVar
@@ -4227,6 +4227,7 @@ class HealthAwareLLMRouter:
                                 "clean_user_surface_contract",
                                 "user_surface_validation_prompt",
                                 "user_surface_prompt_binding",
+                                "user_surface_grounding_evidence",
                                 "clean_user_surface_steering_alpha",
                                 "clean_user_surface_recurrent_loops",
                                 "live_mind_controls_bound",

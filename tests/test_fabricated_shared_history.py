@@ -76,25 +76,19 @@ class TestTheMeasuredFailures:
         )
         assert "fabricated_shared_history" in verdict.reasons
 
-    def test_it_is_recorded_rather_than_fatal_until_grounding_is_wired(self):
-        """It deserves to be fatal and is not yet, on purpose.
-
-        The assessment sees the visible request and the recent turns; it does
-        NOT see the memory evidence she recalled from, because no call site
-        passes it. A genuine recall grounded in retained memory reads
-        identically to an invention, and killing it would gate away the thing
-        that makes recall worth having. This test is the marker for finishing
-        that wire — when `grounding=` reaches here, flip both assertions.
-        """
+    def test_it_is_fatal_after_turn_bound_grounding_was_wired(self):
         from core.brain.llm.mlx_worker import _DELIVERABLE_RESIDUAL_SURFACE_REASONS
+        from core.conversation.surface_disposition import UNSPEAKABLE_REASONS
 
         assert (
-            "fabricated_shared_history" in _DELIVERABLE_RESIDUAL_SURFACE_REASONS
+            "fabricated_shared_history" not in _DELIVERABLE_RESIDUAL_SURFACE_REASONS
         )
+        assert "fabricated_shared_history" in UNSPEAKABLE_REASONS
         verdict = assess_user_facing_reply(
             THE_THREE[1][0], THE_THREE[1][1], recent_user_messages=RECENT
         )
-        assert verdict.hard_failure is False
+        assert verdict.hard_failure is True
+        assert verdict.ok is False
 
     def test_a_recall_grounded_in_memory_evidence_is_not_flagged(self):
         """The false positive that kept it out of the hard set."""
@@ -131,6 +125,30 @@ class TestGroundedRecallSurvives:
                 "my favorite animal is the orca, and I'm demoing you on July 28th"
             ],
         )
+
+    def test_requested_recall_without_evidence_is_not_automatically_exempt(self):
+        assert has_fabricated_shared_history(
+            "You told me your childhood nickname was Apollo.",
+            "What did I tell you about my childhood?",
+            RECENT,
+        )
+
+    def test_exact_turn_custody_supplies_grounding_to_the_assessor(self):
+        from core.conversation.turn_evidence_custody import (
+            bind_turn_evidence_custody,
+            record_turn_grounding,
+        )
+
+        reply = "You told me your favorite animal is the orca."
+        with bind_turn_evidence_custody(session_id="owner", turn_id="recall"):
+            assert record_turn_grounding("my favorite animal is the orca")
+            verdict = assess_user_facing_reply(
+                "What did I tell you to remember?",
+                reply,
+                recent_user_messages=RECENT,
+            )
+
+        assert "fabricated_shared_history" not in verdict.reasons
 
     def test_recalling_what_he_asked_for_passes(self):
         assert not has_fabricated_shared_history(

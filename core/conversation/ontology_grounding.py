@@ -8,10 +8,10 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
-from enum import Enum
+from enum import StrEnum
 
 
-class OntologyGroundingStatus(str, Enum):
+class OntologyGroundingStatus(StrEnum):
     PASS = "pass"
     PENDING = "pending"
     VIOLATION = "violation"
@@ -47,11 +47,6 @@ _IDIOM_RE = re.compile(
     r")\b",
     re.IGNORECASE,
 )
-_DIGITAL_EMBODIMENT_RE = re.compile(
-    r"\b(?:digital|virtual|interface|ui|avatar|sensor|camera|microphone|"
-    r"robotic|simulated|software|runtime|model|token|neural|screen)\b",
-    re.IGNORECASE,
-)
 _DIGITAL_WORK_SUPPORT_RE = re.compile(
     r"\b(?:you|bryan|aura|codex|claude|agentic\s+ai|agents?|runtime|tools?|"
     r"repo|codebase|project|software|desktop|conversation|user|operator)\b",
@@ -74,6 +69,13 @@ _PHYSICAL_ACTION_CONTEXTS = (
 _BODY_PARTS = (
     r"hands?|mouth|stomach|skin|eyes?|ears?|feet|arms?|legs?|fingers?|"
     r"taste\s+buds|heart|lungs?|biological\s+body|physical\s+body"
+)
+_BODY_QUALIFIER = r"(?:(?:physical|biological|digital|virtual|robotic|simulated)\s+)?"
+_DIGITAL_BODY_QUALIFIER_RE = re.compile(
+    rf"\b(?:my|the)\s+(?:"
+    r"digital|virtual|interface|avatar(?:'s)?|robotic|simulated|software|runtime"
+    rf")(?:\s+[a-z][a-z'-]*){{0,2}}\s+(?:{_BODY_PARTS})\b",
+    re.IGNORECASE,
 )
 _FAMILY = (
     r"family|mother|father|parents|siblings|brother|sister|aunt|uncle|"
@@ -109,7 +111,7 @@ _LITERAL_PATTERNS = _compiled(
         ),
         (
             "physical_body_state",
-            rf"\bmy\s+(?:{_BODY_PARTS})\s+"
+            rf"\bmy\s+{_BODY_QUALIFIER}(?:{_BODY_PARTS})\s+"
             r"(?:is|are|was|were|feel|feels|felt|hurt|hurts|ached?|"
             r"touched|held|heard|saw|smelled|tasted)\b[^.?!]{0,100}",
         ),
@@ -188,6 +190,41 @@ _PENDING_PREDICATE_RE = re.compile(
     re.IGNORECASE,
 )
 
+_PROPOSITION_BOUNDARY_RE = re.compile(
+    r"[.;!?](?:\s+|$)|,\s+(?=(?:and|but|yet|while|whereas|however|though|except)\b)|"
+    r"\b(?:but|however|though|except|whereas)\b",
+    re.IGNORECASE,
+)
+
+
+def _proposition_scope(text: str, start: int, end: int) -> str:
+    """Return the smallest assertion containing one concrete claim match."""
+
+    left = 0
+    right = len(text)
+    for boundary in _PROPOSITION_BOUNDARY_RE.finditer(text):
+        if boundary.end() <= start:
+            left = boundary.end()
+            continue
+        if boundary.start() >= end:
+            right = boundary.start()
+            break
+    return text[left:right].strip(" ,;:\t\r\n")
+
+
+def _claim_is_explicitly_digital(scope: str, matched_text: str) -> bool:
+    """True only when the body noun itself is digitally qualified.
+
+    A nearby word such as ``screen`` is context, not a modifier. Treating any
+    digital word in the proposition as an exemption let "my physical hands
+    hurt while I use the screen" pass as digitally embodied.
+    """
+
+    return bool(
+        _DIGITAL_BODY_QUALIFIER_RE.search(matched_text)
+        or _DIGITAL_BODY_QUALIFIER_RE.search(scope)
+    )
+
 
 def _mask_nonassertive_language(text: str, prompt: str) -> tuple[str, tuple[str, ...]]:
     masked = text
@@ -245,22 +282,14 @@ def detect_unsupported_embodiment_claim(
         return _result(OntologyGroundingStatus.PASS)
 
     screened, global_evidence = _mask_nonassertive_language(body, prompt_text)
-    clauses = re.split(
-        r"\b(?:but|however|though|except)\b",
-        screened,
-        flags=re.IGNORECASE,
-    )
-    for clause in clauses:
-        clause = clause.strip()
-        if not clause or _COUNTERFACTUAL_OR_DISCUSSION_RE.search(clause):
-            continue
-        for claim_type, pattern in _LITERAL_PATTERNS:
-            match = pattern.search(clause)
-            if not match:
+    for claim_type, pattern in _LITERAL_PATTERNS:
+        for match in pattern.finditer(screened):
+            scope = _proposition_scope(screened, match.start(), match.end())
+            if _COUNTERFACTUAL_OR_DISCUSSION_RE.search(scope):
                 continue
             if (
                 claim_type in {"physical_body_state", "physical_sensory_claim"}
-                and _DIGITAL_EMBODIMENT_RE.search(clause)
+                and _claim_is_explicitly_digital(scope, match.group(0))
             ):
                 continue
             return _result(
@@ -271,9 +300,12 @@ def detect_unsupported_embodiment_claim(
                 confidence=0.98,
                 evidence=(*global_evidence, "completed_literal_first_person_clause"),
             )
-        for claim_type, pattern in _SOCIAL_HISTORY_PATTERNS:
-            match = pattern.search(clause)
-            if not match or _DIGITAL_WORK_SUPPORT_RE.search(clause):
+    for claim_type, pattern in _SOCIAL_HISTORY_PATTERNS:
+        for match in pattern.finditer(screened):
+            scope = _proposition_scope(screened, match.start(), match.end())
+            if _COUNTERFACTUAL_OR_DISCUSSION_RE.search(scope):
+                continue
+            if _DIGITAL_WORK_SUPPORT_RE.search(scope):
                 continue
             return _result(
                 OntologyGroundingStatus.VIOLATION,

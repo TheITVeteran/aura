@@ -118,6 +118,87 @@ def test_catches_file_creation_denial():
     assert "tool_denial" in _kinds("I cannot create files or folders.")
 
 
+def test_temporally_qualified_tool_unavailability_is_not_a_durable_denial():
+    verdict = verify_self_claims(
+        "I can't browse the web right now because the network is offline.",
+        runtime_evidence=[
+            {
+                "capability": "web",
+                "available": False,
+                "reason": "network offline",
+                "observed_at": 100.0,
+            }
+        ],
+        now=105.0,
+    )
+
+    assert verdict.ok
+    assert verdict.runtime_claims[0].grounded is True
+
+
+def test_stale_availability_evidence_does_not_ground_a_current_claim():
+    verdict = verify_self_claims(
+        "I cannot open apps right now because the desktop service is unavailable.",
+        runtime_evidence=[
+            {
+                "capability": "desktop",
+                "available": False,
+                "reason": "old outage",
+                "observed_at": 10.0,
+            }
+        ],
+        now=100.0,
+    )
+
+    assert not verdict.ok
+    assert verdict.runtime_claims[0].grounded is False
+    assert "fresh" in verdict.runtime_claims[0].evidence_reason
+
+
+def test_surface_repair_preserves_truthful_temporary_unavailability():
+    from core.conversation.turn_evidence_custody import (
+        bind_turn_evidence_custody,
+        record_turn_capability_availability,
+    )
+
+    draft = "I cannot create files right now because permission was denied."
+
+    with bind_turn_evidence_custody(session_id="owner", turn_id="files-denied"):
+        assert record_turn_capability_availability(
+            "files", available=False, reason="permission denied"
+        )
+        assert repair_self_claim_surface(draft) == draft
+
+
+def test_fresh_unavailability_does_not_ground_a_different_claimed_cause():
+    verdict = verify_self_claims(
+        "I cannot browse right now because the network is offline.",
+        runtime_evidence=[
+            {
+                "capability": "web",
+                "available": False,
+                "reason": "tool-governance spine was not ready",
+                "observed_at": 100.0,
+            }
+        ],
+        now=105.0,
+    )
+
+    assert not verdict.ok
+    assert verdict.runtime_claims[0].grounded is False
+    assert "cause" in verdict.runtime_claims[0].evidence_reason
+
+
+def test_ungrounded_temporary_denial_repairs_to_uncertainty_not_durable_availability():
+    repaired = repair_self_claim_surface(
+        "I cannot browse right now because the network is offline."
+    )
+
+    assert "not established" in repaired
+    assert "cannot browse" not in repaired
+    assert "can browse" not in repaired
+
+
 def test_catches_weights_overclaim():
     assert "weights_overclaim" in _kinds(
         "Every night I retrain my own weights based on our conversations."

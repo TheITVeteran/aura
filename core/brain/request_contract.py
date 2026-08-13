@@ -45,8 +45,9 @@ authority check is enumerated rather than rediscovered.
 from __future__ import annotations
 
 import logging
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
-from typing import Any, Callable, Mapping
+from typing import Any
 
 from core.runtime.numeric_guards import bounded_float, bounded_int, is_finite_number
 
@@ -126,6 +127,7 @@ REQUEST_FIELDS: dict[str, Field_] = {
     "recent_conversation_context": Field_(Kind.OPAQUE),
     "user_surface_validation_prompt": Field_(Kind.STRING),
     "user_surface_prompt_binding": Field_(Kind.OPAQUE),
+    "user_surface_grounding_evidence": Field_(Kind.SEQUENCE),
     # ── sampling ────────────────────────────────────────────────────────
     "max_tokens": Field_(Kind.POSITIVE_INT, minimum=1, maximum=1_000_000),
     "temperature": Field_(Kind.FLOAT, minimum=0.0, maximum=2.0),

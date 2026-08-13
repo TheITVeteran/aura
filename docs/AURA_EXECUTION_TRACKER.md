@@ -46953,3 +46953,44 @@ terminal chat, capability preconditions and smaller subject/momentum/mood
 boundaries. Powered resident-32B replication remains independent; this closure
 does not claim its verdict, runtime tissue qualification, fusion authority,
 frontier reasoning or a `WOW Signal`.
+
+## Checkpoint 2026-08-12-324: User-Surface Semantics Fail Honestly
+
+The fifth dependency-ordered semantic repair group is implemented. Reply-shape
+repair no longer invents filler sentences, generic presence words or raw
+reference values merely to make a count pass. It may split or select content
+the model actually produced, but missing semantic predicates remain measured
+shortfalls for regeneration or explicit partial delivery. An unavailable
+integrity detector now uses an independent bounded egress check and quarantines
+ambiguous autonomous speech instead of silently treating it as clean.
+
+Shared-history claims are now hard integrity failures unless the asserted past
+is supported by recent conversation or evidence held under the exact current
+turn. Conversation, retained-memory and canonical-memory evidence enter that
+custody at the point where the route admits them; bounded evidence then crosses
+the MLX request contract and worker IPC so the earliest user-surface gate can
+distinguish real recall from invention. Direct recall questions receive no
+blanket exemption: even a one-word remembered value needs evidence, while
+reporting phrases such as “I can verify” do not count as invented facts.
+
+Capability language now separates durable ability from current availability.
+“I cannot browse” remains a false durable denial, while “I cannot browse right
+now” is admitted only when a fresh unavailable-state observation for that
+capability is bound to the exact turn. A specific claimed cause must agree with
+the observed cause; stale, absent or mismatched evidence triggers regeneration
+without rewriting a temporary condition into a permanent capability claim.
+Ontology checks likewise operate on proposition scope: counterfactual language
+and unrelated words such as “screen” cannot exempt a literal physical-body
+claim, while directly qualified digital or virtual embodiment remains valid.
+
+Validation under Aura's Python 3.12 runtime is green for the owned surface:
+the combined conversation reliability, exact-turn evidence, worker IPC,
+self-claim, ontology, egress, reply-pipeline and recall regression set passes
+`495/495`; canonical smoke passes `104/104`; repository Ruff, full Python
+compilation and diff hygiene pass. These six `semantic-content-reliability`
+findings are implemented but remain open in the append-only ledger until this
+code is committed, published and hash-bound by the next evidence checkpoint.
+
+Powered resident-32B replication remains separate and undisturbed. This
+checkpoint does not claim a replication verdict, runtime tissue qualification,
+fusion authority, frontier reasoning or a `WOW Signal`.

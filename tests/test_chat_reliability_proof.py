@@ -1117,7 +1117,7 @@ def test_exact_reply_contract_does_not_discard_followup_actions(prompt):
     )
 
 
-def test_sentence_count_repair_pads_short_reply_without_inventing_domain_facts():
+def test_sentence_count_repair_keeps_a_semantic_shortfall_visible():
     from core.conversation.response_reliability import (
         assess_user_facing_reply,
         repair_instruction_shape,
@@ -1126,8 +1126,10 @@ def test_sentence_count_repair_pads_short_reply_without_inventing_domain_facts()
     prompt = "Answer in two sentences."
     repaired = repair_instruction_shape(prompt, "Okay.")
 
-    assert repaired == "Okay. That is the direct answer."
-    assert assess_user_facing_reply(prompt, repaired).ok is True
+    assert repaired == "Okay."
+    assessment = assess_user_facing_reply(prompt, repaired)
+    assert assessment.ok is False
+    assert "missing_requested_sentence_count" in assessment.reasons
 
 
 def test_exact_reply_parser_ignores_commands_inside_escaped_quoted_target():
@@ -1285,7 +1287,7 @@ def test_explicit_word_count_request_rejects_wrong_count():
     assert "missing_requested_word_count" in assessment.reasons
 
 
-def test_repair_instruction_shape_fits_explicit_word_count():
+def test_repair_instruction_shape_does_not_pad_an_explicit_word_count():
     from core.conversation.response_reliability import (
         assess_user_facing_reply,
         repair_instruction_shape,
@@ -1295,8 +1297,38 @@ def test_repair_instruction_shape_fits_explicit_word_count():
     repaired = repair_instruction_shape(prompt, "Yes, I'm here.")
     assessment = assess_user_facing_reply(prompt, repaired)
 
-    assert repaired == "Yes I'm here and listening."
-    assert assessment.ok
+    assert repaired == "Yes, I'm here."
+    assert not assessment.ok
+    assert "missing_requested_word_count" in assessment.reasons
+
+
+def test_sentence_count_repair_never_manufactures_completion_filler():
+    from core.conversation.response_reliability import (
+        assess_user_facing_reply,
+        repair_instruction_shape,
+    )
+
+    prompt = "Latency sample 7: answer in exactly three sentences and include the sample number."
+    draft = "Checksums reveal accidental corruption."
+
+    repaired = repair_instruction_shape(prompt, draft)
+
+    assert repaired == draft
+    assert "This sentence exists only" not in repaired
+    assert "Contract recovery sentence" not in repaired
+    assessment = assess_user_facing_reply(prompt, repaired)
+    assert "missing_requested_sentence_count" in assessment.reasons
+    assert "missing_requested_reference_value" in assessment.reasons
+
+
+def test_reference_value_repair_never_attaches_a_value_to_an_unrelated_claim():
+    from core.conversation.response_reliability import repair_instruction_shape
+
+    prompt = "Latency sample 7: answer in one sentence and include the sample number."
+    draft = "The ocean stores most of the planet's excess heat."
+
+    assert repair_instruction_shape(prompt, draft) == draft
+    assert "sample number 7" not in repair_instruction_shape(prompt, draft)
 
 
 @pytest.mark.parametrize(
@@ -2013,7 +2045,6 @@ def test_numbering_fused_to_previous_sentence_is_rejected():
 
 
 def test_autonomous_follow_through_has_no_stored_floor():
-    from core.conversation.response_reliability import assess_user_facing_reply
     from core.synthesis import deterministic_user_facing_floor
 
     prompt = (

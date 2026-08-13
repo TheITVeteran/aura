@@ -15,6 +15,10 @@ from core.conversation.surface_disposition import (
 from core.conversation.turn_evidence_custody import (
     bind_turn_evidence_custody,
     join_turn_evidence_custody,
+    record_turn_capability_availability,
+    record_turn_grounding,
+    turn_capability_availability,
+    turn_grounding_evidence,
 )
 
 pytestmark = pytest.mark.unit
@@ -93,3 +97,21 @@ def test_a_lease_is_one_use_and_cannot_cross_turns() -> None:
         with pytest.raises(PermissionError):
             with join_turn_evidence_custody(lease):
                 pass
+
+
+def test_grounding_and_availability_are_exact_turn_owned() -> None:
+    with bind_turn_evidence_custody(session_id="s", turn_id="t"):
+        assert record_turn_grounding("Bryan said his favorite animal is the orca")
+        assert record_turn_capability_availability(
+            "web",
+            available=False,
+            reason="network disconnected",
+            observed_at=123.0,
+        )
+        assert turn_grounding_evidence() == (
+            "Bryan said his favorite animal is the orca",
+        )
+        assert turn_capability_availability()[0]["turn_id"] == "t"
+
+    assert turn_grounding_evidence() == ()
+    assert turn_capability_availability() == ()

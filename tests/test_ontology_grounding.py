@@ -41,6 +41,30 @@ def test_ontology_grounding_allows_counterfactual_and_tool_actions():
     assert detect_unsupported_embodiment_claim(
         "If I had hands, I would probably over-stir the soup."
     ).ok
+
+
+def test_counterfactual_exemption_does_not_cover_a_later_literal_proposition():
+    verdict = detect_unsupported_embodiment_claim(
+        "If I had hands, I would paint; however, my physical hands hurt now."
+    )
+
+    assert verdict.status is OntologyGroundingStatus.VIOLATION
+    assert verdict.claim_type == "physical_body_state"
+
+
+def test_unrelated_digital_context_does_not_exempt_a_physical_claim():
+    verdict = detect_unsupported_embodiment_claim(
+        "My interface is open, but my physical hands hurt while I use the screen."
+    )
+
+    assert verdict.status is OntologyGroundingStatus.VIOLATION
+    assert verdict.claim_type == "physical_body_state"
+
+
+def test_directly_qualified_digital_body_metaphor_remains_allowed():
+    assert detect_unsupported_embodiment_claim(
+        "My virtual hands feel constrained by the interface bounds."
+    ).ok
     assert detect_unsupported_embodiment_claim(
         "I made a folder on the desktop after the tool receipt confirmed it."
     ).ok

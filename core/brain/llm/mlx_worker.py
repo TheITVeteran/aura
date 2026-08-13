@@ -885,6 +885,12 @@ def _surface_quality_failure_reasons(
         if isinstance(recent_raw, (list, tuple))
         else []
     )
+    grounding_raw = job.get("user_surface_grounding_evidence")
+    grounding = (
+        [str(item or "") for item in grounding_raw]
+        if isinstance(grounding_raw, (list, tuple))
+        else []
+    )
     try:
         from core.conversation.response_reliability import assess_user_facing_reply
     except (ImportError, AttributeError, RuntimeError) as exc:
@@ -899,6 +905,7 @@ def _surface_quality_failure_reasons(
         prompt,
         response_text,
         recent_user_messages=recent_messages,
+        grounding=grounding,
     )
     if assessment.ok and not assessment.retryable and not assessment.hard_failure:
         return []
@@ -1039,11 +1046,6 @@ _DELIVERABLE_RESIDUAL_SURFACE_REASONS = frozenset(
         # referents.py); this reason is how a regression there becomes a rate
         # instead of an anecdote.
         "borrowed_owner_first_person_speech",
-        # Same reasoning, one step stronger: an invented shared past is worse
-        # than a borrowed sentence and will become a hard failure once the
-        # assessment can see the memory evidence she recalled from. Until
-        # then, flagging beats killing a real recall.
-        "fabricated_shared_history",
     }
 )
 

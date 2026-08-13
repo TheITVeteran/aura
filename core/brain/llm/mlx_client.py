@@ -2864,6 +2864,32 @@ def _surface_quality_rejection_reasons(value: Any) -> tuple[str, ...]:
     return tuple(str(reason).strip()[:120] for reason in raw_reasons if str(reason).strip())[:8]
 
 
+def _bounded_surface_grounding_evidence(value: Any = None) -> list[str]:
+    """Carry exact-turn recall evidence across worker IPC without prompt trust."""
+
+    surface_grounding = value
+    if surface_grounding is None:
+        try:
+            from core.conversation.turn_evidence_custody import turn_grounding_evidence
+
+            surface_grounding = turn_grounding_evidence()
+        except (ImportError, AttributeError, RuntimeError, TypeError, ValueError):
+            surface_grounding = ()
+    bounded: list[str] = []
+    total_chars = 0
+    if not isinstance(surface_grounding, (list, tuple)):
+        return bounded
+    for item in surface_grounding[:16]:
+        evidence_text = str(item or "").strip()[:3_200]
+        if not evidence_text or evidence_text in bounded:
+            continue
+        if total_chars + len(evidence_text) > 24_000:
+            break
+        bounded.append(evidence_text)
+        total_chars += len(evidence_text)
+    return bounded
+
+
 def _rejected_surface_draft(value: Any) -> str:
     """The draft the worker's quality gate rejected, if it carried one."""
     receipt = value if isinstance(value, dict) else {}
@@ -13203,6 +13229,9 @@ class MLXLocalClient:
                 dict(kwargs.get("user_surface_prompt_binding") or {})
                 if isinstance(kwargs.get("user_surface_prompt_binding"), dict)
                 else {}
+            ),
+            "user_surface_grounding_evidence": _bounded_surface_grounding_evidence(
+                kwargs.get("user_surface_grounding_evidence")
             ),
             "clean_user_surface_steering_alpha": kwargs.get("clean_user_surface_steering_alpha"),
             "clean_user_surface_recurrent_loops": (

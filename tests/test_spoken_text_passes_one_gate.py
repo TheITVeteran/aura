@@ -99,3 +99,46 @@ class TestTheBridgeStillScreensInternalText:
         assert not _suppress_internal_leak(
             {"type": "aura_message", "message": "It's 1:24 AM, and I know that from my clock."}
         )
+
+    def test_primary_detector_failure_uses_bounded_fallback_for_plain_speech(
+        self, monkeypatch
+    ):
+        import core.conversation.response_reliability as reliability
+
+        monkeypatch.setattr(
+            reliability,
+            "_model_text_integrity_reasons",
+            lambda *args, **kwargs: (_ for _ in ()).throw(RuntimeError("detector down")),
+        )
+
+        assert not _suppress_internal_leak(
+            {"type": "aura_message", "message": "I found the article and its argument is worth examining."}
+        )
+
+    def test_primary_detector_failure_quarantines_ambiguous_control_text(
+        self, monkeypatch
+    ):
+        import core.conversation.response_reliability as reliability
+
+        monkeypatch.setattr(
+            reliability,
+            "_model_text_integrity_reasons",
+            lambda *args, **kwargs: (_ for _ in ()).throw(RuntimeError("detector down")),
+        )
+
+        assert _suppress_internal_leak(
+            {"type": "aura_message", "message": "ROUTER_ERROR: unknown (at all_failed)"}
+        )
+
+    def test_bridge_quarantines_spoken_text_when_gate_itself_raises(self, monkeypatch):
+        import core.conversation.response_reliability as reliability
+
+        monkeypatch.setattr(
+            reliability,
+            "internal_leak_reasons",
+            lambda _text: (_ for _ in ()).throw(RuntimeError("gate down")),
+        )
+
+        assert _suppress_internal_leak(
+            {"type": "aura_message", "message": "This message cannot be verified."}
+        )

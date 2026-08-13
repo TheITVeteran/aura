@@ -44,8 +44,9 @@ import contextvars
 import re
 import time
 import uuid
+from collections.abc import Iterable
 from enum import Enum
-from typing import Any, Iterable
+from typing import Any
 
 __all__ = [
     "SurfaceDisposition",
@@ -402,6 +403,7 @@ UNSPEAKABLE_REASONS: frozenset[str] = frozenset(
         "arithmetic_answer_missing",
         "surface_validation_prompt_binding_invalid",
         "surface_quality_gate_unavailable",
+        "integrity_check_unavailable",
         # ── Claims the runtime cannot support ────────────────────────────
         # These are not style. They are statements about reality that are
         # false: having spoken aloud, having a body, having run a tool,
@@ -412,7 +414,7 @@ UNSPEAKABLE_REASONS: frozenset[str] = frozenset(
         # something is worse than no answer, and saying so is the one thing a
         # person cannot check for themselves.
         "unfounded_voice_intrusion",
-    "unfounded_tool_execution_claim",
+        "unfounded_tool_execution_claim",
         "unsupported_embodiment_claim",
         "unsupported_affection_claim",
         "unsupported_self_telemetry_claim",
@@ -422,6 +424,7 @@ UNSPEAKABLE_REASONS: frozenset[str] = frozenset(
         "unsupported_runtime_limits_claim",
         "host_telemetry_substituted_for_self_condition",
         "ungrounded_person_narrative",
+        "fabricated_shared_history",
         "ungrounded_person_address",
         "template_telemetry_greeting",
         "unfounded_alarm_derailment",

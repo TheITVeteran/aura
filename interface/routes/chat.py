@@ -23147,7 +23147,10 @@ async def api_chat(
     already been dealt with two turns ago.
     """
     from core.conversation.failure_context import bind_failure_ledger
-    from core.conversation.turn_evidence_custody import bind_turn_evidence_custody
+    from core.conversation.turn_evidence_custody import (
+        bind_turn_evidence_custody,
+        record_turn_capability_availability,
+    )
 
     request_profile = request_access_profile(request)
     request_session = _chat_turn_session_key(request, body)
@@ -23195,6 +23198,17 @@ async def api_chat(
                 ),
                 bind_failure_ledger(),
             ):
+                tools_available = _runtime_tool_governance_available()
+                for capability in ("web", "desktop", "files"):
+                    record_turn_capability_availability(
+                        capability,
+                        available=tools_available,
+                        reason=(
+                            "authority, capability, and Will services admitted"
+                            if tools_available
+                            else "tool-governance spine was not ready at turn ingress"
+                        ),
+                    )
                 _served = _apply_recorded_answer(
                     body.message,
                     await _api_chat_turn(body, request),
@@ -25584,6 +25598,9 @@ async def _api_chat_turn(body: ChatRequest, request: Request):
             session_id=_chat_session_id,
         )
         if conversation_recall_evidence:
+            from core.conversation.turn_evidence_custody import record_turn_grounding
+
+            record_turn_grounding(conversation_recall_evidence)
             effective_user_message = (
                 f"{effective_user_message}\n\n"
                 "[CONVERSATION RECALL EVIDENCE]\n"
@@ -25601,6 +25618,9 @@ async def _api_chat_turn(body: ChatRequest, request: Request):
             )
         )
         if retained_memory_evidence:
+            from core.conversation.turn_evidence_custody import record_turn_grounding
+
+            record_turn_grounding(retained_memory_evidence)
             effective_user_message = (
                 f"{effective_user_message}\n\n"
                 "[RETAINED MEMORY EVIDENCE]\n"
@@ -25612,6 +25632,9 @@ async def _api_chat_turn(body: ChatRequest, request: Request):
             )
         if desktop_memory_state_evidence:
             memory_reply, memory_status = desktop_memory_state_evidence
+            from core.conversation.turn_evidence_custody import record_turn_grounding
+
+            record_turn_grounding(f"status={memory_status}\n{memory_reply}")
             effective_user_message = (
                 f"{effective_user_message}\n\n"
                 "[CANONICAL MEMORY STATE EVIDENCE]\n"

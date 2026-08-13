@@ -97,9 +97,19 @@ def _suppress_internal_leak(ws_msg: dict[str, Any]) -> bool:
         )
         return True
     except (ImportError, RuntimeError, TypeError, ValueError) as exc:
-        # Fail open: a broken check must not silence Aura.
-        logger.debug("EventBridge leak check skipped: %s", exc)
-        return False
+        # This is user-visible autonomous egress. Treating an unavailable
+        # integrity verdict as clean can publish the exact internal control
+        # text this seam exists to contain. Quarantine this one message; the
+        # next independently generated message gets a fresh bounded check.
+        record_degradation(
+            "event_bridge.integrity_gate",
+            exc,
+            severity="warning",
+            action="quarantined one autonomous spoken message until integrity checking recovered",
+            enforce_failure_policy=False,
+        )
+        logger.warning("EventBridge integrity gate unavailable; message quarantined: %s", exc)
+        return str(ws_msg.get("type", "")) in _SPOKEN_WS_TYPES
 
 
 def _complete_spoken_tail(ws_msg: dict[str, Any]) -> None:

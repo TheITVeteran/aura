@@ -41,7 +41,11 @@ __all__ = [
     "bind_turn_evidence_custody",
     "current_turn_evidence_custody",
     "join_turn_evidence_custody",
+    "record_turn_capability_availability",
+    "record_turn_grounding",
     "run_as_turn_evidence_participant",
+    "turn_capability_availability",
+    "turn_grounding_evidence",
 ]
 
 
@@ -82,6 +86,8 @@ class TurnEvidenceCustody:
         self._participants: set[tuple[int, int]] = {self._owner}
         self._leases: dict[str, EvidenceParticipantLease] = {}
         self._receipts: list[dict[str, Any]] = []
+        self._grounding: list[str] = []
+        self._capability_availability: dict[str, dict[str, Any]] = {}
         self._closed = False
 
     @property
@@ -122,7 +128,7 @@ class TurnEvidenceCustody:
         return lease
 
     @contextmanager
-    def join(self, lease: EvidenceParticipantLease) -> Iterator["TurnEvidenceCustody"]:
+    def join(self, lease: EvidenceParticipantLease) -> Iterator[TurnEvidenceCustody]:
         """Consume ``lease`` and admit this exact child for the block."""
 
         participant = _execution_identity()
@@ -172,6 +178,69 @@ class TurnEvidenceCustody:
         with self._lock:
             return tuple(dict(item) for item in self._receipts)
 
+    def append_grounding(self, evidence: Any) -> bool:
+        """Attach source text that this exact turn was entitled to use."""
+
+        if not self.admits_current_execution():
+            return False
+        text = str(evidence or "").strip()
+        if not text:
+            return False
+        with self._lock:
+            if self._closed:
+                return False
+            if text not in self._grounding and len(self._grounding) < 32:
+                self._grounding.append(text[:16_000])
+            return True
+
+    def grounding(self) -> tuple[str, ...]:
+        """Authenticated recall/evidence text admitted to the current turn."""
+
+        if not self.admits_current_execution():
+            return ()
+        with self._lock:
+            return tuple(self._grounding)
+
+    def record_capability_availability(
+        self,
+        capability: Any,
+        *,
+        available: bool,
+        reason: Any = "",
+        observed_at: float | None = None,
+    ) -> bool:
+        """Record a turn-bound observation, never a durable capability claim."""
+
+        if not self.admits_current_execution():
+            return False
+        name = str(capability or "").strip().casefold()
+        if not name:
+            return False
+        row = {
+            "capability": name[:64],
+            "available": bool(available),
+            "reason": " ".join(str(reason or "").split())[:240],
+            "observed_at": float(observed_at if observed_at is not None else time.time()),
+            "session_id": self.session_id,
+            "turn_id": self.turn_id,
+        }
+        with self._lock:
+            if self._closed:
+                return False
+            self._capability_availability[name] = row
+            return True
+
+    def capability_availability(self) -> tuple[dict[str, Any], ...]:
+        """Freshness-checkable availability observations for this exact turn."""
+
+        if not self.admits_current_execution():
+            return ()
+        with self._lock:
+            return tuple(
+                dict(self._capability_availability[name])
+                for name in sorted(self._capability_availability)
+            )
+
     def close(self) -> None:
         with self._lock:
             self._closed = True
@@ -187,6 +256,48 @@ _ACTIVE_CUSTODY: contextvars.ContextVar[TurnEvidenceCustody | None] = contextvar
 
 def current_turn_evidence_custody() -> TurnEvidenceCustody | None:
     return _ACTIVE_CUSTODY.get()
+
+
+def record_turn_grounding(evidence: Any) -> bool:
+    """Attach recall evidence to the active turn, if this task owns it."""
+
+    custody = current_turn_evidence_custody()
+    return bool(custody and custody.append_grounding(evidence))
+
+
+def turn_grounding_evidence() -> tuple[str, ...]:
+    """Return only evidence owned by the current exact turn execution."""
+
+    custody = current_turn_evidence_custody()
+    return custody.grounding() if custody is not None else ()
+
+
+def record_turn_capability_availability(
+    capability: Any,
+    *,
+    available: bool,
+    reason: Any = "",
+    observed_at: float | None = None,
+) -> bool:
+    """Record one current availability observation under turn custody."""
+
+    custody = current_turn_evidence_custody()
+    return bool(
+        custody
+        and custody.record_capability_availability(
+            capability,
+            available=available,
+            reason=reason,
+            observed_at=observed_at,
+        )
+    )
+
+
+def turn_capability_availability() -> tuple[dict[str, Any], ...]:
+    """Return exact-turn capability observations, never inherited ambient state."""
+
+    custody = current_turn_evidence_custody()
+    return custody.capability_availability() if custody is not None else ()
 
 
 @contextmanager

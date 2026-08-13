@@ -19,6 +19,7 @@ from core.brain.llm.mlx_worker import (
     _SELF_CLAIM_BOUNDARY_SUFFIX,
     _repair_live_user_surface_instruction_shape,
     _salvage_exhausted_user_surface,
+    _surface_quality_failure_reasons,
 )
 
 
@@ -104,7 +105,26 @@ def test_worker_repairs_compact_explicit_shape_before_retry_decode():
         "Done. Sample two. Ask the user another question.",
     )
 
-    assert repaired == "Latency sample 2 completed."
+    assert repaired == "Sample two."
+
+
+def test_worker_admits_shared_history_only_with_bound_grounding_evidence():
+    prompt = "What did I tell you to remember about my favorite animal?"
+    reply = "You told me your favorite animal is the orca."
+    ungrounded = _job_for(prompt)
+    grounded = {
+        **ungrounded,
+        "user_surface_grounding_evidence": [
+            "Bryan said his favorite animal is the orca."
+        ],
+    }
+
+    assert "fabricated_shared_history" in _surface_quality_failure_reasons(
+        ungrounded, reply
+    )
+    assert "fabricated_shared_history" not in _surface_quality_failure_reasons(
+        grounded, reply
+    )
 
 
 def test_live_failure_shape_now_delivers():

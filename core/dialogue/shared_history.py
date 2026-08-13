@@ -47,7 +47,8 @@ the evidence and the memory at the same time.
 from __future__ import annotations
 
 import re
-from typing import Any, Iterable
+from collections.abc import Iterable
+from typing import Any
 
 __all__ = [
     "fabricated_shared_history",
@@ -98,29 +99,36 @@ _STOPWORDS: frozenset[str] = frozenset(
     """.split()
 )
 
-#: The user ASKING her to recollect. When the question is "what did I say",
-#: "what was I worried about", "do you remember what I told you" — a
-#: past-tense claim about them with content not in the current turn is the
-#: ANSWER, not an invention. Flagging it inverts the check.
-#:
-#: Measured against the 120-turn contract transcript: asked "What did you think
-#: I was worried about in the last exchange?", the correct reply "You were
-#: worried that the conversation could look alive for a minute and then quietly
-#: lose the plot" was flagged as fabricated shared history. The claim is novel
-#: because the question demanded something not already on the page.
-_INVITES_RECOLLECTION_RE = re.compile(
-    r"(?i)"
-    r"\b(?:what|which|when|where|how|why|who)\b[^?]{0,80}\b"
-    r"(?:i|we|you)\s+(?:said|asked|told|meant|wanted|felt|thought|were|was|"
-    r"had|mentioned|worried|brought\s+up)\b"
-    r"|\bdo\s+you\s+(?:remember|recall)\b"
-    r"|\bwhat\s+did\s+(?:i|we)\b"
-    r"|\bremind\s+me\s+what\b"
-    r"|\bwhat\s+(?:was|were)\s+(?:i|we|my|our)\b"
-    r"|\bwhat\s+did\s+you\s+think\s+(?:i|we)\b"
+_WORD_RE = re.compile(r"[A-Za-z][A-Za-z'-]+")
+
+# A direct recollection question can have a one-word answer ("orca", "Tuesday",
+# "Paris"). That value is exactly the part that needs evidence. Earlier code
+# exempted recollection answers wholesale; the general two-word novelty floor
+# then preserved a narrower version of the same hole. Recollection now lowers
+# the evidence threshold without changing what counts as grounding.
+_REQUESTS_RECOLLECTION_RE = re.compile(
+    r"(?i)\b(?:remember|recall|remind\s+me|what\s+did\s+(?:i|we)|"
+    r"what\s+(?:was|were)\s+(?:my|our|i|we))\b"
 )
 
-_WORD_RE = re.compile(r"[A-Za-z][A-Za-z'-]+")
+# Reporting language can legitimately differ from the evidence. The recalled
+# value may not. These words describe the act or confidence of recollection;
+# excluding them keeps direct-recall scrutiny focused on the remembered fact.
+_RECALL_FRAME_WORDS = frozenset(
+    {
+        "asked",
+        "discussed",
+        "durable",
+        "evidence",
+        "mentioned",
+        "recalled",
+        "remembered",
+        "shared",
+        "told",
+        "verified",
+        "verify",
+    }
+)
 
 #: A claim carrying fewer new content words than this is phrasing, not a
 #: fabricated event.
@@ -181,15 +189,6 @@ def fabricated_shared_history(
     if not sentences:
         return []
 
-    # A RECOLLECTION SHE WAS ASKED FOR IS NOT AN INVENTION.
-    #
-    # "What did you think I was worried about?" demands a past-tense claim
-    # about him whose content is necessarily not in the current turn — that is
-    # what makes it a question. Flagging the answer inverts the check. This
-    # module is about UNSOLICITED invented history.
-    if _INVITES_RECOLLECTION_RE.search(str(user_message or "")):
-        return []
-
     known: set[str] = _content_words(user_message)
     for message in recent_user_messages or ():
         known |= _content_words(message)
@@ -207,6 +206,13 @@ def fabricated_shared_history(
     if len(known) < _MIN_CONTEXT_WORDS:
         return []
 
+    recollection_requested = bool(
+        _REQUESTS_RECOLLECTION_RE.search(str(user_message or ""))
+    )
+    required_novel_words = max(1, int(min_novel_words))
+    if recollection_requested:
+        required_novel_words = 1
+
     found: list[str] = []
     for sentence in sentences:
         if not any(pattern.search(sentence) for pattern in _RELATIONAL_PAST_RES):
@@ -215,9 +221,11 @@ def fabricated_shared_history(
         if not content:
             continue
         novel = content - known
-        if len(novel) < max(1, int(min_novel_words)):
+        if recollection_requested:
+            novel -= _RECALL_FRAME_WORDS
+        if len(novel) < required_novel_words:
             continue
-        if (len(novel) / len(content)) < _MIN_NOVEL_SHARE:
+        if not recollection_requested and (len(novel) / len(content)) < _MIN_NOVEL_SHARE:
             continue  # Mostly grounded: this is her phrasing, not an invention.
         found.append(sentence)
     found.sort(key=lambda item: -len(item))

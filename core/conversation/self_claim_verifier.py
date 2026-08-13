@@ -24,7 +24,10 @@ also cannot establish its absence.
 from __future__ import annotations
 
 import re
+import time
+from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
+from typing import Any
 
 # ── substrate truths used in corrections ───────────────────────────────
 
@@ -271,7 +274,8 @@ _PATTERNS: tuple[tuple[str, re.Pattern[str]], ...] = (
         "tool_denial",
         re.compile(
             rf"\bi\s+{_NEG}\s+(?:have the ability to\s+|be able to\s+)?"
-            r"(?:browse|search)\s+the\s+(?:web|internet)\b",
+            r"(?:browse(?:\s+the\s+(?:web|internet))?|"
+            r"search\s+the\s+(?:web|internet))\b",
             re.IGNORECASE,
         ),
     ),
@@ -375,6 +379,47 @@ _TRUTHFUL_GUARDS: tuple[re.Pattern[str], ...] = (
 )
 
 _GUARD_WINDOW = 80
+_RUNTIME_EVIDENCE_MAX_AGE_S = 30.0
+_TEMPORAL_AVAILABILITY_RE = re.compile(
+    r"\b(?:right\s+now|currently|at\s+the\s+moment|this\s+turn|today|"
+    r"temporar(?:ily|y)|until\s+(?:the|you|i)|because\s+(?:the|a|my)|"
+    r"permission\s+(?:is|was)|service\s+(?:is|was)|runtime\s+(?:is|was)|"
+    r"not\s+available|unavailable|offline|disconnected|blocked|denied|timed?\s*out)\b",
+    re.IGNORECASE,
+)
+_RUNTIME_CAUSE_RE = re.compile(r"\bbecause\b(?P<cause>[^.!?]+)", re.IGNORECASE)
+_RUNTIME_REASON_STOPWORDS = frozenset(
+    {
+        "and",
+        "because",
+        "cannot",
+        "cant",
+        "currently",
+        "right",
+        "that",
+        "this",
+        "tool",
+        "tools",
+        "turn",
+        "with",
+    }
+)
+_UNGROUNDED_RUNTIME_CORRECTION = (
+    "Operational truth: claim a current tool or service outage only from fresh "
+    "evidence bound to this turn. If availability is unmeasured, state that it "
+    "has not been established and attempt the governed path rather than denying "
+    "the durable capability."
+)
+
+
+@dataclass(frozen=True)
+class RuntimeCapabilityClaim:
+    """A situational availability statement, separate from durable ontology."""
+
+    capability: str
+    matched_text: str
+    grounded: bool
+    evidence_reason: str = ""
 
 
 @dataclass(frozen=True)
@@ -388,6 +433,7 @@ class SelfClaimViolation:
 class SelfClaimVerdict:
     ok: bool
     violations: tuple[SelfClaimViolation, ...]
+    runtime_claims: tuple[RuntimeCapabilityClaim, ...] = ()
 
     def regeneration_directive(self) -> str:
         """Instruction block for regenerating a reply that misstated the self."""
@@ -413,21 +459,132 @@ def _guarded(text: str, start: int, end: int) -> bool:
     return any(guard.search(window) for guard in _TRUTHFUL_GUARDS)
 
 
-def verify_self_claims(draft_reply: str) -> SelfClaimVerdict:
+def _tool_capability_for_match(text: str) -> str:
+    lowered = text.casefold()
+    if (
+        "browse" in lowered
+        or "search" in lowered
+        or "web" in lowered
+        or "internet" in lowered
+    ):
+        return "web"
+    if "file" in lowered or "folder" in lowered or "document" in lowered or "pdf" in lowered:
+        return "files"
+    return "desktop"
+
+
+def _runtime_evidence_rows(
+    runtime_evidence: Iterable[Mapping[str, Any]] | None,
+) -> tuple[Mapping[str, Any], ...]:
+    if runtime_evidence is not None:
+        return tuple(runtime_evidence)
+    try:
+        from core.conversation.turn_evidence_custody import turn_capability_availability
+
+        return tuple(turn_capability_availability())
+    except (ImportError, AttributeError, RuntimeError, TypeError, ValueError):
+        return ()
+
+
+def _ground_runtime_claim(
+    capability: str,
+    evidence: Iterable[Mapping[str, Any]],
+    *,
+    claim_sentence: str,
+    now: float,
+) -> tuple[bool, str]:
+    for row in evidence:
+        if str(row.get("capability") or "").casefold() not in {capability, "tools"}:
+            continue
+        try:
+            age = now - float(row.get("observed_at"))
+        except (TypeError, ValueError):
+            continue
+        if age < 0.0 or age > _RUNTIME_EVIDENCE_MAX_AGE_S:
+            continue
+        if not bool(row.get("available")):
+            reason = str(row.get("reason") or "current runtime unavailable")[:240]
+            cause_match = _RUNTIME_CAUSE_RE.search(claim_sentence)
+            if cause_match:
+                cause_words = {
+                    word.casefold()
+                    for word in re.findall(r"[A-Za-z][A-Za-z'-]+", cause_match.group("cause"))
+                    if word.casefold() not in _RUNTIME_REASON_STOPWORDS
+                }
+                reason_words = {
+                    word.casefold()
+                    for word in re.findall(r"[A-Za-z][A-Za-z'-]+", reason)
+                    if word.casefold() not in _RUNTIME_REASON_STOPWORDS
+                }
+                if cause_words and not cause_words.intersection(reason_words):
+                    return False, "fresh unavailable-state evidence did not support the claimed cause"
+            return True, reason
+    return False, "no fresh unavailable-state evidence"
+
+
+def verify_self_claims(
+    draft_reply: str,
+    *,
+    runtime_evidence: Iterable[Mapping[str, Any]] | None = None,
+    now: float | None = None,
+) -> SelfClaimVerdict:
     """Check a draft reply's self-claims against substrate truth.
 
     Returns a verdict whose violations carry the substrate corrections.
-    Pure function: no I/O, deterministic, cheap enough for every turn.
+    ``runtime_evidence`` contains exact-turn availability observations. A
+    durable statement such as "I cannot browse" remains an ontology denial;
+    a temporally scoped statement such as "I cannot browse right now" is an
+    operational claim and is never rewritten into a durable capability
+    assertion. When no argument is supplied, exact-turn custody is consulted.
     """
     text = str(draft_reply or "")
     if not text.strip():
-        return SelfClaimVerdict(ok=True, violations=())
+        return SelfClaimVerdict(ok=True, violations=(), runtime_claims=())
 
     violations: list[SelfClaimViolation] = []
+    runtime_claims: list[RuntimeCapabilityClaim] = []
+    evidence = _runtime_evidence_rows(runtime_evidence)
+    observed_now = float(now if now is not None else time.time())
     for kind, pattern in _PATTERNS:
         for match in pattern.finditer(text):
             if _guarded(text, match.start(), match.end()):
                 continue
+            if kind == "tool_denial":
+                sentence_start = max(
+                    text.rfind(".", 0, match.start()),
+                    text.rfind("!", 0, match.start()),
+                    text.rfind("?", 0, match.start()),
+                ) + 1
+                sentence_ends = [
+                    idx for mark in ".!?" if (idx := text.find(mark, match.end())) >= 0
+                ]
+                sentence_end = min(sentence_ends) + 1 if sentence_ends else len(text)
+                sentence = text[sentence_start:sentence_end]
+                if _TEMPORAL_AVAILABILITY_RE.search(sentence):
+                    capability = _tool_capability_for_match(match.group(0))
+                    grounded, reason = _ground_runtime_claim(
+                        capability,
+                        evidence,
+                        claim_sentence=sentence,
+                        now=observed_now,
+                    )
+                    runtime_claims.append(
+                        RuntimeCapabilityClaim(
+                            capability=capability,
+                            matched_text=match.group(0)[:160],
+                            grounded=grounded,
+                            evidence_reason=reason,
+                        )
+                    )
+                    if not grounded:
+                        violations.append(
+                            SelfClaimViolation(
+                                kind="runtime_tool_unavailability_ungrounded",
+                                matched_text=sentence.strip()[:160],
+                                correction=_UNGROUNDED_RUNTIME_CORRECTION,
+                            )
+                        )
+                    continue
             violations.append(
                 SelfClaimViolation(
                     kind=kind,
@@ -435,7 +592,11 @@ def verify_self_claims(draft_reply: str) -> SelfClaimVerdict:
                     correction=_CORRECTIONS[kind],
                 )
             )
-    return SelfClaimVerdict(ok=not violations, violations=tuple(violations))
+    return SelfClaimVerdict(
+        ok=not violations,
+        violations=tuple(violations),
+        runtime_claims=tuple(runtime_claims),
+    )
 
 
 def repair_self_claim_surface(draft_reply: str) -> str:
@@ -467,4 +628,9 @@ def repair_self_claim_surface(draft_reply: str) -> str:
         for kind in kinds
         if kind in _SURFACE_CORRECTIONS
     ]
+    if "runtime_tool_unavailability_ungrounded" in kinds:
+        corrected.append(
+            "I have not established that this capability is unavailable in the "
+            "current turn, so I will use the governed path and report its observed result."
+        )
     return " ".join(corrected).strip()

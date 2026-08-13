@@ -39,9 +39,7 @@ the moment someone is most tempted to skip it.
 """
 from __future__ import annotations
 
-import ast
 import logging
-import math
 import re
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass, replace
@@ -51,12 +49,12 @@ from core.brain.llm.latent_cortex.output_quality import (
     evaluate_facet_coverage,
     request_facets,
 )
-from core.conversation.requested_reply_shape import reply_scope_text
 from core.conversation.arithmetic_check import (
     ARITHMETIC_NUMBER_RE,
     requested_arithmetic_result,
 )
 from core.conversation.ontology_grounding import detect_unsupported_embodiment_claim
+from core.conversation.requested_reply_shape import reply_scope_text
 from core.dialogue.referents import borrowed_first_person_spans
 from core.dialogue.shared_history import has_fabricated_shared_history
 from core.runtime.errors import record_degradation
@@ -3494,32 +3492,18 @@ def _expand_sentence_candidates(sentences: list[str], count: int) -> list[str]:
 
 
 def _pad_sentence_candidates(sentences: list[str], count: int) -> list[str]:
-    """Finish a hard sentence-count contract without inventing domain facts."""
+    """Return only sentences supported by the draft being repaired.
 
-    padded = list(sentences)
-    transparent_fillers = (
-        "That is the direct answer.",
-        "I am keeping it within the available context and requested scope.",
-        "No unsupported factual claim is being added.",
-        "The response remains bounded to what the completed generation established.",
-        "Any additional detail would require a fresh supported generation.",
-        "This sentence exists only to preserve the requested response structure.",
-    )
-    filler_index = 0
-    normalized = {_normalize(sentence) for sentence in padded}
-    while len(padded) < count:
-        if filler_index < len(transparent_fillers):
-            filler = transparent_fillers[filler_index]
-        else:
-            filler = (
-                f"Contract recovery sentence {filler_index + 1} adds no new factual claim."
-            )
-        filler_index += 1
-        if _normalize(filler) in normalized:
-            continue
-        padded.append(filler)
-        normalized.add(_normalize(filler))
-    return padded
+    A deterministic shape repair may split or reformat existing content. It
+    cannot create the missing semantic predicates. The old implementation
+    padded an undersized answer with sentences whose sole purpose was making
+    the count pass; that converted a measured shortfall into a false success.
+    Leaving the list short keeps ``missing_requested_sentence_count`` live so
+    the caller can regenerate or serve an explicitly recorded partial result.
+    """
+
+    del count
+    return list(sentences)
 
 
 def _paragraphize_sentences(sentences: list[str], count: int) -> str:
@@ -3738,15 +3722,6 @@ def _safe_complete_word_count_candidate(
     return ""
 
 
-def _word_count_repair_fillers(user_message: Any) -> list[str]:
-    user_norm = _normalize(user_message)
-    if any(marker in user_norm for marker in ("diagnostic", "probe", "health", "status")):
-        return ["I", "am", "here", "and", "listening", "now", "clearly"]
-    if any(marker in user_norm for marker in ("ready", "with me", "there")):
-        return ["I", "am", "here", "with", "you", "now"]
-    return ["I", "am", "present", "and", "answering", "directly", "now"]
-
-
 def _fit_reply_to_requested_word_count(user_message: Any, reply_text: Any) -> str:
     requested_range = _requested_word_count_range(user_message)
     if not requested_range:
@@ -3766,22 +3741,11 @@ def _fit_reply_to_requested_word_count(user_message: Any, reply_text: Any) -> st
         )
         return complete_candidate or original
     elif len(words) < minimum_words:
-        if _count_contract_topic_anchors(user_message):
-            return original
-        fillers = _word_count_repair_fillers(user_message)
-        filler_index = 0
-        seen = {word.lower() for word in words}
-        if "i'm" in seen or "im" in seen:
-            seen.update({"i", "am"})
-        if "you're" in seen or "youre" in seen:
-            seen.update({"you", "are"})
-        while len(words) < minimum_words:
-            filler = fillers[filler_index % len(fillers)]
-            filler_index += 1
-            if filler.lower() in seen and filler_index <= (len(fillers) * 2):
-                continue
-            words.append(filler)
-            seen.add(filler.lower())
+        # A word-count shortfall is missing content, not missing whitespace.
+        # Adding generic presence words made the shape pass while preserving
+        # none of the requested substance. Keep the original shortfall visible
+        # to the retry/partial-completion path.
+        return original
 
     if not words:
         return ""
@@ -3818,20 +3782,9 @@ def repair_instruction_shape(user_message: Any, reply_text: Any) -> str:
         if word_repaired:
             return word_repaired
 
-    missing_references = [
-        (label, value)
-        for label, value in _requested_reference_values(user)
-        if not _reply_contains_reference_value(repaired, value)
-    ]
-    if missing_references:
-        repaired_sentences = _split_sentences(repaired)
-        if repaired_sentences:
-            suffix = ", ".join(
-                f"{label} {value}" for label, value in missing_references
-            )
-            first = repaired_sentences[0].rstrip(" .!?")
-            repaired_sentences[0] = f"{first} ({suffix})."
-            repaired = " ".join(repaired_sentences)
+    # Missing requested values are semantic omissions. Appending raw values to
+    # an unrelated sentence can produce grammatical text whose proposition is
+    # false. Only another grounded generation may supply them.
 
     requested_sentences = _requested_sentence_count(user)
     if requested_sentences is not None:
@@ -3843,7 +3796,18 @@ def repair_instruction_shape(user_message: Any, reply_text: Any) -> str:
             sentence_repaired,
             requested_sentences,
         )
-        repaired = " ".join(sentence_repaired[:requested_sentences])
+        if len(sentence_repaired) >= requested_sentences:
+            # Select only from content the model already produced. A later
+            # sentence can carry the requested value even when the opening is
+            # preamble ("Done. Sample two."). Check each contiguous window and
+            # admit one only when the complete semantic contract still holds.
+            for start in range(len(sentence_repaired) - requested_sentences + 1):
+                candidate = " ".join(
+                    sentence_repaired[start : start + requested_sentences]
+                )
+                if not _instruction_coverage_reasons(user, candidate):
+                    repaired = candidate
+                    break
 
     requested_numbered = _requested_count(_NUMBERED_LIST_REQUEST_RE, user)
     requested_numbered_sentences = _requested_count(_NUMBERED_SENTENCE_REQUEST_RE, user)
@@ -3887,9 +3851,10 @@ def repair_instruction_shape(user_message: Any, reply_text: Any) -> str:
         else:
             repaired = f"{repaired}\n\n{followup}"
     repaired = repaired.strip()
-    if _instruction_coverage_reasons(user, repaired):
-        if compact_acknowledgement:
-            return compact_acknowledgement
+    # A remaining coverage reason is deliberately left visible. The compact
+    # acknowledgement above is safe only when replacing a literal backend
+    # surface leak; using it as a universal fallback turned unrelated prose
+    # into a canned sentence that happened to contain the requested number.
     return repaired
 
 
@@ -7347,11 +7312,11 @@ _STOPWORDS_FOR_ANCHORS = frozenset(
         "said", "say", "saying", "tell", "told", "asked", "answer",
         # The pro-forms themselves are what points at the antecedent, so they
         # can never be the question's own subject.
-        "that", "them", "they", "those", "these",
+        "that", "them",
         # Light verbs carry no topic: "how does that work" is as anaphoric as
         # "why is it like that".
-        "work", "works", "working", "mean", "means", "happen", "happens",
-        "happened", "come", "comes", "goes", "look", "looks", "seem", "seems",
+        "work", "works", "working", "means", "happen", "happens",
+        "happened", "comes", "goes", "look", "looks", "seem", "seems",
         "matter", "matters", "help", "helps", "need", "needs", "exactly",
         "instead",
     }
@@ -7360,7 +7325,9 @@ _STOPWORDS_FOR_ANCHORS = frozenset(
 
 def _content_anchors(text: Any, *, minimum_length: int = 4) -> set[str]:
     """Content words that could carry a topic. Lowercased, stopwords removed."""
-    words = re.findall(r"[A-Za-z][A-Za-z'-]{%d,}" % (minimum_length - 1), str(text or ""))
+    words = re.findall(
+        rf"[A-Za-z][A-Za-z'-]{{{minimum_length - 1},}}", str(text or "")
+    )
     return {
         word.lower().strip("'-")
         for word in words
@@ -7448,11 +7415,30 @@ def assess_user_facing_reply(
     when the caller has already established there was no answer to give. It
     excuses nothing else; see ``_apply_reply_provenance``.
     """
+    bound_grounding = [
+        str(item).strip() for item in (grounding or ()) if str(item or "").strip()
+    ]
+    try:
+        from core.conversation.turn_evidence_custody import turn_grounding_evidence
+
+        for item in turn_grounding_evidence():
+            text = str(item or "").strip()
+            if text and text not in bound_grounding:
+                bound_grounding.append(text)
+    except (ImportError, AttributeError, RuntimeError, TypeError, ValueError) as exc:
+        record_degradation(
+            "response_reliability.turn_grounding",
+            exc,
+            severity="warning",
+            action="continued without unavailable turn-bound grounding evidence",
+            enforce_failure_policy=False,
+        )
+
     assessment = _assess_user_facing_reply(
         user_message,
         reply_text,
         recent_user_messages=recent_user_messages,
-        grounding=grounding,
+        grounding=bound_grounding,
         antecedent=antecedent,
     )
     assessment = _apply_reply_provenance(
@@ -7488,10 +7474,10 @@ def _apply_reply_provenance(
         return assessment
     try:
         from core.conversation.reply_provenance import (
+            ReplyProvenance,
             admission_defects,
             declared_provenance,
             excused_reasons,
-            ReplyProvenance,
         )
     except ImportError as exc:  # pragma: no cover - import wiring failure
         record_degradation("response_reliability.provenance", exc, severity="warning")
@@ -7702,20 +7688,10 @@ def _assess_user_facing_reply(
     # past instead of saying it had none, and each fabrication became the
     # context that licensed the next.
     #
-    # NOT hard yet, and the reason is a wire that does not exist.
-    #
-    # A reply reporting a conversation the person did not have deserves to
-    # die. But this assessment only sees the visible request and the recent
-    # turns — it does NOT see the memory evidence she was given to recall
-    # from, because no call site passes it. So a genuine recall grounded in
-    # retained memory ("I can verify durable memory evidence that we
-    # discussed retained memory...") reads identically to an invention, and
-    # killing it would gate away exactly the thing that makes recall worth
-    # having.
-    #
-    # Recorded and delivered until fabricated_shared_history() can be given
-    # `grounding=` from the recall lane. Then it becomes hard, and the
-    # measured failures below die at the gate instead of reaching Bryan.
+    # Grounding supplied by a caller is merged above with evidence held by the
+    # exact turn custody object. A real transcript/memory recall therefore
+    # survives; a shared past absent from both sources is a hard integrity
+    # failure and cannot become the context that licenses the next invention.
     if has_fabricated_shared_history(
         raw, user_message, recent_messages, grounding=grounding
     ):
@@ -7725,7 +7701,6 @@ def _assess_user_facing_reply(
     ):
         reasons.append("borrowed_owner_first_person_speech")
 
-    user_norm = _normalize(user_message)
     if has_malformed_contraction(raw, user_message):
         reasons.append("corrupted_social_fragment")
     if is_confusion_repair_turn(user_message) and _unexpected_short_foreign_name(user_message, raw):
@@ -7947,6 +7922,7 @@ def _assess_user_facing_reply(
         "unfounded_voice_intrusion",
         "unsupported_context_continuation_claim",
         "ungrounded_person_narrative",
+        "fabricated_shared_history",
         # NOT ungrounded_person_address. A vocative is one word. Even when the
         # name is genuinely wrong the honest remedy is to drop the vocative and
         # deliver the answer — destroying the whole reply over how it addressed
@@ -8071,8 +8047,37 @@ _INTERNAL_LEAK_REASONS = frozenset(
         "corrupted_language",
         "function_word_starvation",
         "internal_task_prompt_leak",
+        "integrity_check_unavailable",
     }
 )
+
+
+_BOUNDED_INTERNAL_LEAK_FALLBACK_RE = re.compile(
+    r"(?:"
+    r"\b(?:ROUTER_ERROR|all_failed|tool_result|runtime_error|worker_loop_stalled)\b|"
+    r"\[(?:SYSTEM|TOOL|INTERNAL|SWARM)[^\]]*\]|"
+    r"</?(?:tool|system|assistant|analysis|answer)>|"
+    r"\\x(?:00|1b)|(?:^|\s)[A-Z][A-Z0-9_]{5,}:"
+    r")",
+    re.IGNORECASE,
+)
+
+
+def _bounded_internal_leak_fallback(text: str) -> tuple[str, ...]:
+    """Independent bounded check used only when the primary detector fails.
+
+    It can positively identify common control surfaces, and it can positively
+    admit ordinary printable prose. Ambiguous text is quarantined rather than
+    being mistaken for a clean verdict.
+    """
+
+    if _BOUNDED_INTERNAL_LEAK_FALLBACK_RE.search(text):
+        return ("raw_lane_telemetry",)
+    printable = all(char.isprintable() or char in "\n\t" for char in text)
+    words = re.findall(r"[A-Za-z][A-Za-z'-]*", text)
+    if printable and len(words) >= 3 and not any(mark in text for mark in ("```json", "{\"type\":", "Traceback (most recent call last)")):
+        return ()
+    return ("integrity_check_unavailable",)
 
 
 def internal_leak_reasons(text: Any) -> tuple[str, ...]:
@@ -8094,8 +8099,15 @@ def internal_leak_reasons(text: Any) -> tuple[str, ...]:
         return ()
     try:
         reasons = _model_text_integrity_reasons(body, prompt="", user_facing=True)
-    except (RuntimeError, TypeError, ValueError):
-        return ()
+    except (RuntimeError, TypeError, ValueError) as exc:
+        record_degradation(
+            "response_reliability.internal_leak_detector",
+            exc,
+            severity="warning",
+            action="ran the bounded independent egress check and quarantined ambiguous text",
+            enforce_failure_policy=False,
+        )
+        return _bounded_internal_leak_fallback(body)
     return tuple(
         dict.fromkeys(reason for reason in reasons if reason in _INTERNAL_LEAK_REASONS)
     )
