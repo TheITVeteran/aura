@@ -28,6 +28,7 @@ make reqproof-gate       # structural gate — required green at every commit
 make reqproof-release    # release gate — blocks until zero open mandatory scope
 make reqproof-docket     # regenerate the current dependency-aware docket
 make reqproof-capture SPEC=<checked-proof-id>  # run and record one checked proof
+make reqproof-capture SPECS='<proof-id> <proof-id>'  # all pass before batch recording
 python tools/reqproof/migrate.py --write     # regenerate registry from tracker
 python tools/reqproof/gate.py --refresh-baseline  # shrink-only ratchet refresh
 ```

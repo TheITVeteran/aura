@@ -596,9 +596,95 @@ def capture_proof(
     return receipt_path
 
 
+def capture_proofs(
+    *,
+    root: Path,
+    spec_registry_path: Path,
+    registry_path: Path,
+    ledger_path: Path,
+    artifact_root: Path,
+    proof_ids: Sequence[str],
+    record: bool,
+    gateway: Gateway | None = None,
+) -> tuple[Path, ...]:
+    """Capture several proofs against one clean pushed source snapshot.
+
+    Each proof still runs through the single-proof contract. Its provisional
+    receipt is removed before the next proof starts so generated custody files
+    cannot make the source checkout appear dirty. Receipts and ledger entries
+    become visible only after every proof has passed.
+    """
+    ordered_ids = tuple(proof_ids)
+    _require(bool(ordered_ids), "at least one proof ID is required")
+    _require(
+        len(set(ordered_ids)) == len(ordered_ids),
+        "batch proof IDs must be unique",
+    )
+
+    gateway = gateway or get_subprocess_gateway()
+    pending: list[tuple[Path, str, dict[str, Any]]] = []
+    try:
+        for proof_id in ordered_ids:
+            receipt_path = capture_proof(
+                root=root,
+                spec_registry_path=spec_registry_path,
+                registry_path=registry_path,
+                ledger_path=ledger_path,
+                artifact_root=artifact_root,
+                proof_id=proof_id,
+                record=False,
+                gateway=gateway,
+            )
+            payload = receipt_path.read_text(encoding="utf-8")
+            receipt = json.loads(payload)
+            receipt_path.unlink()
+            pending.append((receipt_path, payload, receipt))
+    except Exception:
+        for receipt_path, _, _ in pending:
+            receipt_path.unlink(missing_ok=True)
+        raise
+
+    written: list[Path] = []
+    try:
+        for receipt_path, payload, _ in pending:
+            _atomic_write_new(receipt_path, payload)
+            written.append(receipt_path)
+        if not record:
+            return tuple(written)
+
+        registry = load_registry(registry_path)
+        ledger = load_evidence_ledger(ledger_path)
+        for receipt_path, _, receipt in pending:
+            receipt_ref = receipt_path.relative_to(root).as_posix()
+            recorded_at = datetime.fromisoformat(receipt["finished_at"]).date().isoformat()
+            for target in receipt["evidence_targets"]:
+                ledger = add_entry(
+                    ledger,
+                    registry,
+                    requirement_id=target["requirement_id"],
+                    evidence_class=target["evidence_class"],
+                    acceptance_ids=target["acceptance_ids"],
+                    ref=receipt_ref,
+                    commit=receipt["source_commit"],
+                    recorded_at=recorded_at,
+                    root=root,
+                )
+        write_evidence_ledger_atomic(ledger, ledger_path)
+    except (EvidenceLedgerError, OSError, ValueError):
+        for receipt_path in written:
+            receipt_path.unlink(missing_ok=True)
+        raise
+    return tuple(written)
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--spec", required=True, help="checked proof specification ID")
+    parser.add_argument(
+        "--spec",
+        action="append",
+        required=True,
+        help="checked proof specification ID; repeat for an atomic batch",
+    )
     parser.add_argument("--spec-registry", default=str(DEFAULT_SPEC_PATH))
     parser.add_argument("--registry", default=str(DEFAULT_REGISTRY_PATH))
     parser.add_argument("--ledger", default=str(DEFAULT_LEDGER_PATH))
@@ -609,25 +695,26 @@ def main() -> int:
     )
     args = parser.parse_args()
     try:
-        receipt = capture_proof(
+        receipts = capture_proofs(
             root=ROOT,
             spec_registry_path=Path(args.spec_registry),
             registry_path=Path(args.registry),
             ledger_path=Path(args.ledger),
             artifact_root=DEFAULT_ARTIFACT_ROOT,
-            proof_id=args.spec,
+            proof_ids=args.spec,
             record=args.record,
         )
     except (ProofCaptureError, EvidenceLedgerError, ValueError, OSError) as exc:
         print(f"reqproof capture failed: {exc}", file=sys.stderr)
         return 2
-    print(
-        json.dumps(
-            {"proof_id": args.spec, "receipt": str(receipt), "recorded": args.record},
-            indent=2,
-            sort_keys=True,
-        )
-    )
+    result: dict[str, Any] = {
+        "proof_ids": args.spec,
+        "receipts": [str(receipt) for receipt in receipts],
+        "recorded": args.record,
+    }
+    if len(receipts) == 1:
+        result.update(proof_id=args.spec[0], receipt=str(receipts[0]))
+    print(json.dumps(result, indent=2, sort_keys=True))
     return 0
 
 

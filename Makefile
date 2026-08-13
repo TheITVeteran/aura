@@ -190,8 +190,8 @@ reqproof-docket:
 	@$(PYTHON) tools/reqproof/docket.py
 
 reqproof-capture:
-	@test -n "$(SPEC)" || (echo "usage: make reqproof-capture SPEC=<checked-proof-id>" >&2; exit 2)
-	@$(PYTHON) tools/reqproof/capture.py --spec "$(SPEC)" --record
+	@test -n "$(SPEC)$(SPECS)" || (echo "usage: make reqproof-capture SPEC=<checked-proof-id> or SPECS='<id> <id>'" >&2; exit 2)
+	@$(PYTHON) tools/reqproof/capture.py $(foreach proof,$(if $(SPECS),$(SPECS),$(SPEC)),--spec "$(proof)") --record
 
 checkpoint-hygiene-audit:
 	@echo "📍 Auditing clean exact-main checkpoint publication..."

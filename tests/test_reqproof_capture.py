@@ -16,11 +16,13 @@ from tools.reqproof.capture import (
     ProofSpecRegistry,
     assert_pushed_clean_source,
     capture_proof,
+    capture_proofs,
     load_proof_specs,
     validate_spec_targets,
 )
 from tools.reqproof.evidence import (
     EvidenceLedger,
+    EvidenceLedgerError,
     load_evidence_ledger,
     write_evidence_ledger_atomic,
 )
@@ -236,6 +238,87 @@ def test_capture_writes_hash_bound_receipt_and_ledger_cell(tmp_path: Path) -> No
     assert gateway.command_kwargs["offline_tooling"] is True
     assert gateway.command_kwargs["accelerator_capability"] == "none"
     assert gateway.command_kwargs["stdin_devnull"] is True
+
+
+def test_batch_capture_records_all_receipts_only_after_every_proof_passes(
+    tmp_path: Path,
+) -> None:
+    spec_path, registry_path, ledger_path = _capture_fixture(tmp_path)
+    specs = [
+        _spec(),
+        _spec(
+            id="second-proof",
+            evidence_targets=[
+                {
+                    "requirement_id": "TEST-001",
+                    "evidence_class": "implementation",
+                    "acceptance_ids": ["A1"],
+                }
+            ],
+        ),
+    ]
+    spec_path.write_text(json.dumps(_hashed_specs(specs)), encoding="utf-8")
+
+    receipts = capture_proofs(
+        root=tmp_path,
+        spec_registry_path=spec_path,
+        registry_path=registry_path,
+        ledger_path=ledger_path,
+        artifact_root=tmp_path / "artifacts" / "reqproof" / "evidence",
+        proof_ids=("bounded-proof", "second-proof"),
+        record=True,
+        gateway=CaptureGateway(),
+    )
+
+    assert [path.parent.name for path in receipts] == [
+        "bounded-proof",
+        "second-proof",
+    ]
+    assert all(path.is_file() for path in receipts)
+    ledger = load_evidence_ledger(ledger_path)
+    assert {entry.evidence.ref for entry in ledger.entries} == {
+        path.relative_to(tmp_path).as_posix() for path in receipts
+    }
+
+
+def test_batch_capture_failure_leaves_no_receipts_or_ledger_changes(
+    tmp_path: Path,
+) -> None:
+    spec_path, registry_path, ledger_path = _capture_fixture(tmp_path)
+    specs = [_spec(), _spec(id="missing-proof", source_paths=["core/missing.py"])]
+    spec_path.write_text(json.dumps(_hashed_specs(specs)), encoding="utf-8")
+    before = ledger_path.read_bytes()
+
+    with pytest.raises(EvidenceLedgerError, match="does not name a regular file"):
+        capture_proofs(
+            root=tmp_path,
+            spec_registry_path=spec_path,
+            registry_path=registry_path,
+            ledger_path=ledger_path,
+            artifact_root=tmp_path / "artifacts" / "reqproof" / "evidence",
+            proof_ids=("bounded-proof", "missing-proof"),
+            record=True,
+            gateway=CaptureGateway(),
+        )
+
+    assert ledger_path.read_bytes() == before
+    assert not list((tmp_path / "artifacts").rglob("*.json"))
+
+
+def test_batch_capture_rejects_duplicate_proof_ids(tmp_path: Path) -> None:
+    spec_path, registry_path, ledger_path = _capture_fixture(tmp_path)
+
+    with pytest.raises(ProofCaptureError, match="must be unique"):
+        capture_proofs(
+            root=tmp_path,
+            spec_registry_path=spec_path,
+            registry_path=registry_path,
+            ledger_path=ledger_path,
+            artifact_root=tmp_path / "artifacts" / "reqproof" / "evidence",
+            proof_ids=("bounded-proof", "bounded-proof"),
+            record=True,
+            gateway=CaptureGateway(),
+        )
 
 
 def test_failed_command_reports_both_streams_and_leaves_no_evidence(

@@ -47151,3 +47151,36 @@ running and had advanced to candidate `37`, while its controller heartbeat,
 resident evaluator and memory sentinel remained alive. No verdict, tissue
 promotion authority, fusion authority, frontier gain or `WOW Signal` is
 claimed from the partial run.
+
+## Checkpoint 2026-08-12-330: Proof Refresh Is One Source-Bound Transaction
+
+The requirement-proof recorder now accepts a bounded ordered set of checked
+proof specifications against one exact clean pushed source commit. Every proof
+still passes the existing sanitized environment, timeout, output bound, source
+manifest and no-accelerator contracts independently. Provisional receipts are
+removed before the next command starts, so generated custody files cannot make
+the source appear dirty; no receipt or ledger entry becomes authoritative
+unless every command in the batch succeeds. Duplicate proof IDs fail closed,
+and a failed member leaves the evidence ledger and all batch receipts
+unchanged.
+
+This closes a control-plane scaling defect exposed after CP329. Refreshing the
+current stale custody set previously required one commit and push per proof,
+even though all proofs described the same immutable source snapshot. The
+Makefile now supports both the existing single `SPEC` form and a multi-proof
+`SPECS` form, while the command-line result retains its single-proof fields for
+consumer compatibility and also reports the complete ordered batch.
+
+Validation under Aura's Python 3.12 runtime is green for the implementation:
+the focused capture contract passes `14/14`; canonical smoke passes `104/104`;
+repository Ruff, full Python compilation and diff hygiene pass. The complete
+reqproof unit surface passes `151/152`; its sole failure is the real-repository
+structural gate correctly reporting the stale evidence that this batch path is
+being introduced to refresh. No threshold, acceptance requirement or stale
+evidence check was weakened.
+
+Powered resident-32B replication remains independent and undisturbed. During
+this checkpoint its third seed advanced from candidate `50` to `53` with the
+controller heartbeat, resident evaluator, memory sentinel and sleep inhibitor
+alive. This checkpoint claims no replication verdict, tissue promotion
+authority, fusion authority, frontier gain or `WOW Signal`.
