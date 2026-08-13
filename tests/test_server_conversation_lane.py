@@ -4858,6 +4858,7 @@ async def test_api_chat_desktop_surface_blocks_critical_memory_before_cognition(
     gib = 1024**3
     calls = []
     shed_calls = []
+    pressure_probe_calls = []
 
     class _FakeCognitiveEngine:
         async def think(self, *_args, **_kwargs):
@@ -4878,9 +4879,28 @@ async def test_api_chat_desktop_surface_blocks_critical_memory_before_cognition(
     assert isinstance(resource_observer, SimulatedResourceObserver)
     resource_observer.configure_memory(
         total_bytes=64 * gib,
-        available_bytes=2 * gib,
-        percent=96.0,
+        available_bytes=24 * gib,
+        percent=62.0,
     )
+    from core.utils import memory_monitor as memory_monitor_module
+
+    real_memory_probe = memory_monitor_module.get_memory_pressure_snapshot
+
+    def _measured_memory_probe():
+        pressure_probe_calls.append("measured")
+        return real_memory_probe()
+
+    monkeypatch.setattr(
+        memory_monitor_module,
+        "get_memory_pressure_snapshot",
+        _measured_memory_probe,
+    )
+    monkeypatch.setattr(
+        chat_routes,
+        "_foreground_chat_lock",
+        chat_routes.PreemptibleChatLock(),
+    )
+    monkeypatch.setattr(chat_routes, "_FOREGROUND_CHAT_BUSY_WAIT_S", 1.0)
     monkeypatch.setattr(chat_routes, "_restore_owner_session_from_request", lambda *_args, **_kwargs: None)
     monkeypatch.setattr(chat_routes, "_notify_user_spoke", lambda *_args, **_kwargs: None)
     monkeypatch.setattr(chat_routes, "_resolve_live_aura_state", lambda: None)
@@ -4898,18 +4918,30 @@ async def test_api_chat_desktop_surface_blocks_critical_memory_before_cognition(
     )
     monkeypatch.setattr(chat_routes.ServiceContainer, "get", staticmethod(_fake_get))
 
-    response = await server_module.api_chat(
-        server_module.ChatRequest(message="Use the desktop path to answer this."),
-        SimpleNamespace(
-            headers={
-                "X-Aura-Surface": "desktop-ui",
-                "X-Aura-Require-CognitiveEngine": "true",
-            },
-            client=SimpleNamespace(host="test"),
-        ),
-        None,
-        None,
+    blocker_token = await chat_routes._foreground_chat_lock.acquire()
+    request_task = asyncio.create_task(
+        server_module.api_chat(
+            server_module.ChatRequest(message="Use the desktop path to answer this."),
+            SimpleNamespace(
+                headers={
+                    "X-Aura-Surface": "desktop-ui",
+                    "X-Aura-Require-CognitiveEngine": "true",
+                },
+                client=SimpleNamespace(host="test"),
+            ),
+            None,
+            None,
+        )
     )
+    await asyncio.sleep(0.05)
+    assert pressure_probe_calls == []
+    resource_observer.configure_memory(
+        total_bytes=64 * gib,
+        available_bytes=2 * gib,
+        percent=96.0,
+    )
+    assert chat_routes._foreground_chat_lock.release(blocker_token) is True
+    response = await asyncio.wait_for(request_task, timeout=2.0)
 
     # In-band for real users: the guard text IS the answer (raw 503s
     # surfaced as bare HTTP errors in both July 8 soaks). Benchmarks
@@ -4918,6 +4950,7 @@ async def test_api_chat_desktop_surface_blocks_critical_memory_before_cognition(
     assert b"memory_pressure_guard" in response.body
     assert b"memory_pressure" in response.body
     assert calls == []
+    assert pressure_probe_calls == ["measured"]
     assert shed_calls
     assert any("memory_pressure" in reason for reason in shed_calls)
 
@@ -4997,6 +5030,64 @@ async def test_api_chat_desktop_surface_blocks_process_tree_memory_before_cognit
     assert calls == []
     assert shed_calls
     assert any("process_tree_rss" in reason for reason in shed_calls)
+
+
+@pytest.mark.asyncio
+async def test_api_chat_refuses_heavy_generation_when_memory_probe_is_unavailable(
+    monkeypatch,
+):
+    from interface import server as server_module
+    from interface.routes import chat as chat_routes
+
+    calls = []
+
+    class _FakeCognitiveEngine:
+        async def think(self, *_args, **_kwargs):
+            calls.append("engine_think")
+            return SimpleNamespace(content="unexpected engine reply")
+
+    monkeypatch.setattr(
+        chat_routes,
+        "_foreground_chat_lock",
+        chat_routes.PreemptibleChatLock(),
+    )
+    monkeypatch.setattr(
+        chat_routes,
+        "_restore_owner_session_from_request",
+        lambda *_args, **_kwargs: None,
+    )
+    monkeypatch.setattr(chat_routes, "_notify_user_spoke", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(
+        chat_routes.ServiceContainer,
+        "get",
+        staticmethod(
+            lambda name, default=None: (
+                _FakeCognitiveEngine() if name == "cognitive_engine" else default
+            )
+        ),
+    )
+    monkeypatch.setattr(
+        "core.utils.memory_monitor.get_memory_pressure_snapshot",
+        lambda: (_ for _ in ()).throw(RuntimeError("probe unavailable")),
+    )
+
+    response = await server_module.api_chat(
+        server_module.ChatRequest(message="Use the desktop path to answer this."),
+        SimpleNamespace(
+            headers={
+                "X-Aura-Surface": "desktop-ui",
+                "X-Aura-Require-CognitiveEngine": "true",
+            },
+            client=SimpleNamespace(host="test"),
+        ),
+        None,
+        None,
+    )
+
+    assert response.status_code == 200
+    assert b"memory_pressure_probe_unavailable" in response.body
+    assert b'"measured":false' in response.body
+    assert calls == []
 
 
 @pytest.mark.asyncio

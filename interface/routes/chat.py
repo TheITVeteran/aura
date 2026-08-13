@@ -2090,6 +2090,100 @@ async def _shed_generation_for_memory_pressure(reason: str) -> None:
         logger.debug("Memory-pressure worker shedding unavailable: %s", exc)
 
 
+def _required_foreground_memory_snapshot() -> Any:
+    """Read one complete memory admission decision or fail closed."""
+
+    from core.utils.memory_monitor import get_memory_pressure_snapshot
+
+    snapshot = get_memory_pressure_snapshot()
+    if snapshot is None or not all(
+        hasattr(snapshot, field)
+        for field in ("critical", "refuse_heavy_local_generation", "reason")
+    ):
+        raise RuntimeError("foreground memory pressure probe returned no decision")
+    if not isinstance(snapshot.critical, bool) or not isinstance(
+        snapshot.refuse_heavy_local_generation,
+        bool,
+    ):
+        raise RuntimeError("foreground memory pressure decision is malformed")
+    return snapshot
+
+
+async def _foreground_memory_admission_response(
+    *,
+    is_benchmark: bool,
+    phase: str,
+) -> JSONResponse | None:
+    """Admit heavy local generation from fresh evidence under lane custody."""
+
+    try:
+        snapshot = _required_foreground_memory_snapshot()
+    except _CHAT_RECOVERABLE_ERRORS as exc:
+        record_degradation(
+            "chat.memory_admission",
+            exc,
+            severity="warning",
+            action="refused heavy foreground generation without a measured memory decision",
+            extra={"phase": str(phase or "foreground")},
+        )
+        return JSONResponse(
+            {
+                "response": (
+                    "I could not verify enough memory headroom to start the local "
+                    "model lane safely, so I stopped before generation."
+                ),
+                "status": "memory_pressure_probe_unavailable",
+                "conversation_lane": _collect_conversation_lane_status(),
+                "memory_pressure": {
+                    "measured": False,
+                    "phase": str(phase or "foreground"),
+                },
+                "response_confidence": "guarded",
+            },
+            status_code=503 if is_benchmark else 200,
+        )
+
+    if snapshot.critical:
+        live_state = _resolve_live_aura_state()
+        if live_state:
+            live_state.cognition.conversation_energy = 0.0
+            live_state.cognition.current_mode = 0  # CognitiveMode.REACTIVE
+            live_state.response_modifiers["sys_pressure"] = "CRITICAL MEMORY LIMIT"
+    if not snapshot.refuse_heavy_local_generation:
+        return None
+
+    reason = str(snapshot.reason or "foreground_memory_pressure_guard")
+    logger.warning(
+        "Unified memory admission refused foreground generation at %s: %s",
+        phase,
+        reason,
+    )
+    await _shed_generation_for_memory_pressure(reason)
+    snapshot_payload = (
+        snapshot.to_dict()
+        if callable(getattr(snapshot, "to_dict", None))
+        else {
+            "critical": snapshot.critical,
+            "refuse_heavy_local_generation": snapshot.refuse_heavy_local_generation,
+            "reason": reason,
+        }
+    )
+    return JSONResponse(
+        {
+            "response": (
+                "I need to shed memory pressure before I can safely start the "
+                "desktop model lane. I am blocking this turn instead of risking "
+                "another system-level memory crash."
+            ),
+            "status": "memory_pressure_guard",
+            "conversation_lane": _collect_conversation_lane_status(),
+            "memory_pressure": snapshot_payload,
+            "response_confidence": "guarded",
+        },
+        status_code=503 if is_benchmark else 200,
+    )
+
+
 async def _preserve_large_user_paste(user_msg: str) -> None:
     """Keep large pasted text in live working memory for follow-up references."""
     content = str(user_msg or "").strip()
@@ -23882,44 +23976,6 @@ async def _api_chat_turn(body: ChatRequest, request: Request):
             record_degradation('chat', _lease_exc)
             logger.debug("Foreground guard lease skipped: %s", _lease_exc)
 
-        # Unified-memory circuit breaker. A heartbeat or foreground lock should
-        # never make the desktop path look healthy while macOS is near OOM.
-        try:
-            from core.utils.memory_monitor import get_memory_pressure_snapshot
-
-            memory_snapshot = get_memory_pressure_snapshot()
-            if memory_snapshot.critical:
-                logger.warning(
-                    "🚨 [MEMORY GUARD] Unified memory pressure blocks foreground chat: %s",
-                    memory_snapshot.reason,
-                )
-                live_state = _resolve_live_aura_state()
-                if live_state:
-                    live_state.cognition.conversation_energy = 0.0
-                    live_state.cognition.current_mode = 0  # CognitiveMode.REACTIVE
-                    live_state.response_modifiers["sys_pressure"] = "CRITICAL MEMORY LIMIT"
-                if memory_snapshot.refuse_heavy_local_generation and not is_benchmark:
-                    await _shed_generation_for_memory_pressure(memory_snapshot.reason)
-                    return JSONResponse(
-                        {
-                            "response": (
-                                "I need to shed memory pressure before I can safely start the "
-                                "desktop model lane. I am blocking this turn instead of risking "
-                                "another system-level memory crash."
-                            ),
-                            "status": "memory_pressure_guard",
-                            "conversation_lane": _collect_conversation_lane_status(),
-                            "memory_pressure": memory_snapshot.to_dict(),
-                            "response_confidence": "guarded",
-                        },
-                        # In-band for real users (the guard text IS the
-                        # answer); strict code for benchmarks only.
-                        status_code=503 if is_benchmark else 200,
-                    )
-        except _CHAT_RECOVERABLE_ERRORS as e:
-            record_degradation('chat', e)
-            logger.debug("Memory check failed: %s", e)
-
         if early_allow_chat_fastpaths and _is_explicit_capability_inventory_request(_semantic_user_message):
             reply_text = _build_grounded_capability_inventory_reply(_semantic_user_message)
             return JSONResponse(
@@ -23996,6 +24052,16 @@ async def _api_chat_turn(body: ChatRequest, request: Request):
                     },
                     status_code=status_code,
                 )
+
+        # Memory admission belongs to the generation lease, not to the time
+        # before a potentially long lock wait. A queued turn can cross from
+        # healthy to unsafe while waiting; sample only after exclusive custody.
+        memory_admission_response = await _foreground_memory_admission_response(
+            is_benchmark=is_benchmark,
+            phase="foreground_generation_admission",
+        )
+        if memory_admission_response is not None:
+            return memory_admission_response
 
         # Notify proactive presence systems; pass content for away-signal detection
         if not is_benchmark:
@@ -24156,18 +24222,22 @@ async def _api_chat_turn(body: ChatRequest, request: Request):
             _live_turn_trace["cognitive_engine_grounded_recovery_attempted"] = True
 
             try:
-                from core.utils.memory_monitor import get_memory_pressure_snapshot
-
-                pressure = get_memory_pressure_snapshot()
-                if bool(getattr(pressure, "refuse_heavy_local_generation", False)):
+                pressure = _required_foreground_memory_snapshot()
+                if pressure.refuse_heavy_local_generation:
                     logger.warning(
                         "Skipping desktop CognitiveEngine recovery under memory pressure: %s",
-                        getattr(pressure, "reason", ""),
+                        pressure.reason,
                     )
                     return None
             except _CHAT_RECOVERABLE_ERRORS as pressure_exc:
-                record_degradation("chat", pressure_exc)
-                logger.debug("Desktop recovery memory-pressure check skipped: %s", pressure_exc)
+                record_degradation(
+                    "chat.memory_admission",
+                    pressure_exc,
+                    severity="warning",
+                    action="refused recovery generation without a measured memory decision",
+                    extra={"phase": "desktop_grounded_recovery"},
+                )
+                return None
 
             recovery_budget = _desktop_required_cognitive_budget(
                 foreground_timeout=foreground_timeout,

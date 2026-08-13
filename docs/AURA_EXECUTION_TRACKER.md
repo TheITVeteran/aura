@@ -47735,3 +47735,34 @@ admission, runtime effect proof, durable-write custody, regeneration CAS,
 memory-log worker ownership and `/api/think` admission remain open. The detached
 CP352 resident promotion remains independently source-bound; no serving,
 frontier, `WOW Signal`, soak or Aura 1.0 claim follows from this checkpoint.
+
+## Checkpoint 2026-08-13-354: Memory Admission Is Fresh and Fail-Closed
+
+Foreground memory pressure was sampled before a turn could wait up to ninety
+seconds for the chat lane. A healthy pre-wait reading could therefore admit the
+32B after the host became unsafe. If the probe raised or returned malformed
+evidence, the route logged the failure and continued into heavy generation.
+The grounded-recovery generation repeated the same fail-open behavior.
+
+One required memory-admission primitive now validates a complete measured
+decision. The primary turn invokes it only after acquiring exclusive foreground
+custody and immediately before any model path. Critical pressure updates body
+state; a heavy-generation refusal performs bounded background shedding and
+returns measured guard evidence. An unavailable or malformed probe returns a
+distinct guarded response with `measured=false` and invokes no model. The same
+required probe governs recovery generation, where either pressure or missing
+evidence prevents the retry. Benchmark callers receive strict HTTP 503 while
+the real desktop receives the explanatory guard in-band.
+
+Regression coverage holds a turn behind the foreground lock while pressure
+changes from healthy to critical, proves the probe is not read before handoff,
+and proves the post-handoff reading prevents cognition. Separate tests cover
+process-tree pressure and probe failure with zero CognitiveEngine calls. The
+complete conversation surface passes `302/302`; canonical smoke passes
+`104/104`; compilation, Ruff, governance lint, layering and diff hygiene pass.
+
+This closes the generation-memory P1 semantic finding. Runtime effect proof,
+durable-write custody, regeneration CAS, memory-log worker ownership and
+`/api/think` admission remain open. The detached CP352 promotion remains a
+separate resident proof transaction; no serving, frontier, `WOW Signal`, soak
+or Aura 1.0 claim follows from this checkpoint.
