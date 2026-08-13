@@ -38,6 +38,7 @@ from core.brain.live_mind_contract import (
     append_text_mutation,
     merge_text_mutations,
     normalize_live_mind_surface_control_receipt,
+    summarize_text_mutation_authorship,
     verify_text_mutation_chain,
 )
 from core.brain.llm.cloud_errors import cloud_call_error_types
@@ -7113,6 +7114,7 @@ def _append_turn_text_mutation(
     before: Any,
     after: Any,
     deterministic: bool = True,
+    authorship_effect: str = "replaced_by_runtime",
 ) -> None:
     """Keep final visible-text provenance on the request-scoped turn trace."""
 
@@ -7129,6 +7131,7 @@ def _append_turn_text_mutation(
         before=before,
         after=after,
         deterministic=deterministic,
+        authorship_effect=authorship_effect,
     )
     mutations = list(receipt.get("text_mutations") or [])
     # Every gate that changes outgoing text passes through here, so this is
@@ -7142,14 +7145,13 @@ def _append_turn_text_mutation(
         turn_identity = str(
             trace.get("turn_id") or trace.get("idempotency_key") or ""
         ).strip()
-        if not turn_identity:
-            raise ValueError("text mutation has no exact turn identity")
-        ledger_for(turn_identity).record_suppression(
-            stage,
-            ",".join(str(item) for item in (reasons or ())) or method,
-            before=str(before or ""),
-            after=str(after or ""),
-        )
+        if turn_identity:
+            ledger_for(turn_identity).record_suppression(
+                stage,
+                ",".join(str(item) for item in (reasons or ())) or method,
+                before=str(before or ""),
+                after=str(after or ""),
+            )
     except _CHAT_RECOVERABLE_ERRORS as _exc:
         record_degradation("chat.turn_arbitration", _exc, severity="info")
     trace["live_mind_surface_control_receipt"] = receipt
@@ -7159,6 +7161,7 @@ def _append_turn_text_mutation(
     trace["deterministic_repair_applied"] = any(
         bool(item.get("deterministic")) for item in mutations
     )
+    trace.update(summarize_text_mutation_authorship(mutations))
 
 
 def _merge_turn_text_mutations(
@@ -7178,6 +7181,7 @@ def _merge_turn_text_mutations(
     receipt["deterministic_repair_applied"] = any(
         bool(item.get("deterministic")) for item in merged
     )
+    receipt.update(summarize_text_mutation_authorship(merged))
     trace["live_mind_surface_control_receipt"] = receipt
     trace["text_mutations"] = merged
     trace["text_mutation_count"] = len(merged)
@@ -7185,6 +7189,7 @@ def _merge_turn_text_mutations(
     trace["deterministic_repair_applied"] = bool(
         receipt["deterministic_repair_applied"]
     )
+    trace.update(summarize_text_mutation_authorship(merged))
 
 
 def _enforce_final_requested_output_contract(
@@ -7296,6 +7301,7 @@ def _enforce_final_requested_output_contract(
         before=reply_text,
         after=repaired,
         deterministic=True,
+        authorship_effect="preserved",
     )
     if not final_assessment.ok:
         logger.error(
@@ -7407,6 +7413,22 @@ def _bind_public_latent_output_quality(
     else:
         trace.pop("latent_cortex_public_output_quality_failure", None)
     return quality
+
+
+_RUNTIME_GROUNDING_RESPONSE_PATHS = frozenset(
+    {
+        "cognitive_engine_memory_state_grounding",
+        "cognitive_engine_identity_continuity_grounding",
+        "cognitive_engine_runtime_fact_grounding",
+        "cognitive_engine_capability_tail_grounding",
+        "cognitive_engine_capability_catalog_grounding",
+        "cognitive_engine_self_process_grounding",
+        "cognitive_engine_self_condition_grounding",
+        "cognitive_engine_bounded_planning",
+        "cognitive_engine_context_evidence_repair",
+        "cognitive_engine_own_source_grounding",
+    }
+)
 
 
 def _build_live_turn_contract_payload(
@@ -7776,6 +7798,9 @@ def _build_live_turn_contract_payload(
                 "hard_output_token_ceiling",
                 "instruction_shape_repair_applied",
                 "deterministic_repair_applied",
+                "authorship_replacement_applied",
+                "authorship_augmentation_applied",
+                "model_replacement_applied",
                 "text_mutations",
                 "text_mutation_count",
                 "exact_reply_token_count",
@@ -7838,6 +7863,24 @@ def _build_live_turn_contract_payload(
         or trace.get("deterministic_repair_applied", False)
         or (legacy_post_generation_repair_applied and not text_mutations)
     )
+    mutation_authorship_effects = [
+        str(item.get("authorship_effect") or "replaced_by_runtime")
+        for item in text_mutations
+    ]
+    unreceipted_runtime_replacement = bool(
+        response_path in _RUNTIME_GROUNDING_RESPONSE_PATHS
+        and not text_mutations
+    )
+    authorship_replacement_applied = bool(
+        "replaced_by_runtime" in mutation_authorship_effects
+        or unreceipted_runtime_replacement
+    )
+    authorship_augmentation_applied = bool(
+        "augmented_by_runtime" in mutation_authorship_effects
+    )
+    model_replacement_applied = bool(
+        "replaced_by_model" in mutation_authorship_effects
+    )
     requested_contract = live_mind_surface_control_receipt.get(
         "requested_output_contract"
     ) or trace.get("requested_output_contract")
@@ -7883,7 +7926,10 @@ def _build_live_turn_contract_payload(
             or final_output_contract_satisfied
         )
     )
-    model_native_output = bool(not post_generation_repair_applied)
+    model_native_output = bool(
+        not post_generation_repair_applied
+        and not unreceipted_runtime_replacement
+    )
     live_mind_controls_structurally_bound = bool(
         (not live_mind_context_required)
         or (
@@ -7896,6 +7942,7 @@ def _build_live_turn_contract_payload(
     accepted_full_mind_response_paths = {
         "cognitive_engine",
         "cognitive_engine_repair_retry",
+        "cognitive_engine_devocatived",
         "cognitive_engine_desktop_plan",
         "cognitive_engine_memory_state_grounding",
         "cognitive_engine_identity_continuity_grounding",
@@ -7953,6 +8000,7 @@ def _build_live_turn_contract_payload(
         and response_path in accepted_full_mind_response_paths
         and latent_cortex_path_requirement_satisfied
         and single_owner_model_generation_proven
+        and not authorship_replacement_applied
     )
     accepted_cognitive_path = bool(
         authentic_cognitive_reply
@@ -7989,6 +8037,8 @@ def _build_live_turn_contract_payload(
         missing_proofs.append("bounded_repair_authored_text")
     if legacy_fallback_used:
         missing_proofs.append("legacy_fallback_authored_text")
+    if authorship_replacement_applied:
+        missing_proofs.append("runtime_replacement_authored_text")
     if confidence != "high":
         missing_proofs.append(f"confidence:{confidence or 'unset'}")
     if response_path not in accepted_full_mind_response_paths:
@@ -8116,14 +8166,26 @@ def _build_live_turn_contract_payload(
         "worker_instruction_shape_repair_applied": worker_instruction_shape_repair_applied,
         "post_generation_repair_applied": post_generation_repair_applied,
         "deterministic_repair_applied": deterministic_repair_applied,
+        "authorship_replacement_applied": authorship_replacement_applied,
+        "authorship_augmentation_applied": authorship_augmentation_applied,
+        "model_replacement_applied": model_replacement_applied,
+        "mutation_authorship_effects": mutation_authorship_effects,
+        "unreceipted_runtime_replacement": unreceipted_runtime_replacement,
+        "runtime_grounding_response_path": bool(
+            response_path in _RUNTIME_GROUNDING_RESPONSE_PATHS
+        ),
         "model_native_output": model_native_output,
         "final_text_authorship": (
-            "model_native"
-            if model_native_output
+            "non_cognitive_replacement"
+            if authorship_replacement_applied
             else (
-                "cognitive_generation_with_recorded_transformations"
-                if engine_think_invoked
-                else "non_cognitive_replacement"
+                "cognitive_generation_with_runtime_evidence"
+                if authorship_augmentation_applied
+                else (
+                    "model_native"
+                    if model_native_output
+                    else "cognitive_generation_with_recorded_transformations"
+                )
             )
         ),
         "text_mutations": text_mutations,
@@ -8234,6 +8296,21 @@ def _only_soft_proofs_missing(contract: Any) -> bool:
         and not contract.get("cognitive_engine_reply_failed")
         and not contract.get("bounded_contract_used")
         and not contract.get("legacy_fallback_used")
+        and not contract.get("authorship_replacement_applied")
+    )
+
+
+def _bounded_runtime_grounding_can_serve(contract: Any) -> bool:
+    """Keep truthful runtime evidence without mislabeling it as model speech."""
+
+    if not isinstance(contract, dict):
+        return False
+    return bool(
+        contract.get("runtime_grounding_response_path")
+        and contract.get("authorship_replacement_applied")
+        and contract.get("engine_think_invoked")
+        and not contract.get("legacy_fallback_used")
+        and contract.get("final_requested_output_contract_proven")
     )
 
 
@@ -10530,6 +10607,7 @@ async def _run_cognitive_engine_chat_turn(
                     before=rejected_reply,
                     after=raw_retry_text,
                     deterministic=False,
+                    authorship_effect="replaced_by_model",
                 )
                 _append_turn_text_mutation(
                     turn_trace,
@@ -10539,6 +10617,7 @@ async def _run_cognitive_engine_chat_turn(
                     before=raw_retry_text,
                     after=retry_text,
                     deterministic=True,
+                    authorship_effect="preserved",
                 )
                 _merge_turn_text_mutations(turn_trace, intermediate_mutations)
                 _append_turn_text_mutation(
@@ -10553,6 +10632,7 @@ async def _run_cognitive_engine_chat_turn(
                     ),
                     after=accepted_text,
                     deterministic=True,
+                    authorship_effect="augmented_by_runtime",
                 )
             return accepted_text
 
@@ -10785,6 +10865,7 @@ async def _run_cognitive_engine_chat_turn(
             before=raw_text,
             after=text,
             deterministic=True,
+            authorship_effect="preserved",
         )
     try:
         from core.conversation.response_reliability import is_cognitive_engine_failure_envelope
@@ -11577,6 +11658,7 @@ async def _run_cognitive_engine_chat_turn(
                         before=text,
                         after=devocatived,
                         deterministic=True,
+                        authorship_effect="preserved",
                     )
                     _mark_turn_trace(
                         cognitive_engine_reply_accepted=True,
@@ -11763,6 +11845,7 @@ async def _run_cognitive_engine_chat_turn(
                     before=text,
                     after=_grounded,
                     deterministic=True,
+                    authorship_effect="replaced_by_runtime",
                 )
                 text = _grounded
             # Whatever she ended up showing, remember where it came from, so
@@ -11826,6 +11909,7 @@ async def _run_cognitive_engine_chat_turn(
                         before=text,
                         after=_real,
                         deterministic=True,
+                        authorship_effect="replaced_by_runtime",
                     )
                     text = _real
 
@@ -11857,6 +11941,7 @@ async def _run_cognitive_engine_chat_turn(
                         before=text,
                         after=_truth,
                         deterministic=True,
+                        authorship_effect="replaced_by_runtime",
                     )
                     text = _truth
             remember_shown_excerpt(text)
@@ -18227,6 +18312,7 @@ async def _repair_final_degraded_reply_with_provenance(
             before=reply_text,
             after=repaired,
             deterministic=True,
+            authorship_effect="replaced_by_runtime",
         )
     return result
 
@@ -22718,6 +22804,7 @@ async def api_chat_regenerate(
             before=_pre_regen_stabilization_reply,
             after=reply_text,
             deterministic=False,
+            authorship_effect="replaced_by_runtime",
         )
         reply_text = _enforce_final_requested_output_contract(
             _regen_turn_trace,
@@ -25765,9 +25852,9 @@ async def _api_chat_turn(body: ChatRequest, request: Request):
                 if runtime_grounding and runtime_grounding_ok:
                     _live_turn_trace.update(
                         {
-                            "cognitive_engine_reply_accepted": True,
-                            "cognitive_engine_reply_failed": False,
-                            "bounded_contract_used": False,
+                            "cognitive_engine_reply_accepted": False,
+                            "cognitive_engine_reply_failed": True,
+                            "bounded_contract_used": True,
                             "legacy_fallback_used": False,
                             "response_path": "cognitive_engine_runtime_fact_grounding",
                             "canonical_grounding_used": True,
@@ -25793,7 +25880,7 @@ async def _api_chat_turn(body: ChatRequest, request: Request):
                         runtime_grounding,
                         cause="chat_response",
                         metadata={
-                            "response_confidence": "high",
+                            "response_confidence": "bounded",
                             "path": "cognitive_engine_runtime_fact_grounding",
                             "status": "cognitive_engine_runtime_fact_grounding",
                             "reason": "desktop_cognitive_engine_required_no_reply",
@@ -25805,10 +25892,10 @@ async def _api_chat_turn(body: ChatRequest, request: Request):
                             "status": "cognitive_engine_runtime_fact_grounding",
                             "reason": "desktop_cognitive_engine_required_no_reply",
                             "conversation_lane": lane,
-                            "response_confidence": "high",
+                            "response_confidence": "bounded",
                             "live_turn_contract": _live_turn_contract(
                                 lane_status=lane,
-                                response_confidence="high",
+                                response_confidence="bounded",
                                 status="cognitive_engine_runtime_fact_grounding",
                                 reply_source="cognitive_engine_runtime_fact_grounding",
                             ),
@@ -25848,9 +25935,9 @@ async def _api_chat_turn(body: ChatRequest, request: Request):
             if identity_repair:
                 _live_turn_trace.update(
                     {
-                        "cognitive_engine_reply_accepted": True,
-                        "cognitive_engine_reply_failed": False,
-                        "bounded_contract_used": False,
+                        "cognitive_engine_reply_accepted": False,
+                        "cognitive_engine_reply_failed": True,
+                        "bounded_contract_used": True,
                         "legacy_fallback_used": False,
                         "response_path": "cognitive_engine_identity_continuity_grounding",
                         "canonical_grounding_used": True,
@@ -25876,7 +25963,7 @@ async def _api_chat_turn(body: ChatRequest, request: Request):
                     identity_repair,
                     cause="chat_response",
                     metadata={
-                        "response_confidence": "high",
+                        "response_confidence": "bounded",
                         "path": "cognitive_engine_identity_continuity_grounding",
                         "status": "cognitive_engine_identity_continuity_grounding",
                         "reason": "desktop_cognitive_engine_required_no_reply",
@@ -25888,10 +25975,10 @@ async def _api_chat_turn(body: ChatRequest, request: Request):
                         "status": "cognitive_engine_identity_continuity_grounding",
                         "reason": "desktop_cognitive_engine_required_no_reply",
                         "conversation_lane": lane,
-                        "response_confidence": "high",
+                        "response_confidence": "bounded",
                         "live_turn_contract": _live_turn_contract(
                             lane_status=lane,
-                            response_confidence="high",
+                            response_confidence="bounded",
                             status="cognitive_engine_identity_continuity_grounding",
                             reply_source="cognitive_engine_identity_continuity_grounding",
                         ),
@@ -27027,6 +27114,7 @@ async def _api_chat_turn(body: ChatRequest, request: Request):
                     before=_pre_condition_grounding_reply,
                     after=reply_text,
                     deterministic=True,
+                    authorship_effect="replaced_by_runtime",
                 )
                 reply_source = "cognitive_engine_self_condition_grounding"
                 response_confidence = "high"
@@ -27086,6 +27174,7 @@ async def _api_chat_turn(body: ChatRequest, request: Request):
                     before=_pre_identity_grounding_reply,
                     after=reply_text,
                     deterministic=True,
+                    authorship_effect="replaced_by_runtime",
                 )
                 reply_source = "cognitive_engine_identity_continuity_grounding"
                 response_confidence = "high"
@@ -27179,6 +27268,14 @@ async def _api_chat_turn(body: ChatRequest, request: Request):
                     before=_pre_memory_grounding_reply,
                     after=reply_text,
                     deterministic=True,
+                    authorship_effect=(
+                        "augmented_by_runtime"
+                        if _turn_has_substance_beyond_memory_request(
+                            _semantic_user_message
+                        )
+                        and str(_pre_memory_grounding_reply or "").strip()
+                        else "replaced_by_runtime"
+                    ),
                 )
                 response_confidence = "high"
                 hard_final_quality_failed = False
@@ -27320,6 +27417,7 @@ async def _api_chat_turn(body: ChatRequest, request: Request):
             before=_pre_context_strip_reply,
             after=_final_reply,
             deterministic=True,
+            authorship_effect="preserved",
         )
         _final_status = reply_source or "ok"
         _pre_objective_chokepoint_reply = _final_reply
@@ -27334,6 +27432,7 @@ async def _api_chat_turn(body: ChatRequest, request: Request):
             before=_pre_objective_chokepoint_reply,
             after=_final_reply,
             deterministic=False,
+            authorship_effect="replaced_by_runtime",
         )
 
         _affordance_results: list[dict[str, Any]] = []
@@ -27359,6 +27458,7 @@ async def _api_chat_turn(body: ChatRequest, request: Request):
                     before=_pre_affordance_reply,
                     after=_final_reply,
                     deterministic=False,
+                    authorship_effect="augmented_by_runtime",
                 )
         if _resume_prefix_for_response:
             _pre_resume_prefix_reply = _final_reply
@@ -27371,6 +27471,7 @@ async def _api_chat_turn(body: ChatRequest, request: Request):
                 before=_pre_resume_prefix_reply,
                 after=_final_reply,
                 deterministic=True,
+                authorship_effect="augmented_by_runtime",
             )
 
         _final_reply = _enforce_final_requested_output_contract(
@@ -27396,6 +27497,7 @@ async def _api_chat_turn(body: ChatRequest, request: Request):
                     before=_final_reply,
                     after=_grounded.text,
                     deterministic=True,
+                    authorship_effect="augmented_by_runtime",
                 )
                 logger.warning(
                     "🧭 [GROUNDING] reconciled a spoken claim against a real reading: %s",
@@ -27428,6 +27530,7 @@ async def _api_chat_turn(body: ChatRequest, request: Request):
                     before=_final_reply,
                     after=_custody.text,
                     deterministic=True,
+                    authorship_effect="augmented_by_runtime",
                 )
                 _final_reply = _custody.text or _final_reply
         except _CHAT_RECOVERABLE_ERRORS as _exc:
@@ -27473,6 +27576,7 @@ async def _api_chat_turn(body: ChatRequest, request: Request):
                 before=_final_reply,
                 after=fail_closed_reply,
                 deterministic=True,
+                authorship_effect="replaced_by_runtime",
             )
             _live_turn_trace.update(
                 {
@@ -27512,6 +27616,40 @@ async def _api_chat_turn(body: ChatRequest, request: Request):
                 or "unknown",
             )
             _full_mind_unproven = False
+        if _full_mind_unproven and _bounded_runtime_grounding_can_serve(
+            final_live_turn_contract
+        ):
+            # This is measured/canonical runtime evidence, not the model's
+            # wording. Preserve the useful answer and downgrade its authorship
+            # claim instead of replacing one honest bounded answer with a
+            # generic full-mind failure apology.
+            grounded_path = str(
+                final_live_turn_contract.get("response_path")
+                or "runtime_grounding"
+            )
+            logger.warning(
+                "Desktop reply served as bounded runtime grounding; it is not "
+                "certified as model-authored/full-mind (path=%s).",
+                grounded_path,
+            )
+            _live_turn_trace.update(
+                {
+                    "cognitive_engine_reply_accepted": False,
+                    "cognitive_engine_reply_failed": True,
+                    "bounded_contract_used": True,
+                    "response_path": grounded_path,
+                }
+            )
+            response_confidence = "bounded"
+            _final_status = grounded_path
+            reply_source = grounded_path
+            final_live_turn_contract = _live_turn_contract(
+                lane_status=lane_status,
+                response_confidence=response_confidence,
+                status=_final_status,
+                reply_source=reply_source,
+            )
+            _full_mind_unproven = False
         if _full_mind_unproven:
             logger.warning(
                 "⚠️ Required desktop full-mind contract was not proven; failing "
@@ -27531,6 +27669,7 @@ async def _api_chat_turn(body: ChatRequest, request: Request):
                 before=_final_reply,
                 after=fail_closed_reply,
                 deterministic=True,
+                authorship_effect="replaced_by_runtime",
             )
             _live_turn_trace.update(
                 {

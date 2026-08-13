@@ -930,6 +930,7 @@ class ReasoningAmplifierV2:
             before=source_answer,
             after=calibrated_answer,
             deterministic=True,
+            authorship_effect="augmented_by_runtime",
         )
 
         # PROOF mode refuses to answer unless something ACTUALLY survived
@@ -954,6 +955,7 @@ class ReasoningAmplifierV2:
                 before=pre_refusal_answer,
                 after=calibrated_answer,
                 deterministic=True,
+                authorship_effect="replaced_by_runtime",
             )
             fallbacks.append("proof_refused_unverified")
 

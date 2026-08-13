@@ -86,6 +86,20 @@ def test_mlx_client_retains_surface_control_receipt_from_worker_response():
                 "surface_quality_gate_passed": True,
                 "surface_quality_gate_attempts": 1,
                 "surface_quality_gate_reasons": ["retryable_draft"],
+                "authorship_replacement_applied": False,
+                "text_mutations": [
+                    {
+                        "stage": "worker.runtime_grounding",
+                        "method": "replace_visible_answer",
+                        "reasons": ["verified_runtime_fact"],
+                        "deterministic": True,
+                        "authorship_effect": "replaced_by_runtime",
+                        "before_chars": 5,
+                        "after_chars": 7,
+                        "before_sha256": "a" * 64,
+                        "after_sha256": "b" * 64,
+                    }
+                ],
                 "applied": True,
                 "untrusted_extra": "drop-me",
             },
@@ -102,6 +116,10 @@ def test_mlx_client_retains_surface_control_receipt_from_worker_response():
     assert receipt["surface_quality_gate_passed"] is True
     assert receipt["surface_quality_gate_attempts"] == 1
     assert receipt["surface_quality_gate_reasons"] == ["retryable_draft"]
+    assert receipt["text_mutation_count"] == 1
+    assert receipt["authorship_replacement_applied"] is True
+    assert receipt["authorship_augmentation_applied"] is False
+    assert receipt["model_replacement_applied"] is False
     assert receipt["applied"] is True
     assert "untrusted_extra" not in receipt
 

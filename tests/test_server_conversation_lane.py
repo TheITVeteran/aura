@@ -1020,7 +1020,7 @@ def test_live_turn_contract_reports_worker_and_post_generation_repairs():
     assert payload["requested_output_contract"]["kind"] == "sentence_count"
 
 
-def test_bounded_planning_floor_can_prove_live_full_mind_path(monkeypatch):
+def test_bounded_planning_floor_cannot_impersonate_live_full_mind_path(monkeypatch):
     from interface.routes import chat as chat_routes
 
     _force_full_mind_runtime(monkeypatch, chat_routes)
@@ -1070,7 +1070,13 @@ def test_bounded_planning_floor_can_prove_live_full_mind_path(monkeypatch):
 
     assert payload["response_path"] == "cognitive_engine_bounded_planning"
     assert payload["required_subsystems_ok"] is True
-    assert payload["full_mind_path"] is True
+    assert payload["model_native_output"] is False
+    assert payload["authentic_cognitive_reply"] is False
+    assert payload["full_mind_path"] is False
+    assert payload["unreceipted_runtime_replacement"] is True
+    assert "runtime_replacement_authored_text" in payload[
+        "full_mind_missing_proofs"
+    ]
 
 
 def test_bounded_planning_reply_does_not_steal_direct_execution_requests():
@@ -2744,6 +2750,11 @@ def test_live_turn_contract_does_not_treat_warming_lane_as_full_mind(monkeypatch
             "cognitive_engine_reply_accepted": False,
             "bounded_contract_used": False,
             "legacy_fallback_used": False,
+            "architecture_context_bound": True,
+            "live_mind_context_present": True,
+            "live_mind_snapshot_present": True,
+            "live_mind_snapshot_ready": True,
+            "live_mind_required_subsystems_ok": True,
             "response_path": "cognitive_engine",
         },
     )
@@ -2898,7 +2909,7 @@ def test_exact_reply_contract_exempts_only_matching_repetition_from_stale_gate()
     assert chat_routes._is_actionably_stale_response("Are you there?", "yes") is True
 
 
-def test_final_requested_output_contract_never_returns_short_sentence_count_miss():
+def test_final_requested_output_contract_does_not_invent_missing_sentence_content():
     from core.conversation.response_reliability import assess_user_facing_reply
     from interface.routes import chat as chat_routes
 
@@ -2911,12 +2922,13 @@ def test_final_requested_output_contract_never_returns_short_sentence_count_miss
         reply_text="Okay.",
     )
 
-    assert final_reply == "Okay. That is the direct answer."
-    assert assess_user_facing_reply(prompt, final_reply).ok is True
-    assert trace["text_mutations"][-1]["stage"] == (
-        "chat.final_requested_output_contract"
-    )
-    assert trace["final_requested_output_contract_satisfied"] is True
+    assert final_reply == "Okay."
+    assert assess_user_facing_reply(prompt, final_reply).ok is False
+    assert trace.get("text_mutations") in (None, [])
+    assert trace["final_requested_output_contract_satisfied"] is False
+    assert "missing_requested_sentence_count" in trace[
+        "final_requested_output_contract_reasons"
+    ]
 
 
 def test_final_requested_output_contract_records_unrepairable_failure(monkeypatch):
@@ -3070,6 +3082,7 @@ def test_live_turn_contract_derives_repair_flags_from_mutation_ledger(monkeypatc
         before="Two sentences. Extra sentence.",
         after="Two sentences.",
         deterministic=True,
+        authorship_effect="preserved",
     )
 
     payload = chat_routes._build_live_turn_contract_payload(
@@ -3109,6 +3122,119 @@ def test_live_turn_contract_derives_repair_flags_from_mutation_ledger(monkeypatc
     assert payload["text_mutations"][0]["stage"] == (
         "response_generation.post_voice_shape"
     )
+    assert payload["text_mutations"][0]["authorship_effect"] == "preserved"
+    assert payload["authorship_replacement_applied"] is False
+    assert payload["authentic_cognitive_reply"] is True
+
+
+def test_live_turn_contract_keeps_cognitive_authorship_for_receipted_runtime_evidence(
+    monkeypatch,
+):
+    from core.brain.live_mind_contract import append_text_mutation
+    from interface.routes import chat as chat_routes
+
+    _force_full_mind_runtime(monkeypatch, chat_routes)
+    trace = _bound_live_mind_controls_trace()
+    append_text_mutation(
+        trace["live_mind_surface_control_receipt"],
+        stage="chat.fact_custody",
+        method="held_fact_restored_at_terminal_boundary",
+        reasons=["verified_count_restored"],
+        before="I counted the files.",
+        after="I counted the files. The verified count is 412.",
+        deterministic=True,
+        authorship_effect="augmented_by_runtime",
+    )
+    trace.update(
+        {
+            "engine_think_invoked": True,
+            "cognitive_engine_reply_accepted": True,
+            "cognitive_engine_reply_failed": False,
+            "bounded_contract_used": False,
+            "legacy_fallback_used": False,
+            "live_mind_context_present": True,
+            "live_mind_snapshot_present": True,
+            "live_mind_snapshot_ready": True,
+            "live_mind_required_subsystems_ok": True,
+            "response_path": "cognitive_engine",
+        }
+    )
+
+    payload = chat_routes._build_live_turn_contract_payload(
+        desktop_required=True,
+        request_surface="desktop-ui",
+        lane_status={
+            "conversation_ready": True,
+            "state": "ready",
+            "desired_model": "Cortex (32B)",
+            "foreground_endpoint": "Cortex",
+        },
+        response_confidence="high",
+        status="cognitive_engine",
+        reply_source="cognitive_engine",
+        turn_trace=trace,
+    )
+
+    assert payload["model_native_output"] is False
+    assert payload["authorship_augmentation_applied"] is True
+    assert payload["authorship_replacement_applied"] is False
+    assert payload["final_text_authorship"] == (
+        "cognitive_generation_with_runtime_evidence"
+    )
+    assert payload["authentic_cognitive_reply"] is True
+    assert payload["full_mind_path"] is True
+
+
+def test_live_turn_contract_rejects_receipted_runtime_replacement(monkeypatch):
+    from core.brain.live_mind_contract import append_text_mutation
+    from interface.routes import chat as chat_routes
+
+    _force_full_mind_runtime(monkeypatch, chat_routes)
+    trace = _bound_live_mind_controls_trace()
+    append_text_mutation(
+        trace["live_mind_surface_control_receipt"],
+        stage="chat.final_identity_grounding",
+        method="deterministic_canonical_grounding",
+        reasons=["identity_continuity_grounding"],
+        before="Model draft.",
+        after="Canonical runtime-authored answer.",
+        deterministic=True,
+        authorship_effect="replaced_by_runtime",
+    )
+    trace.update(
+        {
+            "engine_think_invoked": True,
+            "cognitive_engine_reply_accepted": True,
+            "cognitive_engine_reply_failed": False,
+            "bounded_contract_used": False,
+            "legacy_fallback_used": False,
+            "response_path": "cognitive_engine_identity_continuity_grounding",
+        }
+    )
+
+    payload = chat_routes._build_live_turn_contract_payload(
+        desktop_required=True,
+        request_surface="desktop-ui",
+        lane_status={
+            "conversation_ready": True,
+            "state": "ready",
+            "desired_model": "Cortex (32B)",
+            "foreground_endpoint": "Cortex",
+        },
+        response_confidence="high",
+        status="cognitive_engine_identity_continuity_grounding",
+        reply_source="cognitive_engine_identity_continuity_grounding",
+        turn_trace=trace,
+    )
+
+    assert payload["model_native_output"] is False
+    assert payload["authorship_replacement_applied"] is True
+    assert payload["final_text_authorship"] == "non_cognitive_replacement"
+    assert payload["authentic_cognitive_reply"] is False
+    assert payload["full_mind_path"] is False
+    assert "runtime_replacement_authored_text" in payload[
+        "full_mind_missing_proofs"
+    ]
 
 
 def test_strict_live_inference_readiness_requires_lane_status(monkeypatch):
@@ -3325,7 +3451,7 @@ def test_live_turn_contract_refuses_shape_repair_as_full_mind(monkeypatch):
     assert payload["bounded_contract_used"] is True
 
 
-def test_live_turn_contract_accepts_memory_state_grounding_after_engine(monkeypatch):
+def test_unreceipted_memory_state_grounding_cannot_claim_model_authorship(monkeypatch):
     from interface.routes import chat as chat_routes
 
     _force_full_mind_runtime(monkeypatch, chat_routes)
@@ -3364,10 +3490,16 @@ def test_live_turn_contract_accepts_memory_state_grounding_after_engine(monkeypa
     assert payload["required_subsystems_ok"] is True
     assert payload["architecture_context_bound"] is True
     assert payload["live_mind_controls_bound"] is True
-    assert payload["full_mind_path"] is True
+    assert payload["model_native_output"] is False
+    assert payload["final_text_authorship"] == "non_cognitive_replacement"
+    assert payload["authentic_cognitive_reply"] is False
+    assert payload["full_mind_path"] is False
+    assert "runtime_replacement_authored_text" in payload[
+        "full_mind_missing_proofs"
+    ]
 
 
-def test_live_turn_contract_accepts_identity_continuity_grounding_after_engine(monkeypatch):
+def test_unreceipted_identity_grounding_cannot_claim_model_authorship(monkeypatch):
     from interface.routes import chat as chat_routes
 
     _force_full_mind_runtime(monkeypatch, chat_routes)
@@ -3405,7 +3537,13 @@ def test_live_turn_contract_accepts_identity_continuity_grounding_after_engine(m
     assert payload["legacy_fallback_used"] is False
     assert payload["required_subsystems_ok"] is True
     assert payload["architecture_context_bound"] is True
-    assert payload["full_mind_path"] is True
+    assert payload["model_native_output"] is False
+    assert payload["final_text_authorship"] == "non_cognitive_replacement"
+    assert payload["authentic_cognitive_reply"] is False
+    assert payload["full_mind_path"] is False
+    assert "runtime_replacement_authored_text" in payload[
+        "full_mind_missing_proofs"
+    ]
 
 
 def test_live_turn_contract_refuses_engine_text_without_mind_snapshot(monkeypatch):
@@ -5209,11 +5347,16 @@ async def test_api_chat_desktop_surface_routes_memory_state_through_cognitive_en
     assert recalled.status_code == 200
     assert changed.status_code == 200
     assert stored_payload["status"] == "cognitive_engine"
-    assert recalled_payload["status"] == "cognitive_engine"
+    assert recalled_payload["status"] == "cognitive_engine_memory_state_grounding"
     assert changed_payload["status"] == "cognitive_engine"
     assert "blue lantern is under the desk" in stored_payload["response"]
     assert "failed the final reliability checks" not in stored_payload["response"]
     assert stored_payload["response_confidence"] == "high"
+    assert recalled_payload["response_confidence"] == "bounded"
+    assert recalled_payload["live_turn_contract"]["full_mind_path"] is False
+    assert recalled_payload["live_turn_contract"]["final_text_authorship"] == (
+        "non_cognitive_replacement"
+    )
     assert "blue lantern is under the desk" in recalled_payload["response"]
     assert "blue lantern is under the desk" in changed_payload["response"]
     assert len(cognitive_calls) == 3
@@ -6481,9 +6624,12 @@ async def test_api_chat_desktop_runtime_path_no_reply_uses_grounded_route_truth(
     assert response.status_code == 200
     assert payload["status"] == "cognitive_engine_runtime_fact_grounding"
     assert payload["reason"] == "desktop_cognitive_engine_required_no_reply"
-    assert payload["response_confidence"] == "high"
-    assert payload["live_turn_contract"]["full_mind_path"] is True
-    assert payload["live_turn_contract"]["bounded_contract_used"] is False
+    assert payload["response_confidence"] == "bounded"
+    assert payload["live_turn_contract"]["full_mind_path"] is False
+    assert payload["live_turn_contract"]["bounded_contract_used"] is True
+    assert payload["live_turn_contract"]["final_text_authorship"] == (
+        "non_cognitive_replacement"
+    )
     assert "stand behind" not in lowered
     assert "resident bridge truth" in lowered
     assert "desktop ui" in lowered
@@ -6495,7 +6641,7 @@ async def test_api_chat_desktop_runtime_path_no_reply_uses_grounded_route_truth(
     assert len(completed_exchanges) == 1
     assert completed_exchanges[0][1]["record_experience"] is True
     assert output_receipts[0][1]["metadata"]["path"] == "cognitive_engine_runtime_fact_grounding"
-    assert output_receipts[0][1]["metadata"]["response_confidence"] == "high"
+    assert output_receipts[0][1]["metadata"]["response_confidence"] == "bounded"
 
 
 @pytest.mark.asyncio
@@ -6602,9 +6748,12 @@ async def test_api_chat_desktop_identity_no_reply_uses_evidence_bound_repair(mon
     assert response.status_code == 200
     assert payload["status"] == "cognitive_engine_identity_continuity_grounding"
     assert payload["reason"] == "desktop_cognitive_engine_required_no_reply"
-    assert payload["response_confidence"] == "high"
-    assert payload["live_turn_contract"]["full_mind_path"] is True
-    assert payload["live_turn_contract"]["bounded_contract_used"] is False
+    assert payload["response_confidence"] == "bounded"
+    assert payload["live_turn_contract"]["full_mind_path"] is False
+    assert payload["live_turn_contract"]["bounded_contract_used"] is True
+    assert payload["live_turn_contract"]["final_text_authorship"] == (
+        "non_cognitive_replacement"
+    )
     assert "stand behind" not in lowered
     assert "local governed cognitive-agent runtime" in lowered
     assert "persistent memory" in lowered
@@ -6614,7 +6763,7 @@ async def test_api_chat_desktop_identity_no_reply_uses_evidence_bound_repair(mon
     assert len(completed_exchanges) == 1
     assert completed_exchanges[0][1]["record_experience"] is True
     assert output_receipts[0][1]["metadata"]["path"] == "cognitive_engine_identity_continuity_grounding"
-    assert output_receipts[0][1]["metadata"]["response_confidence"] == "high"
+    assert output_receipts[0][1]["metadata"]["response_confidence"] == "bounded"
 
 
 @pytest.mark.asyncio
@@ -8458,7 +8607,10 @@ async def test_cognitive_engine_self_condition_uses_canonical_projection_without
 
     assert payload["live_mind_controls_worker_applied"] is False
     assert payload["live_mind_controls_application_satisfied"] is True
-    assert payload["full_mind_path"] is True
+    assert payload["model_native_output"] is False
+    assert payload["authentic_cognitive_reply"] is False
+    assert payload["full_mind_path"] is False
+    assert payload["unreceipted_runtime_replacement"] is True
 
 
 @pytest.mark.asyncio

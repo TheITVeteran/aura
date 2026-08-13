@@ -482,6 +482,41 @@ def test_text_mutation_sequence_preserves_distinct_same_shaped_events():
     assert len(merge_text_mutations(merged, merged)) == 2
 
 
+def test_text_mutation_authorship_is_typed_and_legacy_entries_fail_closed():
+    from core.brain.live_mind_contract import (
+        append_text_mutation,
+        normalize_text_mutations,
+    )
+
+    legacy = normalize_text_mutations(
+        [
+            {
+                "stage": "legacy",
+                "method": "unknown_rewrite",
+                "before_sha256": "a" * 64,
+                "after_sha256": "b" * 64,
+            }
+        ]
+    )
+    assert legacy[0]["authorship_effect"] == "replaced_by_runtime"
+
+    receipt = {"text_mutations": []}
+    append_text_mutation(
+        receipt,
+        stage="response_generation.voice",
+        method="surface_cleanup",
+        reasons=["voice_profile"],
+        before="raw",
+        after="polished",
+        deterministic=True,
+        authorship_effect="preserved",
+    )
+    assert receipt["text_mutations"][0]["authorship_effect"] == "preserved"
+    assert receipt["authorship_replacement_applied"] is False
+    assert receipt["authorship_augmentation_applied"] is False
+    assert receipt["model_replacement_applied"] is False
+
+
 def test_text_mutation_chain_cryptographically_binds_exact_public_bytes():
     import hashlib
 

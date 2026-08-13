@@ -92,6 +92,72 @@ def test_live_mind_surface_receipt_normalizes_stale_worker_bound_flag():
     assert normalized["clean_user_surface_contract"] is True
 
 
+def test_live_mind_surface_receipt_derives_authorship_from_mutation_ledger():
+    from core.brain.live_mind_contract import (
+        normalize_live_mind_surface_control_receipt,
+    )
+
+    receipt = {
+        "enabled": True,
+        "applied": True,
+        "clean_user_surface_contract": True,
+        "surface_quality_gate_passed": True,
+        "authorship_replacement_applied": False,
+        "text_mutations": [
+            {
+                "stage": "runtime_grounding",
+                "method": "replace_visible_answer",
+                "authorship_effect": "replaced_by_runtime",
+                "before_sha256": "a" * 64,
+                "after_sha256": "b" * 64,
+            }
+        ],
+    }
+    controls = {
+        "temperature": 0.58,
+        "top_p": 0.85,
+        "clean_user_surface_recurrent_loops": 1,
+        "clean_user_surface_steering_alpha": 0.3,
+    }
+
+    normalized = normalize_live_mind_surface_control_receipt(
+        receipt,
+        controls_bound=True,
+        generation_controls=controls,
+        source="test",
+    )
+
+    assert normalized["authorship_replacement_applied"] is True
+    assert normalized["authorship_augmentation_applied"] is False
+    assert normalized["model_replacement_applied"] is False
+
+
+def test_live_mind_surface_receipt_discards_unbacked_authorship_summary():
+    from core.brain.live_mind_contract import (
+        normalize_live_mind_surface_control_receipt,
+    )
+
+    normalized = normalize_live_mind_surface_control_receipt(
+        {
+            "enabled": True,
+            "applied": True,
+            "clean_user_surface_contract": True,
+            "surface_quality_gate_passed": True,
+            "authorship_replacement_applied": False,
+        },
+        controls_bound=True,
+        generation_controls={
+            "temperature": 0.58,
+            "top_p": 0.85,
+            "clean_user_surface_recurrent_loops": 1,
+            "clean_user_surface_steering_alpha": 0.3,
+        },
+        source="test",
+    )
+
+    assert "authorship_replacement_applied" not in normalized
+
+
 @pytest.mark.parametrize(
     "failed_receipt,expected_status",
     [

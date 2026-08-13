@@ -29,6 +29,26 @@ _MAX_TEXT_MUTATIONS = 64
 _CONTENT_FREE_REASON_RE = re.compile(r"^[A-Za-z0-9_.:/-]{1,96}$")
 _SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
 
+# A text hash chain proves which bytes changed; it does not prove who authored
+# the new meaning. Keep that second question explicit. Unknown/legacy values
+# normalize to ``replaced_by_runtime`` so incomplete provenance cannot inherit
+# model authorship merely because a model ran earlier in the turn.
+TEXT_MUTATION_AUTHORSHIP_EFFECTS = frozenset(
+    {
+        "preserved",
+        "augmented_by_runtime",
+        "replaced_by_model",
+        "replaced_by_runtime",
+    }
+)
+
+
+def _normalize_authorship_effect(value: Any) -> str:
+    effect = str(value or "").strip().lower()
+    if effect in TEXT_MUTATION_AUTHORSHIP_EFFECTS:
+        return effect
+    return "replaced_by_runtime"
+
 
 def _content_free_reason(value: Any) -> str:
     """Keep categorical reasons while replacing arbitrary detail with a digest."""
@@ -75,6 +95,9 @@ def normalize_text_mutations(value: Any) -> list[dict[str, Any]]:
             "method": method,
             "reasons": reasons,
             "deterministic": bool(item.get("deterministic", False)),
+            "authorship_effect": _normalize_authorship_effect(
+                item.get("authorship_effect")
+            ),
         }
         event_id = str(item.get("event_id") or "").strip()[:64]
         if event_id:
@@ -105,6 +128,7 @@ def merge_text_mutations(*values: Any) -> list[dict[str, Any]]:
             entry["method"],
             tuple(entry["reasons"]),
             entry["deterministic"],
+            entry["authorship_effect"],
             entry["before_chars"],
             entry["after_chars"],
             entry["before_sha256"],
@@ -163,6 +187,20 @@ def merge_text_mutations(*values: Any) -> list[dict[str, Any]]:
     return [dict(entry, sequence=index) for index, entry in enumerate(bounded, start=1)]
 
 
+def summarize_text_mutation_authorship(value: Any) -> dict[str, bool]:
+    """Derive stable authorship flags from the normalized mutation ledger."""
+
+    effects = {
+        str(entry.get("authorship_effect") or "replaced_by_runtime")
+        for entry in normalize_text_mutations(value)
+    }
+    return {
+        "authorship_replacement_applied": "replaced_by_runtime" in effects,
+        "authorship_augmentation_applied": "augmented_by_runtime" in effects,
+        "model_replacement_applied": "replaced_by_model" in effects,
+    }
+
+
 def append_text_mutation(
     container: dict[str, Any],
     *,
@@ -172,6 +210,7 @@ def append_text_mutation(
     before: Any,
     after: Any,
     deterministic: bool,
+    authorship_effect: str = "replaced_by_runtime",
 ) -> dict[str, Any]:
     """Append one mutation only when the visible bytes actually changed."""
 
@@ -197,6 +236,7 @@ def append_text_mutation(
         "method": method,
         "reasons": reason_items,
         "deterministic": bool(deterministic),
+        "authorship_effect": _normalize_authorship_effect(authorship_effect),
         "before_chars": len(before_text),
         "after_chars": len(after_text),
         "before_sha256": hashlib.sha256(before_text.encode("utf-8")).hexdigest(),
@@ -208,6 +248,7 @@ def append_text_mutation(
     container["deterministic_repair_applied"] = any(
         bool(item.get("deterministic")) for item in mutations
     )
+    container.update(summarize_text_mutation_authorship(mutations))
     return container
 
 
@@ -384,6 +425,17 @@ def normalize_live_mind_surface_control_receipt(
     """
 
     normalized = dict(receipt) if isinstance(receipt, Mapping) else {}
+    mutations = normalize_text_mutations(normalized.get("text_mutations"))
+    if mutations:
+        normalized["text_mutations"] = mutations
+        normalized["text_mutation_count"] = len(mutations)
+        normalized.update(summarize_text_mutation_authorship(mutations))
+    else:
+        # Summary booleans are derived evidence, not independent assertions.
+        # With no retained ledger they cannot prove a mutation's authorship.
+        normalized.pop("authorship_replacement_applied", None)
+        normalized.pop("authorship_augmentation_applied", None)
+        normalized.pop("model_replacement_applied", None)
     controls_present = live_mind_generation_controls_present(generation_controls)
     quality_passed = bool(
         normalized.get("surface_quality_gate_passed") is True

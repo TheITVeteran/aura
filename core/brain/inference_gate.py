@@ -1192,6 +1192,7 @@ class InferenceGate:
                     before=original,
                     after=stabilized,
                     deterministic=True,
+                    authorship_effect="preserved",
                 )
                 metadata["surface_control_receipt"] = receipt
                 metadata["text_mutations"] = list(receipt.get("text_mutations") or [])

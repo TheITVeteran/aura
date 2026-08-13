@@ -21,6 +21,7 @@ from typing import Any
 from core.brain.live_mind_contract import (
     append_text_mutation,
     normalize_text_mutations,
+    summarize_text_mutation_authorship,
 )
 from core.brain.llm.latent_cortex.action_state_capture import (
     UnknownActionStateApplicationError,
@@ -732,6 +733,7 @@ def _surface_generation_control_receipt(
     receipt["deterministic_repair_applied"] = any(
         bool(item.get("deterministic")) for item in receipt["text_mutations"]
     )
+    receipt.update(summarize_text_mutation_authorship(receipt["text_mutations"]))
     for key in (
         "exact_reply_token_count",
         "exact_reply_required_termination_headroom",
@@ -6815,6 +6817,7 @@ def _mlx_worker_loop(
                                                 before=response_text,
                                                 after=grounded_surface,
                                                 deterministic=True,
+                                                authorship_effect="replaced_by_runtime",
                                             )
                                             response_text = grounded_surface
                                         # Normalise whitespace-only defects
@@ -6839,6 +6842,7 @@ def _mlx_worker_loop(
                                                 before=response_text,
                                                 after=formatted_surface,
                                                 deterministic=True,
+                                                authorship_effect="preserved",
                                             )
                                             response_text = formatted_surface
                                         pre_shape_reasons = _surface_quality_failure_reasons(
@@ -6865,6 +6869,7 @@ def _mlx_worker_loop(
                                                 before=response_text,
                                                 after=shaped_surface,
                                                 deterministic=True,
+                                                authorship_effect="preserved",
                                             )
                                             response_text = shaped_surface
                                         surface_control_state["surface_quality_gate_attempts"] = int(
@@ -6901,6 +6906,7 @@ def _mlx_worker_loop(
                                                         before=response_text,
                                                         after=unescaped_surface,
                                                         deterministic=True,
+                                                        authorship_effect="preserved",
                                                     )
                                                     response_text = unescaped_surface
                                                     rejection_reasons = unescaped_reasons
@@ -6931,6 +6937,7 @@ def _mlx_worker_loop(
                                                     before=response_text,
                                                     after=completed_surface,
                                                     deterministic=True,
+                                                    authorship_effect="preserved",
                                                 )
                                                 response_text = completed_surface
                                                 rejection_reasons = []
@@ -6957,6 +6964,7 @@ def _mlx_worker_loop(
                                                     before=response_text,
                                                     after=telemetry_surface,
                                                     deterministic=True,
+                                                    authorship_effect="replaced_by_runtime",
                                                 )
                                                 response_text = telemetry_surface
                                                 rejection_reasons = []
@@ -7134,6 +7142,7 @@ def _mlx_worker_loop(
                                                     before=response_text,
                                                     after=salvaged,
                                                     deterministic=True,
+                                                    authorship_effect="preserved",
                                                 )
                                                 response_text = salvaged
                                                 surface_control_state["surface_quality_gate_passed"] = True
@@ -7166,6 +7175,7 @@ def _mlx_worker_loop(
                                                         before=response_text,
                                                         after=best_draft,
                                                         deterministic=True,
+                                                        authorship_effect="preserved",
                                                     )
                                                     response_text = best_draft
                                                     surface_control_state["surface_quality_gate_passed"] = (

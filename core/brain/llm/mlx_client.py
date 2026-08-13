@@ -2813,6 +2813,9 @@ def _sanitize_surface_control_receipt(value: Any) -> dict[str, Any]:
         "instruction_shape_repair_applied",
         "deterministic_repair_applied",
         "text_mutation_count",
+        "authorship_replacement_applied",
+        "authorship_augmentation_applied",
+        "model_replacement_applied",
         "exact_reply_token_count",
         "exact_reply_required_termination_headroom",
         "exact_reply_available_termination_headroom",
@@ -2843,10 +2846,14 @@ def _sanitize_surface_control_receipt(value: Any) -> dict[str, Any]:
         }
     mutations = value.get("text_mutations")
     if isinstance(mutations, list):
-        from core.brain.live_mind_contract import normalize_text_mutations
+        from core.brain.live_mind_contract import (
+            normalize_text_mutations,
+            summarize_text_mutation_authorship,
+        )
 
         receipt["text_mutations"] = normalize_text_mutations(mutations)
         receipt["text_mutation_count"] = len(receipt["text_mutations"])
+        receipt.update(summarize_text_mutation_authorship(receipt["text_mutations"]))
     return receipt
 
 

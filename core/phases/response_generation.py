@@ -12,6 +12,7 @@ from core.brain.live_mind_contract import (
     append_text_mutation,
     merge_text_mutations,
     normalize_live_mind_surface_control_receipt,
+    summarize_text_mutation_authorship,
 )
 from core.brain.llm.context_assembler import ContextAssembler
 from core.brain.llm.latent_cortex.output_quality import evaluate_latent_output
@@ -2142,6 +2143,7 @@ class ResponseGenerationPhase(BasePhase):
                             before=pre_shape_text,
                             after=response_text,
                             deterministic=True,
+                            authorship_effect="preserved",
                         )
                         logger.info(
                             "🛡️ ResponseGeneration repaired instruction shape locally before critique (%s).",
@@ -2186,6 +2188,7 @@ class ResponseGenerationPhase(BasePhase):
                     before=pre_amplifier_text,
                     after=amplifier_source_answer,
                     deterministic=False,
+                    authorship_effect="replaced_by_model",
                 )
                 amplifier_text_mutations = getattr(
                     response_text,
@@ -2206,6 +2209,11 @@ class ResponseGenerationPhase(BasePhase):
                     response_mutation_receipt["deterministic_repair_applied"] = any(
                         bool(item.get("deterministic"))
                         for item in merged_amplifier_mutations
+                    )
+                    response_mutation_receipt.update(
+                        summarize_text_mutation_authorship(
+                            merged_amplifier_mutations
+                        )
                     )
                 if response_text != pre_amplifier_text:
                     generation_metadata = {
@@ -2262,6 +2270,7 @@ class ResponseGenerationPhase(BasePhase):
                                 before=response_text,
                                 after=critique_response,
                                 deterministic=False,
+                                authorship_effect="replaced_by_model",
                             )
                             response_text = critique_response
                             generation_metadata = {
@@ -2292,6 +2301,7 @@ class ResponseGenerationPhase(BasePhase):
                         before=pre_composer_text,
                         after=response_text,
                         deterministic=False,
+                        authorship_effect="replaced_by_runtime",
                     )
 
             except TimeoutError:
@@ -2325,6 +2335,7 @@ class ResponseGenerationPhase(BasePhase):
                         before=pre_tool_timeout_recovery,
                         after=response_text,
                         deterministic=True,
+                        authorship_effect="replaced_by_runtime",
                     )
                     state.response_modifiers["required_tool_timeout_repaired"] = {
                         "skill": skill_name,
@@ -2359,6 +2370,7 @@ class ResponseGenerationPhase(BasePhase):
                         before=pre_tool_empty_recovery,
                         after=response_text,
                         deterministic=True,
+                        authorship_effect="replaced_by_runtime",
                     )
                     state.response_modifiers["required_tool_empty_repaired"] = {
                         "skill": skill_name,
@@ -2387,6 +2399,7 @@ class ResponseGenerationPhase(BasePhase):
                         before=pre_tool_blank_recovery,
                         after=response_text,
                         deterministic=True,
+                        authorship_effect="replaced_by_runtime",
                     )
                     state.response_modifiers["required_tool_empty_repaired"] = {
                         "skill": skill_name,
@@ -2428,6 +2441,7 @@ class ResponseGenerationPhase(BasePhase):
                                 before=response_text,
                                 after=repaired_text,
                                 deterministic=True,
+                                authorship_effect="preserved",
                             )
                             response_text = repaired_text
                             reliability = assess_user_facing_reply(
@@ -2558,6 +2572,7 @@ class ResponseGenerationPhase(BasePhase):
                 before=response_text,
                 after=content,
                 deterministic=True,
+                authorship_effect="preserved",
             )
 
             # Proactive XML Answer Tag formatting guard:
@@ -2606,6 +2621,7 @@ class ResponseGenerationPhase(BasePhase):
                         before=pre_answer_tag_text,
                         after=content,
                         deterministic=True,
+                        authorship_effect="preserved",
                     )
                     logger.info("🛡️ [HARDENING] Auto-corrected and wrapped extracted answer '%s' in XML tags.", extracted_ans)
 
@@ -2620,6 +2636,7 @@ class ResponseGenerationPhase(BasePhase):
                 before=content,
                 after=cleaned_response,
                 deterministic=True,
+                authorship_effect="preserved",
             )
             if was_corrected:
                 logger.info(
@@ -2736,6 +2753,7 @@ class ResponseGenerationPhase(BasePhase):
                         before=pre_retry_guard_text,
                         after=retried_text,
                         deterministic=True,
+                        authorship_effect="preserved",
                     )
                     if retry_guard_corrected:
                         logger.debug(
@@ -2780,6 +2798,9 @@ class ResponseGenerationPhase(BasePhase):
                 before=pre_dialogue_text,
                 after=cleaned_response,
                 deterministic=not dialogue_retried,
+                authorship_effect=(
+                    "replaced_by_model" if dialogue_retried else "preserved"
+                ),
             )
             if dialogue_retried:
                 generation_metadata = {
@@ -2802,6 +2823,7 @@ class ResponseGenerationPhase(BasePhase):
                 before=pre_tool_repair,
                 after=cleaned_response,
                 deterministic=True,
+                authorship_effect="augmented_by_runtime",
             )
 
             # 6. Clean response
@@ -2819,6 +2841,7 @@ class ResponseGenerationPhase(BasePhase):
                 before=pre_clean_response,
                 after=cleaned_response,
                 deterministic=True,
+                authorship_effect="preserved",
             )
 
             # 6b. SUBSTRATE VOICE: Shape the response — enforce the profile
@@ -2858,6 +2881,7 @@ class ResponseGenerationPhase(BasePhase):
                         before=pre_voice_shape,
                         after=cleaned_response,
                         deterministic=False,
+                        authorship_effect="preserved",
                     )
                 except (RuntimeError, AttributeError, TypeError, ValueError) as _shape_exc:
                     _record_response_generation_degradation(
@@ -2884,6 +2908,7 @@ class ResponseGenerationPhase(BasePhase):
                         before=pre_post_voice_repair,
                         after=cleaned_response,
                         deterministic=True,
+                        authorship_effect="preserved",
                     )
                     state.response_modifiers["post_voice_shape_repair"] = {
                         "reasons": list(repair_reasons),
@@ -2908,6 +2933,7 @@ class ResponseGenerationPhase(BasePhase):
                 before=pre_final_tool_repair,
                 after=cleaned_response,
                 deterministic=True,
+                authorship_effect="augmented_by_runtime",
             )
 
             # 6c. Skip emission for background tasks if they produced no meaningful content
@@ -3005,6 +3031,9 @@ class ResponseGenerationPhase(BasePhase):
             surface_control_receipt["text_mutation_count"] = len(merged_mutations)
             surface_control_receipt["deterministic_repair_applied"] = any(
                 bool(item.get("deterministic")) for item in merged_mutations
+            )
+            surface_control_receipt.update(
+                summarize_text_mutation_authorship(merged_mutations)
             )
             if final_latent_quality:
                 surface_control_receipt["surface_quality_gate_enabled"] = True

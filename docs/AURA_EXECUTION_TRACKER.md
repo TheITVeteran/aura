@@ -47626,3 +47626,47 @@ effect-proof, persistence-timeout, regeneration, queue-race or `/api/think`
 findings are closed. The detached CP349 resident promotion remains separately
 source-bound; its partial lifecycle evidence is not interpreted here as serving
 authority, broad reasoning, frontier performance or a `WOW Signal`.
+
+## Checkpoint 2026-08-13-351: Visible Reply Authorship Is Proven, Not Inferred
+
+The semantic review found that Aura's live-turn contract treated several
+canonical runtime substitutions as authentic full-mind replies merely because
+the model had run earlier in the turn. The existing mutation ledger proved
+which bytes changed, but it did not distinguish a meaning-preserving surface
+cleanup from grounded evidence appended to model text, a fresh model retry or
+a complete runtime-authored replacement. Canonical identity, runtime,
+self-condition and bounded-planning responses could therefore inherit model
+authorship without a mutation receipt at all.
+
+Every production mutation site now declares one bounded authorship effect:
+`preserved`, `augmented_by_runtime`, `replaced_by_model` or
+`replaced_by_runtime`. Unknown and legacy entries fail closed as runtime
+replacements. Worker and parent IPC preserve the typed ledger and independently
+derive its summary flags; caller-supplied booleans without the ledger are not
+accepted as evidence. An AST audit confirms that every production
+`append_text_mutation` call supplies the classification explicitly.
+
+The final live-turn contract now rejects runtime-authored replacements as
+authentic cognitive or full-mind speech. It still serves validated canonical
+runtime evidence when useful, but labels that result bounded and
+non-model-authored instead of replacing it with a generic failure envelope.
+Meaning-preserving cleanup and verified runtime evidence appended to a genuine
+model answer retain cognitive authorship. Direct identity/runtime projections,
+unreceipted canonical grounding and canonical self-condition floors no longer
+claim the 32B said words it did not generate. The final output-contract repair
+also refuses to invent generic semantic content merely to satisfy a requested
+sentence count.
+
+Validation under Aura's Python 3.12 runtime is green: the complete conversation
+lane passes `300/300`; the adjacent MLX IPC, live-mind, response-generation,
+amplifier, inference-gate, mutation-ledger and proof-degradation surface passes
+`263/263`; canonical smoke passes `104/104`; compilation, Ruff, governance
+lint, layering and diff hygiene pass.
+
+This closes the second P1 semantic-review finding. It does not claim that the
+remaining forced-preemption, generation-memory guard, effect-proof,
+persistence-timeout, regeneration, queue-race or `/api/think` findings are
+closed. CP349's first resident canary completed all nine exact cases, but its
+persisted-pending cold canary exposed an activation-mode transition defect;
+that failed activation remains stopped and no recurrent serving authority,
+broad reasoning, frontier, `WOW Signal`, soak or Aura 1.0 claim follows.
