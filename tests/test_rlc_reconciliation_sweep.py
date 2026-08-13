@@ -197,6 +197,14 @@ def test_the_battery_leads_with_the_unified_system_not_the_ablation():
         by_name["complete_system_recurrent_composed"].profile
         == "complete_closed_book_recurrent_composed"
     )
+    assert (
+        by_name["complete_system_recurrent_initial_control"].profile
+        == "complete_closed_book_recurrent_initial_control"
+    )
+    assert (
+        by_name["complete_system_recurrent_depth_lesion"].profile
+        == "complete_closed_book_recurrent_depth_lesion"
+    )
     assert by_name["full_stack"].profile == "full"
     assert by_name["full_stack_oracle"].profile == "full_oracle"
     assert by_name["rlc_mechanism"].profile == "mechanism"
@@ -274,6 +282,8 @@ def test_recurrent_composed_request_keeps_the_uncomposed_engine_as_a_control():
         "vanilla_equal_compute",
         "complete_system_closed_book",
         "complete_system_recurrent_composed",
+        "complete_system_recurrent_initial_control",
+        "complete_system_recurrent_depth_lesion",
         "complete_system_adaptation_ablation",
         "complete_system_executable_ablation",
         "vanilla_resource_dominating",
@@ -302,7 +312,7 @@ def test_recurrent_package_identity_is_bound_into_the_decode_fingerprint():
     assert composed_a != composed_b
 
 
-def test_only_composed_profile_invokes_the_integrated_recurrent_producer(
+def test_composed_profiles_invoke_their_causally_matched_recurrent_producer(
     monkeypatch: pytest.MonkeyPatch,
 ):
     from tools import rlc_integrated_recurrent_producer as producer
@@ -314,13 +324,15 @@ def test_only_composed_profile_invokes_the_integrated_recurrent_producer(
         return {"candidate": True}, {"receipt": True}
 
     monkeypatch.setattr(producer, "produce_integrated_recurrent_candidate", fake_produce)
+    trained_controller = object()
     common = {
-        "loaded": object(),
+        "loaded": SimpleNamespace(controller=trained_controller),
         "model": object(),
         "tokenizer": object(),
         "task": object(),
         "public_tokens": [1, 2, 3],
         "max_tokens": 2048,
+        "initial_controller": object(),
     }
     assert sweep._integrated_candidates_for_profile(
         profile="complete_closed_book",
@@ -334,6 +346,71 @@ def test_only_composed_profile_invokes_the_integrated_recurrent_producer(
     assert len(calls) == 1
     assert calls[0]["public_tokens"] == [1, 2, 3]
     assert calls[0]["max_tokens"] == 2048
+    assert calls[0]["source"] == producer.SOURCE_NAME
+    assert calls[0]["controller"] is None
+    assert calls[0]["recurrence_depth"] is None
+    assert sweep._integrated_candidates_for_profile(
+        profile="complete_closed_book_recurrent_initial_control",
+        **common,
+    ) == [{"candidate": True}]
+    assert calls[-1]["source"] == producer.INITIAL_CONTROL_SOURCE
+    assert calls[-1]["controller"] is common["initial_controller"]
+    assert calls[-1]["recurrence_depth"] is None
+    assert sweep._integrated_candidates_for_profile(
+        profile="complete_closed_book_recurrent_depth_lesion",
+        **common,
+    ) == [{"candidate": True}]
+    assert calls[-1]["source"] == producer.DEPTH_LESION_SOURCE
+    assert calls[-1]["controller"] is trained_controller
+    assert calls[-1]["recurrence_depth"] == 1
+
+
+def test_composed_adjudication_requires_learned_parameters_and_recurrent_depth():
+    task_ids = {f"task-{index}" for index in range(8)}
+
+    def rows(correct: bool):
+        return {task_id: {"correct": correct} for task_id in task_ids}
+
+    scored = {
+        "complete_system_recurrent_composed": rows(True),
+        "complete_system_recurrent_initial_control": rows(False),
+        "complete_system_recurrent_depth_lesion": rows(False),
+        "complete_system_closed_book": rows(False),
+        "vanilla": rows(False),
+    }
+    result = sweep._adjudicate_composed_recurrent_tissue(
+        scored=scored,
+        expected_task_ids=task_ids,
+        complete=True,
+        resource_target_control_proven=True,
+    )
+
+    assert result["bounded_learned_tissue_positive"] is True
+    assert result["recurrent_depth_positive"] is True
+    assert result["powered_causal_result"] is True
+    assert result["wow_signal_authorized"] is False
+    assert result["fusion_authorized"] is False
+
+
+def test_composed_adjudication_does_not_mislabel_architecture_only_gain_as_learning():
+    task_ids = {"task-a", "task-b"}
+    correct = {task_id: {"correct": True} for task_id in task_ids}
+    wrong = {task_id: {"correct": False} for task_id in task_ids}
+    result = sweep._adjudicate_composed_recurrent_tissue(
+        scored={
+            "complete_system_recurrent_composed": correct,
+            "complete_system_recurrent_initial_control": correct,
+            "complete_system_recurrent_depth_lesion": wrong,
+            "complete_system_closed_book": wrong,
+            "vanilla": wrong,
+        },
+        expected_task_ids=task_ids,
+        complete=True,
+        resource_target_control_proven=True,
+    )
+
+    assert result["bounded_learned_tissue_positive"] is False
+    assert result["decision"] == "no_bounded_learned_tissue_gain"
 
 
 def test_staged_campaigns_do_not_pay_for_the_full_certificate_early():

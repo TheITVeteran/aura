@@ -118,6 +118,27 @@ ARMS: tuple[Arm, ...] = (
         None,
         "complete_closed_book_recurrent_composed",
     ),
+    # Architecture- and compute-matched causal control.  The controller is
+    # reconstructed from the package's exact initialization contract but its
+    # learned tensors are never loaded.  A treatment lift over this arm can be
+    # attributed to learned tissue rather than merely running another decode.
+    Arm(
+        "complete_system_recurrent_initial_control",
+        8,
+        "suppressed",
+        None,
+        "complete_closed_book_recurrent_initial_control",
+    ),
+    # Same trained controller and complete engine, but one recurrent pass.
+    # This separates a learned-controller effect from the causal contribution
+    # of depth while retaining the identical public-information boundary.
+    Arm(
+        "complete_system_recurrent_depth_lesion",
+        8,
+        "suppressed",
+        None,
+        "complete_closed_book_recurrent_depth_lesion",
+    ),
     # Same acquisition, amplifier, verifier, incumbent and recurrence path as
     # the treatment, but without latent-gradient updates or temporary fast
     # weights.  This matched ablation distinguishes a gain caused by adaptive
@@ -317,6 +338,8 @@ CLAIM_ARM_NAMES: Final[frozenset[str]] = frozenset({"complete_system_closed_book
 DIAGNOSTIC_ARM_NAMES: Final[frozenset[str]] = frozenset(
     {
         "complete_system_recurrent_composed",
+        "complete_system_recurrent_initial_control",
+        "complete_system_recurrent_depth_lesion",
         "complete_system_adaptation_ablation",
         "complete_system_executable_ablation",
         "full_stack_disposition",
@@ -329,8 +352,24 @@ COMPLETE_SYSTEM_PROFILES: Final[frozenset[str]] = frozenset(
     {
         "complete_closed_book",
         "complete_closed_book_recurrent_composed",
+        "complete_closed_book_recurrent_initial_control",
+        "complete_closed_book_recurrent_depth_lesion",
         "complete_closed_book_adaptation_ablation",
         "complete_closed_book_executable_ablation",
+    }
+)
+RECURRENT_COMPOSED_ARMS: Final[frozenset[str]] = frozenset(
+    {
+        "complete_system_recurrent_composed",
+        "complete_system_recurrent_initial_control",
+        "complete_system_recurrent_depth_lesion",
+    }
+)
+RECURRENT_COMPOSED_PROFILES: Final[frozenset[str]] = frozenset(
+    {
+        "complete_closed_book_recurrent_composed",
+        "complete_closed_book_recurrent_initial_control",
+        "complete_closed_book_recurrent_depth_lesion",
     }
 )
 RUNTIME_STACK_ARM_NAMES: Final[frozenset[str]] = frozenset(
@@ -363,7 +402,8 @@ def _expand_requested_arms(
         expanded.add("vanilla")
         if campaign_stage in {"pilot", "certificate"}:
             expanded.add("vanilla_equal_compute")
-    if "complete_system_recurrent_composed" in expanded:
+    if expanded & RECURRENT_COMPOSED_ARMS:
+        expanded.update(RECURRENT_COMPOSED_ARMS)
         expanded.add("complete_system_closed_book")
     if "complete_system_closed_book" in expanded and campaign_stage == "certificate":
         expanded.add(RESOURCE_DOMINATING_CONTROL_ARM)
@@ -2391,15 +2431,32 @@ def _integrated_candidates_for_profile(
     task: Any,
     public_tokens: list[int],
     max_tokens: int,
+    initial_controller: Any | None = None,
     activity: Callable[[], None] | None = None,
 ) -> list[dict[str, Any]]:
-    if profile != "complete_closed_book_recurrent_composed":
+    if profile not in RECURRENT_COMPOSED_PROFILES:
         return []
     if loaded is None:
         raise EpisodeFault("composed recurrent package was not loaded")
     from tools.rlc_integrated_recurrent_producer import (
+        DEPTH_LESION_SOURCE,
+        INITIAL_CONTROL_SOURCE,
+        SOURCE_NAME,
         produce_integrated_recurrent_candidate,
     )
+
+    controller = None
+    source = SOURCE_NAME
+    recurrence_depth = None
+    if profile == "complete_closed_book_recurrent_initial_control":
+        if initial_controller is None:
+            raise EpisodeFault("initialization-matched recurrent control was not loaded")
+        controller = initial_controller
+        source = INITIAL_CONTROL_SOURCE
+    elif profile == "complete_closed_book_recurrent_depth_lesion":
+        controller = loaded.controller
+        source = DEPTH_LESION_SOURCE
+        recurrence_depth = 1
 
     candidate, _producer_receipt = produce_integrated_recurrent_candidate(
         model=model,
@@ -2408,9 +2465,158 @@ def _integrated_candidates_for_profile(
         loaded=loaded,
         public_tokens=public_tokens,
         max_tokens=max_tokens,
+        recurrence_depth=recurrence_depth,
+        controller=controller,
+        source=source,
         activity=activity,
     )
     return [candidate]
+
+
+def _paired_arm_comparison(
+    *,
+    scored: dict[str, dict[str, dict[str, Any]]],
+    treatment_arm: str,
+    control_arm: str,
+    expected_task_ids: set[str],
+) -> dict[str, Any]:
+    """Measure one paired correctness contrast without imputing missing cells."""
+
+    treatment = scored.get(treatment_arm, {})
+    control = scored.get(control_arm, {})
+    paired = sorted(expected_task_ids & set(treatment) & set(control))
+    missing = sorted(
+        expected_task_ids - set(paired)
+    )
+    lifts = [
+        task_id
+        for task_id in paired
+        if treatment[task_id]["correct"] and not control[task_id]["correct"]
+    ]
+    regressions = [
+        task_id
+        for task_id in paired
+        if control[task_id]["correct"] and not treatment[task_id]["correct"]
+    ]
+    discordant = len(lifts) + len(regressions)
+    sign_test_p = (
+        sum(math.comb(discordant, index) for index in range(len(lifts), discordant + 1))
+        / (2**discordant)
+        if discordant
+        else 1.0
+    )
+    return {
+        "treatment_arm": treatment_arm,
+        "control_arm": control_arm,
+        "paired_cells": len(paired),
+        "missing_task_ids": missing,
+        "lifts": len(lifts),
+        "lift_task_ids": lifts,
+        "regressions": len(regressions),
+        "regression_task_ids": regressions,
+        "discordant_pairs": discordant,
+        "one_sided_exact_sign_p": round(sign_test_p, 12),
+    }
+
+
+def _adjudicate_composed_recurrent_tissue(
+    *,
+    scored: dict[str, dict[str, dict[str, Any]]],
+    expected_task_ids: set[str],
+    complete: bool,
+    resource_target_control_proven: bool,
+) -> dict[str, Any]:
+    """Adjudicate learned tissue separately from the older engine claim.
+
+    The contrasts answer different causal questions and are intentionally not
+    collapsed into aggregate accuracy: initialization identifies learned
+    parameters, the uncomposed engine identifies marginal system value, and a
+    depth-one lesion identifies useful recurrent computation.
+    """
+
+    treatment_arm = "complete_system_recurrent_composed"
+    comparisons = {
+        "learned_parameters": _paired_arm_comparison(
+            scored=scored,
+            treatment_arm=treatment_arm,
+            control_arm="complete_system_recurrent_initial_control",
+            expected_task_ids=expected_task_ids,
+        ),
+        "marginal_composition": _paired_arm_comparison(
+            scored=scored,
+            treatment_arm=treatment_arm,
+            control_arm="complete_system_closed_book",
+            expected_task_ids=expected_task_ids,
+        ),
+        "recurrent_depth": _paired_arm_comparison(
+            scored=scored,
+            treatment_arm=treatment_arm,
+            control_arm="complete_system_recurrent_depth_lesion",
+            expected_task_ids=expected_task_ids,
+        ),
+        "vanilla_floor": _paired_arm_comparison(
+            scored=scored,
+            treatment_arm=treatment_arm,
+            control_arm="vanilla",
+            expected_task_ids=expected_task_ids,
+        ),
+    }
+    required = (
+        comparisons["learned_parameters"],
+        comparisons["marginal_composition"],
+    )
+    measured = bool(
+        complete
+        and expected_task_ids
+        and all(not row["missing_task_ids"] for row in comparisons.values())
+    )
+    bounded_learned_tissue_positive = bool(
+        measured
+        and all(row["lifts"] > 0 and row["regressions"] == 0 for row in required)
+        and comparisons["vanilla_floor"]["regressions"] == 0
+    )
+    recurrent_depth_positive = bool(
+        measured
+        and comparisons["recurrent_depth"]["lifts"] > 0
+        and comparisons["recurrent_depth"]["regressions"] == 0
+    )
+    powered = bool(
+        bounded_learned_tissue_positive
+        and recurrent_depth_positive
+        and resource_target_control_proven
+        and all(
+            row["one_sided_exact_sign_p"] <= NEXT_STAGE_ALPHA
+            for row in (
+                comparisons["learned_parameters"],
+                comparisons["marginal_composition"],
+                comparisons["recurrent_depth"],
+            )
+        )
+    )
+    if not measured:
+        decision = "inconclusive_composed_causal_block_incomplete"
+    elif not bounded_learned_tissue_positive:
+        decision = "no_bounded_learned_tissue_gain"
+    elif not recurrent_depth_positive:
+        decision = "learned_tissue_gain_without_depth_causality"
+    elif not powered:
+        decision = "bounded_causal_canary_positive_replication_required"
+    else:
+        decision = "powered_causal_result_requires_independent_replication"
+    return {
+        "schema": "aura.rlc.composed_recurrent_adjudication.v1",
+        "authority": "diagnostic_until_independently_replicated",
+        "measured": measured,
+        "comparisons": comparisons,
+        "bounded_learned_tissue_positive": bounded_learned_tissue_positive,
+        "recurrent_depth_positive": recurrent_depth_positive,
+        "resource_target_control_proven": resource_target_control_proven,
+        "powered_causal_result": powered,
+        "independent_replication_required": True,
+        "wow_signal_authorized": False,
+        "fusion_authorized": False,
+        "decision": decision,
+    }
 
 
 def main() -> int:
@@ -2594,7 +2800,7 @@ def main() -> int:
                     },
                     "output_memory_diagnostic": args.output_memory_diagnostic,
                     "integrated_recurrent_package_required": (
-                        "complete_system_recurrent_composed" in requested_names
+                        bool(requested_names & RECURRENT_COMPOSED_ARMS)
                     ),
                     "integrated_recurrent_max_tokens": (
                         args.integrated_recurrent_max_tokens
@@ -2607,9 +2813,7 @@ def main() -> int:
 
     integrated_recurrent_package: Path | None = None
     integrated_recurrent_identity: dict[str, Any] = {}
-    if any(
-        arm.name == "complete_system_recurrent_composed" for arm in selected
-    ):
+    if any(arm.name in RECURRENT_COMPOSED_ARMS for arm in selected):
         if not 16 <= args.integrated_recurrent_max_tokens <= 2048:
             print(
                 "integrated recurrent max tokens must be inside [16, 2048]",
@@ -2681,12 +2885,12 @@ def main() -> int:
             output_memory_diagnostic=args.output_memory_diagnostic,
             integrated_recurrent_package_sha256=(
                 integrated_recurrent_identity.get("manifest_sha256", "")
-                if name == "complete_system_recurrent_composed"
+                if name in RECURRENT_COMPOSED_ARMS
                 else ""
             ),
             integrated_recurrent_max_tokens=(
                 args.integrated_recurrent_max_tokens
-                if name == "complete_system_recurrent_composed"
+                if name in RECURRENT_COMPOSED_ARMS
                 else 2048
             ),
         )
@@ -2767,9 +2971,15 @@ def main() -> int:
         model, tokenizer = load(args.model)
         print("model loaded", flush=True)
         loaded_integrated_recurrent = None
+        initial_integrated_recurrent_controller = None
         if integrated_recurrent_package is not None:
+            import mlx.core as mx
+
             from core.brain.llm.unified_recurrent_shadow import (
                 load_unified_recurrent_shadow,
+            )
+            from core.learning.unified_intrinsic_recurrence import (
+                UnifiedRecurrentController,
             )
 
             loaded_integrated_recurrent = load_unified_recurrent_shadow(
@@ -2785,6 +2995,19 @@ def main() -> int:
             ):
                 print(
                     "loaded composed recurrent package identity differs",
+                    file=sys.stderr,
+                )
+                return 2
+            initial_integrated_recurrent_controller = UnifiedRecurrentController(
+                loaded_integrated_recurrent.controller.config
+            )
+            mx.eval(initial_integrated_recurrent_controller.parameters())
+            if (
+                initial_integrated_recurrent_controller.parameter_sha256()
+                == loaded_integrated_recurrent.controller.parameter_sha256()
+            ):
+                print(
+                    "trained recurrent controller equals its initialization control",
                     file=sys.stderr,
                 )
                 return 2
@@ -3076,14 +3299,16 @@ def main() -> int:
                                 task=task,
                                 public_tokens=_render_prompt(tokenizer, task),
                                 max_tokens=args.integrated_recurrent_max_tokens,
+                                initial_controller=(
+                                    initial_integrated_recurrent_controller
+                                ),
                                 activity=(
                                     _integrated_recurrent_progress_callback(
                                         out_dir,
                                         arm=arm,
                                         task_id=task.task_id,
                                     )
-                                    if spec.profile
-                                    == "complete_closed_book_recurrent_composed"
+                                    if spec.profile in RECURRENT_COMPOSED_PROFILES
                                     else None
                                 ),
                             )
@@ -3178,13 +3403,7 @@ def main() -> int:
                     vanilla_latency_by_task[task.task_id] = incremental_latency_s
                 paired_incumbent_latency_s = (
                     vanilla_latency_by_task.get(task.task_id, 0.0)
-                    if spec.profile
-                    in {
-                        "complete_closed_book",
-                        "complete_closed_book_adaptation_ablation",
-                        "full",
-                        "full_oracle",
-                    }
+                    if spec.profile in COMPLETE_SYSTEM_PROFILES | {"full", "full_oracle"}
                     else 0.0
                 )
                 journal.append(
@@ -3581,6 +3800,16 @@ def grade(out_dir: Path, tasks) -> dict[str, Any]:
         resource_target_control_proven
         and resource_dominating_target_arm == "complete_system_closed_book"
     )
+    composed_recurrent_adjudication = _adjudicate_composed_recurrent_tissue(
+        scored=scored,
+        expected_task_ids=(expected_task_ids or set(by_id)),
+        complete=complete,
+        resource_target_control_proven=(
+            resource_target_control_proven
+            and resource_dominating_target_arm
+            == "complete_system_recurrent_composed"
+        ),
+    )
     # A mutual 0 == 0 failure is not parity and must never advance. A strict
     # 0 < N treatment result is different: it directly demonstrates solved
     # tasks where ordinary decode solved none. Requiring vanilla itself to be
@@ -3827,6 +4056,7 @@ def grade(out_dir: Path, tasks) -> dict[str, Any]:
         "resource_target_control_proven": resource_target_control_proven,
         "resource_dominating_target_arm": resource_dominating_target_arm,
         "resource_dominance_issues": resource_dominance_issues,
+        "composed_recurrent_adjudication": composed_recurrent_adjudication,
         "outscored_resource_advantaged_control": (outscored_resource_advantaged_control),
         "paired_vanilla_floor": {
             "holds": floor_holds,

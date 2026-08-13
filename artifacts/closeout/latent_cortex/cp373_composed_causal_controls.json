@@ -1,0 +1,36 @@
+{
+  "schema": "aura.rlc.closeout_checkpoint.v1",
+  "checkpoint": "CP373",
+  "subject": "composed causal controls and adjudication",
+  "changes": [
+    "initialization-matched controller executes inside the identical complete engine",
+    "trained depth-one lesion executes inside the identical complete engine",
+    "trained, initial, lesion, uncomposed and ordinary arms share frozen task and package identity",
+    "paired adjudication separates learned parameters, marginal composition and recurrent depth",
+    "single-run evidence cannot authorize WOW Signal or fusion"
+  ],
+  "verification": {
+    "focused_tests": "77 passed",
+    "smoke": "104 passed",
+    "composed_component_self_test": "passed with all seven required arms",
+    "ruff": "passed",
+    "compile": "passed",
+    "diff_check": "passed",
+    "environment_note": "The worktree-local .venv lacked pytest; canonical live-source .venv reran and passed smoke."
+  },
+  "active_campaign": {
+    "checkpoint": "CP368",
+    "state": "running",
+    "durable_candidates": 15,
+    "planned_candidates": 28,
+    "restart_count": 0,
+    "disturbed": false
+  },
+  "claims": {
+    "learned_tissue_gain_proven": false,
+    "recurrent_depth_gain_proven": false,
+    "broad_reasoning_gain_proven": false,
+    "fusion_authorized": false,
+    "wow_signal_authorized": false
+  }
+}

@@ -48136,3 +48136,42 @@ keeps the composed arm diagnostic until its paired lift, regression, public
 promotion, resource-dominance and package-provenance criteria are encoded and
 tested. The active CP368 campaign remains untouched; no broad gain, powered
 replication, fusion or `WOW Signal` is claimed.
+
+## Checkpoint 2026-08-13-373: Learned Tissue Has Causal Controls
+
+The CP372 composed arm still confounded two changes: it loaded trained
+controller parameters and performed an extra recurrent decode. The sweep now
+runs a four-way complete-engine block: trained controller at package depth,
+the same architecture reconstructed from its exact deterministic
+initialization, the trained controller lesioned to depth one, and the
+uncomposed complete engine. Ordinary decode and the resource-dominating
+ordinary control remain paired outside that block.
+
+Every recurrent variant is bound to the same qualified package, public task,
+prompt, terminal contract and structural compute-accounting implementation.
+Producer receipts preserve both the installed package-controller digest and
+the controller that actually generated the candidate. Unknown source labels,
+malformed controllers and a trained package identical to its initialization
+control fail closed. The initialization control is constructed only after the
+resident model and package have been reopened in the same process.
+
+The grader now reports separate paired contrasts for learned parameters,
+marginal composition, recurrent depth and the vanilla floor. A bounded causal
+canary requires trained tissue to lift both the initialization control and the
+uncomposed engine without regressions. Multi-pass recurrence is reported
+separately against the depth-one lesion. A powered result additionally needs
+exact paired-sign margins and the resource-dominating control, but still cannot
+authorize `WOW Signal` or fusion until an independent replication accepts the
+frozen evidence.
+
+The producer and reconciliation surface passes `77/77`, canonical smoke passes
+`104/104`, the seven-arm composed component self-test passes, and Ruff, byte
+compilation and diff hygiene pass. The first smoke
+launcher attempted the incomplete worktree-local `.venv` and lacked `pytest`;
+the canonical live-source virtualenv then executed the unchanged gate cleanly.
+Evidence is
+`artifacts/closeout/latent_cortex/cp373_composed_causal_controls.json`.
+
+The independent CP368 campaign remains healthy at 15/28 durable candidates
+with zero restarts and was not modified. CP373 establishes how the complete
+engine will be judged; it does not supply the resident-32B result itself.

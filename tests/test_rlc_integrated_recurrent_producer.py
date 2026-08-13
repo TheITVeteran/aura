@@ -13,6 +13,7 @@ from core.brain.llm.latent_cortex.resource_accounting import (
 )
 from tools.rlc_complete_system_closed_book import build_integrated_candidate
 from tools.rlc_integrated_recurrent_producer import (
+    INITIAL_CONTROL_SOURCE,
     PRODUCER_SCHEMA,
     RESOURCE_ESTIMATOR,
     build_general_recurrent_resource_receipt,
@@ -90,9 +91,7 @@ class _Loaded:
             "manifest_sha256": "a" * 64,
             "controller_sha256": "b" * 64,
         }
-        self.controller = SimpleNamespace(
-            config=SimpleNamespace(correction_rank=2, depth_basis_size=3)
-        )
+        self.controller = _Controller("b" * 64)
         self.spec = SimpleNamespace(
             plan_at=lambda depth: SimpleNamespace(
                 prelude_end=1,
@@ -109,6 +108,7 @@ class _Loaded:
         *,
         max_tokens,
         recurrence_depth,
+        controller,
         completion_check,
         activity,
     ):
@@ -116,10 +116,20 @@ class _Loaded:
         assert tuple(public_tokens) == (1, 2, 3)
         assert max_tokens == 32
         assert recurrence_depth == 4
+        assert controller.parameter_sha256() in {"b" * 64, "c" * 64}
         assert completion_check((7, 8)) is True
         if activity is not None:
             activity()
         return (7, 8), True, 0
+
+
+class _Controller:
+    def __init__(self, digest: str) -> None:
+        self.config = SimpleNamespace(correction_rank=2, depth_basis_size=3)
+        self._digest = digest
+
+    def parameter_sha256(self):
+        return self._digest
 
 
 def _model():
@@ -155,6 +165,26 @@ def test_integrated_producer_binds_terminal_text_package_task_and_compute():
     assert candidate["text"] == 'FINAL_ANSWER: {"value":42}'
     assert candidate["source_receipt_sha256"] == producer["receipt_sha256"]
     assert candidate["resource_accounting"]["accounting_complete"] is True
+
+
+def test_integrated_producer_binds_an_initialization_matched_controller_control():
+    task = SimpleNamespace(
+        task_id="task-fixture",
+        public=SimpleNamespace(prompt="What is 6 * 7?"),
+    )
+    candidate, producer = produce_integrated_recurrent_candidate(
+        model=_model(),
+        tokenizer=_Tokenizer(),
+        task=task,
+        loaded=_Loaded(),
+        public_tokens=(1, 2, 3),
+        max_tokens=32,
+        controller=_Controller("c" * 64),
+        source=INITIAL_CONTROL_SOURCE,
+    )
+    assert candidate["source"] == INITIAL_CONTROL_SOURCE
+    assert producer["package_controller_sha256"] == "b" * 64
+    assert producer["controller_sha256"] == "c" * 64
 
 
 def test_integrated_candidate_refuses_incomplete_resource_accounting():

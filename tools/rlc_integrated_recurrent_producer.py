@@ -22,6 +22,8 @@ from tools.rlc_complete_system_closed_book import build_integrated_candidate
 PRODUCER_SCHEMA: Final = "aura.rlc.integrated_recurrent_producer.v1"
 RESOURCE_ESTIMATOR: Final = "unified_general_recurrent_structural_v1"
 SOURCE_NAME: Final = "unified_recurrent_controller"
+INITIAL_CONTROL_SOURCE: Final = "unified_recurrent_initial_control"
+DEPTH_LESION_SOURCE: Final = "unified_recurrent_depth_lesion"
 
 
 def _canonical_sha256(value: Any) -> str:
@@ -157,6 +159,8 @@ def produce_integrated_recurrent_candidate(
     public_tokens: Sequence[int],
     max_tokens: int,
     recurrence_depth: int | None = None,
+    controller: Any | None = None,
+    source: str = SOURCE_NAME,
     activity: Callable[[], None] | None = None,
 ) -> tuple[dict[str, Any], dict[str, Any]]:
     """Decode and seal one qualified recurrent candidate without scoring it."""
@@ -164,6 +168,13 @@ def produce_integrated_recurrent_candidate(
     tokens = tuple(int(value) for value in public_tokens)
     if not tokens or any(value < 0 for value in tokens):
         raise ValueError("integrated recurrent prompt tokens are invalid")
+    selected_controller = loaded.controller if controller is None else controller
+    if source not in {SOURCE_NAME, INITIAL_CONTROL_SOURCE, DEPTH_LESION_SOURCE}:
+        raise ValueError("integrated recurrent source identity is invalid")
+    if not hasattr(selected_controller, "config") or not callable(
+        getattr(selected_controller, "parameter_sha256", None)
+    ):
+        raise ValueError("integrated recurrent controller is invalid")
     depth = (
         int(loaded.receipt["recurrence_depth"])
         if recurrence_depth is None
@@ -176,6 +187,7 @@ def produce_integrated_recurrent_candidate(
         tokens,
         max_tokens=_positive_integer(max_tokens, name="max_tokens"),
         recurrence_depth=depth,
+        controller=selected_controller,
         completion_check=_completion_check(tokenizer),
         activity=activity,
     )
@@ -196,14 +208,14 @@ def produce_integrated_recurrent_candidate(
         prelude_end=int(plan.prelude_end),
         coda_start=int(plan.coda_start),
         recurrence_depth=depth,
-        correction_rank=int(loaded.controller.config.correction_rank),
-        depth_basis_size=int(loaded.controller.config.depth_basis_size),
+        correction_rank=int(selected_controller.config.correction_rank),
+        depth_basis_size=int(selected_controller.config.depth_basis_size),
         renormalize=bool(plan.renormalize),
     )
     package_receipt = dict(loaded.receipt)
     producer_body = {
         "schema": PRODUCER_SCHEMA,
-        "source": SOURCE_NAME,
+        "source": source,
         "task_id": str(task.task_id),
         "prompt_sha256": hashlib.sha256(str(task.public.prompt).encode()).hexdigest(),
         "public_token_sha256": _canonical_sha256(list(tokens)),
@@ -213,7 +225,10 @@ def produce_integrated_recurrent_candidate(
         "recurrence_depth": depth,
         "package_id": str(package_receipt.get("package_id") or ""),
         "manifest_sha256": str(package_receipt.get("manifest_sha256") or ""),
-        "controller_sha256": str(package_receipt.get("controller_sha256") or ""),
+        "package_controller_sha256": str(
+            package_receipt.get("controller_sha256") or ""
+        ),
+        "controller_sha256": str(selected_controller.parameter_sha256()),
         "resource_accounting_sha256": resource["receipt_sha256"],
         "resource_estimator": RESOURCE_ESTIMATOR,
         "same_public_information": True,
@@ -221,7 +236,12 @@ def produce_integrated_recurrent_candidate(
         "score_observed": False,
         "serving_authority": False,
     }
-    for name in ("package_id", "manifest_sha256", "controller_sha256"):
+    for name in (
+        "package_id",
+        "manifest_sha256",
+        "package_controller_sha256",
+        "controller_sha256",
+    ):
         value = producer_body[name]
         if not value or (name != "package_id" and not _sha256(value)):
             raise RuntimeError("integrated recurrent package identity is invalid")
@@ -230,7 +250,7 @@ def produce_integrated_recurrent_candidate(
         "receipt_sha256": _canonical_sha256(producer_body),
     }
     candidate = build_integrated_candidate(
-        source=SOURCE_NAME,
+        source=source,
         task_id=str(task.task_id),
         text=text,
         resource_accounting=resource,
@@ -242,6 +262,8 @@ def produce_integrated_recurrent_candidate(
 
 __all__ = [
     "PRODUCER_SCHEMA",
+    "DEPTH_LESION_SOURCE",
+    "INITIAL_CONTROL_SOURCE",
     "RESOURCE_ESTIMATOR",
     "SOURCE_NAME",
     "build_general_recurrent_resource_receipt",
