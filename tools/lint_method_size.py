@@ -26,6 +26,35 @@ unbounded liability into a one-way one and puts the cost on whoever next
 touches the function, which is the only time anyone has the context to
 split it correctly.
 
+A measured seam in ``_api_chat_turn``, so it is not re-derived
+-------------------------------------------------------------
+The hard part of splitting that function is not choosing where to cut, it is
+proving the cut is behaviour-preserving. One seam has been measured and is
+recorded here rather than left as folklore.
+
+``interface/routes/chat.py`` lines 23398-23800 are the chat-preflight block —
+one ``try`` with a coherent job (session identity, file references, resume
+prefix, grounded recall, directive composition, affordance menu, context
+clamp). Its interface with the rest of the function is small and exact:
+
+* **reads 6** from the enclosing scope: ``body``, ``request``,
+  ``_original_user_message``, ``_profile_user_id``, ``conversation_only_surface``,
+  ``is_benchmark``
+* **escapes 6**: ``_chat_session_id``, ``_grounded``, ``_grounded_recall_context``,
+  ``_resume_prefix_for_response``, ``_shown``, ``status``
+* **exactly one** ``return`` (line 23445, an early ``JSONResponse``), so the
+  extraction needs a single optional-response sentinel rather than general
+  control-flow surgery
+* 7 ``await`` points, so the helper is ``async``
+* no ``yield``, and no name is read before it is stored
+
+The one hazard is that ``_grounded``, ``_shown`` and ``status`` are bound only
+inside the block while being read after it. Giving them defaults in an
+extracted result object would be a behaviour CHANGE, not a pure move — it
+converts a possible ``UnboundLocalError`` into a default value. That has to be
+resolved deliberately, with the chat-route suite, not folded silently into a
+refactor. It is also the reason this seam is documented instead of already cut.
+
 Run: ``python tools/lint_method_size.py`` / ``--write-baseline`` / ``--top``
 """
 

@@ -1,16 +1,16 @@
 {
   "threshold_lines": 400,
-  "tracked": 71,
-  "total_lines": 66148,
+  "tracked": 75,
+  "total_lines": 70123,
   "functions": {
     "core/brain/cognitive_engine.py::CognitiveEngine._direct_desktop_quick_reply": {
-      "lines": 971,
+      "lines": 975,
       "complexity": 190,
       "returns": 12
     },
     "core/brain/cognitive_engine.py::CognitiveEngine._run_thinking_loop": {
-      "lines": 637,
-      "complexity": 94,
+      "lines": 690,
+      "complexity": 95,
       "returns": 12
     },
     "core/brain/frontier_gap.py::validate_capability_report": {
@@ -24,18 +24,18 @@
       "returns": 4
     },
     "core/brain/inference_gate.py::InferenceGate.generate": {
-      "lines": 3130,
-      "complexity": 644,
+      "lines": 3203,
+      "complexity": 652,
       "returns": 33
     },
     "core/brain/latent_cortex_service.py::LatentCortexService._receipt_contract_errors": {
-      "lines": 2476,
+      "lines": 2479,
       "complexity": 702,
       "returns": 24
     },
     "core/brain/latent_cortex_service.py::LatentCortexService.deep_reason": {
-      "lines": 1345,
-      "complexity": 230,
+      "lines": 1371,
+      "complexity": 231,
       "returns": 43
     },
     "core/brain/llm/context_assembler.py::ContextAssembler.build_system_prompt": {
@@ -49,14 +49,19 @@
       "returns": 1
     },
     "core/brain/llm/latent_cortex/engine.py::LatentCortexEngine._latent_episode": {
-      "lines": 4432,
-      "complexity": 520,
+      "lines": 4922,
+      "complexity": 571,
       "returns": 14
     },
     "core/brain/llm/latent_cortex/engine.py::LatentCortexEngine.reason": {
-      "lines": 521,
-      "complexity": 101,
+      "lines": 548,
+      "complexity": 102,
       "returns": 3
+    },
+    "core/brain/llm/latent_cortex/fast_weight_learning.py::validate_fast_weight_learning_receipt": {
+      "lines": 517,
+      "complexity": 249,
+      "returns": 1
     },
     "core/brain/llm/latent_cortex/frontier_certification.py::verify_frontier_gain_bundle": {
       "lines": 466,
@@ -74,7 +79,7 @@
       "returns": 3
     },
     "core/brain/llm/latent_cortex/recurrence_adapter_identity_v2.py::validate_v2_adapter_identity": {
-      "lines": 543,
+      "lines": 545,
       "complexity": 119,
       "returns": 1
     },
@@ -89,8 +94,8 @@
       "returns": 1
     },
     "core/brain/llm/latent_cortex/types.py::CortexConfig.validate": {
-      "lines": 536,
-      "complexity": 247,
+      "lines": 568,
+      "complexity": 257,
       "returns": 3
     },
     "core/brain/llm/latent_cortex/virtual_quanta.py::validate_virtual_quanta_receipt": {
@@ -109,8 +114,8 @@
       "returns": 9
     },
     "core/brain/llm/mlx_client.py::MLXLocalClient._ensure_worker_alive_inner": {
-      "lines": 570,
-      "complexity": 78,
+      "lines": 590,
+      "complexity": 80,
       "returns": 17
     },
     "core/brain/llm/mlx_client.py::MLXLocalClient._generate_inner": {
@@ -124,8 +129,8 @@
       "returns": 52
     },
     "core/brain/llm/mlx_worker.py::_mlx_worker_loop": {
-      "lines": 3350,
-      "complexity": 501,
+      "lines": 3536,
+      "complexity": 517,
       "returns": 9
     },
     "core/brain/llm_health_router.py::HealthAwareLLMRouter._call_endpoint": {
@@ -139,13 +144,13 @@
       "returns": 8
     },
     "core/brain/reasoning_amplifier_v2.py::ReasoningAmplifierV2.amplify": {
-      "lines": 468,
-      "complexity": 92,
+      "lines": 474,
+      "complexity": 94,
       "returns": 4
     },
     "core/capability_engine.py::CapabilityEngine._load_default_trigger_patterns": {
-      "lines": 425,
-      "complexity": 6,
+      "lines": 429,
+      "complexity": 3,
       "returns": 0
     },
     "core/capability_engine.py::CapabilityEngine.execute": {
@@ -164,9 +169,9 @@
       "returns": 1
     },
     "core/conversation/response_reliability.py::_assess_user_facing_reply": {
-      "lines": 433,
-      "complexity": 88,
-      "returns": 3
+      "lines": 498,
+      "complexity": 85,
+      "returns": 4
     },
     "core/embodiment/reality_connectors.py::build_configured_reality_connector_catalog": {
       "lines": 413,
@@ -174,12 +179,12 @@
       "returns": 1
     },
     "core/kernel/aura_kernel.py::AuraKernel.tick": {
-      "lines": 526,
+      "lines": 533,
       "complexity": 93,
       "returns": 3
     },
     "core/learning/recurrence_native_objective_v2.py::_exact_adjoint_live_path_result": {
-      "lines": 613,
+      "lines": 616,
       "complexity": 77,
       "returns": 8
     },
@@ -224,7 +229,7 @@
       "returns": 0
     },
     "core/orchestrator/main.py::RobustOrchestrator.start": {
-      "lines": 1053,
+      "lines": 1055,
       "complexity": 144,
       "returns": 5
     },
@@ -244,18 +249,18 @@
       "returns": 11
     },
     "core/orchestrator/mixins/response_processing.py::ResponseProcessingMixin._finalize_response": {
-      "lines": 411,
-      "complexity": 94,
+      "lines": 419,
+      "complexity": 96,
       "returns": 4
     },
     "core/orchestrator/mixins/tool_execution.py::ToolExecutionMixin.execute_tool": {
-      "lines": 911,
+      "lines": 917,
       "complexity": 148,
       "returns": 29
     },
     "core/organism/model_validation.py::install_runtime_validation": {
-      "lines": 578,
-      "complexity": 3,
+      "lines": 1168,
+      "complexity": 4,
       "returns": 1
     },
     "core/phases/cognitive_routing.py::CognitiveRoutingPhase.execute": {
@@ -279,13 +284,13 @@
       "returns": 23
     },
     "core/phases/response_generation.py::ResponseGenerationPhase.execute": {
-      "lines": 1877,
-      "complexity": 314,
+      "lines": 1893,
+      "complexity": 319,
       "returns": 16
     },
     "core/phases/response_generation_unitary.py::UnitaryResponsePhase.execute": {
-      "lines": 3037,
-      "complexity": 613,
+      "lines": 3035,
+      "complexity": 612,
       "returns": 47
     },
     "core/runtime/action_executor.py::ActionExecutor.execute": {
@@ -294,29 +299,39 @@
       "returns": 8
     },
     "core/runtime/errors.py::record_degradation": {
-      "lines": 431,
-      "complexity": 61,
+      "lines": 442,
+      "complexity": 62,
       "returns": 2
     },
+    "core/runtime/health_contract.py::_runtime_integrity_block": {
+      "lines": 513,
+      "complexity": 51,
+      "returns": 1
+    },
+    "core/self/self_condition.py::build_self_condition_projection": {
+      "lines": 446,
+      "complexity": 87,
+      "returns": 4
+    },
     "core/service_registration.py::_register_all_services_body": {
-      "lines": 586,
+      "lines": 599,
       "complexity": 9,
       "returns": 47
     },
     "core/skills/computer_use.py::ComputerUseSkill._execute_action": {
-      "lines": 1433,
-      "complexity": 265,
-      "returns": 71
+      "lines": 1512,
+      "complexity": 272,
+      "returns": 78
     },
     "core/skills/desktop_task.py::DesktopTaskSkill._derive_single_objective_steps": {
-      "lines": 461,
-      "complexity": 102,
-      "returns": 5
+      "lines": 494,
+      "complexity": 103,
+      "returns": 6
     },
     "core/skills/desktop_task.py::DesktopTaskSkill.execute": {
-      "lines": 692,
-      "complexity": 145,
-      "returns": 8
+      "lines": 739,
+      "complexity": 151,
+      "returns": 9
     },
     "core/voice/speech_profile.py::SpeechProfileCompiler.compile": {
       "lines": 499,
@@ -324,8 +339,8 @@
       "returns": 1
     },
     "interface/routes/chat.py::_api_chat_turn": {
-      "lines": 4564,
-      "complexity": 714,
+      "lines": 4799,
+      "complexity": 735,
       "returns": 116
     },
     "interface/routes/chat.py::_build_live_turn_contract_payload": {
@@ -333,18 +348,23 @@
       "complexity": 182,
       "returns": 3
     },
+    "interface/routes/chat.py::_paired_chat_response_boundary": {
+      "lines": 416,
+      "complexity": 53,
+      "returns": 12
+    },
     "interface/routes/chat.py::_repair_final_degraded_reply": {
       "lines": 409,
       "complexity": 95,
       "returns": 18
     },
     "interface/routes/chat.py::_run_cognitive_engine_chat_turn": {
-      "lines": 2670,
-      "complexity": 416,
-      "returns": 64
+      "lines": 2697,
+      "complexity": 418,
+      "returns": 65
     },
     "interface/routes/chat.py::_stabilize_user_facing_reply": {
-      "lines": 669,
+      "lines": 686,
       "complexity": 190,
       "returns": 25
     },
