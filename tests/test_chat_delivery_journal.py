@@ -531,6 +531,91 @@ def _patch_route_identity(monkeypatch: pytest.MonkeyPatch, journal: ChatDelivery
 
 
 @pytest.mark.asyncio
+async def test_pending_answer_ack_follows_rendered_terminal_receipt(
+    monkeypatch: pytest.MonkeyPatch,
+    journal: ChatDeliveryJournal,
+) -> None:
+    from core.conversation import chat_preflight
+    from interface.routes import chat as chat_mod
+
+    _patch_route_identity(monkeypatch, journal)
+    events: list[str] = []
+    monkeypatch.setattr(
+        chat_mod,
+        "_attach_http_chat_delivery_receipt",
+        lambda *_args, **_kwargs: events.append("receipt-attached"),
+    )
+    monkeypatch.setattr(
+        chat_preflight,
+        "acknowledge_delivery",
+        lambda ids, *, delivery_owner, **_kwargs: (
+            events.append(f"ack:{delivery_owner}:{','.join(ids)}") or len(ids)
+        ),
+    )
+    monkeypatch.setattr(
+        chat_preflight,
+        "release_delivery_claims",
+        lambda *_args, **_kwargs: events.append("released") or 1,
+    )
+
+    @chat_mod._paired_chat_response_boundary
+    async def handler(*, body, request):
+        chat_mod._CHAT_PENDING_DELIVERY_CLAIM.set(("turn-owner", ("pending-1",)))
+        return JSONResponse({"response": "late answer delivered", "status": "ok"})
+
+    response = await handler(
+        body=chat_mod.ChatRequest(message="next", session_id="session-1"),
+        request=_request("pending-ack-order"),
+    )
+
+    assert response.status_code == 200
+    assert events == ["receipt-attached", "ack:turn-owner:pending-1"]
+
+
+@pytest.mark.asyncio
+async def test_pending_answer_claim_released_when_response_receipt_cannot_attach(
+    monkeypatch: pytest.MonkeyPatch,
+    journal: ChatDeliveryJournal,
+) -> None:
+    from core.conversation import chat_preflight
+    from interface.routes import chat as chat_mod
+
+    _patch_route_identity(monkeypatch, journal)
+    events: list[str] = []
+
+    def fail_receipt(*_args, **_kwargs) -> None:
+        events.append("receipt-failed")
+        raise RuntimeError("receipt attachment failed")
+
+    monkeypatch.setattr(chat_mod, "_attach_http_chat_delivery_receipt", fail_receipt)
+    monkeypatch.setattr(
+        chat_preflight,
+        "acknowledge_delivery",
+        lambda *_args, **_kwargs: events.append("acked") or 1,
+    )
+    monkeypatch.setattr(
+        chat_preflight,
+        "release_delivery_claims",
+        lambda ids, *, delivery_owner, **_kwargs: (
+            events.append(f"released:{delivery_owner}:{','.join(ids)}") or len(ids)
+        ),
+    )
+
+    @chat_mod._paired_chat_response_boundary
+    async def handler(*, body, request):
+        chat_mod._CHAT_PENDING_DELIVERY_CLAIM.set(("turn-owner", ("pending-1",)))
+        return JSONResponse({"response": "late answer", "status": "ok"})
+
+    with pytest.raises(RuntimeError, match="receipt attachment failed"):
+        await handler(
+            body=chat_mod.ChatRequest(message="next", session_id="session-1"),
+            request=_request("pending-release-on-failure"),
+        )
+
+    assert events == ["receipt-failed", "released:turn-owner:pending-1"]
+
+
+@pytest.mark.asyncio
 async def test_route_concurrent_duplicate_runs_handler_once(
     monkeypatch: pytest.MonkeyPatch,
     journal: ChatDeliveryJournal,

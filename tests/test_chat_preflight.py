@@ -10,6 +10,7 @@ Run:
 from __future__ import annotations
 
 import json
+import multiprocessing
 import os
 import sys
 import tempfile
@@ -25,8 +26,10 @@ if str(ROOT) not in sys.path:
 from core.conversation import chat_preflight as cp  # noqa: E402
 from core.conversation.chat_preflight import (  # noqa: E402
     PendingChat,
+    acknowledge_delivery,
     answer_pending,
     build_file_context_block,
+    claim_answered_for_session,
     clamp_composed_chat_context,
     compose_chat_directive_prefix,
     consume_for_session,
@@ -35,8 +38,21 @@ from core.conversation.chat_preflight import (  # noqa: E402
     format_resume_prefix,
     has_unanswered_for_session,
     load_referenced_files,
+    release_delivery_claims,
     schedule_background_retry,
 )
+
+
+def _enqueue_pending_batch(path: str, worker: int, count: int) -> None:
+    """Spawn-safe writer used to prove process-level queue serialization."""
+
+    queue_path = Path(path)
+    for index in range(count):
+        enqueue(
+            f"worker-{worker}",
+            f"message-{worker}-{index}",
+            path=queue_path,
+        )
 
 
 def _temp_path(suffix: str = ".jsonl") -> Path:
@@ -161,11 +177,11 @@ class TestFileLoading(unittest.TestCase):
 
 class TestPendingQueue(unittest.TestCase):
     def setUp(self):
-        self.path = _temp_path()
+        self._temp_dir = tempfile.TemporaryDirectory()
+        self.path = Path(self._temp_dir.name) / "pending.jsonl"
 
     def tearDown(self):
-        if self.path.exists():
-            self.path.unlink()
+        self._temp_dir.cleanup()
 
     def test_enqueue_and_unanswered_check(self):
         enqueue("session-1", "What is the meaning of life?", reason="timeout", path=self.path)
@@ -189,6 +205,143 @@ class TestPendingQueue(unittest.TestCase):
         self.assertEqual(delivered[0].answer_text, "A2")
         # The unanswered one should remain
         self.assertTrue(has_unanswered_for_session("s3", path=self.path))
+
+    def test_exact_pending_identity_prevents_same_session_answer_swap(self):
+        first_id = enqueue("shared", "first question", path=self.path)
+        second_id = enqueue("shared", "second question", path=self.path)
+
+        self.assertTrue(
+            answer_pending(
+                "shared",
+                "second answer",
+                path=self.path,
+                pending_id=second_id,
+            )
+        )
+        self.assertTrue(
+            answer_pending(
+                "shared",
+                "first answer",
+                path=self.path,
+                pending_id=first_id,
+            )
+        )
+
+        claimed = claim_answered_for_session(
+            "shared",
+            delivery_owner="turn-1",
+            path=self.path,
+        )
+        answers = {item.pending_id: item.answer_text for item in claimed}
+        self.assertEqual(
+            answers,
+            {first_id: "first answer", second_id: "second answer"},
+        )
+
+    def test_pending_identity_cannot_cross_session_boundary(self):
+        pending_id = enqueue("owner", "private question", path=self.path)
+
+        self.assertFalse(
+            answer_pending(
+                "other",
+                "misbound answer",
+                path=self.path,
+                pending_id=pending_id,
+            )
+        )
+        self.assertTrue(has_unanswered_for_session("owner", path=self.path))
+
+    def test_claim_survives_until_exact_owner_acknowledges(self):
+        pending_id = enqueue("owner", "question", path=self.path)
+        self.assertTrue(
+            answer_pending(
+                "owner",
+                "answer",
+                path=self.path,
+                pending_id=pending_id,
+            )
+        )
+
+        claimed = claim_answered_for_session(
+            "owner",
+            delivery_owner="turn-1",
+            path=self.path,
+        )
+        self.assertEqual([item.pending_id for item in claimed], [pending_id])
+        self.assertEqual(len(cp._read_all(self.path)), 1)
+        self.assertEqual(
+            acknowledge_delivery(
+                [pending_id],
+                delivery_owner="wrong-turn",
+                path=self.path,
+            ),
+            0,
+        )
+        self.assertEqual(len(cp._read_all(self.path)), 1)
+        self.assertEqual(
+            acknowledge_delivery(
+                [pending_id],
+                delivery_owner="turn-1",
+                path=self.path,
+            ),
+            1,
+        )
+        self.assertEqual(cp._read_all(self.path), [])
+
+    def test_failed_delivery_release_allows_immediate_reclaim(self):
+        pending_id = enqueue("owner", "question", path=self.path)
+        self.assertTrue(
+            answer_pending(
+                "owner",
+                "answer",
+                path=self.path,
+                pending_id=pending_id,
+            )
+        )
+        claimed = claim_answered_for_session(
+            "owner",
+            delivery_owner="failed-turn",
+            path=self.path,
+        )
+        self.assertEqual(len(claimed), 1)
+        self.assertEqual(
+            release_delivery_claims(
+                [pending_id],
+                delivery_owner="failed-turn",
+                path=self.path,
+            ),
+            1,
+        )
+
+        reclaimed = claim_answered_for_session(
+            "owner",
+            delivery_owner="retry-turn",
+            path=self.path,
+        )
+        self.assertEqual([item.pending_id for item in reclaimed], [pending_id])
+
+    def test_process_concurrent_enqueues_preserve_every_record(self):
+        context = multiprocessing.get_context("spawn")
+        workers = [
+            context.Process(
+                target=_enqueue_pending_batch,
+                args=(str(self.path), worker, 6),
+            )
+            for worker in range(3)
+        ]
+        for worker in workers:
+            worker.start()
+        for worker in workers:
+            worker.join(timeout=15.0)
+            self.assertEqual(worker.exitcode, 0)
+
+        records = cp._read_all(self.path)
+        self.assertEqual(len(records), 18)
+        self.assertEqual(len({record["pending_id"] for record in records}), 18)
+        self.assertEqual(
+            {record["user_message"] for record in records},
+            {f"message-{worker}-{index}" for worker in range(3) for index in range(6)},
+        )
 
     def test_format_resume_prefix(self):
         delivered = [
@@ -250,7 +403,7 @@ class TestPendingQueue(unittest.TestCase):
 
     def test_background_retry_answers_pending_queue(self):
         async def scenario():
-            enqueue("s6", "finish this later", path=self.path)
+            pending_id = enqueue("s6", "finish this later", path=self.path)
 
             async def retry(message, **kwargs):
                 self.assertEqual(message, "finish this later")
@@ -267,10 +420,11 @@ class TestPendingQueue(unittest.TestCase):
                 "finish this later",
                 2.0,
                 retry,
+                pending_id=pending_id,
                 path=self.path,
                 proactive_emit=False,
             )
-            task = cp._RETRY_TASKS.get("s6")
+            task = cp._RETRY_TASKS.get(pending_id)
             self.assertIsNotNone(task)
             await asyncio.wait_for(task, timeout=2.0)
 
@@ -284,7 +438,11 @@ class TestPendingQueue(unittest.TestCase):
 
     def test_background_retry_rejects_generic_assistant_text(self):
         async def scenario():
-            enqueue("s7", "What happened to the desktop conversation lane?", path=self.path)
+            pending_id = enqueue(
+                "s7",
+                "What happened to the desktop conversation lane?",
+                path=self.path,
+            )
 
             async def retry(message, **kwargs):
                 self.assertEqual(message, "What happened to the desktop conversation lane?")
@@ -296,10 +454,11 @@ class TestPendingQueue(unittest.TestCase):
                 "What happened to the desktop conversation lane?",
                 2.0,
                 retry,
+                pending_id=pending_id,
                 path=self.path,
                 proactive_emit=False,
             )
-            task = cp._RETRY_TASKS.get("s7")
+            task = cp._RETRY_TASKS.get(pending_id)
             self.assertIsNotNone(task)
             await asyncio.wait_for(task, timeout=2.0)
 

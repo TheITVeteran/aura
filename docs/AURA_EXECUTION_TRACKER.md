@@ -46816,3 +46816,39 @@ closeout. The next bounded group is `pending-retry-custody` (four accepted
 findings), followed by external-chat IPC and the remaining five grouped repairs.
 The separate Spark completion envelope remains `915/920`; this semantic repair
 does not manufacture powered reasoning evidence or a `WOW Signal`.
+
+## Checkpoint 2026-08-12-320: Delayed Answers Retain Exact Durable Custody
+
+The third dependency-ordered semantic repair group is implemented. Every timed
+out foreground message receives a durable pending identity, and each background
+retry is keyed to that identity rather than to its session. Two delayed turns
+in one conversation therefore remain two obligations: their answers cannot
+cross, deduplicate each other, or attach to whichever message happened to be
+newest. The pending queue's read-modify-write transactions now hold both a
+process-local mutex and a path-backed interprocess lock; concurrent writers in
+separate processes cannot silently overwrite each other.
+
+Late answers are no longer deleted when merely read. A response turn takes a
+bounded exact-owner lease, retains the answered record through generation and
+terminal journal sealing, renders the payload, attaches its delivery receipt,
+and only then acknowledges the exact pending IDs. A failed or unsealed response
+releases its lease for immediate retry, while an abandoned lease expires. The
+reply stream also treats a closed and drained channel as terminal even when a
+full queue prevented the close sentinel from being enqueued, eliminating the
+otherwise permanent wait behind backpressure.
+
+Validation under Aura's Python 3.12 runtime is green for the owned surface:
+the pending-queue, retry, terminal-delivery, event-loop budget and streamed
+reply regressions pass, including independent-process concurrent writers and
+forced terminal-receipt failure; the widened chat/runtime slice has `149`
+applicable passes; canonical smoke passes `104/104`; focused Ruff, compilation
+and diff hygiene pass. The widened run also found one unrelated pre-existing
+runtime-boundary violation in `core/affect/affective_circumplex.py`; it is not
+misreported as a CP320 regression and is the immediate next repair.
+
+This checkpoint implements the four `pending-retry-custody` findings but does
+not close their semantic ledger records before the code is committed and
+hash-bound. After the independent runtime-boundary repair, the next evidence
+checkpoint records those four closures and advances to `external-chat-ipc`.
+Powered resident-32B replication remains separate and undisturbed; no reasoning
+gain or `WOW Signal` is claimed here.

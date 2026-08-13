@@ -27,17 +27,19 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import hashlib
 import json
 import logging
 import os
 import re
 import threading
 import time
+import uuid
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any
 
-from core.runtime.atomic_writer import atomic_write_text
+from core.runtime.atomic_writer import atomic_write_text, interprocess_file_lock
 from core.runtime.errors import FallbackClassification, record_degradation
 from core.runtime.structured_input import looks_like_learning_resource_bundle
 from core.utils.task_tracker import task_tracker
@@ -520,10 +522,14 @@ class PendingChat:
     session_id: str
     user_message: str
     queued_at: float
+    pending_id: str = ""
     reason: str = ""  # what made it pend (timeout, lockdown, etc.)
     answered: bool = False
     answer_text: str = ""
     answered_at: float | None = None
+    delivery_owner: str = ""
+    delivery_claimed_at: float | None = None
+    delivery_lease_until: float | None = None
 
 
 def _ensure_dir(path: Path) -> None:
@@ -550,8 +556,15 @@ def _coerce_pending_record(raw: Any) -> dict[str, Any] | None:
     answered = _safe_bool(raw.get("answered", False))
     answered_at_raw = raw.get("answered_at")
     answered_at = None if answered_at_raw in (None, "") else max(0.0, _safe_float(answered_at_raw))
+    pending_id = _safe_text(raw.get("pending_id", ""), max_chars=128)
+    if not pending_id:
+        legacy_identity = f"{session_id}\0{user_message}\0{queued_at:.9f}"
+        pending_id = "legacy-" + hashlib.sha256(legacy_identity.encode("utf-8")).hexdigest()[:32]
+    claimed_at_raw = raw.get("delivery_claimed_at")
+    lease_until_raw = raw.get("delivery_lease_until")
     return asdict(
         PendingChat(
+            pending_id=pending_id,
             session_id=session_id,
             user_message=user_message,
             queued_at=queued_at,
@@ -559,8 +572,27 @@ def _coerce_pending_record(raw: Any) -> dict[str, Any] | None:
             answered=answered,
             answer_text=_safe_text(raw.get("answer_text", ""), max_chars=MAX_ANSWER_TEXT_CHARS),
             answered_at=answered_at,
+            delivery_owner=_safe_text(raw.get("delivery_owner", ""), max_chars=160),
+            delivery_claimed_at=(
+                None if claimed_at_raw in (None, "") else max(0.0, _safe_float(claimed_at_raw))
+            ),
+            delivery_lease_until=(
+                None if lease_until_raw in (None, "") else max(0.0, _safe_float(lease_until_raw))
+            ),
         )
     )
+
+
+@contextlib.contextmanager
+def _queue_transaction(path: Path):
+    """Serialize a queue read-modify-write across threads and processes."""
+
+    # Own the lock directory so the lock primitive never chmods a shared
+    # parent such as macOS' system temporary directory.
+    lock_name = hashlib.sha256(str(path.resolve(strict=False)).encode("utf-8")).hexdigest()
+    lock_path = path.parent / ".aura-pending-locks" / f"{lock_name}.lock"
+    with _QUEUE_LOCK, interprocess_file_lock(lock_path):
+        yield
 
 
 def _read_all(path: Path | None = None) -> list[dict[str, Any]]:
@@ -650,14 +682,15 @@ def _write_all(records: list[dict[str, Any]], path: Path | None = None) -> None:
 
 def enqueue(
     session_id: str, user_message: str, reason: str = "timeout", path: Path | None = None
-) -> None:
+) -> str:
     """Add an unanswered user message to the pending queue. Best-effort."""
     session_id = _safe_text(session_id, max_chars=MAX_SESSION_ID_CHARS)
     user_message = _safe_text(user_message, max_chars=MAX_USER_MESSAGE_CHARS)
     if not session_id or not user_message:
-        return
+        return ""
     path = _resolve_pending_queue_path(path)
-    with _QUEUE_LOCK:
+    pending_id = uuid.uuid4().hex
+    with _queue_transaction(path):
         records = _read_all(path)
         # Drop expired entries while we're here
         now = time.time()
@@ -667,6 +700,7 @@ def enqueue(
         records.append(
             asdict(
                 PendingChat(
+                    pending_id=pending_id,
                     session_id=session_id,
                     user_message=user_message,
                     queued_at=now,
@@ -677,10 +711,21 @@ def enqueue(
         if len(records) > RING_LIMIT:
             records = records[-RING_LIMIT:]
         _write_all(records, path)
+    return pending_id
 
 
-def answer_pending(session_id: str, answer_text: str, path: Path | None = None) -> bool:
-    """Mark the most recent unanswered entry for this session as answered.
+def answer_pending(
+    session_id: str,
+    answer_text: str,
+    path: Path | None = None,
+    *,
+    pending_id: str = "",
+) -> bool:
+    """Mark the exact pending entry as answered.
+
+    ``pending_id`` is mandatory for production retry custody. The empty form
+    remains a compatibility path for callers that can prove only one pending
+    message exists and selects the oldest unanswered record, never the newest.
     Returns True if one was updated.
     """
     session_id = _safe_text(session_id, max_chars=MAX_SESSION_ID_CHARS)
@@ -688,12 +733,18 @@ def answer_pending(session_id: str, answer_text: str, path: Path | None = None) 
     if not session_id or not answer_text:
         return False
     path = _resolve_pending_queue_path(path)
-    with _QUEUE_LOCK:
+    pending_id = _safe_text(pending_id, max_chars=128)
+    with _queue_transaction(path):
         records = _read_all(path)
         updated = False
-        # Walk in reverse to grab the most-recent unanswered one
-        for r in reversed(records):
-            if r.get("session_id") == session_id and not r.get("answered"):
+        for r in records:
+            identity_matches = (
+                bool(pending_id)
+                and r.get("pending_id") == pending_id
+                and r.get("session_id") == session_id
+            )
+            legacy_matches = not pending_id and r.get("session_id") == session_id
+            if (identity_matches or legacy_matches) and not r.get("answered"):
                 r["answered"] = True
                 r["answer_text"] = answer_text
                 r["answered_at"] = time.time()
@@ -704,54 +755,118 @@ def answer_pending(session_id: str, answer_text: str, path: Path | None = None) 
         return updated
 
 
+def claim_answered_for_session(
+    session_id: str,
+    *,
+    delivery_owner: str,
+    path: Path | None = None,
+    lease_seconds: float = 300.0,
+    deadline_monotonic: float | None = None,
+) -> list[PendingChat]:
+    """Lease answered rows for one terminal delivery without deleting them."""
+
+    session_id = _safe_text(session_id, max_chars=MAX_SESSION_ID_CHARS)
+    owner = _safe_text(delivery_owner, max_chars=160)
+    if not session_id or not owner:
+        return []
+    path = _resolve_pending_queue_path(path)
+    with _queue_transaction(path):
+        records = _read_all(path)
+        if deadline_monotonic is not None and time.monotonic() >= deadline_monotonic:
+            return []
+        now = time.time()
+        lease_until = now + max(1.0, min(900.0, float(lease_seconds)))
+        claimed: list[PendingChat] = []
+        changed = False
+        for record in records:
+            if record.get("session_id") != session_id or not record.get("answered"):
+                continue
+            current_owner = str(record.get("delivery_owner") or "")
+            current_expiry = _safe_float(record.get("delivery_lease_until") or 0.0)
+            if current_owner and current_owner != owner and current_expiry > now:
+                continue
+            record["delivery_owner"] = owner
+            record["delivery_claimed_at"] = now
+            record["delivery_lease_until"] = lease_until
+            coerced = _coerce_pending_record(record)
+            if coerced is not None:
+                claimed.append(PendingChat(**coerced))
+                changed = True
+        if changed:
+            _write_all(records, path)
+        return claimed
+
+
+def acknowledge_delivery(
+    pending_ids: list[str] | tuple[str, ...],
+    *,
+    delivery_owner: str,
+    path: Path | None = None,
+) -> int:
+    """Delete only rows carried by an already sealed terminal response."""
+
+    ids = {_safe_text(item, max_chars=128) for item in pending_ids if _safe_text(item, max_chars=128)}
+    owner = _safe_text(delivery_owner, max_chars=160)
+    if not ids or not owner:
+        return 0
+    path = _resolve_pending_queue_path(path)
+    with _queue_transaction(path):
+        records = _read_all(path)
+        remaining = [
+            record
+            for record in records
+            if not (
+                record.get("pending_id") in ids
+                and str(record.get("delivery_owner") or "") == owner
+            )
+        ]
+        removed = len(records) - len(remaining)
+        if removed:
+            _write_all(remaining, path)
+        return removed
+
+
+def release_delivery_claims(
+    pending_ids: list[str] | tuple[str, ...],
+    *,
+    delivery_owner: str,
+    path: Path | None = None,
+) -> int:
+    """Release unsealed claims immediately so another delivery may retry."""
+
+    ids = {_safe_text(item, max_chars=128) for item in pending_ids if _safe_text(item, max_chars=128)}
+    owner = _safe_text(delivery_owner, max_chars=160)
+    if not ids or not owner:
+        return 0
+    path = _resolve_pending_queue_path(path)
+    with _queue_transaction(path):
+        records = _read_all(path)
+        released = 0
+        for record in records:
+            if record.get("pending_id") in ids and record.get("delivery_owner") == owner:
+                record["delivery_owner"] = ""
+                record["delivery_claimed_at"] = None
+                record["delivery_lease_until"] = None
+                released += 1
+        if released:
+            _write_all(records, path)
+        return released
+
+
 def consume_for_session(
     session_id: str,
     path: Path | None = None,
     *,
     deadline_monotonic: float | None = None,
 ) -> list[PendingChat]:
-    """Return all answered pending chats for a session, mark them consumed
-    (delete from the queue). Caller is responsible for surfacing them to the
-    user. Unanswered entries stay in the queue.
-    """
-    session_id = _safe_text(session_id, max_chars=MAX_SESSION_ID_CHARS)
-    if not session_id:
-        return []
-    path = _resolve_pending_queue_path(path)
-    with _QUEUE_LOCK:
-        records = _read_all(path)
-        if deadline_monotonic is not None and time.monotonic() >= deadline_monotonic:
-            return []
-        delivered: list[PendingChat] = []
-        remaining: list[dict[str, Any]] = []
-        for r in records:
-            if r.get("session_id") == session_id and r.get("answered"):
-                delivered.append(
-                    PendingChat(
-                        session_id=_safe_text(
-                            r.get("session_id", ""), max_chars=MAX_SESSION_ID_CHARS
-                        ),
-                        user_message=_safe_text(
-                            r.get("user_message", ""), max_chars=MAX_USER_MESSAGE_CHARS
-                        ),
-                        queued_at=max(0.0, _safe_float(r.get("queued_at", 0.0))),
-                        reason=_safe_text(r.get("reason", ""), max_chars=MAX_REASON_CHARS),
-                        answered=True,
-                        answer_text=_safe_text(
-                            r.get("answer_text", ""), max_chars=MAX_ANSWER_TEXT_CHARS
-                        ),
-                        answered_at=max(0.0, _safe_float(r.get("answered_at") or 0.0)),
-                    )
-                )
-            else:
-                remaining.append(r)
-        if delivered and (
-            deadline_monotonic is None or time.monotonic() < deadline_monotonic
-        ):
-            _write_all(remaining, path)
-        elif delivered:
-            return []
-        return delivered
+    """Compatibility claim API; rows remain durable until acknowledged."""
+
+    return claim_answered_for_session(
+        session_id,
+        delivery_owner=f"compat-{uuid.uuid4().hex}",
+        path=path,
+        deadline_monotonic=deadline_monotonic,
+    )
 
 
 def has_unanswered_for_session(session_id: str, path: Path | None = None) -> bool:
@@ -759,7 +874,7 @@ def has_unanswered_for_session(session_id: str, path: Path | None = None) -> boo
     if not session_id:
         return False
     path = _resolve_pending_queue_path(path)
-    with _QUEUE_LOCK:
+    with _queue_transaction(path):
         return any(
             r.get("session_id") == session_id and not r.get("answered") for r in _read_all(path)
         )
@@ -1668,6 +1783,7 @@ def schedule_background_retry(
     base_timeout_s: float,
     retry_callable,
     *,
+    pending_id: str = "",
     path: Path | None = None,
     proactive_emit: bool = True,
 ) -> None:
@@ -1684,14 +1800,17 @@ def schedule_background_retry(
         proactive_emit: also push the late answer through executive authority.
 
     The retry result is written via ``answer_pending`` so the next chat from
-    this session picks it up. Per-session deduplication: only one retry
-    in-flight at a time per session.
+    this session picks it up. Production callers pass ``pending_id`` so each
+    delayed turn has independent custody and retry deduplication even when
+    several messages in one session time out together.
     """
     session_id = _safe_text(session_id, max_chars=MAX_SESSION_ID_CHARS)
     user_message = _safe_text(user_message, max_chars=MAX_USER_MESSAGE_CHARS)
     if not session_id or not user_message or not callable(retry_callable):
         return
     path = _resolve_pending_queue_path(path)
+    pending_id = _safe_text(pending_id, max_chars=128)
+    retry_key = pending_id or f"legacy:{session_id}:{hashlib.sha256(user_message.encode('utf-8')).hexdigest()[:16]}"
     base_timeout = max(1.0, _safe_float(base_timeout_s, default=1.0))
     extended_budget = min(RETRY_MAX_BUDGET_S, base_timeout * RETRY_BUDGET_MULTIPLIER)
 
@@ -1749,7 +1868,12 @@ def schedule_background_retry(
                         ",".join(str(reason) for reason in reasons) or "unknown",
                     )
                     return
-                answered = answer_pending(session_id, text, path=path)
+                answered = answer_pending(
+                    session_id,
+                    text,
+                    path=path,
+                    pending_id=pending_id,
+                )
                 logger.info(
                     "Background retry succeeded for session %s (len=%d)", session_id, len(text)
                 )
@@ -1833,13 +1957,12 @@ def schedule_background_retry(
             logger.warning("Background retry failed for session %s: %s", session_id, e)
         finally:
             with _RETRY_TASKS_LOCK:
-                _RETRY_TASKS.pop(session_id, None)
+                _RETRY_TASKS.pop(retry_key, None)
 
     with _RETRY_TASKS_LOCK:
-        # Per-session dedup: if a retry is already in-flight, skip. The user
-        # message has already been queued — when the in-flight retry completes
-        # it will answer one of the queued entries.
-        existing = _RETRY_TASKS.get(session_id)
+        # Deduplicate the exact message, not the session. Two timed-out turns in
+        # one conversation are two obligations and may not share an answer.
+        existing = _RETRY_TASKS.get(retry_key)
         if existing is not None and not existing.done():
             logger.debug("Retry already in-flight for session %s; skipping new retry.", session_id)
             return
@@ -1862,4 +1985,4 @@ def schedule_background_retry(
                 extra={"session_id": session_id},
             )
             return
-        _RETRY_TASKS[session_id] = task
+        _RETRY_TASKS[retry_key] = task

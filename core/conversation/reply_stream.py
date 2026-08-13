@@ -189,6 +189,12 @@ class ReplyStreamChannel:
         much of the answer it already committed to out loud.
         """
         while True:
+            # ``close`` may be unable to enqueue its sentinel while the queue
+            # is full. Once the already-published chunks are drained, the
+            # closed state itself is terminal evidence; do not wait for a
+            # sentinel that backpressure legitimately prevented.
+            if self._closed and self._queue.empty():
+                return
             try:
                 item = await asyncio.wait_for(self._queue.get(), timeout=max(0.05, timeout_s))
             except TimeoutError:

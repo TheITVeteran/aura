@@ -177,6 +177,10 @@ _CHAT_REQUEST_SURFACE: ContextVar[str] = ContextVar(
     "aura_chat_request_surface",
     default="",
 )
+_CHAT_PENDING_DELIVERY_CLAIM: ContextVar[tuple[str, tuple[str, ...]]] = ContextVar(
+    "aura_chat_pending_delivery_claim",
+    default=("", ()),
+)
 _CHAT_SESSION_ID_MAX_CHARS = 64
 
 
@@ -1114,6 +1118,7 @@ def _paired_chat_response_boundary(handler: Callable[..., Any]) -> Callable[...,
         key_token = _CHAT_DELIVERY_IDEMPOTENCY_KEY.set(
             admission.record.identity.idempotency_key
         )
+        pending_claim_token = _CHAT_PENDING_DELIVERY_CLAIM.set(("", ()))
         fence_lost = asyncio.Event()
         heartbeat_task = get_task_tracker().create_task(
             _chat_delivery_heartbeat(journal, admission, fence_lost),
@@ -1381,9 +1386,37 @@ def _paired_chat_response_boundary(handler: Callable[..., Any]) -> Callable[...,
                 payload=payload,
                 record=terminal_record,
             )
+            pending_owner, pending_ids = _CHAT_PENDING_DELIVERY_CLAIM.get()
+            if terminal_state is DeliveryState.COMPLETED and pending_owner and pending_ids:
+                try:
+                    from core.conversation.chat_preflight import acknowledge_delivery
+
+                    acknowledged = acknowledge_delivery(
+                        pending_ids,
+                        delivery_owner=pending_owner,
+                    )
+                    if acknowledged == len(pending_ids):
+                        _CHAT_PENDING_DELIVERY_CLAIM.set(("", ()))
+                    else:
+                        logger.warning(
+                            "Pending-chat terminal acknowledgement removed %d/%d rows",
+                            acknowledged,
+                            len(pending_ids),
+                        )
+                except _CHAT_RECOVERABLE_ERRORS as exc:
+                    record_degradation("chat.pending_delivery_ack", exc)
             return response
         finally:
+            pending_owner, pending_ids = _CHAT_PENDING_DELIVERY_CLAIM.get()
+            if pending_owner and pending_ids:
+                try:
+                    from core.conversation.chat_preflight import release_delivery_claims
+
+                    release_delivery_claims(pending_ids, delivery_owner=pending_owner)
+                except _CHAT_RECOVERABLE_ERRORS as exc:
+                    record_degradation("chat.pending_delivery_release", exc)
             await _stop_chat_delivery_heartbeat(heartbeat_task)
+            _CHAT_PENDING_DELIVERY_CLAIM.reset(pending_claim_token)
             _CHAT_DELIVERY_IDEMPOTENCY_KEY.reset(key_token)
             _CHAT_DELIVERY_TURN_ID.reset(turn_token)
 
@@ -23423,9 +23456,9 @@ async def _api_chat_turn(body: ChatRequest, request: Request):
     try:
         from core.conversation.chat_preflight import (
             build_file_context_block,
+            claim_answered_for_session,
             clamp_composed_chat_context,
             compose_chat_directive_prefix,
-            consume_for_session,
             extract_file_references,
             format_resume_prefix,
         )
@@ -23487,14 +23520,24 @@ async def _api_chat_turn(body: ChatRequest, request: Request):
                     time.monotonic() + (_CHAT_BLOCKING_PREFLIGHT_TIMEOUT_S * 0.8)
                 )
                 _delivered = await _await_bounded_chat_blocking(
-                    consume_for_session,
+                    claim_answered_for_session,
                     _chat_session_id,
+                    delivery_owner=(
+                        str(_CHAT_DELIVERY_TURN_ID.get() or "").strip()
+                        or str(_CHAT_DELIVERY_IDEMPOTENCY_KEY.get() or "").strip()
+                    ),
                     deadline_monotonic=_resume_deadline,
                     timeout_s=_CHAT_BLOCKING_PREFLIGHT_TIMEOUT_S,
                     operation_name="pending_chat_resume_collection",
                     completion_grace_s=0.5,
                 )
                 if _delivered:
+                    _CHAT_PENDING_DELIVERY_CLAIM.set(
+                        (
+                            str(_delivered[0].delivery_owner or ""),
+                            tuple(str(item.pending_id) for item in _delivered if item.pending_id),
+                        )
+                    )
                     _resume_prefix_for_response = format_resume_prefix(_delivered)
                     # Fold a context-block into body.message so the cortex sees
                     # the prior thread when generating the new response.
@@ -27949,7 +27992,11 @@ async def _api_chat_turn(body: ChatRequest, request: Request):
                 enqueue,
                 schedule_background_retry,
             )
-            enqueue(_chat_session_id, _original_user_message, reason="outer_timeout")
+            _pending_id = enqueue(
+                _chat_session_id,
+                _original_user_message,
+                reason="outer_timeout",
+            )
 
             async def _retry_call(msg: str, **kwargs) -> str:
                 return await _background_retry_generate(
@@ -27962,6 +28009,7 @@ async def _api_chat_turn(body: ChatRequest, request: Request):
                 _original_user_message,
                 base_timeout_s=foreground_timeout,
                 retry_callable=_retry_call,
+                pending_id=_pending_id,
             )
             logger.info("Auto-resume: queued '%s' for background retry (session=%s)",
                         _original_user_message[:60], _chat_session_id)
