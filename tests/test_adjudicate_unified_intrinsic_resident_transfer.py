@@ -1,9 +1,12 @@
 from __future__ import annotations
 
+import argparse
 import copy
+from pathlib import Path
 
 import pytest
 
+from tools import adjudicate_unified_intrinsic_resident_transfer as adjudicator
 from tools.adjudicate_unified_intrinsic_resident_transfer import (
     INCONCLUSIVE_CEILING,
     INCONCLUSIVE_INSTRUMENT,
@@ -211,3 +214,28 @@ def test_candidate_matrix_must_reconstruct_summaries_and_pairs() -> None:
     changed["report_sha256"] = canonical_sha256(body)
     with pytest.raises(ResidentTransferAdjudicationError, match="candidate count"):
         adjudicate_report(changed)
+
+
+def test_completed_report_reopens_the_explicit_evaluation_root(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    campaign = tmp_path / "campaign"
+    evaluation_root = campaign / "named-root-control-canary"
+    observed: list[Path | None] = []
+
+    def existing_plan(arguments: argparse.Namespace) -> dict:
+        observed.append(arguments.output)
+        return {}
+
+    def status(arguments: argparse.Namespace) -> dict:
+        observed.append(arguments.output)
+        return {"state": "completed", "report": _report()}
+
+    monkeypatch.setattr(adjudicator.launcher, "_existing_plan", existing_plan)
+    monkeypatch.setattr(adjudicator.launcher, "status", status)
+
+    report = adjudicator._completed_report(campaign, evaluation_root)  # noqa: SLF001
+
+    assert report == _report()
+    assert observed == [evaluation_root, evaluation_root]

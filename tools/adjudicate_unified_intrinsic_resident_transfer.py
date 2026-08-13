@@ -308,8 +308,11 @@ def adjudicate_report(report: Mapping[str, Any]) -> dict[str, Any]:
     return {**body, "verdict_sha256": canonical_sha256(body)}
 
 
-def _completed_report(campaign: Path) -> dict[str, Any]:
-    arguments = argparse.Namespace(campaign=campaign, output=None)
+def _completed_report(
+    campaign: Path,
+    evaluation_root: Path | None = None,
+) -> dict[str, Any]:
+    arguments = argparse.Namespace(campaign=campaign, output=evaluation_root)
     plan = launcher._existing_plan(arguments)  # noqa: SLF001
     if plan is None:
         _fail("resident evaluation plan is unavailable")
@@ -322,10 +325,16 @@ def _completed_report(campaign: Path) -> dict[str, Any]:
 def main(argv: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("campaign", type=Path)
+    parser.add_argument("--evaluation-root", type=Path)
     parser.add_argument("--output", type=Path)
     arguments = parser.parse_args(argv)
     try:
-        report = _completed_report(arguments.campaign.expanduser().resolve(strict=True))
+        report = _completed_report(
+            arguments.campaign.expanduser().resolve(strict=True),
+            arguments.evaluation_root.expanduser().absolute()
+            if arguments.evaluation_root is not None
+            else None,
+        )
         verdict = adjudicate_report(report)
         if arguments.output is not None:
             atomic_write_bytes(

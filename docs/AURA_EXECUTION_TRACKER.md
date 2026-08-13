@@ -46575,3 +46575,24 @@ controller suite passes `21/21`; focused Ruff, compilation and diff hygiene
 pass. The completion envelope remains `915/920`; preregistration is not a
 decoded result and the powered model run remains gated on the completed CP292
 canary.
+
+## Checkpoint 2026-08-12-295: Named Resident Canaries Are Adjudicable
+
+The independent single-seed adjudicator previously exposed `--output` only for
+the verdict artifact and always reopened the evaluator's default
+`resident-evaluation` directory. A source-bound canary in a named strict child,
+including the active CP292 true-root run, therefore could not be adjudicated by
+its public CLI without custom Python that bypassed the intended interface.
+
+The CLI now accepts a distinct `--evaluation-root` while preserving the
+existing `--output` verdict-file contract. Plan discovery and status validation
+receive the same explicit evaluation root, so the report still passes the
+launcher's source, checkpoint, runtime, progress-journal and completion checks
+before the independent arm matrix is recomputed. A regression proves the named
+root reaches both custody boundaries rather than falling back to a default.
+
+Validation is green under Aura's Python 3.12 runtime: `30/30` focused
+adjudicator and resident-evaluation launcher tests pass; focused Ruff,
+compilation and diff hygiene pass. The completion envelope remains `915/920`;
+the interface repair enables honest automated handoff but is not itself a
+canary verdict or reasoning gain.
