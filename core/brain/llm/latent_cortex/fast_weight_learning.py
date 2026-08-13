@@ -931,6 +931,9 @@ def validate_fast_weight_learning_receipt(
     accepted_probe_only = (
         disposition == "accepted_probe_not_output_under_incumbent_policy"
     )
+    adaptation_materialized = bool(
+        optimization["accepted_steps"] > 0 or supervised_trajectory_map
+    )
     attached = bool(lease["acquired"])
     if causal["evaluated"]:
         if (
@@ -1026,7 +1029,7 @@ def validate_fast_weight_learning_receipt(
             else admission["source_sha256"]
         )
         if (
-            optimization["accepted_steps"] <= 0
+            not adaptation_materialized
             or optimization["budget_exhausted"] is not False
             or controls["decision"] not in {"accepted", "rescaled"}
             or causal["evaluated"] is not True
@@ -1048,7 +1051,7 @@ def validate_fast_weight_learning_receipt(
             else admission["source_sha256"]
         )
         if (
-            optimization["accepted_steps"] <= 0
+            not adaptation_materialized
             or optimization["budget_exhausted"] is not False
             or controls["decision"] not in {"accepted", "rescaled"}
             or causal["evaluated"] is not True

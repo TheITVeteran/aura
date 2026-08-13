@@ -307,6 +307,9 @@ def test_supervised_trajectory_map_fits_distinct_keys_and_erases():
             )
         fast_weights.activate_adaptation_path()
 
+        assert fast_weights.lifecycle.optimized_steps == 0
+        assert fast_weights.has_effective_delta() is True
+
         targets = corrections[1] / mx.linalg.norm(
             corrections[1], axis=1, keepdims=True
         )

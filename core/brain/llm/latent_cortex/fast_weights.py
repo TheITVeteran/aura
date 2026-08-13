@@ -1363,6 +1363,31 @@ class EpisodicFastWeights:
             "layers": rows,
         }
 
+    def has_effective_delta(self, *, epsilon: float = 1e-12) -> bool:
+        """Return whether the attached function is observably non-identity.
+
+        Direct supervised writes can materialize a useful delta before the
+        gradient optimizer accepts a step. Lifecycle gates must inspect the
+        function that exists, not infer identity from the optimizer counter.
+        """
+
+        if (
+            isinstance(epsilon, bool)
+            or not isinstance(epsilon, (int, float))
+            or not math.isfinite(float(epsilon))
+            or float(epsilon) < 0.0
+        ):
+            raise ValueError("fast-weight effective-delta epsilon is invalid")
+        metrics = self.effective_delta_metrics()
+        maximum = metrics.get("max_effective_delta_rms")
+        return bool(
+            metrics.get("finite") is True
+            and not isinstance(maximum, bool)
+            and isinstance(maximum, (int, float))
+            and math.isfinite(float(maximum))
+            and float(maximum) > float(epsilon)
+        )
+
     def canary_erase(self) -> None:
         """Erase ΔW because the protected battery regressed under it.
 

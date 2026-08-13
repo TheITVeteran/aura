@@ -254,6 +254,41 @@ def test_destructive_delta_is_erased_before_decode(tiny_model, monkeypatch):
     assert "fast_weight_candidate_exported" not in receipt.honest_flags
 
 
+def test_direct_write_without_optimizer_step_still_runs_canaries(
+    tiny_model, monkeypatch
+):
+    """A materialized direct write is not identity just because SGD did nothing."""
+
+    def direct_write_only(self, loss_fn, **kwargs):
+        del loss_fn, kwargs
+        for handle in self.handles:
+            handle.wrapper.U = handle.wrapper.U * 0.0 + 50.0
+            handle.wrapper.V = handle.wrapper.V * 0.0 + 50.0
+        assert self.lifecycle.optimized_steps == 0
+
+    monkeypatch.setattr(EpisodicFastWeights, "optimize", direct_write_only)
+    engine = LatentCortexEngine(
+        tiny_model,
+        _ExactEvidenceTokenizer(),
+        config=_config(
+            fast_weights=FastWeightsConfig(
+                enabled=True,
+                target="o_proj",
+                opt_steps=1,
+                canary_rescale_attempts=0,
+            )
+        ),
+    )
+
+    receipt = _run(engine).receipt
+
+    assert receipt.fast_weight_optimized_steps == 0
+    assert receipt.fast_weight_canaries["evaluated"] is True
+    assert receipt.fast_weight_canaries["decision"] == "erased"
+    assert receipt.fast_weight_canaries["delta_magnitude_history"]
+    assert "fast_weight_canary_erased" in receipt.honest_flags
+
+
 def test_rescale_ladder_recovers_marginal_delta(tiny_model, monkeypatch):
     """A marginally-regressing ΔW should survive at reduced scale."""
     calls = {"count": 0}
@@ -313,6 +348,9 @@ def test_rescale_validates_inputs(tiny_model):
         identity_metrics = fast_weights.effective_delta_metrics()
         assert identity_metrics["finite"] is True
         assert identity_metrics["max_effective_delta_rms"] == 0.0
+        assert fast_weights.has_effective_delta() is False
+        with pytest.raises(ValueError, match="epsilon"):
+            fast_weights.has_effective_delta(epsilon=-1.0)
         with pytest.raises(ValueError):
             fast_weights.rescale(1.5)
         with pytest.raises(ValueError):

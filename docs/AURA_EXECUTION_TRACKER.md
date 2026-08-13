@@ -48752,3 +48752,41 @@ is recorded in
 The next bounded action is the registered `down_proj:coda` site under this same
 frozen target/sham design. A larger campaign remains inadmissible until the
 teacher-free neural answer itself passes the task verifier.
+
+## Checkpoint 2026-08-13-390: Direct Neural Writes Cannot Hide Behind SGD Counters
+
+CP389 left one registered decoder site unevaluated. The first frozen
+`down_proj:coda` cell exposed an earlier lifecycle defect before it could answer
+the placement question: the supervised trajectory map had already installed a
+nonzero low-rank function, but because the optional gradient optimizer accepted
+zero additional steps, the canary and causal-verifier gates inferred identity
+from the optimizer counter and discarded the write without measuring it.
+
+CP390 makes the attached function authoritative. `EpisodicFastWeights` now
+reports whether its finite effective delta is observably nonzero. Capability
+canaries and the teacher-free causal verifier inspect that predicate rather than
+an optimizer implementation detail, while true identity deltas still skip a
+measurement that cannot teach us anything. Receipt validation likewise
+recognizes an admitted supervised trajectory map as materialized adaptation
+even when SGD contributes no accepted step. A direct-write regression test
+holds the optimizer counter at zero, installs a destructive delta and proves
+the engine measures and erases it before decode.
+
+The exact frozen cell was then rerun with the same model, task, registry,
+difficulty, seed and four-arm design. The direct `down_proj:coda` treatment
+selected gain `-0.5`, improved the teacher-free public probe from `0.25` to
+`0.310185`, and beat its matched sham by `0.060185` while staying inside the
+structural RMS envelope. The protected behavioral battery then found broad
+regression even after two bounded halvings and erased the write exactly. No
+causal task probe or adapted final answer was admitted. The complete system
+remained correct through executable reasoning; disabling adaptation preserved
+that answer, while disabling the executable producer removed it.
+
+This is a useful negative placement result and a positive lifecycle/safety
+result. It does not prove task-level neural lift, general reasoning gain,
+fusion, frontier performance or `WOW Signal`. Final validation is recorded in
+`artifacts/closeout/latent_cortex/cp390_direct_write_lifecycle_truth.json`. The
+next bounded action is to localize decoder plasticity more narrowly: preserve
+the safer CP389 output-projection effect without applying the globally damaging
+MLP down-projection write, then require task correctness before any larger
+campaign.

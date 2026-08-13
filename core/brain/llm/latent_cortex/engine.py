@@ -8439,12 +8439,12 @@ class LatentCortexEngine:
     ) -> str:
         """Measure protected behaviors under active ΔW; rescale then erase.
 
-        Runs only when at least one optimization step was accepted — before
-        that, V is still zero and the adapted function is bit-identical to
-        the baseline, so a measurement would spend budget to learn nothing.
+        Runs whenever the attached function has a nonzero effective delta.
+        A direct supervised trajectory write may be active even when the
+        optional gradient optimizer accepts no additional step.
         """
         cfg = self.config.fast_weights
-        if fast_weights.lifecycle.optimized_steps <= 0:
+        if not fast_weights.has_effective_delta():
             receipt.fast_weight_canaries = {
                 "evaluated": False,
                 "decision": "identity_no_check",
@@ -8610,14 +8610,14 @@ class LatentCortexEngine:
             }
             learning_state["disposition"] = "rejected_capability_regression"
             return "already_erased"
-        if lifecycle.optimized_steps <= 0:
+        if not fast_weights.has_effective_delta():
             fast_weights.canary_erase()
             receipt.fast_weight_verifier = {
                 "evaluated": False,
-                "decision": "erased_no_accepted_step",
+                "decision": "erased_identity_delta",
             }
             learning_state["disposition"] = "rejected_no_accepted_step"
-            return "erased_no_accepted_step"
+            return "erased_identity_delta"
         if pre_score is None or not math.isfinite(pre_score):
             fast_weights.canary_erase()
             receipt.fast_weight_verifier = {

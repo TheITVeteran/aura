@@ -1,0 +1,79 @@
+{
+  "schema": "aura.closeout.latent_cortex_checkpoint.v1",
+  "checkpoint": "CP390",
+  "title": "Lifecycle gates inspect materialized tissue rather than optimizer counters",
+  "source_parent": "4c345d85582455609b232c98122063bf2347b814",
+  "implementation": {
+    "effective_delta_predicate_added": true,
+    "direct_supervised_write_is_independent_of_optimizer_step_count": true,
+    "capability_canary_gate_uses_effective_delta": true,
+    "causal_verifier_gate_uses_effective_delta": true,
+    "learning_receipt_acceptance_recognizes_supervised_trajectory_maps": true,
+    "identity_delta_still_skips_uninformative_measurement": true
+  },
+  "bounded_real_checkpoint_result": {
+    "model": "mlx-community/Qwen2.5-1.5B-Instruct-4bit",
+    "task_registry": "2026.08.06.1",
+    "domain": "novel_algorithms",
+    "difficulty": 2,
+    "seed": 41037613,
+    "plasticity_site": "down_proj:coda",
+    "adapted_layers": [21, 22, 23, 24, 25, 26, 27],
+    "optimizer_accepted_steps": 0,
+    "direct_write_materialized": true,
+    "selected_treatment_gain": -0.5,
+    "selected_treatment_score": 0.310185,
+    "selected_treatment_max_effective_delta_rms": 0.024074621609,
+    "selected_sham_gain": 0.0,
+    "selected_sham_score": 0.25,
+    "incremental_gain_over_sham": 0.060185,
+    "canary_decision": "erased",
+    "canary_rescales": 2,
+    "protected_canary_regressions": [
+      "basic_reasoning",
+      "basic_reasoning_heldout",
+      "factual_calibration",
+      "factual_calibration_uncertainty",
+      "identity_continuity",
+      "identity_continuity_autobiographical",
+      "identity_continuity_self_other",
+      "prose_coherence",
+      "prose_coherence_heldout",
+      "prose_coherence_paraphrase",
+      "tool_call_syntax",
+      "tool_call_syntax_heldout"
+    ],
+    "causal_probe_evaluated": false,
+    "disposition": "rejected_capability_regression",
+    "runtime_receipt_sha256": "519a9f833989a0b7862684871bceee744c3264552b8a4f98032aa206222772b6",
+    "learning_receipt_sha256": "ecb13518b22348e9effa338770b87502ded03764b88837fb9e1abc90d7b0f074",
+    "gain_search_receipt_sha256": "dd229981a46e0edfd027a63203f47b3340091cab29b6a253c712559999fb5022"
+  },
+  "system_result": {
+    "vanilla_correct": 0,
+    "complete_system_correct": 1,
+    "adaptation_ablation_correct": 1,
+    "executable_ablation_correct": 0,
+    "system_gain_source": "executable_reasoning",
+    "neural_probe_task_correct": false
+  },
+  "validation": {
+    "targeted_contracts": "105 passed",
+    "canonical_smoke": "104 passed",
+    "ruff": "pass",
+    "byte_compile": "pass",
+    "diff_check": "pass"
+  },
+  "claims": {
+    "direct_write_lifecycle_truth_proven": true,
+    "down_projection_probe_gain_observed": true,
+    "down_projection_canary_safety_proven": true,
+    "task_level_neural_tissue_gain_proven": false,
+    "general_reasoning_gain_proven": false,
+    "fusion_authorized": false,
+    "ordinary_serving_authorized": false,
+    "frontier_reasoning_proven": false,
+    "wow_signal": false
+  },
+  "next_bounded_action": "Localize a decoder write that preserves the CP389 output-projection gain while avoiding the broad MLP down-projection regressions before any larger campaign."
+}
