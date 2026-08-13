@@ -145,6 +145,9 @@ class EpisodicDeltaLinear:
         self.last_input_summary = None
         self.input_summary_history = []
         self.last_input_features = None
+        self.query_gate_keys = None
+        self.query_gate_threshold = 0.0
+        self.query_gate_temperature = 1.0
         self.capture_input_positions = False
         self.input_position_limit = 0
         self.input_position_phase: str | None = None
@@ -315,7 +318,49 @@ class EpisodicDeltaLinear:
             return base
         self.phase_delta_calls[phase] += 1
         delta = (x @ self.V.T) @ self.U.T
+        if self.query_gate_keys is not None:
+            import mlx.core as mx
+
+            width = int(x.shape[-1])
+            flat = x.reshape((-1, width)).astype(mx.float32)
+            norms = mx.maximum(mx.linalg.norm(flat, axis=1, keepdims=True), 1e-6)
+            similarities = (flat / norms) @ self.query_gate_keys.T
+            maximum = mx.max(similarities, axis=1, keepdims=True)
+            gate = mx.sigmoid(
+                (maximum - float(self.query_gate_threshold))
+                / float(self.query_gate_temperature)
+            )
+            gate = gate.reshape((*x.shape[:-1], 1)).astype(delta.dtype)
+            delta = delta * gate
         return base + self.scale * delta
+
+    def install_query_gate(self, keys, *, threshold: float, temperature: float) -> None:
+        """Bind the episodic delta to normalized private query activations."""
+
+        import mlx.core as mx
+
+        if (
+            getattr(keys, "ndim", 0) != 2
+            or int(keys.shape[0]) <= 0
+            or int(keys.shape[1]) != int(self.V.shape[1])
+        ):
+            raise ValueError("fast-weight query-gate key shape differs")
+        if not bool(mx.all(mx.isfinite(keys))):
+            raise ValueError("fast-weight query-gate keys are non-finite")
+        norms = mx.linalg.norm(keys.astype(mx.float32), axis=1, keepdims=True)
+        if bool(mx.any(norms <= 1e-8)):
+            raise ValueError("fast-weight query-gate keys contain a zero vector")
+        if not math.isfinite(float(threshold)) or not -1.0 < float(threshold) < 1.0:
+            raise ValueError("fast-weight query-gate threshold must be inside (-1, 1)")
+        if (
+            not math.isfinite(float(temperature))
+            or not 0.0 < float(temperature) <= 1.0
+        ):
+            raise ValueError("fast-weight query-gate temperature must be inside (0, 1]")
+        self.query_gate_keys = mx.stop_gradient(keys.astype(mx.float32) / norms)
+        self.query_gate_threshold = float(threshold)
+        self.query_gate_temperature = float(temperature)
+        mx.eval(self.query_gate_keys)
 
 
 @dataclass
@@ -733,6 +778,43 @@ class EpisodicFastWeights:
                 raise RuntimeError("fast-weight query-key capture is absent")
             commitments[int(handle.layer_index)] = tensor_sha256(features)
         return commitments
+
+    def install_captured_query_gates(
+        self,
+        *,
+        threshold: float,
+        temperature: float,
+    ) -> dict[str, Any]:
+        """Make captured query activations the private scope of every delta."""
+
+        from core.brain.llm.latent_cortex.verified_best import tensor_sha256
+
+        if not self.handles:
+            raise RuntimeError("fast-weight query gate requires wrappers")
+        rows = []
+        for handle in self.handles:
+            keys = handle.wrapper.last_input_features
+            if keys is None:
+                raise RuntimeError("fast-weight query gate lacks captured activations")
+            handle.wrapper.install_query_gate(
+                keys,
+                threshold=threshold,
+                temperature=temperature,
+            )
+            rows.append(
+                {
+                    "layer": int(handle.layer_index),
+                    "key_count": int(keys.shape[0]),
+                    "keys_sha256": tensor_sha256(keys),
+                }
+            )
+        self._notify_function_change("fast_weights_query_gate_installed")
+        return {
+            "schema": "aura.fast_weight_query_gate.v1",
+            "threshold": float(threshold),
+            "temperature": float(temperature),
+            "layers": rows,
+        }
 
     def capture_input_position_features(
         self,
@@ -1221,6 +1303,7 @@ class EpisodicFastWeights:
                         round(rms, 12) if math.isfinite(rms) else None
                     ),
                     "finite": finite,
+                    "query_conditioned": wrapper.query_gate_keys is not None,
                 }
             )
         return {
@@ -1706,6 +1789,14 @@ class EpisodicFastWeights:
                 episode_id,
             )
             return None
+        if any(bool(handle.get("query_conditioned")) for handle in self._exported_handles):
+            self.last_export_error = "query_conditioned_candidate_not_generalized"
+            logger.info(
+                "Consolidation export refused: episode-scoped query gate cannot become "
+                "an unconditional durable adapter for %s",
+                episode_id,
+            )
+            return None
         self.last_export_receipt = None
         self.last_export_error = ""
         try:
@@ -1788,6 +1879,7 @@ class EpisodicFastWeights:
                 "layer_index": h.layer_index,
                 "U": np.array(h.wrapper.U),
                 "V": np.array(h.wrapper.V),
+                "query_conditioned": h.wrapper.query_gate_keys is not None,
             }
             for h in self.handles
         ]

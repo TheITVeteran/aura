@@ -1,0 +1,48 @@
+{
+  "schema": "aura.closeout.latent_cortex_checkpoint.v1",
+  "checkpoint": "CP386",
+  "title": "Verified episodic fast weights are query-conditioned",
+  "source_parent": "2704607743f0e633619df7af72fa85611363af89",
+  "diagnosis": {
+    "resident_evidence_source": "CP382 first complete-system cell",
+    "target_probe_improved": true,
+    "baseline_score": 0.151718,
+    "treatment_score": 0.296296,
+    "matched_sham_score": 0.229651,
+    "disposition": "rejected_capability_regression",
+    "root_cause": "task-fitted low-rank delta applied unconditionally to unrelated projection inputs"
+  },
+  "implementation": {
+    "gate_schema": "aura.fast_weight_query_gate.v1",
+    "default_threshold": 0.8,
+    "default_temperature": 0.05,
+    "similarity": "maximum cosine similarity to normalized private captured query keys",
+    "live_graph": true,
+    "private_keys_published": false,
+    "per_layer_key_commitments": true,
+    "structural_delta_limit_preserved": true,
+    "behavioral_canaries_preserved": true,
+    "exact_attach_and_erase_contract_preserved": true,
+    "unconditional_durable_export_refused": true
+  },
+  "validation": {
+    "matching_delta_norm_lower_bound": 5.0,
+    "unrelated_delta_norm_upper_bound": 0.00001,
+    "fast_weight_and_wiring_files": "196 passed",
+    "engine_and_teaching_event_files": "64 passed",
+    "canonical_smoke": "104 passed",
+    "ruff": "pass",
+    "byte_compile": "pass",
+    "diff_check": "pass"
+  },
+  "claims": {
+    "model_scale_selectivity_calibrated": false,
+    "neural_tissue_gain_proven": false,
+    "general_reasoning_gain_proven": false,
+    "fusion_authorized": false,
+    "ordinary_serving_authorized": false,
+    "frontier_reasoning_proven": false,
+    "wow_signal": false
+  },
+  "next_bounded_action": "Calibrate gate separation on a real checkpoint, then run one frozen treatment/sham target cell with protected canaries."
+}

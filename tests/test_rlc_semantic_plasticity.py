@@ -8,6 +8,7 @@ pytest.importorskip("mlx_lm")
 from mlx_lm.models.qwen2 import Model, ModelArgs  # noqa: E402
 
 from core.brain.llm.latent_cortex.fast_weights import (  # noqa: E402
+    EpisodicDeltaLinear,
     EpisodicFastWeights,
 )
 from core.brain.llm.latent_cortex.semantic_plasticity import (  # noqa: E402
@@ -328,6 +329,99 @@ def test_supervised_trajectory_map_fits_distinct_keys_and_erases():
     restored = model(tokens)
     mx.eval(restored)
     assert bool(mx.array_equal(restored, baseline))
+
+
+def test_query_gate_preserves_matching_write_and_suppresses_unrelated_context():
+    layer = _model().model.layers[1].self_attn.o_proj
+    wrapper = EpisodicDeltaLinear(
+        layer,
+        rank=1,
+        scale=1.0,
+        seed_stat=0.5,
+        tag="query-gate-selectivity",
+    )
+    key = mx.concatenate([mx.ones((1,)), mx.zeros((31,))])
+    wrapper.U = mx.ones_like(wrapper.U)
+    wrapper.V = key[None, :]
+    wrapper.identity_bypass = False
+    wrapper.install_query_gate(
+        key[None, :],
+        threshold=0.8,
+        temperature=0.02,
+    )
+
+    matching = key.reshape((1, 1, 32))
+    unrelated = mx.concatenate(
+        [mx.ones((1,)), mx.array([10.0]), mx.zeros((30,))]
+    ).reshape((1, 1, 32))
+    matching_delta = wrapper(matching) - layer(matching)
+    unrelated_delta = wrapper(unrelated) - layer(unrelated)
+    mx.eval(matching_delta, unrelated_delta)
+
+    assert float(mx.linalg.norm(matching_delta)) > 5.0
+    assert float(mx.linalg.norm(unrelated_delta)) < 1e-5
+
+
+def test_manager_receipts_private_query_gate_commitments():
+    model = _model()
+    fast_weights = EpisodicFastWeights(
+        FastWeightsConfig(enabled=True, rank=2, max_wrapped_layers=1)
+    )
+    fast_weights.attach(
+        model.model,
+        (1, 2),
+        seed_stat=0.5,
+        episode_id="query-gate-receipt",
+    )
+    try:
+        wrapper = fast_weights.handles[0].wrapper
+        wrapper.last_input_features = mx.stack(
+            [mx.ones((32,)), mx.arange(32).astype(mx.float32)]
+        )
+        receipt = fast_weights.install_captured_query_gates(
+            threshold=0.8,
+            temperature=0.05,
+        )
+
+        assert receipt["schema"] == "aura.fast_weight_query_gate.v1"
+        assert receipt["layers"][0]["layer"] == 1
+        assert receipt["layers"][0]["key_count"] == 2
+        assert len(receipt["layers"][0]["keys_sha256"]) == 64
+        assert wrapper.query_gate_keys.shape == (2, 32)
+        assert fast_weights.effective_delta_metrics()["layers"][0][
+            "query_conditioned"
+        ] is True
+    finally:
+        fast_weights.detach()
+
+
+def test_query_conditioned_candidate_cannot_export_as_unconditional_adapter(tmp_path):
+    model = _model()
+    fast_weights = EpisodicFastWeights(
+        FastWeightsConfig(enabled=True, rank=1, max_wrapped_layers=1)
+    )
+    fast_weights.attach(
+        model.model,
+        (1, 2),
+        seed_stat=0.5,
+        episode_id="query-gate-export-boundary",
+    )
+    wrapper = fast_weights.handles[0].wrapper
+    wrapper.last_input_features = mx.ones((1, 32))
+    fast_weights.install_captured_query_gates(threshold=0.8, temperature=0.05)
+    fast_weights.snapshot_for_export()
+    fast_weights.detach()
+    fast_weights.lifecycle.erase_proven = True
+
+    assert (
+        fast_weights.export_candidate(
+            tmp_path,
+            episode_id="query-gate-export-boundary",
+            evidence={},
+        )
+        is None
+    )
+    assert fast_weights.last_export_error == "query_conditioned_candidate_not_generalized"
 
 
 def test_layerwise_trajectory_rejects_missing_layer():

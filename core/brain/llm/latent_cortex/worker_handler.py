@@ -94,6 +94,9 @@ _CONFIG_KEYS = {
     "fast_weights_export_candidates",
     "fast_weights_opt_steps",
     "fast_weights_output_memory_diagnostic",
+    "fast_weights_query_gate",
+    "fast_weights_query_gate_temperature",
+    "fast_weights_query_gate_threshold",
     "fast_weights_rank",
     "fast_weights_scale",
     "fast_weights_target",
@@ -254,6 +257,15 @@ def config_from_job(job_config: dict[str, Any] | None) -> CortexConfig:
             opt_steps=_typed_value(raw, "fast_weights_opt_steps", 4, int),
             lr=_typed_value(raw, "fast_weights_lr", 0.01, float),
             max_wrapped_layers=_typed_value(raw, "fast_weights_max_layers", 8, int),
+            query_gate_enabled=_typed_value(
+                raw, "fast_weights_query_gate", True, bool
+            ),
+            query_gate_threshold=_typed_value(
+                raw, "fast_weights_query_gate_threshold", 0.8, float
+            ),
+            query_gate_temperature=_typed_value(
+                raw, "fast_weights_query_gate_temperature", 0.05, float
+            ),
             output_memory_diagnostic_enabled=_typed_value(
                 raw,
                 "fast_weights_output_memory_diagnostic",

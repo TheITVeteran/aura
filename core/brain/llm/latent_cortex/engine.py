@@ -54,9 +54,9 @@ from core.brain.llm.latent_cortex.fast_weight_learning import (
 from core.brain.llm.latent_cortex.fast_weights import EpisodicFastWeights
 from core.brain.llm.latent_cortex.governance import CheckpointInvariant
 from core.brain.llm.latent_cortex.latent_opt import LatentOptimizer, build_proxy_loss
+from core.brain.llm.latent_cortex.loop_core import ComputeBudgetUnaffordable
 from core.brain.llm.latent_cortex.plasticity_sites import PLASTICITY_SITE_REGISTRY
 from core.brain.llm.latent_cortex.probe_cache import DecodeProbeCache
-from core.brain.llm.latent_cortex.loop_core import ComputeBudgetUnaffordable
 from core.brain.llm.latent_cortex.recurrence import WindowRunner, recurrence_step
 from core.brain.llm.latent_cortex.resource_accounting import (
     build_information_receipt,
@@ -6632,6 +6632,21 @@ class LatentCortexEngine:
                 fast_weights.activate_adaptation_path()
                 if (
                     fast_weight_teaching_event
+                    and self.config.fast_weights.query_gate_enabled
+                ):
+                    query_gate_receipt = fast_weights.install_captured_query_gates(
+                        threshold=self.config.fast_weights.query_gate_threshold,
+                        temperature=self.config.fast_weights.query_gate_temperature,
+                    )
+                    fast_weight_learning_state["controls"][
+                        "query_gate"
+                    ] = query_gate_receipt
+                    receipt.flag(
+                        "fast_weight_query_gate:"
+                        f"{len(query_gate_receipt['layers'])}"
+                    )
+                if (
+                    fast_weight_teaching_event
                     and self.config.fast_weights.associative_bootstrap_enabled
                 ):
                     if (
@@ -6896,6 +6911,9 @@ class LatentCortexEngine:
                         "supervised_trajectory_map": fast_weight_learning_state[
                             "controls"
                         ]["supervised_trajectory_map"],
+                        "query_gate": fast_weight_learning_state["controls"][
+                            "query_gate"
+                        ],
                         "output_associative_memory": fast_weight_learning_state["controls"][
                             "output_associative_memory"
                         ],
@@ -6916,6 +6934,9 @@ class LatentCortexEngine:
                         "supervised_trajectory_map": fast_weight_learning_state[
                             "controls"
                         ]["supervised_trajectory_map"],
+                        "query_gate": fast_weight_learning_state["controls"][
+                            "query_gate"
+                        ],
                         "output_associative_memory": fast_weight_learning_state["controls"][
                             "output_associative_memory"
                         ],

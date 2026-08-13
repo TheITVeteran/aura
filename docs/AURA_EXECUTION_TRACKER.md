@@ -48592,3 +48592,41 @@ The next bounded action is to make the verified neural correction spatially
 selective enough to survive capability canaries and to bypass redundant
 gradient/gain-search work only when the measured direct write already dominates
 it, then restart from a fresh immutable campaign identity.
+
+## Checkpoint 2026-08-13-386: Episodic Tissue Is Query-Conditioned
+
+CP385 established that the resident direct verified write improved its target
+probe but damaged an unrelated generated canary because the same low-rank
+delta fired on every projection input. CP386 repairs that behavior at the
+projection boundary rather than weakening the canary. Every verified teaching
+event now binds its temporary delta to normalized private query activations.
+Each token receives a bounded smooth gate based on its maximum cosine
+similarity to those keys; unrelated contexts approach the frozen base function
+while matching states retain the learned correction.
+
+The gate is part of the live MLX graph, not prompt conditioning or evaluator
+logic. Configuration validates finite threshold and temperature bounds and the
+worker request contract carries both explicitly. Receipts commit the key count
+and SHA-256 per layer without publishing activation tensors. The existing
+structural delta ceiling remains conservative because it still measures the
+ungated worst-case matrix, and behavioral canaries continue to execute under
+the adapted function. Observer/cache invalidation, model leases, exact attach
+identity and erase proof are unchanged.
+
+One lifecycle boundary is deliberately fail-closed: an episode-scoped gated
+delta cannot be exported as an unconditional durable adapter with its private
+gate omitted. Durable consolidation still requires a separately generalized
+and regression-tested operator. Mechanism tests prove a matching activation
+retains a material delta while an unrelated activation is suppressed below
+`1e-5`; query-gate commitments, worker wiring, serialization refusal and exact
+detach restoration are covered. The complete fast-weight/wiring suite passes
+`196/196`; engine and teaching-event integration passes `64/64`. Canonical
+smoke and static gates are recorded in
+`artifacts/closeout/latent_cortex/cp386_query_conditioned_fast_weights.json`.
+
+This checkpoint does not claim that the selected threshold separates real
+32B task and canary activations, that tissue now wins a task, or that gradient
+and gain search can yet be skipped. The next bounded action is a quick
+checkpoint-real selectivity calibration followed by one frozen target/sham
+cell; only measured target improvement with protected-canary survival can
+authorize a new powered campaign.

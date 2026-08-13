@@ -1178,6 +1178,9 @@ def test_config_from_job_maps_every_advanced_mechanism():
             "fast_weights_lr": 0.005,
             "fast_weights_max_layers": 4,
             "fast_weights_canary_max_delta_rms": 0.025,
+            "fast_weights_query_gate": True,
+            "fast_weights_query_gate_threshold": 0.75,
+            "fast_weights_query_gate_temperature": 0.04,
             "exchange_gamma": 0.2,
             "convergence_eps": 0.01,
             "decode_top_p": 0.82,
@@ -1208,6 +1211,9 @@ def test_config_from_job_maps_every_advanced_mechanism():
     assert cfg.fast_weights.enabled is True and cfg.fast_weights.opt_steps == 3
     assert cfg.fast_weights.lr == 0.005 and cfg.fast_weights.max_wrapped_layers == 4
     assert cfg.fast_weights.canary_max_effective_delta_rms == 0.025
+    assert cfg.fast_weights.query_gate_enabled is True
+    assert cfg.fast_weights.query_gate_threshold == 0.75
+    assert cfg.fast_weights.query_gate_temperature == 0.04
     assert cfg.branches.exchange_gamma == 0.2
     assert cfg.recurrence.convergence_eps == 0.01
     assert cfg.decode_top_p == 0.82

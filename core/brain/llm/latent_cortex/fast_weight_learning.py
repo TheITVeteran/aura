@@ -484,6 +484,7 @@ def empty_learning_state(
             "capability_canaries": {},
             "trajectory_transplant": {},
             "supervised_trajectory_map": {},
+            "query_gate": {},
             "output_associative_memory": {},
             "verifier_gain_search": {},
             "test_time_training": (
@@ -618,6 +619,7 @@ def validate_fast_weight_learning_receipt(
     optional_control_fields = {
         "trajectory_transplant",
         "supervised_trajectory_map",
+        "query_gate",
         "output_associative_memory",
     }
     if (
@@ -676,6 +678,7 @@ def validate_fast_weight_learning_receipt(
     test_time_training = controls["test_time_training"]
     trajectory_transplant = controls.get("trajectory_transplant", {})
     supervised_trajectory_map = controls.get("supervised_trajectory_map", {})
+    query_gate = controls.get("query_gate", {})
     output_associative_memory = controls.get("output_associative_memory", {})
     gain_search = controls["verifier_gain_search"]
     if not isinstance(trajectory_transplant, Mapping):
@@ -731,6 +734,33 @@ def validate_fast_weight_learning_receipt(
         raise ValueError("fast-weight output-memory receipt is invalid")
     if not isinstance(supervised_trajectory_map, Mapping):
         raise ValueError("fast-weight supervised trajectory receipt is invalid")
+    if not isinstance(query_gate, Mapping):
+        raise ValueError("fast-weight query-gate receipt is invalid")
+    if query_gate:
+        if (
+            set(query_gate) != {"schema", "threshold", "temperature", "layers"}
+            or query_gate["schema"] != "aura.fast_weight_query_gate.v1"
+            or not _is_finite_number(query_gate["threshold"])
+            or not -1.0 < float(query_gate["threshold"]) < 1.0
+            or not _is_finite_number(query_gate["temperature"])
+            or not 0.0 < float(query_gate["temperature"]) <= 1.0
+            or not isinstance(query_gate["layers"], list)
+            or not query_gate["layers"]
+        ):
+            raise ValueError("fast-weight query-gate receipt is malformed")
+        for row in query_gate["layers"]:
+            if (
+                not isinstance(row, Mapping)
+                or set(row) != {"layer", "key_count", "keys_sha256"}
+                or type(row["layer"]) is not int
+                or row["layer"] < 0
+                or type(row["key_count"]) is not int
+                or row["key_count"] <= 0
+                or not _is_sha256(row["keys_sha256"])
+            ):
+                raise ValueError("fast-weight query-gate layer receipt is malformed")
+        if not teaching_event:
+            raise ValueError("fast-weight query gate lacks a teaching event")
     if supervised_trajectory_map:
         if (
             set(supervised_trajectory_map)

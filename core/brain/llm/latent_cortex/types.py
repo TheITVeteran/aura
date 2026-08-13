@@ -145,6 +145,12 @@ class FastWeightsConfig:
     associative_bootstrap_enabled: bool = True
     associative_bootstrap_gain: float = 0.25
     associative_bootstrap_regularization: float = 1e-4
+    # A direct verified write is useful only for the episode that taught it.
+    # Gate the temporary delta by cosine similarity to private, captured query
+    # activations so unrelated canary and user contexts remain near identity.
+    query_gate_enabled: bool = True
+    query_gate_threshold: float = 0.8
+    query_gate_temperature: float = 0.05
     # Diagnostic-only associative memory at the normalized output boundary.
     # It cannot authorize a served answer until matched controls establish
     # that verified supervision, rather than any supervision, is selective.
@@ -900,6 +906,22 @@ class CortexConfig:
         ):
             problems.append(
                 "fast_weights.associative_bootstrap_regularization must be finite and inside (0, 1]"
+            )
+        if type(self.fast_weights.query_gate_enabled) is not bool:
+            problems.append("fast_weights.query_gate_enabled must be boolean")
+        if (
+            not finite(self.fast_weights.query_gate_threshold)
+            or not -1.0 < self.fast_weights.query_gate_threshold < 1.0
+        ):
+            problems.append(
+                "fast_weights.query_gate_threshold must be finite and inside (-1, 1)"
+            )
+        if (
+            not finite(self.fast_weights.query_gate_temperature)
+            or not 0.0 < self.fast_weights.query_gate_temperature <= 1.0
+        ):
+            problems.append(
+                "fast_weights.query_gate_temperature must be finite and inside (0, 1]"
             )
         if type(self.fast_weights.output_memory_diagnostic_enabled) is not bool:
             problems.append("fast_weights.output_memory_diagnostic_enabled must be boolean")
