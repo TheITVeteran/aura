@@ -163,6 +163,92 @@ class RSILineageLedger:
                     yield json.loads(line)
 
 
+def improver_efficiency(
+    *, baseline_score: float, after_score: float, cost_s: float
+) -> float:
+    """Verified capability gain per unit of resource spent producing it.
+
+    The quantity a strong-RSI claim actually needs, and the one thing the
+    capability curve cannot stand in for. Strong RSI is not "generation g+1
+    scores higher"; it is "the improver got better at improving", which means
+
+        I_g = verified capability improvement / cost consumed by improver g
+
+    must rise independently of C_g. The two genuinely come apart: under
+    diminishing returns capability keeps climbing while each increment costs
+    more, so I falls while C rises. A number that cannot express that cannot
+    be evidence for the second inequality.
+
+    Returns 0.0 when the cost is unknown or non-positive. An improvement whose
+    cost nobody recorded has no measured efficiency, and 0.0 breaks the
+    monotonicity the strong verdict requires — which is the correct outcome:
+    the claim fails for want of evidence rather than succeeding on a default.
+    """
+    if cost_s is None or cost_s <= 0.0:
+        return 0.0
+    delta = float(after_score) - float(baseline_score)
+    if delta <= 0.0:
+        return 0.0
+    return round(delta / (float(cost_s) / 3600.0), 6)
+
+
+def improver_curve_dependence(
+    capability_curve: List[float], improver_curve: List[float]
+) -> str:
+    """Reason the improver curve is not independent evidence, or "" if it is.
+
+    The anti-circularity gate. ``weight_compounding`` recorded
+    ``improver_score = candidate_accuracy`` — literally the same number as
+    ``after_score`` — so a rising capability curve produced an identically
+    rising "improver" curve and the two-inequality test was satisfied by one
+    measurement counted twice. That is not a bug in the arithmetic; it is the
+    strong-RSI claim resting on nothing.
+
+    Identity is checked, and so is affine dependence: an improver score that is
+    any linear function of capability carries exactly as much independent
+    information as an identical one, which is none.
+    """
+    if len(capability_curve) < 2 or len(improver_curve) != len(capability_curve):
+        return ""
+
+    if all(
+        abs(a - b) <= 1e-12 for a, b in zip(capability_curve, improver_curve)
+    ):
+        return (
+            "improver curve is identical to the capability curve; the second "
+            "inequality is one measurement counted twice"
+        )
+
+    # Any two points lie exactly on a line, so affine dependence carries no
+    # information below three generations and would fire on every honest
+    # two-generation lineage. Identity above is still meaningful at n=2.
+    if len(capability_curve) < 3:
+        return ""
+
+    n = len(capability_curve)
+    mean_c = sum(capability_curve) / n
+    mean_i = sum(improver_curve) / n
+    var_c = sum((c - mean_c) ** 2 for c in capability_curve)
+    if var_c <= 1e-18:
+        return ""  # capability is flat; monotonicity already failed
+    slope = sum(
+        (c - mean_c) * (i - mean_i)
+        for c, i in zip(capability_curve, improver_curve)
+    ) / var_c
+    intercept = mean_i - slope * mean_c
+    residual = max(
+        abs(i - (slope * c + intercept))
+        for c, i in zip(capability_curve, improver_curve)
+    )
+    scale = max(abs(i) for i in improver_curve) or 1.0
+    if residual / scale <= 1e-9:
+        return (
+            "improver curve is an exact affine function of the capability "
+            f"curve (slope {slope:.4g}); it carries no independent information"
+        )
+    return ""
+
+
 def evaluate_lineage(records: List[RSIGenerationRecord], *, independently_reproduced: bool = False) -> RSILineageVerdict:
     if not records:
         return RSILineageVerdict(VERDICT_NO_RSI, ["no generation records"], 0, [], [])
@@ -186,6 +272,10 @@ def evaluate_lineage(records: List[RSIGenerationRecord], *, independently_reprod
         reasons.append("capability curve is not strictly increasing")
     if not improver_monotone:
         reasons.append("improver curve is not strictly increasing")
+
+    dependence = improver_curve_dependence(capability_curve, improver_curve)
+    if dependence:
+        reasons.append(dependence)
 
     if reasons:
         return RSILineageVerdict(VERDICT_BOUNDED, reasons, len(records), capability_curve, improver_curve)

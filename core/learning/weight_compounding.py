@@ -90,6 +90,7 @@ from core.learning.rsi_lineage import (
     RSILineageLedger,
     RSILineageVerdict,
     evaluate_lineage,
+    improver_efficiency,
 )
 from core.runtime.atomic_writer import atomic_write_text
 from core.runtime.errors import record_degradation
@@ -1083,7 +1084,24 @@ class WeightCompoundingLoop:
             promoted=promoted,
             rollback_performed=False,
             time_to_valid_improvement_s=receipt.elapsed_s,
-            improver_score=float(receipt.candidate_accuracy or 0.0),
+            # NOT candidate_accuracy. This recorded the capability score a
+            # second time under a different name, so a rising capability curve
+            # produced an identically rising "improver" curve and the
+            # two-inequality strong-RSI test was satisfied by one measurement
+            # counted twice.
+            #
+            # The improver score has to measure the improver: verified
+            # capability gain per hour of the cycle that produced it. That
+            # comes apart from capability exactly where it matters — under
+            # diminishing returns capability keeps climbing while each
+            # increment costs more, so this falls while after_score rises.
+            # rsi_lineage.improver_curve_dependence now refuses a strong
+            # verdict if the two curves are ever affinely related again.
+            improver_score=improver_efficiency(
+                baseline_score=float(receipt.incumbent_accuracy or 0.0),
+                after_score=float(receipt.candidate_accuracy or 0.0),
+                cost_s=float(receipt.elapsed_s or 0.0),
+            ),
         )
         try:
             entry = self._ledger.append(record)
