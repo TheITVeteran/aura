@@ -73,13 +73,69 @@ def test_an_unnamed_failure_class_says_so_instead_of_trailing_a_colon() -> None:
     )
 
 
-def test_the_rejection_path_serves_the_reply_when_nothing_is_named() -> None:
-    import inspect
-
+@pytest.mark.asyncio
+async def test_the_rejection_path_serves_the_draft_when_nothing_is_named(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from core.conversation import response_reliability
     from interface.routes import chat
 
-    source = inspect.getsource(chat)
-    marker = "_record_exhausted_cognitive_failure(\n                    _named_gate_failure(assessment),"
-    assert marker in source
-    guarded = source[: source.find(marker)]
-    assert "_reply_gate_proved_a_violation(assessment)" in guarded
+    prompt = "Tell me one interesting fact about octopus cognition."
+    draft = (
+        "An octopus distributes much of its nervous system through its arms, "
+        "so local sensing and movement do not wait on a single central controller."
+    )
+    calls: list[str] = []
+
+    class _FakeCognitiveEngine:
+        async def think(self, objective, **_kwargs):
+            calls.append(str(objective))
+            return SimpleNamespace(content=draft)
+
+    async def _no_recall(*_args, **_kwargs):
+        return None
+
+    assessment = SimpleNamespace(ok=False, reasons=(), retryable=True)
+    monkeypatch.setattr(
+        chat.ServiceContainer,
+        "get",
+        staticmethod(
+            lambda name, default=None: _FakeCognitiveEngine()
+            if name == "cognitive_engine"
+            else default
+        ),
+    )
+    monkeypatch.setattr(
+        response_reliability,
+        "assess_user_facing_reply",
+        lambda *_args, **_kwargs: assessment,
+    )
+    monkeypatch.setattr(
+        chat,
+        "_reply_assessment_requires_repair_with_memory_evidence",
+        lambda *_args, **_kwargs: True,
+    )
+    monkeypatch.setattr(
+        chat,
+        "_desktop_secondary_model_repair_allowed",
+        lambda **_kwargs: (False, "single_owner_test"),
+    )
+    monkeypatch.setattr(chat, "_build_conversation_recall_reply", _no_recall)
+    trace: dict[str, object] = {}
+
+    reply = await chat._run_cognitive_engine_chat_turn(
+        prompt,
+        visible_user_message=prompt,
+        origin="user",
+        timeout_s=60.0,
+        lane={"conversation_ready": True, "state": "ready"},
+        source="desktop_ui",
+        require_engine=True,
+        turn_trace=trace,
+    )
+
+    assert calls == [prompt]
+    assert reply == draft
+    assert reply != prompt
+    assert trace["cognitive_engine_reply_accepted"] is True
+    assert trace["response_path"] == "cognitive_engine_reply_gate_unnamed"

@@ -11229,7 +11229,7 @@ async def _run_cognitive_engine_chat_turn(
                         bounded_contract_used=False,
                         response_path="cognitive_engine_reply_gate_unnamed",
                     )
-                    return visible
+                    return text
                 _mark_turn_trace(
                     cognitive_engine_reply_accepted=False,
                     bounded_contract_used=False,
