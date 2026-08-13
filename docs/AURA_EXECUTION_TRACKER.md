@@ -48713,3 +48713,42 @@ recorded in
 The next bounded action is to move this now-valid semantic objective to a
 decoder-effective plasticity site and require the teacher-free tissue decode to
 satisfy the task verifier outright.
+
+## Checkpoint 2026-08-13-389: Plasticity Selection Respects The Safety Envelope
+
+CP388's ordered objective produced a treatment-specific neural probe gain but
+did not make the teacher-free answer correct. CP389 adds an explicit `coda`
+placement whose registered interval is the post-recurrence decoder rather than
+an alias for the late recurrent window. It is opt-in; the production default is
+unchanged.
+
+The first coda run exposed an optimizer/safety composition defect. Verifier
+search selected a `-1.0` treatment strength with score `0.535319`, but that
+function exceeded the existing `0.05` effective-delta RMS limit. The canary
+ladder then halved it twice and evaluated an unsearched `-0.25` function, which
+regressed to `0.197495` and was correctly erased. The system was safe, but its
+optimization contract was incoherent: it optimized one function and admitted a
+different one.
+
+The v2 gain-search contract now measures delta finiteness and maximum effective
+RMS at every treatment and sham point. Only already-admissible points can win.
+The unchanged safety threshold remains authoritative, and denser negative
+points cover the interval that the old rescale ladder skipped. Historical v1
+receipts remain verifiable but do not acquire the stronger v2 authority.
+
+On the identical frozen Qwen2.5-1.5B cell, `o_proj:coda` selected a safe
+`-0.4375` treatment at `0.407407` and a matched sham at `0.329884`. The selected
+treatment's maximum effective-delta RMS was `0.033356082065`; canaries accepted
+it with zero rescale and no new regression, and the independent teacher-free
+causal probe reproduced `0.407407`. The probe is still not task-correct. The
+complete system remains correct only through executable reasoning, while the
+adaptation ablation remains correct and the producer ablation remains wrong.
+This is not a task-level tissue lift, fusion, frontier result or `WOW Signal`.
+
+The focused mechanism and campaign surface passes `173/173`; canonical smoke
+passes `104/104`; ruff, byte compilation and diff checks pass. Signed evidence
+is recorded in
+`artifacts/closeout/latent_cortex/cp389_safety_constrained_decoder_plasticity.json`.
+The next bounded action is the registered `down_proj:coda` site under this same
+frozen target/sham design. A larger campaign remains inadmissible until the
+teacher-free neural answer itself passes the task verifier.

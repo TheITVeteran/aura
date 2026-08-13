@@ -8,12 +8,26 @@ import math
 from collections.abc import Mapping, Sequence
 from typing import Any
 
-VERIFIER_GAIN_SEARCH_SCHEMA = "aura.rlc.verifier_gain_search.v1"
+VERIFIER_GAIN_SEARCH_SCHEMA = "aura.rlc.verifier_gain_search.v2"
+_LEGACY_SCHEMA = "aura.rlc.verifier_gain_search.v1"
+_LEGACY_GAIN_GRID = (0.0, 0.25, 0.5, 1.0, 2.0, 4.0, -0.5, -1.0)
 # Zero is a first-class candidate.  Therefore the search cannot select a
 # verifier-worse write, even before the independent strict-improvement and
 # matched-sham gates run.  Increasing absolute magnitudes explore the learned
 # direction; signed points test whether credit assignment inverted it.
-VERIFIER_GAIN_GRID = (0.0, 0.25, 0.5, 1.0, 2.0, 4.0, -0.5, -1.0)
+VERIFIER_GAIN_GRID = (
+    0.0,
+    0.25,
+    0.5,
+    1.0,
+    2.0,
+    4.0,
+    -0.25,
+    -0.375,
+    -0.4375,
+    -0.5,
+    -1.0,
+)
 
 
 def _sha(value: Any) -> str:
@@ -41,12 +55,14 @@ def _validate_rows(
     *,
     arm: str,
     gain_grid: Sequence[float],
+    constrained: bool,
+    threshold_effective_delta_rms: float | None = None,
 ) -> list[dict[str, Any]]:
     if not isinstance(rows, list) or len(rows) != len(gain_grid):
         raise ValueError("verifier gain-search row coverage differs")
     normalized = []
     for index, (row, gain) in enumerate(zip(rows, gain_grid, strict=True)):
-        if not isinstance(row, Mapping) or set(row) != {
+        expected_fields = {
             "arm",
             "index",
             "gain",
@@ -54,7 +70,16 @@ def _validate_rows(
             "probe_token_count",
             "score",
             "layer_apps",
-        }:
+        }
+        if constrained:
+            expected_fields.update(
+                {
+                    "delta_finite",
+                    "max_effective_delta_rms",
+                    "structurally_admissible",
+                }
+            )
+        if not isinstance(row, Mapping) or set(row) != expected_fields:
             raise ValueError("verifier gain-search row fields differ")
         if (
             row["arm"] != arm
@@ -70,15 +95,48 @@ def _validate_rows(
             or row["layer_apps"] <= 0
         ):
             raise ValueError("verifier gain-search row is invalid")
+        if constrained:
+            maximum = row["max_effective_delta_rms"]
+            maximum_valid = bool(
+                not isinstance(maximum, bool)
+                and isinstance(maximum, (int, float))
+                and math.isfinite(float(maximum))
+                and float(maximum) >= 0.0
+            )
+            if (
+                type(row["delta_finite"]) is not bool
+                or (row["delta_finite"] and not maximum_valid)
+                or (not row["delta_finite"] and maximum is not None)
+                or type(row["structurally_admissible"]) is not bool
+                or threshold_effective_delta_rms is None
+                or row["structurally_admissible"]
+                is not (
+                    row["delta_finite"]
+                    and maximum_valid
+                    and float(maximum) <= float(threshold_effective_delta_rms)
+                )
+            ):
+                raise ValueError("verifier gain-search structural evidence is invalid")
         normalized.append(dict(row))
     return normalized
 
 
-def _selected(rows: Sequence[Mapping[str, Any]]) -> dict[str, Any]:
+def _selected(
+    rows: Sequence[Mapping[str, Any]],
+    *,
+    constrained: bool,
+) -> dict[str, Any]:
     # Grid order is the deterministic tie-break.  Zero comes first, so equal
     # evidence selects the least invasive point instead of changing cognition
     # without demonstrated benefit.
-    return dict(max(rows, key=lambda row: float(row["score"])))
+    eligible = (
+        [row for row in rows if row["structurally_admissible"]]
+        if constrained
+        else list(rows)
+    )
+    if not eligible:
+        raise ValueError("verifier gain search has no structurally admissible point")
+    return dict(max(eligible, key=lambda row: float(row["score"])))
 
 
 def build_verifier_gain_search_receipt(
@@ -86,10 +144,30 @@ def build_verifier_gain_search_receipt(
     treatment_rows: list[dict[str, Any]],
     sham_rows: list[dict[str, Any]],
     baseline_score: float,
+    threshold_effective_delta_rms: float,
 ) -> dict[str, Any]:
     gains = list(VERIFIER_GAIN_GRID)
-    treatment = _validate_rows(treatment_rows, arm="treatment", gain_grid=gains)
-    sham = _validate_rows(sham_rows, arm="sham", gain_grid=gains)
+    if (
+        isinstance(threshold_effective_delta_rms, bool)
+        or not isinstance(threshold_effective_delta_rms, (int, float))
+        or not math.isfinite(float(threshold_effective_delta_rms))
+        or float(threshold_effective_delta_rms) <= 0.0
+    ):
+        raise ValueError("verifier gain-search structural threshold is invalid")
+    treatment = _validate_rows(
+        treatment_rows,
+        arm="treatment",
+        gain_grid=gains,
+        constrained=True,
+        threshold_effective_delta_rms=float(threshold_effective_delta_rms),
+    )
+    sham = _validate_rows(
+        sham_rows,
+        arm="sham",
+        gain_grid=gains,
+        constrained=True,
+        threshold_effective_delta_rms=float(threshold_effective_delta_rms),
+    )
     if isinstance(baseline_score, bool) or not isinstance(baseline_score, (int, float)):
         raise ValueError("verifier gain-search baseline is invalid")
     if not math.isfinite(float(baseline_score)):
@@ -99,12 +177,16 @@ def build_verifier_gain_search_receipt(
         and left["layer_apps"] == right["layer_apps"]
         for left, right in zip(treatment, sham, strict=True)
     )
-    treatment_selected = _selected(treatment)
-    sham_selected = _selected(sham)
+    treatment_selected = _selected(treatment, constrained=True)
+    sham_selected = _selected(sham, constrained=True)
     payload = {
         "schema": VERIFIER_GAIN_SEARCH_SCHEMA,
         "gain_grid": gains,
-        "selection_policy": "highest_public_verifier_score_grid_order_tiebreak",
+        "selection_policy": (
+            "highest_public_verifier_score_within_effective_delta_rms_"
+            "grid_order_tiebreak"
+        ),
+        "threshold_effective_delta_rms": float(threshold_effective_delta_rms),
         "teacher_removed_from_probe_context": True,
         "capability_claim_authority": False,
         "baseline_score": float(baseline_score),
@@ -128,10 +210,13 @@ def build_verifier_gain_search_receipt(
 def validate_verifier_gain_search_receipt(value: Any) -> dict[str, Any]:
     if not isinstance(value, Mapping):
         raise ValueError("verifier gain-search receipt is missing")
+    if value.get("schema") == _LEGACY_SCHEMA:
+        return _validate_legacy_receipt(value)
     fields = {
         "schema",
         "gain_grid",
         "selection_policy",
+        "threshold_effective_delta_rms",
         "teacher_removed_from_probe_context",
         "capability_claim_authority",
         "baseline_score",
@@ -164,11 +249,31 @@ def validate_verifier_gain_search_receipt(value: Any) -> dict[str, Any]:
         or not _is_sha(value["selected_sham_tokens_sha256"])
     ):
         raise ValueError("verifier gain-search scalar fields are invalid")
+    threshold = value["threshold_effective_delta_rms"]
+    if (
+        isinstance(threshold, bool)
+        or not isinstance(threshold, (int, float))
+        or not math.isfinite(float(threshold))
+        or float(threshold) <= 0.0
+    ):
+        raise ValueError("verifier gain-search structural threshold is invalid")
     gains = list(VERIFIER_GAIN_GRID)
-    treatment = _validate_rows(value["treatment"], arm="treatment", gain_grid=gains)
-    sham = _validate_rows(value["sham"], arm="sham", gain_grid=gains)
-    selected_treatment = _selected(treatment)
-    selected_sham = _selected(sham)
+    treatment = _validate_rows(
+        value["treatment"],
+        arm="treatment",
+        gain_grid=gains,
+        constrained=True,
+        threshold_effective_delta_rms=float(threshold),
+    )
+    sham = _validate_rows(
+        value["sham"],
+        arm="sham",
+        gain_grid=gains,
+        constrained=True,
+        threshold_effective_delta_rms=float(threshold),
+    )
+    selected_treatment = _selected(treatment, constrained=True)
+    selected_sham = _selected(sham, constrained=True)
     compute_matched = all(
         left["probe_token_count"] == right["probe_token_count"]
         and left["layer_apps"] == right["layer_apps"]
@@ -176,6 +281,72 @@ def validate_verifier_gain_search_receipt(value: Any) -> dict[str, Any]:
     )
     if (
         value["schema"] != VERIFIER_GAIN_SEARCH_SCHEMA
+        or value["gain_grid"] != gains
+        or value["selection_policy"]
+        != "highest_public_verifier_score_within_effective_delta_rms_grid_order_tiebreak"
+        or value["teacher_removed_from_probe_context"] is not True
+        or value["capability_claim_authority"] is not False
+        or value["evaluations_per_arm"] != len(gains)
+        or value["compute_matched"] is not compute_matched
+        or compute_matched is not True
+        or float(value["selected_treatment_gain"])
+        != float(selected_treatment["gain"])
+        or float(value["selected_treatment_score"])
+        != float(selected_treatment["score"])
+        or value["selected_treatment_tokens_sha256"]
+        != selected_treatment["probe_tokens_sha256"]
+        or float(value["selected_sham_gain"]) != float(selected_sham["gain"])
+        or float(value["selected_sham_score"]) != float(selected_sham["score"])
+        or value["selected_sham_tokens_sha256"]
+        != selected_sham["probe_tokens_sha256"]
+    ):
+        raise ValueError("verifier gain-search verdict does not reconstruct")
+    return dict(value)
+
+
+def _validate_legacy_receipt(value: Mapping[str, Any]) -> dict[str, Any]:
+    """Keep signed v1 evidence readable without granting it v2 authority."""
+
+    fields = {
+        "schema",
+        "gain_grid",
+        "selection_policy",
+        "teacher_removed_from_probe_context",
+        "capability_claim_authority",
+        "baseline_score",
+        "evaluations_per_arm",
+        "compute_matched",
+        "treatment",
+        "sham",
+        "selected_treatment_gain",
+        "selected_treatment_score",
+        "selected_treatment_tokens_sha256",
+        "selected_sham_gain",
+        "selected_sham_score",
+        "selected_sham_tokens_sha256",
+        "receipt_sha256",
+    }
+    if set(value) != fields:
+        raise ValueError("legacy verifier gain-search fields differ")
+    payload = {field: value[field] for field in fields - {"receipt_sha256"}}
+    if value["receipt_sha256"] != _sha(payload):
+        raise ValueError("legacy verifier gain-search commitment differs")
+    gains = list(_LEGACY_GAIN_GRID)
+    treatment = _validate_rows(
+        value["treatment"], arm="treatment", gain_grid=gains, constrained=False
+    )
+    sham = _validate_rows(
+        value["sham"], arm="sham", gain_grid=gains, constrained=False
+    )
+    selected_treatment = _selected(treatment, constrained=False)
+    selected_sham = _selected(sham, constrained=False)
+    compute_matched = all(
+        left["probe_token_count"] == right["probe_token_count"]
+        and left["layer_apps"] == right["layer_apps"]
+        for left, right in zip(treatment, sham, strict=True)
+    )
+    if (
+        value["schema"] != _LEGACY_SCHEMA
         or value["gain_grid"] != gains
         or value["selection_policy"]
         != "highest_public_verifier_score_grid_order_tiebreak"
@@ -195,7 +366,7 @@ def validate_verifier_gain_search_receipt(value: Any) -> dict[str, Any]:
         or value["selected_sham_tokens_sha256"]
         != selected_sham["probe_tokens_sha256"]
     ):
-        raise ValueError("verifier gain-search verdict does not reconstruct")
+        raise ValueError("legacy verifier gain-search verdict does not reconstruct")
     return dict(value)
 
 

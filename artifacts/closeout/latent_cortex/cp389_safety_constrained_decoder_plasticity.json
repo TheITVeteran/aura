@@ -1,0 +1,69 @@
+{
+  "schema": "aura.closeout.latent_cortex_checkpoint.v1",
+  "checkpoint": "CP389",
+  "title": "Decoder plasticity is selected inside the safety envelope",
+  "source_parent": "5617471d04721f8993bc4c157f3e98e9466daddb",
+  "implementation": {
+    "registered_decoder_coda_placement": true,
+    "coda_interval_is_post_recurrence_decoder": true,
+    "gain_search_schema": "aura.rlc.verifier_gain_search.v2",
+    "legacy_v1_receipts_remain_readable": true,
+    "selection_constrained_by_effective_delta_rms": true,
+    "safety_threshold_unchanged": 0.05,
+    "treatment_and_sham_grid_compute_matched": true,
+    "unmeasured_post_selection_rescale_avoided": true
+  },
+  "bounded_real_checkpoint_result": {
+    "model": "mlx-community/Qwen2.5-1.5B-Instruct-4bit",
+    "task_registry": "2026.08.06.1",
+    "domain": "novel_algorithms",
+    "difficulty": 2,
+    "seed": 41037613,
+    "plasticity_site": "o_proj:coda",
+    "adapted_layers": [21, 22, 23, 24, 25, 26, 27],
+    "baseline_score": 0.25,
+    "selected_treatment_gain": -0.4375,
+    "selected_treatment_score": 0.407407,
+    "selected_treatment_max_effective_delta_rms": 0.033356082065,
+    "selected_sham_gain": -0.25,
+    "selected_sham_score": 0.329884,
+    "incremental_gain_over_sham": 0.077523,
+    "canary_decision": "accepted",
+    "canary_rescales": 0,
+    "protected_canary_regressions": [],
+    "causal_probe_reproduced_selected_score": true,
+    "causal_probe_task_correct": false,
+    "disposition": "accepted_probe_not_output_under_incumbent_policy",
+    "runtime_receipt_sha256": "2862e8271db11a7f54a30d245720774df9be496b41adc650fc485602085aa1b3",
+    "learning_receipt_sha256": "847b7b1688291fbe30d274704f3d1202e029cdf18431f8ece1b80a89312424b8",
+    "gain_search_receipt_sha256": "612a6414abea6f4704570848e433b958c99d16a1a23cf16182530bdf8b4c39b4",
+    "matched_compute_receipt_sha256": "fe027c4b337efeaa2bf0ab088ca123bb104056b65e4ca24e95c7b0b8383d3aab"
+  },
+  "system_result": {
+    "vanilla_correct": 0,
+    "complete_system_correct": 1,
+    "adaptation_ablation_correct": 1,
+    "executable_ablation_correct": 0,
+    "system_gain_source": "executable_reasoning",
+    "neural_probe_task_correct": false
+  },
+  "validation": {
+    "targeted_contracts": "173 passed",
+    "canonical_smoke": "104 passed",
+    "ruff": "pass",
+    "byte_compile": "pass",
+    "diff_check": "pass"
+  },
+  "claims": {
+    "decoder_coda_plasticity_mechanism_proven": true,
+    "safety_constrained_gain_selection_proven": true,
+    "treatment_specific_probe_gain_observed": true,
+    "task_level_neural_tissue_gain_proven": false,
+    "general_reasoning_gain_proven": false,
+    "fusion_authorized": false,
+    "ordinary_serving_authorized": false,
+    "frontier_reasoning_proven": false,
+    "wow_signal": false
+  },
+  "next_bounded_action": "Evaluate the registered MLP down-projection decoder site under the same frozen task, safety envelope, teacher-free causal probe, and matched sham before expanding the campaign."
+}

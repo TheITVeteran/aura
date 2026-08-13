@@ -14,7 +14,7 @@ from dataclasses import dataclass
 
 PLASTICITY_SITE_REGISTRY_SCHEMA = "aura.rlc.plasticity_site_registry.v1"
 PLASTICITY_TARGETS = ("o_proj", "down_proj")
-PLASTICITY_LAYER_PLACEMENTS = ("early", "distributed", "late")
+PLASTICITY_LAYER_PLACEMENTS = ("early", "distributed", "late", "coda")
 
 
 def _sha(value: object) -> str:
@@ -50,7 +50,7 @@ def select_plasticity_layers(
         return inventory
     if placement == "early":
         return inventory[:count]
-    if placement == "late":
+    if placement in {"late", "coda"}:
         return inventory[-count:]
     if count == 1:
         return (inventory[(len(inventory) - 1) // 2],)

@@ -324,9 +324,13 @@ class LatentCortexEngine:
             self.config.fast_weights.target,
             self.config.fast_weights.layer_placement,
         )
+        self.plasticity_layer_range = (
+            (self.coda_start, self.n_layers)
+            if self.config.fast_weights.layer_placement == "coda"
+            else (self.prelude_end, self.coda_start)
+        )
         adapted_layers = self.plasticity_site.layer_indices(
-            self.prelude_end,
-            self.coda_start,
+            *self.plasticity_layer_range,
             max(1, self.config.fast_weights.max_wrapped_layers),
         )
         self.invariant = CheckpointInvariant(
@@ -6432,7 +6436,7 @@ class LatentCortexEngine:
                     )
                 wrapped = fast_weights.attach(
                     self.model.model,
-                    (self.prelude_end, self.coda_start),
+                    self.plasticity_layer_range,
                     seed_stat=seed_stat,
                     episode_id=receipt.episode_id,
                     seed_vectors=retrieval_seed_vectors,
@@ -8855,6 +8859,19 @@ class LatentCortexEngine:
                     force_exact_tokens=True,
                 )
                 score = float(verifier(self.tokenizer.decode(probe)))
+                delta_magnitude = fast_weights.effective_delta_metrics()
+                max_delta_rms = delta_magnitude.get("max_effective_delta_rms")
+                delta_finite = bool(delta_magnitude.get("finite") is True)
+                structurally_admissible = bool(
+                    delta_finite
+                    and not isinstance(max_delta_rms, bool)
+                    and isinstance(max_delta_rms, (int, float))
+                    and math.isfinite(float(max_delta_rms))
+                    and float(max_delta_rms)
+                    <= float(
+                        self.config.fast_weights.canary_max_effective_delta_rms
+                    )
+                )
                 snapshot = fast_weights.snapshot_delta()
                 row = {
                     "arm": arm,
@@ -8864,6 +8881,15 @@ class LatentCortexEngine:
                     "probe_token_count": len(probe),
                     "score": score,
                     "layer_apps": probe_cost,
+                    "delta_finite": delta_finite,
+                    "max_effective_delta_rms": (
+                        float(max_delta_rms)
+                        if not isinstance(max_delta_rms, bool)
+                        and isinstance(max_delta_rms, (int, float))
+                        and math.isfinite(float(max_delta_rms))
+                        else None
+                    ),
+                    "structurally_admissible": structurally_admissible,
                 }
                 rows[arm].append(row)
                 private[arm].append((float(gain), snapshot, probe, score))
@@ -8872,6 +8898,9 @@ class LatentCortexEngine:
             treatment_rows=rows["treatment"],
             sham_rows=rows["sham"],
             baseline_score=baseline_score,
+            threshold_effective_delta_rms=(
+                self.config.fast_weights.canary_max_effective_delta_rms
+            ),
         )
         treatment_gain = gain_receipt["selected_treatment_gain"]
         sham_gain = gain_receipt["selected_sham_gain"]

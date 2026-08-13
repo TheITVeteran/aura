@@ -220,6 +220,26 @@ def test_full_episode_produces_tokens_and_truthful_receipt(tiny_model):
     assert not r.honest_flags, f"clean episode must carry no flags: {r.honest_flags}"
 
 
+def test_coda_plasticity_site_selects_decoder_layers(tiny_model):
+    engine = LatentCortexEngine(
+        tiny_model,
+        config=_config(
+            fast_weights=FastWeightsConfig(
+                enabled=True,
+                layer_placement="coda",
+                max_wrapped_layers=2,
+            )
+        ),
+    )
+
+    assert engine.plasticity_site.site_id == "o_proj:coda"
+    assert engine.plasticity_layer_range == (engine.coda_start, engine.n_layers)
+    assert engine.plasticity_site.layer_indices(
+        *engine.plasticity_layer_range,
+        2,
+    ) == (engine.coda_start, engine.n_layers - 1)
+
+
 def test_vanilla_incumbent_runs_latent_episode_but_preserves_ordinary_decode(
     tiny_model,
 ):

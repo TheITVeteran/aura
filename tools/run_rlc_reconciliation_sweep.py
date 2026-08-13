@@ -2167,7 +2167,7 @@ def _manifest_integrity_issues(
         elif (
             fast_weight_site["target"] not in {"o_proj", "down_proj"}
             or fast_weight_site["layer_placement"]
-            not in {"early", "distributed", "late"}
+            not in {"early", "distributed", "late", "coda"}
         ):
             issues.append("fast_weight_site_invalid")
 
@@ -2843,7 +2843,7 @@ def main() -> int:
     )
     parser.add_argument(
         "--fast-weight-layer-placement",
-        choices=("early", "distributed", "late"),
+        choices=("early", "distributed", "late", "coda"),
         default="early",
     )
     parser.add_argument(

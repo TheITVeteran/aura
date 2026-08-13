@@ -12,7 +12,12 @@ from core.brain.llm.latent_cortex.verifier_gain_search import (
 )
 
 
-def _rows(arm: str, winning_index: int) -> list[dict]:
+def _rows(
+    arm: str,
+    winning_index: int,
+    *,
+    unsafe_indices: frozenset[int] = frozenset(),
+) -> list[dict]:
     return [
         {
             "arm": arm,
@@ -24,6 +29,9 @@ def _rows(arm: str, winning_index: int) -> list[dict]:
             "probe_token_count": 16,
             "score": 1.0 if index == winning_index else 0.25,
             "layer_apps": 512,
+            "delta_finite": True,
+            "max_effective_delta_rms": 0.06 if index in unsafe_indices else 0.01,
+            "structurally_admissible": index not in unsafe_indices,
         }
         for index, gain in enumerate(VERIFIER_GAIN_GRID)
     ]
@@ -34,6 +42,7 @@ def test_gain_search_selects_each_arm_independently_and_reconstructs():
         treatment_rows=_rows("treatment", 4),
         sham_rows=_rows("sham", 1),
         baseline_score=0.25,
+        threshold_effective_delta_rms=0.05,
     )
     assert receipt["selected_treatment_gain"] == VERIFIER_GAIN_GRID[4]
     assert receipt["selected_sham_gain"] == VERIFIER_GAIN_GRID[1]
@@ -46,6 +55,7 @@ def test_gain_search_rejects_rehashed_unequal_compute():
         treatment_rows=_rows("treatment", 0),
         sham_rows=_rows("sham", 0),
         baseline_score=0.25,
+        threshold_effective_delta_rms=0.05,
     )
     tampered = copy.deepcopy(receipt)
     tampered["sham"][0]["layer_apps"] += 1
@@ -61,3 +71,22 @@ def test_gain_search_rejects_rehashed_unequal_compute():
     ).hexdigest()
     with pytest.raises(ValueError, match="verdict does not reconstruct"):
         validate_verifier_gain_search_receipt(tampered)
+
+
+def test_gain_search_selects_best_structurally_admissible_point():
+    receipt = build_verifier_gain_search_receipt(
+        treatment_rows=_rows(
+            "treatment",
+            len(VERIFIER_GAIN_GRID) - 1,
+            unsafe_indices=frozenset({len(VERIFIER_GAIN_GRID) - 1}),
+        ),
+        sham_rows=_rows("sham", 0),
+        baseline_score=0.25,
+        threshold_effective_delta_rms=0.05,
+    )
+
+    assert receipt["treatment"][-1]["score"] == 1.0
+    assert receipt["treatment"][-1]["structurally_admissible"] is False
+    assert receipt["selected_treatment_gain"] == VERIFIER_GAIN_GRID[0]
+    assert receipt["selected_treatment_score"] == 0.25
+    validate_verifier_gain_search_receipt(receipt)

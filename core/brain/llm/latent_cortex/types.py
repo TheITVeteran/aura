@@ -132,7 +132,7 @@ class FastWeightsConfig:
     # Where inside the recurrent region the bounded wrappers attach. ``early``
     # preserves the historical serving function; other placements are
     # explicit, source-bound experimental choices until causally promoted.
-    layer_placement: str = "early"  # early | distributed | late
+    layer_placement: str = "early"  # early | distributed | late | coda
     opt_steps: int = 4
     lr: float = 0.01
     # Layers (within the recurrent window) that receive fast weights; None ⇒
@@ -877,9 +877,10 @@ class CortexConfig:
             "early",
             "distributed",
             "late",
+            "coda",
         }:
             problems.append(
-                "fast_weights.layer_placement must be early, distributed, or late"
+                "fast_weights.layer_placement must be early, distributed, late, or coda"
             )
         if not integer_in(self.fast_weights.opt_steps, 1, ABSOLUTE_MAX_RECURRENT_STEPS):
             problems.append("fast_weights.opt_steps outside recurrent-step limits")
