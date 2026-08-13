@@ -501,6 +501,89 @@ FMEA_REGISTRY: tuple[FailureMode, ...] = (
         "sealed compounding gate still decide what ships, so misdirection can waste idle "
         "compute but cannot promote a regression.",
     ),
+    # ── Cognition ──────────────────────────────────────────────────
+    #
+    # Everything above this line is infrastructure: memory pressure, worker
+    # lifecycle, lane admission, forensics. That is the half of the system the
+    # OS can kill, and it was the only half declared here.
+    #
+    # The failures in this section were all found by RUNNING the mechanisms,
+    # none by reading them, and none had a declared detection at the time.
+    # They share a shape that infrastructure FMEA does not cover: the
+    # subsystem stays up, every contract test passes, and the *dynamics* are
+    # wrong — so the effect is silent degradation of cognition rather than an
+    # outage. A cognitive failure mode with no steady-state detector is
+    # indistinguishable from correct operation for as long as nobody looks.
+    FailureMode(
+        id="FM-COG-001",
+        subsystem="core/consciousness/global_workspace.py (competition)",
+        mode="Broadcast monopoly or cartel: the workspace stops rotating in steady state",
+        cause="Refractory policy that excludes losers, or adaptation whose recovery rate is "
+        "fixed. A leaky integrator with gain g and fixed decay r pins each source's "
+        "sustainable share at r/g, so exactly g/r sources can rotate however many bid",
+        effect="No global workspace, only a sort. Every downstream consumer of winners — "
+        "soul.py, the context stream, ignition-gated cognition — reads a broadcast that "
+        "one or two producers hold permanently",
+        blast_radius=BlastRadius.ORGANISM,
+        severity=Severity.CRITICAL,
+        detection="Steady-state competition health over a trajectory: no_starvation and "
+        "rotation_entropy against order_preserving, plus no_limit_cycle for the a-b-a-b "
+        "alternation that scores as a perfect rotation on entropy alone",
+        mitigation="Adaptation recovery derived as r = g/n from the size of the field, making "
+        "the equilibrium share 1/n; the lone-source and urgent-vs-idle regimes fall out "
+        "rather than needing special cases",
+        detection_modules=("core.verify.dynamics",),
+        mitigation_modules=("core.consciousness.global_workspace",),
+        occurrences=(
+            "2026-08-12 monopoly: 24/24 wins to one source of four, past 46 contract tests",
+            "2026-08-12 duopoly: 12/12 split by the top two, past the monopoly fix's own test",
+        ),
+        notes="Both states passed the assertions written against the previous one. "
+        "top_share < 0.75 with two distinct winners is true of a perfect duopoly, which is "
+        "why the check is now a property over a trajectory rather than a bound on a symptom.",
+    ),
+    FailureMode(
+        id="FM-COG-002",
+        subsystem="core/consciousness/global_workspace.py (arbitration)",
+        mode="Decisions settled by submission timing while presented as priority",
+        cause="effective_priority scales salience by (1 - 0.03*age), so candidates of "
+        "identical salience differ by ~0.03*spread purely from when they were submitted",
+        effect="Arbitrary arbitration that looks principled. Measured: four sources bidding "
+        "an identical 0.70 produced 0 exact ties in 12 ticks and were separated by ~2e-6",
+        blast_radius=BlastRadius.LANE,
+        severity=Severity.MAJOR,
+        detection="Tie impasses counted against the timing noise floor that mechanism "
+        "creates rather than against exact equality; surfaced in get_snapshot()",
+        mitigation="GAP",
+        detection_modules=("core.consciousness.global_workspace", "core.cognition.impasse"),
+        mitigation_modules=(),
+        occurrences=("2026-08-12 identical-bid probe: 3 tie impasses in 12 ticks",),
+        notes="A visible tie would have been better than this. Pinned as a mitigation GAP "
+        "rather than described as fixed: selection is genuinely unchanged, and the rate "
+        "being measurable is the precondition for deciding whether it needs a fix, not the "
+        "fix itself.",
+    ),
+    FailureMode(
+        id="FM-COG-003",
+        subsystem="core/memory/episodic_memory.py (recall ranking)",
+        mode="A ranking term silently decays to a constant",
+        cause="Scoring keyed to an absolute wall-clock epoch rather than elapsed time; the "
+        "usable window recedes as real time advances until every live input saturates",
+        effect="Recall ranked by importance alone. Measured on 2026-08-12, every episode "
+        "newer than 2026-04-12 scored exactly 1.000000 — one minute and thirty days "
+        "indistinguishable — so the term contributed a constant 0.4 to every candidate",
+        blast_radius=BlastRadius.ORGANISM,
+        severity=Severity.MAJOR,
+        detection="Scale-freedom: identical relative histories must score identically at any "
+        "wall clock, and distinct ages must produce distinct scores across the operating range",
+        mitigation="ACT-R base-level activation B = ln(sum t_j^-d), a function of elapsed time "
+        "only, so it cannot saturate and has no epoch to go stale; also reads frequency",
+        detection_modules=("core.cognition.actr_activation",),
+        mitigation_modules=("core.cognition.actr_activation", "core.memory.episodic_memory"),
+        occurrences=("2026-08-12 recency scorer measured flat across the whole live range",),
+        notes="Time-bomb class: correct when written, degrades with the calendar, and no test "
+        "that does not move the clock can see it. The detector moves the clock.",
+    ),
 )
 
 

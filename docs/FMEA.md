@@ -4,7 +4,7 @@
 > (`make fmea-doc`). Do not edit by hand — a drift test regenerates
 > and compares this file on every suite run.
 
-Registry version: `1.1` — 22 modes (2 catastrophic, 11 critical, 7 major, 2 minor); 1 open mitigation gap(s), 0 open detection gap(s).
+Registry version: `1.1` — 25 modes (2 catastrophic, 12 critical, 9 major, 2 minor); 2 open mitigation gap(s), 0 open detection gap(s).
 
 Every entry is REAL: it either occurred live (occurrences cite when)
 or is a structurally-reachable state found by analysis. Gaps are
@@ -271,6 +271,45 @@ explicit and pinned by an allowlist test that only shrinks.
 - **Mitigation modules:** `core.learning.deliberate_practice`
 - **Notes:** Direction is quality-of-learning only: the two-sided specialist gate and the sealed compounding gate still decide what ships, so misdirection can waste idle compute but cannot promote a regression.
 
+## FM-COG-001 — Broadcast monopoly or cartel: the workspace stops rotating in steady state
+
+- **Subsystem:** core/consciousness/global_workspace.py (competition)
+- **Severity / blast radius:** critical / organism
+- **Cause:** Refractory policy that excludes losers, or adaptation whose recovery rate is fixed. A leaky integrator with gain g and fixed decay r pins each source's sustainable share at r/g, so exactly g/r sources can rotate however many bid
+- **Effect:** No global workspace, only a sort. Every downstream consumer of winners — soul.py, the context stream, ignition-gated cognition — reads a broadcast that one or two producers hold permanently
+- **Detection:** Steady-state competition health over a trajectory: no_starvation and rotation_entropy against order_preserving, plus no_limit_cycle for the a-b-a-b alternation that scores as a perfect rotation on entropy alone
+- **Mitigation:** Adaptation recovery derived as r = g/n from the size of the field, making the equilibrium share 1/n; the lone-source and urgent-vs-idle regimes fall out rather than needing special cases
+- **Detection modules:** `core.verify.dynamics`
+- **Mitigation modules:** `core.consciousness.global_workspace`
+- **Recorded occurrences:** 2026-08-12 monopoly: 24/24 wins to one source of four, past 46 contract tests; 2026-08-12 duopoly: 12/12 split by the top two, past the monopoly fix's own test
+- **Notes:** Both states passed the assertions written against the previous one. top_share < 0.75 with two distinct winners is true of a perfect duopoly, which is why the check is now a property over a trajectory rather than a bound on a symptom.
+
+## FM-COG-002 — Decisions settled by submission timing while presented as priority
+
+- **Subsystem:** core/consciousness/global_workspace.py (arbitration)
+- **Severity / blast radius:** major / lane
+- **Cause:** effective_priority scales salience by (1 - 0.03*age), so candidates of identical salience differ by ~0.03*spread purely from when they were submitted
+- **Effect:** Arbitrary arbitration that looks principled. Measured: four sources bidding an identical 0.70 produced 0 exact ties in 12 ticks and were separated by ~2e-6
+- **Detection:** Tie impasses counted against the timing noise floor that mechanism creates rather than against exact equality; surfaced in get_snapshot()
+- **Mitigation:** GAP
+- **Detection modules:** `core.consciousness.global_workspace`, `core.cognition.impasse`
+- **Recorded occurrences:** 2026-08-12 identical-bid probe: 3 tie impasses in 12 ticks
+- **Notes:** A visible tie would have been better than this. Pinned as a mitigation GAP rather than described as fixed: selection is genuinely unchanged, and the rate being measurable is the precondition for deciding whether it needs a fix, not the fix itself.
+
+## FM-COG-003 — A ranking term silently decays to a constant
+
+- **Subsystem:** core/memory/episodic_memory.py (recall ranking)
+- **Severity / blast radius:** major / organism
+- **Cause:** Scoring keyed to an absolute wall-clock epoch rather than elapsed time; the usable window recedes as real time advances until every live input saturates
+- **Effect:** Recall ranked by importance alone. Measured on 2026-08-12, every episode newer than 2026-04-12 scored exactly 1.000000 — one minute and thirty days indistinguishable — so the term contributed a constant 0.4 to every candidate
+- **Detection:** Scale-freedom: identical relative histories must score identically at any wall clock, and distinct ages must produce distinct scores across the operating range
+- **Mitigation:** ACT-R base-level activation B = ln(sum t_j^-d), a function of elapsed time only, so it cannot saturate and has no epoch to go stale; also reads frequency
+- **Detection modules:** `core.cognition.actr_activation`
+- **Mitigation modules:** `core.cognition.actr_activation`, `core.memory.episodic_memory`
+- **Recorded occurrences:** 2026-08-12 recency scorer measured flat across the whole live range
+- **Notes:** Time-bomb class: correct when written, degrades with the calendar, and no test that does not move the clock can see it. The detector moves the clock.
+
 ## Open gaps (the work queue)
 
 - **FM-MEM-001** (mitigation gap): Linear memory growth ~242MB/h under sustained conversation
+- **FM-COG-002** (mitigation gap): Decisions settled by submission timing while presented as priority
