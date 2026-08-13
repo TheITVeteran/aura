@@ -165,6 +165,106 @@ def test_materializes_and_reopens_shadow_only_package(
     }
 
 
+def test_migrates_byte_identical_package_with_explicit_identity_bridge(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    campaign, output_root = _fixture(tmp_path, monkeypatch)
+    source_result = materializer.materialize(
+        campaign,
+        output_root=output_root,
+        package_id="source-package",
+    )
+    source_package = Path(source_result["package"])
+    source_manifest = json.loads((source_package / "manifest.json").read_bytes())
+    source_checkpoint = json.loads(
+        (source_package / "checkpoint-complete.json").read_bytes()
+    )
+
+    migrated_campaign = tmp_path / "migrated-campaign"
+    migrated_output = migrated_campaign / "training-output"
+    migrated_output.mkdir(parents=True, mode=0o700)
+    migrated_campaign.chmod(0o700)
+    target_identity = {
+        **source_checkpoint["identity"],
+        "identity_sha256": "d" * 64,
+        "source_migration_controller_sha256": "e" * 64,
+    }
+    target_receipt = {
+        **source_checkpoint,
+        "identity": target_identity,
+    }
+    checkpoint = SimpleNamespace(
+        receipt=target_receipt,
+        weights_path=campaign / "controller-source.safetensors",
+    )
+    target_config = {
+        "campaign_id": "migration-campaign",
+        "config_sha256": "f" * 64,
+        "paths": {"training_output": str(migrated_output)},
+        "source": {"git": {"commit": "a" * 40}},
+    }
+    migration_body = {
+        "schema": "aura.unified_intrinsic.checkpoint_source_migration.v1",
+        "state": "complete",
+        "source": {
+            "checkpoint_sha256": source_manifest["checkpoint_sha256"],
+            "identity_sha256": source_manifest["checkpoint_identity_sha256"],
+        },
+        "destination": {
+            "campaign_id": target_config["campaign_id"],
+            "config_sha256": target_config["config_sha256"],
+            "checkpoint_sha256": source_manifest["checkpoint_sha256"],
+            "identity_sha256": target_identity["identity_sha256"],
+        },
+        "source_differences": {
+            "core/learning/unified_intrinsic_recurrence.py": {
+                "source": "b" * 64,
+                "target": "c" * 64,
+            }
+        },
+        "target_source_commit": target_config["source"]["git"]["commit"],
+        "payload_byte_identical": True,
+        "optimizer_and_bundle_bytes_preserved": True,
+        "history_preserved": True,
+        "training_state_preserved": True,
+    }
+    migration = {
+        **migration_body,
+        "migration_sha256": canonical_sha256(migration_body),
+    }
+    (migrated_campaign / "checkpoint-source-migration.json").write_bytes(
+        canonical_bytes(migration) + b"\n"
+    )
+    (migrated_campaign / "checkpoint-source-migration.json").chmod(0o400)
+    (migrated_campaign / "campaign.json").write_text("fixture")
+    (migrated_campaign / "campaign.json").chmod(0o400)
+    monkeypatch.setattr(materializer, "_load_config", lambda _path: target_config)
+    monkeypatch.setattr(
+        materializer,
+        "resolve_checkpoint_generation",
+        lambda *_args, **_kwargs: checkpoint,
+    )
+
+    result = materializer.migrate_materialized_package(
+        source_package,
+        migrated_campaign,
+        output_root=output_root,
+        package_id="migrated-package",
+    )
+    package = Path(result["package"])
+    manifest = json.loads((package / "manifest.json").read_bytes())
+
+    assert manifest["source_migration_origin_package_id"] == "source-package"
+    assert manifest["source_migration_sha256"] == migration["migration_sha256"]
+    assert manifest["checkpoint_identity_sha256"] == "d" * 64
+    assert materializer.inspect_shadow_package(package) == result
+    assert runtime_shadow.inspect_shadow_package(package)["manifest"] == manifest
+    assert (package / "controller.safetensors").read_bytes() == (
+        source_package / "controller.safetensors"
+    ).read_bytes()
+
+
 def test_controller_projection_refuses_noncontroller_training_tissue(
     tmp_path: Path,
 ) -> None:

@@ -24,9 +24,13 @@ from core.brain.llm.unified_recurrent_shadow_battery import (  # noqa: E402
     seal_shadow_canary_battery,
     validate_shadow_canary_battery,
 )
+from core.brain.llm.unified_recurrent_shadow_migration import (  # noqa: E402
+    shadow_source_migration_errors,
+)
 from core.runtime.atomic_writer import atomic_write_bytes  # noqa: E402
 from tools import adjudicate_unified_intrinsic_resident_replication as replication  # noqa: E402
 from tools import launch_unified_intrinsic_resident_evaluation as launcher  # noqa: E402
+from tools.run_unified_intrinsic_resident_campaign import _load_config  # noqa: E402
 from tools.unified_intrinsic_checkpoint import (  # noqa: E402
     resolve_checkpoint_generation,
 )
@@ -175,6 +179,30 @@ def _write_document(path: Path, value: Mapping[str, Any]) -> dict[str, Any]:
         "sha256": hashlib.sha256(payload).hexdigest(),
         "size_bytes": len(payload),
     }
+
+
+def _copy_bound_artifact(
+    source_root: Path,
+    binding: Mapping[str, Any],
+    destination_root: Path,
+) -> dict[str, Any]:
+    if set(binding) != {"path", "sha256", "size_bytes"}:
+        _fail("shadow package source artifact binding differs")
+    name = binding.get("path")
+    if not isinstance(name, str) or Path(name).name != name:
+        _fail("shadow package source artifact path differs")
+    source = source_root / name
+    destination = destination_root / name
+    before = _stable_identity(source)
+    if before != dict(binding) or destination.exists() or destination.is_symlink():
+        _fail("shadow package source artifact identity differs")
+    shutil.copyfile(source, destination, follow_symlinks=False)
+    destination.chmod(0o400)
+    after_source = _stable_identity(source)
+    after_destination = _stable_identity(destination)
+    if before != after_source or before != after_destination:
+        _fail("shadow package source artifact changed while copying")
+    return after_destination
 
 
 def _stable_identity(path: Path, *, maximum: int = _MAX_COPY_BYTES) -> dict[str, Any]:
@@ -491,6 +519,14 @@ def inspect_shadow_package(
         if not isinstance(binding, dict):
             _fail(f"shadow package artifact binding is unavailable: {role}")
         bindings.append(binding)
+    migration_binding = artifacts.get("source_migration")
+    migration_sha256 = manifest.get("source_migration_sha256")
+    if (migration_binding is None) != (migration_sha256 is None):
+        _fail("shadow package source migration inventory differs")
+    if migration_binding is not None:
+        if not isinstance(migration_binding, dict):
+            _fail("shadow package source migration binding differs")
+        bindings.append(migration_binding)
     reports = artifacts.get("replication_reports")
     if not isinstance(reports, list) or not reports:
         _fail("shadow package replication report inventory is unavailable")
@@ -528,6 +564,9 @@ def inspect_shadow_package(
         or verdict.get("verdict_sha256") != manifest.get("replication_verdict_sha256")
         or verdict.get("checkpoint_sha256") != manifest.get("checkpoint_sha256")
         or checkpoint.get("checkpoint_sha256") != manifest.get("checkpoint_sha256")
+        or not isinstance(checkpoint.get("identity"), dict)
+        or checkpoint["identity"].get("identity_sha256")
+        != manifest.get("checkpoint_identity_sha256")
         or canary_battery.get("battery_sha256")
         != manifest.get("canary_battery_sha256")
         or canary_battery.get("replication_plan_sha256")
@@ -536,6 +575,18 @@ def inspect_shadow_package(
         != manifest.get("replication_verdict_sha256")
     ):
         _fail("shadow package scientific evidence differs")
+    if migration_binding is not None:
+        migration = _read_document(package / str(migration_binding["path"]))
+        migration_errors = shadow_source_migration_errors(
+            migration,
+            manifest=manifest,
+            checkpoint=checkpoint,
+        )
+        if migration_errors:
+            _fail(
+                "shadow package source migration differs:"
+                + ",".join(migration_errors)
+            )
     return {
         "schema": COMPLETE_SCHEMA,
         "package": str(package),
@@ -702,6 +753,165 @@ def materialize(
         raise
 
 
+def migrate_materialized_package(
+    source_package: Path,
+    migrated_campaign: Path,
+    *,
+    output_root: Path,
+    package_id: str,
+) -> dict[str, Any]:
+    """Carry supported evidence across an exact source-only checkpoint migration."""
+
+    if not isinstance(package_id, str) or _PACKAGE_ID.fullmatch(package_id) is None:
+        _fail("shadow package id is invalid")
+    source_package = _private_directory(source_package, create=False)
+    inspect_shadow_package(source_package)
+    source_manifest = _read_document(source_package / "manifest.json")
+    source_artifacts = source_manifest.get("artifacts")
+    if not isinstance(source_artifacts, dict):
+        _fail("shadow package source artifact inventory differs")
+
+    migrated_campaign = _private_directory(migrated_campaign, create=False)
+    config = _load_config(migrated_campaign / "campaign.json")
+    checkpoint = resolve_checkpoint_generation(
+        Path(config["paths"]["training_output"]),
+        stem="checkpoint_latest",
+        required=True,
+    )
+    if checkpoint is None:  # pragma: no cover - required=True is exhaustive
+        _fail("shadow package migrated checkpoint is unavailable")
+    migration = _read_document(migrated_campaign / "checkpoint-source-migration.json")
+    identity = checkpoint.receipt.get("identity")
+    if not isinstance(identity, dict):
+        _fail("shadow package migrated checkpoint identity is unavailable")
+
+    output_root = _private_directory(output_root, create=True)
+    destination = output_root / package_id
+    if destination.exists() or destination.is_symlink():
+        _fail("shadow package destination already exists")
+    stage = output_root / f".{package_id}.stage-{uuid.uuid4().hex}"
+    stage.mkdir(mode=0o700)
+    try:
+        projected = _controller_only_copy(
+            checkpoint.weights_path,
+            stage / "controller.safetensors",
+            checkpoint_sha256=checkpoint.receipt["checkpoint_sha256"],
+        )
+        if projected != source_artifacts.get("controller"):
+            _fail("shadow package migrated controller bytes differ")
+        artifacts: dict[str, Any] = {
+            "controller": projected,
+            "checkpoint": _write_document(
+                stage / "checkpoint-complete.json",
+                checkpoint.receipt,
+            ),
+        }
+        for role in (
+            "campaign_completion",
+            "replication_plan",
+            "replication_verdict",
+            "canary_battery",
+        ):
+            binding = source_artifacts.get(role)
+            if not isinstance(binding, dict):
+                _fail(f"shadow package source artifact is unavailable: {role}")
+            artifacts[role] = _copy_bound_artifact(
+                source_package,
+                binding,
+                stage,
+            )
+        source_reports = source_artifacts.get("replication_reports")
+        if not isinstance(source_reports, list) or not source_reports:
+            _fail("shadow package source replication reports are unavailable")
+        report_bindings = [
+            _copy_bound_artifact(source_package, binding, stage)
+            for binding in source_reports
+            if isinstance(binding, dict)
+        ]
+        if len(report_bindings) != len(source_reports):
+            _fail("shadow package source replication report inventory differs")
+        artifacts["source_migration"] = _write_document(
+            stage / "checkpoint-source-migration.json",
+            migration,
+        )
+
+        preserved_manifest = {
+            key: value
+            for key, value in source_manifest.items()
+            if key
+            not in {
+                "manifest_sha256",
+                "package_id",
+                "source_commit",
+                "checkpoint_identity_sha256",
+                "artifacts",
+                "promotion_requirements",
+            }
+        }
+        body = {
+            **preserved_manifest,
+            "package_id": package_id,
+            "source_commit": config["source"]["git"]["commit"],
+            "checkpoint_identity_sha256": identity["identity_sha256"],
+            "source_migration_sha256": migration.get("migration_sha256"),
+            "source_migration_config_sha256": config["config_sha256"],
+            "source_migration_campaign_id": config["campaign_id"],
+            "source_migration_origin_package_id": source_manifest["package_id"],
+            "artifacts": {
+                **artifacts,
+                "replication_reports": report_bindings,
+            },
+            "promotion_requirements": [
+                *source_manifest.get("promotion_requirements", []),
+                "source_migration_equivalence_gate",
+            ],
+        }
+        manifest = {**body, "manifest_sha256": canonical_sha256(body)}
+        migration_errors = shadow_source_migration_errors(
+            migration,
+            manifest=manifest,
+            checkpoint=checkpoint.receipt,
+        )
+        if migration_errors:
+            _fail(
+                "shadow package source migration differs:"
+                + ",".join(migration_errors)
+            )
+        manifest_binding = _write_document(stage / "manifest.json", manifest)
+        complete_body = {
+            "schema": COMPLETE_SCHEMA,
+            "package_id": package_id,
+            "manifest_sha256": manifest["manifest_sha256"],
+            "manifest_file_sha256": manifest_binding["sha256"],
+            "bound_artifact_count": 8 + len(report_bindings),
+            "mode": "shadow_only",
+            "serving_authority": False,
+        }
+        complete = {
+            **complete_body,
+            "complete_sha256": canonical_sha256(complete_body),
+        }
+        _write_document(stage / "PACKAGE_COMPLETE.json", complete)
+        inspect_shadow_package(stage, expected_package_id=package_id)
+        os.replace(stage, destination)
+        directory_fd = os.open(
+            output_root,
+            os.O_RDONLY | getattr(os, "O_CLOEXEC", 0),
+        )
+        try:
+            os.fsync(directory_fd)
+        finally:
+            os.close(directory_fd)
+    except Exception:
+        shutil.rmtree(stage, ignore_errors=True)
+        raise
+    try:
+        return inspect_shadow_package(destination, expected_package_id=package_id)
+    except Exception:
+        shutil.rmtree(destination, ignore_errors=True)
+        raise
+
+
 def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
     subparsers = parser.add_subparsers(dest="action", required=True)
@@ -717,6 +927,11 @@ def _parser() -> argparse.ArgumentParser:
             "plan, reports and verdict. Defaults to resident-replication."
         ),
     )
+    migrate_parser = subparsers.add_parser("migrate")
+    migrate_parser.add_argument("source_package", type=Path)
+    migrate_parser.add_argument("migrated_campaign", type=Path)
+    migrate_parser.add_argument("--output-root", type=Path, required=True)
+    migrate_parser.add_argument("--package-id", required=True)
     inspect_parser = subparsers.add_parser("inspect")
     inspect_parser.add_argument("package", type=Path)
     return parser
@@ -727,12 +942,19 @@ def main(argv: Sequence[str] | None = None) -> int:
     try:
         if arguments.action == "inspect":
             result = inspect_shadow_package(arguments.package)
-        else:
+        elif arguments.action == "materialize":
             result = materialize(
                 arguments.campaign,
                 output_root=arguments.output_root,
                 package_id=arguments.package_id,
                 replication_root=arguments.replication_root,
+            )
+        else:
+            result = migrate_materialized_package(
+                arguments.source_package,
+                arguments.migrated_campaign,
+                output_root=arguments.output_root,
+                package_id=arguments.package_id,
             )
     except (
         OSError,

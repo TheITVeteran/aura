@@ -29,6 +29,9 @@ from core.brain.llm.unified_recurrent_shadow_contract import (
     LOAD_SCHEMA,
     seal_shadow_load_receipt,
 )
+from core.brain.llm.unified_recurrent_shadow_migration import (
+    shadow_source_migration_errors,
+)
 from core.brain.llm.unified_recurrent_shadow_probe_contract import (
     RECEIPT_SCHEMA as PROBE_RECEIPT_SCHEMA,
 )
@@ -342,6 +345,16 @@ def inspect_shadow_package(path: Path) -> dict[str, Any]:
             role=role,
             decode=role != "controller",
         )
+    migration_binding = artifacts.get("source_migration")
+    migration_sha256 = manifest.get("source_migration_sha256")
+    if (migration_binding is None) != (migration_sha256 is None):
+        _fail("unified shadow source migration inventory differs")
+    if migration_binding is not None:
+        bound["source_migration"] = _binding(
+            root,
+            migration_binding,
+            role="source_migration",
+        )
     reports = artifacts.get("replication_reports")
     if not isinstance(reports, list) or not reports:
         _fail("unified shadow replication reports are unavailable")
@@ -382,6 +395,9 @@ def inspect_shadow_package(path: Path) -> dict[str, Any]:
         or plan.get("plan_sha256") != manifest.get("replication_plan_sha256")
         or verdict.get("checkpoint_sha256") != manifest.get("checkpoint_sha256")
         or checkpoint.get("checkpoint_sha256") != manifest.get("checkpoint_sha256")
+        or not isinstance(checkpoint.get("identity"), dict)
+        or checkpoint["identity"].get("identity_sha256")
+        != manifest.get("checkpoint_identity_sha256")
         or canary_battery.get("battery_sha256")
         != manifest.get("canary_battery_sha256")
         or canary_battery.get("replication_plan_sha256")
@@ -395,6 +411,17 @@ def inspect_shadow_package(path: Path) -> dict[str, Any]:
         or len(report_rows) != len(reports)
     ):
         _fail("unified shadow scientific evidence differs")
+    if "source_migration" in documents:
+        migration_errors = shadow_source_migration_errors(
+            documents["source_migration"],
+            manifest=manifest,
+            checkpoint=checkpoint,
+        )
+        if migration_errors:
+            _fail(
+                "unified shadow source migration differs:"
+                + ",".join(migration_errors)
+            )
     report_commitments: dict[int, str] = {}
     for row in report_rows:
         if (
@@ -972,6 +999,13 @@ def load_unified_recurrent_shadow(
         _fail("unified shadow controller tensor shape differs")
     controller.update(tree_unflatten(list(loaded.items())))
     mx.eval(controller.parameters())
+    controller_sha256 = controller.parameter_sha256()
+    migrated_controller_sha256 = identity.get("source_migration_controller_sha256")
+    if (
+        migrated_controller_sha256 is not None
+        and migrated_controller_sha256 != controller_sha256
+    ):
+        _fail("unified shadow migrated controller identity differs")
     body = {
         "schema": LOAD_SCHEMA,
         "configured": True,
@@ -980,7 +1014,7 @@ def load_unified_recurrent_shadow(
         "package_id": manifest["package_id"],
         "manifest_sha256": manifest["manifest_sha256"],
         "checkpoint_sha256": manifest["checkpoint_sha256"],
-        "controller_sha256": controller.parameter_sha256(),
+        "controller_sha256": controller_sha256,
         "families": list(manifest["domain_contract"]["families"]),
         "task_depths": list(manifest["domain_contract"]["task_depths"]),
         "recurrence_depth": int(manifest["domain_contract"]["recurrence_depth"]),
