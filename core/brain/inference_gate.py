@@ -539,12 +539,19 @@ async def _thread_lock_context(
     timeout_s: float | None = None,
     label: str = "lock",
 ):
-    if timeout_s is None:
-        acquired = await asyncio.to_thread(lock.acquire)
-    else:
-        acquired = await asyncio.to_thread(lock.acquire, True, max(0.0, float(timeout_s)))
-    if not acquired:
-        raise TimeoutError(f"{label}_timeout")
+    deadline = (
+        None
+        if timeout_s is None
+        else time.monotonic() + max(0.0, float(timeout_s))
+    )
+    while not lock.acquire(blocking=False):
+        if deadline is not None:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0.0:
+                raise TimeoutError(f"{label}_timeout")
+            await asyncio.sleep(min(0.01, remaining))
+        else:
+            await asyncio.sleep(0.01)
     try:
         yield
     finally:
