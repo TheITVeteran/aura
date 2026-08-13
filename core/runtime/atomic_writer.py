@@ -28,6 +28,7 @@ import fcntl
 import json
 import logging
 import os
+import sys
 import tempfile
 import threading
 import time
@@ -60,32 +61,79 @@ class AtomicWriteError(RuntimeError):
     """Raised when an atomic write cannot complete."""
 
 
-def _fsync_file(fd: int) -> None:
+#: True when this platform's fsync() leaves data in the drive's own write
+#: cache, so that only F_FULLFSYNC actually reaches stable storage.
+#:
+#: This is macOS behaviour and it is documented, not suspected: fsync(2) there
+#: pushes to the device and returns, and Apple's guidance is to use
+#: fcntl(F_FULLFSYNC) when the write must survive power loss. Aura runs on
+#: macOS, so until now every "durable" write in the runtime — mind-state
+#: backups and hash-chained ledgers included — was durable against process
+#: death but not against power loss, and nothing said so.
+_FSYNC_NEEDS_FULLSYNC = sys.platform == "darwin" and hasattr(fcntl, "F_FULLFSYNC")
+
+#: Set once when F_FULLFSYNC is asked for and the filesystem refuses it.
+#: Network and some virtual filesystems return EINVAL/ENOTSUP; retrying per
+#: call would pay the failed syscall forever.
+_fullsync_unsupported = False
+
+
+def _fsync_file(fd: int, *, full: bool = False) -> None:
     # Every durable write in the runtime funnels through here, which makes
     # it the one place worth instrumenting: fsync is the blocking call that
     # froze the live event loop for 20 minutes, and it is IO stall by
     # definition. PSI accounts the wait; lockdep reports (once per call
     # site) if we are about to block while holding a lock.
+    #
+    # `full` requests F_FULLFSYNC — a real flush of the drive cache rather
+    # than a handoff to it. It is opt-in rather than the default precisely
+    # because of that 20-minute freeze: F_FULLFSYNC is far slower, and making
+    # every write in the runtime pay for power-loss durability would trade a
+    # silent correctness gap for a loud liveness one. Callers that hold
+    # something they cannot reconstruct ask for it; everyone else does not.
     from core.runtime.lockdep import assert_no_locks_held
     from core.runtime.pressure_stall import Resource, stall
 
+    global _fullsync_unsupported
+
     assert_no_locks_held("fsync")
+    want_full = full and _FSYNC_NEEDS_FULLSYNC and not _fullsync_unsupported
+    used_full = False
     started = time.perf_counter()
     with stall(Resource.IO):
-        try:
-            os.fsync(fd)
-        except (AttributeError, OSError):
-            # Best-effort on platforms where fsync is unavailable.
-            pass  # no-op: intentional
+        if want_full:
+            try:
+                fcntl.fcntl(fd, fcntl.F_FULLFSYNC)
+                used_full = True
+            except OSError as exc:
+                # The filesystem does not implement it. Fall through to plain
+                # fsync rather than losing the write, and stop asking.
+                _fullsync_unsupported = True
+                logger.warning(
+                    "F_FULLFSYNC unsupported on this filesystem (%s); durable "
+                    "writes fall back to fsync and are no longer power-loss safe",
+                    exc,
+                )
+        if not used_full:
+            try:
+                os.fsync(fd)
+            except (AttributeError, OSError):
+                # Best-effort on platforms where fsync is unavailable.
+                pass  # no-op: intentional
     try:
         from core.observability.histograms import record
 
-        record("Aura.Fsync.DurationMs", (time.perf_counter() - started) * 1000.0)
+        elapsed_ms = (time.perf_counter() - started) * 1000.0
+        record("Aura.Fsync.DurationMs", elapsed_ms)
+        if used_full:
+            # Separate channel: the whole point of opting in is that the cost
+            # is different, and a merged histogram would hide it.
+            record("Aura.Fsync.FullDurationMs", elapsed_ms)
     except Exception:  # noqa: BLE001 — telemetry never blocks durability
         logger.debug("fsync histogram recording failed", exc_info=True)
 
 
-def _fsync_dir(directory: Path) -> None:
+def _fsync_dir(directory: Path, *, full: bool = False) -> None:
     if not hasattr(os, "O_DIRECTORY"):
         return
     try:
@@ -93,7 +141,7 @@ def _fsync_dir(directory: Path) -> None:
     except (FileNotFoundError, PermissionError, OSError):
         return
     try:
-        _fsync_file(dir_fd)
+        _fsync_file(dir_fd, full=full)
     finally:
         os.close(dir_fd)
 
@@ -174,6 +222,7 @@ def atomic_write_bytes(
     payload: bytes,
     *,
     durable: bool = True,
+    power_safe: bool = False,
     mode: int = 0o600,
 ) -> None:
     """Atomically replace `path` with `payload`.
@@ -182,6 +231,14 @@ def atomic_write_bytes(
     file) but skips both fsyncs. Probe files, caches, and other content that
     is worthless after a crash must use it: under memory-pressure thrash a
     single fsync has blocked the live event loop for 20 minutes.
+
+    ``power_safe=True`` additionally requests F_FULLFSYNC, which is the only
+    thing on macOS that flushes the drive's own write cache. Plain ``durable``
+    survives process death; only ``power_safe`` survives power loss. It is
+    opt-in because it is markedly slower, and the same 20-minute freeze is the
+    reason not to make it the default for every write in the runtime. Reach for
+    it when losing the write would lose something unreconstructable — mind
+    state, ledger commitments, identity material.
     """
     target = Path(path)
     file_mode = _validated_file_mode(mode)
@@ -196,10 +253,12 @@ def atomic_write_bytes(
             fh.write(payload)
             fh.flush()
             if durable:
-                _fsync_file(fh.fileno())
+                _fsync_file(fh.fileno(), full=power_safe)
         os.replace(tmp_path, target)
         if durable:
-            _fsync_dir(parent)
+            # The rename must reach stable storage too, or a power loss can
+            # leave the old name pointing at nothing on some filesystems.
+            _fsync_dir(parent, full=power_safe)
     except OSError:
         try:
             if tmp_path.exists():
@@ -258,9 +317,16 @@ def atomic_write_text(
     *,
     encoding: str = "utf-8",
     durable: bool = True,
+    power_safe: bool = False,
     mode: int = 0o600,
 ) -> None:
-    atomic_write_bytes(path, text.encode(encoding), durable=durable, mode=mode)
+    atomic_write_bytes(
+        path,
+        text.encode(encoding),
+        durable=durable,
+        power_safe=power_safe,
+        mode=mode,
+    )
 
 
 async def async_atomic_write_bytes(
@@ -268,6 +334,7 @@ async def async_atomic_write_bytes(
     payload: bytes,
     *,
     durable: bool = True,
+    power_safe: bool = False,
     mode: int = 0o600,
 ) -> None:
     """Event-loop-safe atomic write: the fsync happens on a worker thread.
@@ -275,6 +342,11 @@ async def async_atomic_write_bytes(
     Under memory-pressure thrash a single on-loop fsync has frozen the live
     event loop for ~20 minutes (12 recorded crashes). Async callers must use
     this lane; the sync functions are for threads and sync bootstrap only.
+
+    ``power_safe`` is available here for the same reason it exists at all, and
+    matters MORE on this lane: F_FULLFSYNC is the slower call, so it is exactly
+    the one that must never run on the event loop. Going through the thread is
+    what makes power-loss durability affordable for async callers.
     """
     import asyncio
 
@@ -283,6 +355,7 @@ async def async_atomic_write_bytes(
         path,
         payload,
         durable=durable,
+        power_safe=power_safe,
         mode=mode,
     )
 
@@ -311,12 +384,14 @@ async def async_atomic_write_text(
     *,
     encoding: str = "utf-8",
     durable: bool = True,
+    power_safe: bool = False,
     mode: int = 0o600,
 ) -> None:
     await async_atomic_write_bytes(
         path,
         text.encode(encoding),
         durable=durable,
+        power_safe=power_safe,
         mode=mode,
     )
 
@@ -368,8 +443,14 @@ def atomic_write_json(
     schema_version: int,
     schema_name: str | None = None,
     indent: int | None = 2,
+    power_safe: bool = False,
 ) -> None:
-    """Atomically write a JSON envelope `{schema, version, payload}`."""
+    """Atomically write a JSON envelope `{schema, version, payload}`.
+
+    ``power_safe=True`` requests F_FULLFSYNC for records that cannot be
+    reconstructed if the machine loses power — identity, commitments, ledger
+    state. See :func:`atomic_write_bytes` for why it is not the default.
+    """
     if not isinstance(schema_version, int) or schema_version < 1:
         raise AtomicWriteError("schema_version must be a positive int")
     target = Path(path)
@@ -381,7 +462,7 @@ def atomic_write_json(
         "payload": obj,
     }
     text = json.dumps(envelope, indent=indent, sort_keys=True, default=str)
-    atomic_write_text(path, text)
+    atomic_write_text(path, text, power_safe=power_safe)
 
 
 async def async_atomic_write_json(
@@ -391,6 +472,7 @@ async def async_atomic_write_json(
     schema_version: int,
     schema_name: str | None = None,
     indent: int | None = 2,
+    power_safe: bool = False,
 ) -> None:
     """Event-loop-safe atomic_write_json: serialization + fsync on a worker thread."""
     import asyncio
@@ -402,6 +484,7 @@ async def async_atomic_write_json(
         schema_version=schema_version,
         schema_name=schema_name,
         indent=indent,
+        power_safe=power_safe,
     )
 
 

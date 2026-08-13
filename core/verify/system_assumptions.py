@@ -38,15 +38,23 @@ assume(
         "restored backup could be silently short of what was committed."
     ),
     note=(
-        "This one is known to be FALSE as stated on the platform Aura runs on. "
-        "macOS fsync() flushes to the drive but does not force the drive's own "
-        "cache; fcntl(fd, F_FULLFSYNC) is required for that, and atomic_writer.py "
-        "calls plain os.fsync. It is recorded rather than repaired because the "
-        "repair is not free: F_FULLFSYNC is drastically slower, and an on-loop "
-        "fsync in this codebase once froze the live event loop for twenty minutes. "
-        "The correct fix is F_FULLFSYNC on the durability-critical lane only, which "
-        "needs a measured latency budget first. Until then the exposure is stated "
-        "rather than implied."
+        "REPAIRED for the lane that needs it, and still true for the rest. macOS "
+        "fsync() hands the write to the drive and returns without flushing the "
+        "drive's own cache; fcntl(fd, F_FULLFSYNC) is what actually flushes it. "
+        "atomic_write_bytes/text/json now take power_safe=True, which requests "
+        "F_FULLFSYNC on both the file and its parent directory and falls back to "
+        "plain fsync (once, remembered) on filesystems that refuse it. "
+        "The identity ledger — commitments, preference history, identity snapshots "
+        "— uses it. "
+        "It is not the default because the cost was measured rather than guessed: "
+        "40 writes of 4KB on this host gave 0.214ms median for fsync against "
+        "8.006ms for F_FULLFSYNC, roughly 37x. Paying that on every write would "
+        "trade a silent correctness gap for a loud liveness one, and an on-loop "
+        "fsync here once froze the live event loop for twenty minutes. Worth "
+        "noting the tails ran the other way: fsync's worst case was 27.1ms against "
+        "F_FULLFSYNC's 11.1ms. "
+        "So the residual assumption is narrow and real: every write that has NOT "
+        "opted in survives process death but not power loss."
     ),
 )
 

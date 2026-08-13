@@ -216,6 +216,13 @@ class IdentityLedger:
             path, payload,
             schema_version=self.SCHEMA_VERSION,
             schema_name="identity_ledger",
+            # Commitments, preference history and identity snapshots cannot be
+            # reconstructed from anything else if the machine loses power, and
+            # a lost promise is not a lost cache entry. On macOS plain fsync
+            # hands the write to the drive's cache and returns, so only
+            # F_FULLFSYNC actually makes this survive. Measured cost on this
+            # host: ~8ms against ~0.2ms, paid once per ledger save.
+            power_safe=True,
         )
 
     def load(self) -> None:

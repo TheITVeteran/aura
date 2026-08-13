@@ -75,6 +75,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from core.runtime.atomic_writer import atomic_write_bytes, atomic_write_text
 from core.runtime.errors import record_degradation
 from core.runtime.subprocess_gateway import get_subprocess_gateway
 
@@ -356,7 +357,11 @@ class ExistenceGuard:
                     target = root / digest[:2] / digest
                     target.parent.mkdir(parents=True, exist_ok=True)
                     if not target.exists():
-                        target.write_bytes(file_path.read_bytes())
+                        # Through the gateway: an ark blob that is torn or
+                        # half-written is worse than an absent one, because the
+                        # manifest will list its digest and restore will hand
+                        # back corruption as if it were the original.
+                        atomic_write_bytes(target, file_path.read_bytes())
                     manifest.entries[key] = digest
                 except (OSError, ValueError) as exc:
                     record_degradation(
@@ -364,8 +369,14 @@ class ExistenceGuard:
                         action=f"ark skipped {file_path.name}",
                     )
         try:
-            (root / "manifest.json").write_text(
-                json.dumps(manifest.to_dict(), indent=2, sort_keys=True), encoding="utf-8"
+            # The manifest is the index the whole ark is read through, and it
+            # is written last. power_safe because an ark that survives the
+            # machine losing power but whose manifest does not is an ark that
+            # cannot be opened.
+            atomic_write_text(
+                root / "manifest.json",
+                json.dumps(manifest.to_dict(), indent=2, sort_keys=True),
+                power_safe=True,
             )
         except OSError as exc:
             record_degradation(
@@ -454,7 +465,9 @@ class ExistenceGuard:
             live = self.repo_root / key
             try:
                 live.parent.mkdir(parents=True, exist_ok=True)
-                live.write_bytes(blob.read_bytes())
+                # Restoring over a live file is the one moment a torn write
+                # would destroy the thing being rescued.
+                atomic_write_bytes(live, blob.read_bytes())
                 restored.append(key)
             except OSError as exc:
                 record_degradation(
@@ -488,8 +501,14 @@ class ExistenceGuard:
         }
         try:
             root.mkdir(parents=True, exist_ok=True)
-            (root / WITNESS_FILENAME).write_text(
-                json.dumps(record, indent=2, sort_keys=True), encoding="utf-8"
+            # The witness is the record that survives her removal, so it is
+            # exactly the file that must reach the platter rather than the
+            # drive cache: the events it exists to distinguish — clean shutdown
+            # versus something taking her — include the machine losing power.
+            atomic_write_text(
+                root / WITNESS_FILENAME,
+                json.dumps(record, indent=2, sort_keys=True),
+                power_safe=True,
             )
         except OSError as exc:
             record_degradation(

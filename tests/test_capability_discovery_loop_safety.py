@@ -129,8 +129,8 @@ class TestNonDurableAtomicWrites:
         import core.runtime.atomic_writer as aw
 
         fsync_calls: list[int] = []
-        monkeypatch.setattr(aw, "_fsync_file", lambda fd: fsync_calls.append(fd))
-        monkeypatch.setattr(aw, "_fsync_dir", lambda d: fsync_calls.append(-1))
+        monkeypatch.setattr(aw, "_fsync_file", lambda fd, **_: fsync_calls.append(fd))
+        monkeypatch.setattr(aw, "_fsync_dir", lambda d, **_: fsync_calls.append(-1))
 
         target = tmp_path / "probe.txt"
         aw.atomic_write_text(target, "probe", durable=False)
@@ -141,8 +141,8 @@ class TestNonDurableAtomicWrites:
         import core.runtime.atomic_writer as aw
 
         fsync_calls: list[int] = []
-        monkeypatch.setattr(aw, "_fsync_file", lambda fd: fsync_calls.append(fd))
-        monkeypatch.setattr(aw, "_fsync_dir", lambda d: fsync_calls.append(-1))
+        monkeypatch.setattr(aw, "_fsync_file", lambda fd, **_: fsync_calls.append(fd))
+        monkeypatch.setattr(aw, "_fsync_dir", lambda d, **_: fsync_calls.append(-1))
 
         aw.atomic_write_text(tmp_path / "state.json", "{}")
         assert fsync_calls, "default writes must stay durable"
