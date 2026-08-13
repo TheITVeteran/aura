@@ -47348,3 +47348,28 @@ the broader 313-requirement programme, production release, soak reliability or
 Aura 1.0 is complete. The resident replication and waiting promotion pipeline
 remain separately supervised, and no scientific verdict or `WOW Signal` is
 inferred from their partial controller states.
+
+## Checkpoint 2026-08-13-336: Model-Free Skill Custody Is Current
+
+Seven checked skill proofs passed atomically against exact pushed CP335 source
+`68b9eeb792398fb22ad81dcd7835b29c4c120c65`. They bind the gate/skill closure
+audit, certification contracts, filesystem catalog parity, clean-machine
+portability, GUI readiness, in-process route readiness and the production
+runtime-route audit. Durations ranged from `1.630` to `33.007` seconds; every
+command returned zero in the sanitized no-accelerator environment and retained
+its complete source manifest.
+
+The structural gate confirms that the seven current implementation, test, GUI
+and portability owners are no longer stale. Aggregate stale-evidence defects
+fell from `48` to `36`, while unproven closures fell from `8` to `6`. The two
+remaining old `skill-readiness-live-route-audit` entries are intentionally not
+relabelled: they carry the live evidence class that the in-process surface
+audit no longer claims. Only the new clean external boot proof may replace
+them after the resident model owner releases custody.
+
+This checkpoint proves current model-free skill construction and routing; it
+does not claim a clean external app boot, installed-app portability, arbitrary
+skill success, soak reliability or full Aura closure. The resident replication
+continues independently, with its third seed still producing fresh candidate
+artifacts and promotion waiting for final adjudication. No scientific verdict,
+frontier claim or `WOW Signal` is inferred from that partial progress.
