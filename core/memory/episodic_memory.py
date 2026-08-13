@@ -12,6 +12,7 @@ Integrates with:
 import asyncio
 import json
 import logging
+import math
 import sqlite3
 import threading
 import time
@@ -20,6 +21,7 @@ from typing import Any
 
 from pydantic import BaseModel, Field
 
+from core.cognition.actr_activation import base_level_activation
 from core.config import config
 from core.health.degraded_events import record_degraded_event
 from core.memory.engram_association import (
@@ -993,15 +995,106 @@ class EpisodicMemory:
         return self._register_recall(ranked[:limit])
 
     @staticmethod
-    def _recency_score(ep: "Episode") -> float:
-        return min(1.0, max(0.0, ep.timestamp - 1774000000) / 2000000)
+    def _presentation_history(ep: "Episode", now: float) -> list[float]:
+        """Reconstruct when this trace was used, from the fields the store keeps.
 
-    def _static_rank(self, episodes: list["Episode"]) -> list["Episode"]:
-        return sorted(
-            episodes,
-            key=lambda ep: (ep.importance * 0.6) + (self._recency_score(ep) * 0.4),
-            reverse=True,
+        The store records an encoding time, an access count and the most recent
+        access, but not the full list of accesses. The two obvious readings of
+        that are both wrong at one end — treating every access as if it
+        happened at encoding ignores rehearsal, treating them all as if they
+        happened at ``last_accessed`` ignores age — so the intermediate
+        accesses are spread evenly between the two timestamps that *are*
+        recorded. Both endpoints are then exact and only the interior is
+        modelled.
+
+        Only ``timestamp`` is required. Rehearsal data is an optional strength
+        signal, and a trace that carries none is a trace used once — which is a
+        meaningful answer, not a missing one. Degraded and duck-typed records
+        reach this path in practice, and refusing to rank them would turn a
+        partial memory into no memory.
+        """
+        history = [ep.timestamp]
+        extra = max(0, int(getattr(ep, "access_count", 0) or 0))
+        if extra:
+            recorded = float(getattr(ep, "last_accessed", 0.0) or 0.0)
+            last = recorded if recorded > ep.timestamp else now
+            if extra == 1:
+                history.append(last)
+            else:
+                step = (last - ep.timestamp) / extra
+                history.extend(ep.timestamp + step * (i + 1) for i in range(extra))
+        return history
+
+    @staticmethod
+    def _recency_score(ep: "Episode", now: float | None = None) -> float:
+        """Base-level activation of this trace: ``B = ln(Σ t_j^-d)``.
+
+        This was ``min(1.0, max(0.0, ep.timestamp - 1774000000) / 2000000)``,
+        which is not a recency score. It measured position against a hardcoded
+        wall-clock epoch, so it was a step function: 0.0 before 2026-03-20, a
+        23-day ramp, then a flat 1.0 for everything after 2026-04-12. Evaluated
+        on 2026-08-12 an episode from one minute ago and one from thirty days
+        ago both scored exactly 1.000000, so this term added a constant 0.4 to
+        every candidate in ``_static_rank`` and the ranking was importance-only.
+        Every day that passed pushed the usable window further into the past.
+
+        Activation depends only on *elapsed* time, so it cannot saturate and
+        has no epoch to go stale, and it reads frequency as well as recency — a
+        trace recalled often is stronger than one merely stored recently, which
+        the previous scorer had no way to express even inside the window where
+        it still had a gradient.
+
+        The value is unbounded below (log activation, ``-inf`` for a trace with
+        no recorded use). :meth:`_static_rank` normalises across the candidate
+        set rather than squashing here, so no threshold or noise constant has
+        to be invented to make the number comparable to ``importance``.
+        """
+        moment = time.time() if now is None else now
+        return base_level_activation(
+            EpisodicMemory._presentation_history(ep, moment), moment
         )
+
+    def _static_rank(
+        self, episodes: list["Episode"], now: float | None = None
+    ) -> list["Episode"]:
+        """Rank by importance blended with activation, normalised over the batch.
+
+        The 0.6/0.4 split is unchanged. What changed is that the second term
+        now varies: activation is min-max normalised across exactly the
+        candidates being ranked, so the most active trace contributes the full
+        0.4 and the least contributes none. Normalising against the batch
+        instead of an absolute scale keeps the blend meaningful without
+        introducing a retrieval threshold — the memory system declares a
+        retention policy in items, not in seconds, so there is no principled
+        wall-clock anchor available to convert activation into [0, 1].
+
+        ``now`` is injectable so the ordering can be tested at a chosen wall
+        clock. That matters more than it sounds: the defect this replaced was
+        precisely a dependence on *when* the code ran, and a test that cannot
+        move the clock cannot detect one.
+        """
+        if len(episodes) < 2:
+            return list(episodes)
+
+        moment = time.time() if now is None else now
+        activations = [self._recency_score(ep, moment) for ep in episodes]
+        finite = [a for a in activations if math.isfinite(a)]
+        low = min(finite) if finite else 0.0
+        high = max(finite) if finite else 0.0
+        span = high - low
+
+        def normalised(value: float) -> float:
+            if not math.isfinite(value):
+                return 0.0  # never used: below every recorded trace
+            return (value - low) / span if span > 0.0 else 1.0
+
+        scored = [
+            ((ep.importance * 0.6) + (normalised(a) * 0.4), index, ep)
+            for index, (ep, a) in enumerate(zip(episodes, activations, strict=True))
+        ]
+        # index breaks ties deterministically; Episode is not orderable.
+        scored.sort(key=lambda item: (-item[0], item[1]))
+        return [ep for _, _, ep in scored]
 
     def _competitive_rank(self, episodes: list["Episode"], query: str) -> list["Episode"]:
         """Re-rank candidates through the engram plasticity competition field.
