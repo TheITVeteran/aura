@@ -805,6 +805,7 @@ class NativeSystem2Engine:
         from core.cognition.impasse import (
             ImpasseType,
             Impasse,
+            classify,
             get_impasse_learner,
             situation_signature,
         )
@@ -814,11 +815,41 @@ class NativeSystem2Engine:
             {"goal": "rank_actions", "context": context.strip()[:256]},
             [a.name for a in candidate_actions],
         )
+
+        # Type the impasse rather than calling every deliberation a tie. The
+        # four Soar types were implemented and only one was ever used here,
+        # which threw away the distinction that makes them worth having: an
+        # empty field, a field where everything was rejected, and a field of
+        # equals are three different problems and warrant three different
+        # responses.
+        #
+        # Scores come from the value model, so the classification reflects what
+        # the decision procedure will actually see, not the raw candidate list.
+        pre_scores = {
+            a.name: value_model.value_for(a.name, a.metadata, state=state_raw).value
+            for a in candidate_actions
+        }
+        typed = classify(
+            [a.name for a in candidate_actions],
+            scores=pre_scores,
+            rejected=[a.name for a in candidate_actions if not a.valid],
+            # Two candidates whose values differ by less than the spread the
+            # value model itself reports as unevidenced are not distinguishable.
+            tolerance=0.0 if any(
+                value_model.value_for(a.name, a.metadata, state=state_raw).is_evidenced
+                for a in candidate_actions
+            ) else 0.05,
+            context={"goal": "rank_actions"},
+        )
         impasse = Impasse(
-            type=ImpasseType.TIE,
+            type=typed.type if typed is not None else ImpasseType.TIE,
             signature=signature,
             candidates=tuple(sorted(a.name for a in candidate_actions)),
-            detail=f"{len(candidate_actions)} candidates require deliberation",
+            detail=(
+                typed.detail
+                if typed is not None
+                else f"{len(candidate_actions)} candidates, value model separates them"
+            ),
         )
 
         match_started = time.perf_counter()
@@ -847,7 +878,14 @@ class NativeSystem2Engine:
             candidate_actions = [by_name[chunk.resolution]]
             chunk_applied = chunk
         else:
-            learner.record_impasse(impasse)
+            # Only a real impasse goes in the impasse log. A decision the value
+            # model separated cleanly is not a deadlock, and counting it as one
+            # would make the impasse rate — the diagnostic the log exists for —
+            # read as "how often did we deliberate" instead of "how often could
+            # we not decide". The chunk is still learned either way, because it
+            # compiles deliberation cost, which is a different thing.
+            if typed is not None:
+                learner.record_impasse(impasse)
             chunk_applied = None
 
         deliberation_started = time.perf_counter()
