@@ -47050,3 +47050,27 @@ this checkpoint its second seed is actively decoding at `210/216`, its
 controller and resident evaluator are alive, and its final verdict remains
 unmeasured. No reasoning gain, promotion authority, frontier claim or
 `WOW Signal` is inferred from partial progress.
+
+## Checkpoint 2026-08-12-327: Terminal Liveness Closure Is Commit-Bound
+
+All three terminal-liveness findings are closed in the append-only semantic
+remediation ledger against CP326's published implementation commit
+`769ccddcb0e95b7d1e17df80f65478df744801d2`. The ledger now reports `46/58`
+findings closed (`79.3%`) with `12` open: `8/8` inventory-critical, `34/40`
+inventory-high and `4/10` inventory-medium findings are closed. Verification
+reports zero unknown finding IDs and zero source files changed since their
+latest closure records.
+
+The evidence binds terminal input ownership, authenticated UI liveness and
+non-blocking output scheduling to the exact implementation commit and its
+terminal, external-chat, architecture and WebSocket lifecycle tests. The
+scoped manifest records ledger digest
+`7a1e83f3149b70f50e86df87a25bc8afed211de930f2f7b815d94b6b84b7c8a1`.
+This is an evidence checkpoint rather than a new runtime implementation.
+
+The remaining scoped queue contains `12` findings across demo support,
+capability preconditions, reply-subject selection, exact arithmetic, one
+chat-preflight boundary, choice consistency, conversational momentum and
+request mood. Powered resident-32B replication remains independent; this
+closure does not claim its verdict, runtime tissue qualification, fusion
+authority, frontier reasoning or a `WOW Signal`.
