@@ -10,9 +10,9 @@ import pytest
 from core.brain.inference_gate import InferenceGate
 from core.bus.local_pipe_bus import LocalPipeBus
 from core.consciousness.evidence_engine import ConsciousnessEvidenceEngine
+from core.conversation.tagged_reply_queue import TaggedReplyQueue
 from core.orchestrator.flow_control import CognitiveFlowController
 from core.orchestrator.main import RobustOrchestrator
-from core.conversation.tagged_reply_queue import TaggedReplyQueue
 
 TMP_ROOT = Path(tempfile.gettempdir())
 
@@ -90,6 +90,47 @@ async def test_tagged_reply_queue_preserves_unmatched_replies():
     assert reply == "user reply"
     assert queue.qsize() == 1
     assert queue.get_nowait() == "background reply"
+
+
+@pytest.mark.asyncio
+async def test_session_waiter_never_accepts_an_untagged_reply():
+    queue = TaggedReplyQueue(maxsize=10)
+    await queue.put("legacy untagged", origin="user")
+    await queue.put("owned", origin="user", session_id="turn-1")
+
+    assert await queue.get_for_origin("user", session_id="turn-1", timeout=0.2) == "owned"
+    assert queue.get_nowait() == "legacy untagged"
+
+
+@pytest.mark.asyncio
+async def test_concurrent_session_waiters_receive_only_their_owned_reply():
+    queue = TaggedReplyQueue(maxsize=10)
+    waiter_a = asyncio.create_task(
+        queue.get_for_origin("user", session_id="turn-a", timeout=0.5)
+    )
+    waiter_b = asyncio.create_task(
+        queue.get_for_origin("user", session_id="turn-b", timeout=0.5)
+    )
+    await asyncio.sleep(0)
+
+    await queue.put("reply-b", origin="user", session_id="turn-b")
+    await queue.put("reply-a", origin="user", session_id="turn-a")
+
+    assert await waiter_a == "reply-a"
+    assert await waiter_b == "reply-b"
+
+
+@pytest.mark.asyncio
+async def test_timed_out_session_waiter_cannot_consume_a_later_reply():
+    queue = TaggedReplyQueue(maxsize=10)
+    assert await queue.get_for_origin("user", session_id="turn-1", timeout=0.01) is None
+
+    await queue.put("late reply", origin="user", session_id="turn-1")
+
+    assert (
+        await queue.get_for_origin("user", session_id="turn-1", timeout=0.2)
+        == "late reply"
+    )
 
 
 def test_tagged_reply_queue_put_nowait_evicts_oldest_when_full():

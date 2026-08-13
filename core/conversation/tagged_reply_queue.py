@@ -6,20 +6,19 @@ that preserves reply ownership across overlapping user, voice, and autonomous
 flows. It remains compatible with the plain queue interface most of Aura uses.
 """
 from __future__ import annotations
-from core.runtime.errors import record_degradation
-
-
 
 import asyncio
 import contextvars
 import logging
+import threading
 import time
 import uuid
-from collections import deque
+from collections import defaultdict, deque
 from contextlib import contextmanager
 from dataclasses import dataclass, field
-from typing import Any, Deque, Optional
+from typing import Any
 
+from core.runtime.errors import record_degradation
 from core.utils.queues import LoopAgnosticQueue
 
 logger = logging.getLogger("Aura.TaggedReplyQueue")
@@ -73,8 +72,8 @@ class TaggedReply:
     def is_for(self, origin: str, session_id: str = "") -> bool:
         if self.origin != origin:
             return False
-        if session_id and self.session_id and self.session_id != session_id:
-            return False
+        if session_id:
+            return self.session_id == session_id
         return True
 
 
@@ -86,15 +85,19 @@ class TaggedReplyQueue:
     def __init__(self, maxsize: int = 50):
         self.maxsize = maxsize
         self._queue = LoopAgnosticQueue(maxsize=maxsize)
-        self._deferred: Deque[TaggedReply] = deque()
-        self._lock = asyncio.Lock()
+        self._deferred: deque[TaggedReply] = deque()
+        self._lock = threading.RLock()
+        self._waiters: dict[
+            tuple[str, str],
+            deque[asyncio.Future[TaggedReply]],
+        ] = defaultdict(deque)
         logger.debug("TaggedReplyQueue initialized (maxsize=%d)", maxsize)
 
     def _coerce_reply(
         self,
         content: Any,
-        origin: Optional[str] = None,
-        session_id: Optional[str] = None,
+        origin: str | None = None,
+        session_id: str | None = None,
     ) -> TaggedReply:
         if isinstance(content, TaggedReply):
             return content
@@ -110,7 +113,7 @@ class TaggedReplyQueue:
         return (time.time() - reply.timestamp) > self.STALE_AFTER_SECONDS
 
     def _prune_deferred(self) -> int:
-        kept: Deque[TaggedReply] = deque()
+        kept: deque[TaggedReply] = deque()
         pruned = 0
         while self._deferred:
             reply = self._deferred.popleft()
@@ -123,14 +126,14 @@ class TaggedReplyQueue:
 
     def _pop_deferred_match(
         self,
-        origin: Optional[str] = None,
+        origin: str | None = None,
         session_id: str = "",
-    ) -> Optional[TaggedReply]:
+    ) -> TaggedReply | None:
         if not self._deferred:
             return None
 
-        found: Optional[TaggedReply] = None
-        kept: Deque[TaggedReply] = deque()
+        found: TaggedReply | None = None
+        kept: deque[TaggedReply] = deque()
         while self._deferred:
             reply = self._deferred.popleft()
             if self._is_stale(reply):
@@ -142,13 +145,85 @@ class TaggedReplyQueue:
         self._deferred = kept
         return found
 
+    def _pop_waiter(self, reply: TaggedReply) -> asyncio.Future[TaggedReply] | None:
+        keys = [(reply.origin, reply.session_id)] if reply.session_id else []
+        keys.append((reply.origin, ""))
+        for key in keys:
+            waiters = self._waiters.get(key)
+            if waiters is None:
+                continue
+            while waiters:
+                waiter = waiters.popleft()
+                if not waiter.done():
+                    if not waiters:
+                        self._waiters.pop(key, None)
+                    return waiter
+            self._waiters.pop(key, None)
+        return None
+
+    @staticmethod
+    def _deliver_waiter(
+        waiter: asyncio.Future[TaggedReply],
+        reply: TaggedReply,
+    ) -> None:
+        def deliver() -> None:
+            if not waiter.done():
+                waiter.set_result(reply)
+
+        waiter.get_loop().call_soon_threadsafe(deliver)
+
+    def _dispatch_waiter(self, reply: TaggedReply) -> bool:
+        with self._lock:
+            waiter = self._pop_waiter(reply)
+        if waiter is None:
+            return False
+        self._deliver_waiter(waiter, reply)
+        return True
+
+    def _drain_queued_match(self, origin: str, session_id: str) -> TaggedReply | None:
+        deferred = self._pop_deferred_match(origin, session_id)
+        if deferred is not None:
+            return deferred
+        found: TaggedReply | None = None
+        while True:
+            try:
+                reply = self._coerce_reply(self._queue.get_nowait())
+            except asyncio.QueueEmpty:
+                break
+            if self._is_stale(reply):
+                continue
+            if found is None and reply.is_for(origin, session_id):
+                found = reply
+            else:
+                self._deferred.append(reply)
+        self._prune_deferred()
+        return found
+
+    def _remove_waiter(
+        self,
+        key: tuple[str, str],
+        waiter: asyncio.Future[TaggedReply],
+    ) -> None:
+        with self._lock:
+            waiters = self._waiters.get(key)
+            if waiters is None:
+                return
+            try:
+                waiters.remove(waiter)
+            except ValueError:
+                return
+            if not waiters:
+                self._waiters.pop(key, None)
+
     async def put(
         self,
         content: Any,
-        origin: Optional[str] = None,
-        session_id: str = "",
+        origin: str | None = None,
+        session_id: str | None = None,
     ):
         reply = self._coerce_reply(content, origin=origin, session_id=session_id)
+        if self._dispatch_waiter(reply):
+            return
         try:
             await self._queue.put(reply)
         except asyncio.QueueFull:
@@ -167,10 +242,12 @@ class TaggedReplyQueue:
     def put_nowait(
         self,
         content: Any,
-        origin: Optional[str] = None,
-        session_id: str = "",
+        origin: str | None = None,
+        session_id: str | None = None,
     ):
         reply = self._coerce_reply(content, origin=origin, session_id=session_id)
+        if self._dispatch_waiter(reply):
+            return
         try:
             self._queue.put_nowait(reply)
         except asyncio.QueueFull:
@@ -187,7 +264,7 @@ class TaggedReplyQueue:
                 logger.warning("Could not enqueue tagged reply without waiting: %s", exc)
 
     async def get(self) -> Any:
-        async with self._lock:
+        with self._lock:
             deferred = self._pop_deferred_match()
         if deferred is not None:
             return deferred.content
@@ -195,72 +272,50 @@ class TaggedReplyQueue:
         return self._coerce_reply(item).content
 
     def get_nowait(self) -> Any:
-        deferred = self._pop_deferred_match()
+        with self._lock:
+            deferred = self._pop_deferred_match()
         if deferred is not None:
             return deferred.content
         item = self._queue.get_nowait()
         return self._coerce_reply(item).content
 
-    async def get_for_origin(
+    async def get_for_origin(  # noqa: ASYNC109 - public compatibility timeout
         self,
         origin: str,
         session_id: str = "",
-        timeout: float = 120.0,
-    ) -> Optional[Any]:
-        deadline = time.time() + timeout
-        deferred_count = 0
-
-        async with self._lock:
+        timeout: float = 120.0,  # noqa: ASYNC109 - public compatibility name
+    ) -> Any | None:
+        if timeout <= 0:
+            return None
+        key = (str(origin), str(session_id or ""))
+        loop = asyncio.get_running_loop()
+        waiter: asyncio.Future[TaggedReply] = loop.create_future()
+        with self._lock:
             self._prune_deferred()
-            deferred = self._pop_deferred_match(origin, session_id)
-        if deferred is not None:
-            return deferred.content
-
-        while time.time() < deadline:
-            remaining = deadline - time.time()
-            if remaining <= 0:
-                break
-
-            try:
-                item = await asyncio.wait_for(
-                    self._queue.get(),
-                    timeout=min(remaining, 2.0),
-                )
-            except asyncio.TimeoutError:
-                continue
-
-            reply = self._coerce_reply(item)
-            if self._is_stale(reply):
-                continue
-
-            if reply.is_for(origin, session_id):
-                if deferred_count:
-                    logger.debug(
-                        "Found reply for %s/%s after deferring %d others",
-                        origin,
-                        session_id or "-",
-                        deferred_count,
-                    )
-                return reply.content
-
-            async with self._lock:
-                self._deferred.append(reply)
-                self._prune_deferred()
-            deferred_count += 1
-
-        logger.warning(
-            "Timed out waiting for reply origin=%s session=%s after %.0fs",
-            origin,
-            session_id or "-",
-            timeout,
-        )
-        return None
+            queued = self._drain_queued_match(*key)
+            if queued is None:
+                self._waiters[key].append(waiter)
+        if queued is not None:
+            return queued.content
+        try:
+            reply = await asyncio.wait_for(asyncio.shield(waiter), timeout=timeout)
+            return reply.content
+        except TimeoutError:
+            logger.warning(
+                "Timed out waiting for reply origin=%s session=%s after %.0fs",
+                origin,
+                session_id or "-",
+                timeout,
+            )
+            return None
+        finally:
+            self._remove_waiter(key, waiter)
 
     async def flush_origin(self, origin: str) -> None:
         flushed = 0
         kept: list[TaggedReply] = []
 
-        async with self._lock:
+        with self._lock:
             while self._deferred:
                 reply = self._deferred.popleft()
                 if reply.origin == origin:
@@ -291,7 +346,7 @@ class TaggedReplyQueue:
 
     async def flush_all(self) -> None:
         count = 0
-        async with self._lock:
+        with self._lock:
             count += len(self._deferred)
             self._deferred.clear()
         while not self._queue.empty():
