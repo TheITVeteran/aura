@@ -813,7 +813,9 @@ class RobustOrchestrator(
             logger.info("🚩 [ORCHESTRATOR] Sensory Actor started.")
 
             # --- Live Multimodal Vision Start ---
-            if _foreground_only_runtime() or not _env_flag("AURA_ENABLE_PROACTIVE_VISION", True):
+            from core.senses.vision_policy import proactive_vision_enabled
+
+            if _foreground_only_runtime() or not proactive_vision_enabled():
                 logger.info("Continuous Sensory Buffer disabled for foreground-only boot.")
             else:
                 try:

@@ -50,9 +50,17 @@ class ContinuousPerceptionEngine:
         self._last_image = None
         self.vision_check_interval = 5.0 # seconds
         self.visual_delta_threshold = 0.15 # 15% difference triggers an analysis
-        self.enable_proactive_vision = os.getenv("AURA_ENABLE_PROACTIVE_VISION", "0") == "1"
+        # Default ON. This flag had FOUR different defaults across four files
+        # — "0" here and in pulse_manager, "1" in continuous_vision, and
+        # _env_flag(..., True) in orchestrator/main — so whether Aura could see
+        # depended on which subsystem you asked. A knob with four meanings is
+        # not a setting, it is a bug that reads like a setting.
+        # One meaning, resolved in core.senses.vision_policy.
+        from core.senses.vision_policy import proactive_vision_enabled
+
+        self.enable_proactive_vision = proactive_vision_enabled()
         if not self.enable_proactive_vision:
-            logger.info("👁️ Continuous vision monitoring disabled by default. Set AURA_ENABLE_PROACTIVE_VISION=1 to enable ambient screen capture.")
+            logger.info("👁️ Continuous vision monitoring is off (AURA_ENABLE_PROACTIVE_VISION=0).")
         
         # Wake word setup
         self.wake_words = ["aura"]

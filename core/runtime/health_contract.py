@@ -1322,8 +1322,46 @@ def _runtime_integrity_block() -> dict[str, Any]:
         from core.verify.causal_influence import get_influence_ledger
         from core.verify.lesion_registry import get_lesion_registry
 
-        block["causal_influence"] = get_influence_ledger().snapshot()
-        block["lesionable_channels"] = get_lesion_registry().snapshot()
+        influence = get_influence_ledger().snapshot()
+        lesions = get_lesion_registry().snapshot()
+        block["causal_influence"] = influence
+        block["lesionable_channels"] = lesions
+
+        # The consumer. Until this existed, no code anywhere branched on a
+        # verdict: `channel_is_influential()` was defined, exported, and called
+        # zero times, so a channel could be measured INERT and nothing would
+        # ever say so. Measurement without a consequence is an expensive way of
+        # keeping a secret.
+        #
+        # A channel measured INERT is not automatically a defect — a
+        # text-mediated channel may legitimately wash out. A channel declared
+        # DIRECT_ACTUATION and measured INERT is different: it claims to reach
+        # the sampler as a number, and the paired trials say removing it
+        # changes nothing. That is a faculty that is running and not working,
+        # which is exactly the condition this apparatus was built to surface.
+        decorative: list[dict[str, Any]] = []
+        registered = lesions.get("registered") or {}
+        for name, entry in (influence.get("channels") or {}).items():
+            if entry.get("verdict") != "inert":
+                continue
+            handle = registered.get(name) or {}
+            if not handle.get("direct_actuation"):
+                continue
+            decorative.append(
+                {
+                    "channel": name,
+                    "owner": handle.get("owner", ""),
+                    "neutral": handle.get("neutral", ""),
+                    "effect": entry.get("effect"),
+                    "noise_floor": entry.get("noise_floor"),
+                    "n_treatment": entry.get("n_treatment"),
+                    "n_null": entry.get("n_null"),
+                    "reason": entry.get("reason", ""),
+                }
+            )
+        block["decorative_direct_channels"] = decorative
+        if decorative:
+            block["decorative_direct_channel_count"] = len(decorative)
     except Exception as exc:  # noqa: BLE001 — integrity reporting is additive
         block["causal_influence_error"] = repr(exc)
 

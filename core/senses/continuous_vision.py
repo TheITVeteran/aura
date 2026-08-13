@@ -125,8 +125,16 @@ class ContinuousSensoryBuffer:
         if is_shutdown_requested():
             logger.info("👁️ Continuous Sensory Buffer not started: runtime shutdown requested.")
             return
-        if os.getenv("AURA_HEADLESS", "0").strip().lower() in {"1", "true", "yes", "on"} or os.getenv("AURA_ENABLE_PROACTIVE_VISION", "1").strip().lower() in {"0", "false", "no", "off"}:
-            logger.info("👁️ Continuous Sensory Buffer disabled by headless/foreground configuration.")
+        from core.senses.vision_policy import vision_policy_reason
+
+        vision_refusal = vision_policy_reason()
+        if vision_refusal:
+            # Named reason: "headless" and "operator_disabled" used to log the
+            # same sentence, which made a missing screen indistinguishable from
+            # a deliberate setting.
+            logger.info(
+                "👁️ Continuous Sensory Buffer not started (%s).", vision_refusal
+            )
             return
         if not self._is_active:
             if self._mss_module is None and not self.camera_capture_enabled:

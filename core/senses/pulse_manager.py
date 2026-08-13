@@ -27,7 +27,10 @@ class PulseManager:
         self.audio_sample_interval = 15.0  # seconds
         self.vision_sample_interval = 60.0 # seconds
         self.system_sample_interval = 30.0 # seconds
-        self.enable_proactive_vision = os.getenv("AURA_ENABLE_PROACTIVE_VISION", "0") == "1"
+        # One meaning for this knob — see core.senses.vision_policy.
+        from core.senses.vision_policy import proactive_vision_enabled
+
+        self.enable_proactive_vision = proactive_vision_enabled()
         
         # New Continuous Perception Engine (Phase 23)
         try:

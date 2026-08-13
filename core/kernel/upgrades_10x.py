@@ -1751,7 +1751,14 @@ class NativeMultimodalBridge(Phase):
         wants_native_vision = any(
             token in obj_lower for token in ("vision", "visual", "screenshot", "screen", "desktop")
         )
-        if wants_native_vision and os.getenv("AURA_ENABLE_NATIVE_VISION_ACTIONS", "0") == "1":
+        # Default ON: when the objective is literally about the screen, looking
+        # at it is the answer. Gated off, "read my screen" reached the model
+        # with no percept attached, which is the shape of the observation-is-
+        # not-actuation defect — a step count reported instead of the reading.
+        # The capture itself is still guarded by the organ's own availability.
+        if wants_native_vision and os.getenv(
+            "AURA_ENABLE_NATIVE_VISION_ACTIONS", "1"
+        ).strip().lower() in {"1", "true", "yes", "on"}:
             try:
                 vision_organ = self.kernel.organs.get("vision")
                 if (

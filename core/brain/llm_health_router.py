@@ -2426,14 +2426,25 @@ class HealthAwareLLMRouter:
 
         The expert-LoRA library keeps specialist adapters on disk; when a
         background reasoning request matches one, it is swapped onto the
-        RESIDENT primary model in the worker (seconds, no reload). Default-off
-        (AURA_EXPERT_LORA_ROUTING) and refusal-safe end to end: selection is
-        in-memory, an actual swap happens only on adapter change while the
-        lane is idle, the client refuses busy lanes, and any failure means
-        the request simply runs on the resident weights.
+        RESIDENT primary model in the worker (seconds, no reload).
+
+        Default-ON. This is the only path by which Aura's own learned weight
+        deltas reach the model that answers, and shipping it off meant the
+        answer to "does anything she learned change what she says?" was
+        structurally no — not measured-and-rejected, just never in the lane.
+        A capability disabled by default is a capability that cannot be
+        measured, and this repository's own standard is that unmeasured is
+        not a verdict.
+        Turning it on is safe on its own terms because the path is
+        refusal-safe end to end: selection is in-memory, an actual swap
+        happens only on adapter change while the lane is idle, the client
+        refuses busy lanes, the swap carries a 20s budget, and every failure
+        mode falls back to the resident weights with a degradation receipt.
+        The kill switch remains — AURA_EXPERT_LORA_ROUTING=0 restores the old
+        behaviour for crash-loop recovery.
         """
         if str(
-            os.environ.get("AURA_EXPERT_LORA_ROUTING", "0")
+            os.environ.get("AURA_EXPERT_LORA_ROUTING", "1")
         ).strip().lower() not in {"1", "true", "yes", "on"}:
             return
         try:
@@ -2730,12 +2741,28 @@ class HealthAwareLLMRouter:
 
     @staticmethod
     def _desktop_background_local_enabled() -> bool:
-        return str(os.environ.get("AURA_ENABLE_DESKTOP_BACKGROUND_LOCAL_LLM", "")).strip().lower() in {
-            "1",
-            "true",
-            "yes",
-            "on",
-        }
+        """Default ON — but this only lifts the BLANKET block.
+
+        Background cognition on a 64GB desktop must not freely wake extra
+        7B/1.5B MLX workers beside the ~35GB 32B Cortex; that pattern showed up
+        live as a footprint spike followed by forced shedding. The old default
+        answered that by refusing the whole lane, which also refused every case
+        where there was ample headroom.
+
+        Per-endpoint memory admission in
+        ``_desktop_background_endpoint_deferral_reason`` is the real guard and
+        it still runs: Brainstem needs substantially more free unified memory
+        than Reflex, and both are checked against a live pressure snapshot on
+        every dispatch. Lifting the blanket refusal leaves that admission in
+        place rather than removing it, so a background model wakes when the
+        memory is genuinely there and defers when it is not.
+
+        AURA_ENABLE_DESKTOP_BACKGROUND_LOCAL_LLM=0 restores the blanket refusal.
+        """
+        raw = str(
+            os.environ.get("AURA_ENABLE_DESKTOP_BACKGROUND_LOCAL_LLM", "1")
+        ).strip().lower()
+        return raw in {"1", "true", "yes", "on"}
 
     def _desktop_background_local_disabled(self) -> bool:
         return desktop_resource_guard_enabled() and not self._desktop_background_local_enabled()

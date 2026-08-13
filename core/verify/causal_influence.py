@@ -66,6 +66,13 @@ class Verdict(StrEnum):
     INFLUENTIAL = "influential"
 
 
+#: Paired trials required before a zero-variance null may support INERT.
+#: Eight is small, and deliberately so: with no spread on either arm the
+#: interval is exact, so the number is guarding against "nobody looked" rather
+#: than against sampling error.
+_MIN_PAIRS_FOR_EXACT_INERT = 8
+
+
 class Arm(StrEnum):
     TREATMENT = "treatment"
     NULL = "null"
@@ -464,6 +471,49 @@ class InfluenceLedger:
                 reason=(
                     f"lesioning moved the output {effect:.4f} beyond nondeterminism "
                     f"(95% CI [{ci_low:.4f}, {ci_high:.4f}] excludes zero)"
+                ),
+            )
+
+        # A deterministic channel measured with perfect precision.
+        #
+        # The noise-floor test below cannot fire when the null arm has zero
+        # spread, because nothing is smaller than a floor of 0.0. That left a
+        # gap: a channel whose lesion demonstrably changes NOTHING, measured
+        # with no nondeterminism at all — the strongest evidence of inertness
+        # obtainable — fell through to UNMEASURED and stayed there forever.
+        # The most decisive possible measurement produced the least decisive
+        # possible verdict.
+        #
+        # With a zero-variance null the resolution limit is not the noise
+        # floor, it is exact. So the claim is available when the whole
+        # bootstrap interval sits at or below zero, on enough paired trials to
+        # be worth anything. Live channels sample a decoder above temperature
+        # zero and will essentially never take this branch; deterministic
+        # numeric channels and offline harnesses will.
+        if (
+            noise_floor == 0.0
+            and math.isfinite(ci_high)
+            and ci_high <= 0.0
+            and len(null) >= _MIN_PAIRS_FOR_EXACT_INERT
+            and len(treatment) >= _MIN_PAIRS_FOR_EXACT_INERT
+        ):
+            return ChannelVerdict(
+                channel=name,
+                verdict=Verdict.INERT,
+                n_treatment=len(treatment),
+                n_null=len(null),
+                mean_treatment=mean_treatment,
+                mean_null=mean_null,
+                effect=effect,
+                ci_low=ci_low,
+                ci_high=ci_high,
+                cliffs_delta=delta,
+                noise_floor=noise_floor,
+                reason=(
+                    f"lesioning the channel changed nothing, measured exactly: "
+                    f"the null arm has no spread and the whole interval "
+                    f"[{ci_low:.4f}, {ci_high:.4f}] sits at or below zero over "
+                    f"{len(treatment)} paired trials"
                 ),
             )
 

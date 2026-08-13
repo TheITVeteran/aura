@@ -482,6 +482,29 @@ async def _activate_verification(*, foreground_only: bool) -> ActivationResult:
 
     instrumentation = install_default_instrumentation()
 
+    # Accumulated causal-influence samples, restored before any traffic.
+    #
+    # ``InfluenceLedger`` always carried load()/as_dict() with a comment saying
+    # "a ledger that resets every boot never reaches a verdict, so the samples
+    # have to outlive the process that took them". Nothing ever called either,
+    # so every boot started at zero observations and every channel read
+    # UNMEASURED permanently — not because the measurement said nothing, but
+    # because it was never allowed to accumulate. This is the load half.
+    try:
+        from core.verify.influence_campaign import load_persisted_ledger
+
+        load_persisted_ledger()
+    except Exception as exc:  # noqa: BLE001 — evidence must not break boot
+        from core.runtime.errors import record_degradation
+
+        record_degradation(
+            "foundations",
+            exc,
+            severity="debug",
+            action="started with an empty influence ledger",
+            enforce_failure_policy=False,
+        )
+
     # Per-turn cost and stuck verdicts. Registered here because this is where
     # the pass seam is armed, and it attaches to that same seam. It installs an
     # after-hook only, so it can observe every turn and alter none of them —
