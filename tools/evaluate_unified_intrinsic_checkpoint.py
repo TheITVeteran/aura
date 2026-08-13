@@ -81,6 +81,33 @@ EVALUATION_SOURCE_FILES = (
     "tools/evaluate_unified_intrinsic_decoding.py",
     "tools/unified_intrinsic_decode_journal.py",
 )
+ROOT_CONTROL_SCHEMA = "aura.unified_intrinsic.root_control_binding.v1"
+MATCHED_CONTROL_SCHEMA = "aura.unified_intrinsic.matched_control_binding.v1"
+
+_CONTROL_COMPATIBILITY_FIELDS = (
+    "model",
+    "runtime",
+    "tokenizer",
+    "spec",
+    "window_geometry",
+    "families",
+    "task_depths",
+    "init_seed",
+    "bridge",
+    "window_tissue_mode",
+    "lora_rank",
+    "controller_rank",
+    "state_weight",
+    "stutter_weight",
+    "state_codebook_sha256",
+    "state_codebook_grounding",
+    "literal_observation_contract",
+    "opcode_observation_contract",
+    "answer_emission_contract",
+    "depth_basis_size",
+    "lora_targets",
+    "readout_sha256",
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -122,9 +149,7 @@ def _evaluation_layout(campaign_dir: Path) -> EvaluationLayout:
     return EvaluationLayout(
         checkpoint_dir=Path(str(paths["training_output"])).resolve(strict=True),
         dataset_path=Path(str(paths["dataset"])).resolve(strict=True),
-        tokenized_dataset_path=Path(str(paths["tokenized_dataset"])).resolve(
-            strict=True
-        ),
+        tokenized_dataset_path=Path(str(paths["tokenized_dataset"])).resolve(strict=True),
         bootstrap_output_dir=(
             Path(str(paths["bootstrap_output"])).resolve(strict=True)
             if paths.get("bootstrap_output") is not None
@@ -142,10 +167,7 @@ def _file_sha256(path: Path) -> str:
 
 
 def _evaluation_source_sha256s() -> dict[str, str]:
-    return {
-        relative: _file_sha256(REPO_ROOT / relative)
-        for relative in EVALUATION_SOURCE_FILES
-    }
+    return {relative: _file_sha256(REPO_ROOT / relative) for relative in EVALUATION_SOURCE_FILES}
 
 
 def _evaluation_preload_evidence(
@@ -218,9 +240,7 @@ def _initial_controller(
 
     bootstrap = identity.get("bootstrap")
     if bootstrap is not None:
-        raise RuntimeError(
-            "bootstrapped unified tissue requires its committed parent checkpoint"
-        )
+        raise RuntimeError("bootstrapped unified tissue requires its committed parent checkpoint")
     controller = UnifiedRecurrentController(
         _controller_config(model, identity, literal_contract, opcode_contract)
     )
@@ -237,12 +257,152 @@ def _initial_controller(
     if observed_grounding != expected_grounding:
         raise RuntimeError("unified checkpoint initial grounding differs")
     expected_sha256 = identity.get("initial_controller_sha256")
-    if (
-        not isinstance(expected_sha256, str)
-        or controller.parameter_sha256() != expected_sha256
-    ):
+    if not isinstance(expected_sha256, str) or controller.parameter_sha256() != expected_sha256:
         raise RuntimeError("unified checkpoint initial controller differs")
     return controller
+
+
+def _root_control_receipt(
+    campaign_dir: Path,
+    *,
+    stem: str,
+    target_identity: dict[str, Any] | None = None,
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    """Reopen a true pre-training root and bind it independently.
+
+    Recovery and source-repair checkpoints may have several immediate parents.
+    A root control is admissible only from a campaign whose own tissue was not
+    bootstrapped, so an intermediate trained checkpoint cannot be mislabeled as
+    untrained merely because it is convenient to load.
+    """
+
+    root = campaign_dir.expanduser().resolve(strict=True)
+    layout = _evaluation_layout(root)
+    try:
+        resolved = resolve_checkpoint_generation(
+            layout.checkpoint_dir,
+            stem=stem,
+            required=True,
+        )
+    except (OSError, UnifiedCheckpointError, ValueError) as exc:
+        raise RuntimeError("unified root control checkpoint is invalid") from exc
+    if resolved is None:  # pragma: no cover - required=True is exhaustive
+        raise RuntimeError("unified root control checkpoint is unavailable")
+    receipt = resolved.receipt
+    receipt_body = {key: value for key, value in receipt.items() if key != "receipt_sha256"}
+    identity = receipt.get("identity")
+    identity_body = (
+        {key: value for key, value in identity.items() if key != "identity_sha256"}
+        if isinstance(identity, dict)
+        else {}
+    )
+    if (
+        not isinstance(identity, dict)
+        or receipt.get("receipt_sha256") != _canonical_sha256(receipt_body)
+        or receipt.get("checkpoint_sha256") != _file_sha256(resolved.weights_path)
+        or identity.get("identity_sha256") != _canonical_sha256(identity_body)
+    ):
+        raise RuntimeError("unified root control commitment differs")
+    if identity.get("bootstrap") is not None:
+        raise RuntimeError("unified root control is itself bootstrapped")
+    initial_sha256 = identity.get("initial_controller_sha256")
+    if not isinstance(initial_sha256, str) or len(initial_sha256) != 64:
+        raise RuntimeError("unified root control identity is incomplete")
+    if target_identity is not None:
+        mismatches = [
+            field
+            for field in _CONTROL_COMPATIBILITY_FIELDS
+            if _canonical_sha256(identity.get(field))
+            != _canonical_sha256(target_identity.get(field))
+        ]
+        if mismatches:
+            raise RuntimeError("unified root control topology differs: " + ",".join(mismatches))
+    body = {
+        "schema": ROOT_CONTROL_SCHEMA,
+        "mode": "deterministic_pretraining_root",
+        "campaign_root": str(root),
+        "stem": stem,
+        "checkpoint_step": receipt.get("step"),
+        "checkpoint_sha256": receipt.get("checkpoint_sha256"),
+        "checkpoint_receipt_sha256": receipt.get("receipt_sha256"),
+        "campaign_identity_sha256": identity.get("identity_sha256"),
+        "controller_sha256": initial_sha256,
+    }
+    return identity, {**body, "binding_sha256": _canonical_sha256(body)}
+
+
+def root_control_binding(
+    campaign_dir: Path,
+    *,
+    stem: str,
+    target_identity: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Return the immutable public binding for an external root control."""
+
+    _identity, binding = _root_control_receipt(
+        campaign_dir,
+        stem=stem,
+        target_identity=target_identity,
+    )
+    return binding
+
+
+def campaign_initial_control_binding(
+    campaign_dir: Path,
+    *,
+    identity: dict[str, Any],
+) -> dict[str, Any]:
+    """Bind the initialization reconstructed from the evaluated campaign itself."""
+
+    root = campaign_dir.expanduser().resolve(strict=True)
+    controller_sha256 = identity.get("initial_controller_sha256")
+    identity_sha256 = identity.get("identity_sha256")
+    if (
+        not isinstance(controller_sha256, str)
+        or len(controller_sha256) != 64
+        or not isinstance(identity_sha256, str)
+        or len(identity_sha256) != 64
+    ):
+        raise RuntimeError("unified matched control identity is incomplete")
+    body = {
+        "schema": MATCHED_CONTROL_SCHEMA,
+        "mode": "campaign_episode_initial",
+        "campaign_root": str(root),
+        "campaign_identity_sha256": identity_sha256,
+        "controller_sha256": controller_sha256,
+    }
+    return {**body, "binding_sha256": _canonical_sha256(body)}
+
+
+def load_root_initial_controller(
+    campaign_dir: Path,
+    *,
+    stem: str,
+    model: Any,
+    tokenizer: Any,
+    spec: UnifiedIntrinsicTrainingSpec,
+    target_identity: dict[str, Any],
+    literal_contract: LiteralObservationContract,
+    opcode_contract: OpcodeObservationContract,
+) -> tuple[UnifiedRecurrentController, dict[str, Any]]:
+    """Materialize a root initialization against an already loaded model."""
+
+    identity, binding = _root_control_receipt(
+        campaign_dir,
+        stem=stem,
+        target_identity=target_identity,
+    )
+    controller = _initial_controller(
+        model,
+        tokenizer,
+        spec,
+        identity,
+        literal_contract,
+        opcode_contract,
+    )
+    if controller.parameter_sha256() != binding["controller_sha256"]:
+        raise RuntimeError("unified root control reconstruction differs")
+    return controller, binding
 
 
 def _bootstrap_initial_controller(
@@ -263,9 +423,7 @@ def _bootstrap_initial_controller(
     ):
         raise RuntimeError("unified checkpoint bootstrap identity differs")
     if identity.get("window_tissue_mode") != "controller_only":
-        raise RuntimeError(
-            "matched bootstrap reconstruction supports controller-only tissue"
-        )
+        raise RuntimeError("matched bootstrap reconstruction supports controller-only tissue")
     if layout.bootstrap_output_dir is None:
         raise RuntimeError("unified checkpoint bootstrap output is unavailable")
     stem = bootstrap.get("stem")
@@ -285,11 +443,7 @@ def _bootstrap_initial_controller(
     parent_identity = receipt.get("identity")
     receipt_body = {key: value for key, value in receipt.items() if key != "receipt_sha256"}
     parent_identity_body = (
-        {
-            key: value
-            for key, value in parent_identity.items()
-            if key != "identity_sha256"
-        }
+        {key: value for key, value in parent_identity.items() if key != "identity_sha256"}
         if isinstance(parent_identity, dict)
         else {}
     )
@@ -298,9 +452,7 @@ def _bootstrap_initial_controller(
         "parent_checkpoint_sha256": receipt.get("checkpoint_sha256"),
         "parent_receipt_sha256": receipt.get("receipt_sha256"),
         "parent_identity_sha256": (
-            parent_identity.get("identity_sha256")
-            if isinstance(parent_identity, dict)
-            else None
+            parent_identity.get("identity_sha256") if isinstance(parent_identity, dict) else None
         ),
     }
     if (
@@ -308,8 +460,7 @@ def _bootstrap_initial_controller(
         or any(bootstrap.get(key) != value for key, value in commitments.items())
         or receipt.get("receipt_sha256") != _canonical_sha256(receipt_body)
         or receipt.get("checkpoint_sha256") != _file_sha256(resolved.weights_path)
-        or parent_identity.get("identity_sha256")
-        != _canonical_sha256(parent_identity_body)
+        or parent_identity.get("identity_sha256") != _canonical_sha256(parent_identity_body)
     ):
         raise RuntimeError("unified checkpoint bootstrap commitment differs")
 
@@ -340,13 +491,10 @@ def _bootstrap_initial_controller(
     mismatches = [
         field
         for field in compatibility_fields
-        if _canonical_sha256(parent_identity.get(field))
-        != _canonical_sha256(identity.get(field))
+        if _canonical_sha256(parent_identity.get(field)) != _canonical_sha256(identity.get(field))
     ]
     if mismatches:
-        raise RuntimeError(
-            "unified checkpoint bootstrap topology differs: " + ",".join(mismatches)
-        )
+        raise RuntimeError("unified checkpoint bootstrap topology differs: " + ",".join(mismatches))
 
     controller = UnifiedRecurrentController(
         _controller_config(model, identity, literal_contract, opcode_contract)
@@ -363,10 +511,7 @@ def _bootstrap_initial_controller(
     parent_bundle.update(tree_unflatten(list(trainable.items())))
     mx.eval(parent_bundle.parameters())
     expected_sha256 = identity.get("initial_controller_sha256")
-    if (
-        not isinstance(expected_sha256, str)
-        or controller.parameter_sha256() != expected_sha256
-    ):
+    if not isinstance(expected_sha256, str) or controller.parameter_sha256() != expected_sha256:
         raise RuntimeError("unified checkpoint bootstrap controller differs")
     return controller
 
@@ -403,18 +548,18 @@ def _load_checkpoint(
         or receipt.get("checkpoint_sha256") != _file_sha256(weights_path)
     ):
         raise RuntimeError("unified checkpoint commitment differs")
-    identity_body = {
-        key: value for key, value in identity.items() if key != "identity_sha256"
-    }
+    identity_body = {key: value for key, value in identity.items() if key != "identity_sha256"}
     if identity.get("identity_sha256") != _canonical_sha256(identity_body):
         raise RuntimeError("unified campaign identity differs")
     source_sha256s = identity.get("source_sha256s")
     training_runtime_files = set(TRAINING_SOURCE_FILES) - set(EVALUATION_SOURCE_FILES)
-    if not isinstance(source_sha256s, dict) or set(source_sha256s) != set(
-        TRAINING_SOURCE_FILES
-    ) or any(
-        source_sha256s[relative] != _file_sha256(REPO_ROOT / relative)
-        for relative in training_runtime_files
+    if (
+        not isinstance(source_sha256s, dict)
+        or set(source_sha256s) != set(TRAINING_SOURCE_FILES)
+        or any(
+            source_sha256s[relative] != _file_sha256(REPO_ROOT / relative)
+            for relative in training_runtime_files
+        )
     ):
         raise RuntimeError("unified campaign source differs")
     model_identity = identity.get("model")
@@ -427,9 +572,7 @@ def _load_checkpoint(
     if not isinstance(runtime_identity, dict) or _runtime_identity() != runtime_identity:
         raise RuntimeError("unified campaign runtime differs")
     dataset_identity = identity.get("dataset")
-    dataset_name = (
-        dataset_identity.get("path") if isinstance(dataset_identity, dict) else None
-    )
+    dataset_name = dataset_identity.get("path") if isinstance(dataset_identity, dict) else None
     if (
         not isinstance(dataset_name, str)
         or Path(dataset_name).name != dataset_name
@@ -444,9 +587,8 @@ def _load_checkpoint(
         dataset_sha256 = _file_sha256(dataset_path)
     except OSError as exc:
         raise RuntimeError("unified campaign dataset is unavailable") from exc
-    if (
-        dataset_size != dataset_identity.get("size_bytes")
-        or dataset_sha256 != dataset_identity.get("sha256")
+    if dataset_size != dataset_identity.get("size_bytes") or dataset_sha256 != dataset_identity.get(
+        "sha256"
     ):
         raise RuntimeError("unified campaign dataset differs")
     train_tasks, holdout_tasks = load_source_dataset(dataset_path)
@@ -495,10 +637,9 @@ def _load_checkpoint(
         max_value=literal_identity.get("max_value"),
         schema=literal_identity.get("schema"),
     )
-    if (
-        literal_contract.contract_sha256 != literal_identity.get("contract_sha256")
-        or literal_contract.digit_token_ids != tokenizer_digit_token_ids(tokenizer)
-    ):
+    if literal_contract.contract_sha256 != literal_identity.get(
+        "contract_sha256"
+    ) or literal_contract.digit_token_ids != tokenizer_digit_token_ids(tokenizer):
         raise RuntimeError("unified checkpoint literal contract differs")
     opcode_identity = identity.get("opcode_observation_contract")
     if not isinstance(opcode_identity, dict):
@@ -551,8 +692,7 @@ def _load_checkpoint(
         tokenizer_contract,
     )
     if (
-        answer_contract.contract_sha256
-        != answer_identity.get("contract_sha256")
+        answer_contract.contract_sha256 != answer_identity.get("contract_sha256")
         or answer_contract != tokenizer_answer_contract
     ):
         raise RuntimeError("unified checkpoint answer emission contract differs")
@@ -639,11 +779,7 @@ def unified_evaluation_context(
         raise RuntimeError("unified checkpoint is unavailable")
     identity = resolved.receipt.get("identity")
     model_identity = identity.get("model") if isinstance(identity, dict) else None
-    model_path = (
-        model_identity.get("canonical_path")
-        if isinstance(model_identity, dict)
-        else None
-    )
+    model_path = model_identity.get("canonical_path") if isinstance(model_identity, dict) else None
     if not isinstance(model_path, str) or not model_path:
         raise RuntimeError("unified campaign model identity differs")
     resource_values = (
@@ -661,23 +797,26 @@ def unified_evaluation_context(
         preload_key_path=preload_key_path,
         preload_config_sha256=preload_config_sha256,
     )
-    with standalone_model_lane(
-        owner_id=f"evaluate-unified-intrinsic:{campaign_dir.parent.name}",
-        model_path=model_path,
-        purpose="benchmark",
-        preemptible=False,
-        allow_owner_eviction=False,
-        metadata={
-            "tool": "evaluate_unified_intrinsic_checkpoint",
-            "operator_launched": True,
-            "memory_envelope_gb": memory_limit_gb,
-        },
-    ), mlx_memory_envelope(
-        memory_gb=memory_limit_gb,
-        cache_gb=cache_limit_gb,
-        wired_gb=wired_limit_gb,
-        restore_limits_on_exit=False,
-    ) as envelope:
+    with (
+        standalone_model_lane(
+            owner_id=f"evaluate-unified-intrinsic:{campaign_dir.parent.name}",
+            model_path=model_path,
+            purpose="benchmark",
+            preemptible=False,
+            allow_owner_eviction=False,
+            metadata={
+                "tool": "evaluate_unified_intrinsic_checkpoint",
+                "operator_launched": True,
+                "memory_envelope_gb": memory_limit_gb,
+            },
+        ),
+        mlx_memory_envelope(
+            memory_gb=memory_limit_gb,
+            cache_gb=cache_limit_gb,
+            wired_gb=wired_limit_gb,
+            restore_limits_on_exit=False,
+        ) as envelope,
+    ):
         bundle, initial_controller, tokenizer, spec, identity = _load_checkpoint(
             campaign_dir,
             stem=stem,
@@ -712,9 +851,7 @@ def _sign_test_p_value(differences: list[float]) -> float | None:
         return None
     wins = sum(value > 0.0 for value in signs)
     tail = min(wins, len(signs) - wins)
-    probability = sum(math.comb(len(signs), k) for k in range(tail + 1)) / (
-        2 ** len(signs)
-    )
+    probability = sum(math.comb(len(signs), k) for k in range(tail + 1)) / (2 ** len(signs))
     return min(1.0, 2.0 * probability)
 
 
@@ -729,8 +866,7 @@ def _fresh_tasks(
 
     families = tuple(identity["families"])
     campaign_depths = tuple(
-        int(value)
-        for value in identity.get("task_depths", (identity.get("task_depth"),))
+        int(value) for value in identity.get("task_depths", (identity.get("task_depth"),))
     )
     if not campaign_depths or any(depth < 1 for depth in campaign_depths):
         raise RuntimeError("unified campaign task depths are invalid")
@@ -747,9 +883,7 @@ def _fresh_tasks(
         seed=int(identity["seed"]) + 9_973,
     )
     excluded = {task.prompt for task in (*train, *selected)}
-    evaluation_depths = (
-        campaign_depths if task_depth is None else (int(task_depth),)
-    )
+    evaluation_depths = campaign_depths if task_depth is None else (int(task_depth),)
     fresh = curriculum.task_battery(
         families,
         evaluation_depths,
@@ -828,8 +962,7 @@ def _evaluate_loaded_checkpoint(
         selected = [row for row in rows if row["family"] == family]
         family_rows[family] = {
             "tasks": len(selected),
-            "mean_depth_ce_gain": sum(row["depth_ce_gain"] for row in selected)
-            / len(selected),
+            "mean_depth_ce_gain": sum(row["depth_ce_gain"] for row in selected) / len(selected),
             "depth_wins": sum(row["depth_ce_gain"] > 0.0 for row in selected),
         }
     layout = _evaluation_layout(campaign_dir)

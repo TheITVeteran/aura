@@ -26,6 +26,10 @@ from core.brain.canonical_json import canonical_json_bytes  # noqa: E402
 from core.learning.recurrent_answer_emission import (  # noqa: E402
     tokenizer_answer_emission_contract,
 )
+from core.learning.recurrent_literal_grounding import (  # noqa: E402
+    LiteralObservationContract,
+    tokenizer_digit_token_ids,
+)
 from core.learning.recurrent_opcode_grounding import (  # noqa: E402
     tokenizer_opcode_contract,
 )
@@ -39,6 +43,8 @@ from tools.evaluate_unified_intrinsic_checkpoint import (  # noqa: E402
     _evaluation_source_sha256s,
     _file_sha256,
     _fresh_tasks,
+    campaign_initial_control_binding,
+    load_root_initial_controller,
     unified_evaluation_context,
 )
 from tools.train_intrinsic_recurrence import encode_example  # noqa: E402
@@ -50,7 +56,7 @@ from tools.unified_intrinsic_decode_journal import (  # noqa: E402
     DecodeProgressJournal,
 )
 
-DECODE_EVALUATION_SCHEMA = "aura.unified_intrinsic_decode_evaluation.v1"
+DECODE_EVALUATION_SCHEMA = "aura.unified_intrinsic_decode_evaluation.v2"
 DECODE_CLAIM_BOUNDARY = (
     "compiled arms measure public typed-state execution plus tokenizer-bound "
     "value emission; trained arms constrain only the public output grammar while "
@@ -136,12 +142,10 @@ def _paired_training_effects(
         ):
             raise RuntimeError("paired recurrent control is incomplete")
         wrong_to_right = sum(
-            not result[control_arm] and result[trained_arm]
-            for result in by_task.values()
+            not result[control_arm] and result[trained_arm] for result in by_task.values()
         )
         right_to_wrong = sum(
-            result[control_arm] and not result[trained_arm]
-            for result in by_task.values()
+            result[control_arm] and not result[trained_arm] for result in by_task.values()
         )
         control_correct = sum(result[control_arm] for result in by_task.values())
         trained_correct = sum(result[trained_arm] for result in by_task.values())
@@ -180,6 +184,7 @@ def _evaluate_decoding_loaded(
     tokenizer: Any,
     spec: Any,
     identity: dict[str, Any],
+    control_binding: dict[str, Any],
     envelope: Any,
     stem: str,
     per_cell: int,
@@ -198,25 +203,15 @@ def _evaluate_decoding_loaded(
     if recurrence_depths is not None and (
         not recurrence_depths
         or len(recurrence_depths) != len(set(recurrence_depths))
-        or any(
-            type(depth) is not int or depth < 2
-            for depth in recurrence_depths
-        )
+        or any(type(depth) is not int or depth < 2 for depth in recurrence_depths)
     ):
-        raise ValueError(
-            "decode recurrence depths must be unique non-anchor campaign depths"
-        )
+        raise ValueError("decode recurrence depths must be unique non-anchor campaign depths")
     depths = task_depths or tuple(
-        int(value)
-        for value in identity.get("task_depths", (identity.get("task_depth"),))
+        int(value) for value in identity.get("task_depths", (identity.get("task_depth"),))
     )
     decoded_depths = recurrence_depths or (max(spec.heldout_depths),)
-    if (
-        any(depth not in spec.depths for depth in decoded_depths)
-    ):
-        raise ValueError(
-            "decode recurrence depths must be unique non-anchor campaign depths"
-        )
+    if any(depth not in spec.depths for depth in decoded_depths):
+        raise ValueError("decode recurrence depths must be unique non-anchor campaign depths")
     tasks = [
         task
         for depth in depths
@@ -252,6 +247,7 @@ def _evaluate_decoding_loaded(
         "schema": "aura.unified_intrinsic.decode_experiment.v1",
         "campaign_identity_sha256": identity["identity_sha256"],
         "checkpoint_sha256": checkpoint_sha256,
+        "matched_control": control_binding,
         "evaluation_source_sha256s": source_sha256s,
         "stem": stem,
         "per_cell": per_cell,
@@ -262,11 +258,7 @@ def _evaluate_decoding_loaded(
         "tasks": task_identities,
         "arms": list(arm_names),
     }
-    progress = (
-        DecodeProgressJournal(progress_dir, experiment)
-        if progress_dir is not None
-        else None
-    )
+    progress = DecodeProgressJournal(progress_dir, experiment) if progress_dir is not None else None
     total_candidates = len(tasks) * len(arm_names)
     resumed_candidates = 0
     bridge = {"assistant_answer": "\n\nFINAL_ANSWER: "}.get(
@@ -307,9 +299,7 @@ def _evaluate_decoding_loaded(
                 plan,
                 controller,
                 state_slot_start=state_slot_start,
-                answer_emission_contract=(
-                    answer_contract if grammar_enabled else None
-                ),
+                answer_emission_contract=(answer_contract if grammar_enabled else None),
                 answer_digit_pointer_enabled=pointer_enabled,
             )
             return logits
@@ -320,16 +310,11 @@ def _evaluate_decoding_loaded(
             state_slot_start: int = int(prompt.shape[-1]),
             cache: dict[int, tuple[tuple[int, ...], Any, int]] = compiled_cache,
         ) -> Any:
-            generated = tuple(
-                int(value) for value in tokens[0, state_slot_start:].tolist()
-            )
+            generated = tuple(int(value) for value in tokens[0, state_slot_start:].tolist())
             cached = cache.get(plan.iterations)
             if cached is not None:
                 expected, dtype, vocabulary_size = cached
-                if (
-                    len(generated) >= len(expected)
-                    or generated != expected[: len(generated)]
-                ):
+                if len(generated) >= len(expected) or generated != expected[: len(generated)]:
                     raise RuntimeError(
                         "compiled recurrent answer diverged from its terminal program"
                     )
@@ -348,13 +333,9 @@ def _evaluate_decoding_loaded(
             if not state_probabilities:
                 raise RuntimeError("compiled recurrent answer produced no typed state")
             state_values = tuple(
-                int(value)
-                for value in mx.argmax(state_probabilities[-1], axis=-1)
-                .tolist()[0]
+                int(value) for value in mx.argmax(state_probabilities[-1], axis=-1).tolist()[0]
             )
-            public_tokens = tuple(
-                int(value) for value in tokens[0, :state_slot_start].tolist()
-            )
+            public_tokens = tuple(int(value) for value in tokens[0, :state_slot_start].tolist())
             expected = answer_contract.expected_tokens(public_tokens, state_values)
             if expected is None:
                 raise RuntimeError("compiled recurrent answer did not reach terminal state")
@@ -442,9 +423,7 @@ def _evaluate_decoding_loaded(
                     or resumed.get("task_depth") != task.depth
                     or resumed.get("expected") != task.answer
                 ):
-                    raise DecodeProgressError(
-                        "decode progress candidate task contract differs"
-                    )
+                    raise DecodeProgressError("decode progress candidate task contract differs")
                 candidates.append(resumed)
                 resumed_candidates += 1
                 sequence += 1
@@ -515,9 +494,7 @@ def _evaluate_decoding_loaded(
         depth_results[str(task_depth)] = {}
         for arm in arm_results:
             selected = [
-                row
-                for row in candidates
-                if row["arm"] == arm and row["task_depth"] == task_depth
+                row for row in candidates if row["arm"] == arm and row["task_depth"] == task_depth
             ]
             correct = sum(row["correct"] for row in selected)
             depth_results[str(task_depth)][arm] = {
@@ -530,6 +507,7 @@ def _evaluate_decoding_loaded(
         "schema": DECODE_EVALUATION_SCHEMA,
         "campaign_identity_sha256": identity["identity_sha256"],
         "checkpoint_sha256": checkpoint_sha256,
+        "matched_control": control_binding,
         "evaluation_source_sha256s": source_sha256s,
         "evaluation_seed": evaluation_seed,
         "per_cell": per_cell,
@@ -547,9 +525,7 @@ def _evaluate_decoding_loaded(
         "candidates": candidates,
         "decode_progress": {
             "enabled": progress is not None,
-            "experiment_sha256": (
-                progress.experiment_sha256 if progress is not None else None
-            ),
+            "experiment_sha256": (progress.experiment_sha256 if progress is not None else None),
             "candidates_committed": len(candidates),
             "candidates_resumed": resumed_candidates,
         },
@@ -578,6 +554,8 @@ def evaluate_decoding(
     preload_key_path: Path | None = None,
     preload_config_sha256: str | None = None,
     progress_dir: Path | None = None,
+    matched_control_campaign: Path | None = None,
+    matched_control_stem: str = "checkpoint_latest",
 ) -> dict[str, Any]:
     if task_depths is not None and (
         not task_depths
@@ -590,9 +568,7 @@ def evaluate_decoding(
         or len(recurrence_depths) != len(set(recurrence_depths))
         or any(type(depth) is not int or depth < 2 for depth in recurrence_depths)
     ):
-        raise ValueError(
-            "decode recurrence depths must be unique non-anchor campaign depths"
-        )
+        raise ValueError("decode recurrence depths must be unique non-anchor campaign depths")
     with unified_evaluation_context(
         campaign_dir,
         stem=stem,
@@ -616,6 +592,21 @@ def evaluate_decoding(
             envelope,
             resource_receipt,
         ) = loaded
+        control_binding = campaign_initial_control_binding(
+            campaign_dir,
+            identity=identity,
+        )
+        if matched_control_campaign is not None:
+            initial_controller, control_binding = load_root_initial_controller(
+                matched_control_campaign,
+                stem=matched_control_stem,
+                model=bundle.model,
+                tokenizer=tokenizer,
+                spec=spec,
+                target_identity=identity,
+                literal_contract=LiteralObservationContract(tokenizer_digit_token_ids(tokenizer)),
+                opcode_contract=tokenizer_opcode_contract(tokenizer),
+            )
         report = _evaluate_decoding_loaded(
             campaign_dir,
             bundle=bundle,
@@ -623,6 +614,7 @@ def evaluate_decoding(
             tokenizer=tokenizer,
             spec=spec,
             identity=identity,
+            control_binding=control_binding,
             envelope=envelope,
             stem=stem,
             per_cell=per_cell,
@@ -667,6 +659,8 @@ def main() -> int:
     parser.add_argument("--preload-key-path", type=Path)
     parser.add_argument("--preload-config-sha256")
     parser.add_argument("--progress-dir", type=Path)
+    parser.add_argument("--matched-control-campaign", type=Path)
+    parser.add_argument("--matched-control-stem", default="checkpoint_latest")
     args = parser.parse_args()
     report = evaluate_decoding(
         args.campaign.expanduser().resolve(strict=True),
@@ -675,9 +669,7 @@ def main() -> int:
         evaluation_seed=args.evaluation_seed,
         max_tokens=args.max_tokens,
         task_depths=(
-            tuple(int(value) for value in args.task_depths.split(","))
-            if args.task_depths
-            else None
+            tuple(int(value) for value in args.task_depths.split(",")) if args.task_depths else None
         ),
         recurrence_depths=(
             tuple(int(value) for value in args.recurrence_depths.split(","))
@@ -695,6 +687,8 @@ def main() -> int:
         preload_key_path=args.preload_key_path,
         preload_config_sha256=args.preload_config_sha256,
         progress_dir=args.progress_dir,
+        matched_control_campaign=args.matched_control_campaign,
+        matched_control_stem=args.matched_control_stem,
     )
     encoded = json.dumps(report, indent=2, sort_keys=True) + "\n"
     if args.report is not None:

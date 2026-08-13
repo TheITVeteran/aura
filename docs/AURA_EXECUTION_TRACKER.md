@@ -46428,3 +46428,45 @@ focused replication and promotion suite passes `49/49`; canonical smoke passes
 envelope remains `915/920`; this checkpoint repairs transport of the
 already-refuted result and does not change scientific evidence or authorize
 recurrent serving.
+
+## Checkpoint 2026-08-12-290: Matched Control Means the Pre-Training Root
+
+The CP281 refutation localized a deeper evidence-identity defect rather than a
+new controller failure. Its so-called initialization-matched arm reconstructed
+the immediate CP275 recovery parent at step 34 and compared it with step 36.
+That was a valid measure of the final two updates, but not a control for the
+complete learned controller. The actual lineage begins with the unbootstrapped
+CP254 campaign: its deterministic pre-training controller is
+`a8703ead03ac974b1215c2769b17c74e65f3770d946d131c9be7d02614b23d2f`,
+whereas CP275's recovery initialization is already-trained tissue at
+`c1a07db619b5658b9b008c9be9c6ec18a2e05feee50327e9f0abe650b7ca5369`.
+
+Source-only checkpoint migration caused the ambiguity by relabelling the
+current resume controller as `initial_controller_sha256`. Migration now
+preserves the experiment's inherited initial commitment and records the
+current payload separately as `source_migration_controller_sha256`. The
+evaluator can independently bind and reconstruct a true root only from an
+authenticated, unbootstrapped checkpoint with exact model, tokenizer,
+topology, grounding, readout and task contracts. Intermediate recovery tissue
+is rejected as a root control.
+
+Resident evaluation plans and decode reports now freeze the same authenticated
+control binding. The report schema advances to v2 and the source-bound plan to
+v3; every new report must identify either its campaign-local initialization or
+an explicit deterministic pre-training root. Status rejects historical v1
+evidence under a v3 plan, while the independent adjudicator retains v1 only for
+reading already-frozen historical results. A plan also fails if the selected
+checkpoint changes between resolution and identity binding.
+
+The real no-model artifact check binds CP254's root to
+`ea5fbd8678bca83cafd759e4b7d94cee5fe08dad7d6dd38aa3e43cae286c4471`
+and confirms exact compatibility with CP275's admitted terminal checkpoint.
+Validation is green under Aura's Python 3.12 runtime: `64/64` focused
+migration, evaluator, launcher, adjudication and replication tests pass;
+canonical smoke passes `104/104`; full compilation, governance ownership,
+layering, Ruff and diff hygiene pass. The completion envelope remains
+`915/920` because no decoded gain, powered replication, runtime authority,
+broader reasoning result, fusion or `WOW Signal` is claimed. Next is the
+source-bound resident diagnostic comparing CP275's trained controller with the
+true CP254 pre-training root on fresh cells; only a positive differential may
+advance to powered replication.

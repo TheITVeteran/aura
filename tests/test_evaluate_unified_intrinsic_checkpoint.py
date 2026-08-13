@@ -226,6 +226,74 @@ def test_bootstrap_initial_controller_rejects_parent_commitment_drift(
         )
 
 
+def test_root_control_binding_requires_a_true_compatible_root(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    weights = tmp_path / "root.safetensors"
+    weights.write_bytes(b"root-controller-checkpoint")
+    identity = {
+        field: f"value-{field}"
+        for field in evaluator._CONTROL_COMPATIBILITY_FIELDS  # noqa: SLF001
+    }
+    identity.update(
+        {
+            "bootstrap": None,
+            "initial_controller_sha256": "a" * 64,
+        }
+    )
+    identity["identity_sha256"] = evaluator._canonical_sha256(identity)  # noqa: SLF001
+    receipt_body = {
+        "step": 73,
+        "checkpoint_sha256": evaluator._file_sha256(weights),  # noqa: SLF001
+        "identity": identity,
+    }
+    receipt = {
+        **receipt_body,
+        "receipt_sha256": evaluator._canonical_sha256(receipt_body),  # noqa: SLF001
+    }
+    monkeypatch.setattr(
+        evaluator,
+        "resolve_checkpoint_generation",
+        lambda *_args, **_kwargs: SimpleNamespace(
+            receipt=receipt,
+            weights_path=weights,
+        ),
+    )
+
+    binding = evaluator.root_control_binding(
+        tmp_path,
+        stem="checkpoint_latest",
+        target_identity=dict(identity),
+    )
+
+    assert binding["mode"] == "deterministic_pretraining_root"
+    assert binding["checkpoint_step"] == 73
+    assert binding["controller_sha256"] == "a" * 64
+    assert binding["binding_sha256"] == evaluator._canonical_sha256(  # noqa: SLF001
+        {key: value for key, value in binding.items() if key != "binding_sha256"}
+    )
+
+    target = dict(identity)
+    target["controller_rank"] = "different"
+    with pytest.raises(RuntimeError, match="topology differs: controller_rank"):
+        evaluator.root_control_binding(
+            tmp_path,
+            stem="checkpoint_latest",
+            target_identity=target,
+        )
+
+    identity["bootstrap"] = {"parent_step": 72}
+    identity["identity_sha256"] = evaluator._canonical_sha256(  # noqa: SLF001
+        {key: value for key, value in identity.items() if key != "identity_sha256"}
+    )
+    receipt_body["identity"] = identity
+    receipt["identity"] = identity
+    receipt["receipt_sha256"] = evaluator._canonical_sha256(receipt_body)  # noqa: SLF001
+    with pytest.raises(RuntimeError, match="itself bootstrapped"):
+        evaluator.root_control_binding(tmp_path, stem="checkpoint_latest")
+
+
 def test_evaluation_without_external_guard_uses_live_pressure(monkeypatch) -> None:
     observed = {"available": True, "under_pressure": False, "source": "live"}
     monkeypatch.setattr(evaluator, "host_pressure", lambda: observed)

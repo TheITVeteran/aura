@@ -16,12 +16,8 @@ from tools.evaluate_unified_intrinsic_decoding import (  # noqa: E402
 
 def test_decode_claim_boundary_defers_identity_to_campaign_binding() -> None:
     assert "Resident model identity" in DECODE_CLAIM_BOUNDARY
-    assert "not a broad reasoning, frontier, fusion, or WOW result" in (
-        DECODE_CLAIM_BOUNDARY
-    )
-    assert "not a preregistered broad reasoning, resident-32B" not in (
-        DECODE_CLAIM_BOUNDARY
-    )
+    assert "not a broad reasoning, frontier, fusion, or WOW result" in (DECODE_CLAIM_BOUNDARY)
+    assert "not a preregistered broad reasoning, resident-32B" not in (DECODE_CLAIM_BOUNDARY)
 
 
 def test_decoded_arm_identity_covers_controls_treatment_and_lesions() -> None:
@@ -49,8 +45,7 @@ def test_force_next_token_replaces_only_the_last_logit_row() -> None:
 
 def test_candidate_response_reconstructs_exact_answer_envelope() -> None:
     assert (
-        _candidate_response("\n\nFINAL_ANSWER: ", '{"residue":7}')
-        == 'FINAL_ANSWER: {"residue":7}'
+        _candidate_response("\n\nFINAL_ANSWER: ", '{"residue":7}') == 'FINAL_ANSWER: {"residue":7}'
     )
     with pytest.raises(ValueError, match="exact answer bridge"):
         _candidate_response("Answer: ", "7")

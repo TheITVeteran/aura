@@ -124,11 +124,10 @@ def test_target_identity_changes_only_the_explicit_source_allowlist(
         controller_sha256="1" * 64,
         allowed_source_changes=frozenset({"trainer.py"}),
     )
-    assert differences == {
-        "trainer.py": {"source": "a" * 64, "target": "d" * 64}
-    }
+    assert differences == {"trainer.py": {"source": "a" * 64, "target": "d" * 64}}
     assert target["source_sha256s"]["objective.py"] == "b" * 64
-    assert target["initial_controller_sha256"] == "1" * 64
+    assert target["initial_controller_sha256"] == "c" * 64
+    assert target["source_migration_controller_sha256"] == "1" * 64
     assert target["bootstrap"]["parent_step"] == 34
     assert target["identity_sha256"] == canonical_sha256(
         {key: value for key, value in target.items() if key != "identity_sha256"}

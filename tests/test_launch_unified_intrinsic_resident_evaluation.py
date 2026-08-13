@@ -17,6 +17,8 @@ def _arguments(root: Path) -> argparse.Namespace:
         campaign=root,
         output=None,
         evaluator_source_root=None,
+        matched_control_campaign=None,
+        matched_control_stem="checkpoint_latest",
         stem="checkpoint_answer_bridge_admitted",
         per_cell=1,
         evaluation_seed=241,
@@ -112,9 +114,7 @@ def _terminal_fixture(
         **completion_body,
         "completion_sha256": launcher.canonical_sha256(completion_body),
     }
-    (root / "completion-receipt.json").write_bytes(
-        launcher.canonical_bytes(completion) + b"\n"
-    )
+    (root / "completion-receipt.json").write_bytes(launcher.canonical_bytes(completion) + b"\n")
     monkeypatch.setattr(launcher.resident, "_load_config", lambda _path: config)
     monkeypatch.setattr(
         launcher.resident,
@@ -125,7 +125,10 @@ def _terminal_fixture(
         "step": checkpoint["step"],
         "checkpoint_sha256": checkpoint["checkpoint_sha256"],
         "receipt_sha256": checkpoint["receipt_sha256"],
-        "identity": {"identity_sha256": "e" * 64},
+        "identity": {
+            "identity_sha256": "e" * 64,
+            "initial_controller_sha256": "f" * 64,
+        },
     }
     monkeypatch.setattr(
         launcher,
@@ -153,9 +156,7 @@ def _terminal_fixture(
         **training_body,
         "receipt_sha256": launcher.canonical_sha256(training_body),
     }
-    checkpoint["training_receipt"]["receipt_sha256"] = training_receipt[
-        "receipt_sha256"
-    ]
+    checkpoint["training_receipt"]["receipt_sha256"] = training_receipt["receipt_sha256"]
     (output / "training_receipt.json").write_bytes(
         launcher.canonical_bytes(training_receipt) + b"\n"
     )
@@ -164,9 +165,7 @@ def _terminal_fixture(
         **completion_body,
         "completion_sha256": launcher.canonical_sha256(completion_body),
     }
-    (root / "completion-receipt.json").write_bytes(
-        launcher.canonical_bytes(completion) + b"\n"
-    )
+    (root / "completion-receipt.json").write_bytes(launcher.canonical_bytes(completion) + b"\n")
     return _arguments(root), config, checkpoint
 
 
@@ -180,6 +179,22 @@ def test_prepare_binds_terminal_checkpoint_and_frozen_evaluator(
 
     assert plan["scientific"]["checkpoint_sha256"] == checkpoint["checkpoint_sha256"]
     assert plan["scientific"]["checkpoint"]["stem"] == arguments.stem
+    assert plan["scientific"]["matched_control"] == {
+        "schema": "aura.unified_intrinsic.matched_control_binding.v1",
+        "mode": "campaign_episode_initial",
+        "campaign_root": str(arguments.campaign),
+        "campaign_identity_sha256": "e" * 64,
+        "controller_sha256": "f" * 64,
+        "binding_sha256": launcher.canonical_sha256(
+            {
+                "schema": "aura.unified_intrinsic.matched_control_binding.v1",
+                "mode": "campaign_episode_initial",
+                "campaign_root": str(arguments.campaign),
+                "campaign_identity_sha256": "e" * 64,
+                "controller_sha256": "f" * 64,
+            }
+        ),
+    }
     assert plan["scientific"]["checkpoint"]["answer_bridge_admission"] == {
         "admission_sha256": launcher.canonical_sha256(
             {
@@ -200,9 +215,7 @@ def test_prepare_binds_terminal_checkpoint_and_frozen_evaluator(
         )
         for relative in launcher.EVALUATION_SOURCE_FILES
     }
-    assert plan["evaluator_command"][1].startswith(
-        str(Path(config["source"]["git"]["root"]))
-    )
+    assert plan["evaluator_command"][1].startswith(str(Path(config["source"]["git"]["root"])))
     assert plan["evaluator_command"][-8:] == [
         "--preload-ready-path",
         plan["ready"],
@@ -241,9 +254,7 @@ def test_prepare_binds_repaired_evaluator_source_root(
         "unified_intrinsic_preload_barrier.py",
         "memory_sentinel.py",
     ):
-        (repaired / "tools" / name).write_bytes(
-            (training_source / "tools" / name).read_bytes()
-        )
+        (repaired / "tools" / name).write_bytes((training_source / "tools" / name).read_bytes())
     arguments.evaluator_source_root = repaired
 
     plan = launcher.prepare(arguments)
@@ -253,6 +264,43 @@ def test_prepare_binds_repaired_evaluator_source_root(
     assert plan["evaluator_command"][1] == str(
         repaired / "tools/evaluate_unified_intrinsic_decoding.py"
     )
+
+
+def test_prepare_binds_an_explicit_root_control(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    arguments, _config, _checkpoint = _terminal_fixture(tmp_path, monkeypatch)
+    control = tmp_path / "root-control"
+    control.mkdir()
+    arguments.matched_control_campaign = control
+    binding = {
+        "schema": "aura.unified_intrinsic.root_control_binding.v1",
+        "mode": "deterministic_pretraining_root",
+        "campaign_root": str(control),
+        "stem": "checkpoint_latest",
+        "controller_sha256": "1" * 64,
+        "binding_sha256": "2" * 64,
+    }
+    calls: list[tuple[Path, str, dict[str, object]]] = []
+
+    def bind(path: Path, *, stem: str, target_identity: dict[str, object]):
+        calls.append((path, stem, target_identity))
+        return binding
+
+    monkeypatch.setattr(launcher, "root_control_binding", bind)
+
+    plan = launcher.prepare(arguments)
+
+    assert calls and calls[0][0] == control
+    assert plan["scientific"]["matched_control"] == binding
+    index = plan["evaluator_command"].index("--matched-control-campaign")
+    assert plan["evaluator_command"][index : index + 4] == [
+        "--matched-control-campaign",
+        str(control),
+        "--matched-control-stem",
+        "checkpoint_latest",
+    ]
 
 
 def test_prepare_rejects_completion_for_a_different_checkpoint(
@@ -322,9 +370,7 @@ def test_prepare_rejects_tampered_answer_bridge_admission(
     receipt["answer_bridge_admission"]["exact"] = 0
     body = {key: value for key, value in receipt.items() if key != "receipt_sha256"}
     receipt["receipt_sha256"] = launcher.canonical_sha256(body)
-    (output / "training_receipt.json").write_bytes(
-        launcher.canonical_bytes(receipt) + b"\n"
-    )
+    (output / "training_receipt.json").write_bytes(launcher.canonical_bytes(receipt) + b"\n")
 
     with pytest.raises(
         launcher.ResidentEvaluationLaunchError,
@@ -447,7 +493,7 @@ def test_status_rejects_forged_report_hash(
     detached_root.mkdir()
     (detached_root / launcher.detached.PLAN_FILE).write_text("{}\n", encoding="ascii")
     report = {
-        "schema": "aura.unified_intrinsic_decode_evaluation.v1",
+        "schema": "aura.unified_intrinsic_decode_evaluation.v2",
         "report_sha256": "0" * 64,
     }
     Path(plan["report"]).write_bytes(launcher.canonical_bytes(report) + b"\n")
@@ -474,17 +520,16 @@ def test_status_accepts_hash_valid_legacy_pretty_report_without_rewriting_it(
     detached_root.mkdir()
     (detached_root / launcher.detached.PLAN_FILE).write_text("{}\n", encoding="ascii")
     body = {
-        "schema": "aura.unified_intrinsic_decode_evaluation.v1",
+        "schema": "aura.unified_intrinsic_decode_evaluation.v2",
         "checkpoint_sha256": checkpoint["checkpoint_sha256"],
         "evaluation_seed": plan["scientific"]["evaluation_seed"],
         "per_cell": plan["scientific"]["per_cell"],
         "max_tokens": plan["scientific"]["max_tokens"],
         "task_depths": plan["scientific"]["task_depths"],
-            "recurrence_depths": plan["scientific"]["recurrence_depths"],
-            "evaluation_source_sha256s": plan["scientific"][
-                "evaluation_source_sha256s"
-            ],
-        }
+        "recurrence_depths": plan["scientific"]["recurrence_depths"],
+        "evaluation_source_sha256s": plan["scientific"]["evaluation_source_sha256s"],
+        "matched_control": plan["scientific"]["matched_control"],
+    }
     report = {**body, "report_sha256": launcher.canonical_sha256(body)}
     pretty = (json.dumps(report, indent=2, sort_keys=True) + "\n").encode("ascii")
     Path(plan["report"]).write_bytes(pretty)
@@ -504,6 +549,41 @@ def test_status_accepts_hash_valid_legacy_pretty_report_without_rewriting_it(
         "size_bytes": len(pretty),
     }
     assert Path(plan["report"]).read_bytes() == pretty
+
+
+def test_status_rejects_a_historical_report_schema_for_a_v3_plan(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    arguments, _config, checkpoint = _terminal_fixture(tmp_path, monkeypatch)
+    plan = launcher.prepare(arguments)
+    detached_root = Path(plan["evaluation_root"]) / "detached"
+    detached_root.mkdir()
+    (detached_root / launcher.detached.PLAN_FILE).write_text("{}\n", encoding="ascii")
+    body = {
+        "schema": "aura.unified_intrinsic_decode_evaluation.v1",
+        "checkpoint_sha256": checkpoint["checkpoint_sha256"],
+        "evaluation_seed": plan["scientific"]["evaluation_seed"],
+        "per_cell": plan["scientific"]["per_cell"],
+        "max_tokens": plan["scientific"]["max_tokens"],
+        "task_depths": plan["scientific"]["task_depths"],
+        "recurrence_depths": plan["scientific"]["recurrence_depths"],
+        "evaluation_source_sha256s": plan["scientific"]["evaluation_source_sha256s"],
+        "matched_control": plan["scientific"]["matched_control"],
+    }
+    report = {**body, "report_sha256": launcher.canonical_sha256(body)}
+    Path(plan["report"]).write_bytes(launcher.canonical_bytes(report) + b"\n")
+    monkeypatch.setattr(
+        launcher.detached,
+        "_status",
+        lambda _path: {"terminal": True, "receipt": {"passed": True}},
+    )
+
+    with pytest.raises(
+        launcher.ResidentEvaluationLaunchError,
+        match="differs from its frozen plan",
+    ):
+        launcher.status(arguments)
 
 
 def test_status_replays_stored_plan_without_rebuilding_current_source(

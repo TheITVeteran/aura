@@ -28,6 +28,16 @@ from tools.unified_intrinsic_resident_identity import (  # noqa: E402
 )
 
 VERDICT_SCHEMA: Final = "aura.unified_intrinsic.resident_transfer_verdict.v1"
+REPORT_SCHEMAS: Final = frozenset(
+    {
+        "aura.unified_intrinsic_decode_evaluation.v1",
+        "aura.unified_intrinsic_decode_evaluation.v2",
+    }
+)
+CONTROL_SCHEMAS: Final = {
+    "aura.unified_intrinsic.matched_control_binding.v1": "campaign_episode_initial",
+    "aura.unified_intrinsic.root_control_binding.v1": "deterministic_pretraining_root",
+}
 SUPPORTED = "supported_bounded_resident_transfer"
 INCONCLUSIVE_CEILING = "inconclusive_control_ceiling"
 INCONCLUSIVE_INSTRUMENT = "inconclusive_instrument"
@@ -99,14 +109,54 @@ def _candidate_matrix(
     return matrix
 
 
+def _validate_matched_control(report: Mapping[str, Any]) -> None:
+    """Require an authenticated control identity for current evidence reports."""
+
+    if report.get("schema") == "aura.unified_intrinsic_decode_evaluation.v1":
+        return
+    binding = report.get("matched_control")
+    if not isinstance(binding, dict):
+        _fail("resident transfer matched control is missing")
+    body = {key: value for key, value in binding.items() if key != "binding_sha256"}
+    expected_mode = CONTROL_SCHEMAS.get(binding.get("schema"))
+    required_strings = {
+        "campaign_root",
+        "controller_sha256",
+        "campaign_identity_sha256",
+    }
+    if expected_mode == "deterministic_pretraining_root":
+        required_strings.update(
+            {
+                "stem",
+                "checkpoint_sha256",
+                "checkpoint_receipt_sha256",
+            }
+        )
+    if (
+        expected_mode is None
+        or binding.get("mode") != expected_mode
+        or binding.get("binding_sha256") != canonical_sha256(body)
+        or any(
+            not isinstance(binding.get(key), str) or not binding[key] for key in required_strings
+        )
+        or any(len(binding[key]) != 64 for key in required_strings if key.endswith("sha256"))
+        or (
+            expected_mode == "deterministic_pretraining_root"
+            and type(binding.get("checkpoint_step")) is not int
+        )
+    ):
+        _fail("resident transfer matched control commitment differs")
+
+
 def adjudicate_report(report: Mapping[str, Any]) -> dict[str, Any]:
     """Return one bounded, machine-checkable resident-transfer verdict."""
 
-    if report.get("schema") != "aura.unified_intrinsic_decode_evaluation.v1":
+    if report.get("schema") not in REPORT_SCHEMAS:
         _fail("resident transfer report schema differs")
     report_body = {key: value for key, value in report.items() if key != "report_sha256"}
     if report.get("report_sha256") != canonical_sha256(report_body):
         _fail("resident transfer report commitment differs")
+    _validate_matched_control(report)
 
     task_count = _integer(report.get("task_count"), "task_count", minimum=1)
     task_depths = report.get("task_depths")

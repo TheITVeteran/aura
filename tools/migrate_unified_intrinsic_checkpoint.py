@@ -65,10 +65,7 @@ def _sha256_file(path: Path) -> str:
 
 
 def _source_sha256s(source_root: Path) -> dict[str, str]:
-    return {
-        relative: _sha256_file(source_root / relative)
-        for relative in TRAINING_SOURCE_FILES
-    }
+    return {relative: _sha256_file(source_root / relative) for relative in TRAINING_SOURCE_FILES}
 
 
 def _controller_sha256(weights_path: Path, identity: dict[str, Any]) -> str:
@@ -150,7 +147,15 @@ def _target_identity(
         "history_inherited": False,
         "dataset_inherited": False,
     }
-    target["initial_controller_sha256"] = controller_sha256
+    # A source-only migration resumes the same experiment.  The controller in
+    # the migrated payload is the current resume state, not a new scientific
+    # initialization.  Re-labelling it as the initial controller silently
+    # collapses trained and matched-control arms after every repair migration.
+    initial_controller_sha256 = source_identity.get("initial_controller_sha256")
+    if not isinstance(initial_controller_sha256, str) or len(initial_controller_sha256) != 64:
+        _fail("migration_initial_controller_identity_missing")
+    target["initial_controller_sha256"] = initial_controller_sha256
+    target["source_migration_controller_sha256"] = controller_sha256
     target["identity_sha256"] = canonical_sha256(target)
     return target, differences
 
@@ -184,11 +189,9 @@ def migrate(
     ):
         _fail("migration_target_parent_differs")
     source_identity = source.receipt.get("identity")
-    if (
-        not isinstance(source_identity, dict)
-        or bootstrap.get("parent_identity_sha256")
-        != source_identity.get("identity_sha256")
-    ):
+    if not isinstance(source_identity, dict) or bootstrap.get(
+        "parent_identity_sha256"
+    ) != source_identity.get("identity_sha256"):
         _fail("migration_source_identity_invalid")
     migration_tool_sha256 = _sha256_file(Path(__file__).resolve(strict=True))
 
@@ -228,8 +231,7 @@ def migrate(
     root = Path(config["paths"]["campaign_root"])
     atomic_write_bytes_if_absent(
         root / "checkpoint-source-migration-intent.json",
-        canonical_bytes({**intent_body, "intent_sha256": canonical_sha256(intent_body)})
-        + b"\n",
+        canonical_bytes({**intent_body, "intent_sha256": canonical_sha256(intent_body)}) + b"\n",
         mode=0o400,
     )
     with interprocess_file_lock(target_output / ".unified_checkpoint.lock"):
@@ -249,8 +251,7 @@ def migrate(
         or migrated.receipt["checkpoint_sha256"] != source.receipt["checkpoint_sha256"]
         or migrated.receipt["step"] != source.receipt["step"]
         or migrated.receipt["history"] != source.receipt.get("history", [])
-        or migrated.receipt["training_state"]
-        != source.receipt.get("training_state", {})
+        or migrated.receipt["training_state"] != source.receipt.get("training_state", {})
         or migrated.receipt["identity"] != target_identity
     ):
         _fail("migration_destination_verification_failed")
@@ -277,9 +278,7 @@ def migrate(
         "source_differences": source_differences,
         "migration_tool_sha256": migration_tool_sha256,
         "target_source_commit": config["source"]["git"]["commit"],
-        "target_source_manifest_sha256": config["source"]["manifest"][
-            "manifest_sha256"
-        ],
+        "target_source_manifest_sha256": config["source"]["manifest"]["manifest_sha256"],
         "payload_byte_identical": migrated.weights_path.read_bytes() == payload,
         "optimizer_and_bundle_bytes_preserved": True,
         "history_preserved": True,

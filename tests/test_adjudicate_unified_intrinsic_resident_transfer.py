@@ -60,9 +60,7 @@ def _report(
                 correct = task in treatment_successes
             else:
                 correct = task < correct_count
-            candidates.append(
-                {"task_id": f"task-{task}", "arm": name, "correct": correct}
-            )
+            candidates.append({"task_id": f"task-{task}", "arm": name, "correct": correct})
 
     body = {
         "schema": "aura.unified_intrinsic_decode_evaluation.v1",
@@ -103,6 +101,47 @@ def test_support_requires_matched_gain_recurrence_and_both_lesions() -> None:
     assert verdict["verdict"] == SUPPORTED
     assert verdict["supported"] is True
     assert all(verdict["checks"].values())
+
+
+def test_v2_requires_an_authenticated_matched_control() -> None:
+    report = _report()
+    body = {key: value for key, value in report.items() if key != "report_sha256"}
+    body["schema"] = "aura.unified_intrinsic_decode_evaluation.v2"
+    report = {**body, "report_sha256": canonical_sha256(body)}
+
+    with pytest.raises(
+        ResidentTransferAdjudicationError,
+        match="matched control is missing",
+    ):
+        adjudicate_report(report)
+
+
+def test_v2_accepts_an_authenticated_root_control() -> None:
+    report = _report()
+    binding_body = {
+        "schema": "aura.unified_intrinsic.root_control_binding.v1",
+        "mode": "deterministic_pretraining_root",
+        "campaign_root": "/tmp/root-control",
+        "stem": "checkpoint_latest",
+        "checkpoint_step": 0,
+        "checkpoint_sha256": "c" * 64,
+        "checkpoint_receipt_sha256": "d" * 64,
+        "campaign_identity_sha256": "e" * 64,
+        "controller_sha256": "b" * 64,
+    }
+    binding = {
+        **binding_body,
+        "binding_sha256": canonical_sha256(binding_body),
+    }
+    body = {key: value for key, value in report.items() if key != "report_sha256"}
+    body.update(
+        schema="aura.unified_intrinsic_decode_evaluation.v2",
+        matched_control=binding,
+    )
+
+    verdict = adjudicate_report({**body, "report_sha256": canonical_sha256(body)})
+
+    assert verdict["verdict"] == SUPPORTED
 
 
 def test_control_ceiling_is_inconclusive_not_positive() -> None:

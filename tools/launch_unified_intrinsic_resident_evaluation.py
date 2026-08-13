@@ -29,6 +29,10 @@ from core.runtime.atomic_writer import (  # noqa: E402
 from core.runtime.mlx_memory_guard import host_pressure  # noqa: E402
 from tools import run_detached_step as detached  # noqa: E402
 from tools import run_unified_intrinsic_resident_campaign as resident  # noqa: E402
+from tools.evaluate_unified_intrinsic_checkpoint import (  # noqa: E402
+    campaign_initial_control_binding,
+    root_control_binding,
+)
 from tools.unified_intrinsic_checkpoint import (  # noqa: E402
     UnifiedCheckpointError,
     resolve_checkpoint_generation,
@@ -42,7 +46,7 @@ from tools.unified_intrinsic_resident_identity import (  # noqa: E402
     canonical_sha256,
 )
 
-PLAN_SCHEMA: Final = "aura.unified_intrinsic.resident_evaluation_plan.v2"
+PLAN_SCHEMA: Final = "aura.unified_intrinsic.resident_evaluation_plan.v3"
 STATUS_SCHEMA: Final = "aura.unified_intrinsic.resident_evaluation_status.v1"
 DEFAULT_STARTUP_LETHAL_MB: Final = 54.0 * 1024.0
 DEFAULT_STEADY_LETHAL_MB: Final = 48.0 * 1024.0
@@ -134,9 +138,7 @@ def _evaluator_source_sha256s(source_root: Path) -> dict[str, str]:
             for relative in EVALUATION_SOURCE_FILES
         }
     except OSError as exc:
-        raise ResidentEvaluationLaunchError(
-            "resident evaluation source is unavailable"
-        ) from exc
+        raise ResidentEvaluationLaunchError("resident evaluation source is unavailable") from exc
 
 
 def _csv_positive_ints(value: str, *, minimum: int) -> tuple[int, ...]:
@@ -197,24 +199,14 @@ def _selected_checkpoint(
         admission = persisted.get("answer_bridge_admission")
         training_identity = persisted.get("identity")
         dataset_identity = (
-            training_identity.get("dataset")
-            if isinstance(training_identity, dict)
-            else None
+            training_identity.get("dataset") if isinstance(training_identity, dict) else None
         )
         expected_tasks = (
-            dataset_identity.get("holdout_count")
-            if isinstance(dataset_identity, dict)
-            else None
+            dataset_identity.get("holdout_count") if isinstance(dataset_identity, dict) else None
         )
-        persisted_body = {
-            key: value for key, value in persisted.items() if key != "receipt_sha256"
-        }
+        persisted_body = {key: value for key, value in persisted.items() if key != "receipt_sha256"}
         admission_body = (
-            {
-                key: value
-                for key, value in admission.items()
-                if key != "admission_sha256"
-            }
+            {key: value for key, value in admission.items() if key != "admission_sha256"}
             if isinstance(admission, dict)
             else {}
         )
@@ -224,8 +216,7 @@ def _selected_checkpoint(
             or persisted.get("receipt_sha256") != training_receipt.get("receipt_sha256")
             or persisted.get("receipt_sha256") != canonical_sha256(persisted_body)
             or not isinstance(admission, dict)
-            or admission.get("schema")
-            != "aura.unified_intrinsic.answer_bridge_admission.v3"
+            or admission.get("schema") != "aura.unified_intrinsic.answer_bridge_admission.v3"
             or admission.get("admission_sha256") != canonical_sha256(admission_body)
             or admission.get("admitted") is not True
             or admission.get("exact") != admission.get("tasks")
@@ -235,8 +226,7 @@ def _selected_checkpoint(
             or admission.get("tasks") != expected_tasks
             or receipt.get("step") != persisted.get("steps")
             or receipt.get("step") != checkpoint.get("step")
-            or receipt.get("checkpoint_sha256")
-            != checkpoint.get("checkpoint_sha256")
+            or receipt.get("checkpoint_sha256") != checkpoint.get("checkpoint_sha256")
         ):
             _fail("resident evaluation requires an admitted answer-bridge checkpoint")
     selected_checkpoint = {
@@ -293,6 +283,30 @@ def _build_plan(arguments: argparse.Namespace) -> dict[str, Any]:
         completion,
         stem=arguments.stem,
     )
+    selected_generation = resolve_checkpoint_generation(
+        Path(config["paths"]["training_output"]),
+        stem=arguments.stem,
+        required=True,
+    )
+    if selected_generation is None:  # pragma: no cover - selected above
+        _fail("resident evaluation checkpoint is unavailable")
+    if selected_generation.receipt.get("receipt_sha256") != selected_checkpoint["receipt_sha256"]:
+        _fail("resident evaluation checkpoint changed during plan construction")
+    target_identity = selected_generation.receipt.get("identity")
+    if not isinstance(target_identity, dict):
+        _fail("resident evaluation checkpoint identity is malformed")
+    matched_control = (
+        root_control_binding(
+            arguments.matched_control_campaign,
+            stem=arguments.matched_control_stem,
+            target_identity=target_identity,
+        )
+        if arguments.matched_control_campaign is not None
+        else campaign_initial_control_binding(
+            requested_campaign_root,
+            identity=target_identity,
+        )
+    )
     campaign_root = Path(config["paths"]["campaign_root"])
     training_source_root = Path(config["source"]["git"]["root"]).resolve(strict=True)
     source_root = (
@@ -333,6 +347,7 @@ def _build_plan(arguments: argparse.Namespace) -> dict[str, Any]:
         "max_tokens": arguments.max_tokens,
         "task_depths": list(task_depths),
         "recurrence_depths": list(recurrence_depths),
+        "matched_control": matched_control,
     }
     evaluation_identity_sha256 = canonical_sha256(scientific)
     evaluator_command = [
@@ -376,6 +391,15 @@ def _build_plan(arguments: argparse.Namespace) -> dict[str, Any]:
         "--preload-config-sha256",
         evaluation_identity_sha256,
     ]
+    if arguments.matched_control_campaign is not None:
+        evaluator_command.extend(
+            [
+                "--matched-control-campaign",
+                matched_control["campaign_root"],
+                "--matched-control-stem",
+                matched_control["stem"],
+            ]
+        )
     command = [
         str(python),
         str(barrier),
@@ -454,9 +478,7 @@ def _evaluation_run_dirs(root: Path) -> list[Path]:
     legacy = root / "detached"
     attempts_root = root / "detached-attempts"
     attempts = sorted(
-        path
-        for path in attempts_root.glob("attempt-*")
-        if path.is_dir() and not path.is_symlink()
+        path for path in attempts_root.glob("attempt-*") if path.is_dir() and not path.is_symlink()
     )
     result = ([legacy] if (legacy / detached.PLAN_FILE).exists() else []) + attempts
     offset = 1 if result and result[0] == legacy else 0
@@ -578,11 +600,9 @@ def launch(arguments: argparse.Namespace) -> dict[str, Any]:
         sentinel_ring,
         required_stage=None,
     )
-    if (
-        ring_entry.get("guard_stage") != "startup"
-        or float(ring_entry.get("active_lethal_mb") or 0.0)
-        != float(plan["startup_lethal_mb"])
-    ):
+    if ring_entry.get("guard_stage") != "startup" or float(
+        ring_entry.get("active_lethal_mb") or 0.0
+    ) != float(plan["startup_lethal_mb"]):
         _fail("resident evaluation sentinel startup evidence differs")
     caffeinate = resident._verify_caffeinate(target_pid, supervisor_pid)  # noqa: SLF001
     pressure = host_pressure()
@@ -639,14 +659,15 @@ def status(arguments: argparse.Namespace) -> dict[str, Any]:
             _fail("resident evaluation report hash is invalid")
         scientific = plan["scientific"]
         if (
-            report.get("checkpoint_sha256") != scientific["checkpoint_sha256"]
+            report.get("schema") != "aura.unified_intrinsic_decode_evaluation.v2"
+            or report.get("checkpoint_sha256") != scientific["checkpoint_sha256"]
             or report.get("evaluation_seed") != scientific["evaluation_seed"]
             or report.get("per_cell") != scientific["per_cell"]
             or report.get("max_tokens") != scientific["max_tokens"]
             or report.get("task_depths") != scientific["task_depths"]
             or report.get("recurrence_depths") != scientific["recurrence_depths"]
-            or report.get("evaluation_source_sha256s")
-            != scientific["evaluation_source_sha256s"]
+            or report.get("evaluation_source_sha256s") != scientific["evaluation_source_sha256s"]
+            or report.get("matched_control") != scientific["matched_control"]
         ):
             _fail("resident evaluation report differs from its frozen plan")
     receipt = inspection.get("receipt")
@@ -689,6 +710,8 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("campaign", type=Path)
     parser.add_argument("--output", type=Path)
     parser.add_argument("--evaluator-source-root", type=Path)
+    parser.add_argument("--matched-control-campaign", type=Path)
+    parser.add_argument("--matched-control-stem", default="checkpoint_latest")
     parser.add_argument("--stem", default="checkpoint_answer_bridge_admitted")
     parser.add_argument("--per-cell", type=int, default=1)
     parser.add_argument("--evaluation-seed", type=int, default=20260811241)
