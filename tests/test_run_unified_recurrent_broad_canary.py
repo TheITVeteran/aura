@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import json
+import sys
+import types
 from pathlib import Path
 
 import pytest
@@ -81,6 +83,41 @@ def test_source_binding_commits_every_implementation_file() -> None:
     assert binding["git_commit"] == "a" * 40
     assert set(binding["implementation_sha256s"]) == set(runner.SOURCE_PATHS)
     assert all(len(value) == 64 for value in binding["implementation_sha256s"].values())
+
+
+def test_base_decode_uses_cached_canonical_greedy_lane(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: dict[str, object] = {}
+
+    def generate_step(tokens, model, *, max_tokens, sampler):
+        calls.update(tokens=tokens, model=model, max_tokens=max_tokens)
+        assert sampler(runner.mx.array([[0.1, 0.9]])).item() == 1
+        yield 11, None
+        yield 22, None
+
+    monkeypatch.setitem(
+        sys.modules,
+        "mlx_lm.generate",
+        types.SimpleNamespace(generate_step=generate_step),
+    )
+    monkeypatch.setattr(runner, "_contract_complete", lambda _tokenizer, ids: ids == [11, 22])
+    tokenizer = types.SimpleNamespace(eos_token_id=99)
+    model = object()
+
+    generated, stopped, latency_ms = runner._base_decode(
+        model,
+        tokenizer,
+        (1, 2, 3),
+        max_tokens=8,
+    )
+
+    assert generated == (11, 22)
+    assert stopped is True
+    assert latency_ms >= 0
+    assert calls["model"] is model
+    assert calls["max_tokens"] == 8
+    assert calls["tokens"].tolist() == [1, 2, 3]
 
 
 def test_private_append_rejects_noncanonical_reopen(tmp_path: Path) -> None:

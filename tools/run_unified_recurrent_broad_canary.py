@@ -276,20 +276,22 @@ def _base_decode(
     *,
     max_tokens: int,
 ) -> tuple[tuple[int, ...], bool, int]:
-    tokens = mx.array([list(public_tokens)], dtype=mx.int32)
+    from mlx_lm.generate import generate_step
+
+    tokens = mx.array(list(public_tokens), dtype=mx.int32)
     generated: list[int] = []
     stopped = False
     started = time.perf_counter()
-    for _index in range(max_tokens):
-        output = model(tokens)
-        logits = (
-            output.logits
-            if hasattr(output, "logits")
-            else output[0]
-            if isinstance(output, tuple)
-            else output
-        )
-        token_id = int(mx.argmax(logits[0, -1]).item())
+    # ``generate_step`` is the canonical MLX greedy lane and retains the exact
+    # transformer KV state between tokens. Re-evaluating the full prefix here
+    # made the control arm quadratically slower without changing its answer.
+    for token_id, _logprobs in generate_step(
+        tokens,
+        model,
+        max_tokens=max_tokens,
+        sampler=lambda values: mx.argmax(values, axis=-1),
+    ):
+        token_id = int(token_id)
         generated.append(token_id)
         if tokenizer.eos_token_id is not None and token_id == tokenizer.eos_token_id:
             stopped = True
@@ -297,10 +299,6 @@ def _base_decode(
         if _contract_complete(tokenizer, generated):
             stopped = True
             break
-        tokens = mx.concatenate(
-            [tokens, mx.array([[token_id]], dtype=tokens.dtype)],
-            axis=1,
-        )
     elapsed_ms = max(0, int(round((time.perf_counter() - started) * 1000.0)))
     return tuple(generated), stopped, elapsed_ms
 
