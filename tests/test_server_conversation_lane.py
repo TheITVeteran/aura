@@ -1245,30 +1245,57 @@ async def test_preemptible_chat_lock_stale_release_cannot_release_new_owner():
     from interface.routes import chat as chat_routes
 
     lock = chat_routes.PreemptibleChatLock()
-    stale_token = await lock.acquire()
-    lock.force_release()
+    owner_started = asyncio.Event()
+    owner_blocked = asyncio.Event()
+    stale_tokens = []
+
+    async def _stale_owner():
+        token = await lock.acquire()
+        stale_tokens.append(token)
+        owner_started.set()
+        try:
+            await owner_blocked.wait()
+        finally:
+            lock.release(token)
+
+    owner_task = asyncio.create_task(_stale_owner())
+    await owner_started.wait()
+    assert await lock.cancel_stale_owner() is True
+    with pytest.raises(asyncio.CancelledError):
+        await owner_task
     current_token = await lock.acquire()
 
-    assert lock.release(stale_token) is False
+    assert lock.release(stale_tokens[0]) is False
     assert lock.locked() is True
     assert lock.release(current_token) is True
     assert lock.locked() is False
 
 
 @pytest.mark.asyncio
-async def test_preemptible_chat_lock_waiter_survives_force_release_without_double_entry():
-    """A waiter queued before force_release must land on the live lock, not the dead one."""
+async def test_preemptible_chat_lock_waiter_survives_owner_cancellation_without_double_entry():
     from interface.routes import chat as chat_routes
 
     lock = chat_routes.PreemptibleChatLock()
-    await lock.acquire()
+    owner_started = asyncio.Event()
+    owner_blocked = asyncio.Event()
 
+    async def _stale_owner():
+        token = await lock.acquire()
+        owner_started.set()
+        try:
+            await owner_blocked.wait()
+        finally:
+            lock.release(token)
+
+    owner_task = asyncio.create_task(_stale_owner())
+    await owner_started.wait()
     waiter = asyncio.ensure_future(lock.acquire())
-    await asyncio.sleep(0)  # let the waiter queue on the pre-preemption lock
-    lock.force_release()
+    await asyncio.sleep(0)
+    assert await lock.cancel_stale_owner() is True
+    with pytest.raises(asyncio.CancelledError):
+        await owner_task
 
     waiter_token = await asyncio.wait_for(waiter, timeout=2.0)
-    # The waiter now owns the live foreground slot exclusively.
     assert lock.locked() is True
     with pytest.raises(asyncio.TimeoutError):
         await asyncio.wait_for(lock.acquire(), timeout=0.1)
@@ -1277,7 +1304,7 @@ async def test_preemptible_chat_lock_waiter_survives_force_release_without_doubl
 
 
 @pytest.mark.asyncio
-async def test_preemptible_chat_lock_force_release_cancels_stale_owner_task():
+async def test_preemptible_chat_lock_preemption_cancels_stale_owner_task():
     from interface.routes import chat as chat_routes
 
     lock = chat_routes.PreemptibleChatLock()
@@ -1295,13 +1322,46 @@ async def test_preemptible_chat_lock_force_release_cancels_stale_owner_task():
     owner_task = asyncio.create_task(_stale_owner())
     await asyncio.wait_for(owner_started.wait(), timeout=1.0)
 
-    lock.force_release(reason=chat_routes._FOREGROUND_CHAT_PREEMPT_CANCEL_REASON)
+    assert await lock.cancel_stale_owner(
+        reason=chat_routes._FOREGROUND_CHAT_PREEMPT_CANCEL_REASON
+    ) is True
 
     with pytest.raises(asyncio.CancelledError):
         await owner_task
     replacement_token = await asyncio.wait_for(lock.acquire(), timeout=1.0)
     assert lock.locked() is True
     assert lock.release(replacement_token) is True
+    assert lock.locked() is False
+
+
+@pytest.mark.asyncio
+async def test_preemptible_chat_lock_refuses_handoff_without_cancellation_ack():
+    from interface.routes import chat as chat_routes
+
+    lock = chat_routes.PreemptibleChatLock()
+    owner_started = asyncio.Event()
+    owner_may_exit = asyncio.Event()
+
+    async def _stubborn_owner():
+        token = await lock.acquire()
+        owner_started.set()
+        try:
+            await owner_may_exit.wait()
+        except asyncio.CancelledError:
+            await owner_may_exit.wait()
+        finally:
+            lock.release(token)
+
+    owner_task = asyncio.create_task(_stubborn_owner())
+    await owner_started.wait()
+
+    assert await lock.cancel_stale_owner(acknowledgement_timeout_s=0.05) is False
+    assert lock.locked() is True
+    with pytest.raises(asyncio.TimeoutError):
+        await asyncio.wait_for(lock.acquire(), timeout=0.05)
+
+    owner_may_exit.set()
+    await asyncio.wait_for(owner_task, timeout=1.0)
     assert lock.locked() is False
 
 

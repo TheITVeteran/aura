@@ -1640,28 +1640,21 @@ class PreemptibleChatLock:
         self._owner_token: object | None = None
         self._owner_task: asyncio.Task[Any] | None = None
 
-    async def acquire(self):
-        # Bounded: each retry means force_release() swapped the lock object
-        # while we waited, which happens at most once per 45s preemption.
-        for _ in range(64):
-            lock = self._lock
-            await lock.acquire()
-            if lock is self._lock:
-                # Monotonic so a mid-turn system sleep cannot inflate
-                # held_duration into a false 45s preemption on wake.
-                self._acquired_at = time.monotonic()
-                self._owner_token = object()
-                self._owner_task = asyncio.current_task()
-                return self._owner_token
-            # force_release() swapped the lock object while we were waiting;
-            # what we just acquired is the dead pre-preemption lock. Holding
-            # it would let two turns run concurrently, so drop it and wait on
-            # the live lock instead.
-            try:
-                lock.release()
-            except RuntimeError as exc:
-                logger.debug("Dead pre-preemption lock release skipped: %s", exc)
-        raise RuntimeError("foreground chat lock preempted repeatedly; giving up acquire")
+    async def acquire(self, *, owner_task: asyncio.Task[Any] | None = None):
+        await self._lock.acquire()
+        # asyncio.wait_for() owns a temporary task around this coroutine. The
+        # caller must be able to bind custody to the HTTP turn that survives
+        # acquisition, not that already-finished helper task.
+        resolved_owner = owner_task or asyncio.current_task()
+        if resolved_owner is None:
+            self._lock.release()
+            raise RuntimeError("foreground chat lock owner task is unavailable")
+        # Monotonic so a mid-turn system sleep cannot inflate held_duration
+        # into a false stale-owner diagnosis on wake.
+        self._acquired_at = time.monotonic()
+        self._owner_token = object()
+        self._owner_task = resolved_owner
+        return self._owner_token
 
     def locked(self):
         return self._lock.locked()
@@ -1695,30 +1688,48 @@ class PreemptibleChatLock:
             return 0.0
         return time.monotonic() - self._acquired_at
 
-    def force_release(self, *, reason: str = "foreground_chat_preempted"):
-        logger.warning("🚨 Preempting stuck foreground chat lock!")
-        dead_lock = self._lock
+    async def cancel_stale_owner(
+        self,
+        *,
+        reason: str = "foreground_chat_preempted",
+        acknowledgement_timeout_s: float = 5.0,
+    ) -> bool:
+        """Cancel one stale owner without admitting a concurrent successor."""
+
         stale_owner_task = self._owner_task
-        self._lock = asyncio.Lock()
-        self._acquired_at = 0.0
-        self._owner_token = None
-        self._owner_task = None
+        stale_owner_token = self._owner_token
         current_task = asyncio.current_task()
         if (
-            stale_owner_task is not None
-            and stale_owner_task is not current_task
-            and not stale_owner_task.done()
+            stale_owner_task is None
+            or stale_owner_task is current_task
+            or stale_owner_task.done()
         ):
-            stale_owner_task.cancel(reason)
-        # Wake anyone still parked on the dead lock: the first drained waiter
-        # acquires it, sees the swap in acquire(), releases it again (draining
-        # the next), and re-queues on the live lock. Without this the parked
-        # waiters would hang until their own wait_for deadlines.
-        try:
-            if dead_lock.locked():
-                dead_lock.release()
-        except RuntimeError as exc:
-            logger.debug("Dead pre-preemption lock drain skipped: %s", exc)
+            return False
+        logger.warning("Cancelling stale foreground chat owner before handoff.")
+        stale_owner_task.cancel(reason)
+        done, _pending = await asyncio.wait(
+            {stale_owner_task},
+            timeout=max(0.05, float(acknowledgement_timeout_s)),
+        )
+        if stale_owner_task not in done:
+            logger.error(
+                "Stale foreground chat owner did not acknowledge cancellation; "
+                "exclusive handoff refused."
+            )
+            return False
+        # A waiter already queued on this same lock may acquire immediately
+        # after release. Check stale identity, not the lock's aggregate state.
+        # Task death with the old token still installed is corruption.
+        if (
+            self._owner_task is stale_owner_task
+            or self._owner_token is stale_owner_token
+        ):
+            logger.error(
+                "Stale foreground chat owner terminated without releasing its lock; "
+                "exclusive handoff refused."
+            )
+            return False
+        return True
 
 
 _FOREGROUND_CHAT_PREEMPT_CANCEL_REASON = "foreground_chat_preempted"
@@ -23778,6 +23789,7 @@ async def _api_chat_turn(body: ChatRequest, request: Request):
     pending_exchange_id: str | None = None
     foreground_slot_acquired = False
     foreground_lock_token: object | None = None
+    foreground_owner_task = asyncio.current_task()
     foreground_lease = None
     kernel_task: asyncio.Task | None = None
     # Start this turn holding no draft from any previous one.
@@ -23930,7 +23942,7 @@ async def _api_chat_turn(body: ChatRequest, request: Request):
                     foreground_busy_wait_s, _FOREGROUND_CHAT_LOCK_PREEMPT_AFTER_S
                 )
             foreground_lock_token = await asyncio.wait_for(
-                _foreground_chat_lock.acquire(),
+                _foreground_chat_lock.acquire(owner_task=foreground_owner_task),
                 timeout=max(0.05, min(foreground_busy_wait_s, _remaining_foreground_budget(reserve=1.0))),
             )
             foreground_slot_acquired = True
@@ -23942,20 +23954,34 @@ async def _api_chat_turn(body: ChatRequest, request: Request):
         except TimeoutError:
             held = getattr(_foreground_chat_lock, "held_duration", 0.0)
             if held > _FOREGROUND_CHAT_LOCK_PREEMPT_AFTER_S:
-                logger.error(f"🚨 Preempting stuck foreground generation (held {held:.1f}s) to allow new user turn.")
-                _force_clear_mlx_foreground_owner(
-                    reason="chat_lock_preemption",
-                    min_age_s=_FOREGROUND_CHAT_LOCK_PREEMPT_AFTER_S,
+                logger.error(
+                    "Cancelling stale foreground generation (held %.1fs) before "
+                    "exclusive handoff to the new user turn.",
+                    held,
                 )
-                if hasattr(_foreground_chat_lock, "force_release"):
-                    _foreground_chat_lock.force_release(
+                owner_cancelled = False
+                if hasattr(_foreground_chat_lock, "cancel_stale_owner"):
+                    owner_cancelled = await _foreground_chat_lock.cancel_stale_owner(
                         reason=_FOREGROUND_CHAT_PREEMPT_CANCEL_REASON,
                     )
-                try:
-                    foreground_lock_token = await asyncio.wait_for(_foreground_chat_lock.acquire(), timeout=1.0)
-                    foreground_slot_acquired = True
-                except TimeoutError as exc:
-                    logger.debug("Foreground lock reacquire after preemption timed out: %s", exc)
+                if owner_cancelled:
+                    _force_clear_mlx_foreground_owner(
+                        reason="chat_lock_preemption",
+                        min_age_s=_FOREGROUND_CHAT_LOCK_PREEMPT_AFTER_S,
+                    )
+                    try:
+                        foreground_lock_token = await asyncio.wait_for(
+                            _foreground_chat_lock.acquire(
+                                owner_task=foreground_owner_task
+                            ),
+                            timeout=1.0,
+                        )
+                        foreground_slot_acquired = True
+                    except TimeoutError as exc:
+                        logger.debug(
+                            "Foreground lock reacquire after preemption timed out: %s",
+                            exc,
+                        )
             
             if not foreground_slot_acquired:
                 status = "benchmark_foreground_busy" if is_benchmark else "foreground_busy"

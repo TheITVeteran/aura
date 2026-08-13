@@ -47702,3 +47702,36 @@ This checkpoint repairs the failed transition only. A new immutable capsule
 must repeat both resident cold loads and the complete two-stage activation
 before any serving authority is accepted. Broad reasoning, frontier
 performance, static fusion, `WOW Signal`, soak and Aura 1.0 remain unproven.
+
+## Checkpoint 2026-08-13-353: Foreground Preemption Is an Exclusive Handoff
+
+The chat lock's forced-preemption path replaced the lock object immediately
+after requesting cancellation from its recorded owner. That could admit a new
+turn while the old turn's thread, model or tool effects were still active.
+Moreover, acquisition through `asyncio.wait_for` recorded the temporary helper
+task as owner rather than the enclosing HTTP turn, so the intended cancellation
+could target an already-finished acquisition task and leave the real turn
+running.
+
+Lock acquisition now binds an explicit long-lived owner task. Stale preemption
+cancels that exact owner and waits for termination acknowledgement; the normal
+owner `finally` must release its token before handoff. The lock object is never
+swapped or externally unlocked. If a non-cooperative owner does not terminate,
+the successor remains excluded. If a waiter was already queued and acquires
+immediately after release, custody is distinguished by owner task and token
+rather than the lock's aggregate locked state. MLX foreground ownership is
+cleared only after the old chat owner acknowledged cancellation.
+
+Regression coverage proves stale tokens cannot release a successor, queued
+waiters remain exclusive, the HTTP owner receives the cancellation, a
+non-cooperative owner blocks handoff, preempted exchanges do not gain fabricated
+assistant replies, and the full stale-turn route recovers without overlapping
+generation. The complete conversation and foreground-priority surface passes
+`305/305`; canonical smoke passes `104/104`; compilation, Ruff, governance
+lint, layering and diff hygiene pass.
+
+This closes the forced-preemption P1 semantic finding. Generation-time memory
+admission, runtime effect proof, durable-write custody, regeneration CAS,
+memory-log worker ownership and `/api/think` admission remain open. The detached
+CP352 resident promotion remains independently source-bound; no serving,
+frontier, `WOW Signal`, soak or Aura 1.0 claim follows from this checkpoint.
