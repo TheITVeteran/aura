@@ -47324,3 +47324,27 @@ seed evaluator, memory sentinel and sleep inhibitor remain alive and its
 authenticated status continues moving; promotion is still waiting on the
 replication's final admitted artifact. No reasoning, fusion, frontier or
 `WOW Signal` claim is made from the transient controller state.
+
+## Checkpoint 2026-08-13-335: Static Lifecycle and Shutdown Custody Is Current
+
+The checked lifecycle and shutdown proof group passed as one atomic transaction
+against exact pushed CP334 source `60fc66c9f7205b2fd3b5d1d30bab7d544cea5551`.
+Four independent receipts now bind the lifecycle ownership audit, its complete
+contract-test surface, the static shutdown contract audit and the bounded
+shutdown test surface. Their respective command durations were `0.132`,
+`18.154`, `0.145` and `12.832` seconds; all returned zero inside the sanitized
+no-accelerator proof environment and retained their source manifests.
+
+The structural gate confirms that lifecycle evidence and static shutdown
+implementation evidence are no longer stale. Aggregate stale-evidence defects
+fell from `59` to `48`, and unproven-closure defects fell from `12` to `8`.
+The one retained old shutdown-test cell is the deliberately uncredited A4
+external signal-injection proof. It will be replaced only by the new full
+fifteen-case live matrix after the resident model owner releases custody; the
+static test batch does not impersonate that evidence.
+
+This is an evidence checkpoint, not a claim that shutdown's external proof,
+the broader 313-requirement programme, production release, soak reliability or
+Aura 1.0 is complete. The resident replication and waiting promotion pipeline
+remain separately supervised, and no scientific verdict or `WOW Signal` is
+inferred from their partial controller states.
