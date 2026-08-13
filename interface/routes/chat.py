@@ -43,6 +43,9 @@ from core.brain.live_mind_contract import (
 from core.brain.llm.cloud_errors import cloud_call_error_types
 from core.brain.llm.latent_cortex.output_quality import evaluate_latent_output
 from core.container import ServiceContainer
+from core.conversation.session_scope import (
+    conversation_session_var as _CHAT_REQUEST_SESSION,
+)
 from core.memory.session_pin_cipher import (
     SESSION_PIN_ENVELOPE_SCHEMA,
     SESSION_PIN_INDEX_CONTENT,
@@ -173,10 +176,6 @@ _CHAT_REQUEST_PRINCIPAL: ContextVar[str] = ContextVar(
 )
 _CHAT_REQUEST_SURFACE: ContextVar[str] = ContextVar(
     "aura_chat_request_surface",
-    default="",
-)
-_CHAT_REQUEST_SESSION: ContextVar[str] = ContextVar(
-    "aura_chat_request_session",
     default="",
 )
 _CHAT_SESSION_ID_MAX_CHARS = 64
@@ -1865,6 +1864,13 @@ async def _complete_logged_exchange(
         user_already_persisted=bool(target.get("user_persisted")),
     )
 
+    _record_unified_transcript_exchange(
+        recorded_user,
+        final_response,
+        session_id=str(target.get("session_id") or ""),
+        exchange_id=str(target.get("id") or exchange_id or ""),
+    )
+
     if not record_experience:
         return
 
@@ -1875,6 +1881,42 @@ async def _complete_logged_exchange(
     except _CHAT_RECOVERABLE_ERRORS as exc:
         record_degradation('chat', exc)
         logger.debug("Conversation experience recording skipped: %s", exc)
+
+
+def _record_unified_transcript_exchange(
+    user_message: str,
+    aura_response: str,
+    *,
+    session_id: str,
+    exchange_id: str,
+) -> None:
+    """Put the terminally delivered HTTP exchange into core continuity.
+
+    Persistence is durable history; this transcript is the bounded live
+    context used by referential continuation. Recording only after terminal
+    completion ensures Aura never remembers a draft that the user did not see.
+    """
+    try:
+        from core.conversation.unified_transcript import UnifiedTranscript
+
+        transcript = UnifiedTranscript.get_instance()
+        metadata = {
+            "exchange_id": str(exchange_id or "")[:64],
+            "origin": "desktop_ui",
+        }
+        transcript.add_text_input(
+            str(user_message or ""),
+            metadata=metadata,
+            conversation_id=session_id,
+        )
+        transcript.add_text_output(
+            str(aura_response or ""),
+            metadata=metadata,
+            conversation_id=session_id,
+        )
+    except _CHAT_RECOVERABLE_ERRORS as exc:
+        record_degradation("chat.unified_transcript", exc)
+        logger.warning("Live transcript exchange recording failed: %s", exc)
 
 
 async def _mark_logged_exchange_preempted(

@@ -22,14 +22,22 @@ Usage:
     context = transcript.get_context_window(20)
 """
 
-from core.runtime.errors import record_degradation
-from core.utils.exceptions import capture_and_log
+from __future__ import annotations
+
 import logging
 import os
 import threading
 import time
 from dataclasses import asdict, dataclass, field
-from typing import Any, Dict, List, Literal, Optional
+from typing import Any, Literal
+
+from core.conversation.session_scope import (
+    LOCAL_CONVERSATION_ID,
+    current_conversation_session,
+    normalize_conversation_id,
+)
+from core.runtime.errors import record_degradation
+from core.utils.exceptions import capture_and_log
 
 logger = logging.getLogger("Aura.UnifiedTranscript")
 
@@ -50,9 +58,10 @@ class TranscriptEntry:
     channel: ChannelType        # How it arrived/was delivered
     modality: ModalityType = "typed"  # Specific delivery mechanism
     timestamp: float = field(default_factory=time.time)
-    metadata: Dict[str, Any] = field(default_factory=dict)
+    metadata: dict[str, Any] = field(default_factory=dict)
+    conversation_id: str = LOCAL_CONVERSATION_ID
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         return asdict(self)
 
     def to_llm_format(self) -> str:
@@ -93,18 +102,18 @@ class UnifiedTranscript:
     Registered in ServiceContainer as "unified_transcript".
     """
 
-    _instance: Optional["UnifiedTranscript"] = None
+    _instance: UnifiedTranscript | None = None
     _lock_class = threading.Lock()
 
     def __init__(self):
-        self._entries: List[TranscriptEntry] = []
+        self._entries: list[TranscriptEntry] = []
         self._max_history = _MAX_HISTORY_DEFAULT
         self._lock = threading.Lock()
-        self._listeners: List = []
+        self._listeners: list = []
         logger.info("📝 UnifiedTranscript ONLINE")
 
     @classmethod
-    def get_instance(cls) -> "UnifiedTranscript":
+    def get_instance(cls) -> UnifiedTranscript:
         """Get or create the singleton instance."""
         if cls._instance is None:
             with cls._lock_class:
@@ -112,7 +121,44 @@ class UnifiedTranscript:
                     cls._instance = cls()
         return cls._instance
 
-    def preceding_turns(self, *, before_content: str = "") -> tuple[str, str]:
+    @staticmethod
+    def _conversation_id(
+        conversation_id: str | None = None,
+        *,
+        channel: ChannelType = "text",
+        metadata: dict[str, Any] | None = None,
+    ) -> str:
+        details = metadata or {}
+        explicit = normalize_conversation_id(conversation_id)
+        scoped = current_conversation_session()
+        described = normalize_conversation_id(
+            details.get("conversation_id")
+            or details.get("chat_session_id")
+            or details.get("session_id")
+        )
+        if explicit or scoped or described:
+            # An authenticated request scope is the security boundary. A
+            # subsystem may provide a more specific label outside that scope,
+            # but it cannot switch a live request into another conversation.
+            return scoped or explicit or described
+        if channel in {"system", "internal"}:
+            return "local-system"
+        return LOCAL_CONVERSATION_ID
+
+    def entries_for_conversation(
+        self,
+        conversation_id: str | None = None,
+    ) -> list[TranscriptEntry]:
+        identity = self._conversation_id(conversation_id)
+        with self._lock:
+            return [entry for entry in self._entries if entry.conversation_id == identity]
+
+    def preceding_turns(
+        self,
+        *,
+        before_content: str = "",
+        conversation_id: str | None = None,
+    ) -> tuple[str, str]:
         """The last user request and the last thing Aura said, in that order.
 
         This is what a message like "Can you do it now?" or "From the grant
@@ -124,8 +170,7 @@ class UnifiedTranscript:
         ``before_content`` skips the current turn when it has already been
         written to the transcript, so a message never resolves against itself.
         """
-        with self._lock:
-            entries = list(self._entries)
+        entries = self.entries_for_conversation(conversation_id)
 
         if before_content:
             needle = str(before_content).strip()
@@ -158,15 +203,22 @@ class UnifiedTranscript:
         content: str,
         channel: ChannelType = "text",
         modality: ModalityType = "typed",
-        metadata: Optional[Dict[str, Any]] = None,
+        metadata: dict[str, Any] | None = None,
+        conversation_id: str | None = None,
     ) -> TranscriptEntry:
         """Add a message to the transcript. Thread-safe."""
+        details = dict(metadata or {})
         entry = TranscriptEntry(
             role=role,
             content=content,
             channel=channel,
+            conversation_id=self._conversation_id(
+                conversation_id,
+                channel=channel,
+                metadata=details,
+            ),
             modality=modality,
-            metadata=metadata or {},
+            metadata=details,
         )
         with self._lock:
             self._entries.append(entry)
@@ -218,36 +270,51 @@ class UnifiedTranscript:
     # Read
     # ------------------------------------------------------------------
 
-    def get_context_window(self, n: int = 20) -> List[TranscriptEntry]:
-        """Get the last N messages across ALL channels.
+    def get_context_window(
+        self,
+        n: int = 20,
+        *,
+        conversation_id: str | None = None,
+    ) -> list[TranscriptEntry]:
+        """Get the last N messages for one conversation across its channels.
         This is the primary interface for LLM context assembly.
         """
-        with self._lock:
-            return list(self._entries[-n:])
+        return self.entries_for_conversation(conversation_id)[-n:]
 
-    def get_context_string(self, n: int = 20) -> str:
+    def get_context_string(self, n: int = 20, *, conversation_id: str | None = None) -> str:
         """Get the last N messages formatted for LLM injection."""
-        entries = self.get_context_window(n)
+        entries = self.get_context_window(n, conversation_id=conversation_id)
         return "\n".join(e.to_llm_format() for e in entries)
 
-    def get_by_channel(self, channel: ChannelType, n: int = 20) -> List[TranscriptEntry]:
+    def get_by_channel(
+        self,
+        channel: ChannelType,
+        n: int = 20,
+        *,
+        conversation_id: str | None = None,
+    ) -> list[TranscriptEntry]:
         """Get last N messages from a specific channel."""
-        with self._lock:
-            filtered = [e for e in self._entries if e.channel == channel]
-            return filtered[-n:]
+        filtered = [
+            entry
+            for entry in self.entries_for_conversation(conversation_id)
+            if entry.channel == channel
+        ]
+        return filtered[-n:]
 
-    def get_last_aura_message(self) -> Optional[TranscriptEntry]:
+    def get_last_aura_message(
+        self,
+        *,
+        conversation_id: str | None = None,
+    ) -> TranscriptEntry | None:
         """Get Aura's most recent message (any channel)."""
-        with self._lock:
-            for entry in reversed(self._entries):
-                if entry.role == "aura":
-                    return entry
+        for entry in reversed(self.entries_for_conversation(conversation_id)):
+            if entry.role == "aura":
+                return entry
         return None
 
-    def get_entry_count(self) -> int:
-        """Total entries in transcript."""
-        with self._lock:
-            return len(self._entries)
+    def get_entry_count(self, *, conversation_id: str | None = None) -> int:
+        """Total entries in the selected conversation."""
+        return len(self.entries_for_conversation(conversation_id))
 
     # ------------------------------------------------------------------
     # Listeners
@@ -261,7 +328,7 @@ class UnifiedTranscript:
     # Telemetry
     # ------------------------------------------------------------------
 
-    def get_summary(self) -> Dict[str, Any]:
+    def get_summary(self) -> dict[str, Any]:
         """Snapshot for telemetry."""
         with self._lock:
             channels = {}

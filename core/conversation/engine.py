@@ -256,7 +256,13 @@ class ConversationContext:
             from core.conversation.unified_transcript import UnifiedTranscript
 
             transcript = UnifiedTranscript.get_instance()
-            transcript.add(u_role, content, channel="text", modality=u_modality)
+            transcript.add(
+                u_role,
+                content,
+                channel="text",
+                modality=u_modality,
+                conversation_id=self.conversation_id,
+            )
         except _ENGINE_RECOVERABLE_ERRORS as e:
             _emit_engine_fault(
                 e,

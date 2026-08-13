@@ -263,7 +263,7 @@ def _transcript_own_exchanges(exclude_norm: str) -> list[tuple[str, str]]:
     try:
         from core.conversation.unified_transcript import UnifiedTranscript
 
-        entries = list(getattr(UnifiedTranscript.get_instance(), "_entries", []) or [])
+        entries = UnifiedTranscript.get_instance().entries_for_conversation()
     except (ImportError, AttributeError, RuntimeError) as exc:
         logger.debug("Grounded recall: transcript unavailable for own turns: %s", exc)
         return []
@@ -483,7 +483,7 @@ def _transcript_user_turns(exclude_norm: str) -> list[str]:
     try:
         from core.conversation.unified_transcript import UnifiedTranscript
 
-        entries = list(getattr(UnifiedTranscript.get_instance(), "_entries", []) or [])
+        entries = UnifiedTranscript.get_instance().entries_for_conversation()
     except (ImportError, AttributeError, RuntimeError) as exc:
         logger.debug("Grounded recall: transcript unavailable: %s", exc)
         return []
@@ -795,7 +795,7 @@ def accepts_unsupported_self_attribution(
 # it means the post-generation check compares against exactly the turn the
 # grounding block quoted rather than resolving a second time and possibly
 # landing on a different one.
-_OWN_PRIOR_TURN: "contextvars.ContextVar[str]" = contextvars.ContextVar(
+_OWN_PRIOR_TURN: contextvars.ContextVar[str] = contextvars.ContextVar(
     "aura_own_prior_turn", default=""
 )
 

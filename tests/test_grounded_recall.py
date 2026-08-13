@@ -47,6 +47,9 @@ def test_resolve_uses_live_transcript_first_and_last(monkeypatch):
         def get_instance(cls):
             return cls()
 
+        def entries_for_conversation(self):
+            return list(self._entries)
+
     import core.conversation.unified_transcript as ut
     monkeypatch.setattr(ut, "UnifiedTranscript", _FakeTranscript)
 
@@ -70,6 +73,9 @@ def test_build_context_block_contains_quote(monkeypatch):
         @classmethod
         def get_instance(cls):
             return cls()
+
+        def entries_for_conversation(self):
+            return list(self._entries)
 
     import core.conversation.unified_transcript as ut
     monkeypatch.setattr(ut, "UnifiedTranscript", _FakeTranscript)
@@ -118,6 +124,9 @@ def test_build_context_none_when_no_prior_turn(monkeypatch):
         @classmethod
         def get_instance(cls):
             return cls()
+
+        def entries_for_conversation(self):
+            return list(self._entries)
 
     import core.conversation.unified_transcript as ut
     monkeypatch.setattr(ut, "UnifiedTranscript", _FakeTranscript)
@@ -215,6 +224,9 @@ def test_grounded_quote_from_context_round_trips(monkeypatch):
         def get_instance(cls):
             return cls()
 
+        def entries_for_conversation(self):
+            return list(self._entries)
+
     import core.conversation.unified_transcript as ut
     monkeypatch.setattr(ut, "UnifiedTranscript", _FakeTranscript)
 
@@ -241,6 +253,9 @@ def test_repair_fires_on_verbatim_adoption_of_the_retrieved_turn(monkeypatch):
         @classmethod
         def get_instance(cls):
             return cls()
+
+        def entries_for_conversation(self):
+            return list(self._entries)
 
     import core.conversation.unified_transcript as ut
     monkeypatch.setattr(ut, "UnifiedTranscript", _FakeTranscript)
