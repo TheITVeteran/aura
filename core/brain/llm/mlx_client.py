@@ -8315,6 +8315,13 @@ class MLXLocalClient:
                     "status": "worker_error",
                     "reason": str(response.get("message") or "unknown"),
                 }
+            if response.get("allocator_reclaimed") is not True:
+                deferred_reboot = "qualified_decode_allocator_reclaim_unacknowledged"
+                return {
+                    **base,
+                    "status": "integrity_failed",
+                    "reason": deferred_reboot,
+                }
             receipt = response.get("receipt")
             errors = qualified_decode_result_errors(
                 receipt,

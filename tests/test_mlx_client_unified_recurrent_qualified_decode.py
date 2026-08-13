@@ -249,6 +249,7 @@ async def test_client_canary_dispatches_exact_request_scoped_activation(
             "id": queue.job["id"],
             "action": "unified_recurrent_qualified_decode",
             "status": "ok",
+            "allocator_reclaimed": True,
             "receipt": _authorized_receipt(
                 request,
                 activation,
@@ -294,6 +295,7 @@ async def test_parent_accepts_only_request_bound_qualified_receipt(
             "id": queue.job["id"],
             "action": "unified_recurrent_qualified_decode",
             "status": "ok",
+            "allocator_reclaimed": True,
             "receipt": _authorized_receipt(
                 request,
                 activation,
@@ -313,3 +315,45 @@ async def test_parent_accepts_only_request_bound_qualified_receipt(
     else:
         assert result["status"] == "integrity_failed"
         assert "qualified_decode_result_domain_differs" in result["reason"]
+
+
+@pytest.mark.asyncio
+async def test_parent_recycles_worker_when_allocator_reclaim_is_unacknowledged(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    client, queue, activation = _client()
+    rebooted: list[str] = []
+
+    async def reboot(_self, **kwargs):
+        rebooted.append(kwargs["reason"])
+        return True
+
+    client.reboot_worker = _bind(client, reboot)
+
+    async def await_receipt(_future, *, timeout_s):
+        assert timeout_s > 0
+        request = queue.job["unified_recurrent_qualified_decode_contract"]
+        return {
+            "id": queue.job["id"],
+            "action": "unified_recurrent_qualified_decode",
+            "status": "ok",
+            "receipt": _authorized_receipt(
+                request,
+                activation,
+                controller="c" * 64,
+            ),
+        }
+
+    monkeypatch.setattr(mlx_client, "_await_shared_future", await_receipt)
+
+    result = await client.unified_recurrent_qualified_decode_async(
+        [1], family="khop", task_depth=2, max_tokens=4
+    )
+
+    assert result == {
+        "ok": False,
+        "status": "integrity_failed",
+        "receipt": {},
+        "reason": "qualified_decode_allocator_reclaim_unacknowledged",
+    }
+    assert rebooted == ["qualified_decode_allocator_reclaim_unacknowledged"]

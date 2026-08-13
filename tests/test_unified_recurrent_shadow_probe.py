@@ -85,3 +85,35 @@ def test_probe_abstains_before_model_execution_on_an_unsupported_family() -> Non
     assert receipt["reason"] == "unsupported_public_token_family"
     assert receipt["base_token_count"] == 0
     assert receipt["shadow_token_count"] == 0
+
+
+def test_canonical_recurrent_progress_exposes_counts_not_token_ids(monkeypatch) -> None:
+    loaded = _loaded()
+    observed: list[dict[str, int | str]] = []
+
+    def recurrent(_model, tokens, _plan, _controller, **_kwargs):
+        return (_select(12 if int(tokens.shape[-1]) == 3 else 999), object())
+
+    monkeypatch.setattr(shadow, "unified_recurrent_logits", recurrent)
+
+    generated, stopped, _latency_ms = loaded.decode_recurrent_tokens(
+        _Model(),
+        [0, 201, 0],
+        max_tokens=2,
+        progress=observed.append,
+    )
+
+    assert generated == (12, 999)
+    assert stopped is True
+    assert [event["stage"] for event in observed] == [
+        "recurrent_decode_started",
+        "recurrent_token_generated",
+        "recurrent_token_generated",
+        "recurrent_decode_completed",
+    ]
+    assert all(set(event) == {
+        "stage",
+        "generated_token_count",
+        "maximum_token_count",
+    } for event in observed)
+    assert all(12 not in event.values() and 999 not in event.values() for event in observed)

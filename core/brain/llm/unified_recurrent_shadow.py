@@ -13,7 +13,7 @@ import re
 import secrets
 import stat
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Final, Never
@@ -549,6 +549,95 @@ class LoadedUnifiedRecurrentShadow:
     def supports(self, public_tokens: list[int] | tuple[int, ...]) -> bool:
         return self.answer_contract.family(public_tokens) in set(self.receipt["families"])
 
+    def decode_recurrent_tokens(
+        self,
+        model: Any,
+        public_tokens: Sequence[int],
+        *,
+        max_tokens: int,
+        cancel_check: Callable[[], bool] | None = None,
+        activity: Callable[[], None] | None = None,
+        progress: Callable[[Mapping[str, int | str]], None] | None = None,
+    ) -> tuple[tuple[int, ...], bool, int]:
+        """Run the one canonical recurrent token loop used by every live arm.
+
+        The progress contract reports only counts and stages. Token identities
+        remain inside the worker until an independently authorized caller
+        validates the typed answer.
+        """
+
+        if not public_tokens or max_tokens < 1:
+            raise UnifiedRecurrentShadowError(
+                "unified recurrent decode dimensions are invalid"
+            )
+        row = tuple(int(value) for value in public_tokens)
+        tokens = mx.array([row], dtype=mx.int32)
+        generated: list[int] = []
+        stopped = False
+        plan = self.spec.plan_at(int(self.receipt["recurrence_depth"]))
+        started = time.perf_counter()
+        if progress is not None:
+            progress(
+                {
+                    "stage": "recurrent_decode_started",
+                    "generated_token_count": 0,
+                    "maximum_token_count": max_tokens,
+                }
+            )
+        from core.brain.llm.latent_cortex.recurrence_adapter import (
+            recurrence_adapter_scope,
+        )
+
+        with recurrence_adapter_scope(start=None, stop=None):
+            for _index in range(max_tokens):
+                if cancel_check is not None and cancel_check():
+                    raise InterruptedError("unified_recurrent_decode_cancelled")
+                if activity is not None:
+                    activity()
+                output, _telemetry = unified_recurrent_logits(
+                    model,
+                    tokens,
+                    plan,
+                    self.controller,
+                    state_slot_start=len(row),
+                    answer_emission_contract=self.answer_contract,
+                    answer_digit_pointer_enabled=True,
+                )
+                logits = (
+                    output.logits
+                    if hasattr(output, "logits")
+                    else output[0]
+                    if isinstance(output, tuple)
+                    else output
+                )
+                token_id = int(mx.argmax(logits[0, -1]).item())
+                generated.append(token_id)
+                if progress is not None:
+                    progress(
+                        {
+                            "stage": "recurrent_token_generated",
+                            "generated_token_count": len(generated),
+                            "maximum_token_count": max_tokens,
+                        }
+                    )
+                if token_id == self.answer_contract.eos_token_id:
+                    stopped = True
+                    break
+                tokens = mx.concatenate(
+                    [tokens, mx.array([[token_id]], dtype=tokens.dtype)],
+                    axis=1,
+                )
+        elapsed_ms = max(0, int(round((time.perf_counter() - started) * 1000.0)))
+        if progress is not None:
+            progress(
+                {
+                    "stage": "recurrent_decode_completed",
+                    "generated_token_count": len(generated),
+                    "maximum_token_count": max_tokens,
+                }
+            )
+        return tuple(generated), stopped, elapsed_ms
+
     def probe(
         self,
         model: Any,
@@ -616,26 +705,15 @@ class LoadedUnifiedRecurrentShadow:
         base_tokens, base_stopped, base_latency_ms = decode(
             lambda tokens: logits(model(tokens))
         )
-        plan = self.spec.plan_at(int(self.receipt["recurrence_depth"]))
-
-        def recurrent(tokens: Any) -> Any:
-            value, _telemetry = unified_recurrent_logits(
+        shadow_tokens, shadow_stopped, shadow_latency_ms = (
+            self.decode_recurrent_tokens(
                 model,
-                tokens,
-                plan,
-                self.controller,
-                state_slot_start=len(public_tokens),
-                answer_emission_contract=self.answer_contract,
-                answer_digit_pointer_enabled=True,
+                public_tokens,
+                max_tokens=max_tokens,
+                cancel_check=cancel_check,
+                activity=activity,
             )
-            return value
-
-        from core.brain.llm.latent_cortex.recurrence_adapter import (
-            recurrence_adapter_scope,
         )
-
-        with recurrence_adapter_scope(start=None, stop=None):
-            shadow_tokens, shadow_stopped, shadow_latency_ms = decode(recurrent)
         output_commitment_key = secrets.token_bytes(32)
         body = {
             "schema": PROBE_RECEIPT_SCHEMA,

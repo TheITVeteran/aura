@@ -3801,6 +3801,7 @@ def _handle_unified_recurrent_qualified_decode(
     consumed_canary_nonces: set[str] | None = None,
     cancel_check: Callable[[], bool] | None = None,
     activity: Callable[[], None] | None = None,
+    reclaim: Callable[[], bool],
 ) -> dict[str, Any]:
     """Execute one typed decode only after exact activation admission."""
 
@@ -3853,23 +3854,40 @@ def _handle_unified_recurrent_qualified_decode(
         loaded_shadow.receipt,
     ):
         raise RuntimeError("qualified_activation_shadow_identity_differs")
-    result = run_qualified_decode(
-        loaded_shadow,
-        model,
-        job.get("unified_recurrent_qualified_decode_contract"),
-        cancel_check=cancel_check,
-        activity=activity,
-    )
-    authorized = authorize_qualified_decode_result(
-        result,
-        effective_activation,
-        canary_only=canary_activation is not None,
-    )
+    def report_progress(event: Mapping[str, int | str]) -> None:
+        log_progress = logger.info if canary_activation is not None else logger.debug
+        log_progress(
+            "Unified recurrent qualified decode progress: stage=%s "
+            "generated=%s/%s",
+            event.get("stage"),
+            event.get("generated_token_count"),
+            event.get("maximum_token_count"),
+        )
+
+    try:
+        result = run_qualified_decode(
+            loaded_shadow,
+            model,
+            job.get("unified_recurrent_qualified_decode_contract"),
+            cancel_check=cancel_check,
+            activity=activity,
+            progress=report_progress,
+        )
+        authorized = authorize_qualified_decode_result(
+            result,
+            effective_activation,
+            canary_only=canary_activation is not None,
+        )
+    finally:
+        reclaimed = reclaim()
+    if reclaimed is not True:
+        raise RuntimeError("unified_recurrent_qualified_decode_memory_not_reclaimed")
     return {
         "id": str(job.get("id") or ""),
         "action": "unified_recurrent_qualified_decode",
         "status": "ok",
         "receipt": authorized,
+        "allocator_reclaimed": True,
     }
 
 
@@ -8232,6 +8250,7 @@ def _mlx_worker_loop(
                                 _job_seq,
                             ),
                             activity=watchdog.activity,
+                            reclaim=lambda: _reclaim_unified_recurrent_probe_memory(mx),
                         )
                 except InterruptedError:
                     response.update(

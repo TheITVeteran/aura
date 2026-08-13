@@ -47510,3 +47510,46 @@ nine-case shadow lifecycle cold loads, but its first qualified-serving canary
 timed out without cancellation acknowledgement; that activation failure is
 preserved and remains the next implementation blocker. No broad reasoning,
 frontier, `WOW Signal`, soak or Aura 1.0 claim follows.
+
+## Checkpoint 2026-08-13-348: Qualified Serving Reuses the Proven Recurrent Decoder
+
+The CP346 resident lifecycle passed both complete nine-case cold loads, yet
+the first qualified canary case exceeded its 180-second lease and did not
+acknowledge cancellation. The matched shadow case had already completed on
+the same model, controller, public program and recurrent parameters. Code
+tracing found that the two paths independently implemented the recurrent
+token loop, while only the shadow path enforced the synchronous MLX allocator
+reclamation contract. The failure is therefore retained as a serving-path
+implementation defect, not interpreted as a negative controller result.
+
+Shadow measurement and qualified typed serving now call one canonical
+`LoadedUnifiedRecurrentShadow.decode_recurrent_tokens` primitive. It owns the
+recurrence plan, adapter scope, state-slot boundary, answer pointer, greedy
+token loop, cancellation and activity semantics. Qualified serving can no
+longer drift to a second implementation. Its progress callback exposes only
+stage and token counts; token identities remain inside the worker until an
+authorized typed receipt is validated.
+
+Every qualified decode now completes the same mandatory
+`gc -> MLX synchronize -> clear_cache -> synchronize` barrier before the
+worker may acknowledge success. The worker reports reclamation over IPC; the
+parent treats an absent acknowledgement as an integrity failure and recycles
+the resident worker. Provisional activation emits structured per-case start
+and completion records, while the worker emits count-only intra-case progress
+at canary log level. Ordinary admitted serving keeps that token-level trace at
+debug level.
+
+Validation under Aura's Python 3.12 runtime is green: the five affected
+recurrent, worker, client and activation suites pass `40/40`; canonical smoke
+passes `104/104`; Ruff, compilation, governance lint, layering and diff
+hygiene pass. Regression coverage proves that both public paths execute the
+canonical primitive, progress contains no token identity, failed allocator
+reclamation prevents acknowledgement, and a parent recycles a worker that
+omits the reclaim receipt.
+
+This is an implementation checkpoint only. No recurrent serving authority is
+active. The next gate is a source-bound one-case resident diagnostic followed,
+only if it passes, by fresh immutable lifecycle and activation evidence. The
+powered replication remains a bounded typed-family result; broad reasoning,
+frontier performance, static fusion, `WOW Signal`, soak and Aura 1.0 remain
+unproven.

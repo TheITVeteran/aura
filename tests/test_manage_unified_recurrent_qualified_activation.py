@@ -224,6 +224,7 @@ def test_promotion_and_revocation_share_one_transaction_lock(
 async def test_verified_activation_canary_uses_live_qualified_path_without_publishing_tokens(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
 ) -> None:
     cases = [
         {
@@ -345,6 +346,12 @@ async def test_verified_activation_canary_uses_live_qualified_path_without_publi
     assert result["authority_remains_active"] is True
     assert all(row["exact"] for row in result["evidence"])
     published = arguments.canary_output.read_text(encoding="ascii")
+    progress = capsys.readouterr().out
+    assert "qualified_canary_case_started" in progress
+    assert "qualified_canary_case_completed" in progress
+    assert "public_token_ids" not in progress
+    assert "expected_token_ids" not in progress
+    assert "generated_token_ids" not in progress
     assert "public_token_ids" not in published
     assert '"expected_token_ids":' not in published
     assert '"generated_token_ids":' not in published

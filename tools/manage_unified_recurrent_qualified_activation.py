@@ -303,6 +303,20 @@ async def _run_qualified_canary(
                     "qualified canary requires exact inert authority state"
                 )
         for index, case in enumerate(cases):
+            print(
+                json.dumps(
+                    {
+                        "event": "qualified_canary_case_started",
+                        "index": index,
+                        "case_count": len(cases),
+                        "family": case["family"],
+                        "task_depth": case["task_depth"],
+                        "maximum_token_count": case["max_tokens"],
+                    },
+                    sort_keys=True,
+                ),
+                flush=True,
+            )
             began = time.monotonic_ns()
             if candidate_activation is None:
                 result = await client.unified_recurrent_qualified_decode_async(
@@ -360,6 +374,26 @@ async def _run_qualified_canary(
                     "latency_ms": elapsed_ms,
                     "exact": exact,
                 }
+            )
+            print(
+                json.dumps(
+                    {
+                        "event": "qualified_canary_case_completed",
+                        "index": index,
+                        "case_count": len(cases),
+                        "family": case["family"],
+                        "task_depth": case["task_depth"],
+                        "generated_token_count": (
+                            len(receipt.get("generated_token_ids") or ())
+                            if isinstance(receipt, Mapping)
+                            else 0
+                        ),
+                        "latency_ms": elapsed_ms,
+                        "exact": exact,
+                    },
+                    sort_keys=True,
+                ),
+                flush=True,
             )
             if not exact:
                 reason = (

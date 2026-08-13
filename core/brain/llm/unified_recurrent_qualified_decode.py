@@ -8,11 +8,6 @@ import time
 from collections.abc import Callable, Mapping, Sequence
 from typing import Any, Final
 
-import mlx.core as mx
-
-from core.brain.llm.latent_cortex.recurrence_adapter import recurrence_adapter_scope
-from core.learning.unified_intrinsic_recurrence import unified_recurrent_logits
-
 REQUEST_SCHEMA: Final = "aura.unified_intrinsic.qualified_decode_request.v1"
 RESULT_SCHEMA: Final = "aura.unified_intrinsic.qualified_decode_result.v1"
 CANARY_AUTHORITY_SCHEMA: Final = "aura.unified_intrinsic.qualified_canary_request.v1"
@@ -575,6 +570,7 @@ def run_qualified_decode(
     *,
     cancel_check: Callable[[], bool] | None = None,
     activity: Callable[[], None] | None = None,
+    progress: Callable[[Mapping[str, int | str]], None] | None = None,
 ) -> dict[str, Any]:
     """Decode one certified typed answer with no expected answer in context."""
 
@@ -611,35 +607,14 @@ def run_qualified_decode(
     ):
         raise UnifiedRecurrentQualifiedDecodeError("qualified decode domain differs")
 
-    prompt = mx.array([public_tokens], dtype=mx.int32)
-    tokens = prompt
-    generated: list[int] = []
-    plan = loaded.spec.plan_at(int(receipt["recurrence_depth"]))
-    started = time.perf_counter()
-    with recurrence_adapter_scope(start=None, stop=None):
-        for _index in range(int(request["max_tokens"])):
-            if cancel_check is not None and cancel_check():
-                raise InterruptedError("unified_recurrent_qualified_decode_cancelled")
-            if activity is not None:
-                activity()
-            output, _telemetry = unified_recurrent_logits(
-                model,
-                tokens,
-                plan,
-                loaded.controller,
-                state_slot_start=len(public_tokens),
-                answer_emission_contract=loaded.answer_contract,
-                answer_digit_pointer_enabled=True,
-            )
-            logits = output.logits if hasattr(output, "logits") else output[0] if isinstance(output, tuple) else output
-            token_id = int(mx.argmax(logits[0, -1]).item())
-            generated.append(token_id)
-            if token_id == loaded.answer_contract.eos_token_id:
-                break
-            tokens = mx.concatenate(
-                [tokens, mx.array([[token_id]], dtype=tokens.dtype)],
-                axis=1,
-            )
+    generated, _stopped, latency_ms = loaded.decode_recurrent_tokens(
+        model,
+        public_tokens,
+        max_tokens=int(request["max_tokens"]),
+        cancel_check=cancel_check,
+        activity=activity,
+        progress=progress,
+    )
     values = validate_qualified_answer(
         public_tokens,
         generated,
@@ -652,9 +627,9 @@ def run_qualified_decode(
         "controller_sha256": receipt["controller_sha256"],
         "family": family,
         "task_depth": task_depth,
-        "generated_token_ids": generated,
+        "generated_token_ids": list(generated),
         "parsed_values": values,
-        "latency_ms": max(0, int(round((time.perf_counter() - started) * 1000))),
+        "latency_ms": latency_ms,
         "grammar_valid": True,
         "output_exposed": True,
         "serving_authority": False,

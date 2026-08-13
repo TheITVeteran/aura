@@ -174,7 +174,10 @@ def test_runs_answer_blind_recurrent_decode_and_returns_bound_tokens(monkeypatch
         generated = int(tokens.shape[-1]) - len(public_tokens)
         return _select(expected[generated]), object()
 
-    monkeypatch.setattr(qualified, "unified_recurrent_logits", recurrent)
+    monkeypatch.setattr(
+        "core.brain.llm.unified_recurrent_shadow.unified_recurrent_logits",
+        recurrent,
+    )
     request = qualified.seal_qualified_decode_request(
         public_tokens,
         package_id="qualified-fixture",
@@ -203,7 +206,10 @@ def test_only_matching_activation_can_authorize_a_typed_result(monkeypatch) -> N
         generated = int(tokens.shape[-1]) - len(public_tokens)
         return _select(expected[generated]), object()
 
-    monkeypatch.setattr(qualified, "unified_recurrent_logits", recurrent)
+    monkeypatch.setattr(
+        "core.brain.llm.unified_recurrent_shadow.unified_recurrent_logits",
+        recurrent,
+    )
     request = qualified.seal_qualified_decode_request(
         public_tokens,
         package_id="qualified-fixture",
@@ -254,7 +260,10 @@ def test_declared_depth_cannot_expand_the_certified_domain(monkeypatch) -> None:
         executed = True
         return _select(999), object()
 
-    monkeypatch.setattr(qualified, "unified_recurrent_logits", recurrent)
+    monkeypatch.setattr(
+        "core.brain.llm.unified_recurrent_shadow.unified_recurrent_logits",
+        recurrent,
+    )
 
     with pytest.raises(
         qualified.UnifiedRecurrentQualifiedDecodeError,
@@ -281,7 +290,10 @@ def test_out_of_vocabulary_program_fails_before_recurrent_execution(monkeypatch)
         executed = True
         return _select(999), object()
 
-    monkeypatch.setattr(qualified, "unified_recurrent_logits", recurrent)
+    monkeypatch.setattr(
+        "core.brain.llm.unified_recurrent_shadow.unified_recurrent_logits",
+        recurrent,
+    )
 
     with pytest.raises(
         qualified.UnifiedRecurrentQualifiedDecodeError,
@@ -299,7 +311,10 @@ def test_result_identity_and_parsed_shape_are_not_ornamental(monkeypatch) -> Non
     def recurrent(_model, tokens, _plan, _controller, **_kwargs):
         return _select(expected[int(tokens.shape[-1]) - len(public_tokens)]), object()
 
-    monkeypatch.setattr(qualified, "unified_recurrent_logits", recurrent)
+    monkeypatch.setattr(
+        "core.brain.llm.unified_recurrent_shadow.unified_recurrent_logits",
+        recurrent,
+    )
     request = qualified.seal_qualified_decode_request(
         public_tokens,
         package_id="qualified-fixture",
@@ -329,7 +344,10 @@ def test_parent_expectations_bind_every_result_domain_field(monkeypatch) -> None
     def recurrent(_model, tokens, _plan, _controller, **_kwargs):
         return _select(expected[int(tokens.shape[-1]) - len(public_tokens)]), object()
 
-    monkeypatch.setattr(qualified, "unified_recurrent_logits", recurrent)
+    monkeypatch.setattr(
+        "core.brain.llm.unified_recurrent_shadow.unified_recurrent_logits",
+        recurrent,
+    )
     request = qualified.seal_qualified_decode_request(
         public_tokens,
         package_id="qualified-fixture",

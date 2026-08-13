@@ -533,9 +533,11 @@ def test_worker_qualified_decode_requires_signed_matching_authority(
         qualified_activation=activation,
         model=object(),
         contract_key=key,
+        reclaim=lambda: True,
     )
 
     assert response["receipt"] == authorized
+    assert response["allocator_reclaimed"] is True
     job["unified_recurrent_qualified_decode_contract"]["task_depth"] = 2
     with pytest.raises(ValueError, match="invalid_contract_authority"):
         mlx_worker._handle_unified_recurrent_qualified_decode(
@@ -544,6 +546,7 @@ def test_worker_qualified_decode_requires_signed_matching_authority(
             qualified_activation=activation,
             model=object(),
             contract_key=key,
+            reclaim=lambda: True,
         )
 
 
@@ -637,6 +640,7 @@ def test_worker_canary_accepts_only_signed_request_scoped_authority(
         model=object(),
         contract_key=key,
         consumed_canary_nonces=set(),
+        reclaim=lambda: True,
     )
     assert response["receipt"] == authorized
 
@@ -651,6 +655,7 @@ def test_worker_canary_accepts_only_signed_request_scoped_authority(
             model=object(),
             contract_key=key,
             consumed_canary_nonces=set(),
+            reclaim=lambda: True,
         )
 
     tampered = signed_job()
@@ -663,4 +668,49 @@ def test_worker_canary_accepts_only_signed_request_scoped_authority(
             model=object(),
             contract_key=key,
             consumed_canary_nonces=set(),
+            reclaim=lambda: True,
+        )
+
+
+def test_worker_qualified_decode_refuses_unreclaimed_allocator_state(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    key = new_contract_key()
+    activation = _qualified_evidence()
+    loaded = SimpleNamespace(receipt=_loaded_shadow_receipt())
+    request = seal_qualified_decode_request(
+        [1],
+        package_id="package",
+        controller_sha256="c" * 64,
+        family="khop",
+        task_depth=1,
+        max_tokens=1,
+    )
+    monkeypatch.setattr(
+        "core.brain.llm.unified_recurrent_qualified_decode.run_qualified_decode",
+        lambda *_args, **_kwargs: {"serving_authority": False},
+    )
+    monkeypatch.setattr(
+        "core.brain.llm.unified_recurrent_qualified_decode."
+        "authorize_qualified_decode_result",
+        lambda *_args, **_kwargs: {"serving_authority": True},
+    )
+    job = sign_job(
+        {
+            "id": "decode-reclaim",
+            "action": "unified_recurrent_qualified_decode",
+            "unified_recurrent_qualified_decode_contract": request,
+        },
+        key,
+        principal="mlx_client.unified_recurrent_qualified_decode",
+    )
+
+    with pytest.raises(RuntimeError, match="memory_not_reclaimed"):
+        mlx_worker._handle_unified_recurrent_qualified_decode(
+            job,
+            loaded_shadow=loaded,
+            qualified_activation=activation,
+            model=object(),
+            contract_key=key,
+            reclaim=lambda: False,
         )
