@@ -205,8 +205,31 @@ class SensoryLocalClient:
             if not started:
                 return False
 
-        reply = await asyncio.to_thread(self._request_blocking, cmd, data, timeout)
-        return reply.get("status") == "ok"
+        from core.supervisor.registry import TaskStatus, get_task_registry
+
+        registry = get_task_registry()
+        task_id = registry.register_task(
+            "sensory_gate",
+            f"Sensory: {cmd}",
+            {"command": cmd},
+        )
+        registry.update_task(task_id, status=TaskStatus.RUNNING)
+        try:
+            reply = await asyncio.to_thread(self._request_blocking, cmd, data, timeout)
+        except Exception as exc:
+            registry.update_task(
+                task_id,
+                status=TaskStatus.FAILED,
+                error=str(exc),
+            )
+            raise
+        succeeded = reply.get("status") == "ok"
+        registry.update_task(
+            task_id,
+            status=TaskStatus.COMPLETED if succeeded else TaskStatus.FAILED,
+            error="" if succeeded else str(reply.get("msg") or ""),
+        )
+        return succeeded
 
     def _request_blocking(
         self,

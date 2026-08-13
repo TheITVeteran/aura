@@ -907,7 +907,6 @@ class SignalMatrixCase:
             "chat_result": self.chat_result,
             "recovery_injection": self.recovery_injection,
             "pre_signal_evidence": self.pre_signal_evidence,
-            "shutdown_report": report,
             "shutdown_report_path": str(self.report_path),
             "stdout_path": str(self.stdout_path),
             "history_paths": [str(path) for path in history],
@@ -1095,6 +1094,14 @@ def main(argv: list[str] | None = None) -> int:
         )
         verdict_payload = _read_json(case.verdict_path)
         if verdict_payload:
+            # Keep case receipts bounded.  The canonical shutdown report remains
+            # a separate artifact and is joined only for in-memory aggregation.
+            report_payload = _read_json(case.report_path)
+            if report_payload:
+                verdict_payload = {
+                    **verdict_payload,
+                    "shutdown_report": report_payload,
+                }
             case_verdicts.append(verdict_payload)
         try:
             contamination = _running_aura_main_pids(observer=observer)

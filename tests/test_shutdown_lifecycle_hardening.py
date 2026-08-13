@@ -1356,6 +1356,10 @@ def test_vision_inference_timeout_clears_request_and_stops_worker() -> None:
     client = MLXVisionClient("/models/test-vision")
     client.start_async = _start  # type: ignore[method-assign]
     client.stop = lambda: stopped.append(True)  # type: ignore[method-assign]
+    client.readiness_status = lambda: {  # type: ignore[method-assign]
+        "ready": True,
+        "reason": "ready",
+    }
     client._req_q = _RequestQueue()
     client._process = _Process()
 

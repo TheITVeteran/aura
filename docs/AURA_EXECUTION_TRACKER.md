@@ -47268,3 +47268,34 @@ The powered replication remains independent and partial. Its final seed had
 advanced to candidate `85` with a moving authenticated controller heartbeat;
 there is still no final adjudication, promotion authority, fusion authority,
 frontier result or `WOW Signal` to report.
+
+## Checkpoint 2026-08-13-333: Lifecycle Evidence Stays Bounded and Observable
+
+The shutdown matrix no longer duplicates each canonical terminal shutdown
+report inside its case verdict. Each report remains a separately addressed
+artifact and is joined to the compact verdict only in memory while the matrix
+computes owner-class coverage. This preserves the same eight-class verdict
+without multiplying large process, task, thread and resource censuses across
+the retained evidence tree.
+
+The expanded lifecycle test pass also exposed a real observability regression
+outside the matrix. The sensory sidecar's queue refactor had preserved request
+execution but dropped the task-registry lifecycle that tells the supervisor
+whether camera and audio work completed or failed. Every admitted sensory
+transaction now registers before execution, enters `RUNNING`, and reaches
+exactly one `COMPLETED` or `FAILED` terminal update with its worker error. A
+stale vision-timeout test now explicitly admits measured readiness before
+testing timeout cleanup, so it no longer bypasses the stricter production
+readiness contract by pretending that a mocked process alone is ready.
+
+Validation under Aura's Python 3.12 runtime is green: the complete focused
+lifecycle, signal-matrix and ownership-audit surface passes `58/58`; canonical
+smoke passes `104/104`; repository Ruff, full Python compilation and diff
+hygiene pass. This is the final source checkpoint before model-free requirement
+proof refresh; no proof receipt is recorded against a dirty or unpushed tree.
+
+The resident-32B replication remains independently supervised and undisturbed.
+Its final seed was actively decoding beyond candidate `100` with its evaluator,
+sentinel, sleep inhibitor and authenticated controller heartbeat alive. There
+is still no final scientific verdict, promotion authority, fusion authority,
+frontier result or `WOW Signal` to report from partial evidence.
