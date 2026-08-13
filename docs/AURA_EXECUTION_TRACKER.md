@@ -47299,3 +47299,28 @@ Its final seed was actively decoding beyond candidate `100` with its evaluator,
 sentinel, sleep inhibitor and authenticated controller heartbeat alive. There
 is still no final scientific verdict, promotion authority, fusion authority,
 frontier result or `WOW Signal` to report from partial evidence.
+
+## Checkpoint 2026-08-13-334: Deferred-Action Probes Close Their Database
+
+The first atomic lifecycle/shutdown proof refresh correctly published no
+receipt when its SQLite lifecycle ratchet found a new offender. Aura's
+self-capability probe opened the durable intention database read-only inside
+the standard-library connection context manager, which commits or rolls back
+but does not close the connection. Repeated self-knowledge checks could
+therefore retain the database descriptor until garbage collection even though
+the probe appeared structurally scoped.
+
+The probe now uses the canonical `connecting(...)` resource-and-transaction
+context, preserving read-only URI behavior and rollback semantics while
+closing the handle deterministically on success or failure. Validation under
+Aura's Python 3.12 runtime is green: the SQLite ownership and descriptor suite
+passes `9/9`, the capability-ledger surface passes `71/71`, canonical smoke
+passes `104/104`, and repository Ruff and full Python compilation pass. The
+same four-proof lifecycle/shutdown transaction must now be rerun against this
+published source; the failed attempt granted no evidence credit.
+
+Resident-32B replication remains separately supervised and partial. Its third
+seed evaluator, memory sentinel and sleep inhibitor remain alive and its
+authenticated status continues moving; promotion is still waiting on the
+replication's final admitted artifact. No reasoning, fusion, frontier or
+`WOW Signal` claim is made from the transient controller state.

@@ -924,8 +924,9 @@ def _probe_deferred_action() -> Availability:
     rows = 0
     try:
         import sqlite3
+        from core.runtime.sqlite_support import connecting
 
-        with sqlite3.connect(f"file:{store}?mode=ro", uri=True) as con:
+        with connecting(sqlite3.connect(f"file:{store}?mode=ro", uri=True)) as con:
             rows = int(con.execute("SELECT COUNT(*) FROM intentions").fetchone()[0])
     except _PROBE_ERRORS + (Exception,):
         return Availability(
