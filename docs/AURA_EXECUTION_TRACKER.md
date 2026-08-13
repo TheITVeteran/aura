@@ -46748,3 +46748,34 @@ been reviewed, or that whole-codebase semantic closeout is complete. Next is
 the dependency-ordered `session-turn-custody` remainder, followed by exact
 evidence/claim binding and the remaining grouped repairs; unchanged hashes may
 carry forward, changed spans must be rereviewed.
+
+## Checkpoint 2026-08-12-316: Reply Custody Stays Inside Its Conversation Turn
+
+The first accepted semantic repair group is complete. Route-delivery state is
+no longer four process-global values that whichever request finished last could
+overwrite. It is a bounded map keyed by exact conversation and turn identity;
+HTTP establishes those identities, the core request context carries them,
+`OutputGate` attaches them to every spoken EventBus payload, and the WebSocket
+bridge consults only the matching state. Unscoped autonomous speech may wait
+while a person is actively awaiting an answer, but it is not retroactively
+treated as another session's late reply after that turn settles.
+
+Turn arbitration now rejects a missing identity instead of merging unrelated
+diagnostics into a shared `unknown` ledger. Grounded recall no longer treats an
+absent origin or a failed origin classifier as proof that internal text came
+from the person; the large-paste ingress now records its authenticated origin
+at creation. The cross-session, open-turn, settled-turn, missing-provenance and
+classifier-failure cases all have executable regressions.
+
+Validation is green under Aura's Python 3.12 runtime: `145/145` focused
+conversation contracts pass; the broader chat, persistence and server slice
+passes `375/375`; canonical smoke passes `104/104`; focused Ruff, compilation
+and diff hygiene pass. CP316 is published on `main` as
+`aa49b3763bbce6153dce749b80eea690c132199e`.
+
+The scoped semantic ledger now records `23/58` findings closed with `35` open:
+all three `session-turn-custody` findings are remediated, all earlier receipts
+in changed files were reverified, and the ledger reports zero drifted closure
+hashes. This is one completed dependency group, not whole-slice or whole-repo
+semantic closeout. The next group is `evidence-claim-binding` (six accepted
+findings), followed by pending/retry custody and the remaining grouped repairs.
