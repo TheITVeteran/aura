@@ -1,0 +1,51 @@
+{
+  "schema": "aura.closeout.rlc.cp372.v1",
+  "checkpoint": "CP372",
+  "change": {
+    "runner": "tools/run_rlc_reconciliation_sweep.py",
+    "arm": "complete_system_recurrent_composed",
+    "profile": "complete_closed_book_recurrent_composed",
+    "uncomposed_complete_engine_control_required": true,
+    "ordinary_control_required": true,
+    "adaptation_ablation_required": true,
+    "executable_ablation_required": true,
+    "resource_dominating_control_required_for_certificate": true,
+    "resource_control_targets_composed_arm": true,
+    "qualified_activation_required": true,
+    "package_manifest_bound_into_fingerprint": true,
+    "same_session_producer_invoked_only_for_composed_arm": true,
+    "content_free_progress_heartbeat": true,
+    "resume_rejects_changed_package_or_source": true
+  },
+  "installed_package_reopen": {
+    "package_id": "cp366-source-migrated-recurrent",
+    "manifest_sha256": "74f9fb3313a649b1bb6dcd2d838fd66d5ef7874eccbcef85cd466e58eade8085",
+    "qualified_activation_sha256": "ec30fd10b696842f660eda229b8938719cdbe1b8e2200714e59f04c3d806a16f",
+    "status": "pass"
+  },
+  "verification": {
+    "producer_and_reconciliation_surface": {
+      "passed": 74,
+      "failed": 0,
+      "duration_s": 18.72
+    },
+    "canonical_smoke": {
+      "passed": 104,
+      "failed": 0,
+      "duration_s": 16.57
+    },
+    "component_self_test": "pass",
+    "qualified_package_reopen": "pass",
+    "ruff": "pass",
+    "py_compile": "pass",
+    "diff_check": "pass"
+  },
+  "claim_boundary": {
+    "composed_execution_path_wired": true,
+    "paired_composed_adjudication_complete": false,
+    "active_cp368_campaign_modified": false,
+    "broad_reasoning_gain_proven": false,
+    "powered_replication_complete": false,
+    "wow_signal": false
+  }
+}

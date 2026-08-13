@@ -48096,3 +48096,43 @@ uncomposed full-engine control, exact package admission, source-frozen decode
 identity and paired adjudication. The active CP368 broad campaign remains
 untouched and no broad gain, powered replication, fusion or `WOW Signal` is
 claimed.
+
+## Checkpoint 2026-08-13-372: The Full Engine Has a Composed Tissue Arm
+
+The reconciliation runner now exposes
+`complete_system_recurrent_composed` as a distinct experimental arm. It does
+not silently change the meaning of `complete_system_closed_book`: the latter
+remains the uncomposed full-engine control. Requesting the composed arm also
+brings ordinary decode, the adaptation and executable-producer ablations, and,
+at certificate stage, the resource-dominating ordinary control.
+
+Before model load, the runner reopens the exact recurrent package and requires
+the currently published `qualified_typed_only` activation to match its package
+and manifest. The composed arm's decode fingerprint binds that manifest and its
+2,048-token terminal producer budget; other arms do not inherit the package
+identity. After model load the package is reopened against the resident model,
+and only the composed profile invokes the CP371 producer. Content-free progress
+updates preserve liveness during long recurrent decodes without exposing token
+content.
+
+The resource-dominating control now records which treatment it dominates. In a
+composed campaign its target is the composed engine, not the older uncomposed
+arm. Resumption reconstructs resource, information, acquisition and prompt
+state from that exact target. The evidence manifest validates the package,
+activation, controller, budget and target-arm bindings before any cell receives
+credit.
+
+The installed package `cp366-source-migrated-recurrent` reopens under manifest
+`74f9fb3313a649b1bb6dcd2d838fd66d5ef7874eccbcef85cd466e58eade8085`
+and activation
+`ec30fd10b696842f660eda229b8938719cdbe1b8e2200714e59f04c3d806a16f`.
+The producer and reconciliation surface passes `74/74`, canonical smoke passes
+`104/104`, the composed component self-test passes, and Ruff, byte compilation
+and diff hygiene pass. Evidence is
+`artifacts/closeout/latent_cortex/cp372_composed_full_engine_arm.json`.
+
+This closes executable wiring, not scientific adjudication. The grader still
+keeps the composed arm diagnostic until its paired lift, regression, public
+promotion, resource-dominance and package-provenance criteria are encoded and
+tested. The active CP368 campaign remains untouched; no broad gain, powered
+replication, fusion or `WOW Signal` is claimed.

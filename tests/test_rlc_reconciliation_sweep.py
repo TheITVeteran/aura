@@ -193,6 +193,10 @@ def test_the_battery_leads_with_the_unified_system_not_the_ablation():
     by_name = {a.name: a for a in sweep.ARMS}
     assert by_name["vanilla"].profile == "ordinary"
     assert by_name["complete_system_closed_book"].profile == "complete_closed_book"
+    assert (
+        by_name["complete_system_recurrent_composed"].profile
+        == "complete_closed_book_recurrent_composed"
+    )
     assert by_name["full_stack"].profile == "full"
     assert by_name["full_stack_oracle"].profile == "full_oracle"
     assert by_name["rlc_mechanism"].profile == "mechanism"
@@ -243,6 +247,7 @@ def test_implementation_identity_binds_extracted_complete_system_modules():
     manifest = sweep._implementation_manifest()
 
     assert "tools/rlc_complete_system_closed_book.py" in manifest
+    assert "tools/rlc_integrated_recurrent_producer.py" in manifest
     assert "tools/rlc_reconciliation_evidence.py" in manifest
     assert "core/brain/reasoning_amplifier_v2.py" in manifest
 
@@ -257,6 +262,78 @@ def test_complete_system_request_expands_to_controls_without_narrower_treatments
         "complete_system_executable_ablation",
         "vanilla_resource_dominating",
     ]
+
+
+def test_recurrent_composed_request_keeps_the_uncomposed_engine_as_a_control():
+    expanded = sweep._expand_requested_arms(
+        {"complete_system_recurrent_composed"},
+        campaign_stage="certificate",
+    )
+    assert [arm.name for arm in expanded] == [
+        "vanilla",
+        "vanilla_equal_compute",
+        "complete_system_closed_book",
+        "complete_system_recurrent_composed",
+        "complete_system_adaptation_ablation",
+        "complete_system_executable_ablation",
+        "vanilla_resource_dominating",
+    ]
+
+
+def test_recurrent_package_identity_is_bound_into_the_decode_fingerprint():
+    common = {
+        "model": "checkpoint",
+        "n_slots": 16,
+        "max_tokens": 512,
+        "episode_wall_s": 720.0,
+        "seed": 7,
+        "per_domain": 1,
+    }
+    composed_a = sweep.decode_fingerprint(
+        **common,
+        arm="complete_system_recurrent_composed",
+        integrated_recurrent_package_sha256="a" * 64,
+    )
+    composed_b = sweep.decode_fingerprint(
+        **common,
+        arm="complete_system_recurrent_composed",
+        integrated_recurrent_package_sha256="b" * 64,
+    )
+    assert composed_a != composed_b
+
+
+def test_only_composed_profile_invokes_the_integrated_recurrent_producer(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    from tools import rlc_integrated_recurrent_producer as producer
+
+    calls = []
+
+    def fake_produce(**kwargs):
+        calls.append(kwargs)
+        return {"candidate": True}, {"receipt": True}
+
+    monkeypatch.setattr(producer, "produce_integrated_recurrent_candidate", fake_produce)
+    common = {
+        "loaded": object(),
+        "model": object(),
+        "tokenizer": object(),
+        "task": object(),
+        "public_tokens": [1, 2, 3],
+        "max_tokens": 2048,
+    }
+    assert sweep._integrated_candidates_for_profile(
+        profile="complete_closed_book",
+        **common,
+    ) == []
+    assert calls == []
+    assert sweep._integrated_candidates_for_profile(
+        profile="complete_closed_book_recurrent_composed",
+        **common,
+    ) == [{"candidate": True}]
+    assert len(calls) == 1
+    assert calls[0]["public_tokens"] == [1, 2, 3]
+    assert calls[0]["max_tokens"] == 2048
 
 
 def test_staged_campaigns_do_not_pay_for_the_full_certificate_early():
