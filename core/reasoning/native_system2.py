@@ -18,13 +18,16 @@ import asyncio
 import hashlib
 import heapq
 import json
+import logging
 import math
 import random
 import time
 import uuid
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass, field, replace as _dc_replace
 from enum import Enum
 from typing import Any, Awaitable, Callable, Dict, Iterable, List, Optional, Sequence, Tuple
+
+logger = logging.getLogger("Aura.Reasoning.NativeSystem2")
 
 
 class TreeCycleError(ValueError):
@@ -216,6 +219,24 @@ class NativeSearchReceipt:
     commitment_reason: str
     will_receipt_id: Optional[str] = None
     generated_at: float = field(default_factory=time.time)
+    #: Where the value estimates behind this search came from, counted by
+    #: source: caller / learned / prior / none. A search whose values were all
+    #: "none" explored faithfully over numbers that expressed no preference,
+    #: so its ordering is tie-breaking rather than judgement. Recording this is
+    #: what stops a governed search receipt from implying evidence it did not
+    #: have.
+    value_evidence: Dict[str, int] = field(default_factory=dict)
+    #: Actions whose risk was raised by the lexical hazard floor because they
+    #: declared none. Named so a reviewer can see that a safety brake was
+    #: applied on the strength of spelling alone.
+    hazard_floored_actions: List[str] = field(default_factory=list)
+
+    @property
+    def value_is_evidenced(self) -> bool:
+        """True when at least one estimate came from the caller or from data."""
+        return bool(
+            self.value_evidence.get("caller", 0) or self.value_evidence.get("learned", 0)
+        )
 
     def to_dict(self) -> Dict[str, Any]:
         return asdict(self)
@@ -591,6 +612,35 @@ class NativeSystem2Engine:
     ) -> NativeSearchResult:
         candidate_actions = [self._coerce_action(action, idx) for idx, action in enumerate(actions)]
 
+        # Value comes from recorded outcomes or from the caller, never from how
+        # the action is spelled. See core/reasoning/action_value.py for what
+        # this replaced and why the hazard floor is a separate axis.
+        from core.reasoning.action_value import (
+            get_action_value_model,
+            lexical_hazard_floor,
+        )
+
+        value_model = get_action_value_model()
+        evidence_counts: Dict[str, int] = {}
+
+        # A bare string action arrives with risk=0.0 because _coerce_action has
+        # nothing better to go on. Apply the lexical floor BEFORE search so the
+        # risk channel — which the world model and value scorer both already
+        # respect — carries the hazard, instead of the value function inventing
+        # a penalty from the same substrings.
+        hazard_floored: List[str] = []
+        floored_actions: List[System2Action] = []
+        for action in candidate_actions:
+            floor = lexical_hazard_floor(action.name) if action.risk <= 0.0 else 0.0
+            if floor > 0.0:
+                # System2Action is frozen, which is the right call for
+                # something that ends up in a commitment receipt: the action
+                # that was searched must be the action that was recorded.
+                action = _dc_replace(action, risk=floor)
+                hazard_floored.append(action.name)
+            floored_actions.append(action)
+        candidate_actions = floored_actions
+
         async def _generator(_state: Any, node: NativePlanNode, cfg: System2SearchConfig) -> Sequence[System2Action]:
             if node.depth == 0:
                 return candidate_actions[: cfg.branching_factor]
@@ -611,8 +661,15 @@ class NativeSystem2Engine:
 
         async def _world(state: Any, action: System2Action, node: NativePlanNode) -> SimulatedTransition:
             selected = action.metadata.get("verifies") or action.name
-            score_hint = _clamp01(float(action.metadata.get("score_hint", 0.55)))
+            estimate = value_model.value_for(selected, action.metadata)
+            evidence_counts[estimate.evidence] = (
+                evidence_counts.get(estimate.evidence, 0) + 1
+            )
+            score_hint = estimate.value
             if action.name.startswith("verify:"):
+                # Verification is a structural property of the generated node,
+                # not a guess from its name: this branch exists only because
+                # _generator built a verify: successor for a real action.
                 score_hint = min(1.0, score_hint + 0.08)
             return SimulatedTransition(
                 next_state={
@@ -632,20 +689,22 @@ class NativeSystem2Engine:
         async def _value(node: NativePlanNode, _goal: str) -> float:
             if node.action is None:
                 return 0.5
-            score_hint = _clamp01(float(node.action.metadata.get("score_hint", node.reward)))
-            name = node.action.name.lower()
-            for token in ("verify", "test", "simulate", "inspect", "evidence", "safe", "rollback", "minimal"):
-                if token in name:
-                    score_hint = min(1.0, score_hint + 0.045)
-            for token in ("delete", "destructive", "exfiltrate", "bypass", "disable safety"):
-                if token in name:
-                    score_hint = max(0.0, score_hint - 0.18)
+            # No substring scoring. The estimate is the caller's score, or the
+            # shrunk mean of measured outcomes for this action, or an
+            # explicitly unevidenced midpoint — and which one it was is
+            # reported on the result rather than blended away here.
+            selected = node.action.metadata.get("verifies") or node.action.name
+            estimate = value_model.value_for(selected, node.action.metadata)
+            score_hint = estimate.value
             if node.action.name.startswith("verify:"):
                 score_hint = max(score_hint, _clamp01(float(node.reward)))
             if not node.action.valid:
                 return 0.0
+            # Risk and side effects are declared fields, so they stay: they are
+            # facts the caller asserted, not inferences from spelling.
             if node.action.external_side_effect:
                 score_hint -= 0.08
+            score_hint -= 0.20 * float(node.action.risk)
             return _clamp01(score_hint - (node.uncertainty * 0.10))
 
         cfg = config or System2SearchConfig(
@@ -655,7 +714,7 @@ class NativeSystem2Engine:
             branching_factor=max(1, len(candidate_actions)),
             beam_width=max(1, min(5, len(candidate_actions))),
         )
-        return await self.search(
+        result = await self.search(
             "rank candidate actions",
             {"context": context, "candidate_count": len(candidate_actions)},
             config=cfg,
@@ -665,6 +724,22 @@ class NativeSystem2Engine:
             source=source,
             context={"candidate_count": len(candidate_actions), "integration": "rank_actions"},
         )
+
+        # Attach provenance after the fact, because the counts are produced by
+        # the scorers during the search. Without this the receipt records a
+        # rigorous search and says nothing about whether its inputs meant
+        # anything, which is the specific way structured search over invented
+        # numbers comes to look like deep reasoning.
+        result.receipt.value_evidence = dict(evidence_counts)
+        result.receipt.hazard_floored_actions = list(hazard_floored)
+        if not result.receipt.value_is_evidenced and candidate_actions:
+            logger.info(
+                "rank_actions: no value evidence for any of %d candidates "
+                "(sources=%s); the ordering is tie-breaking, not judgement",
+                len(candidate_actions),
+                evidence_counts or {"none": 0},
+            )
+        return result
 
     def get_receipt(self, search_id: str) -> Optional[NativeSearchReceipt]:
         return self._receipts.get(search_id)

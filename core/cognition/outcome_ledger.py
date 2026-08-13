@@ -549,6 +549,54 @@ class OutcomeLedger:
             record_degradation("outcome_ledger", e, severity="debug")
         return {k: round(v, 4) for k, v in out.items()}
 
+    def measured_action_stats(
+        self, *, limit: int = 20000
+    ) -> Dict[str, Dict[str, float]]:
+        """Per-action outcome statistics over MEASURED receipts only.
+
+        The evidence base for any learned action value. ``observation`` must be
+        ``'measured'``: an expired receipt's 0.0 is an accountability
+        convention, not an observation of the world, and folding those into a
+        mean would teach that every unwatched action failed.
+
+        ``repeat_count`` is honoured as a weight so one stuck reflex counts as
+        one fact with a weight rather than as thousands of independent
+        successes — otherwise a loop would dominate the statistics of every
+        other action.
+
+        Returns ``{action: {"n": weight, "mean": .., "m2": ..}}`` where ``m2``
+        is the weighted sum of squared deviations, so a caller can compute
+        within-group variance without a second pass over the table.
+        """
+        out: Dict[str, Dict[str, float]] = {}
+        try:
+            with connecting(self._connect()) as conn:
+                rows = conn.execute(
+                    "SELECT action, observed, repeat_count FROM outcome_receipts "
+                    "WHERE observation = 'measured' AND observed IS NOT NULL "
+                    "ORDER BY resolved_at DESC LIMIT ?",
+                    (int(limit),),
+                ).fetchall()
+        except (sqlite3.Error, OSError, ValueError) as e:
+            record_degradation("outcome_ledger", e, severity="debug")
+            return out
+
+        for action, observed, repeat in rows:
+            if observed is None:
+                continue
+            key = str(action)
+            weight = max(1.0, float(repeat or 1))
+            value = float(observed)
+            bucket = out.setdefault(key, {"n": 0.0, "mean": 0.0, "m2": 0.0})
+            # Weighted Welford: stable in one pass, and the variance is needed
+            # by the shrinkage estimator that consumes this.
+            total = bucket["n"] + weight
+            delta = value - bucket["mean"]
+            bucket["mean"] += delta * (weight / total)
+            bucket["m2"] += weight * delta * (value - bucket["mean"])
+            bucket["n"] = total
+        return out
+
     def stats(self) -> Dict[str, Any]:
         with self._lock:
             return {
