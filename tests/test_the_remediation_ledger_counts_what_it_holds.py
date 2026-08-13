@@ -148,6 +148,10 @@ def test_a_clean_ledger_reports_no_warning(ledger_world):
     assert "NOT counted as closed" not in _status(ledger_world)
 
 
+def test_custom_campaign_status_is_not_mislabeled_cp126(ledger_world):
+    assert "CP126" not in _status(ledger_world)
+
+
 def test_status_does_not_crash_on_a_row_with_no_status(ledger_world):
     """It raised TypeError comparing None to str, taking the whole report down."""
     tmp_path, inventory, ledger = ledger_world

@@ -1,0 +1,10 @@
+{
+  "campaign_sha256": "73ad97cdacabd7ddfab4197738e0b44fd328c41f316489f0f0a3dae25617ff64",
+  "issues": [],
+  "observed_file_count": 37,
+  "observed_line_count": 22621,
+  "observed_span_count": 41,
+  "passed": true,
+  "schema": "aura.closeout.semantic_review_campaign_validation.v1",
+  "source_commit": "3ed0ec87cde695f7ed73e7c18b831153f3dd7026"
+}

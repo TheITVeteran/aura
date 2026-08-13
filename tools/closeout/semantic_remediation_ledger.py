@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Record and summarize REMEDIATION of CP126 semantic-review findings.
+"""Record and summarize remediation of hash-bound semantic-review findings.
 
 The review inventory (`semantic_review_ledger.py`) proves that spans were
 read and findings were recorded. It deliberately claims nothing about repair:
@@ -240,7 +240,7 @@ def cmd_status(args: argparse.Namespace) -> int:
         str(e.get("status") or "(missing status)") for e in ledger.values()
     )
 
-    print("CP126 semantic remediation status")
+    print("Semantic remediation status")
     print("=" * 58)
     print(f"  findings in inventory : {total}")
     print(f"  recorded closed       : {len(closed_ids)}  ({100.0 * len(closed_ids) / max(1, total):.1f}%)")
@@ -619,13 +619,13 @@ def cmd_sweep(args: argparse.Namespace) -> int:
     if args.list_changed:
         print()
         print(f"  span_changed criticals (top {args.limit}):")
-        for path, fid, sev, title in [r for r in span_changed if r[2] == "critical"][: args.limit]:
+        for path, fid, _sev, title in [r for r in span_changed if r[2] == "critical"][: args.limit]:
             print(f"    {fid[-8:]}  {path}")
             print(f"              {title[:78]}")
     if args.list_present:
         print()
         print(f"  still_present criticals (top {args.limit}):")
-        for path, fid, sev, title in [r for r in still_present if r[2] == "critical"][: args.limit]:
+        for path, fid, _sev, title in [r for r in still_present if r[2] == "critical"][: args.limit]:
             print(f"    {fid[-8:]}  {path}")
             print(f"              {title[:78]}")
     if args.out:

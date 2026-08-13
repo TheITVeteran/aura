@@ -46706,3 +46706,45 @@ This is operational continuity, not additional scientific evidence. The
 completion envelope remains `915/920`; powered replication, runtime
 qualification, broad reasoning evidence, fusion authority and `WOW Signal`
 remain open.
+
+## Checkpoint 2026-08-12-315: Semantic Review Is a Hash-Bound Batch Program
+
+The semantic closeout is no longer a monolithic queue whose thousands of files
+must be reread one at a time. CP310 added exact active-code and path-prefix
+scopes to the campaign planner, while preserving the rule that a scoped review
+cannot claim whole-repository completion. The first frozen campaign binds
+source commit `3ed0ec87cde695f7ed73e7c18b831153f3dd7026`, campaign digest
+`73ad97cdacabd7ddfab4197738e0b44fd328c41f316489f0f0a3dae25617ff64`,
+and the complete `core/conversation` production surface: 37 files, 41 spans,
+22,621 lines and two whole-slice review batches.
+
+Every planned span has a hash-bound review entry. Independent adjudication
+reduced 58 raw leads to 38 accepted defects in nine dependency-ordered repair
+groups: 2 critical, 24 high and 12 medium. Sixteen leads were refuted against
+current code and four were stale because CP313 or CP314 had already removed
+their defect. All 20 non-open outcomes are recorded in a drift-detecting
+remediation ledger; the 38 accepted findings remain explicitly open. Frozen
+source validation passes with zero issues and independently reports both
+campaign validity and complete inventory before edits were permitted.
+
+CP313 replaced competing shared reply readers with exact session-owned waiter
+delivery. CP314 then established one core conversation identity boundary for
+HTTP, memory and speech; tags every live transcript entry; filters every
+continuity and grounded-recall read by that identity; preserves local
+cross-modality voice/text continuity; carries explicit IDs from the older
+conversation engine; and writes only terminally delivered desktop exchanges
+into live continuity. The authenticated request scope overrides lower-level
+session labels, preventing a subsystem from moving a live request into another
+conversation.
+
+Validation is green under Aura's Python 3.12 runtime: CP314's focused
+continuity suite passes `64/64`, the broader live conversation/persistence
+route suite passes `468/468`, canonical smoke passes `104/104`, and the
+semantic campaign/remediation tool suite passes `34/34`; focused Ruff,
+compilation, archive hash checks and diff hygiene pass. The durable evidence
+lives under `artifacts/closeout/semantic_review/cp310/`. This checkpoint does
+not claim the 38 accepted findings are repaired, that another subsystem has
+been reviewed, or that whole-codebase semantic closeout is complete. Next is
+the dependency-ordered `session-turn-custody` remainder, followed by exact
+evidence/claim binding and the remaining grouped repairs; unchanged hashes may
+carry forward, changed spans must be rereviewed.

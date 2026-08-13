@@ -1,0 +1,68 @@
+{
+  "schema": "aura.closeout.semantic_inventory_snapshot.v2",
+  "scope": {
+    "active_code_only": true,
+    "path_prefixes": [
+      "core/conversation"
+    ],
+    "full_repository": false
+  },
+  "source_commit": "3ed0ec87cde695f7ed73e7c18b831153f3dd7026",
+  "campaign_sha256": "73ad97cdacabd7ddfab4197738e0b44fd328c41f316489f0f0a3dae25617ff64",
+  "evidence_sha256": {
+    "campaign_archive": "6cb1ebdda9cbe44d8a3974508a23b8a4c06cd04982672c156dabf24aa68241e5",
+    "inventory_archive": "6eaee8d00a16fdbeefeead039199211b815b24a075ddb9355168c234e2b070d8",
+    "submission_0001_archive": "e2c4a196a66166759d4c0e2afe8778703288d67cd1e06954e4770e219093f973",
+    "submission_0002_archive": "c7b0bb79fbd1b965a4095a91a12764a6f3826676112b44fb653f46b1217445af",
+    "source_validation": "8ca62217f5d7e1f414e3e2b591689689a8727eaf0279952475609093ba660f3f",
+    "inventory_status": "9871e1055897763e7ac4a0b53df4bab0175472e2195549485b3c71cb95e92f8a",
+    "adjudication": "69e47b6365a65cde8e89f7efc82d3d6d72de198e4496ad3f820cc57de5153803",
+    "remediation_ledger": "23543066a3c04273ab359890f8f07ecd98586cde9b300c7e705cc5691d9fa014"
+  },
+  "validation": {
+    "exact_source_campaign_passed": true,
+    "inventory_complete": true,
+    "edits_permitted": true,
+    "issues": []
+  },
+  "inventory": {
+    "complete": true,
+    "planned_files": 37,
+    "planned_spans": 41,
+    "planned_lines": 22621,
+    "batches": 2
+  },
+  "adjudication": {
+    "total": 58,
+    "accepted": 38,
+    "accepted_by_severity": {
+      "critical": 2,
+      "high": 24,
+      "medium": 12,
+      "low": 0
+    },
+    "duplicate": 0,
+    "refuted": 16,
+    "stale": 4
+  },
+  "remediation": {
+    "recorded_closed": 20,
+    "remaining_open": 38,
+    "closure_checkpoints": [
+      "929cf62ae7143c5db23587538802e31815796d91",
+      "da0c0af466b770ec5875d3435b9746f44b14c471"
+    ]
+  },
+  "claim_supported": [
+    "exact_source_scoped_read_only_inventory_complete",
+    "raw_findings_independently_adjudicated",
+    "refuted_and_stale_findings_recorded_in_remediation_ledger",
+    "accepted_findings_grouped_in_dependency_order"
+  ],
+  "claim_not_supported": [
+    "accepted_finding_remediated",
+    "full_repository_semantic_review_complete",
+    "aggregate_closeout_complete",
+    "live_runtime_certified"
+  ]
+}
