@@ -2522,6 +2522,7 @@ def test_complete_system_receipt_requires_acquisition_amplifier_and_promotion(
         "complete_system_closed_book": {
             "schema": "aura.rlc.complete_system_closed_book.v1",
             "contract": "same_information_no_memory_rag_web_or_answer_key",
+            "task_id": "fixture-task",
             "objective": objective,
             "objective_sha256": hashlib.sha256(objective.encode()).hexdigest(),
             "response_contract": response_contract,
@@ -2549,6 +2550,7 @@ def test_complete_system_receipt_requires_acquisition_amplifier_and_promotion(
                 "evaluation": candidate_evaluation,
                 "quality_assessment": candidate_quality,
             },
+            "integrated_candidates": [],
             "promotion_candidate_selection": candidate_selection,
             "amplifier_verifier_calls": 4,
             "in_process_generation_calls": 1,
@@ -2576,6 +2578,7 @@ def test_complete_system_receipt_requires_acquisition_amplifier_and_promotion(
     assert evidence["estimated_flops"] == ledger.estimated_flops()
     assert evidence["resource_accounting_sha256"] == ledger.to_receipt()["receipt_sha256"]
     assert evidence["information_accounting_sha256"] == information["receipt_sha256"]
+
 
     from tools import rlc_reconciliation_evidence
     from tools.rlc_complete_system_closed_book import (
@@ -2731,6 +2734,97 @@ def test_complete_system_receipt_requires_acquisition_amplifier_and_promotion(
     assert "complete_system_resource_accounting_incomplete" in invalid["issues"]
 
 
+def test_complete_system_admits_a_bound_recurrent_candidate_without_answer_key():
+    from core.brain.llm.latent_cortex.frontier_tasks import generate_task_battery
+    from core.brain.llm.latent_cortex.resource_accounting import (
+        ModelComputeProfile,
+        ResourceLedger,
+    )
+    from core.brain.llm.latent_cortex.task_verifiers import EpisodeTaskVerifier
+    from tools.rlc_complete_system_closed_book import (
+        _normalize_integrated_candidates,
+        _select_complete_system_promotion_candidate,
+        build_integrated_candidate,
+    )
+
+    task = generate_task_battery(
+        [131973299],
+        domains=["novel_algorithms"],
+        difficulty=2,
+    )[0]
+    correct = (
+        'FINAL_ANSWER: {"sequence":[58,51,30,22,85,87,94],'
+        '"checksum":1943}'
+    )
+    ledger = ResourceLedger(
+        ModelComputeProfile(
+            model_type="fixture",
+            hidden_size=8,
+            intermediate_size=16,
+            num_hidden_layers=2,
+            num_attention_heads=2,
+            num_key_value_heads=1,
+            vocab_size=32,
+            head_dim=4,
+        )
+    )
+    ledger.charge(
+        "unified_recurrent_decode",
+        transformer_layer_apps=10,
+        attention_query_key_pairs=20,
+        output_head_tokens=2,
+    )
+    integrated = build_integrated_candidate(
+        source="unified_recurrent_controller",
+        task_id=task.task_id,
+        text=correct,
+        resource_accounting=ledger.to_receipt(),
+        source_receipt_sha256="a" * 64,
+    )
+    assert _normalize_integrated_candidates(
+        [integrated],
+        task_id=task.task_id,
+    ) == [integrated]
+
+    selected, receipt = _select_complete_system_promotion_candidate(
+        verifier=EpisodeTaskVerifier(
+            task.public.prompt,
+            response_contract=task.public.response_contract,
+        ),
+        rlc_text='FINAL_ANSWER: {"sequence":[],"checksum":0}',
+        amplifier_text='FINAL_ANSWER: {"sequence":[],"checksum":0}',
+        amplifier_consensus_programs=0,
+        amplifier_consensus_strategies=0,
+        integrated_candidates=[integrated],
+    )
+    assert selected == correct
+    assert receipt["selected_source"] == "unified_recurrent_controller"
+    assert receipt["authority"] == "public_objective_deterministic_execution"
+    assert [row["source"] for row in receipt["candidates"]] == [
+        "rlc_final",
+        "unified_recurrent_controller",
+        "reasoning_amplifier",
+    ]
+
+    tampered = json.loads(json.dumps(integrated))
+    tampered["text"] = 'FINAL_ANSWER: {"sequence":[],"checksum":0}'
+    with pytest.raises(ValueError, match="receipt differs"):
+        _normalize_integrated_candidates([tampered], task_id=task.task_id)
+    with pytest.raises(ValueError, match="task identity differs"):
+        _normalize_integrated_candidates([integrated], task_id="different-task")
+    with pytest.raises(ValueError, match="source is duplicated"):
+        _normalize_integrated_candidates([integrated, integrated], task_id=task.task_id)
+    for reserved in ("rlc_final", "reasoning_amplifier"):
+        with pytest.raises(ValueError, match="source is invalid"):
+            build_integrated_candidate(
+                source=reserved,
+                task_id=task.task_id,
+                text=correct,
+                resource_accounting=ledger.to_receipt(),
+                source_receipt_sha256="a" * 64,
+            )
+
+
 def test_complete_system_replaces_only_the_bound_incumbent_resource_placeholder():
     from core.brain.llm.latent_cortex.resource_accounting import (
         ModelComputeProfile,
@@ -2757,15 +2851,18 @@ def test_complete_system_replaces_only_the_bound_incumbent_resource_placeholder(
     rlc.mark_unknown("bound_incumbent_generation")
     amplifier = ResourceLedger(profile)
     amplifier.charge("decode", transformer_layer_apps=13)
+    integrated = ResourceLedger(profile)
+    integrated.charge("unified_recurrent_decode", transformer_layer_apps=17)
 
     combined = _aggregate_complete_system_resources(
         incumbent_resource=incumbent.to_receipt(),
         rlc_resources=[rlc.to_receipt()],
         amplifier_resources=[amplifier.to_receipt()],
+        integrated_resources=[integrated.to_receipt()],
     ).to_receipt()
     assert combined["accounting_complete"] is True
     assert combined["unknown_operations"] == []
-    assert combined["totals"]["transformer_layer_apps"] == 31
+    assert combined["totals"]["transformer_layer_apps"] == 48
 
     rlc_without_placeholder = ResourceLedger(profile)
     rlc_without_placeholder.charge("recurrence", transformer_layer_apps=11)

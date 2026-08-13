@@ -48026,3 +48026,38 @@ depth one `1/1` on the same fresh novel-algorithm task. That is a promising
 partial causal contrast, not a verdict. Trained depth four, ordinary decode, the
 other six domains, powered replication, complete-system comparison and the
 `WOW Signal` remain open.
+
+## Checkpoint 2026-08-13-370: Learned Tissue Can Enter the Complete Engine
+
+The broad controller and the complete RLC architecture previously had no
+scientifically admissible composition boundary. Broad recurrent candidates
+could be measured in isolation, while the complete-system arm could use only
+its native RLC answer and reasoning-amplifier output. This made the programme
+repeat the exact mistake identified earlier: testing one mechanism beside the
+engine rather than allowing the mechanism to participate inside it.
+
+The complete-system path now accepts replayable integrated candidates bound to
+their exact task, text digest, producer receipt and validated compute ledger.
+The receipt states that every candidate used the same public information and no
+answer key. Reserved or duplicate source identities, task mismatch, text or
+receipt tampering, malformed resource accounting and undeclared fields fail
+before composition. Integrated compute is merged into the final system ledger
+instead of disappearing behind the winning answer.
+
+The public deterministic objective verifier may promote a verified recurrent
+candidate over both native RLC and amplifier candidates. If no candidate earns
+exact public proof, the existing reasoning-amplifier result remains the fallback;
+the complete-system ordinary-incumbent floor and no-regression assessment are
+unchanged. The recurrent text is also available as an amplifier seed, allowing
+the downstream architecture to refine rather than merely replace it.
+
+The full reconciliation surface passes `67/67`, the focused composition tests
+pass `10/10`, canonical smoke passes `104/104`, and Ruff, byte compilation and
+diff hygiene pass. Evidence is
+`artifacts/closeout/latent_cortex/cp370_integrated_candidate_composition.json`.
+
+This establishes the composition contract only. A source-frozen runner must
+still produce the recurrent candidate receipt and execute the complete engine
+on the same answer-blind task. The active CP368 broad campaign remains untouched;
+its incomplete observations do not establish broad gain, powered replication,
+frontier performance, static fusion or a `WOW Signal`.

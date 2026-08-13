@@ -12,6 +12,7 @@ import hashlib
 import json
 import math
 import time
+from collections.abc import Mapping, Sequence
 from typing import Any
 
 
@@ -64,6 +65,101 @@ def _candidate_quality_assessment(row: dict[str, Any]) -> dict[str, Any]:
         "issues": issues,
         "score": float(row.get("score") or 0.0),
     }
+
+
+def _canonical_sha256(value: Any) -> str:
+    return hashlib.sha256(
+        json.dumps(
+            value,
+            sort_keys=True,
+            separators=(",", ":"),
+            ensure_ascii=True,
+            allow_nan=False,
+        ).encode("ascii")
+    ).hexdigest()
+
+
+def build_integrated_candidate(
+    *,
+    source: str,
+    task_id: str,
+    text: str,
+    resource_accounting: Mapping[str, Any],
+    source_receipt_sha256: str,
+) -> dict[str, Any]:
+    """Bind one same-prompt candidate before complete-system composition."""
+
+    from core.brain.llm.latent_cortex.resource_accounting import (
+        validate_resource_receipt,
+    )
+
+    normalized_source = str(source or "").strip()
+    normalized_task_id = str(task_id or "").strip()
+    normalized_text = str(text or "").strip()
+    if (
+        not normalized_source
+        or len(normalized_source) > 80
+        or not normalized_source.isascii()
+        or not normalized_source[0].isalpha()
+        or not normalized_source.replace("_", "").isalnum()
+        or normalized_source in {"rlc_final", "reasoning_amplifier"}
+    ):
+        raise ValueError("integrated candidate source is invalid")
+    if not normalized_task_id or len(normalized_task_id) > 256:
+        raise ValueError("integrated candidate task identity is invalid")
+    if not normalized_text:
+        raise ValueError("integrated candidate text is empty")
+    if (
+        not isinstance(source_receipt_sha256, str)
+        or len(source_receipt_sha256) != 64
+        or any(character not in "0123456789abcdef" for character in source_receipt_sha256)
+    ):
+        raise ValueError("integrated candidate source receipt is invalid")
+    resource = validate_resource_receipt(resource_accounting)
+    body = {
+        "schema": "aura.rlc.integrated_candidate.v1",
+        "source": normalized_source,
+        "task_id": normalized_task_id,
+        "text": normalized_text,
+        "text_sha256": hashlib.sha256(normalized_text.encode("utf-8")).hexdigest(),
+        "resource_accounting": resource,
+        "source_receipt_sha256": source_receipt_sha256,
+        "same_public_information": True,
+        "answer_key_used": False,
+    }
+    return {**body, "receipt_sha256": _canonical_sha256(body)}
+
+
+def _normalize_integrated_candidates(
+    candidates: Sequence[Mapping[str, Any]] | None,
+    *,
+    task_id: str,
+) -> list[dict[str, Any]]:
+    if candidates is None:
+        return []
+    if isinstance(candidates, (str, bytes)) or not isinstance(candidates, Sequence):
+        raise TypeError("integrated candidates must be a sequence")
+    normalized: list[dict[str, Any]] = []
+    seen_sources: set[str] = set()
+    for value in candidates:
+        if not isinstance(value, Mapping):
+            raise TypeError("integrated candidate must be a mapping")
+        expected = build_integrated_candidate(
+            source=str(value.get("source") or ""),
+            task_id=str(value.get("task_id") or ""),
+            text=str(value.get("text") or ""),
+            resource_accounting=value.get("resource_accounting") or {},
+            source_receipt_sha256=str(value.get("source_receipt_sha256") or ""),
+        )
+        if dict(value) != expected:
+            raise ValueError("integrated candidate receipt differs")
+        if expected["task_id"] != task_id:
+            raise ValueError("integrated candidate task identity differs")
+        if expected["source"] in seen_sources:
+            raise ValueError("integrated candidate source is duplicated")
+        seen_sources.add(expected["source"])
+        normalized.append(expected)
+    return normalized
 
 
 class _ClosedBookVerifierRegistry:
@@ -464,6 +560,7 @@ def _select_complete_system_promotion_candidate(
     amplifier_text: str,
     amplifier_consensus_programs: int,
     amplifier_consensus_strategies: int,
+    integrated_candidates: Sequence[Mapping[str, Any]] = (),
 ) -> tuple[str, dict[str, Any]]:
     """Select the strongest public candidate without discarding an RLC proof.
 
@@ -476,10 +573,17 @@ def _select_complete_system_promotion_candidate(
     """
 
     candidates: list[dict[str, Any]] = []
-    for source, text in (
+    candidate_inputs = [
         ("rlc_final", str(rlc_text or "").strip()),
+        *[
+            (str(row.get("source") or ""), str(row.get("text") or "").strip())
+            for row in integrated_candidates
+        ],
         ("reasoning_amplifier", str(amplifier_text or "").strip()),
-    ):
+    ]
+    if len({source for source, _text in candidate_inputs}) != len(candidate_inputs):
+        raise ValueError("complete-system candidate sources are not unique")
+    for source, text in candidate_inputs:
         evaluation = verifier.evaluate(text, _record=False) if text else {}
         quality = _candidate_quality_assessment(evaluation) if evaluation else {
             "schema": "aura.rlc.candidate_quality_assessment.v1",
@@ -513,7 +617,7 @@ def _select_complete_system_promotion_candidate(
         selected = exact[0]
         authority = "public_objective_deterministic_execution"
     else:
-        selected = candidates[1]
+        selected = candidates[-1]
         if amplifier_consensus_programs >= 2 and amplifier_consensus_strategies >= 2:
             authority = "independent_executable_consensus"
         else:
@@ -536,6 +640,7 @@ def _aggregate_complete_system_resources(
     incumbent_resource: dict[str, Any],
     rlc_resources: list[dict[str, Any]],
     amplifier_resources: list[dict[str, Any]],
+    integrated_resources: list[dict[str, Any]] | None = None,
 ) -> Any:
     """Replace the RLC incumbent placeholder with its exact measured work."""
 
@@ -567,6 +672,8 @@ def _aggregate_complete_system_resources(
         merge(receipt, prefix=f"rlc_{index}", resolve_incumbent=True)
     for index, receipt in enumerate(amplifier_resources):
         merge(receipt, prefix=f"amplifier_{index}", resolve_incumbent=False)
+    for index, receipt in enumerate(integrated_resources or []):
+        merge(receipt, prefix=f"integrated_{index}", resolve_incumbent=False)
     return ledger
 
 
@@ -697,6 +804,7 @@ def _run_complete_system_closed_book(
     runtime_identity: dict[str, Any],
     campaign_seed: int,
     executable_reasoning_enabled: bool = True,
+    integrated_candidates: Sequence[Mapping[str, Any]] = (),
 ) -> tuple[str, dict[str, Any]]:
     """Measure the same-information RLC, acquisition, and amplifier composition."""
 
@@ -732,6 +840,10 @@ def _run_complete_system_closed_book(
     incumbent_text = str(incumbent_value.get("text") or "")
     if not incumbent_text:
         raise sweep.EpisodeFault("complete-system incumbent text is absent")
+    integrated = _normalize_integrated_candidates(
+        integrated_candidates,
+        task_id=str(task.task_id),
+    )
 
     first_verifier = EpisodeTaskVerifier(
         objective,
@@ -902,7 +1014,11 @@ def _run_complete_system_closed_book(
         amplifier_verifier,
         domain=domain,
     )
-    seeds = list(dict.fromkeys([incumbent_text, final_rlc_text]))
+    seeds = list(
+        dict.fromkeys(
+            [incumbent_text, final_rlc_text, *[row["text"] for row in integrated]]
+        )
+    )
     amplifier = ReasoningAmplifierV2(generate, verifier=verifier_registry)
     amplified = asyncio.run(
         amplifier.amplify(
@@ -966,6 +1082,7 @@ def _run_complete_system_closed_book(
         amplifier_text=amplifier_candidate,
         amplifier_consensus_programs=len(consensus_programs),
         amplifier_consensus_strategies=len(consensus_strategies),
+        integrated_candidates=integrated,
     )
     selected_candidate = next(
         row
@@ -1002,6 +1119,7 @@ def _run_complete_system_closed_book(
         incumbent_resource=incumbent_resource_accounting,
         rlc_resources=rlc_receipts,
         amplifier_resources=amplifier_generation_resources,
+        integrated_resources=[row["resource_accounting"] for row in integrated],
     )
     verifier_input_bytes = (
         verifier_registry.input_bytes
@@ -1052,6 +1170,7 @@ def _run_complete_system_closed_book(
     final_receipt["complete_system_closed_book"] = {
         "schema": "aura.rlc.complete_system_closed_book.v1",
         "contract": "same_information_no_memory_rag_web_or_answer_key",
+        "task_id": str(task.task_id),
         "objective": objective,
         "objective_sha256": hashlib.sha256(objective.encode()).hexdigest(),
         "response_contract": task.public.response_contract,
@@ -1076,6 +1195,7 @@ def _run_complete_system_closed_book(
             "evaluation": amplifier_candidate_evaluation,
             "quality_assessment": amplifier_candidate_quality,
         },
+        "integrated_candidates": integrated,
         "promotion_candidate_selection": candidate_selection,
         "amplifier_verifier_calls": verifier_registry.calls,
         "in_process_generation_calls": generation_calls,
@@ -1113,6 +1233,8 @@ def _complete_system_evidence(
         system.get("contract") == "same_information_no_memory_rag_web_or_answer_key",
         "closed_book_contract_not_bound",
     )
+    task_id = str(system.get("task_id") or "")
+    require(bool(task_id), "complete_system_task_identity_absent")
     objective = str(system.get("objective") or "")
     response_contract = str(system.get("response_contract") or "")
     require(bool(objective), "complete_system_objective_absent")
@@ -1356,6 +1478,23 @@ def _complete_system_evidence(
         system.get("amplifier_verified") is candidate_quality.get("proxy_admitted"),
         "amplifier_proxy_verdict_mismatch",
     )
+    integrated_rows = system.get("integrated_candidates")
+    normalized_integrated: list[dict[str, Any]] = []
+    if not isinstance(integrated_rows, list):
+        require(False, "integrated_candidate_inventory_invalid")
+    else:
+        try:
+            normalized_integrated = _normalize_integrated_candidates(
+                integrated_rows,
+                task_id=task_id,
+            )
+        except (TypeError, ValueError):
+            require(False, "integrated_candidate_inventory_invalid")
+        else:
+            require(
+                integrated_rows == normalized_integrated,
+                "integrated_candidate_inventory_mismatch",
+            )
     selection = system.get("promotion_candidate_selection") or {}
     selection_rows = selection.get("candidates") or []
     reconstructed_selection_rows: list[dict[str, Any]] = []
@@ -1399,7 +1538,11 @@ def _complete_system_evidence(
     )
     require(
         [row.get("source") for row in reconstructed_selection_rows]
-        == ["rlc_final", "reasoning_amplifier"],
+        == [
+            "rlc_final",
+            *[row["source"] for row in normalized_integrated],
+            "reasoning_amplifier",
+        ],
         "system_candidate_selection_sources_invalid",
     )
     require(
@@ -1491,6 +1634,10 @@ def _complete_system_evidence(
         "amplifier_ground_truth_verified": candidate_quality.get("ground_truth_verified") is True,
         "amplifier_verifier_calls": int(system.get("amplifier_verifier_calls") or 0),
         "in_process_generation_calls": int(system.get("in_process_generation_calls") or 0),
+        "integrated_candidate_count": len(normalized_integrated),
+        "integrated_candidate_sources": [
+            row["source"] for row in normalized_integrated
+        ],
         "promotion_decision": str(promotion.get("decision") or ""),
         "promotion_authority": str(promotion.get("authority") or ""),
         "no_regression_guaranteed": promotion.get("no_regression_guaranteed") is True,
@@ -1502,6 +1649,7 @@ def _complete_system_evidence(
 
 
 __all__ = [
+    "build_integrated_candidate",
     "_candidate_quality_assessment",
     "_promotion_assessment",
     "_complete_system_evidence",

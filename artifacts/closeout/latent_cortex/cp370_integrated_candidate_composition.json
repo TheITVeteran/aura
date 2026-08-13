@@ -1,0 +1,45 @@
+{
+  "schema": "aura.closeout.rlc.cp370.v1",
+  "checkpoint": "CP370",
+  "change": {
+    "composition_boundary": "tools/rlc_complete_system_closed_book.py",
+    "integrated_candidate_schema": "aura.rlc.integrated_candidate.v1",
+    "same_public_information_required": true,
+    "answer_key_forbidden": true,
+    "task_identity_bound": true,
+    "source_receipt_bound": true,
+    "candidate_text_bound": true,
+    "resource_accounting_required": true,
+    "public_objective_verifier_can_promote": true,
+    "ordinary_incumbent_floor_preserved": true,
+    "integrated_compute_merged_into_system_receipt": true
+  },
+  "verification": {
+    "complete_system_focused": {
+      "passed": 10,
+      "failed": 0,
+      "duration_s": 2.57
+    },
+    "reconciliation_surface": {
+      "passed": 67,
+      "failed": 0,
+      "duration_s": 20.12
+    },
+    "canonical_smoke": {
+      "passed": 104,
+      "failed": 0,
+      "duration_s": 16.81
+    },
+    "ruff": "pass",
+    "py_compile": "pass",
+    "diff_check": "pass"
+  },
+  "claim_boundary": {
+    "composition_contract_proven": true,
+    "source_frozen_combined_runner_complete": false,
+    "active_cp368_campaign_modified": false,
+    "broad_reasoning_gain_proven": false,
+    "powered_replication_complete": false,
+    "wow_signal": false
+  }
+}
