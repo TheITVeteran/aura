@@ -51,6 +51,7 @@ from core.brain.llm.latent_cortex.output_quality import (
 )
 from core.conversation.arithmetic_check import (
     ARITHMETIC_NUMBER_RE,
+    arithmetic_answer_matches,
     requested_arithmetic_result,
 )
 from core.conversation.ontology_grounding import detect_unsupported_embodiment_claim
@@ -3194,11 +3195,7 @@ def _arithmetic_answer_missing(user_message: Any, reply_text: Any) -> bool:
     if not reply.strip():
         return True
     for token in ARITHMETIC_NUMBER_RE.findall(reply.replace(",", "")):
-        try:
-            value = float(token)
-        except ValueError:
-            continue
-        if abs(value - expected) <= max(1e-6, abs(expected) * 1e-9):
+        if arithmetic_answer_matches(expected, token):
             return False
     return True
 

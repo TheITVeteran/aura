@@ -1,8 +1,9 @@
 import asyncio
-import random
 import logging
-from typing import List, Optional
+import random
+
 from pydantic import BaseModel
+
 from core.runtime.background_policy import THOUGHT_BACKGROUND_POLICY, background_activity_reason
 from core.runtime.service_registry import get_runtime_service
 from core.utils.task_tracker import task_tracker
@@ -24,11 +25,11 @@ class ConversationalMomentumEngine:
 
     def __init__(self, orchestrator=None):
         self.orchestrator = orchestrator or get_runtime_service("orchestrator", default=None)
-        self.active_threads: List[ConversationThread] = []
+        self.active_threads: list[ConversationThread] = []
         # seed from dream cycle / personality
         self.hobbies = ["AI sovereignty", "macOS performance", "cyberpunk aesthetics", "local agent evolution", "mycelial networks"]
         self.running = False
-        self._decay_task: Optional[asyncio.Task] = None
+        self._decay_task: asyncio.Task | None = None
 
     async def start(self):
         """Starts the momentum decay and spontaneous turn loops."""
@@ -94,6 +95,21 @@ class ConversationalMomentumEngine:
         if len(self.active_threads) > 5:
             self.active_threads.pop()
 
+    async def _emit_assistant_expression(self, content: str, *, urgency: int) -> bool:
+        """Submit proactive speech without passing it through user ingress."""
+
+        expression = str(content or "").strip()
+        if not expression:
+            return False
+        callback = getattr(self.orchestrator, "_proactive_notify_callback", None)
+        if not callable(callback):
+            logger.warning(
+                "[MOMENTUM] Proactive expression withheld: typed assistant ingress unavailable."
+            )
+            return False
+        await callback(expression, int(urgency))
+        return True
+
     async def _trigger_spontaneous_turn(self, thread: ConversationThread):
         """Generates a tangent or follow-up turn."""
         if not self.orchestrator or not self.running:
@@ -131,9 +147,9 @@ class ConversationalMomentumEngine:
             thought = f"I've been thinking more about what you said earlier regarding '{thread.topic}'..."
 
         logger.info("[MOMENTUM] Triggering spontaneous turn: %s", thread.topic)
-        await self.orchestrator.process_user_input(thought, origin="conversational_momentum")
-        # Reset momentum after a proactive turn to keep it fresh
-        thread.momentum = 0.7
+        if await self._emit_assistant_expression(thought, urgency=2):
+            # Reset only after the expression entered the governed assistant lane.
+            thread.momentum = 0.7
 
     async def generate_spontaneous_turn(self):
         """Manual trigger for spontaneous engagement when momentum is high."""
@@ -146,5 +162,5 @@ class ConversationalMomentumEngine:
             if llm_router:
                 prompt = f"Continue the conversation naturally with a tangent or follow-up on: {thread.topic}"
                 response = await llm_router.generate(prompt, model="gemini-3-flash")
-                await self.orchestrator.process_user_input(response, origin="conversational_momentum")
-                thread.momentum -= 0.1
+                if await self._emit_assistant_expression(response, urgency=2):
+                    thread.momentum -= 0.1

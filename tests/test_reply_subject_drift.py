@@ -96,9 +96,7 @@ def test_polar_questions_are_recognised():
 
 
 def test_a_polar_answer_is_exempt_only_for_a_polar_question():
-    assert answers_polar_question(
-        "Do you ever get tired of being asked how you are?", POLAR_REPLY
-    )
+    assert answers_polar_question("Do you ever get tired of being asked how you are?", POLAR_REPLY)
     assert not answers_polar_question("What did you do today?", POLAR_REPLY)
     assert not answers_polar_question(
         "Do you ever get tired of this?", "The weather in Lisbon is mild."
@@ -108,6 +106,16 @@ def test_a_polar_answer_is_exempt_only_for_a_polar_question():
 def test_empty_and_tiny_replies_are_never_drifted():
     for text in ("", "   ", "Sure.", "I think so."):
         assert assess_subject_drift(text).drifted is False
+
+
+def test_repeated_runtime_terms_count_as_repeated_evidence():
+    reply = "System process state runtime loop " * 8
+
+    verdict = assess_subject_drift(reply)
+
+    assert verdict.drifted is True
+    assert len(set(verdict.runtime_subjects)) < MIN_RUNTIME_TERMS
+    assert len(verdict.runtime_subjects) >= MIN_RUNTIME_TERMS
 
 
 def test_runtime_self_prose_requires_a_self_process_subject():
@@ -141,13 +149,54 @@ def test_reasoning_language_does_not_turn_an_external_task_into_introspection():
     assert "solve" in verdict.request_task_terms
 
 
+def test_task_vocabulary_inside_a_self_process_question_does_not_block_it():
+    verdict = assess_subject_alignment(
+        "How does your reasoning change while solving a checksum?",
+        RUNTIME_BURST,
+    )
+
+    assert verdict.aligned is True
+    assert verdict.reason == "grounded_self_process_request"
+    assert "reasoning" in verdict.request_self_terms
+    assert "solving" in verdict.request_task_terms
+
+
+def test_instrumental_self_process_language_does_not_bypass_an_external_task():
+    verdict = assess_subject_alignment(
+        "Do you use your reasoning process to solve this checksum?",
+        RUNTIME_BURST,
+    )
+
+    assert verdict.aligned is False
+    assert verdict.reason == "runtime_subject_not_requested"
+
+
+def test_a_polar_question_can_ask_how_a_task_affects_self_process():
+    verdict = assess_subject_alignment(
+        "Does solving a checksum change your reasoning process?",
+        RUNTIME_BURST,
+    )
+
+    assert verdict.aligned is True
+    assert verdict.reason == "grounded_self_process_request"
+
+
+def test_inflected_self_process_question_is_resolved_semantically():
+    verdict = assess_subject_alignment(
+        "Tell me how you search while deciding what to inspect.",
+        RUNTIME_BURST,
+    )
+
+    assert verdict.aligned is True
+    assert "deciding" in verdict.request_self_terms
+    assert {"search", "inspect"} <= set(verdict.request_task_terms)
+
+
 def test_recent_self_process_context_can_ground_a_natural_followup():
     verdict = assess_subject_alignment(
         "And what changes after that?",
         RUNTIME_BURST,
-        recent_thread=(
-            "How does uncertainty change your attention and decision process?",
-        ),
+        recent_thread=("How does uncertainty change your attention and decision process?",),
     )
     assert verdict.aligned is True
     assert verdict.reason == "grounded_self_process_followup"

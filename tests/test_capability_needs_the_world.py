@@ -21,6 +21,10 @@ The distinction these tests protect is the one a person makes without
 effort: the faculty stays intact while the world is broken.
 """
 
+import threading
+import time
+import types
+
 import pytest
 
 import core.conversation.capability_preconditions as preconditions
@@ -38,6 +42,17 @@ class _Engine:
         return [{"name": "web_search", "available": True}]
 
 
+def _await_probe(name: str, *, timeout: float = 1.0):
+    deadline = time.monotonic() + timeout
+    pending_fact = f"{name.replace('_', ' ')} state is being measured"
+    while time.monotonic() < deadline:
+        state = preconditions.precondition_state(name)
+        if state.fact != pending_fact:
+            return state
+        time.sleep(0.001)
+    raise AssertionError(f"precondition probe {name!r} did not finish")
+
+
 @pytest.fixture
 def offline(monkeypatch):
     preconditions.reset_precondition_cache()
@@ -48,6 +63,7 @@ def offline(monkeypatch):
             "network", False, "there is no network connection right now"
         ),
     )
+    _await_probe("network")
     yield
     preconditions.reset_precondition_cache()
 
@@ -60,6 +76,7 @@ def online(monkeypatch):
         "network",
         lambda: preconditions.PreconditionState("network", True, "there is a network"),
     )
+    _await_probe("network")
     yield
     preconditions.reset_precondition_cache()
 
@@ -91,6 +108,7 @@ class TestTheTwoAxesCompose:
             "network",
             lambda: preconditions.PreconditionState("network", True, "there is a network"),
         )
+        _await_probe("network")
         assert condition_for("web_search", capability_engine=engine).standing is (
             CapabilityStanding.READY
         )
@@ -100,6 +118,7 @@ class TestTheTwoAxesCompose:
             "network",
             lambda: preconditions.PreconditionState("network", False, "no network"),
         )
+        _await_probe("network")
         assert condition_for("web_search", capability_engine=engine).standing is (
             CapabilityStanding.BLOCKED_BY_PRECONDITION
         )
@@ -132,15 +151,147 @@ class TestAnUnknownWorldIsNotABrokenOne:
         monkeypatch.setitem(
             preconditions._PROBES,
             "network",
-            lambda: preconditions.PreconditionState(
-                "network", False, "unknown", unknown=True
-            ),
+            lambda: preconditions.PreconditionState("network", False, "unknown", unknown=True),
         )
+        state = _await_probe("network")
+        assert state.unknown
         assert preconditions.failing_preconditions("web_search") == ()
         assert condition_for("web_search", capability_engine=_Engine()).standing is (
             CapabilityStanding.READY
         )
         preconditions.reset_precondition_cache()
+
+
+class TestProbesNeverBlockTheConversation:
+    def test_a_slow_accessibility_probe_runs_outside_the_chat_caller(self, monkeypatch):
+        entered = threading.Event()
+        release = threading.Event()
+
+        def slow_probe():
+            entered.set()
+            assert release.wait(timeout=1.0)
+            return preconditions.PreconditionState(
+                "accessibility_permission", True, "accessibility is granted"
+            )
+
+        preconditions.reset_precondition_cache()
+        monkeypatch.setitem(preconditions._PROBES, "accessibility_permission", slow_probe)
+
+        started = time.monotonic()
+        state = preconditions.precondition_state("accessibility_permission")
+        elapsed = time.monotonic() - started
+
+        assert elapsed < 0.05
+        assert state.unknown
+        assert entered.wait(timeout=0.5)
+        assert preconditions.request_precondition_refresh("accessibility_permission") is False
+
+        release.set()
+        measured = _await_probe("accessibility_permission")
+        assert measured.satisfied
+        assert not measured.unknown
+        preconditions.reset_precondition_cache()
+
+    def test_reset_rejects_a_late_result_from_an_obsolete_generation(self, monkeypatch):
+        entered = threading.Event()
+        release = threading.Event()
+
+        def obsolete_probe():
+            entered.set()
+            assert release.wait(timeout=1.0)
+            return preconditions.PreconditionState("network", False, "obsolete offline")
+
+        preconditions.reset_precondition_cache()
+        monkeypatch.setitem(preconditions._PROBES, "network", obsolete_probe)
+        assert preconditions.precondition_state("network").unknown
+        assert entered.wait(timeout=0.5)
+
+        preconditions.reset_precondition_cache()
+        monkeypatch.setitem(
+            preconditions._PROBES,
+            "network",
+            lambda: preconditions.PreconditionState("network", True, "fresh online"),
+        )
+        release.set()
+
+        measured = _await_probe("network")
+        assert measured.satisfied
+        assert measured.fact == "fresh online"
+        preconditions.reset_precondition_cache()
+
+
+class TestAccessibilityUsesThePassiveNativeStatusAPI:
+    def test_accessibility_is_read_without_osascript(self, monkeypatch):
+        monkeypatch.setattr(preconditions.sys, "platform", "darwin")
+
+        application_services = types.SimpleNamespace(**{"AXIsProcessTrusted": lambda: True})
+        monkeypatch.setitem(preconditions.sys.modules, "ApplicationServices", application_services)
+
+        state = preconditions._probe_accessibility_permission()
+
+        assert state.satisfied
+        assert not state.unknown
+
+
+class TestNetworkUsesIndependentWebSignals:
+    def test_https_capable_network_is_online_without_public_dns_port_53(self, monkeypatch):
+        seen_tcp_ports: list[int] = []
+        monkeypatch.setattr(
+            preconditions,
+            "_https_endpoint_reachable",
+            lambda url: url.endswith("generate_204"),
+        )
+
+        def tcp_probe(host: str, port: int) -> bool:
+            seen_tcp_ports.append(port)
+            return False
+
+        monkeypatch.setattr(preconditions, "_tcp_https_endpoint_reachable", tcp_probe)
+
+        state = preconditions._probe_network()
+
+        assert state.satisfied
+        assert not state.unknown
+        assert 53 not in seen_tcp_ports
+        assert all(port == 443 for _, port in preconditions._TCP_HTTPS_TARGETS)
+
+    def test_tcp_443_is_an_independent_route_signal_when_https_providers_fail(self, monkeypatch):
+        monkeypatch.setattr(preconditions, "_https_endpoint_reachable", lambda _url: False)
+        monkeypatch.setattr(
+            preconditions,
+            "_tcp_https_endpoint_reachable",
+            lambda host, _port: host == "1.1.1.1",
+        )
+
+        state = preconditions._probe_network()
+
+        assert state.satisfied
+        assert not state.unknown
+
+    def test_offline_requires_every_expected_signal_to_fail(self, monkeypatch):
+        monkeypatch.setattr(preconditions, "_https_endpoint_reachable", lambda _url: False)
+        monkeypatch.setattr(
+            preconditions, "_tcp_https_endpoint_reachable", lambda _host, _port: False
+        )
+
+        state = preconditions._probe_network()
+
+        assert not state.satisfied
+        assert not state.unknown
+
+    def test_unexpected_probe_fault_is_unknown_not_offline(self, monkeypatch):
+        def broken_https(_url: str) -> bool:
+            raise RuntimeError("probe implementation failed")
+
+        monkeypatch.setattr(preconditions, "_https_endpoint_reachable", broken_https)
+        monkeypatch.setattr(
+            preconditions, "_tcp_https_endpoint_reachable", lambda _host, _port: False
+        )
+
+        state = preconditions._probe_network()
+
+        assert state.satisfied
+        assert state.unknown
 
 
 class TestPreconditionsAreDeclared:

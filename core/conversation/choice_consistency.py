@@ -67,7 +67,7 @@ _REJECTING_RE = re.compile(
 
 _OPTION_SPLIT_RE = re.compile(r",\s*or\s+|\s+or\s+", re.IGNORECASE)
 _STOPWORDS = frozenset({
-    "a", "an", "and", "the", "to", "of", "for", "my", "your", "the", "would",
+    "a", "an", "and", "the", "to", "of", "for", "my", "your", "would",
     "you", "i", "it", "that", "this", "be", "is", "are", "with", "on", "in",
     "next", "last", "one", "lose", "losing", "rather", "or", "ability", "no",
 })
@@ -106,6 +106,19 @@ def _content_tokens(text: str) -> frozenset[str]:
     )
 
 
+def _lexical_tokens(text: str) -> tuple[str, ...]:
+    return tuple(re.findall(r"[a-z0-9]+", str(text or "").casefold()))
+
+
+def _option_tokens(option: str) -> frozenset[str]:
+    """Keep short alternatives meaningful after structural words are removed."""
+
+    content = _content_tokens(option)
+    if content:
+        return content
+    return frozenset(_lexical_tokens(option))
+
+
 def extract_offered_options(question: Any) -> tuple[str, ...]:
     """The alternatives the question put on the table."""
 
@@ -131,22 +144,40 @@ def extract_offered_options(question: Any) -> tuple[str, ...]:
             body = stripped_body
         body = body.strip(" ?.!,:")
         parts = [p.strip(" ?.!,:") for p in _OPTION_SPLIT_RE.split(body)]
-        parts = [p for p in parts if len(_content_tokens(p)) >= 1]
+        parts = [p for p in parts if _option_tokens(p)]
         if len(parts) >= 2:
             return tuple(parts[:4])
     return ()
 
 
 def _option_for(sentence: str, options: tuple[str, ...]) -> str:
-    """Which option this sentence is about, by content-word overlap."""
+    """Resolve one uniquely supported option, otherwise remain explicit."""
 
-    sentence_tokens = _content_tokens(sentence)
-    best, best_score = "", 0
-    for option in options:
-        score = len(sentence_tokens & _content_tokens(option))
-        if score > best_score:
-            best, best_score = option, score
-    return best if best_score >= 2 else ""
+    sentence_tokens = frozenset(_lexical_tokens(sentence))
+    option_tokens = tuple(_option_tokens(option) for option in options)
+    shared_tokens = set.intersection(*(set(tokens) for tokens in option_tokens))
+    scored: list[tuple[tuple[int, float, int], str]] = []
+    normalized_sentence = " ".join(_lexical_tokens(sentence))
+
+    for option, tokens in zip(options, option_tokens, strict=True):
+        overlap = sentence_tokens & tokens
+        discriminating = overlap - shared_tokens
+        normalized_option = " ".join(_lexical_tokens(option))
+        exact_phrase = bool(
+            normalized_option
+            and re.search(rf"(?<!\w){re.escape(normalized_option)}(?!\w)", normalized_sentence)
+        )
+        if not discriminating and not exact_phrase:
+            continue
+        coverage = len(overlap) / max(1, len(tokens))
+        scored.append(((int(exact_phrase), coverage, len(overlap)), option))
+
+    if not scored:
+        return ""
+    scored.sort(key=lambda item: item[0], reverse=True)
+    if len(scored) > 1 and scored[0][0] == scored[1][0]:
+        return ""
+    return scored[0][1]
 
 
 def find_choice_contradiction(

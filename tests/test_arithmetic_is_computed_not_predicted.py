@@ -14,6 +14,7 @@ wanted a lead-in verb AND symbol operators, so it computed nothing for "times",
 nothing for "multiply X by Y", and nothing for a bare "2+2" — every phrasing a
 person actually uses.
 """
+
 from __future__ import annotations
 
 import pytest
@@ -77,3 +78,20 @@ def test_the_live_wrong_answer_is_detected():
     assert _arithmetic_answer_missing(question, "50864799") is True
     assert _arithmetic_answer_missing(question, "50847899") is False
     assert _arithmetic_answer_missing(question, "It's 50,847,899.") is False
+
+
+def test_integer_results_above_float_precision_remain_exact():
+    question = "what is 9007199254740993 + 2?"
+
+    assert requested_arithmetic_result(question) == 9007199254740995
+    assert _arithmetic_answer_missing(question, "9007199254740995") is False
+    assert _arithmetic_answer_missing(question, "9007199254740996") is True
+
+
+def test_power_results_above_float_precision_remain_exact():
+    question = "what is 3 to the 40th power?"
+    expected = 3**40
+
+    assert requested_arithmetic_result(question) == expected
+    assert _arithmetic_answer_missing(question, str(expected)) is False
+    assert _arithmetic_answer_missing(question, str(expected + 1)) is True

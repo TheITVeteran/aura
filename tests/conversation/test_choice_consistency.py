@@ -47,7 +47,7 @@ def test_the_question_is_recognised_as_a_forced_choice() -> None:
 
 
 def test_the_options_are_extracted_without_the_lead_in() -> None:
-    """"Pick one:" and "would you rather" both precede the first option."""
+    """ "Pick one:" and "would you rather" both precede the first option."""
     options = extract_offered_options(QUESTION)
 
     assert options == (
@@ -95,6 +95,31 @@ def test_a_reply_that_never_commits_is_not_a_contradiction() -> None:
     hedged = "Both options are difficult and it depends on what you value more."
 
     assert find_choice_contradiction(QUESTION, hedged) is None
+
+
+@pytest.mark.parametrize(
+    ("question", "reply"),
+    [
+        ("Pick one: tea or coffee?", "I choose tea. My answer is coffee."),
+        ("Choose one: Notes or Reminders?", "I prefer Notes. I pick Reminders."),
+        ("Pick one: yes or no?", "I choose yes. My answer is no."),
+    ],
+)
+def test_one_word_alternatives_are_resolved_without_a_two_token_minimum(
+    question: str,
+    reply: str,
+) -> None:
+    contradiction = find_choice_contradiction(question, reply)
+
+    assert contradiction is not None
+    assert contradiction.first_option != contradiction.second_option
+
+
+def test_shared_option_vocabulary_remains_unresolved_instead_of_being_guessed() -> None:
+    question = "Pick one: open the red file or open the blue file?"
+    reply = "I choose the file. My answer is the file."
+
+    assert find_choice_contradiction(question, reply) is None
 
 
 def test_the_reply_path_flags_it() -> None:

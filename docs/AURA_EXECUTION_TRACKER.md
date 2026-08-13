@@ -47074,3 +47074,49 @@ chat-preflight boundary, choice consistency, conversational momentum and
 request mood. Powered resident-32B replication remains independent; this
 closure does not claim its verdict, runtime tissue qualification, fusion
 authority, frontier reasoning or a `WOW Signal`.
+
+## Checkpoint 2026-08-12-328: Conversation Semantics Track Evidence, Not Shortcuts
+
+The final twelve findings in the frozen `core/conversation` semantic inventory
+are implemented as one bounded user-surface repair. Exact integer arithmetic
+now remains exact through evaluation and answer comparison instead of crossing
+an IEEE-754 float boundary, and malformed expressions cannot be accepted by
+evaluating only a valid prefix. Capability preconditions no longer block the
+chat event loop on AppleScript or one DNS resolver: accessibility uses the
+native passive trust API, refreshes are generation-safe background
+singleflights, and network unavailability requires independent providers to
+agree rather than treating blocked DNS/53 as proof that the host is offline.
+
+Health context now distinguishes an active structured incident from a recent
+event whose current state is unconfirmed; a recovered incident cannot be
+repeated in present tense merely because its historical degradation record is
+recent. Offered-choice reasoning retains meaningful one-word alternatives and
+selects only a uniquely supported option. Spontaneous momentum speech enters a
+typed assistant notification lane and is withheld when that lane is absent,
+instead of being re-ingested as a user turn with user authority.
+
+Demo support resolves the actual repository root, gives direct and fallback
+assistant diagnostics explicit origin custody, and labels static inspection as
+static evidence rather than behavioral execution. Reply-subject selection now
+counts repeated runtime terms, handles inflection, and resolves self-process
+questions within their clause instead of allowing an unrelated task verb to
+steal the subject. Request mood is likewise clause-scoped: cancellation and
+hypothetical framing apply only to the clause they govern, while independent
+actionable clauses remain actionable and are exposed in the verdict metrics.
+
+Validation under Aura's Python 3.12 runtime is green: the combined owned
+regression surface passes `165/165`; the complete `tests/conversation` package
+passes `161/161`; canonical smoke passes `104/104`; repository Ruff, full
+Python compilation and diff hygiene pass. The first smoke invocation selected
+Homebrew Python without pytest and ran no tests; the same canonical target was
+rerun with Aura's repository virtual environment and produced the stated green
+result. The twelve findings remain open in the append-only ledger until this
+implementation is committed, published and bound to that immutable commit by
+the next evidence checkpoint.
+
+Powered resident-32B replication remains independently supervised and
+undisturbed. At this checkpoint seeds `20260812293` and `20260812294` have
+complete reports, seed `20260812295` is actively decoding and had reached
+candidate `28`, with its resident evaluator and memory sentinel alive and
+status artifacts moving. No scientific verdict, tissue promotion authority,
+fusion authority, frontier gain or `WOW Signal` is claimed from partial data.

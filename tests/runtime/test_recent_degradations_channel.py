@@ -49,11 +49,7 @@ def test_tracker_defines_recent_exactly_once() -> None:
     from core.runtime import errors
 
     source = inspect.getsource(errors.DegradationTracker)
-    definitions = [
-        line
-        for line in source.splitlines()
-        if line.strip().startswith("def recent(")
-    ]
+    definitions = [line for line in source.splitlines() if line.strip().startswith("def recent(")]
 
     assert len(definitions) == 1, definitions
 
@@ -142,3 +138,62 @@ def test_clean_runtime_makes_no_degradation_claim() -> None:
     blob = " ".join(_live_health_summary())
 
     assert "Degradations recorded recently" not in blob
+
+
+def test_recovered_degradation_is_not_asserted_to_be_current() -> None:
+    from core.conversation.chat_preflight import _live_health_summary
+    from core.resilience.incident_manager import get_incident_manager
+
+    subsystem = "recovered_voice_probe"
+    _record(subsystem, "temporary failure")
+    assert get_incident_manager().resolve(f"degradation:{subsystem}") is not None
+
+    blob = " ".join(_live_health_summary())
+
+    assert subsystem not in blob
+    assert "These active incidents are mine and current" not in blob
+
+
+def test_stale_warning_is_not_presented_as_current(monkeypatch) -> None:
+    from core.conversation import chat_preflight
+
+    observed_at = 10_000.0
+    monkeypatch.setattr(chat_preflight.time, "time", lambda: observed_at)
+    active, unconfirmed = chat_preflight._current_degradation_records(
+        [
+            {
+                "subsystem": "old_warning",
+                "severity": "warning",
+                "error": "old",
+                "at": observed_at - chat_preflight._DEGRADATION_CURRENT_WINDOW_S - 1.0,
+            }
+        ],
+        observed_at=observed_at,
+    )
+
+    assert active == []
+    assert unconfirmed == []
+
+
+def test_old_but_active_incident_remains_current(monkeypatch) -> None:
+    from core.conversation import chat_preflight
+
+    monkeypatch.setattr(
+        chat_preflight,
+        "_active_degradation_categories",
+        lambda: {"degradation:still_broken"},
+    )
+    active, unconfirmed = chat_preflight._current_degradation_records(
+        [
+            {
+                "subsystem": "still_broken",
+                "severity": "degraded",
+                "error": "persistent",
+                "at": 1.0,
+            }
+        ],
+        observed_at=10_000.0,
+    )
+
+    assert [record["subsystem"] for record in active] == ["still_broken"]
+    assert unconfirmed == []

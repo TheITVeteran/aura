@@ -7,6 +7,7 @@ import logging
 import os
 import re
 import time
+from enum import StrEnum
 from pathlib import Path
 from typing import Any
 
@@ -81,6 +82,19 @@ _SEARCH_EXCLUDED_DIRS = frozenset(
 )
 _RECENT_ACTIVITY_MAX_AGE_SECONDS = 12 * 60 * 60
 
+
+class _DiagnosticOutputOrigin(StrEnum):
+    """Machine-authored origins allowed onto the diagnostic output lane."""
+
+    ASSISTANT = "assistant"
+
+
+class _DiagnosticEvidenceKind(StrEnum):
+    """The evidence actually collected by this bounded background helper."""
+
+    STATIC_SOURCE_INSPECTION = "static_source_inspection"
+
+
 _DEMO_SUPPORT_ERRORS = (
     AttributeError,
     ImportError,
@@ -139,7 +153,10 @@ def _collapsed(text: str) -> str:
 
 
 def _repo_root() -> Path:
-    return Path(__file__).resolve().parents[1]
+    # demo_support.py lives at <repo>/core/conversation/demo_support.py.
+    # parents[1] is only <repo>/core and silently excludes every other
+    # top-level package from repository diagnostics.
+    return Path(__file__).resolve().parents[2]
 
 
 def _demo_state_path() -> Path:
@@ -173,8 +190,8 @@ def is_priority_probe(message: str) -> bool:
 def build_background_diagnostic_ack(target: str) -> str:
     target_name = Path(target).name
     return (
-        f"I'm on it. I'll inspect `{target_name}` in the background, trace its core function, "
-        "and post the result here when I'm done."
+        f"I'm on it. I'll statically inspect `{target_name}` in the background and report what "
+        "its source structure and syntax show. I won't treat that as verified runtime behavior."
     )
 
 
@@ -296,8 +313,8 @@ def _python_summary(path: Path, source: str) -> str:
         location = f"line {exc.lineno}" if exc.lineno else "an unknown line"
         detail = _truncate(exc.msg or "invalid syntax", 160)
         return (
-            f"I finished the background diagnostic on `{path.name}`. "
-            f"It doesn't currently parse as Python: {detail} at {location}, so that's the first boundary that needs attention."
+            f"I completed a static parse check of `{path.name}` without executing it. "
+            f"It doesn't currently parse as Python: {detail} at {location}."
         )
 
     doc = _truncate(_first_sentence(ast.get_docstring(module) or ""), 180)
@@ -308,7 +325,10 @@ def _python_summary(path: Path, source: str) -> str:
         if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
     ]
     class_names = [node.name for node in classes]
-    primary_symbol = _describe_primary_symbol(classes, [node for node in module.body if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))])
+    primary_symbol = _describe_primary_symbol(
+        classes,
+        [node for node in module.body if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))],
+    )
 
     focus_bits = []
     if doc:
@@ -321,11 +341,13 @@ def _python_summary(path: Path, source: str) -> str:
         focus_bits.append(f"Key entry points: {', '.join(functions[:4])}")
 
     if not focus_bits:
-        focus_bits.append("It is a local module with no module docstring, so I traced its structure directly.")
+        focus_bits.append(
+            "It is a local module with no module docstring or top-level declarations to inventory."
+        )
 
     return (
-        f"I finished the background diagnostic on `{path.name}`. "
-        f"From the file's actual structure, its core function looks like {_truncate(' '.join(focus_bits), 320)}."
+        f"I completed a static source inspection of `{path.name}` without executing it or verifying "
+        f"runtime behavior. Its declared structure is: {_truncate(' '.join(focus_bits), 320)}."
     )
 
 
@@ -338,8 +360,8 @@ def _generic_summary(path: Path, source: str) -> str:
             break
     detail = _truncate(first_non_empty or f"{path.name} contains local project data.", 180)
     return (
-        f"I finished the background diagnostic on `{path.name}`. "
-        f"The file looks centered on {detail}"
+        f"I completed a static text inspection of `{path.name}` without executing or behaviorally "
+        f"validating it. Its first non-empty content is: {detail}"
     )
 
 
@@ -360,13 +382,15 @@ async def _record_recent_activity(orchestrator: Any, payload: dict[str, Any]) ->
             episodic = getattr(facade, "episodic", None) if facade else None
         if episodic and hasattr(episodic, "record_episode_async"):
             await episodic.record_episode_async(
-                context=f"[BACKGROUND TASK] Requested diagnostic on {payload['target_name']}.",
-                action=f"Ran autonomous file diagnostic for {payload['target_name']}.",
+                context=f"[BACKGROUND TASK] Requested static source inspection of {payload['target_name']}.",
+                action=f"Completed static source inspection for {payload['target_name']}.",
                 outcome=payload["summary"],
                 success=bool(payload.get("ok", True)),
                 emotional_valence=0.35,
-                tools_used=["background_file_diagnostic"],
-                lessons=["User-requested background work completed without a follow-up prompt."],
+                tools_used=["background_static_source_inspection"],
+                lessons=[
+                    "Static source evidence was reported without claiming code execution or runtime verification."
+                ],
                 importance=0.95,
             )
     except (ImportError, AttributeError, RuntimeError) as exc:
@@ -395,7 +419,9 @@ async def _record_recent_activity(orchestrator: Any, payload: dict[str, Any]) ->
     try:
         from core.container import ServiceContainer
 
-        state_repo = getattr(orchestrator, "state_repo", None) or ServiceContainer.get("state_repo", default=None)
+        state_repo = getattr(orchestrator, "state_repo", None) or ServiceContainer.get(
+            "state_repo", default=None
+        )
         state = getattr(state_repo, "_current", None) if state_repo else None
         if state:
             working_memory = list(getattr(state.cognition, "working_memory", []) or [])
@@ -405,6 +431,11 @@ async def _record_recent_activity(orchestrator: Any, payload: dict[str, Any]) ->
                     "content": payload["summary"],
                     "metadata": {
                         "type": "background_task_result",
+                        "activity_kind": payload.get(
+                            "activity_kind",
+                            _DiagnosticEvidenceKind.STATIC_SOURCE_INSPECTION.value,
+                        ),
+                        "behavior_verified": bool(payload.get("behavior_verified", False)),
                         "path": payload["target_path"],
                         "requested_by_user": True,
                     },
@@ -419,7 +450,9 @@ async def _record_recent_activity(orchestrator: Any, payload: dict[str, Any]) ->
             }
             state.cognition.modifiers = modifiers
             if hasattr(state_repo, "commit"):
-                await state_repo.commit(state, cause=f"Background diagnostic complete: {payload['target_name']}")
+                await state_repo.commit(
+                    state, cause=f"Static source inspection complete: {payload['target_name']}"
+                )
     except (ImportError, AttributeError, RuntimeError) as exc:
         _record_demo_degradation(
             exc,
@@ -431,21 +464,25 @@ async def _record_recent_activity(orchestrator: Any, payload: dict[str, Any]) ->
 
 
 async def _surface_activity(orchestrator: Any, summary: str) -> None:
+    origin = _DiagnosticOutputOrigin.ASSISTANT
+    metadata = {
+        "autonomous": False,
+        "spontaneous": True,
+        "requested_by_user": True,
+        "demo_background": True,
+        "force_user": True,
+        "executive_authority": True,
+        "content_origin": "assistant_generated_background_result",
+        "activity_kind": _DiagnosticEvidenceKind.STATIC_SOURCE_INSPECTION.value,
+    }
     try:
         output_gate = getattr(orchestrator, "output_gate", None)
         if output_gate and hasattr(output_gate, "emit"):
             await output_gate.emit(
                 summary,
-                origin="assistant",
+                origin=origin,
                 target="primary",
-                metadata={
-                    "autonomous": False,
-                    "spontaneous": True,
-                    "requested_by_user": True,
-                    "demo_background": True,
-                    "force_user": True,
-                    "executive_authority": True,
-                },
+                metadata=metadata,
             )
             return
     except (RuntimeError, AttributeError, TypeError) as exc:
@@ -458,7 +495,12 @@ async def _surface_activity(orchestrator: Any, summary: str) -> None:
 
     try:
         if hasattr(orchestrator, "emit_spontaneous_message"):
-            await orchestrator.emit_spontaneous_message(summary, modality="chat", origin="user")
+            await orchestrator.emit_spontaneous_message(
+                summary,
+                modality="chat",
+                origin=origin,
+                metadata=metadata,
+            )
     except (RuntimeError, AttributeError, TypeError) as exc:
         _record_demo_degradation(
             exc,
@@ -485,6 +527,10 @@ async def run_background_file_diagnostic(
             "target_name": Path(target).name,
             "target_path": str(target),
             "summary": summary,
+            "activity_kind": _DiagnosticEvidenceKind.STATIC_SOURCE_INSPECTION.value,
+            "evidence_scope": "path_resolution_only",
+            "code_executed": False,
+            "behavior_verified": False,
             "requested_at": now,
             "completed_at": now,
             "ok": False,
@@ -514,6 +560,10 @@ async def run_background_file_diagnostic(
         "target_name": resolved.name,
         "target_path": str(resolved),
         "summary": summary,
+        "activity_kind": _DiagnosticEvidenceKind.STATIC_SOURCE_INSPECTION.value,
+        "evidence_scope": "source_text_syntax_and_declarations",
+        "code_executed": False,
+        "behavior_verified": False,
         "requested_at": now,
         "completed_at": time.time(),
         "ok": ok,
@@ -524,7 +574,9 @@ async def run_background_file_diagnostic(
 
 def _strip_diagnostic_prefix(summary: str) -> str:
     return re.sub(
-        r"^I (?:ran|finished) the background diagnostic on\s+`?[^`]+`?\.\s*",
+        r"^I (?:(?:ran|finished) the background diagnostic on|completed a static "
+        r"(?:source inspection|text inspection|parse check) of)\s+`?[^`]+`?"
+        r"(?:\s+without [^.]+)?\.\s*",
         "",
         str(summary or "").strip(),
         flags=re.IGNORECASE,
@@ -534,7 +586,9 @@ def _strip_diagnostic_prefix(summary: str) -> str:
 def _is_fresh_activity_payload(payload: Any) -> bool:
     if not isinstance(payload, dict):
         return False
-    timestamp = payload.get("completed_at") or payload.get("requested_at") or payload.get("timestamp")
+    timestamp = (
+        payload.get("completed_at") or payload.get("requested_at") or payload.get("timestamp")
+    )
     try:
         activity_ts = float(timestamp)
     except (TypeError, ValueError):
@@ -572,17 +626,21 @@ async def maybe_build_recent_activity_reply(message: str, orchestrator: Any) -> 
     if "just" in collapsed:
         preamble = "I was just working on"
     else:
-        preamble = "Right before this session, I was running a background diagnostic on"
+        preamble = "Right before this session, I was running a static source inspection of"
 
     payload = _recent_activity_payload(orchestrator)
     if isinstance(payload, dict):
-        target_name = payload.get("target_name") or Path(str(payload.get("target_path", ""))).name or "that file"
+        target_name = (
+            payload.get("target_name")
+            or Path(str(payload.get("target_path", ""))).name
+            or "that file"
+        )
         summary = str(payload.get("summary", "") or "").strip()
         if summary:
             summary = _strip_diagnostic_prefix(summary)
             return (
                 f"{preamble} `{target_name}`. "
-                f"{summary or "I finished tracing its core function and stored the result for continuity."}"
+                f"{summary or 'I stored the bounded static-inspection result for continuity.'}"
             )
 
     try:
@@ -595,7 +653,9 @@ async def maybe_build_recent_activity_reply(message: str, orchestrator: Any) -> 
         if episodic and hasattr(episodic, "recall_recent_async"):
             episodes = await episodic.recall_recent_async(limit=5)
             for ep in episodes:
-                if (time.time() - float(getattr(ep, "timestamp", 0.0) or 0.0)) > _RECENT_ACTIVITY_MAX_AGE_SECONDS:
+                if (
+                    time.time() - float(getattr(ep, "timestamp", 0.0) or 0.0)
+                ) > _RECENT_ACTIVITY_MAX_AGE_SECONDS:
                     continue
                 context = " ".join(
                     [
@@ -630,7 +690,12 @@ def _goal_field(item: Any, *keys: str) -> str:
             elif value and not isinstance(value, (dict, list)):
                 return str(value)
         # Fallback: try 'description' as a common field
-        desc = item.get("description") or item.get("objective") or item.get("goal") or item.get("content")
+        desc = (
+            item.get("description")
+            or item.get("objective")
+            or item.get("goal")
+            or item.get("content")
+        )
         if desc and isinstance(desc, str):
             return desc
     if isinstance(item, str):
@@ -648,10 +713,14 @@ async def maybe_build_priority_focus_reply(message: str, orchestrator: Any) -> s
     try:
         from core.container import ServiceContainer
 
-        state_repo = getattr(orchestrator, "state_repo", None) or ServiceContainer.get("state_repo", default=None)
+        state_repo = getattr(orchestrator, "state_repo", None) or ServiceContainer.get(
+            "state_repo", default=None
+        )
         state = getattr(state_repo, "_current", None) if state_repo else None
         if state:
-            current_objective = _sanitize_focus_label(getattr(state.cognition, "current_objective", ""))
+            current_objective = _sanitize_focus_label(
+                getattr(state.cognition, "current_objective", "")
+            )
             active_goals = list(getattr(state.cognition, "active_goals", []) or [])
             pending = list(getattr(state.cognition, "pending_initiatives", []) or [])
     except (ImportError, AttributeError, RuntimeError) as exc:
@@ -706,7 +775,9 @@ async def maybe_build_priority_focus_reply(message: str, orchestrator: Any) -> s
         focus_bits.append("staying RAM-conscious so I don't thrash the machine")
 
     if not focus_bits:
-        focus_bits.append("holding a stable conversational state, consolidating memory, and waiting for the next meaningful move")
+        focus_bits.append(
+            "holding a stable conversational state, consolidating memory, and waiting for the next meaningful move"
+        )
 
     return (
         "Right now I should be focused on "

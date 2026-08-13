@@ -95,13 +95,13 @@ def test_a_mention_is_not_a_request(message):
 
 
 def test_an_instruction_wins_over_incidental_mention_framing():
-    """"Ask ChatGPT what it said yesterday" reports speech AND instructs."""
+    """ "Ask ChatGPT what it said yesterday" reports speech AND instructs."""
     verdict = assess_request_mood("Ask ChatGPT what it said yesterday.")
     assert verdict.mood is RequestMood.DIRECTIVE
 
 
 def test_a_cancelling_frame_beats_an_imperative():
-    """"Don't open ChatGPT" is imperative in form and forbids the action."""
+    """ "Don't open ChatGPT" is imperative in form and forbids the action."""
     verdict = assess_request_mood("Don't open ChatGPT, just tell me about it.")
     assert verdict.mood is RequestMood.MENTION
     assert "refusal_to_act" in verdict.reasons
@@ -141,12 +141,36 @@ def test_contextual_followup_does_not_invent_an_action_without_one():
 
 
 def test_scheduled_request_preserves_future_temporal_scope():
-    verdict = assess_request_mood(
-        "Tomorrow, create a reminder after the training run finishes."
-    )
+    verdict = assess_request_mood("Tomorrow, create a reminder after the training run finishes.")
 
     assert verdict.mood is RequestMood.DIRECTIVE
     assert verdict.temporal_scope == "scheduled"
+
+
+def test_a_cancelled_clause_does_not_cancel_an_independent_directive():
+    verdict = assess_request_mood("Do not open Chrome; open Notes.")
+
+    assert verdict.mood is RequestMood.DIRECTIVE
+    assert verdict.actionable_clauses == ("open Notes",)
+    assert verdict.non_action_clauses == ("Do not open Chrome",)
+    assert "mixed_clause_intent" in verdict.reasons
+
+
+def test_hypothetical_discussion_does_not_cancel_a_later_action_clause():
+    verdict = assess_request_mood("Discuss the hypothetical, then save this file.")
+
+    assert verdict.mood is RequestMood.DIRECTIVE
+    assert verdict.actionable_clauses == (
+        "Discuss the hypothetical",
+        "save this file",
+    )
+
+
+def test_a_single_hypothetical_clause_remains_non_actionable():
+    verdict = assess_request_mood("If you were to ask ChatGPT, what would it say?")
+
+    assert verdict.mood is RequestMood.MENTION
+    assert verdict.actionable_clauses == ()
 
 
 class TestTheRouterUsesIt:
@@ -154,9 +178,7 @@ class TestTheRouterUsesIt:
         from core.capability_engine import CapabilityEngine
 
         assert (
-            CapabilityEngine._is_mention_rather_than_request(
-                "What do you think of ChatGPT?"
-            )
+            CapabilityEngine._is_mention_rather_than_request("What do you think of ChatGPT?")
             is True
         )
 
@@ -179,7 +201,4 @@ class TestTheRouterUsesIt:
             raise ValueError("classifier is broken")
 
         monkeypatch.setattr(mood_module, "names_a_thing_without_asking_for_it", boom)
-        assert (
-            CapabilityEngine._is_mention_rather_than_request("What do you think of X?")
-            is False
-        )
+        assert CapabilityEngine._is_mention_rather_than_request("What do you think of X?") is False

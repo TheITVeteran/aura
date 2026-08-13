@@ -50,6 +50,9 @@ class MoodVerdict:
     mood: RequestMood
     reasons: tuple[str, ...] = ()
     temporal_scope: str = "present"
+    actionable_clauses: tuple[str, ...] = ()
+    non_action_clauses: tuple[str, ...] = ()
+    ambiguous_clauses: tuple[str, ...] = ()
 
     @property
     def asks_for_action(self) -> bool:
@@ -64,6 +67,9 @@ class MoodVerdict:
             "request_mood": self.mood.value,
             "reasons": list(self.reasons),
             "temporal_scope": self.temporal_scope,
+            "actionable_clauses": list(self.actionable_clauses),
+            "non_action_clauses": list(self.non_action_clauses),
+            "ambiguous_clauses": list(self.ambiguous_clauses),
         }
 
 
@@ -75,7 +81,7 @@ _ACTION_VERBS = (
     "email|post|ask|tell|reply|respond|answer|show|pull|load|check|read|write|"
     "save|delete|move|copy|close|switch|log|sign|install|update|play|pause|"
     "take|make|create|build|generate|draw|compose|summarise|summarize|"
-    "translate|compile|deploy|test|call|ping|talk|chat|converse|"
+    "translate|compile|deploy|test|call|ping|talk|chat|converse|discuss|"
     "proceed|continue|resume|finish|complete|apply|actuate|connect|configure|"
     "restart|reboot|shutdown|sleep|wake|"
     # Memory instructions are instructions. "Remember for future sessions that
@@ -129,6 +135,13 @@ _SCHEDULED_REQUEST_RE = re.compile(
 _FOLLOWUP_ACTION_RE = re.compile(
     r"^\s*(?:yes[,\s]+please|go\s+ahead|do\s+that|do\s+it|proceed|continue|"
     r"resume|finish\s+it|make\s+it\s+so|that\s+works[,\s]+do\s+it)\s*[.!]?\s*$",
+    re.IGNORECASE,
+)
+
+_CLAUSE_BOUNDARY_RE = re.compile(r"\s*;\s*|(?<=[.!?])\s+|\n+")
+_COORDINATED_ACTION_RE = re.compile(
+    rf"\s+(?:but|and(?:\s+then)?|then)\s+"
+    rf"(?=(?:(?:please|also|just|now|next)\s+)*(?:{_ACTION_VERBS})\b)",
     re.IGNORECASE,
 )
 
@@ -211,16 +224,7 @@ def _is_plain_declarative(text: str) -> bool:
     return bool(_FINITE_STATEMENT_RE.search(text))
 
 
-def assess_request_mood(
-    message: str,
-    previous_message: str = "",
-) -> MoodVerdict:
-    """Decide whether the turn instructs an action or talks about something."""
-
-    text = " ".join(str(message or "").split())
-    if not text:
-        return MoodVerdict(RequestMood.AMBIGUOUS, ("empty",))
-
+def _assess_clause(text: str) -> MoodVerdict:
     directive_reasons: list[str] = []
     if _IMPERATIVE_RE.search(text):
         directive_reasons.append("imperative_clause")
@@ -230,22 +234,6 @@ def assess_request_mood(
         directive_reasons.append("indirect_request")
     if _SCHEDULED_REQUEST_RE.search(text):
         directive_reasons.append("scheduled_request")
-
-    if _QUOTED_UTTERANCE_RE.fullmatch(text):
-        return MoodVerdict(RequestMood.MENTION, ("quoted_utterance",), "quoted")
-
-    if _FOLLOWUP_ACTION_RE.fullmatch(text):
-        previous_verdict = (
-            assess_request_mood(previous_message)
-            if str(previous_message or "").strip()
-            else None
-        )
-        if previous_verdict is not None and previous_verdict.asks_for_action:
-            return MoodVerdict(
-                RequestMood.DIRECTIVE,
-                ("contextual_action_followup",),
-                previous_verdict.temporal_scope,
-            )
 
     mention_reasons = [
         name for pattern, name in _MENTION_FRAMES if re.search(pattern, text, re.IGNORECASE)
@@ -295,6 +283,96 @@ def assess_request_mood(
             temporal_scope,
         )
     return MoodVerdict(RequestMood.AMBIGUOUS, ("no_frame_matched",))
+
+
+def _split_independent_clauses(text: str) -> tuple[str, ...]:
+    """Split only strong or action-headed coordination boundaries."""
+
+    clauses: list[str] = []
+    for sentence in _CLAUSE_BOUNDARY_RE.split(text):
+        clauses.extend(_COORDINATED_ACTION_RE.split(sentence))
+    return tuple(clause.strip(" ,.!?;") for clause in clauses if clause.strip(" ,.!?;"))
+
+
+def assess_request_mood(
+    message: str,
+    previous_message: str = "",
+) -> MoodVerdict:
+    """Decide whether independent clauses instruct, mention, or stay ambiguous."""
+
+    text = " ".join(str(message or "").split())
+    if not text:
+        return MoodVerdict(RequestMood.AMBIGUOUS, ("empty",))
+
+    if _QUOTED_UTTERANCE_RE.fullmatch(text):
+        return MoodVerdict(
+            RequestMood.MENTION,
+            ("quoted_utterance",),
+            "quoted",
+            non_action_clauses=(text,),
+        )
+
+    if _FOLLOWUP_ACTION_RE.fullmatch(text):
+        previous_verdict = (
+            assess_request_mood(previous_message)
+            if str(previous_message or "").strip()
+            else None
+        )
+        if previous_verdict is not None and previous_verdict.asks_for_action:
+            return MoodVerdict(
+                RequestMood.DIRECTIVE,
+                ("contextual_action_followup",),
+                previous_verdict.temporal_scope,
+                actionable_clauses=(text,),
+            )
+
+    clauses = _split_independent_clauses(text)
+    assessed = tuple((clause, _assess_clause(clause)) for clause in clauses)
+    actionable = tuple(
+        clause for clause, verdict in assessed if verdict.mood is RequestMood.DIRECTIVE
+    )
+    non_action = tuple(
+        clause for clause, verdict in assessed if verdict.mood is RequestMood.MENTION
+    )
+    ambiguous = tuple(
+        clause for clause, verdict in assessed if verdict.mood is RequestMood.AMBIGUOUS
+    )
+    reasons = tuple(dict.fromkeys(reason for _, verdict in assessed for reason in verdict.reasons))
+
+    if actionable:
+        if non_action or ambiguous:
+            reasons = tuple(dict.fromkeys((*reasons, "mixed_clause_intent")))
+        directive_scopes = [
+            verdict.temporal_scope
+            for _, verdict in assessed
+            if verdict.mood is RequestMood.DIRECTIVE
+        ]
+        temporal_scope = "scheduled" if "scheduled" in directive_scopes else "present"
+        return MoodVerdict(
+            RequestMood.DIRECTIVE,
+            reasons,
+            temporal_scope,
+            actionable_clauses=actionable,
+            non_action_clauses=non_action,
+            ambiguous_clauses=ambiguous,
+        )
+    if non_action:
+        return MoodVerdict(
+            RequestMood.MENTION,
+            reasons,
+            "hypothetical"
+            if any(verdict.temporal_scope == "hypothetical" for _, verdict in assessed)
+            else "retrospective"
+            if any(verdict.temporal_scope == "retrospective" for _, verdict in assessed)
+            else "present",
+            non_action_clauses=non_action,
+            ambiguous_clauses=ambiguous,
+        )
+    return MoodVerdict(
+        RequestMood.AMBIGUOUS,
+        reasons or ("no_frame_matched",),
+        ambiguous_clauses=ambiguous or clauses,
+    )
 
 
 def names_a_thing_without_asking_for_it(message: str) -> bool:

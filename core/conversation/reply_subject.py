@@ -92,7 +92,7 @@ SELF_PROCESS_REQUEST_TERMS = frozenset(
 EXTERNAL_TASK_REQUEST_TERMS = frozenset(
     """
     browse calculate click compute create delete download edit email execute
-    export fetch find install move navigate open post rename run save search
+    export fetch find inspect install move navigate open post rename run save search
     send solve terminal type upload write
     """.split()
 )
@@ -157,10 +157,106 @@ class SubjectAlignmentVerdict:
         }
 
 
-def _partition(reply_text: str) -> tuple[set[str], set[str]]:
-    terms = content_terms(reply_text)
-    runtime = {term for term in terms if term in RUNTIME_SELF_TERMS}
-    return runtime, terms - runtime
+_CONTENT_WORD_RE = re.compile(r"[a-z0-9][a-z0-9'’-]*", re.IGNORECASE)
+_REQUEST_CLAUSE_RE = re.compile(r"\s*;\s*|(?<=[.!?])\s+|\n+")
+_SELF_PROCESS_WH_RE = re.compile(
+    r"^\s*(?:how|why|what|when|where|whether)\b"
+    r"|\b(?:explain|describe|tell\s+me)\s+(?:how|why|what|when|where|whether)\b",
+    re.IGNORECASE,
+)
+_SELF_PROCESS_AUXILIARY_RE = re.compile(
+    r"^\s*(?:do|does|did|is|are|was|were|has|have)\b"
+    r"|^\s*(?:can|could|would|will)\s+(?:your|aura(?:'s)?)\b",
+    re.IGNORECASE,
+)
+_INSTRUMENTAL_SELF_PROCESS_RE = re.compile(
+    r"\b(?:use|apply|employ)\b.{0,80}\b(?:you|your|yourself|aura)\b"
+    r".{0,80}\bto\s+(?:" + "|".join(sorted(EXTERNAL_TASK_REQUEST_TERMS)) + r")\b",
+    re.IGNORECASE,
+)
+
+
+def _content_term_occurrences(text: str) -> tuple[str, ...]:
+    """Return topical terms without collapsing repeated evidence into a set."""
+
+    allowed = content_terms(text)
+    return tuple(
+        token
+        for token in (
+            match.group(0).lower() for match in _CONTENT_WORD_RE.finditer(str(text or ""))
+        )
+        if token in allowed
+    )
+
+
+def _partition(reply_text: str) -> tuple[tuple[str, ...], tuple[str, ...]]:
+    terms = _content_term_occurrences(reply_text)
+    runtime = tuple(term for term in terms if term in RUNTIME_SELF_TERMS)
+    external = tuple(term for term in terms if term not in RUNTIME_SELF_TERMS)
+    return runtime, external
+
+
+def _vocabulary_hits(tokens: set[str], vocabulary: frozenset[str]) -> tuple[str, ...]:
+    """Match ordinary English inflections without maintaining phrase variants."""
+
+    hits: set[str] = set()
+    for token in tokens:
+        candidates = {token}
+        if token.endswith("ies") and len(token) > 4:
+            candidates.add(f"{token[:-3]}y")
+        if token.endswith("ing") and len(token) > 5:
+            stem = token[:-3]
+            candidates.update({stem, f"{stem}e"})
+            if len(stem) > 2 and stem[-1] == stem[-2]:
+                candidates.add(stem[:-1])
+        if token.endswith("ed") and len(token) > 4:
+            stem = token[:-2]
+            candidates.update({stem, f"{stem}e"})
+        if token.endswith("es") and len(token) > 4:
+            candidates.update({token[:-2], token[:-1]})
+        elif token.endswith("s") and len(token) > 3:
+            candidates.add(token[:-1])
+        if candidates & vocabulary:
+            hits.add(token)
+    return tuple(sorted(hits))
+
+
+def _request_evidence(
+    text: str,
+) -> tuple[tuple[str, ...], tuple[str, ...], bool, bool]:
+    normalized = str(text or "").strip().lower()
+    all_self: set[str] = set()
+    all_tasks: set[str] = set()
+    has_self_reference = False
+    targets_self_process = False
+
+    clauses = [
+        clause.strip() for clause in _REQUEST_CLAUSE_RE.split(normalized) if clause.strip()
+    ] or [normalized]
+    for clause in clauses:
+        tokens = content_terms(clause)
+        self_terms = set(_vocabulary_hits(tokens, SELF_PROCESS_REQUEST_TERMS))
+        task_terms = set(_vocabulary_hits(tokens, EXTERNAL_TASK_REQUEST_TERMS))
+        clause_has_reference = bool(re.search(r"\b(?:you|your|yourself|aura)\b", clause))
+        all_self.update(self_terms)
+        all_tasks.update(task_terms)
+        has_self_reference = has_self_reference or clause_has_reference
+        explicit_self_question = bool(
+            _SELF_PROCESS_WH_RE.search(clause)
+            or (
+                _SELF_PROCESS_AUXILIARY_RE.search(clause)
+                and not _INSTRUMENTAL_SELF_PROCESS_RE.search(clause)
+            )
+        )
+        if clause_has_reference and self_terms and (not task_terms or explicit_self_question):
+            targets_self_process = True
+
+    return (
+        tuple(sorted(all_self)),
+        tuple(sorted(all_tasks)),
+        has_self_reference,
+        targets_self_process,
+    )
 
 
 def assess_subject_drift(
@@ -200,9 +296,7 @@ def assess_subject_drift(
         return SubjectDriftVerdict(
             False, "names_external_subjects", share, external_terms, runtime_terms
         )
-    return SubjectDriftVerdict(
-        True, "runtime_self_reference", share, external_terms, runtime_terms
-    )
+    return SubjectDriftVerdict(True, "runtime_self_reference", share, external_terms, runtime_terms)
 
 
 def assess_subject_alignment(
@@ -229,22 +323,15 @@ def assess_subject_alignment(
             False,
         )
 
-    def request_evidence(text: str) -> tuple[tuple[str, ...], tuple[str, ...], bool]:
-        normalized = str(text or "").strip().lower()
-        tokens = content_terms(normalized)
-        return (
-            tuple(sorted(tokens & SELF_PROCESS_REQUEST_TERMS)),
-            tuple(sorted(tokens & EXTERNAL_TASK_REQUEST_TERMS)),
-            bool(re.search(r"\b(?:you|your|yourself|aura)\b", normalized)),
-        )
-
-    self_terms, task_terms, has_self_reference = request_evidence(user_message)
-    if has_self_reference and self_terms and not task_terms:
+    self_terms, task_terms, has_self_reference, targets_self_process = _request_evidence(
+        user_message
+    )
+    if targets_self_process:
         return SubjectAlignmentVerdict(
             True,
             "grounded_self_process_request",
             self_terms,
-            (),
+            task_terms,
             True,
         )
 
@@ -265,14 +352,16 @@ def assess_subject_alignment(
             prior_text = str(prior or "").strip()
             if not prior_text:
                 continue
-            prior_self, prior_task, prior_reference = request_evidence(prior_text)
-            if prior_reference and prior_self and not prior_task:
+            prior_self, prior_task, prior_reference, prior_targets_self = _request_evidence(
+                prior_text
+            )
+            if prior_targets_self:
                 return SubjectAlignmentVerdict(
                     True,
                     "grounded_self_process_followup",
                     prior_self,
-                    (),
-                    True,
+                    prior_task,
+                    prior_reference,
                 )
             # The nearest substantive turn owns the pro-form. Looking farther
             # back would silently switch its antecedent.

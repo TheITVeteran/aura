@@ -37,9 +37,17 @@ from __future__ import annotations
 import ast
 import math
 import re
+from decimal import Decimal, InvalidOperation
 from typing import Any
 
-__all__ = ["ARITHMETIC_NUMBER_RE", "requested_arithmetic_result"]
+ArithmeticResult = int | float
+
+__all__ = [
+    "ARITHMETIC_NUMBER_RE",
+    "ArithmeticResult",
+    "arithmetic_answer_matches",
+    "requested_arithmetic_result",
+]
 
 
 # Arithmetic a reply can be CHECKED against. The 2026-07-25 probe asked
@@ -142,13 +150,19 @@ def _arithmetic_expression_in(text: str) -> str | None:
     # Thousands separators only, never the decimal comma: "1,000 * 2".
     normalized = re.sub(r"(?<=\d),(?=\d{3}\b)", "", normalized)
 
-    candidates = _BARE_EXPRESSION_RE.findall(normalized)
+    candidates: list[str] = []
+    for match in _BARE_EXPRESSION_RE.finditer(normalized):
+        # Never compute only a valid prefix of an invalid expression.
+        remainder = normalized[match.end() :]
+        if re.match(r"\s*[-+*/]", remainder):
+            continue
+        candidates.append(match.group(0))
     if not candidates:
         return None
     return max(candidates, key=len)
 
 
-def _evaluate_arithmetic(expression: str) -> float | None:
+def _evaluate_arithmetic(expression: str) -> ArithmeticResult | None:
     """Evaluate a simple arithmetic expression, or None if it is not one."""
     cleaned = (
         str(expression or "")
@@ -165,9 +179,9 @@ def _evaluate_arithmetic(expression: str) -> float | None:
     except (SyntaxError, ValueError):
         return None
 
-    def _eval(node: ast.AST) -> float:
+    def _eval(node: ast.AST) -> ArithmeticResult:
         if isinstance(node, ast.Constant) and isinstance(node.value, int | float):
-            return float(node.value)
+            return node.value
         if isinstance(node, ast.UnaryOp) and isinstance(node.op, ast.UAdd | ast.USub):
             value = _eval(node.operand)
             return value if isinstance(node.op, ast.UAdd) else -value
@@ -189,9 +203,9 @@ def _evaluate_arithmetic(expression: str) -> float | None:
         result = _eval(tree.body)
     except (ArithmeticError, ValueError, TypeError, RecursionError):
         return None
-    if not math.isfinite(result):
+    if isinstance(result, float) and not math.isfinite(result):
         return None
-    return float(result)
+    return result
 
 
 # Word forms with exactly one mechanical answer. The bare-expression pattern
@@ -213,7 +227,7 @@ _RECTANGLE_AREA_RE = re.compile(
 )
 
 
-def requested_arithmetic_result(user_message: Any) -> float | None:
+def requested_arithmetic_result(user_message: Any) -> ArithmeticResult | None:
     """The single correct answer to a computable arithmetic question, if any."""
     text = str(user_message or "")
 
@@ -234,15 +248,18 @@ def requested_arithmetic_result(user_message: Any) -> float | None:
         if not (0 <= exponent <= 64) or abs(base) > 10_000:
             return None
         try:
-            value = float(base**exponent)
-        except (ArithmeticError, OverflowError):
+            value = base**exponent
+        except ArithmeticError:
             return None
-        return value if math.isfinite(value) else None
+        return value
 
     match = _RECTANGLE_AREA_RE.search(text)
     if match:
         try:
-            return float(match.group(1)) * float(match.group(2))
+            left, right = match.group(1), match.group(2)
+            if "." not in left and "." not in right:
+                return int(left) * int(right)
+            return float(left) * float(right)
         except (ArithmeticError, ValueError):
             return None
 
@@ -256,3 +273,23 @@ def requested_arithmetic_result(user_message: Any) -> float | None:
     if expression is None:
         return None
     return _evaluate_arithmetic(expression)
+
+
+def arithmetic_answer_matches(expected: ArithmeticResult, candidate: Any) -> bool:
+    """Compare exact integers exactly and decimal results with bounded tolerance."""
+
+    token = str(candidate or "").strip().replace(",", "")
+    if not ARITHMETIC_NUMBER_RE.fullmatch(token):
+        return False
+    if isinstance(expected, int):
+        try:
+            return Decimal(token) == Decimal(expected)
+        except InvalidOperation:
+            return False
+    try:
+        value = float(token)
+    except (OverflowError, ValueError):
+        return False
+    if not math.isfinite(value):
+        return False
+    return math.isclose(value, expected, rel_tol=1e-9, abs_tol=1e-6)

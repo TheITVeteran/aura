@@ -93,6 +93,7 @@ MAX_REASON_CHARS = 240
 MAX_QUEUE_LINE_CHARS = 256_000
 MAX_PENDING_QUEUE_BYTES = 24 * 1024 * 1024
 _QUEUE_LOCK = threading.RLock()
+_DEGRADATION_CURRENT_WINDOW_S = 300.0
 
 _CHAT_PREFLIGHT_RECOVERABLE_ERRORS = (
     ImportError,
@@ -1432,6 +1433,61 @@ def _sense_availability_summary() -> list[str]:
         lines.append(f"  • {reading.channel}: {reading.detail or reading.state}")
     return lines
 
+
+def _active_degradation_categories() -> set[str] | None:
+    """Return active incident categories, or ``None`` when unreadable."""
+
+    try:
+        from core.resilience.incident_manager import get_incident_manager
+
+        return {
+            str(item.get("category") or "")
+            for item in get_incident_manager().get_active()
+            if isinstance(item, dict) and item.get("category")
+        }
+    except _CHAT_PREFLIGHT_RECOVERABLE_ERRORS:
+        return None
+
+
+def _current_degradation_records(
+    records: list[dict[str, Any]],
+    *,
+    observed_at: float,
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    """Partition active evidence from recent events with unknown status."""
+
+    categories = _active_degradation_categories()
+    active: list[dict[str, Any]] = []
+    unconfirmed: list[dict[str, Any]] = []
+    for record in records:
+        if not isinstance(record, dict):
+            continue
+        subsystem = str(record.get("subsystem") or "")
+        category = f"degradation:{subsystem}"
+        severity = str(record.get("severity") or "").lower()
+        try:
+            age_s = max(0.0, observed_at - float(record.get("at")))
+        except (TypeError, ValueError):
+            continue
+        if categories is not None and category in categories:
+            active.append(record)
+        elif severity in {"degraded", "critical"} and categories is not None:
+            # These severities create a structured incident. Its absence from
+            # the active set is recovery evidence, even if the event is recent.
+            continue
+        elif age_s <= _DEGRADATION_CURRENT_WINDOW_S:
+            # Warnings do not always create incidents. Preserve the observation
+            # without upgrading it into a present-tense health assertion.
+            unconfirmed.append(record)
+    return active[-6:], unconfirmed[-6:]
+
+
+def _render_degradation_record(record: dict[str, Any]) -> str:
+    subsystem = str(record.get("subsystem") or "unknown")
+    severity = str(record.get("severity") or "degraded")
+    detail = str(record.get("error") or record.get("message") or "")[:120]
+    return f"{subsystem} ({severity})" + (f": {detail}" if detail else "")
+
 def _live_health_summary() -> list[str]:
     """Heartbeats, uptime, and the faults she is carrying right now.
 
@@ -1510,33 +1566,30 @@ def _live_health_summary() -> list[str]:
     try:
         from core.runtime.errors import recent_degradations
 
-        records = recent_degradations(limit=6) or []
-        if records:
-            rendered: list[str] = []
-            for record in records:
-                subsystem = str(
-                    (record.get("subsystem") if isinstance(record, dict) else "") or "unknown"
-                )
-                severity = str(
-                    (record.get("severity") if isinstance(record, dict) else "") or "degraded"
-                )
-                detail = str(
-                    (record.get("error") or record.get("message") or "")
-                    if isinstance(record, dict)
-                    else ""
-                )[:120]
-                rendered.append(
-                    f"{subsystem} ({severity})" + (f": {detail}" if detail else "")
-                )
+        records = recent_degradations(limit=500) or []
+        active_records, unconfirmed_records = _current_degradation_records(
+            records,
+            observed_at=time.time(),
+        )
+        if active_records:
             lines.append(
-                "Degradations recorded recently (oldest first, newest last): "
-                + "; ".join(rendered)
+                "Degradations recorded recently and still active "
+                "(oldest first, newest last): "
+                + "; ".join(_render_degradation_record(record) for record in active_records)
                 + "."
             )
             lines.append(
-                "These are mine and they are current. If asked how I am, report "
+                "These active incidents are mine and current. If asked how I am, report "
                 "them rather than a general impression, and never describe "
                 "myself as fully stable while any of them stands."
+            )
+        if unconfirmed_records:
+            lines.append(
+                "Recent degradation events with current status not independently "
+                "confirmed: "
+                + "; ".join(_render_degradation_record(record) for record in unconfirmed_records)
+                + ". Do not describe these events as active or recovered without "
+                "another live health reading."
             )
     except _CHAT_PREFLIGHT_RECOVERABLE_ERRORS as exc:
         _emit_chat_fault(

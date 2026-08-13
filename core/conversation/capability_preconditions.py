@@ -33,10 +33,14 @@ from __future__ import annotations
 import logging
 import os
 import socket
+import sys
 import threading
 import time
+import urllib.error
+import urllib.request
+from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Any, Callable
+from typing import Any
 
 logger = logging.getLogger("Aura.CapabilityPreconditions")
 
@@ -45,6 +49,7 @@ __all__ = [
     "declared_preconditions",
     "failing_preconditions",
     "precondition_state",
+    "request_precondition_refresh",
     "reset_precondition_cache",
 ]
 
@@ -55,6 +60,21 @@ _CACHE_TTL_SECONDS = 12.0
 
 #: A probe must never be the reason a reply is slow.
 _PROBE_TIMEOUT_SECONDS = 1.0
+
+# Network availability is not synonymous with permission to reach a public DNS
+# server on port 53. Corporate, hotel and mobile networks commonly block that
+# traffic while their local resolver and HTTPS work normally. These independent
+# providers plus direct TCP/443 reachability avoid making any one provider,
+# resolver or protocol the source of truth.
+_HTTPS_PROBE_URLS = (
+    "https://www.apple.com/library/test/success.html",
+    "https://connectivitycheck.gstatic.com/generate_204",
+    "https://www.cloudflare.com/cdn-cgi/trace",
+)
+_TCP_HTTPS_TARGETS = (
+    ("1.1.1.1", 443),
+    ("8.8.8.8", 443),
+)
 
 
 @dataclass(frozen=True)
@@ -68,24 +88,63 @@ class PreconditionState:
     unknown: bool = False
 
 
-def _probe_network() -> PreconditionState:
-    """Is anything reachable off this machine right now?
+def _https_endpoint_reachable(url: str) -> bool:
+    request = urllib.request.Request(
+        url,
+        method="HEAD",
+        headers={"User-Agent": "Aura-Connectivity-Probe/1"},
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=_PROBE_TIMEOUT_SECONDS) as response:
+            # Any valid HTTP response proves DNS, routing, TCP and TLS. The
+            # exact status is not a service-health contract.
+            return 100 <= int(response.status) < 600
+    except urllib.error.HTTPError:
+        # urllib raises for 4xx/5xx, but receiving that response still proves
+        # the network path and TLS handshake worked.
+        return True
+    except (OSError, TimeoutError, urllib.error.URLError):
+        return False
 
-    A TCP connect, not an HTTP fetch: it answers the actual question (is
-    there a route out) without touching a service that might itself be down,
-    and it fails fast.
+
+def _tcp_https_endpoint_reachable(host: str, port: int) -> bool:
+    try:
+        with socket.create_connection((host, port), timeout=_PROBE_TIMEOUT_SECONDS):
+            return True
+    except (OSError, TimeoutError):
+        return False
+
+
+def _probe_network() -> PreconditionState:
+    """Measure off-host reachability without depending on public DNS/53.
+
+    A successful HTTPS observation is strongest because it exercises the path
+    web capabilities use. Direct TCP/443 is an independent route signal when
+    DNS or a connectivity-check provider is unavailable. Only unanimous,
+    expected connection failures establish offline; an unexpected probe fault
+    remains unknown rather than becoming a confident false negative.
     """
-    for host, port in (("1.1.1.1", 53), ("8.8.8.8", 53)):
+    unexpected_error = False
+    for url in _HTTPS_PROBE_URLS:
         try:
-            with socket.create_connection((host, port), timeout=_PROBE_TIMEOUT_SECONDS):
+            if _https_endpoint_reachable(url):
                 return PreconditionState("network", True, "there is a network connection")
-        except OSError:
-            continue
         except Exception as exc:  # noqa: BLE001 - a probe may never raise upward
-            logger.debug("Network probe error: %s", exc)
-            return PreconditionState(
-                "network", True, "network state could not be determined", unknown=True
-            )
+            unexpected_error = True
+            logger.debug("HTTPS network probe error for %s: %s", url, exc)
+
+    for host, port in _TCP_HTTPS_TARGETS:
+        try:
+            if _tcp_https_endpoint_reachable(host, port):
+                return PreconditionState("network", True, "there is a network connection")
+        except Exception as exc:  # noqa: BLE001 - a probe may never raise upward
+            unexpected_error = True
+            logger.debug("TCP network probe error for %s:%s: %s", host, port, exc)
+
+    if unexpected_error:
+        return PreconditionState(
+            "network", True, "network state could not be determined", unknown=True
+        )
     return PreconditionState("network", False, "there is no network connection right now")
 
 
@@ -116,9 +175,7 @@ def _probe_desktop_session() -> PreconditionState:
         )
     if os.environ.get("DISPLAY") or os.environ.get("WAYLAND_DISPLAY"):
         return PreconditionState("desktop_session", True, "there is a desktop session")
-    return PreconditionState(
-        "desktop_session", False, "there is no desktop session attached"
-    )
+    return PreconditionState("desktop_session", False, "there is no desktop session attached")
 
 
 def _probe_writable_home() -> PreconditionState:
@@ -132,9 +189,7 @@ def _probe_writable_home() -> PreconditionState:
         )
     except Exception as exc:  # noqa: BLE001
         logger.debug("Storage probe error: %s", exc)
-        return PreconditionState(
-            "writable_storage", True, "storage state is unknown", unknown=True
-        )
+        return PreconditionState("writable_storage", True, "storage state is unknown", unknown=True)
 
 
 def _probe_accessibility_permission() -> PreconditionState:
@@ -145,35 +200,14 @@ def _probe_accessibility_permission() -> PreconditionState:
     "[Accessibility error or UI unresponsive]" — which is a fact about
     permission, not about her, and she should be able to say which.
     """
-    try:
-        if os.uname().sysname != "Darwin":
-            return PreconditionState(
-                "accessibility_permission", True, "not applicable on this platform"
-            )
-    except Exception as exc:  # noqa: BLE001
-        logger.debug("Accessibility probe platform check failed: %s", exc)
+    if sys.platform != "darwin":
         return PreconditionState(
-            "accessibility_permission", True, "permission state is unknown", unknown=True
+            "accessibility_permission", True, "not applicable on this platform"
         )
     try:
-        from core.runtime.subprocess_gateway import get_subprocess_gateway
+        from ApplicationServices import AXIsProcessTrusted
 
-        result = get_subprocess_gateway().run(
-            [
-                "osascript",
-                "-e",
-                'tell application "System Events" to return name of first '
-                "application process whose frontmost is true",
-            ],
-            capture_output=True,
-            read_only=True,
-            text=True,
-            timeout=_PROBE_TIMEOUT_SECONDS * 4,
-            source="conversation.capability_preconditions.accessibility_probe",
-            accelerator_capability="none",
-        )
-        output = (result.stdout or "").strip()
-        granted = bool(output) and "not allowed" not in (result.stderr or "").lower()
+        granted = bool(AXIsProcessTrusted())
         return PreconditionState(
             "accessibility_permission",
             granted,
@@ -214,15 +248,76 @@ _CAPABILITY_PRECONDITIONS: dict[str, tuple[str, ...]] = {
 
 _CACHE: dict[str, tuple[float, PreconditionState]] = {}
 _CACHE_LOCK = threading.Lock()
+_CACHE_EPOCH = 0
+_IN_FLIGHT: dict[str, int] = {}
 
 
 def reset_precondition_cache() -> None:
+    global _CACHE_EPOCH
     with _CACHE_LOCK:
+        _CACHE_EPOCH += 1
         _CACHE.clear()
+        _IN_FLIGHT.clear()
+
+
+def _run_probe_refresh(
+    key: str,
+    probe: Callable[[], PreconditionState],
+    epoch: int,
+) -> None:
+    try:
+        state = probe()
+        if not isinstance(state, PreconditionState) or state.name != key:
+            raise TypeError(f"probe {key!r} returned an invalid precondition state")
+    except Exception as exc:  # noqa: BLE001 - terminal background boundary
+        logger.debug("Precondition probe %s failed: %s", key, exc)
+        state = PreconditionState(
+            key,
+            True,
+            f"{key.replace('_', ' ')} state could not be determined",
+            unknown=True,
+        )
+
+    with _CACHE_LOCK:
+        if epoch != _CACHE_EPOCH:
+            return
+        _CACHE[key] = (time.monotonic(), state)
+        if _IN_FLIGHT.get(key) == epoch:
+            _IN_FLIGHT.pop(key, None)
+
+
+def request_precondition_refresh(name: str) -> bool:
+    """Schedule one bounded refresh without waiting for external I/O.
+
+    Returns ``True`` only for the caller that started the generation's worker.
+    Runtime services can use this to prewarm the cache; chat callers get the
+    same single-flight behavior through :func:`precondition_state`.
+    """
+    key = str(name or "").strip()
+    probe = _PROBES.get(key)
+    if probe is None:
+        return False
+
+    with _CACHE_LOCK:
+        cached = _CACHE.get(key)
+        if cached is not None and (time.monotonic() - cached[0]) < _CACHE_TTL_SECONDS:
+            return False
+        epoch = _CACHE_EPOCH
+        if _IN_FLIGHT.get(key) == epoch:
+            return False
+        _IN_FLIGHT[key] = epoch
+
+    threading.Thread(
+        target=_run_probe_refresh,
+        args=(key, probe, epoch),
+        name=f"AuraPreconditionProbe-{key}",
+        daemon=True,
+    ).start()
+    return True
 
 
 def precondition_state(name: str) -> PreconditionState:
-    """Current state of one precondition, cached briefly."""
+    """Return a fresh cached state and refresh misses without blocking chat."""
     key = str(name or "").strip()
     probe = _PROBES.get(key)
     if probe is None:
@@ -234,10 +329,13 @@ def precondition_state(name: str) -> PreconditionState:
         if cached is not None and (now - cached[0]) < _CACHE_TTL_SECONDS:
             return cached[1]
 
-    state = probe()
-    with _CACHE_LOCK:
-        _CACHE[key] = (time.monotonic(), state)
-    return state
+    request_precondition_refresh(key)
+    return PreconditionState(
+        key,
+        True,
+        f"{key.replace('_', ' ')} state is being measured",
+        unknown=True,
+    )
 
 
 def declared_preconditions(capability: Any) -> tuple[str, ...]:
