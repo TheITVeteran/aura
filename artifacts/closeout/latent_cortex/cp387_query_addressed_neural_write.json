@@ -1,0 +1,64 @@
+{
+  "schema": "aura.closeout.latent_cortex_checkpoint.v1",
+  "checkpoint": "CP387",
+  "title": "Verified corrections are written at the live query address",
+  "source_parent": "f4ea0cb5a08885265f91227049d14e7bd9e83307",
+  "implementation": {
+    "map_schema": "aura.fast_weight_supervised_trajectory_map.v2",
+    "key_source": "captured_query_activation",
+    "private_tensor_binding_enforced_before_write": true,
+    "receipt_commitment_binding_enforced_after_write": true,
+    "legacy_v1_receipts_remain_readable": true,
+    "treatment_and_sham_use_same_query_keys": true,
+    "exact_attach_and_erase_contract_preserved": true
+  },
+  "real_checkpoint_calibration": {
+    "model": "mlx-community/Qwen2.5-1.5B-Instruct-4bit",
+    "target_repeat_cosine": 0.999,
+    "highest_related_non_target_cosine": 0.749663,
+    "highest_protected_canary_cosine": 0.686845,
+    "gate_threshold": 0.8,
+    "selectivity_observed": true
+  },
+  "bounded_component_result": {
+    "task_registry": "2026.08.06.1",
+    "domain": "novel_algorithms",
+    "difficulty": 2,
+    "seed": 41037613,
+    "vanilla_correct": 0,
+    "complete_system_correct": 1,
+    "adaptation_ablation_correct": 1,
+    "executable_ablation_correct": 0,
+    "neural_probe_baseline_score": 0.25,
+    "neural_probe_treatment_score": 0.407407,
+    "neural_probe_sham_score": 0.407407,
+    "treatment_selected_gain": 2.0,
+    "sham_selected_gain": -0.5,
+    "treatment_changed_token_sequence": true,
+    "disposition": "rejected_matched_control",
+    "causal_efficacy_observed": true,
+    "verified_semantic_specificity_observed": false,
+    "complete_system_gain_source": "executable_reasoning_not_neural_adaptation"
+  },
+  "validation": {
+    "semantic_and_receipt_files": "31 passed",
+    "engine_file": "61 passed",
+    "fast_weight_file": "48 passed",
+    "wiring_file": "108 passed",
+    "canonical_smoke": "104 passed",
+    "ruff": "pass",
+    "byte_compile": "pass",
+    "diff_check": "pass"
+  },
+  "claims": {
+    "query_selectivity_proven_on_tested_checkpoint": true,
+    "neural_token_causality_observed": true,
+    "neural_tissue_gain_proven": false,
+    "general_reasoning_gain_proven": false,
+    "fusion_authorized": false,
+    "ordinary_serving_authorized": false,
+    "frontier_reasoning_proven": false,
+    "wow_signal": false
+  },
+  "next_bounded_action": "Train the query-addressed temporary tissue against ordered verified-answer likelihood rather than an answer-token unigram proxy, then require treatment to beat matched sham on the same frozen cell."
+}

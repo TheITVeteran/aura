@@ -762,17 +762,28 @@ def validate_fast_weight_learning_receipt(
         if not teaching_event:
             raise ValueError("fast-weight query gate lacks a teaching event")
     if supervised_trajectory_map:
+        map_schema = supervised_trajectory_map.get("schema")
+        expected_map_fields = {
+            "schema",
+            "gain",
+            "regularization",
+            "corrections_normalized",
+            "layers",
+        }
+        if map_schema == "aura.fast_weight_supervised_trajectory_map.v2":
+            expected_map_fields.add("key_source")
         if (
-            set(supervised_trajectory_map)
-            != {
-                "schema",
-                "gain",
-                "regularization",
-                "corrections_normalized",
-                "layers",
+            set(supervised_trajectory_map) != expected_map_fields
+            or map_schema
+            not in {
+                "aura.fast_weight_supervised_trajectory_map.v1",
+                "aura.fast_weight_supervised_trajectory_map.v2",
             }
-            or supervised_trajectory_map["schema"]
-            != "aura.fast_weight_supervised_trajectory_map.v1"
+            or (
+                map_schema == "aura.fast_weight_supervised_trajectory_map.v2"
+                and supervised_trajectory_map["key_source"]
+                != "captured_query_activation"
+            )
             or not _is_finite_number(supervised_trajectory_map["gain"])
             or not 0.0 < float(supervised_trajectory_map["gain"]) <= 16.0
             or not _is_finite_number(supervised_trajectory_map["regularization"])
@@ -830,6 +841,16 @@ def validate_fast_weight_learning_receipt(
                 )
             ):
                 raise ValueError("fast-weight supervised trajectory row is invalid")
+            if (
+                map_schema == "aura.fast_weight_supervised_trajectory_map.v2"
+                and row["inputs_sha256"]
+                != trajectory_transplant["query_activation_sha256s"].get(
+                    str(row["layer"])
+                )
+            ):
+                raise ValueError(
+                    "fast-weight supervised trajectory key is not the live query"
+                )
         if not teaching_event:
             raise ValueError("fast-weight supervised trajectory lacks a teaching event")
     if output_associative_memory:

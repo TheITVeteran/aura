@@ -6216,7 +6216,7 @@ class LatentCortexEngine:
         fw_sham_target_tokens: list[int] = []
         fw_sham_semantic_seed_vectors = None
         fw_sham_trajectory_directions = None
-        fw_incumbent_input_features = None
+        fw_query_input_features = None
         fw_treatment_output_corrections = None
         fw_sham_output_corrections = None
         fw_sham_probe_tokens: list[int] = []
@@ -6494,7 +6494,7 @@ class LatentCortexEngine:
                             )
                         )
                         (
-                            fw_incumbent_input_features,
+                            _incumbent_input_features,
                             incumbent_features,
                             incumbent_context_tokens,
                         ) = (
@@ -6553,6 +6553,9 @@ class LatentCortexEngine:
                                 use_cache=False,
                                 force_exact_tokens=True,
                             )
+                        )
+                        fw_query_input_features = (
+                            fast_weights.captured_input_features()
                         )
                         layers = sorted(treatment_directions)
                         fast_weight_learning_state["controls"][
@@ -6650,11 +6653,11 @@ class LatentCortexEngine:
                     and self.config.fast_weights.associative_bootstrap_enabled
                 ):
                     if (
-                        fw_incumbent_input_features is not None
+                        fw_query_input_features is not None
                         and fw_treatment_output_corrections is not None
                     ):
                         write_receipt = fast_weights.install_supervised_trajectory_map(
-                            fw_incumbent_input_features,
+                            fw_query_input_features,
                             fw_treatment_output_corrections,
                             gain=self.config.fast_weights.associative_bootstrap_gain,
                             regularization=(
@@ -6724,11 +6727,11 @@ class LatentCortexEngine:
                     receipt.flag("fast_weight_matched_trajectory_subspace")
                     fw_sham_initial_snapshot = fast_weights.snapshot_delta()
                     if (
-                        fw_incumbent_input_features is not None
+                        fw_query_input_features is not None
                         and fw_sham_output_corrections is not None
                     ):
                         fast_weights.install_supervised_trajectory_map(
-                            fw_incumbent_input_features,
+                            fw_query_input_features,
                             fw_sham_output_corrections,
                             gain=self.config.fast_weights.associative_bootstrap_gain,
                             regularization=(

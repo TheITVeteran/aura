@@ -779,6 +779,23 @@ class EpisodicFastWeights:
             commitments[int(handle.layer_index)] = tensor_sha256(features)
         return commitments
 
+    def captured_input_features(self) -> dict[int, Any]:
+        """Return private, detached copies of the captured live-query keys."""
+
+        import mlx.core as mx
+
+        captured = {}
+        for handle in self.handles:
+            features = handle.wrapper.last_input_features
+            if features is None:
+                raise RuntimeError("fast-weight query-key capture is absent")
+            copied = mx.stop_gradient(mx.array(features).astype(mx.float32))
+            mx.eval(copied)
+            captured[int(handle.layer_index)] = copied
+        if not captured:
+            raise RuntimeError("fast-weight query-key capture requires wrappers")
+        return captured
+
     def install_captured_query_gates(
         self,
         *,
@@ -1075,7 +1092,7 @@ class EpisodicFastWeights:
         regularization: float,
         normalize_corrections: bool = True,
     ) -> dict[str, Any]:
-        """Install the minimum-norm map from decode states to corrections.
+        """Install the minimum-norm map from live-query states to corrections.
 
         For rows ``X`` and verified corrections ``Y``, the rank-bounded dual
         ridge map is ``X.T @ solve(X @ X.T + lambda I, Y)``.  The wrapper's
@@ -1121,6 +1138,14 @@ class EpisodicFastWeights:
             wrapper = handle.wrapper
             inputs = input_features_by_layer[layer].astype(mx.float32)
             corrections = output_corrections_by_layer[layer].astype(mx.float32)
+            captured_query = wrapper.last_input_features
+            if (
+                captured_query is None
+                or tensor_sha256(inputs) != tensor_sha256(captured_query)
+            ):
+                raise ValueError(
+                    "supervised trajectory keys differ from captured query activations"
+                )
             if (
                 getattr(inputs, "ndim", 0) != 2
                 or getattr(corrections, "ndim", 0) != 2
@@ -1206,7 +1231,8 @@ class EpisodicFastWeights:
             )
         self._notify_function_change("fast_weights_supervised_trajectory_map_installed")
         return {
-            "schema": "aura.fast_weight_supervised_trajectory_map.v1",
+            "schema": "aura.fast_weight_supervised_trajectory_map.v2",
+            "key_source": "captured_query_activation",
             "gain": float(gain),
             "regularization": float(regularization),
             "corrections_normalized": normalize_corrections,

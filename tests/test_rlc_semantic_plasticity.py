@@ -295,6 +295,7 @@ def test_supervised_trajectory_map_fits_distinct_keys_and_erases():
             lambda: model(tokens),
             token_start=1,
         )
+        wrapper.last_input_features = inputs[1]
         corrections = {1: mx.roll(outputs[1], shift=1, axis=0) - outputs[1]}
         with mx.stream(mx.gpu):
             receipt = fast_weights.install_supervised_trajectory_map(
@@ -313,7 +314,8 @@ def test_supervised_trajectory_map_fits_distinct_keys_and_erases():
             mx.linalg.norm(predicted - 0.5 * targets)
             / mx.linalg.norm(0.5 * targets)
         )
-        assert receipt["schema"] == "aura.fast_weight_supervised_trajectory_map.v1"
+        assert receipt["schema"] == "aura.fast_weight_supervised_trajectory_map.v2"
+        assert receipt["key_source"] == "captured_query_activation"
         assert receipt["layers"][0]["teaching_pairs"] == 3
         assert relative_error == pytest.approx(
             receipt["layers"][0]["training_relative_error"],
@@ -329,6 +331,30 @@ def test_supervised_trajectory_map_fits_distinct_keys_and_erases():
     restored = model(tokens)
     mx.eval(restored)
     assert bool(mx.array_equal(restored, baseline))
+
+
+def test_supervised_trajectory_map_rejects_non_query_keys():
+    model = _model()
+    fast_weights = EpisodicFastWeights(
+        FastWeightsConfig(enabled=True, rank=1, max_wrapped_layers=1)
+    )
+    fast_weights.attach(
+        model.model,
+        (1, 2),
+        seed_stat=0.5,
+        episode_id="supervised-map-query-binding",
+    )
+    try:
+        fast_weights.handles[0].wrapper.last_input_features = mx.ones((1, 32))
+        with pytest.raises(ValueError, match="captured query activations"):
+            fast_weights.install_supervised_trajectory_map(
+                {1: mx.zeros((1, 32))},
+                {1: mx.ones((1, 32))},
+                gain=0.5,
+                regularization=1e-4,
+            )
+    finally:
+        fast_weights.detach()
 
 
 def test_query_gate_preserves_matching_write_and_suppresses_unrelated_context():
@@ -378,6 +404,11 @@ def test_manager_receipts_private_query_gate_commitments():
         wrapper.last_input_features = mx.stack(
             [mx.ones((32,)), mx.arange(32).astype(mx.float32)]
         )
+        captured = fast_weights.captured_input_features()
+        assert bool(mx.array_equal(captured[1], wrapper.last_input_features))
+        wrapper.last_input_features = mx.zeros_like(wrapper.last_input_features)
+        assert bool(mx.any(captured[1] != 0))
+        wrapper.last_input_features = captured[1]
         receipt = fast_weights.install_captured_query_gates(
             threshold=0.8,
             temperature=0.05,

@@ -48630,3 +48630,42 @@ and gain search can yet be skipped. The next bounded action is a quick
 checkpoint-real selectivity calibration followed by one frozen target/sham
 cell; only measured target improvement with protected-canary survival can
 authorize a new powered campaign.
+
+## Checkpoint 2026-08-13-387: Neural Writes Address The Live Problem State
+
+The CP386 checkpoint-real calibration separated the repeated target query
+(`~0.999` cosine) from the closest related algorithm (`0.749663`) and every
+protected canary measured (`<=0.686845`) at the committed `0.8` gate. The gate
+therefore has real selectivity on the tested Qwen2.5-1.5B checkpoint; this is
+measured model evidence, not a toy-vector inference.
+
+The direct verified write nevertheless used teacher-forced incumbent-answer
+activations as its associative keys. Its sub-percent training fit proved only
+that it could recall a correction while rereading the old answer, not while
+solving the live problem. CP387 binds every treatment and sham map to detached
+private copies of the actual query activations captured by the wrapped model.
+The mutation boundary rejects a caller-supplied tensor whose digest differs
+from that capture. The v2 learning receipt names the key source and independently
+requires every layer's map-key digest to equal the precommitted query-activation
+digest. Legacy v1 evidence remains readable but cannot support this stronger
+claim.
+
+The exact frozen CP386 counterexample was rerun at the same model, task-registry
+version, domain, difficulty, seed, token ceiling and four-arm component design.
+Vanilla remained wrong, the complete system remained correct, disabling neural
+adaptation preserved that system answer, and removing executable reasoning
+removed the gain. The neural result changed materially: CP386 selected zero
+treatment gain and changed no tokens; CP387 changed the token sequence and
+raised the public probe from `0.25` to `0.407407`. The matched sham also reached
+`0.407407`, so the control correctly rejected the tissue as
+`rejected_matched_control`. This is evidence of causal neural efficacy without
+evidence of verified semantic specificity. It is not a tissue gain, fusion,
+frontier or `WOW Signal` result.
+
+The semantic and receipt surface passes `31/31`; the engine file passes
+`61/61`; fast-weight contracts pass `48/48`; production wiring passes
+`108/108`. Final static and smoke gates are recorded in
+`artifacts/closeout/latent_cortex/cp387_query_addressed_neural_write.json`.
+The next bounded action is to optimize ordered verified-answer likelihood
+through the query-addressed tissue. The current token-unigram reconstruction
+proxy discards sequence and position, making treatment/sham ties unsurprising.
