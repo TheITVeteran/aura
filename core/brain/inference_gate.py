@@ -752,21 +752,22 @@ def _transition_age_s(client: Any, lane: Mapping[str, Any] | None = None) -> flo
     return max(0.0, time.time() - wall)
 
 
-def _generation_actually_stopped(client: Any) -> bool:
+def _generation_actually_stopped(client: Any) -> bool | None:
     """Whether this client really has no generation running.
 
-    Returns True when the client cannot answer: a client with no observable
-    generation count has not been shown to be still running, and treating
-    "cannot tell" as "still wedged" would make every such client permanently
-    un-abortable. The clients that matter — the MLX lanes — do expose it.
+    True and False are measured states. None means supervision was unavailable
+    or malformed; absence of evidence must not be reported as a confirmed stop.
     """
     status = getattr(client, "get_supervision_status", None)
     if not callable(status):
-        return True
+        return None
     try:
-        active = int((status() or {}).get("active_generations", 0) or 0)
+        snapshot = status()
+        if not isinstance(snapshot, Mapping) or "active_generations" not in snapshot:
+            return None
+        active = int(snapshot["active_generations"])
     except (AttributeError, OSError, RuntimeError, TypeError, ValueError):
-        return True
+        return None
     return active <= 0
 
 
@@ -2101,20 +2102,27 @@ class InferenceGate:
             # reported as "the generation ended" — so a wedged decode that
             # ignored the abort still counted, and the watchdog stood down
             # believing the lane was free.
-            if _generation_actually_stopped(client):
+            stopped = _generation_actually_stopped(client)
+            if stopped is True:
                 aborted += 1
             else:
+                detail = (
+                    "the client still reports an active generation"
+                    if stopped is False
+                    else "generation supervision is unavailable"
+                )
                 _record_inference_degradation(
                     RuntimeError(f"force_abort_unconfirmed:{reason}"),
                     action=(
-                        "force-abort was accepted but the client still reports an "
-                        "active generation; not counting it as aborted"
+                        f"force-abort was accepted but {detail}; not counting it "
+                        "as aborted"
                     ),
                     severity="error",
                 )
                 logger.error(
-                    "🛑 Force-abort accepted but generation still active on %s — "
-                    "refusing to report it as stopped.",
+                    "🛑 Force-abort accepted but %s on %s — refusing to report "
+                    "it as stopped.",
+                    detail,
                     getattr(client, "model_path", "local client"),
                 )
         return aborted
