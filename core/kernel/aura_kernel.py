@@ -1116,6 +1116,15 @@ class AuraKernel:
                 )
             return None
 
+        return await self._tick_body(objective, priority, turn_origin, state)
+
+    async def _tick_body(self, objective, priority, turn_origin, state):
+        """Body lifted verbatim out of ``AuraKernel.tick``.
+
+        Moved by tools/extract_seam.py, which refuses to write unless the
+        relocated body diffs clean against the original. The seam was
+        5 names in, 0 out, 1 early return(s), 5 awaits.
+        """
         try:
             # Priority request acquired the lock — clear the pending flag
             if priority:

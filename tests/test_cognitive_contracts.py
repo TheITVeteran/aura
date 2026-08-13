@@ -383,7 +383,11 @@ def test_kernel_measures_provenance_around_every_phase() -> None:
     assert "begin_transformation" in source
     assert "transformation.complete" in source
 
-    tick_source = inspect.getsource(AuraKernel.tick)
+    # Follows self.<helper>() delegation, so extracting part of tick into
+    # _tick_body does not break a contract about the tick pipeline.
+    from tools.find_extraction_seam import implementation_source
+
+    tick_source = implementation_source(AuraKernel, "tick")
     assert "open_tick" in tick_source
 
 

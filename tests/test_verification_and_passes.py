@@ -347,7 +347,12 @@ def test_kernel_tick_loop_consults_the_instrumentation():
 
     from core.kernel import aura_kernel
 
-    source = inspect.getsource(aura_kernel.AuraKernel.tick)
+    # The whole tick implementation, not just the wrapper. tick's body was
+    # extracted into _tick_body, and an assertion keyed to one function's
+    # braces breaks on a decomposition that changed no behaviour.
+    from tools.find_extraction_seam import implementation_source
+
+    source = implementation_source(aura_kernel.AuraKernel, "tick")
     assert "_pass_instrumentation()" in source
     assert "_record_pass(" in source
 

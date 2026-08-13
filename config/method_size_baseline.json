@@ -1,7 +1,7 @@
 {
   "threshold_lines": 400,
   "tracked": 76,
-  "total_lines": 70244,
+  "total_lines": 70484,
   "functions": {
     "core/brain/cognitive_engine.py::CognitiveEngine._direct_desktop_quick_reply": {
       "lines": 975,
@@ -49,8 +49,8 @@
       "returns": 1
     },
     "core/brain/llm/latent_cortex/engine.py::LatentCortexEngine._latent_episode": {
-      "lines": 4922,
-      "complexity": 571,
+      "lines": 5021,
+      "complexity": 584,
       "returns": 14
     },
     "core/brain/llm/latent_cortex/engine.py::LatentCortexEngine.reason": {
@@ -59,8 +59,8 @@
       "returns": 3
     },
     "core/brain/llm/latent_cortex/fast_weight_learning.py::validate_fast_weight_learning_receipt": {
-      "lines": 517,
-      "complexity": 249,
+      "lines": 567,
+      "complexity": 273,
       "returns": 1
     },
     "core/brain/llm/latent_cortex/frontier_certification.py::verify_frontier_gain_bundle": {
@@ -94,8 +94,8 @@
       "returns": 1
     },
     "core/brain/llm/latent_cortex/types.py::CortexConfig.validate": {
-      "lines": 568,
-      "complexity": 257,
+      "lines": 584,
+      "complexity": 262,
       "returns": 3
     },
     "core/brain/llm/latent_cortex/virtual_quanta.py::validate_virtual_quanta_receipt": {
@@ -129,7 +129,7 @@
       "returns": 52
     },
     "core/brain/llm/mlx_worker.py::_mlx_worker_loop": {
-      "lines": 3536,
+      "lines": 3546,
       "complexity": 517,
       "returns": 9
     },
@@ -144,7 +144,7 @@
       "returns": 8
     },
     "core/brain/reasoning_amplifier_v2.py::ReasoningAmplifierV2.amplify": {
-      "lines": 474,
+      "lines": 476,
       "complexity": 94,
       "returns": 4
     },
@@ -178,10 +178,10 @@
       "complexity": 72,
       "returns": 1
     },
-    "core/kernel/aura_kernel.py::AuraKernel.tick": {
-      "lines": 533,
-      "complexity": 93,
-      "returns": 3
+    "core/kernel/aura_kernel.py::AuraKernel._tick_body": {
+      "lines": 485,
+      "complexity": 83,
+      "returns": 1
     },
     "core/learning/recurrence_native_objective_v2.py::_exact_adjoint_live_path_result": {
       "lines": 616,
@@ -284,8 +284,8 @@
       "returns": 23
     },
     "core/phases/response_generation.py::ResponseGenerationPhase.execute": {
-      "lines": 1893,
-      "complexity": 319,
+      "lines": 1921,
+      "complexity": 320,
       "returns": 16
     },
     "core/phases/response_generation_unitary.py::UnitaryResponsePhase.execute": {
@@ -339,13 +339,13 @@
       "returns": 1
     },
     "interface/routes/chat.py::_api_chat_turn": {
-      "lines": 4442,
-      "complexity": 684,
-      "returns": 116
+      "lines": 4477,
+      "complexity": 686,
+      "returns": 117
     },
     "interface/routes/chat.py::_build_live_turn_contract_payload": {
-      "lines": 759,
-      "complexity": 182,
+      "lines": 799,
+      "complexity": 190,
       "returns": 3
     },
     "interface/routes/chat.py::_paired_chat_response_boundary": {
@@ -364,7 +364,7 @@
       "returns": 2
     },
     "interface/routes/chat.py::_run_cognitive_engine_chat_turn": {
-      "lines": 2697,
+      "lines": 2705,
       "complexity": 418,
       "returns": 65
     },

@@ -121,6 +121,50 @@ def _bound_in(node: ast.AST) -> set[str]:
     return bound
 
 
+def _read_before_written(node: ast.AST) -> set[str]:
+    """Names the block reads before it first assigns them.
+
+    These are free variables even though the block also binds them, and
+    treating any Store as "bound" misses them entirely. It is not a corner
+    case: ``AuraKernel.tick`` sets ``state = self.state`` in its preamble and
+    the seam both reads ``state`` and rebinds it via ``state.derive(...)``.
+    Extracting on the strength of the naive analysis produced a clean
+    100%-similarity move that raised ``UnboundLocalError`` on the first tick.
+
+    Line numbers are a sound approximation here because a seam is one
+    statement: a read on an earlier line than every write to the same name
+    cannot be reached after that write.
+    """
+    # Comprehension targets bind in their own scope and are written and read
+    # on the same line, so a line-based comparison flags every one of them.
+    # They are never inputs to the enclosing block.
+    comprehension_targets: set[str] = set()
+    for sub in ast.walk(node):
+        if isinstance(sub, (ast.ListComp, ast.SetComp, ast.DictComp, ast.GeneratorExp)):
+            for generator in sub.generators:
+                comprehension_targets |= _names(generator.target, ast.Store)
+
+    first_write: dict[str, int] = {}
+    first_read: dict[str, int] = {}
+    for sub in ast.walk(node):
+        if not isinstance(sub, ast.Name):
+            continue
+        line = getattr(sub, "lineno", 0)
+        if isinstance(sub.ctx, ast.Store):
+            first_write.setdefault(sub.id, line)
+            first_write[sub.id] = min(first_write[sub.id], line)
+        elif isinstance(sub.ctx, ast.Load):
+            first_read.setdefault(sub.id, line)
+            first_read[sub.id] = min(first_read[sub.id], line)
+    return {
+        name
+        for name, read_at in first_read.items()
+        if name in first_write
+        and read_at <= first_write[name]
+        and name not in comprehension_targets
+    }
+
+
 def _module_scope(tree: ast.Module) -> set[str]:
     scope = {
         n.name
@@ -161,7 +205,10 @@ def analyse(path: Path, function: str, *, min_lines: int = 60) -> list[Seam]:
             continue
 
         bound = _bound_in(stmt)
-        reads = _names(stmt, ast.Load) - bound - module_scope - _BUILTINS
+        # A name the block rebinds is still an input if it is read first.
+        reads = (
+            (_names(stmt, ast.Load) - bound) | _read_before_written(stmt)
+        ) - module_scope - _BUILTINS
 
         after: set[str] = set()
         for other in fn.body:
@@ -198,6 +245,59 @@ def analyse(path: Path, function: str, *, min_lines: int = 60) -> list[Seam]:
 
     seams.sort(key=lambda s: (not s.safe, -s.lines))
     return seams
+
+
+def implementation_source(owner: object, name: str, *, depth: int = 3) -> str:
+    """Source of a method plus the bodies it delegates to on ``self``.
+
+    Source-inspection tests couple to function boundaries: assert that
+    ``tick``'s source mentions something, extract half of ``tick`` into
+    ``_tick_body``, and the assertion fails while the behaviour is identical.
+    Three tests broke that way on the first kernel extraction, and every one of
+    the remaining 50 seams would break more of them.
+
+    Following ``self.<helper>()`` calls one level at a time keeps the assertion
+    about the *implementation* rather than about where its curly braces happen
+    to fall, which is what those tests meant in the first place.
+    """
+    import inspect
+
+    seen: set[str] = set()
+    parts: list[str] = []
+
+    def walk(method_name: str, remaining: int) -> None:
+        if method_name in seen or remaining < 0:
+            return
+        seen.add(method_name)
+        method = getattr(owner, method_name, None)
+        if method is None:
+            return
+        try:
+            source = inspect.getsource(method)
+        except (OSError, TypeError):
+            return
+        parts.append(source)
+        try:
+            tree = ast.parse(textwrap_dedent(source))
+        except SyntaxError:
+            return
+        for node in ast.walk(tree):
+            if (
+                isinstance(node, ast.Call)
+                and isinstance(node.func, ast.Attribute)
+                and isinstance(node.func.value, ast.Name)
+                and node.func.value.id == "self"
+            ):
+                walk(node.func.attr, remaining - 1)
+
+    walk(name, depth)
+    return "\n".join(parts)
+
+
+def textwrap_dedent(text: str) -> str:
+    import textwrap
+
+    return textwrap.dedent(text)
 
 
 def _tracked() -> list[tuple[Path, str]]:
