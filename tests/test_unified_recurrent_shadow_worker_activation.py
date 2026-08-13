@@ -166,6 +166,22 @@ def _qualified_candidate() -> dict:
     return {**body, "activation_sha256": _sha(body)}
 
 
+def _qualified_pending() -> dict:
+    candidate = _qualified_candidate()
+    body = {
+        key: value
+        for key, value in candidate.items()
+        if key != "activation_sha256"
+    }
+    body.update(
+        {
+            "mode": "qualified_typed_pending",
+            "candidate_canary_sha256": "d" * 64,
+        }
+    )
+    return {**body, "activation_sha256": _sha(body)}
+
+
 def _loaded_shadow_receipt() -> dict:
     return seal_shadow_load_receipt(
         {
@@ -550,11 +566,16 @@ def test_worker_qualified_decode_requires_signed_matching_authority(
         )
 
 
+@pytest.mark.parametrize(
+    "activation_factory",
+    [_qualified_candidate, _qualified_pending],
+)
 def test_worker_canary_accepts_only_signed_request_scoped_authority(
     monkeypatch: pytest.MonkeyPatch,
+    activation_factory,
 ) -> None:
     key = new_contract_key()
-    activation = _qualified_candidate()
+    activation = activation_factory()
     request = seal_qualified_decode_request(
         [1],
         package_id="package",

@@ -122,6 +122,25 @@ def _activation() -> dict:
     return {**body, "activation_sha256": digest}
 
 
+def _inert_activation(mode: str) -> dict:
+    body = {
+        key: value
+        for key, value in _activation().items()
+        if key != "activation_sha256"
+    }
+    body.update(
+        {
+            "mode": mode,
+            "serving_authority": False,
+            "candidate_canary_sha256": (
+                "3" * 64 if mode == "qualified_typed_pending" else ""
+            ),
+            "qualified_canary_sha256": "",
+        }
+    )
+    return {**body, "activation_sha256": qualified._sha(body)}
+
+
 def _select(token_id: int):
     vocabulary = mx.arange(1000)
     return mx.where(vocabulary == token_id, 0.0, -1e9)[None, None, :]
@@ -241,6 +260,82 @@ def test_only_matching_activation_can_authorize_a_typed_result(monkeypatch) -> N
         match="activation identity differs",
     ):
         qualified.authorize_qualified_decode_result(result, activation)
+
+
+@pytest.mark.parametrize(
+    "mode",
+    ["qualified_canary_only", "qualified_typed_pending"],
+)
+def test_request_scoped_canary_accepts_each_valid_inert_activation_transition(
+    monkeypatch,
+    mode,
+) -> None:
+    loaded = _loaded()
+    public_tokens = [201, 202, 10, 800, 11, 203, 13, 800, 12]
+    expected = [401, 12, 409, 999]
+
+    def recurrent(_model, tokens, _plan, _controller, **_kwargs):
+        return _select(expected[int(tokens.shape[-1]) - len(public_tokens)]), object()
+
+    monkeypatch.setattr(
+        "core.brain.llm.unified_recurrent_shadow.unified_recurrent_logits",
+        recurrent,
+    )
+    request = qualified.seal_qualified_decode_request(
+        public_tokens,
+        package_id="qualified-fixture",
+        controller_sha256="c" * 64,
+        family="khop",
+        task_depth=2,
+        max_tokens=4,
+    )
+    result = qualified.run_qualified_decode(loaded, _model(), request)
+    activation = _inert_activation(mode)
+
+    authorized = qualified.authorize_qualified_decode_result(
+        result,
+        activation,
+        canary_only=True,
+    )
+
+    assert authorized["serving_authority"] is False
+    assert authorized["authority_source"] == "qualified_canary_request"
+    assert authorized["qualified_activation_sha256"] == activation[
+        "activation_sha256"
+    ]
+
+
+def test_request_scoped_canary_rejects_durable_serving_activation(monkeypatch) -> None:
+    loaded = _loaded()
+    public_tokens = [201, 202, 10, 800, 11, 203, 13, 800, 12]
+    expected = [401, 12, 409, 999]
+
+    def recurrent(_model, tokens, _plan, _controller, **_kwargs):
+        return _select(expected[int(tokens.shape[-1]) - len(public_tokens)]), object()
+
+    monkeypatch.setattr(
+        "core.brain.llm.unified_recurrent_shadow.unified_recurrent_logits",
+        recurrent,
+    )
+    request = qualified.seal_qualified_decode_request(
+        public_tokens,
+        package_id="qualified-fixture",
+        controller_sha256="c" * 64,
+        family="khop",
+        task_depth=2,
+        max_tokens=4,
+    )
+    result = qualified.run_qualified_decode(loaded, _model(), request)
+
+    with pytest.raises(
+        qualified.UnifiedRecurrentQualifiedDecodeError,
+        match="activation identity differs",
+    ):
+        qualified.authorize_qualified_decode_result(
+            result,
+            _activation(),
+            canary_only=True,
+        )
 
 
 def test_declared_depth_cannot_expand_the_certified_domain(monkeypatch) -> None:

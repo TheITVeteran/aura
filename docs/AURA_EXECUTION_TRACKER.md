@@ -47670,3 +47670,35 @@ closed. CP349's first resident canary completed all nine exact cases, but its
 persisted-pending cold canary exposed an activation-mode transition defect;
 that failed activation remains stopped and no recurrent serving authority,
 broad reasoning, frontier, `WOW Signal`, soak or Aura 1.0 claim follows.
+
+## Checkpoint 2026-08-13-352: Pending Recurrent Authority Survives Cold Canary
+
+The CP349 activation completed all nine request-scoped resident-32B candidate
+cases exactly, persisted the resulting evidence as inert
+`qualified_typed_pending` authority, then cold-loaded a fresh worker. That
+worker generated and reclaimed the first pending case successfully but the
+post-decode authorizer rejected the pending activation mode. Launchd
+reproduced the same sequence, proving a deterministic state-transition defect
+rather than a decode-quality failure. The failed supervisor was unloaded
+before it could consume another full candidate pass.
+
+The activation validator already treated both `qualified_canary_only` and
+`qualified_typed_pending` as valid non-serving states. The result authorizer
+now admits exactly those two modes under request-scoped canary authority while
+still requiring `serving_authority` to remain false. Durable
+`qualified_typed_only` authority remains rejected on that path and can only be
+used by ordinary qualified serving after the persisted-pending cold canary is
+sealed. Package, controller, family, task depth, activation hash, battery,
+case, request, nonce and expiry bindings are unchanged.
+
+Regression coverage proves both inert modes produce request-scoped,
+non-serving typed receipts; durable serving authority cannot enter the canary
+path; and the signed worker canary accepts both candidate and persisted-pending
+activation identities. The complete affected decode, worker, manager and
+client surface passes `42/42`; canonical smoke passes `104/104`; compilation,
+Ruff, governance lint, layering and diff hygiene pass.
+
+This checkpoint repairs the failed transition only. A new immutable capsule
+must repeat both resident cold loads and the complete two-stage activation
+before any serving authority is accepted. Broad reasoning, frontier
+performance, static fusion, `WOW Signal`, soak and Aura 1.0 remain unproven.

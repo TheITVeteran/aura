@@ -14,6 +14,9 @@ CANARY_AUTHORITY_SCHEMA: Final = "aura.unified_intrinsic.qualified_canary_reques
 MAX_PUBLIC_TOKENS: Final = 16_384
 MAX_ANSWER_TOKENS: Final = 32
 _FAMILIES: Final = frozenset({"khop", "modular", "register_trace"})
+_REQUEST_SCOPED_CANARY_MODES: Final = frozenset(
+    {"qualified_canary_only", "qualified_typed_pending"}
+)
 _HEX: Final = frozenset("0123456789abcdef")
 _PARSED_FIELDS: Final = {
     "khop": frozenset({"node"}),
@@ -516,7 +519,7 @@ def authorize_qualified_decode_result(
         (
             canary_only
             and (
-                activation.get("mode") != "qualified_canary_only"
+                activation.get("mode") not in _REQUEST_SCOPED_CANARY_MODES
                 or activation.get("serving_authority") is not False
             )
         )
