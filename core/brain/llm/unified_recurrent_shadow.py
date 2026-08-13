@@ -549,6 +549,90 @@ class LoadedUnifiedRecurrentShadow:
     def supports(self, public_tokens: list[int] | tuple[int, ...]) -> bool:
         return self.answer_contract.family(public_tokens) in set(self.receipt["families"])
 
+    def decode_general_recurrent_tokens(
+        self,
+        model: Any,
+        public_tokens: Sequence[int],
+        *,
+        max_tokens: int,
+        recurrence_depth: int | None = None,
+        controller: UnifiedRecurrentController | None = None,
+        completion_check: Callable[[tuple[int, ...]], bool] | None = None,
+        cancel_check: Callable[[], bool] | None = None,
+        activity: Callable[[], None] | None = None,
+    ) -> tuple[tuple[int, ...], bool, int]:
+        """Decode through recurrent hidden tissue without typed answer helpers.
+
+        This is an experiment surface, not serving authority.  It deliberately
+        omits state-slot insertion, the terminal grammar, and the digit pointer
+        so broader evaluations measure only the controller's shared hidden-state
+        correction and transport operators under the frozen language-model head.
+        """
+
+        if not public_tokens or max_tokens < 1:
+            raise UnifiedRecurrentShadowError(
+                "general recurrent decode dimensions are invalid"
+            )
+        selected = self.controller if controller is None else controller
+        if not isinstance(selected, UnifiedRecurrentController):
+            raise UnifiedRecurrentShadowError(
+                "general recurrent decode controller is invalid"
+            )
+        depth = (
+            int(self.receipt["recurrence_depth"])
+            if recurrence_depth is None
+            else recurrence_depth
+        )
+        if type(depth) is not int or depth < 1:
+            raise UnifiedRecurrentShadowError(
+                "general recurrent decode depth is invalid"
+            )
+        row = tuple(int(value) for value in public_tokens)
+        tokens = mx.array([row], dtype=mx.int32)
+        generated: list[int] = []
+        stopped = False
+        plan = self.spec.plan_at(depth)
+        eos_token_id = self.answer_contract.eos_token_id
+        started = time.perf_counter()
+        from core.brain.llm.latent_cortex.recurrence_adapter import (
+            recurrence_adapter_scope,
+        )
+
+        with recurrence_adapter_scope(start=None, stop=None):
+            for _index in range(max_tokens):
+                if cancel_check is not None and cancel_check():
+                    raise InterruptedError("unified_general_recurrent_decode_cancelled")
+                if activity is not None:
+                    activity()
+                output, _telemetry = unified_recurrent_logits(
+                    model,
+                    tokens,
+                    plan,
+                    selected,
+                    answer_digit_pointer_enabled=False,
+                )
+                logits = (
+                    output.logits
+                    if hasattr(output, "logits")
+                    else output[0]
+                    if isinstance(output, tuple)
+                    else output
+                )
+                token_id = int(mx.argmax(logits[0, -1]).item())
+                generated.append(token_id)
+                if eos_token_id is not None and token_id == eos_token_id:
+                    stopped = True
+                    break
+                if completion_check is not None and completion_check(tuple(generated)):
+                    stopped = True
+                    break
+                tokens = mx.concatenate(
+                    [tokens, mx.array([[token_id]], dtype=tokens.dtype)],
+                    axis=1,
+                )
+        elapsed_ms = max(0, int(round((time.perf_counter() - started) * 1000.0)))
+        return tuple(generated), stopped, elapsed_ms
+
     def decode_recurrent_tokens(
         self,
         model: Any,

@@ -223,6 +223,112 @@ def test_loads_controller_as_shadow_without_mutating_model(
     assert loaded.supports([0, 1, 2]) is False
 
 
+def test_general_decode_uses_only_untyped_recurrent_hidden_channel(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    package, model, tokenizer = _loaded_fixture(tmp_path, monkeypatch)
+    loaded = shadow.load_unified_recurrent_shadow(
+        package,
+        model=model,
+        tokenizer=tokenizer,
+        model_path=tmp_path,
+    )
+    observed: list[dict[str, object]] = []
+
+    def recurrent(_model, tokens, plan, controller, **kwargs):
+        observed.append(
+            {
+                "token_count": int(tokens.shape[-1]),
+                "iterations": plan.iterations,
+                "controller": controller,
+                "kwargs": dict(kwargs),
+            }
+        )
+        selected = 999 if len(observed) == 2 else 7
+        logits = mx.where(mx.arange(1000) == selected, 0.0, -1e9)[None, None, :]
+        return logits, object()
+
+    monkeypatch.setattr(shadow, "unified_recurrent_logits", recurrent)
+
+    tokens, stopped, _latency_ms = loaded.decode_general_recurrent_tokens(
+        model,
+        [1, 2, 3],
+        max_tokens=4,
+        recurrence_depth=2,
+        completion_check=lambda generated: generated == (7,),
+    )
+
+    assert tokens == (7,)
+    assert stopped is True
+    assert [row["token_count"] for row in observed] == [3]
+    assert all(row["iterations"] == 2 for row in observed)
+    assert all(row["controller"] is loaded.controller for row in observed)
+    assert all(
+        row["kwargs"] == {"answer_digit_pointer_enabled": False}
+        for row in observed
+    )
+
+
+def test_general_decode_accepts_initialization_matched_control(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    package, model, tokenizer = _loaded_fixture(tmp_path, monkeypatch)
+    loaded = shadow.load_unified_recurrent_shadow(
+        package,
+        model=model,
+        tokenizer=tokenizer,
+        model_path=tmp_path,
+    )
+    control = UnifiedRecurrentController(loaded.controller.config)
+    observed: list[object] = []
+
+    def recurrent(_model, _tokens, _plan, controller, **kwargs):
+        observed.append((controller, kwargs))
+        logits = mx.where(mx.arange(1000) == 999, 0.0, -1e9)[None, None, :]
+        return logits, object()
+
+    monkeypatch.setattr(shadow, "unified_recurrent_logits", recurrent)
+
+    tokens, stopped, _latency_ms = loaded.decode_general_recurrent_tokens(
+        model,
+        [1],
+        max_tokens=1,
+        controller=control,
+    )
+
+    assert tokens == (999,)
+    assert stopped is True
+    assert observed == [(control, {"answer_digit_pointer_enabled": False})]
+
+
+@pytest.mark.parametrize("depth", [0, -1, True])
+def test_general_decode_rejects_invalid_depth(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    depth: object,
+) -> None:
+    package, model, tokenizer = _loaded_fixture(tmp_path, monkeypatch)
+    loaded = shadow.load_unified_recurrent_shadow(
+        package,
+        model=model,
+        tokenizer=tokenizer,
+        model_path=tmp_path,
+    )
+
+    with pytest.raises(
+        shadow.UnifiedRecurrentShadowError,
+        match="general recurrent decode depth is invalid",
+    ):
+        loaded.decode_general_recurrent_tokens(
+            model,
+            [1],
+            max_tokens=1,
+            recurrence_depth=depth,
+        )
+
+
 def test_refuses_extra_controller_tensor(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
