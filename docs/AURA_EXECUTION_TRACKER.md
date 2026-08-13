@@ -47925,3 +47925,44 @@ the controller bytes, records every changed source digest, materializes a new
 source-bound package, reopens typed-only qualification, and then relaunches the
 fresh broad four-arm canary. No broad reasoning, frontier, static fusion or
 `WOW Signal` claim follows from the stopped run or this execution repair.
+
+## Checkpoint 2026-08-13-367: Migrated Tissue Is Qualified and Broad Work Is Observable
+
+The CP365 execution repair could not inherit CP352 serving authority merely
+because the controller tensors were unchanged. The exact step-36 checkpoint was
+migrated under a new source identity while preserving the checkpoint,
+controller, optimizer, cursor, history and training-state bytes. The migration
+receipt records all six source differences and proves the controller parameter
+digest remained
+`582b136c9287d913bdc5a5a84fc584a13867bcd005a7d29cc5bfa2fc1d959cb3`.
+The resulting package `cp366-source-migrated-recurrent` is bound to manifest
+`74f9fb3313a649b1bb6dcd2d838fd66d5ef7874eccbcef85cd466e58eade8085`.
+
+The resident 32B independently cold-loaded that package twice. Both frozen
+nine-case batteries passed, the durable pointer reopened the same package,
+restart identity remained stable, rollback completed and a post-rollback fresh
+worker proved the package inactive. The lifecycle receipt is supported at
+`966db676212e1d6c419d6de524b0e0c0ff7097a4ecd9110cbf53aa4e689ae8a9`.
+Candidate-scoped authority then decoded `9/9` typed cases exactly. A new worker
+reopened persisted-pending authority and independently decoded `9/9` exactly
+again. The manager finally CAS-published `qualified_typed_only` activation
+`ec30fd10b696842f660eda229b8938719cdbe1b8e2200714e59f04c3d806a16f`;
+ordinary chat and arbitrary reasoning remain unauthorized.
+
+The fresh answer-blind broad comparison is now under the independent detached
+supervisor with a frozen issuer and plan, moving authenticated heartbeat,
+trainer-bound sleep assertion, six-hour wall bound and a durable candidate
+journal. Its first base-greedy candidate committed in 32.386 seconds, replacing
+the pre-CP365 836.963-second non-result. No verdict is inferred from that one
+candidate.
+
+Future broad arms now emit content-free task, arm and token-step liveness while
+keeping generated token identities private until adjudication. The candidate
+journal remains the only resumable scored evidence boundary. Focused broad
+runner and adjudication coverage passes `14/14`; Ruff and compilation pass.
+
+This checkpoint establishes source-continuous typed qualification and bounded,
+observable broad execution. The active four-arm run must complete before any
+broad-transfer conclusion. Powered replication, full RLC-system comparison,
+frontier performance, static fusion and `WOW Signal` remain locked behind that
+result.

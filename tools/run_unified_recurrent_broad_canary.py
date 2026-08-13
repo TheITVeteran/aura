@@ -11,7 +11,7 @@ import secrets
 import stat
 import sys
 import time
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from pathlib import Path
 from typing import Any, Final
 
@@ -275,6 +275,7 @@ def _base_decode(
     public_tokens: Sequence[int],
     *,
     max_tokens: int,
+    progress: Callable[[int], None] | None = None,
 ) -> tuple[tuple[int, ...], bool, int]:
     from mlx_lm.generate import generate_step
 
@@ -293,6 +294,8 @@ def _base_decode(
     ):
         token_id = int(token_id)
         generated.append(token_id)
+        if progress is not None:
+            progress(len(generated))
         if tokenizer.eos_token_id is not None and token_id == tokenizer.eos_token_id:
             stopped = True
             break
@@ -306,6 +309,41 @@ def _base_decode(
 def _arm_order(task_id: str) -> tuple[str, ...]:
     offset = int(hashlib.sha256(task_id.encode()).hexdigest()[:8], 16) % len(ARMS)
     return ARMS[offset:] + ARMS[:offset]
+
+
+def _progress_callback(
+    *,
+    task: FrontierTask,
+    arm: str,
+    maximum_tokens: int,
+    stage: str,
+) -> Callable[..., None]:
+    """Emit content-free token progress for one otherwise long-running arm."""
+
+    count = 0
+
+    def report(generated_tokens: int | None = None) -> None:
+        nonlocal count
+        if generated_tokens is None:
+            count += 1
+        else:
+            count = generated_tokens
+        print(
+            json.dumps(
+                {
+                    "event": stage,
+                    "task_id": task.task_id,
+                    "domain": task.domain,
+                    "arm": arm,
+                    "token_step": count,
+                    "maximum_tokens": maximum_tokens,
+                },
+                sort_keys=True,
+            ),
+            flush=True,
+        )
+
+    return report
 
 
 def _candidate_rows(path: Path, *, plan_sha256: str) -> list[dict[str, Any]]:
@@ -357,12 +395,34 @@ def _run_loaded(
             key = (task.task_id, arm)
             if key in completed:
                 continue
+            maximum_tokens = int(plan["max_tokens"])
+            print(
+                json.dumps(
+                    {
+                        "event": "arm_started",
+                        "task_id": task.task_id,
+                        "domain": task.domain,
+                        "arm": arm,
+                        "maximum_tokens": maximum_tokens,
+                        "completed_arms": len(completed),
+                        "total_arms": total,
+                    },
+                    sort_keys=True,
+                ),
+                flush=True,
+            )
             if arm == "base_greedy":
                 generated, stopped, latency_ms = _base_decode(
                     model,
                     tokenizer,
                     public_tokens,
-                    max_tokens=int(plan["max_tokens"]),
+                    max_tokens=maximum_tokens,
+                    progress=_progress_callback(
+                        task=task,
+                        arm=arm,
+                        maximum_tokens=maximum_tokens,
+                        stage="token_generated",
+                    ),
                 )
             else:
                 controller = initial if arm == "initial_t4" else loaded.controller
@@ -370,10 +430,16 @@ def _run_loaded(
                 generated, stopped, latency_ms = loaded.decode_general_recurrent_tokens(
                     model,
                     public_tokens,
-                    max_tokens=int(plan["max_tokens"]),
+                    max_tokens=maximum_tokens,
                     recurrence_depth=depth,
                     controller=controller,
                     completion_check=lambda ids: _contract_complete(tokenizer, ids),
+                    activity=_progress_callback(
+                        task=task,
+                        arm=arm,
+                        maximum_tokens=maximum_tokens,
+                        stage="token_step_started",
+                    ),
                 )
             text = tokenizer.decode(list(generated), skip_special_tokens=True)
             score = task.score(text)

@@ -104,12 +104,14 @@ def test_base_decode_uses_cached_canonical_greedy_lane(
     monkeypatch.setattr(runner, "_contract_complete", lambda _tokenizer, ids: ids == [11, 22])
     tokenizer = types.SimpleNamespace(eos_token_id=99)
     model = object()
+    progress: list[int] = []
 
     generated, stopped, latency_ms = runner._base_decode(
         model,
         tokenizer,
         (1, 2, 3),
         max_tokens=8,
+        progress=progress.append,
     )
 
     assert generated == (11, 22)
@@ -118,6 +120,42 @@ def test_base_decode_uses_cached_canonical_greedy_lane(
     assert calls["model"] is model
     assert calls["max_tokens"] == 8
     assert calls["tokens"].tolist() == [1, 2, 3]
+    assert progress == [1, 2]
+
+
+def test_progress_callback_reports_content_free_token_steps(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    task = types.SimpleNamespace(task_id="task-1", domain="mathematics")
+    callback = runner._progress_callback(
+        task=task,
+        arm="trained_t4",
+        maximum_tokens=32,
+        stage="token_step_started",
+    )
+
+    callback()
+    callback()
+
+    rows = [json.loads(line) for line in capsys.readouterr().out.splitlines()]
+    assert rows == [
+        {
+            "arm": "trained_t4",
+            "domain": "mathematics",
+            "event": "token_step_started",
+            "maximum_tokens": 32,
+            "task_id": "task-1",
+            "token_step": 1,
+        },
+        {
+            "arm": "trained_t4",
+            "domain": "mathematics",
+            "event": "token_step_started",
+            "maximum_tokens": 32,
+            "task_id": "task-1",
+            "token_step": 2,
+        },
+    ]
 
 
 def test_private_append_rejects_noncanonical_reopen(tmp_path: Path) -> None:
