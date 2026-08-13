@@ -96,16 +96,6 @@
       "path": "core/brain/llm/nucleus_manager.py"
     },
     {
-      "expected_load_references": 1,
-      "guard_symbol": "acquire_synchronous_in_process_model_lane",
-      "min_guard_sites": 1,
-      "modules": [
-        "sentence_transformers"
-      ],
-      "ownership_mode": "in_process_sync_heartbeat",
-      "path": "core/brain/semantic_memory.py"
-    },
-    {
       "expected_load_references": 3,
       "guard_symbol": "acquire_in_process_model_lane",
       "min_guard_sites": 1,
@@ -117,13 +107,13 @@
     },
     {
       "expected_load_references": 1,
-      "guard_symbol": "acquire_synchronous_in_process_model_lane",
+      "guard_symbol": "require_active_synchronous_in_process_model_lane",
       "min_guard_sites": 1,
       "modules": [
         "sentence_transformers"
       ],
-      "ownership_mode": "in_process_sync_heartbeat",
-      "path": "core/memory/vector_memory_engine.py"
+      "ownership_mode": "in_process_sync_heartbeat_required_by_constructor",
+      "path": "core/memory/embedding_model.py"
     },
     {
       "expected_load_references": 4,

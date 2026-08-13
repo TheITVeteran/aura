@@ -222,8 +222,6 @@ class EmbeddingEngine:
             return
 
         try:
-            from sentence_transformers import SentenceTransformer
-
             from core.runtime.model_lane_control import (
                 ModelLaneControlError,
                 acquire_synchronous_in_process_model_lane,
@@ -255,10 +253,9 @@ class EmbeddingEngine:
                 # the stored width never moves. assert_window_matches_model
                 # is the check whose absence let a 256-token encoder accept
                 # 800-word chunks silently.
-                self._model = SentenceTransformer(
-                    self.PREFERRED_MODEL, truncate_dim=self.VECTOR_DIM
+                self._model = embedding_model.load_encoder(
+                    model_lane_lease=lane_lease,
                 )
-                embedding_model.assert_window_matches_model(self._model)
             except (OSError, RuntimeError, AttributeError, TypeError, ValueError):
                 lane_lease.release(reason="embedding_model_load_failed")
                 raise

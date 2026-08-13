@@ -3798,6 +3798,16 @@ class SynchronousInProcessModelLaneLease:
         self._heartbeat_thread = self._new_heartbeat_thread()
         self._heartbeat_thread.start()
 
+    @property
+    def active(self) -> bool:
+        """Whether this process still has a live synchronous ownership fence."""
+
+        return (
+            not self._released
+            and not self._release_in_progress
+            and self._heartbeat_thread.is_alive()
+        )
+
     def _heartbeat_loop(self) -> None:
         while not self._stop_event.wait(self._heartbeat_interval_s):
             if self._released:
@@ -3863,6 +3873,18 @@ class SynchronousInProcessModelLaneLease:
             fencing_token=self.decision.fencing_token,
             preemptible=preemptible,
         )
+
+
+def require_active_synchronous_in_process_model_lane(
+    lease: Any,
+) -> SynchronousInProcessModelLaneLease:
+    """Reject model construction unless its synchronous lane fence is live."""
+
+    if not isinstance(lease, SynchronousInProcessModelLaneLease) or not lease.active:
+        raise ModelLaneControlError(
+            "model_load_requires_active_synchronous_in_process_model_lane"
+        )
+    return lease
 
 
 def acquire_synchronous_in_process_model_lane(

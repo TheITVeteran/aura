@@ -7,12 +7,12 @@ import time
 import uuid
 from typing import Any
 
-from core.memory import embedding_model
 from core.governance_context import (
     get_active_governance,
     governance_runtime_active,
     require_governance,
 )
+from core.memory import embedding_model
 from core.runtime.atomic_writer import atomic_write_text
 from core.runtime.errors import record_degradation
 
@@ -174,14 +174,6 @@ class SemanticMemory:
                 self._init_error = "faiss not installed"
                 return
 
-            # --- SentenceTransformers ---
-            try:
-                from sentence_transformers import SentenceTransformer
-            except ImportError:
-                logger.info("sentence-transformers not installed. Staying in Lite Mode.")
-                self._init_error = "sentence-transformers not installed"
-                return
-
             from core.runtime.model_lane_control import (
                 ModelLaneControlError,
                 acquire_synchronous_in_process_model_lane,
@@ -210,10 +202,9 @@ class SemanticMemory:
 
             # Load encoder (can take 5-10s on first run)
             logger.info("Loading Embedding Model (%s)...", embedding_model.REPO_ID)
-            encoder = SentenceTransformer(
-                embedding_model.REPO_ID, truncate_dim=embedding_model.VECTOR_DIM
+            encoder = embedding_model.load_encoder(
+                model_lane_lease=lane_lease,
             )
-            embedding_model.assert_window_matches_model(encoder)
 
             # Build or load FAISS index
             if os.path.exists(self.index_path):

@@ -171,16 +171,22 @@ def estimate_tokens(word_count: int) -> int:
     return int(word_count * TOKENS_PER_WORD) + 2  # +2 for BOS/EOS
 
 
-def load_encoder(*, device: str | None = None) -> Any:
-    """Load the declared encoder at the declared width.
+def load_encoder(*, model_lane_lease: Any, device: str | None = None) -> Any:
+    """Load the declared encoder under an active model-lane ownership fence.
 
     Raises ImportError when sentence-transformers is absent — callers own the
     fallback decision, because a silent fallback to TF-IDF is a quality change
     the caller has to record as a degradation.
     """
+    from core.runtime.model_lane_control import (
+        require_active_synchronous_in_process_model_lane,
+    )
+
+    require_active_synchronous_in_process_model_lane(model_lane_lease)
     from sentence_transformers import SentenceTransformer
 
     model = SentenceTransformer(REPO_ID, truncate_dim=VECTOR_DIM)
+    assert_window_matches_model(model)
     if device:
         model = model.to(device)
     return model

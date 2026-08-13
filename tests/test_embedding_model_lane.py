@@ -12,7 +12,7 @@ import pytest
 from core.brain.semantic_memory import SemanticMemory
 from core.memory import embedding_model
 from core.memory.vector_memory_engine import EmbeddingEngine
-from core.runtime.model_lane_control import ModelLaneController
+from core.runtime.model_lane_control import ModelLaneControlError, ModelLaneController
 from core.runtime.receipts import ReceiptStore
 from core.runtime.shutdown_coordinator import clear_shutdown_request
 
@@ -100,6 +100,25 @@ def _install_fake_embedding_dependencies(
     faiss.read_index = lambda _path: _Index()
     monkeypatch.setitem(sys.modules, "faiss", faiss)
     return _Encoder
+
+
+def test_embedding_constructor_rejects_an_unowned_load(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    constructor_calls: list[str] = []
+    sentence_transformers = ModuleType("sentence_transformers")
+    sentence_transformers.SentenceTransformer = lambda *_args, **_kwargs: constructor_calls.append(
+        "constructed"
+    )
+    monkeypatch.setitem(sys.modules, "sentence_transformers", sentence_transformers)
+
+    with pytest.raises(
+        ModelLaneControlError,
+        match="model_load_requires_active_synchronous_in_process_model_lane",
+    ):
+        embedding_model.load_encoder(model_lane_lease=object())
+
+    assert constructor_calls == [], "ownership must be checked before model construction"
 
 
 @pytest.fixture(autouse=True)
