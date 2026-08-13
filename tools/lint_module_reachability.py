@@ -187,6 +187,29 @@ def main() -> int:
         print("❌ orphan count rose without a new module name — refresh the baseline")
         return 1
 
+    # Counting them stops the number growing and says nothing about what any
+    # one of them IS. "279 unreachable" is not actionable; "279 decided" is.
+    dispositions = ROOT / "config" / "orphan_dispositions.json"
+    if dispositions.is_file():
+        decided = json.loads(dispositions.read_text(encoding="utf-8")).get("modules", {})
+        undecided = sorted(set(orphans) - set(decided))
+        if undecided:
+            print(f"\n❌ {len(undecided)} unreachable module(s) with no recorded decision:")
+            for name in undecided[:10]:
+                print(f"   {name}")
+            print(
+                "\nRun tools/triage_orphan_modules.py --write-dispositions to seed "
+                "them, then change any default that is wrong. A module nobody has "
+                "decided about is how a half-wired subsystem survives."
+            )
+            return 1
+        counts: dict[str, int] = {}
+        for entry in decided.values():
+            key = str(entry.get("disposition", "?"))
+            counts[key] = counts.get(key, 0) + 1
+        summary = ", ".join(f"{v} {k.lower()}" for k, v in sorted(counts.items()))
+        print(f"   dispositions: {summary}")
+
     print("✅ no new unreachable modules")
     return 0
 

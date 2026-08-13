@@ -91,3 +91,54 @@ def test_the_baseline_is_a_list_of_real_modules(baseline):
         "the baseline names modules that no longer exist; refresh it with "
         f"--write-baseline: {missing[:10]}"
     )
+
+
+# --------------------------------------------------------------------------
+# Every orphan has a decision
+# --------------------------------------------------------------------------
+
+
+def _dispositions() -> dict:
+    path = Path(__file__).resolve().parent.parent / "config" / "orphan_dispositions.json"
+    assert path.is_file(), "the disposition registry is missing"
+    return json.loads(path.read_text(encoding="utf-8"))
+
+
+def test_every_unreachable_module_has_a_recorded_decision(report):
+    """"279 unreachable" is a number; "279 decided" is a plan.
+
+    Counting them stops the total growing and says nothing about what any one
+    of them is. Some are entry points invoked by name, some expose a service
+    surface nothing reaches, and some are scaffolding — and a module nobody has
+    decided about is exactly how a half-wired subsystem survives.
+    """
+    decided = _dispositions()["modules"]
+    undecided = sorted(set(report["orphans"]) - set(decided))
+    assert not undecided, (
+        "unreachable modules with no recorded decision:\n  " + "\n  ".join(undecided[:10])
+    )
+
+
+def test_every_disposition_is_one_of_the_declared_kinds():
+    data = _dispositions()
+    allowed = set(data["dispositions"])
+    bad = {
+        name: entry["disposition"]
+        for name, entry in data["modules"].items()
+        if entry.get("disposition") not in allowed
+    }
+    assert not bad, f"unknown dispositions: {bad}"
+
+
+def test_the_wire_pending_set_is_real_debt_and_stays_visible():
+    """66 modules expose a service surface and nothing reaches them.
+
+    This is the half-wired shape this codebase keeps finding — a second affect
+    engine, an unreachable fallback — at scale. Pinned so the count cannot
+    quietly grow while the headline orphan number stays flat.
+    """
+    modules = _dispositions()["modules"]
+    pending = [n for n, e in modules.items() if e["disposition"] == "WIRE_PENDING"]
+    assert len(pending) <= 66, (
+        f"modules written to be wired but unreachable grew to {len(pending)}"
+    )
