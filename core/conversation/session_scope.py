@@ -20,6 +20,11 @@ conversation_turn_var: contextvars.ContextVar[str] = contextvars.ContextVar(
 )
 
 LOCAL_CONVERSATION_ID: Final = "local"
+# Native windows are an owner surface, not anonymous internal cognition.  The
+# HTTP desktop and voice routes already derive this principal key for the same
+# machine, so non-HTTP owner surfaces must join it rather than minting a third
+# local conversation.
+LOCAL_OWNER_CONVERSATION_ID: Final = "127.0.0.1"
 
 
 def normalize_conversation_id(value: object) -> str:
@@ -62,6 +67,7 @@ def conversation_session_scope(session_id: str) -> Iterator[str]:
 
 __all__ = [
     "LOCAL_CONVERSATION_ID",
+    "LOCAL_OWNER_CONVERSATION_ID",
     "MAX_CONVERSATION_ID_CHARS",
     "MAX_CONVERSATION_TURN_ID_CHARS",
     "conversation_session_scope",

@@ -541,10 +541,20 @@ class BootAutonomyMixin:
         # ExternalChatManager — lets Aura open proactive terminal/GUI chat windows
         try:
             from core.conversation.external_chat import ExternalChatManager
+            from core.runtime.shutdown_coordinator import get_shutdown_coordinator
 
             if not hasattr(self, "conversation_history"):
                 self.conversation_history = []
             external_chat = ExternalChatManager(self)
+            shutdown_coordinator = get_shutdown_coordinator()
+            handler_name = "external_chat.shutdown"
+            if handler_name not in shutdown_coordinator.handler_names("actors"):
+                shutdown_coordinator.register(
+                    external_chat.shutdown,
+                    phase="actors",
+                    name=handler_name,
+                    timeout=5.0,
+                )
             ServiceContainer.register_instance("external_chat", external_chat)
             logger.info("ExternalChatManager online — proactive chat windows available.")
         except _BOOT_AUTONOMY_BOUNDARY_ERRORS as e:

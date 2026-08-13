@@ -95,6 +95,18 @@ def test_the_voice_key_is_what_the_desktop_would_produce() -> None:
     assert spoken == typed
 
 
+def test_a_native_external_window_joins_the_owner_conversation() -> None:
+    """A native window has no socket peer, but it still belongs to the owner."""
+
+    from core.conversation.session_scope import LOCAL_OWNER_CONVERSATION_ID
+    from interface.routes.voice_duplex import conversation_key_for
+
+    typed = _chat_turn_session_key(_request(), SimpleNamespace(session_id=""))
+    spoken = conversation_key_for(None, "127.0.0.1")
+
+    assert LOCAL_OWNER_CONVERSATION_ID == typed == spoken
+
+
 @pytest.mark.parametrize("host", ["127.0.0.1", "::1"])
 def test_the_key_is_stable_for_a_given_caller(host: str) -> None:
     a = _chat_turn_session_key(_request(host), SimpleNamespace(session_id=host))

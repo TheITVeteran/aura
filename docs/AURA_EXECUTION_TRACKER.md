@@ -46886,3 +46886,47 @@ repository. The next dependency-ordered group is `external-chat-ipc`, followed
 by the remaining five repair groups. Powered resident-32B replication remains
 independent; this evidence checkpoint does not claim a powered reasoning gain,
 runtime tissue qualification, fusion authority, or `WOW Signal`.
+
+## Checkpoint 2026-08-12-322: External Chat Has Authenticated Durable Custody
+
+The fourth dependency-ordered semantic repair group is implemented. The
+external terminal surface no longer uses predictable FIFOs under shared
+`/tmp`, newline framing, or dequeue-before-write delivery. Each window now owns
+an owner-only random channel namespace, a per-channel secret absent from
+process arguments, independently HMAC-authenticated JSON frames, atomic durable
+publication and acknowledgement-driven custody. Multiline text remains one
+message, an absent or reconnecting reader cannot erase Aura's reply, malformed
+identities and tampered frames fail before cognition, and delivery order follows
+authenticated enqueue time rather than random filenames.
+
+An inbound turn now remains pending until the canonical foreground processor
+returns its exact response and that response is durably correlated under the
+same message identity. A signed completion marker prevents crash replay from
+running cognition twice; only after response custody and completion commit does
+the server acknowledge the user's frame. External terminal and GUI turns use
+the canonical `external` foreground origin under the same local-owner
+conversation identity as desktop text and voice, eliminating a third split
+conversation and the prior background-governance misclassification.
+
+Launch truth is now two-sided: the terminal client must write a valid signed
+ready frame and the server-side handler task must be admitted before the manager
+publishes an active window. GUI launch reports Tk/event-loop failure and really
+falls back to the authenticated terminal; dequeued GUI output is restored if
+rendering fails. Window IDs are random, inactive or failed windows are never
+reported as active, and the canonical shutdown coordinator closes all windows
+and removes the private runtime namespace.
+
+Validation under Aura's Python 3.12 runtime is green for the owned surface:
+external IPC, exact round-trip, cross-surface identity and boot-hardening
+contracts pass `40/40`; canonical smoke passes `104/104`; focused Ruff, Python
+compilation and diff hygiene pass. The initial smoke command selected a
+Homebrew interpreter without pytest and therefore executed no tests; rerunning
+with Aura's repository virtual environment produced the stated green result.
+
+This checkpoint implements the four `external-chat-ipc` findings but does not
+close their semantic ledger records before the implementation is committed and
+hash-bound. The next evidence checkpoint records those four closures and
+advances to `semantic-content-reliability`. Powered resident-32B replication
+remains separate and undisturbed; at this checkpoint seed `20260812293` is
+complete, seed `20260812294` is actively decoding, and no scientific verdict,
+fusion authority, frontier gain or `WOW Signal` is claimed.

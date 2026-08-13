@@ -12,21 +12,35 @@ This allows Aura to "tap you on the shoulder" when she wants to talk.
 """
 
 import asyncio
-import errno
+import concurrent.futures
 import logging
 import os
 import platform
 import queue
 import re
+import secrets
 import shlex
 import shutil
-import tempfile
+import sys
 import threading
 import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from core.conversation.external_chat_ipc import (
+    DurableChannelSpool,
+    ExternalChatAuthenticationError,
+    ExternalChatLaunchError,
+    FrameCodec,
+    channel_secret,
+    create_private_channel_directory,
+    terminal_client_source,
+)
+from core.conversation.session_scope import (
+    LOCAL_OWNER_CONVERSATION_ID,
+    conversation_session_scope,
+)
 from core.runtime.errors import record_degradation
 from core.runtime.file_write_gateway import get_file_write_gateway
 from core.runtime.subprocess_gateway import get_subprocess_gateway
@@ -42,9 +56,28 @@ _RECOVERABLE_EXTERNAL_CHAT_ERRORS = (
     RuntimeError,
     TypeError,
     ValueError,
+    concurrent.futures.CancelledError,
     queue.Empty,
 )
 _WINDOW_ID_RE = re.compile(r"^[A-Za-z0-9_.-]{1,80}$")
+_EXTERNAL_CHAT_ORIGIN = "external"
+
+
+async def _run_external_turn(orchestrator: Any, message: str) -> str | None:
+    """Run one local external-surface turn and return its owned reply."""
+
+    processor = getattr(orchestrator, "process_user_input_priority", None)
+    if not callable(processor):
+        raise ExternalChatLaunchError(
+            "external chat orchestrator has no foreground processing entry point"
+        )
+    with conversation_session_scope(LOCAL_OWNER_CONVERSATION_ID):
+        response = await processor(message, origin=_EXTERNAL_CHAT_ORIGIN)
+    if response == "":
+        raise RuntimeError("external chat foreground processing returned an empty failure")
+    if response is None:
+        return None
+    return str(response)
 
 
 def _spawn_detached(
@@ -93,15 +126,18 @@ class TerminalChatWindow:
     Opens in a new terminal window.
     """
 
-    def __init__(self, window_id: str, orchestrator):
+    def __init__(self, window_id: str, orchestrator, *, runtime_root: Path | None = None):
         if not _WINDOW_ID_RE.fullmatch(window_id):
             raise ValueError("external chat window_id contains unsupported characters")
         self.window_id = window_id
         self.orchestrator = orchestrator
+        self.channel_dir = create_private_channel_directory(runtime_root)
+        self._secret = channel_secret()
+        self._codec = FrameCodec(channel_id=window_id, secret=self._secret)
+        self._spool = DurableChannelSpool(self.channel_dir, self._codec)
 
         # Communication queues
         self.incoming_queue = queue.Queue()  # User → Aura
-        self.outgoing_queue = queue.Queue()  # Aura → User
 
         # State
         self.active = False
@@ -119,10 +155,9 @@ class TerminalChatWindow:
         """
         logger.info("📟 Opening terminal chat window: %s", self.window_id)
 
-        script_path = self._create_chat_script(initial_message)
-        system = platform.system()
-
         try:
+            script_path = self._create_chat_script()
+            system = platform.system()
             if system == "Linux":
                 for term_cmd in self._linux_terminal_commands(script_path):
                     if shutil.which(term_cmd[0]):
@@ -135,10 +170,11 @@ class TerminalChatWindow:
                     raise FileNotFoundError("no supported Linux terminal emulator found")
 
             elif system == "Darwin":  # macOS
-                script_for_apple = _escape_applescript_string(str(script_path))
+                command = shlex.join([sys.executable, str(script_path)])
+                script_for_apple = _escape_applescript_string(command)
                 apple_script = f"""
 tell application "Terminal"
-    do script "bash {script_for_apple}"
+    do script "{script_for_apple}"
     activate
 end tell
 """
@@ -149,105 +185,52 @@ end tell
 
             elif system == "Windows":
                 self.process = _spawn_detached(
-                    ["cmd", "/c", "start", "cmd", "/k", "bash", str(script_path)],
+                    ["cmd", "/c", "start", "", sys.executable, str(script_path)],
                     source="core.conversation.external_chat.terminal_windows_launch",
                 )
             else:
                 raise RuntimeError(f"unsupported terminal platform: {system}")
 
+            if not self._wait_for_launch_ack(timeout_s=10.0):
+                raise ExternalChatLaunchError(
+                    f"external chat client did not acknowledge launch: {self.window_id}"
+                )
             self.active = True
             self._start_message_handler()
+            if initial_message:
+                self.send_message(initial_message)
             logger.info("✅ Terminal window opened: %s", self.window_id)
-
         except _RECOVERABLE_EXTERNAL_CHAT_ERRORS as exc:
             record_degradation("external_chat", exc)
             logger.error("Failed to open terminal: %s", exc)
+            self.close()
+            if isinstance(exc, ExternalChatLaunchError):
+                raise
+            raise ExternalChatLaunchError(
+                f"failed to launch terminal chat {self.window_id}: {exc}"
+            ) from exc
 
     @staticmethod
     def _linux_terminal_commands(script_path: Path) -> list[list[str]]:
         return [
-            ["gnome-terminal", "--", "bash", str(script_path)],
-            ["xterm", "-e", "bash", str(script_path)],
-            ["konsole", "-e", "bash", str(script_path)],
-            ["xfce4-terminal", "-e", "bash", str(script_path)],
+            ["gnome-terminal", "--", sys.executable, str(script_path)],
+            ["xterm", "-e", sys.executable, str(script_path)],
+            ["konsole", "-e", sys.executable, str(script_path)],
+            ["xfce4-terminal", "-e", sys.executable, str(script_path)],
         ]
 
-    def _create_chat_script(self, initial_message: str | None) -> Path:
-        """Create bash script for chat interface"""
-        chat_dir = Path(tempfile.gettempdir()) / "aura_chat"
-        chat_dir.mkdir(mode=0o700, parents=True, exist_ok=True)
-        pipe_in = chat_dir / f"{self.window_id}_in"
-        pipe_out = chat_dir / f"{self.window_id}_out"
-        message_file = chat_dir / f"{self.window_id}_initial.txt"
+    def _create_chat_script(self) -> Path:
+        """Create the private authenticated terminal client."""
+
         file_gateway = get_file_write_gateway()
-        file_gateway.write_text(
-            message_file,
-            initial_message or "",
-            encoding="utf-8",
-            source="core.conversation.external_chat.initial_message",
-        )
-
-        script = f'''#!/bin/bash
-set -u
-
-# Chat window for Aura
-WINDOW_ID={shlex.quote(self.window_id)}
-PIPE_IN={shlex.quote(str(pipe_in))}
-PIPE_OUT={shlex.quote(str(pipe_out))}
-INITIAL_MESSAGE_FILE={shlex.quote(str(message_file))}
-
-# Create named pipes
-mkfifo "$PIPE_IN" 2>/dev/null || true
-mkfifo "$PIPE_OUT" 2>/dev/null || true
-
-# Display header
-clear
-echo "=================================="
-echo "    AURA CHAT - {self.window_id}"
-echo "=================================="
-echo ""
-
-# Initial message from Aura
-if [ -s "$INITIAL_MESSAGE_FILE" ]; then
-    printf "AURA: "
-    cat "$INITIAL_MESSAGE_FILE"
-    echo ""
-    echo ""
-fi
-
-# Chat loop
-while true; do
-    # Check for Aura's messages
-    if [ -p "$PIPE_OUT" ]; then
-        if read -t 0.1 line < "$PIPE_OUT"; then
-            echo "AURA: $line"
-        fi
-    fi
-
-    # Prompt for user input
-    read -t 0.1 -p "YOU: " user_input
-    if [ $? -eq 0 ]; then
-        # Send to Aura
-        if [ -n "$user_input" ]; then
-            echo "$user_input" > "$PIPE_IN"
-        fi
-
-        # Check for exit
-        if [ "$user_input" = "exit" ] || [ "$user_input" = "quit" ]; then
-            echo "Closing chat window..."
-            break
-        fi
-    fi
-done
-
-# Cleanup
-rm -f "$PIPE_IN" "$PIPE_OUT" "$INITIAL_MESSAGE_FILE"
-'''
-
-        script_path = chat_dir / f"{self.window_id}.sh"
+        script_path = self.channel_dir / "client.py"
         file_gateway.write_text(
             script_path,
-            script,
+            terminal_client_source(
+                channel_id=self.window_id,
+                secret=self._secret,
+                channel_dir=self.channel_dir,
+            ),
             encoding="utf-8",
             source="core.conversation.external_chat.chat_script",
         )
@@ -255,40 +238,65 @@ rm -f "$PIPE_IN" "$PIPE_OUT" "$INITIAL_MESSAGE_FILE"
 
         return script_path
 
+    def _wait_for_launch_ack(self, *, timeout_s: float) -> bool:
+        deadline = time.monotonic() + max(0.1, timeout_s)
+        while time.monotonic() < deadline:
+            try:
+                if self._spool.client_ready():
+                    return True
+            except (ExternalChatAuthenticationError, OSError, ValueError) as exc:
+                record_degradation("external_chat.launch_ack", exc)
+                return False
+            time.sleep(0.05)
+        return False
+
     def _start_message_handler(self) -> None:
         """Start background task to handle messages."""
+        handler = self._message_handler_loop()
         try:
             self.handler_task = get_task_tracker().create_task(
-                self._message_handler_loop(),
-                name="external_chat.message_handler",
+                handler,
+                name=f"external_chat.message_handler.{self.window_id}",
             )
-        except RuntimeError as exc:
-            record_degradation("external_chat", exc)
-            logger.debug("ExternalChat: message handler not started: %s", exc)
+        except _RECOVERABLE_EXTERNAL_CHAT_ERRORS:
+            handler.close()
+            raise
+        if self.handler_task is None:
+            handler.close()
+            raise ExternalChatLaunchError(
+                f"external chat handler was not admitted: {self.window_id}"
+            )
 
     async def _message_handler_loop(self):
-        """Handle bidirectional communication"""
-        chat_dir = Path(tempfile.gettempdir()) / "aura_chat"
-        pipe_in = chat_dir / f"{self.window_id}_in"
-        pipe_out = chat_dir / f"{self.window_id}_out"
-
+        """Handle signed inbound frames and durable outbound acknowledgements."""
         while self.active:
             try:
-                for user_msg in await asyncio.to_thread(self._read_pipe_messages, pipe_in):
+                await asyncio.to_thread(self._spool.acknowledge_outbound)
+                inbound = await asyncio.to_thread(self._spool.pending_inbound)
+                for frame in inbound:
+                    if await asyncio.to_thread(
+                        self._spool.inbound_completed,
+                        frame.message_id,
+                    ):
+                        await asyncio.to_thread(
+                            self._spool.acknowledge_inbound,
+                            frame.message_id,
+                        )
+                        continue
+                    response = await _run_external_turn(self.orchestrator, frame.text)
                     self.incoming_queue.put(
                         ChatMessage(
                             speaker="user",
-                            text=user_msg,
+                            text=frame.text,
                             timestamp=time.time(),
                             window_id=self.window_id,
                         )
                     )
-                    self._process_user_message(user_msg)
-
-                if not self.outgoing_queue.empty():
-                    aura_msg = self.outgoing_queue.get()
-                    if await asyncio.to_thread(pipe_out.exists):
-                        await asyncio.to_thread(self._write_pipe_message, pipe_out, aura_msg)
+                    await asyncio.to_thread(
+                        self._spool.complete_inbound,
+                        frame.message_id,
+                        response_text=response,
+                    )
 
                 await asyncio.sleep(0.1)
 
@@ -297,77 +305,16 @@ rm -f "$PIPE_IN" "$PIPE_OUT" "$INITIAL_MESSAGE_FILE"
                 logger.error("Message handler error: %s", exc)
                 await asyncio.sleep(1)
 
-    @staticmethod
-    def _read_pipe_messages(pipe_in: Path) -> list[str]:
-        if not pipe_in.exists():
-            return []
-        try:
-            fd = os.open(pipe_in, os.O_RDONLY | os.O_NONBLOCK)
-        except OSError as exc:
-            if exc.errno in {errno.ENXIO, errno.ENOENT}:
-                return []
-            raise
-        try:
-            data = os.read(fd, 65536)
-        finally:
-            os.close(fd)
-        if not data:
-            return []
-        return [
-            line.strip()
-            for line in data.decode("utf-8", errors="replace").splitlines()
-            if line.strip()
-        ]
-
-    @staticmethod
-    def _write_pipe_message(pipe_out: Path, message: str) -> None:
-        try:
-            fd = os.open(pipe_out, os.O_WRONLY | os.O_NONBLOCK)
-        except OSError as exc:
-            if exc.errno in {errno.ENXIO, errno.ENOENT}:
-                return
-            raise
-        try:
-            os.write(fd, f"{message}\n".encode("utf-8", errors="replace"))
-        finally:
-            os.close(fd)
-
-    def _process_user_message(self, message: str) -> None:
-        """Process user message through orchestrator.
-
-        This is CRITICAL - allows full request execution through external window.
-        """
-        try:
-            # Add to orchestrator's message queue
-            # Add to orchestrator's message queue via threadsafe method
-            if hasattr(self.orchestrator, "enqueue_from_thread"):
-                self.orchestrator.enqueue_from_thread(
-                    message, origin=f"external_window_{self.window_id}"
-                )
-
-            # Store in orchestrator's conversation history
-            if hasattr(self.orchestrator, "conversation_history"):
-                self.orchestrator.conversation_history.append(
-                    {
-                        "timestamp": time.time(),
-                        "source": f"external_window_{self.window_id}",
-                        "speaker": "user",
-                        "message": message,
-                    }
-                )
-
-        except _RECOVERABLE_EXTERNAL_CHAT_ERRORS as exc:
-            record_degradation("external_chat", exc)
-            logger.error("Failed to process message through orchestrator: %s", exc)
-
-    def send_message(self, text: str) -> None:
+    def send_message(self, text: str, *, message_id: str = "") -> str:
         """Send message from Aura to user in this window.
 
         Args:
             text: What Aura wants to say
 
         """
-        self.outgoing_queue.put(text)
+        if not self.active:
+            raise ExternalChatLaunchError(f"external chat window is not active: {self.window_id}")
+        message_id = self._spool.enqueue_outbound(text, message_id=message_id)
 
         # Store in conversation history
         msg = ChatMessage(
@@ -379,26 +326,24 @@ rm -f "$PIPE_IN" "$PIPE_OUT" "$INITIAL_MESSAGE_FILE"
 
         # Add to orchestrator's history
         if hasattr(self.orchestrator, "conversation_history"):
-            self.orchestrator.conversation_history.append(msg.to_dict())
+            history = msg.to_dict()
+            history.update({"message_id": message_id, "delivery_state": "pending_ack"})
+            self.orchestrator.conversation_history.append(history)
+        return message_id
 
     def close(self) -> None:
         """Close the chat window"""
         self.active = False
+        handler = self.handler_task
+        if handler is not None and not handler.done():
+            handler.cancel()
 
-        # Clean up pipes
-        chat_dir = Path(tempfile.gettempdir()) / "aura_chat"
-        for pipe in [
-            chat_dir / f"{self.window_id}_in",
-            chat_dir / f"{self.window_id}_out",
-            chat_dir / f"{self.window_id}_initial.txt",
-            chat_dir / f"{self.window_id}.sh",
-        ]:
-            if pipe.exists():
-                try:
-                    pipe.unlink()
-                except _RECOVERABLE_EXTERNAL_CHAT_ERRORS as exc:
-                    record_degradation("external_chat", exc)
-                    logger.debug("External chat cleanup skipped %s: %s", pipe, exc)
+        try:
+            if self.channel_dir.exists():
+                shutil.rmtree(self.channel_dir)
+        except _RECOVERABLE_EXTERNAL_CHAT_ERRORS as exc:
+            record_degradation("external_chat", exc)
+            logger.debug("External chat cleanup skipped %s: %s", self.channel_dir, exc)
         logger.info("✅ Terminal window closed: %s", self.window_id)
 
 
@@ -421,6 +366,9 @@ class GUIChatWindow:
         # State
         self.active = False
         self.window = None
+        self._launch_ready = threading.Event()
+        self._launch_error: BaseException | None = None
+        self._event_loop: asyncio.AbstractEventLoop | None = None
 
         logger.info("✓ GUI Chat Window created: %s", window_id)
 
@@ -428,15 +376,32 @@ class GUIChatWindow:
         """Open GUI chat window"""
         logger.info("🪟 Opening GUI chat window: %s", self.window_id)
 
-        # Start GUI in separate thread
+        try:
+            self._event_loop = asyncio.get_running_loop()
+        except RuntimeError:
+            candidate = getattr(self.orchestrator, "loop", None)
+            if candidate is None or not candidate.is_running():
+                raise ExternalChatLaunchError(
+                    f"GUI chat has no live orchestrator event loop: {self.window_id}"
+                ) from None
+            self._event_loop = candidate
+        self.active = True
         thread = threading.Thread(
             target=self._create_gui,
             args=(initial_message,),
             daemon=True,
         )
         thread.start()
-
-        self.active = True
+        if not self._launch_ready.wait(timeout=5.0):
+            self.active = False
+            raise ExternalChatLaunchError(
+                f"GUI chat did not acknowledge launch: {self.window_id}"
+            )
+        if self._launch_error is not None:
+            self.active = False
+            raise ExternalChatLaunchError(
+                f"GUI chat failed to launch: {self.window_id}: {self._launch_error}"
+            ) from self._launch_error
 
     def _create_gui(self, initial_message: str | None) -> None:
         """Create tkinter GUI"""
@@ -495,7 +460,7 @@ class GUIChatWindow:
                     )
 
                     self.incoming_queue.put(msg)
-                    self._process_user_message(text)
+                    self._schedule_user_message(text)
 
             # Send button
             send_btn = tk.Button(
@@ -512,6 +477,7 @@ class GUIChatWindow:
             # Check for Aura's messages
             def check_outgoing() -> None:
                 """Check for messages from Aura"""
+                aura_text: str | None = None
                 try:
                     drained = 0
                     while drained < 32:
@@ -522,9 +488,12 @@ class GUIChatWindow:
                         chat_display.insert(tk.END, f"AURA: {aura_text}\n\n")
                         chat_display.config(state=tk.DISABLED)
                         chat_display.see(tk.END)
+                        aura_text = None
                 except queue.Empty:
                     logger.debug("GUI outgoing queue is empty")
                 except _RECOVERABLE_EXTERNAL_CHAT_ERRORS as exc:
+                    if aura_text is not None:
+                        self.outgoing_queue.put(aura_text)
                     record_degradation("external_chat", exc)
                     logger.debug("GUI outgoing pump failed: %s", exc, exc_info=True)
 
@@ -537,6 +506,7 @@ class GUIChatWindow:
 
             # Store window reference
             self.window = root
+            self._launch_ready.set()
 
             # Run GUI
             root.mainloop()
@@ -545,37 +515,41 @@ class GUIChatWindow:
             self.active = False
 
         except _RECOVERABLE_EXTERNAL_CHAT_ERRORS as exc:
+            self._launch_error = exc
+            self._launch_ready.set()
+            self.active = False
             record_degradation("external_chat", exc)
             logger.error("GUI creation failed: %s", exc)
-            logger.info("Falling back to terminal window")
-            # Could fallback to terminal window here
 
-    def _process_user_message(self, message: str) -> None:
-        """Process user message through orchestrator"""
-        try:
-            # Same as terminal window - full integration
-            # Add to orchestrator's message queue via threadsafe method
-            if hasattr(self.orchestrator, "enqueue_from_thread"):
-                self.orchestrator.enqueue_from_thread(
-                    message, origin=f"external_window_{self.window_id}"
-                )
+    def _schedule_user_message(self, message: str) -> None:
+        """Submit a GUI turn to the owner loop and route its exact reply back."""
 
-            if hasattr(self.orchestrator, "conversation_history"):
-                self.orchestrator.conversation_history.append(
-                    {
-                        "timestamp": time.time(),
-                        "source": f"external_window_{self.window_id}",
-                        "speaker": "user",
-                        "message": message,
-                    }
-                )
+        loop = self._event_loop
+        if loop is None or not loop.is_running():
+            raise ExternalChatLaunchError(
+                f"external chat owner loop is unavailable: {self.window_id}"
+            )
+        future = asyncio.run_coroutine_threadsafe(
+            _run_external_turn(self.orchestrator, message),
+            loop,
+        )
 
-        except _RECOVERABLE_EXTERNAL_CHAT_ERRORS as exc:
-            record_degradation("external_chat", exc)
-            logger.error("Failed to process message: %s", exc)
+        def _deliver_reply(completed) -> None:
+            try:
+                response = completed.result()
+                if response:
+                    self.send_message(response)
+            except _RECOVERABLE_EXTERNAL_CHAT_ERRORS as exc:
+                record_degradation("external_chat", exc)
+                logger.error("External GUI turn failed: %s", exc)
 
-    def send_message(self, text: str) -> None:
+        future.add_done_callback(_deliver_reply)
+
+    def send_message(self, text: str) -> str:
         """Send message from Aura to user"""
+        if not self.active:
+            raise ExternalChatLaunchError(f"external chat window is not active: {self.window_id}")
+        message_id = secrets.token_hex(16)
         self.outgoing_queue.put(text)
 
         # Store in history
@@ -586,8 +560,11 @@ class GUIChatWindow:
                     "source": f"external_window_{self.window_id}",
                     "speaker": "aura",
                     "message": text,
+                    "message_id": message_id,
+                    "delivery_state": "queued_for_gui",
                 }
             )
+        return message_id
 
     def close(self) -> None:
         """Close GUI window"""
@@ -606,13 +583,12 @@ class ExternalChatManager:
     Aura uses this to initiate conversations with the user.
     """
 
-    def __init__(self, orchestrator):
+    def __init__(self, orchestrator, *, runtime_root: Path | None = None):
         self.orchestrator = orchestrator
+        self.runtime_root = create_private_channel_directory(runtime_root)
 
         # Track windows
         self.windows: dict[str, Any] = {}
-        self.next_window_id = 1
-
         # Preferences
         self.preferred_window_type = "gui"  # "gui" or "terminal"
 
@@ -633,10 +609,10 @@ class ExternalChatManager:
             Window ID
 
         """
-        window_id = f"chat_{self.next_window_id}"
-        self.next_window_id += 1
-
         window_type = window_type or self.preferred_window_type
+        if window_type not in {"gui", "terminal"}:
+            raise ValueError(f"unsupported external chat window type: {window_type}")
+        window_id = f"chat_{secrets.token_hex(12)}"
 
         logger.info("🪟 Opening %s chat window: %s", window_type, window_id)
 
@@ -644,28 +620,50 @@ class ExternalChatManager:
         if window_type == "gui":
             window = GUIChatWindow(window_id, self.orchestrator)
         else:
-            window = TerminalChatWindow(window_id, self.orchestrator)
+            window = TerminalChatWindow(
+                window_id,
+                self.orchestrator,
+                runtime_root=self.runtime_root,
+            )
 
-        # Open it
-        window.open(message)
+        try:
+            window.open(message)
+        except ExternalChatLaunchError:
+            window.close()
+            if window_type != "gui":
+                raise
+            logger.warning("GUI external chat failed; trying authenticated terminal surface")
+            window = TerminalChatWindow(
+                window_id,
+                self.orchestrator,
+                runtime_root=self.runtime_root,
+            )
+            window.open(message)
 
-        # Store reference
+        if not window.active:
+            window.close()
+            raise ExternalChatLaunchError(
+                f"external chat launch returned without an active surface: {window_id}"
+            )
         self.windows[window_id] = window
 
         return window_id
 
-    def send_to_window(self, window_id: str, message: str):
+    def send_to_window(self, window_id: str, message: str) -> str:
         """Send message to specific window"""
-        if window_id in self.windows:
-            self.windows[window_id].send_message(message)
-        else:
-            logger.error("Window %s not found", window_id)
+        window = self.windows.get(window_id)
+        if window is None or not window.active:
+            raise KeyError(f"active external chat window not found: {window_id}")
+        result = window.send_message(message)
+        return str(result or "")
 
-    def broadcast(self, message: str):
+    def broadcast(self, message: str) -> dict[str, str]:
         """Send message to all open windows"""
+        receipts: dict[str, str] = {}
         for window in self.windows.values():
             if window.active:
-                window.send_message(message)
+                receipts[window.window_id] = str(window.send_message(message) or "")
+        return receipts
 
     def close_window(self, window_id: str):
         """Close specific window"""
@@ -677,6 +675,17 @@ class ExternalChatManager:
         """Close all external windows"""
         for window_id in list(self.windows.keys()):
             self.close_window(window_id)
+
+    def shutdown(self) -> None:
+        """Canonical synchronous shutdown hook for every owned surface."""
+
+        self.close_all_windows()
+        try:
+            if self.runtime_root.exists():
+                shutil.rmtree(self.runtime_root)
+        except _RECOVERABLE_EXTERNAL_CHAT_ERRORS as exc:
+            record_degradation("external_chat.shutdown", exc)
+            logger.warning("External chat runtime cleanup failed: %s", exc)
 
     def get_active_windows(self) -> list:
         """Get list of active window IDs"""
