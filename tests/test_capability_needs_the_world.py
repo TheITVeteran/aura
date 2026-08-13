@@ -234,6 +234,32 @@ class TestAccessibilityUsesThePassiveNativeStatusAPI:
 
 
 class TestNetworkUsesIndependentWebSignals:
+    def test_https_probe_uses_the_canonical_read_only_network_owner(self, monkeypatch):
+        import core.runtime.network_gateway as network_gateway
+
+        calls: list[tuple[tuple, dict]] = []
+
+        class _Gateway:
+            def request(self, *args, **kwargs):
+                calls.append((args, kwargs))
+                return {"status_code": 503, "ok": False}
+
+        monkeypatch.setattr(network_gateway, "get_network_gateway", lambda: _Gateway())
+
+        assert preconditions._https_endpoint_reachable("https://example.com/probe")
+        assert calls == [
+            (
+                ("HEAD", "https://example.com/probe"),
+                {
+                    "headers": {"User-Agent": "Aura-Connectivity-Probe/1"},
+                    "timeout": preconditions._PROBE_TIMEOUT_SECONDS,
+                    "source": "capability_preconditions.network_probe",
+                    "read_only": True,
+                    "suppress_degradation": True,
+                },
+            )
+        ]
+
     def test_https_capable_network_is_online_without_public_dns_port_53(self, monkeypatch):
         seen_tcp_ports: list[int] = []
         monkeypatch.setattr(

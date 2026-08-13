@@ -36,8 +36,6 @@ import socket
 import sys
 import threading
 import time
-import urllib.error
-import urllib.request
 from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any
@@ -89,22 +87,21 @@ class PreconditionState:
 
 
 def _https_endpoint_reachable(url: str) -> bool:
-    request = urllib.request.Request(
+    from core.runtime.network_gateway import get_network_gateway
+
+    response = get_network_gateway().request(
+        "HEAD",
         url,
-        method="HEAD",
         headers={"User-Agent": "Aura-Connectivity-Probe/1"},
+        timeout=_PROBE_TIMEOUT_SECONDS,
+        source="capability_preconditions.network_probe",
+        read_only=True,
+        suppress_degradation=True,
     )
-    try:
-        with urllib.request.urlopen(request, timeout=_PROBE_TIMEOUT_SECONDS) as response:
-            # Any valid HTTP response proves DNS, routing, TCP and TLS. The
-            # exact status is not a service-health contract.
-            return 100 <= int(response.status) < 600
-    except urllib.error.HTTPError:
-        # urllib raises for 4xx/5xx, but receiving that response still proves
-        # the network path and TLS handshake worked.
-        return True
-    except (OSError, TimeoutError, urllib.error.URLError):
-        return False
+    # Any valid HTTP response proves DNS, routing, TCP and TLS. The exact
+    # status is not a service-health contract, including a legitimate 4xx/5xx.
+    status = int(response.get("status_code", 0) or 0)
+    return 100 <= status < 600
 
 
 def _tcp_https_endpoint_reachable(host: str, port: int) -> bool:

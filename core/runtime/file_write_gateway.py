@@ -13,10 +13,11 @@ import stat
 import threading
 import time
 import uuid
-from collections.abc import Collection, Sequence
+from collections.abc import Callable, Collection, Iterator, Mapping, Sequence
+from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, BinaryIO, cast
+from typing import Any, BinaryIO, TypeVar, cast
 
 from core.governance_context import (
     governance_runtime_active,
@@ -35,6 +36,7 @@ from core.runtime.atomic_writer import (
 from core.runtime.state_ownership import assert_state_path_allowed
 
 logger = logging.getLogger("Aura.FileWriteGateway")
+_BinaryAdapter = TypeVar("_BinaryAdapter")
 _FILE_WRITE_DOMAINS = (
     "file_write",
     "memory_write",
@@ -1283,6 +1285,46 @@ class FileWriteGateway:
         except (OSError, ValueError):
             os.close(fd)
             raise
+
+    @contextmanager
+    def open_owned_binary_adapter(
+        self,
+        path: PathLike,
+        *,
+        mode: str,
+        adapter: Callable[..., _BinaryAdapter],
+        adapter_kwargs: Mapping[str, Any] | None = None,
+        permissions: int = 0o600,
+        source: str = "unknown",
+    ) -> Iterator[_BinaryAdapter]:
+        """Own a write-capable library adapter and its underlying file.
+
+        Media/database libraries often need a mutable file object and expose
+        their own ``open`` function. Letting each caller invoke that second
+        opener makes effect ownership ambiguous and scatters flush/close
+        ordering. This lane gives the adapter only an already-governed handle,
+        closes the adapter first, then durably flushes the underlying file.
+        """
+
+        if not callable(adapter):
+            raise TypeError("binary adapter must be callable")
+        kwargs = dict(adapter_kwargs or {})
+        with self.open_owned_binary(
+            path,
+            mode=mode,
+            permissions=permissions,
+            source=source,
+        ) as handle:
+            wrapped = adapter(handle, **kwargs)
+            try:
+                yield wrapped
+            finally:
+                close = getattr(wrapped, "close", None)
+                if callable(close):
+                    close()
+                if not handle.closed:
+                    handle.flush()
+                    os.fsync(handle.fileno())
 
     def replace_file(
         self,

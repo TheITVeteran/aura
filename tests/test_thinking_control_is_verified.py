@@ -16,6 +16,8 @@ These tests pin the probe that catches it.
 """
 from __future__ import annotations
 
+import logging
+
 from core.brain.llm.chat_format import (
     render_chat_template,
     template_supports_thinking,
@@ -86,6 +88,25 @@ def test_inert_flag_is_recorded_not_swallowed(monkeypatch):
     assert seen, "an inert reasoning flag must be recorded, never swallowed"
     assert "chat_format.thinking_control" == seen[0][0]
     assert "INERT" in seen[0][1]
+
+
+def test_broken_degradation_recorder_is_visible_without_breaking_render(
+    monkeypatch, caplog
+):
+    _clear_cache()
+    import core.runtime.errors as errors
+
+    def _broken_recorder(*_args, **_kwargs):
+        raise RuntimeError("recorder unavailable")
+
+    monkeypatch.setattr(errors, "record_degradation", _broken_recorder)
+    tok = _Tokenizer("{{ enable_thinking }}", honours=False)
+
+    with caplog.at_level(logging.WARNING, logger="Aura.ChatFormat"):
+        assert template_supports_thinking(tok) is False
+
+    assert "Unable to record inert chat-template thinking control" in caplog.text
+    assert "recorder unavailable" in caplog.text
 
 
 def test_rejected_kwarg_is_unsupported_and_not_a_degradation(monkeypatch):

@@ -51,6 +51,8 @@ import sys
 import threading
 from pathlib import Path
 from typing import Any, Iterable
+from core.governance_context import local_internal_governed_scope
+from core.runtime.dynamic_execution_gateway import get_dynamic_execution_gateway
 from core.runtime.lockdep import LockRank, checked_lock
 
 #: Path components that mean "not this project's source".
@@ -160,12 +162,21 @@ def _compiled_bodies_differ(source: Path, cache: Path) -> bool | None:
 
     try:
         cached_code = marshal.loads(cache.read_bytes()[_PYC_HEADER_BYTES:])
-        # noqa: S102 — reviewed. This compiles to COMPARE code objects with
-        # the cached .pyc, per the docstring above; the result is never
-        # executed and never leaves this function.
-        current_code = compile(  # noqa: S102
-            source.read_bytes(), str(source), "exec", dont_inherit=True
-        )
+        # Compilation is still a dynamic-code surface even though this code
+        # object is compared and never executed. Keep the raw builtin inside
+        # the canonical owner and give this maintenance probe an explicit,
+        # bounded internal governance scope.
+        with local_internal_governed_scope(
+            "loaded_source_drift.compare",
+            domain="state_mutation",
+        ):
+            current_code = get_dynamic_execution_gateway().compile_source(
+                source.read_bytes(),
+                filename=str(source),
+                mode="exec",
+                source="loaded_source_drift.compare",
+                dont_inherit=True,
+            )
     except (OSError, SyntaxError, ValueError, TypeError, EOFError, MemoryError, RecursionError):
         return None
     if not isinstance(cached_code, type(current_code)):
@@ -265,6 +276,13 @@ def _loaded_project_modules(root: Path) -> Iterable[tuple[str, Path, Path | None
         # edits their dependencies in place; scanning them only adds noise and
         # cost to a question about this repository.
         if _VENDOR_PARTS.intersection(relative.parts):
+            continue
+        # Pytest rewrites assertion bytecode before executing test modules.
+        # Their cache therefore cannot equal an ordinary compile of the same
+        # source, and an edited test file was falsely reported as stale live
+        # runtime code. Tests are not shipped runtime surfaces; exclude them
+        # structurally instead of special-casing the rewritten cache format.
+        if relative.parts and relative.parts[0] == "tests":
             continue
         cached = getattr(module, "__cached__", None)
         cache_path: Path | None = None

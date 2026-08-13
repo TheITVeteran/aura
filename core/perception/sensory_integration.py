@@ -38,6 +38,71 @@ from core.voice.microphone_authority import record_sounddevice_array
 logger = logging.getLogger("Aura.SensoryIntegration")
 
 
+def _capture_video_to_governed_file(
+    authority: Any,
+    lease: Any,
+    *,
+    path: str,
+    duration: float,
+) -> dict[str, Any]:
+    """Stream a bounded camera capture through the canonical file owner.
+
+    This function is deliberately synchronous and is only called through
+    ``asyncio.to_thread`` by ``VisionSystem.capture``. Keeping the blocking
+    frame cadence here makes that event-loop property structural rather than
+    dependent on a nested function the production linter cannot distinguish.
+    """
+    import av
+
+    from core.runtime.file_write_gateway import get_file_write_gateway
+
+    frames_written = 0
+    start = time.monotonic()
+    next_frame_at = start
+    gateway = get_file_write_gateway()
+    with gateway.open_owned_binary_adapter(
+        Path(path),
+        mode="w+b",
+        adapter=av.open,
+        adapter_kwargs={"mode": "w", "format": "mp4"},
+        permissions=0o600,
+        source="sensory_integration.video_capture",
+    ) as container:
+        stream = None
+        try:
+            while time.monotonic() - start < duration:
+                frame = authority.read(lease)
+                if frame is None:
+                    if frames_written == 0:
+                        return {"error": lease.last_error or "capture_failed"}
+                    break
+                if stream is None:
+                    height, width = frame.shape[:2]
+                    stream = container.add_stream("mpeg4", rate=20)
+                    stream.width = int(width)
+                    stream.height = int(height)
+                    stream.pix_fmt = "yuv420p"
+                video_frame = av.VideoFrame.from_ndarray(frame, format="bgr24")
+                for packet in stream.encode(video_frame):
+                    container.mux(packet)
+                frames_written += 1
+                next_frame_at += 0.05
+                delay = next_frame_at - time.monotonic()
+                if delay > 0:
+                    time.sleep(delay)
+        finally:
+            if stream is not None:
+                for packet in stream.encode():
+                    container.mux(packet)
+    return {
+        "type": "video",
+        "path": path,
+        "duration": round(time.monotonic() - start, 3),
+        "frames": frames_written,
+        "timestamp": time.time(),
+    }
+
+
 class SensoryModality(Enum):
     """Types of sensory input"""
 
@@ -521,47 +586,12 @@ class VisionSystem:
                     }
                 else:
                     path = save_path or f"capture_{int(time.time())}.mp4"
-                    import av
-
-                    container = None
-                    stream = None
-                    frames_written = 0
-                    start = time.monotonic()
-                    next_frame_at = start
-                    try:
-                        while time.monotonic() - start < duration:
-                            frame = authority.read(lease)
-                            if frame is None:
-                                if frames_written == 0:
-                                    return {"error": lease.last_error or "capture_failed"}
-                                break
-                            if container is None:
-                                height, width = frame.shape[:2]
-                                container = av.open(path, mode="w")
-                                stream = container.add_stream("mpeg4", rate=20)
-                                stream.width = int(width)
-                                stream.height = int(height)
-                                stream.pix_fmt = "yuv420p"
-                            video_frame = av.VideoFrame.from_ndarray(frame, format="bgr24")
-                            for packet in stream.encode(video_frame):
-                                container.mux(packet)
-                            frames_written += 1
-                            next_frame_at += 0.05
-                            delay = next_frame_at - time.monotonic()
-                            if delay > 0:
-                                time.sleep(delay)
-                    finally:
-                        if container is not None and stream is not None:
-                            for packet in stream.encode():
-                                container.mux(packet)
-                            container.close()
-                    return {
-                        "type": "video",
-                        "path": path,
-                        "duration": round(time.monotonic() - start, 3),
-                        "frames": frames_written,
-                        "timestamp": time.time(),
-                    }
+                    return _capture_video_to_governed_file(
+                        authority,
+                        lease,
+                        path=path,
+                        duration=duration,
+                    )
             except (ImportError, AttributeError, RuntimeError, OSError, ValueError) as e:
                 record_degradation('sensory_integration', e)
                 return {"error": str(e)}

@@ -1049,6 +1049,51 @@ def test_file_write_gateway_replace_file_durably_moves_source(tmp_path) -> None:
     assert backing.read_bytes() == b"unchanged"
 
 
+def test_file_write_gateway_owns_binary_adapter_close_and_durable_flush(tmp_path) -> None:
+    from core.runtime.file_write_gateway import FileWriteGateway
+
+    gateway = FileWriteGateway()
+    target = tmp_path / "stream.bin"
+    closed: list[bool] = []
+
+    class _Adapter:
+        def __init__(self, handle, *, prefix: bytes) -> None:
+            self.handle = handle
+            self.handle.write(prefix)
+
+        def write(self, payload: bytes) -> None:
+            self.handle.write(payload)
+
+        def close(self) -> None:
+            closed.append(True)
+
+    with gateway.open_owned_binary_adapter(
+        target,
+        mode="w+b",
+        adapter=_Adapter,
+        adapter_kwargs={"prefix": b"header:"},
+        source="unit.binary_adapter",
+    ) as adapter:
+        adapter.write(b"payload")
+
+    assert closed == [True]
+    assert target.read_bytes() == b"header:payload"
+
+
+def test_file_write_gateway_rejects_noncallable_binary_adapter(tmp_path) -> None:
+    from core.runtime.file_write_gateway import FileWriteGateway
+
+    gateway = FileWriteGateway()
+    with pytest.raises(TypeError, match="binary adapter must be callable"):
+        with gateway.open_owned_binary_adapter(
+            tmp_path / "stream.bin",
+            mode="w+b",
+            adapter=None,
+            source="unit.invalid_binary_adapter",
+        ):
+            pass
+
+
 def test_write_bytes_if_absent_applies_requested_private_mode(tmp_path) -> None:
     from core.runtime.file_write_gateway import FileWriteGateway
 

@@ -1,8 +1,11 @@
 from __future__ import annotations
 
 import hashlib as _hashlib
+import logging
 import os
 from typing import Dict, Iterable, List, Optional
+
+logger = logging.getLogger("Aura.ChatFormat")
 
 _ROLE_ALIASES = {
     "assistant": "assistant",
@@ -145,8 +148,16 @@ def _record_inert_thinking_flag(template: str) -> None:
                    "fast lanes will emit chain-of-thought and consume budget",
             severity="warning",
         )
-    except Exception:  # noqa: BLE001 - a probe must never break a render
-        pass
+    except Exception as exc:  # noqa: BLE001 - a probe must never break a render
+        # Rendering must remain available when telemetry is impaired, but the
+        # telemetry failure itself must remain observable. A silent pass made
+        # the broken reasoning-mode control and the broken recorder look the
+        # same from operations.
+        logger.warning(
+            "Unable to record inert chat-template thinking control: %s",
+            exc,
+            exc_info=True,
+        )
 
 
 def render_chat_template(

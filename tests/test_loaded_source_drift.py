@@ -9,9 +9,60 @@ detour for want of it.
 
 from __future__ import annotations
 
+import marshal
 import pathlib
 
+import core.runtime.loaded_source_drift as loaded_source_drift
+from core.runtime.dynamic_execution_gateway import DynamicExecutionGateway
 from core.runtime.loaded_source_drift import scan_drift
+
+
+def test_source_comparison_uses_the_governed_dynamic_compile_owner(
+    monkeypatch, tmp_path
+):
+    source = tmp_path / "subject.py"
+    source.write_bytes(b"VALUE = 1\n")
+    compiled = compile(source.read_bytes(), str(source), "exec", dont_inherit=True)
+    cache = tmp_path / "subject.pyc"
+    cache.write_bytes(b"\x00" * 16 + marshal.dumps(compiled))
+    calls: list[dict] = []
+
+    class _Gateway:
+        def compile_source(self, source_code, **kwargs):
+            calls.append({"source_code": source_code, **kwargs})
+            return compiled
+
+    monkeypatch.setattr(
+        loaded_source_drift,
+        "get_dynamic_execution_gateway",
+        lambda: _Gateway(),
+    )
+
+    assert loaded_source_drift._compiled_bodies_differ(source, cache) is False
+    assert calls == [
+        {
+            "source_code": b"VALUE = 1\n",
+            "filename": str(source),
+            "mode": "exec",
+            "source": "loaded_source_drift.compare",
+            "dont_inherit": True,
+        }
+    ]
+
+
+def test_dynamic_compile_owner_preserves_byte_source_and_future_isolation():
+    gateway = DynamicExecutionGateway()
+    code = gateway.compile_source(
+        b"VALUE = 1\n",
+        filename="subject.py",
+        mode="exec",
+        source="unit.source_comparison",
+        dont_inherit=True,
+    )
+
+    namespace: dict[str, object] = {}
+    exec(code, namespace)
+    assert namespace["VALUE"] == 1
 
 
 def test_a_freshly_imported_tree_reads_clean():
@@ -19,15 +70,18 @@ def test_a_freshly_imported_tree_reads_clean():
 
     report = scan_drift()
     assert report.checked > 0
-    # Test modules are legitimately unmeasurable: pytest's assertion rewriting
-    # compiles them in memory, so there is no bytecode cache to compare a
-    # source file against. They are reported as `unknown` rather than counted
-    # as clean, which is the contract — an unmeasurable module is not a fresh
-    # one. Everything the runtime actually imports must be measurable.
-    assert all(
-        name.startswith("tests.") for name in report.unknown
-    ), f"unmeasurable runtime modules: {report.unknown}"
+    # Pytest assertion rewriting produces bytecode that cannot equal ordinary
+    # compilation. Test-only modules are not runtime surfaces and must be
+    # excluded rather than misclassified as stale production code.
+    assert not any(name.startswith("tests.") for name in report.unknown)
     assert not report.is_stale, report.narrative()
+
+
+def test_assertion_rewritten_test_modules_are_not_runtime_drift_inputs():
+    root = loaded_source_drift._project_root()
+    loaded = tuple(loaded_source_drift._loaded_project_modules(root))
+
+    assert not any(name.startswith("tests.") for name, _source, _cache in loaded)
 
 
 def test_a_real_edit_is_detected_and_clears():

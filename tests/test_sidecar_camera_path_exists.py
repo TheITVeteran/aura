@@ -595,6 +595,22 @@ async def test_vision_system_video_capture_uses_pyav_not_main_process_cv2(
     assert authority.released is True
 
 
+def test_video_capture_is_structurally_off_loop_and_uses_governed_streaming_file():
+    import inspect
+
+    import core.perception.sensory_integration as sensory_integration
+
+    capture_source = inspect.getsource(sensory_integration.VisionSystem.capture)
+    helper_source = inspect.getsource(
+        sensory_integration._capture_video_to_governed_file
+    )
+
+    assert "asyncio.to_thread(_do_capture)" in capture_source
+    assert "time.sleep" not in capture_source
+    assert "open_owned_binary_adapter" in helper_source
+    assert "adapter=av.open" in helper_source
+
+
 def test_on_demand_camera_provider_captures_without_inprocess_cv2(monkeypatch):
     import core.perception.camera_authority as camera_mod
     from core.perception.sensory_runtime import CameraProvider

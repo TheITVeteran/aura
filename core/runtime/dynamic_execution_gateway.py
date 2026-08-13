@@ -38,22 +38,30 @@ class DynamicExecutionGateway:
 
     def compile_source(
         self,
-        source_code: str,
+        source_code: str | bytes,
         *,
         filename: str,
         mode: str = "exec",
         source: str,
+        dont_inherit: bool = False,
         compiler: Callable[..., CodeType] | None = None,
     ) -> CodeType:
         """Compile source code through the dynamic-execution owner."""
 
-        if not isinstance(source_code, str):
-            raise TypeError("source_code must be a string")
+        if not isinstance(source_code, (str, bytes)):
+            raise TypeError("source_code must be text or bytes")
+        if not isinstance(filename, str) or not filename:
+            raise ValueError("filename must be a non-empty string")
         if mode not in {"exec", "eval", "single"}:
             raise ValueError(f"unsupported compile mode: {mode}")
         self._authorize("compile_source", source)
         compile_fn = compiler or compile
-        return compile_fn(source_code, filename=filename, mode=mode)
+        return compile_fn(
+            source_code,
+            filename=filename,
+            mode=mode,
+            dont_inherit=bool(dont_inherit),
+        )
 
     def execute_code_object(
         self,
