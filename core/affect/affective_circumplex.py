@@ -20,11 +20,15 @@ LLM parameter mapping:
   Low valence   → higher rep_penalty (avoids rumination spirals)
   High arousal  → higher rep_penalty floor (prevents excited mantra loops)
 """
+from __future__ import annotations
+
 import logging
 import time
-from typing import Any, Dict, Optional, Tuple
+from typing import Any
 
 from core.runtime.errors import record_degradation
+from core.verify import influence_channels
+from core.verify.lesion_registry import register_flag_lesion
 
 logger = logging.getLogger("Aura.AffectiveCircumplex")
 
@@ -62,7 +66,7 @@ class AffectiveCircumplex:
     def __init__(self):
         self._last_compute: float = 0.0
         self._cache_ttl: float = 3.0          # Recompute every 3 seconds max
-        self._cached: Optional[Dict[str, Any]] = None
+        self._cached: dict[str, Any] | None = None
         # Refractory Period: emotional momentum offsets that decay over time
         self._valence_offset: float = 0.0     # transient boost/dip on valence
         self._arousal_offset: float = 0.0     # transient boost/dip on arousal
@@ -82,7 +86,9 @@ class AffectiveCircumplex:
           Thermal alert         → apply_event(-0.10, +0.20)
           Silence chosen        → apply_event(+0.05, -0.10)
         """
-        _clamp = lambda x: max(-0.40, min(0.40, x))
+        def _clamp(value: float) -> float:
+            return max(-0.40, min(0.40, value))
+
         self._valence_offset = _clamp(self._valence_offset + valence_delta)
         self._arousal_offset = _clamp(self._arousal_offset + arousal_delta)
         self._cached = None   # invalidate cache so next call sees the event
@@ -90,12 +96,12 @@ class AffectiveCircumplex:
                      valence_delta, arousal_delta,
                      self._valence_offset, self._arousal_offset)
 
-    def get_coordinates(self) -> Tuple[float, float]:
+    def get_coordinates(self) -> tuple[float, float]:
         """Return current (valence, arousal) pair, each in [0.0, 1.0]."""
         params = self._compute()
         return params["valence"], params["arousal"]
 
-    def get_llm_params(self) -> Dict[str, Any]:
+    def get_llm_params(self) -> dict[str, Any]:
         """
         Return LLM generation parameters derived from current affective state.
 
@@ -116,7 +122,7 @@ class AffectiveCircumplex:
 
     # ─── Internal ─────────────────────────────────────────────────────────────
 
-    def _compute(self) -> Dict[str, Any]:
+    def _compute(self) -> dict[str, Any]:
         now = time.monotonic()
         if self._cached and (now - self._last_compute) < self._cache_ttl:
             return self._cached
@@ -198,7 +204,7 @@ class AffectiveCircumplex:
             self._arousal_offset = 0.0
         self._last_decay = now
 
-    def _sample_raw_axes(self) -> Tuple[float, float]:
+    def _sample_raw_axes(self) -> tuple[float, float]:
         """Read live system metrics and return (valence, arousal)."""
         self._decay_offsets()
         cpu = 0.0
@@ -282,7 +288,7 @@ class AffectiveCircumplex:
         return valence, arousal
 
     @staticmethod
-    def _resolve_neurochemical_system() -> Optional[Any]:
+    def _resolve_neurochemical_system() -> Any | None:
         try:
             from core.container import ServiceContainer
 
@@ -351,10 +357,10 @@ class AffectiveCircumplex:
 
 
 # ── Singleton ──────────────────────────────────────────────────────────────────
-_circumplex: Optional["AffectiveCircumplex"] = None
+_circumplex: AffectiveCircumplex | None = None
 
 
-def get_circumplex() -> "AffectiveCircumplex":
+def get_circumplex() -> AffectiveCircumplex:
     global _circumplex
     if _circumplex is None:
         _circumplex = AffectiveCircumplex()
@@ -374,20 +380,9 @@ def get_circumplex() -> "AffectiveCircumplex":
 # imports it to read the parameters, so the channel exists exactly when the
 # thing it measures does. The neutral is no affective modulation at all — the
 # caller's own budget and the default temperature.
-try:  # pragma: no cover - registration must never break an affect read
-    from core.verify import influence_channels as _influence_channels
-    from core.verify.lesion_registry import register_flag_lesion as _register_flag_lesion
-
-    _register_flag_lesion(
-        _influence_channels.AFFECT_CIRCUMPLEX_SAMPLING,
-        owner="core/affect/affective_circumplex.py",
-        neutral="no affective modulation: caller's token budget, default temperature",
-        direct_actuation=True,
-    )
-except Exception as _lesion_exc:  # noqa: BLE001
-    record_degradation(
-        "affective_circumplex",
-        _lesion_exc,
-        severity="debug",
-        action="circumplex sampling left unmeasurable by the influence apparatus",
-    )
+register_flag_lesion(
+    influence_channels.AFFECT_CIRCUMPLEX_SAMPLING,
+    owner="core/affect/affective_circumplex.py",
+    neutral="no affective modulation: caller's token budget, default temperature",
+    direct_actuation=True,
+)
