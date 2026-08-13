@@ -505,6 +505,39 @@ def test_launch_contract_is_source_bound_and_restart_supervised(
     assert intent["config_sha256"] == config["config_sha256"]
 
 
+def test_stage_runtime_preserves_virtualenv_entrypoint(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    config = _config(tmp_path)
+    base_python = tmp_path / "base-python"
+    base_python.write_bytes(b"binary")
+    venv_python = tmp_path / "venv" / "bin" / "python"
+    venv_python.parent.mkdir(parents=True)
+    venv_python.symlink_to(base_python)
+    identity = {
+        "executable": str(venv_python),
+        "real_executable": str(base_python),
+        "sys_prefix": str(venv_python.parents[1]),
+        "sha256": "i" * 64,
+    }
+    monkeypatch.setattr(
+        pipeline.resident,
+        "_load_config",
+        lambda _path: {"runtime": {"interpreter": identity}},
+    )
+    monkeypatch.setattr(
+        pipeline.replication,
+        "_runtime_python",
+        lambda _config: (venv_python, identity),
+    )
+
+    selected = pipeline._runtime_python(config)  # noqa: SLF001
+
+    assert selected == venv_python
+    assert selected != selected.resolve(strict=True)
+
+
 def test_supervision_requires_launchd_parent_and_exact_caffeinate_child(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

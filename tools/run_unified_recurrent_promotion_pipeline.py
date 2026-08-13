@@ -1249,8 +1249,14 @@ def _runtime_python(config: Mapping[str, Any]) -> Path:
     campaign_config = resident._load_config(  # noqa: SLF001
         Path(str(config["campaign"])) / "campaign.json"
     )
-    python, _interpreter = replication._runtime_python(campaign_config)  # noqa: SLF001
-    return python.resolve(strict=True)
+    python, interpreter = replication._runtime_python(campaign_config)  # noqa: SLF001
+    # Preserve the attested virtualenv entrypoint for execution. Resolving its
+    # symlink selects the base Homebrew binary, bypasses pyvenv.cfg discovery,
+    # and drops venv-only dependencies such as MLX. The resolved binary remains
+    # part of the interpreter attestation; it is not the executable contract.
+    if str(python) != interpreter.get("executable"):
+        _fail("promotion runtime interpreter entrypoint differs from attestation")
+    return python
 
 
 def _stage_cleanup_members(
