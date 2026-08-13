@@ -48484,3 +48484,38 @@ Ruff and diff hygiene pass. Evidence is
 `artifacts/closeout/latent_cortex/cp382_bounded_episode_fault_integrity.json`.
 The next bounded action is a fresh empty-journal seven-arm component campaign
 frozen from CP382. CP380 must not be resumed or graded.
+
+## Checkpoint 2026-08-13-383: A Finished Campaign Cannot Wait for This Chat
+
+The CP382 replacement campaign is source-frozen at
+`dd7da4cedbe320611e3fec4a5c594c23705837bb`. Its preflight regenerated the
+seven hidden tasks and expanded the requested composed treatment into the
+exact seven-arm, 49-cell causal matrix. Launchd owns controller PID `41735`,
+its exact `caffeinate -dims` child is PID `41736`, and sweep process group
+`41864` loaded the resident 32B plus the source-bound recurrent package. The
+HMAC heartbeat verifies the config and lineage. Its first ordinary cell
+committed cleanly in `62.502s`; the uncomposed complete-system cell is running.
+No scientific result exists yet.
+
+The prior post-training pipeline is intentionally not chained to this run. It
+targets a retired checkpoint-selection topology and exposes actions that are
+outside this component experiment. Reusing it would risk treating the wrong
+object as authoritative.
+
+`tools/watch_rlc_reconciliation_verification.py` is the narrow replacement.
+Under separate launchd and sleep-inhibitor custody it follows one exact
+controller config, revalidates its digest and immutable source, consumes the
+controller's authenticated status, and waits for terminal evidence. A complete
+matrix invokes `verify_rlc_reconciliation_campaign.py` from the campaign's own
+frozen source. A valid terminal-futility receipt is preserved without falsely
+demanding a matrix that the preregistered stopping rule deliberately ended.
+Blocked controller state, timeout, or verifier failure remain explicit blocked
+receipts.
+
+The watcher cannot train, attach, fuse, activate, or change ordinary serving.
+Every result, including a positive component canary, explicitly denies fusion,
+ordinary serving, frontier reasoning and `WOW Signal`; a positive result can
+authorize only the already-declared powered replication. The focused watcher,
+controller and independent-verifier contracts pass `55/55`; Ruff, byte
+compilation and diff hygiene pass. Evidence is
+`artifacts/closeout/latent_cortex/cp383_unattended_independent_adjudication.json`.

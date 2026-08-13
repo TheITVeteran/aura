@@ -1,0 +1,36 @@
+{
+  "schema": "aura.rlc.closeout_checkpoint.v1",
+  "checkpoint": "CP383",
+  "subject": "campaign completion automatically reaches an independent bounded adjudication",
+  "runtime_changes": [
+    "a launchd-supervised watcher follows one exact controller configuration to terminal evidence",
+    "the watcher revalidates the controller config digest, immutable source and authenticated controller status",
+    "a complete matrix invokes the independent verifier from the campaign's frozen source capsule",
+    "a signed terminal-futility receipt is preserved as a negative stopping result without forcing an impossible full-matrix verification",
+    "controller exhaustion, watcher timeout and verifier failure remain explicit blocked outcomes",
+    "the watcher has no training, attachment, fusion, activation or ordinary-serving authority",
+    "every terminal watcher receipt explicitly denies fusion, WOW Signal and ordinary serving"
+  ],
+  "verification": {
+    "focused_watcher_controller_and_verifier_tests": "55 passed",
+    "ruff": "passed",
+    "compile": "passed",
+    "diff_check": "passed"
+  },
+  "active_campaign_observation": {
+    "campaign": "cp382-bounded-contract-v2-component-s41037613",
+    "source_commit": "dd7da4cedbe320611e3fec4a5c594c23705837bb",
+    "config_sha256": "0afd59baec64397b696ba86eeac8c6abbc6f038f55c390ddaa2d533f52158232",
+    "matrix": "7 tasks x 7 arms",
+    "first_durable_cell": "vanilla novel_algorithms completed cleanly in 62.50169620802626 seconds",
+    "scientific_result_available": false,
+    "modified_by_this_checkpoint": false
+  },
+  "claims": {
+    "reasoning_gain_proven": false,
+    "fusion_authorized": false,
+    "frontier_level_proven": false,
+    "wow_signal_authorized": false
+  },
+  "next": "freeze this watcher, install its launchd job beside the active campaign, and continue engineering while both detached supervisors run"
+}
