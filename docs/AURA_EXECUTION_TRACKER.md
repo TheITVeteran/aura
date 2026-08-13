@@ -47120,3 +47120,34 @@ complete reports, seed `20260812295` is actively decoding and had reached
 candidate `28`, with its resident evaluator and memory sentinel alive and
 status artifacts moving. No scientific verdict, tissue promotion authority,
 fusion authority, frontier gain or `WOW Signal` is claimed from partial data.
+
+## Checkpoint 2026-08-12-329: Scoped Conversation Closure Is Commit-Bound
+
+All twelve findings implemented by CP328 are closed in the append-only scoped
+remediation ledger against its published implementation commit
+`2036cfe6ddd38daf1004e7e6fc07a65a02692431`. The frozen `core/conversation`
+inventory now reports `58/58` findings closed (`100.0%`) with zero remaining:
+`8/8` inventory-critical, `40/40` inventory-high and `10/10`
+inventory-medium findings have a recorded disposition. This is closure of the
+exact CP310 conversation inventory, not a claim that the full repository's
+semantic review is complete.
+
+CP328 also changed `chat_preflight.py` and `response_reliability.py`, whose
+older receipts protected six independent custody and reliability findings.
+Verification correctly detected those source hashes as changed. Their current
+contracts were rerun together and passed `414/414`; the six findings were then
+recorded as `verified_already_remediated` against CP328 rather than being left
+with stale evidence. The final verifier reports zero orphan finding IDs and
+zero files changed since their latest closure records. The ledger writer's own
+contracts pass `12/12`, and the scoped manifest records ledger digest
+`2cdf5e83ce0a72c7f8f17c27b5e61e193ea5c05a877f622c172e2af824e7a009`.
+
+This evidence checkpoint closes the bounded `core/conversation` campaign and
+returns the closeout programme to the next unclosed subsystem inventory; it
+does not close the repository-wide semantic campaign, aggregate production
+rubric or deferred soak gates. Powered resident-32B replication remains
+independent and undisturbed. At this checkpoint seed `20260812295` is still
+running and had advanced to candidate `37`, while its controller heartbeat,
+resident evaluator and memory sentinel remained alive. No verdict, tissue
+promotion authority, fusion authority, frontier gain or `WOW Signal` is
+claimed from the partial run.

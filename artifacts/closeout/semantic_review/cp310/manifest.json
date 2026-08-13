@@ -17,7 +17,7 @@
     "source_validation": "8ca62217f5d7e1f414e3e2b591689689a8727eaf0279952475609093ba660f3f",
     "inventory_status": "9871e1055897763e7ac4a0b53df4bab0175472e2195549485b3c71cb95e92f8a",
     "adjudication": "69e47b6365a65cde8e89f7efc82d3d6d72de198e4496ad3f820cc57de5153803",
-    "remediation_ledger": "7a1e83f3149b70f50e86df87a25bc8afed211de930f2f7b815d94b6b84b7c8a1"
+    "remediation_ledger": "2cdf5e83ce0a72c7f8f17c27b5e61e193ea5c05a877f622c172e2af824e7a009"
   },
   "validation": {
     "exact_source_campaign_passed": true,
@@ -46,8 +46,8 @@
     "stale": 4
   },
   "remediation": {
-    "recorded_closed": 46,
-    "remaining_open": 12,
+    "recorded_closed": 58,
+    "remaining_open": 0,
     "closure_checkpoints": [
       "929cf62ae7143c5db23587538802e31815796d91",
       "da0c0af466b770ec5875d3435b9746f44b14c471",
@@ -56,7 +56,8 @@
       "5abfe58162719d4d2397f44acd57a7d857ac8b30",
       "a4e5a4a6170dce4941f51a9fc6513f60ef557901",
       "99a4949141e094241c3e60f6a672b78cbe65be01",
-      "769ccddcb0e95b7d1e17df80f65478df744801d2"
+      "769ccddcb0e95b7d1e17df80f65478df744801d2",
+      "2036cfe6ddd38daf1004e7e6fc07a65a02692431"
     ]
   },
   "claim_supported": [
@@ -69,10 +70,11 @@
     "pending_retry_custody_findings_remediated",
     "external_chat_ipc_findings_remediated",
     "semantic_content_reliability_findings_remediated",
-    "terminal_chat_liveness_findings_remediated"
+    "terminal_chat_liveness_findings_remediated",
+    "remaining_conversation_semantic_findings_remediated",
+    "all_scoped_core_conversation_findings_closed"
   ],
   "claim_not_supported": [
-    "all_accepted_findings_remediated",
     "full_repository_semantic_review_complete",
     "aggregate_closeout_complete",
     "live_runtime_certified"
