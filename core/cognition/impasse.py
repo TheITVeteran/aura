@@ -58,6 +58,8 @@ __all__ = [
     "Impasse",
     "Chunk",
     "ChunkStore",
+    "ImpasseLearner",
+    "get_impasse_learner",
     "classify",
     "situation_signature",
 ]
@@ -220,13 +222,25 @@ class Chunk:
         return self.p_correct * self.cost_saved_per_use - self.match_cost
 
 
+#: Hard ceiling on retained chunks and recorded impasses. A long-lived process
+#: meets unboundedly many distinct situations, so a store that only grows is a
+#: leak with a learning-shaped justification — NASA/JPL rule 3 applied to a
+#: cognitive cache. Eviction is by lowest expected value, so the bound removes
+#: what pays least rather than what arrived first.
+_MAX_CHUNKS = 4096
+_MAX_IMPASSE_LOG = 2048
+
+
 @dataclass
 class ChunkStore:
     """Learned impasse resolutions, retained only while they pay."""
 
+    max_chunks: int = _MAX_CHUNKS
+    max_impasse_log: int = _MAX_IMPASSE_LOG
     _chunks: dict[str, Chunk] = field(default_factory=dict)
     _impasses: list[Impasse] = field(default_factory=list)
     _retracted: list[tuple[str, str]] = field(default_factory=list)
+    _evicted: int = 0
 
     # -- recording -------------------------------------------------------
 
@@ -239,6 +253,11 @@ class ChunkStore:
         underspecified.
         """
         self._impasses.append(impasse)
+        if len(self._impasses) > self.max_impasse_log:
+            # Keep the recent tail: the rate is the diagnostic, and an
+            # unbounded log of every deadlock a long-lived process ever hit is
+            # a leak rather than a record.
+            del self._impasses[: len(self._impasses) - self.max_impasse_log]
         return impasse
 
     def learn(
@@ -269,7 +288,24 @@ class ChunkStore:
             match_cost=match_cost,
         )
         self._chunks[impasse.signature] = chunk
+        self._enforce_capacity()
         return chunk
+
+    def _enforce_capacity(self) -> None:
+        """Evict the least valuable chunks once the store is full.
+
+        Evicting by expected value rather than by age is the point: a chunk
+        that has been paying for months should outlive one learned five
+        minutes ago that has never fired. Age-based eviction would make the
+        cache forget precisely what it had learned best.
+        """
+        overflow = len(self._chunks) - self.max_chunks
+        if overflow <= 0:
+            return
+        ranked = sorted(self._chunks.values(), key=lambda c: c.expected_value)
+        for chunk in ranked[:overflow]:
+            del self._chunks[chunk.signature]
+            self._evicted += 1
 
     def recall(self, signature: str) -> Chunk | None:
         """The learned resolution for this exact situation, if one is retained."""
@@ -350,5 +386,98 @@ class ChunkStore:
             "impasse_counts": self.impasse_counts(),
             "total_match_cost_s": round(self.total_match_cost(), 6),
             "net_value_s": round(self.net_value(), 6),
-            "retracted": list(self._retracted),
+            "evicted": self._evicted,
+            "retracted": list(self._retracted[-16:]),
         }
+
+
+class ImpasseLearner:
+    """Process-wide chunk learning, safe to call from live cognition.
+
+    :class:`ChunkStore` is the mechanism; this is the thing a running system
+    actually holds. It adds the three properties a cache in a long-lived
+    cognitive loop needs and a bare dict does not: a lock, a bound, and a
+    pruning cadence that is tied to use rather than to a timer, so a store that
+    is never touched never spends any time maintaining itself.
+    """
+
+    def __init__(self, store: ChunkStore | None = None) -> None:
+        import threading
+
+        self._lock = threading.Lock()
+        self._store = store or ChunkStore()
+        self._since_prune = 0
+        self._hits = 0
+        self._misses = 0
+
+    #: Learn/recall operations between prunes. Pruning walks every chunk, so
+    #: doing it per call would add the cost the accounting exists to avoid;
+    #: doing it never lets non-paying chunks accumulate match cost unchecked.
+    _PRUNE_INTERVAL = 64
+
+    def recall(self, signature: str) -> Chunk | None:
+        with self._lock:
+            chunk = self._store.recall(signature)
+            if chunk is None:
+                self._misses += 1
+            else:
+                self._hits += 1
+            return chunk
+
+    def record_impasse(self, impasse: Impasse) -> None:
+        with self._lock:
+            self._store.record_impasse(impasse)
+
+    def learn(
+        self,
+        impasse: Impasse,
+        resolution: str,
+        *,
+        cost_saved_per_use: float,
+        match_cost: float,
+    ) -> Chunk:
+        with self._lock:
+            chunk = self._store.learn(
+                impasse,
+                resolution,
+                cost_saved_per_use=cost_saved_per_use,
+                match_cost=match_cost,
+            )
+            self._maybe_prune_locked()
+            return chunk
+
+    def record_outcome(self, signature: str, *, correct: bool) -> None:
+        with self._lock:
+            self._store.record_outcome(signature, correct=correct)
+            self._maybe_prune_locked()
+
+    def _maybe_prune_locked(self) -> None:
+        self._since_prune += 1
+        if self._since_prune >= self._PRUNE_INTERVAL:
+            self._since_prune = 0
+            self._store.prune()
+
+    def prune_now(self) -> list[Chunk]:
+        with self._lock:
+            self._since_prune = 0
+            return self._store.prune()
+
+    def report(self) -> dict[str, object]:
+        with self._lock:
+            report = self._store.report()
+            total = self._hits + self._misses
+            report["hits"] = self._hits
+            report["misses"] = self._misses
+            report["hit_rate"] = round(self._hits / total, 4) if total else 0.0
+            return report
+
+
+_learner: ImpasseLearner | None = None
+
+
+def get_impasse_learner() -> ImpasseLearner:
+    """The process-wide learner. Created on first use, never reset implicitly."""
+    global _learner
+    if _learner is None:
+        _learner = ImpasseLearner()
+    return _learner

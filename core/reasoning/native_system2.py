@@ -230,6 +230,12 @@ class NativeSearchReceipt:
     #: declared none. Named so a reviewer can see that a safety brake was
     #: applied on the strength of spelling alone.
     hazard_floored_actions: List[str] = field(default_factory=list)
+    #: The compiled-resolution key for this decision, when chunking applied.
+    chunk_signature: Optional[str] = None
+    #: True when a previously learned chunk supplied the answer and the search
+    #: collapsed to confirming it. A receipt that does not say this would
+    #: present a one-node confirmation as if it were full deliberation.
+    chunk_reused: bool = False
 
     @property
     def value_is_evidenced(self) -> bool:
@@ -714,6 +720,63 @@ class NativeSystem2Engine:
             branching_factor=max(1, len(candidate_actions)),
             beam_width=max(1, min(5, len(candidate_actions))),
         )
+
+        # Soar chunking, on the decision that is expensive enough to be worth
+        # compiling. An impasse here is a real substate — a budgeted MCTS/beam
+        # search over the candidate set — so a compiled resolution saves
+        # measured search time rather than the microseconds a cheap tie costs.
+        # This is why chunking is wired here and not to workspace arbitration:
+        # a chunk has to out-earn its own match cost, and tie-breaking never
+        # could.
+        from core.cognition.impasse import (
+            ImpasseType,
+            Impasse,
+            get_impasse_learner,
+            situation_signature,
+        )
+
+        learner = get_impasse_learner()
+        signature = situation_signature(
+            {"goal": "rank_actions", "context": context.strip()[:256]},
+            [a.name for a in candidate_actions],
+        )
+        impasse = Impasse(
+            type=ImpasseType.TIE,
+            signature=signature,
+            candidates=tuple(sorted(a.name for a in candidate_actions)),
+            detail=f"{len(candidate_actions)} candidates require deliberation",
+        )
+
+        match_started = time.perf_counter()
+        chunk = learner.recall(signature)
+        match_cost = time.perf_counter() - match_started
+        by_name = {a.name: a for a in candidate_actions}
+
+        if chunk is not None and chunk.resolution in by_name:
+            # The impasse is not re-entered. The compiled resolution supplies
+            # the answer and the search collapses to confirming it, which is
+            # what makes the saving real rather than notional.
+            #
+            # max_depth stays at 2 and the budget is small but not 1. Dropping
+            # to depth 1 was measured and is wrong: the generator builds the
+            # `verify:` successor at depth 1, so a depth-1 reuse committed to
+            # the bare action where the original deliberation had committed to
+            # verifying it. A chunk that silently removes the verification step
+            # is not a compiled decision, it is a different and less safe one.
+            cfg = System2SearchConfig(
+                algorithm=cfg.algorithm,
+                budget=4,
+                max_depth=2,
+                branching_factor=1,
+                beam_width=1,
+            )
+            candidate_actions = [by_name[chunk.resolution]]
+            chunk_applied = chunk
+        else:
+            learner.record_impasse(impasse)
+            chunk_applied = None
+
+        deliberation_started = time.perf_counter()
         result = await self.search(
             "rank candidate actions",
             {"context": context, "candidate_count": len(candidate_actions)},
@@ -730,8 +793,34 @@ class NativeSystem2Engine:
         # rigorous search and says nothing about whether its inputs meant
         # anything, which is the specific way structured search over invented
         # numbers comes to look like deep reasoning.
+        deliberation_s = time.perf_counter() - deliberation_started
+
         result.receipt.value_evidence = dict(evidence_counts)
         result.receipt.hazard_floored_actions = list(hazard_floored)
+
+        committed = result.committed_action
+        chosen = (
+            (committed.metadata.get("verifies") or committed.name)
+            if committed is not None
+            else None
+        )
+        if chunk_applied is not None:
+            result.receipt.chunk_signature = signature
+            result.receipt.chunk_reused = True
+        elif chosen is not None and chosen in by_name:
+            # Compile what the substate produced. cost_saved_per_use is the
+            # deliberation actually measured, not an estimate, and match_cost
+            # is what the lookup above actually took — so the expected-value
+            # test that decides whether to keep this chunk is grounded in two
+            # measurements rather than in optimism.
+            learner.learn(
+                impasse,
+                chosen,
+                cost_saved_per_use=max(0.0, deliberation_s),
+                match_cost=max(0.0, match_cost),
+            )
+            result.receipt.chunk_signature = signature
+            result.receipt.chunk_reused = False
         if not result.receipt.value_is_evidenced and candidate_actions:
             logger.info(
                 "rank_actions: no value evidence for any of %d candidates "
