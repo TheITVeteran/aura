@@ -12,7 +12,7 @@ import pytest
 from core.conversation import persistence as persistence_module
 from core.conversation.persistence import (
     ConversationPersistence,
-    ConversationRevisionConflict,
+    ConversationRevisionConflictError,
 )
 
 
@@ -79,6 +79,114 @@ def test_conversation_persistence_records_exchange_atomically(monkeypatch, tmp_p
         "exchange-42:aura",
     ]
     assert len(published) == 2
+
+
+def test_completed_exchange_atomically_enqueues_durable_memory_log(tmp_path):
+    store = ConversationPersistence(tmp_path / "memory-outbox.db")
+    session_id = store.start_session()
+
+    store.record_exchange(
+        "Durably learn this turn",
+        "This answer must survive worker restart.",
+        origin="desktop_ui",
+        cid="outbox-1",
+        session_id=session_id,
+        principal_id="bryan",
+        principal_surface="owner",
+        enqueue_memory_log=True,
+    )
+
+    assert store.memory_log_outbox_status() == {
+        "pending": 1,
+        "processing": 0,
+        "completed": 0,
+        "rejected": 0,
+        "failed": 0,
+    }
+    claimed = store.claim_memory_log_batch(limit=4)
+    assert len(claimed) == 1
+    assert claimed[0]["operation_id"] == f"{session_id}:outbox-1:r1"
+    assert claimed[0]["user_content"] == "Durably learn this turn"
+    assert claimed[0]["aura_content"] == "This answer must survive worker restart."
+    assert claimed[0]["principal_id"] == "bryan"
+    assert claimed[0]["principal_surface"] == "owner"
+    assert claimed[0]["attempts"] == 1
+
+    assert store.settle_memory_log_item(
+        claimed[0]["operation_id"],
+        outcome="completed",
+    ) == "completed"
+    assert store.memory_log_outbox_status()["completed"] == 1
+
+
+def test_memory_log_outbox_reclaims_expired_lease_and_bounds_poison_retry(tmp_path):
+    store = ConversationPersistence(tmp_path / "memory-outbox-retry.db")
+    session_id = store.start_session()
+    store.record_exchange(
+        "Retry this turn",
+        "The durable outbox owns it.",
+        cid="outbox-retry",
+        session_id=session_id,
+        enqueue_memory_log=True,
+    )
+    operation_id = f"{session_id}:outbox-retry:r1"
+    first = store.claim_memory_log_batch(limit=1)[0]
+    assert first["operation_id"] == operation_id
+
+    with sqlite3.connect(tmp_path / "memory-outbox-retry.db") as con:
+        con.execute(
+            "UPDATE conversation_memory_outbox SET claimed_at = ? "
+            "WHERE operation_id = ?",
+            (0.0, operation_id),
+        )
+        con.commit()
+
+    reclaimed = store.claim_memory_log_batch(limit=1, lease_s=1.0)[0]
+    assert reclaimed["operation_id"] == operation_id
+    assert reclaimed["attempts"] == 2
+    for _ in range(7):
+        state = store.settle_memory_log_item(
+            operation_id,
+            outcome="retry",
+            error="transient memory service failure",
+        )
+        if state == "failed":
+            break
+        assert state == "pending"
+        store.claim_memory_log_batch(limit=1)
+
+    assert state == "failed"
+    assert store.memory_log_outbox_status()["failed"] == 1
+
+
+def test_regenerated_revision_gets_distinct_memory_log_identity(tmp_path):
+    store = ConversationPersistence(tmp_path / "memory-outbox-revision.db")
+    session_id = store.start_session()
+    store.record_exchange(
+        "Revise the answer",
+        "Original answer",
+        cid="outbox-regen",
+        session_id=session_id,
+        enqueue_memory_log=True,
+    )
+    store.replace_aura_turn(
+        exchange_id="outbox-regen",
+        session_id=session_id,
+        replacement_content="Replacement answer",
+        expected_revision=1,
+        expected_content_sha256=hashlib.sha256(b"Original answer").hexdigest(),
+    )
+
+    claimed = store.claim_memory_log_batch(limit=4)
+    assert [item["revision"] for item in claimed] == [1, 2]
+    assert [item["aura_content"] for item in claimed] == [
+        "Original answer",
+        "Replacement answer",
+    ]
+    assert [item["operation_id"] for item in claimed] == [
+        f"{session_id}:outbox-regen:r1",
+        f"{session_id}:outbox-regen:r2",
+    ]
 
 
 def test_conversation_regeneration_is_atomic_and_append_only(monkeypatch, tmp_path):
@@ -166,7 +274,7 @@ def test_conversation_regeneration_rejects_stale_revision_without_mutation(tmp_p
         expected_content_sha256=original_sha,
     )
 
-    with pytest.raises(ConversationRevisionConflict, match="source revision changed"):
+    with pytest.raises(ConversationRevisionConflictError, match="source revision changed"):
         store.replace_aura_turn(
             exchange_id="regen-stale",
             session_id=session_id,

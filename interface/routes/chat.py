@@ -18,6 +18,7 @@ import logging
 import math
 import os
 import re
+import sqlite3
 import threading
 import time
 import uuid
@@ -44,7 +45,7 @@ from core.brain.live_mind_contract import (
 from core.brain.llm.cloud_errors import cloud_call_error_types
 from core.brain.llm.latent_cortex.output_quality import evaluate_latent_output
 from core.container import ServiceContainer
-from core.conversation.persistence import ConversationRevisionConflict
+from core.conversation.persistence import ConversationRevisionConflictError
 from core.conversation.session_scope import (
     conversation_session_var as _CHAT_REQUEST_SESSION,  # noqa: N812
 )
@@ -1823,11 +1824,13 @@ _FOREGROUND_CHAT_LOCK_PREEMPT_AFTER_S = _env_float(
     minimum=45.0,
 )
 _CHAT_TURN_MEMORY_LOG_DRAIN_TASK_NAME = "ChatTurnMemoryLogDrain"
-_CHAT_TURN_MEMORY_LOG_QUEUE_MAX = 64
+_CHAT_TURN_MEMORY_LOG_RETRY_TASK_NAME = "ChatTurnMemoryLogRetry"
+_CHAT_TURN_MEMORY_LOG_BATCH_MAX = 16
+_CHAT_TURN_MEMORY_LOG_RUN_MAX = 128
 _CHAT_TURN_MEMORY_LOG_TIMEOUT_S = 20.0
 _CHAT_TURN_CONSCIOUSNESS_UPDATE_TIMEOUT_S = 8.0
-_CHAT_TURN_MEMORY_LOG_QUEUE: collections.deque[dict[str, str]] = collections.deque()
-_CHAT_TURN_MEMORY_LOG_QUEUE_LOCK = threading.RLock()
+_CHAT_TURN_MEMORY_LOG_LEASE_RECHECK_S = 61.0
+_CHAT_TURN_MEMORY_LOG_SHUTDOWN_HANDLER = "chat.durable_memory_log_outbox"
 _DURABLE_CONVERSATION_WRITE_TIMEOUT_S = _DURABLE_CONVERSATION_CONTEXT_TIMEOUT_S
 _DURABLE_CONVERSATION_WRITE_DRAIN_TIMEOUT_S = 12.0
 _DURABLE_CONVERSATION_WRITE_HISTORY_MAX = 1024
@@ -1908,6 +1911,7 @@ def _settle_durable_conversation_write(
             if user_record is not None and user_record.state == "failed":
                 user_record.state = "superseded"
                 user_record.error = "superseded_by_atomic_exchange"
+        _schedule_chat_turn_memory_log()
     # Completion callbacks execute on the owning event loop. Updating these
     # scalar receipt fields in place lets operators see a late write settle;
     # the registry above remains authoritative across log trimming.
@@ -2530,13 +2534,17 @@ def _resolve_exact_profile_user_id(request: Request) -> str:
         return ""
 
 
-async def _run_chat_turn_memory_log_item(payload: dict[str, str]) -> None:
-    user_message = str(payload.get("user_message") or "")
-    aura_response = str(payload.get("aura_response") or "")
+async def _run_chat_turn_memory_log_item(
+    payload: dict[str, Any],
+) -> tuple[str, str]:
+    user_message = str(payload.get("user_content") or "")
+    aura_response = str(payload.get("aura_content") or "")
     session_id = str(payload.get("session_id") or "")
-    chat_origin = str(payload.get("chat_origin") or "unknown")
-    user_id = str(payload.get("user_id") or "").strip()[:160]
+    chat_origin = str(payload.get("origin") or "unknown")
+    user_id = str(payload.get("principal_id") or "").strip()[:160]
     principal_surface = str(payload.get("principal_surface") or "").strip().casefold()[:32]
+    operation_id = str(payload.get("operation_id") or "")[:160]
+    revision = int(payload.get("revision") or 1)
     try:
         from core.conversation.response_reliability import (
             assess_conversation_learning_admission,
@@ -2552,11 +2560,21 @@ async def _run_chat_turn_memory_log_item(payload: dict[str, str]) -> None:
                 "durable transcript remains available for audit.",
                 ",".join(admission.reasons) or "unknown",
             )
-            return
+            return "rejected", ",".join(admission.reasons) or "learning_admission_rejected"
 
-        from core.memory.chat_turn_logger import log_chat_turn_auto
+        from core.memory.chat_turn_logger import (
+            local_chat_turn_learning_rejection_reason,
+            log_chat_turn_auto,
+        )
 
-        await asyncio.wait_for(
+        local_rejection = local_chat_turn_learning_rejection_reason(
+            user_message,
+            aura_response,
+        )
+        if local_rejection:
+            return "rejected", local_rejection
+
+        logged = await asyncio.wait_for(
             log_chat_turn_auto(
                 user_message=user_message,
                 aura_response=aura_response,
@@ -2568,10 +2586,14 @@ async def _run_chat_turn_memory_log_item(payload: dict[str, str]) -> None:
                     "user_id": user_id,
                     "principal_id": user_id,
                     "principal_surface": principal_surface,
+                    "memory_log_operation_id": operation_id,
+                    "conversation_revision": revision,
                 },
             ),
             timeout=_CHAT_TURN_MEMORY_LOG_TIMEOUT_S,
         )
+        if not logged:
+            return "retry", "episodic_memory_did_not_commit"
 
         try:
             from core.consciousness.coordinator import get_consciousness_coordinator
@@ -2584,72 +2606,146 @@ async def _run_chat_turn_memory_log_item(payload: dict[str, str]) -> None:
         except _CHAT_RECOVERABLE_ERRORS as exc:
             record_degradation("chat.consciousness_update", exc)
             logger.debug("Consciousness update skipped: %s", exc)
+        return "completed", ""
     except TimeoutError as exc:
         record_degradation("chat.memory_log_timeout", exc)
         logger.warning(
-            "Chat turn memory log exceeded %.1fs and was cancelled.",
+            "Chat turn memory log exceeded %.1fs; durable outbox retained it for retry.",
             _CHAT_TURN_MEMORY_LOG_TIMEOUT_S,
         )
+        return "retry", f"TimeoutError:{exc}"
     except _CHAT_RECOVERABLE_ERRORS as exc:
         record_degradation("chat", exc)
         logger.debug("Chat turn logging failed: %s", exc)
+        return "retry", f"{type(exc).__name__}:{exc}"
 
 
 async def _drain_chat_turn_memory_log_queue() -> None:
-    max_items = max(1, _CHAT_TURN_MEMORY_LOG_QUEUE_MAX)
-    for _ in range(max_items):
-        with _CHAT_TURN_MEMORY_LOG_QUEUE_LOCK:
-            if not _CHAT_TURN_MEMORY_LOG_QUEUE:
+    persistence = ServiceContainer.get("persistence", default=None)
+    claim = getattr(persistence, "claim_memory_log_batch", None)
+    settle = getattr(persistence, "settle_memory_log_item", None)
+    status = getattr(persistence, "memory_log_outbox_status", None)
+    if not callable(claim) or not callable(settle):
+        return
+
+    processed = 0
+    retry_delay_s: float | None = None
+    while processed < _CHAT_TURN_MEMORY_LOG_RUN_MAX:
+        try:
+            items = await asyncio.to_thread(
+                claim,
+                limit=min(
+                    _CHAT_TURN_MEMORY_LOG_BATCH_MAX,
+                    _CHAT_TURN_MEMORY_LOG_RUN_MAX - processed,
+                ),
+            )
+        except (sqlite3.Error, OSError, RuntimeError) as exc:
+            record_degradation("chat.memory_log_outbox_claim", exc)
+            _schedule_chat_turn_memory_log_retry(1.0)
+            return
+        if not items:
+            break
+        for payload in items:
+            outcome, error = await _run_chat_turn_memory_log_item(payload)
+            attempts = max(1, int(payload.get("attempts") or 1))
+            delay_s = min(60.0, float(2 ** min(6, attempts - 1)))
+            try:
+                terminal_state = await asyncio.to_thread(
+                    settle,
+                    str(payload.get("operation_id") or ""),
+                    outcome=outcome,
+                    error=error,
+                    retry_delay_s=delay_s,
+                )
+            except (sqlite3.Error, OSError, RuntimeError) as exc:
+                record_degradation("chat.memory_log_outbox_settle", exc)
+                _schedule_chat_turn_memory_log_retry(
+                    _CHAT_TURN_MEMORY_LOG_LEASE_RECHECK_S
+                )
                 return
-            payload = _CHAT_TURN_MEMORY_LOG_QUEUE.popleft()
-        await _run_chat_turn_memory_log_item(payload)
-    with _CHAT_TURN_MEMORY_LOG_QUEUE_LOCK:
-        remaining = len(_CHAT_TURN_MEMORY_LOG_QUEUE)
-    if remaining:
-        record_degradation(
-            "chat.memory_log_backpressure",
-            RuntimeError("chat turn memory log drain yielded with queued items remaining"),
-            severity="warning",
-            action="left remaining chat memory logs queued for next drain to keep worker bounded",
-            extra={"remaining": remaining, "batch_max": max_items},
+            if terminal_state == "pending":
+                retry_delay_s = (
+                    delay_s
+                    if retry_delay_s is None
+                    else min(retry_delay_s, delay_s)
+                )
+            processed += 1
+
+    try:
+        outbox_status = await asyncio.to_thread(status) if callable(status) else {}
+    except (sqlite3.Error, OSError, RuntimeError) as exc:
+        record_degradation("chat.memory_log_outbox_status", exc)
+        _schedule_chat_turn_memory_log_retry(1.0)
+        return
+    pending = int(outbox_status.get("pending") or 0)
+    processing = int(outbox_status.get("processing") or 0)
+    if pending > 0 or processing > 0:
+        delay_s = retry_delay_s or (
+            0.05 if pending > 0 else _CHAT_TURN_MEMORY_LOG_LEASE_RECHECK_S
         )
+        _schedule_chat_turn_memory_log_retry(delay_s)
+
+
+async def _retry_chat_turn_memory_log_after(delay_s: float) -> None:
+    await asyncio.sleep(max(0.01, float(delay_s)))
+    await _drain_chat_turn_memory_log_queue()
+
+
+def _schedule_chat_turn_memory_log_retry(delay_s: float) -> bool:
+    tracker = get_task_tracker()
+    if _active_task_count_by_name(tracker, _CHAT_TURN_MEMORY_LOG_RETRY_TASK_NAME):
+        return True
+    retry_coro = _retry_chat_turn_memory_log_after(delay_s)
+    schedule = getattr(tracker, "bounded_track", None) or getattr(
+        tracker,
+        "create_task",
+        None,
+    )
+    if not callable(schedule):
+        retry_coro.close()
+        raise RuntimeError("task_tracker_has_no_scheduler")
+    try:
+        schedule(
+            retry_coro,
+            name=_CHAT_TURN_MEMORY_LOG_RETRY_TASK_NAME,
+        )
+        return True
+    except _CHAT_RECOVERABLE_ERRORS:
+        retry_coro.close()
+        raise
+
+
+def _ensure_chat_turn_memory_log_shutdown_handler() -> None:
+    from core.runtime.shutdown_coordinator import get_shutdown_coordinator
+
+    coordinator = get_shutdown_coordinator()
+    if _CHAT_TURN_MEMORY_LOG_SHUTDOWN_HANDLER in coordinator.handler_names(
+        "memory_commit"
+    ):
+        return
+    coordinator.register(
+        _drain_chat_turn_memory_log_queue,
+        phase="memory_commit",
+        name=_CHAT_TURN_MEMORY_LOG_SHUTDOWN_HANDLER,
+        timeout=_CHAT_TURN_MEMORY_LOG_TIMEOUT_S + 5.0,
+    )
 
 
 def _schedule_chat_turn_memory_log(
     *,
-    user_message: str,
-    aura_response: str,
-    session_id: str,
-    chat_origin: str,
-    user_id: str,
+    user_message: str = "",
+    aura_response: str = "",
+    session_id: str = "",
+    chat_origin: str = "",
+    user_id: str = "",
     principal_surface: str = "",
 ) -> bool:
-    """Queue post-response memory logging without dropping turns under normal backpressure."""
+    """Wake the durable post-response memory outbox worker."""
     try:
-        with _CHAT_TURN_MEMORY_LOG_QUEUE_LOCK:
-            if len(_CHAT_TURN_MEMORY_LOG_QUEUE) >= _CHAT_TURN_MEMORY_LOG_QUEUE_MAX:
-                dropped = _CHAT_TURN_MEMORY_LOG_QUEUE.popleft()
-                record_degradation(
-                    "chat.memory_log_backpressure",
-                    RuntimeError("chat turn memory log queue overflow"),
-                    severity="warning",
-                    action="dropped oldest queued chat memory log to keep live desktop bounded",
-                    extra={
-                        "dropped_origin": str(dropped.get("chat_origin") or "unknown"),
-                        "queue_max": _CHAT_TURN_MEMORY_LOG_QUEUE_MAX,
-                    },
-                )
-            _CHAT_TURN_MEMORY_LOG_QUEUE.append(
-                {
-                    "user_message": str(user_message or ""),
-                    "aura_response": str(aura_response or ""),
-                    "session_id": str(session_id or ""),
-                    "chat_origin": str(chat_origin or "unknown"),
-                    "user_id": str(user_id or "").strip()[:160],
-                    "principal_surface": str(principal_surface or "").strip().casefold()[:32],
-                }
-            )
-
+        persistence = ServiceContainer.get("persistence", default=None)
+        if not callable(getattr(persistence, "claim_memory_log_batch", None)):
+            return False
+        _ensure_chat_turn_memory_log_shutdown_handler()
         task_tracker = get_task_tracker()
         active_drains = _active_task_count_by_name(
             task_tracker,
@@ -2676,6 +2772,18 @@ def _schedule_chat_turn_memory_log(
         record_degradation("chat", exc)
         logger.debug("Chat turn logging task creation failed: %s", exc)
         return False
+
+
+def start_chat_turn_memory_log_worker() -> bool:
+    """Recover durable pending memory work when the API runtime starts."""
+
+    return _schedule_chat_turn_memory_log(
+        user_message="",
+        aura_response="",
+        session_id="",
+        chat_origin="startup_recovery",
+        user_id="",
+    )
 
 
 #: A second, separate request following the thing to be remembered. Only an
@@ -5388,6 +5496,7 @@ async def _persist_completed_conversation_exchange(
                     origin="desktop_ui",
                     cid=safe_exchange_id,
                     session_id=safe_session_id or None,
+                    enqueue_memory_log=True,
                     **scope_kwargs,
                 )
                 return
@@ -23358,7 +23467,7 @@ async def _apply_regenerated_reply(
             terminal_error = record.task.exception()
         except (asyncio.InvalidStateError, asyncio.CancelledError):
             terminal_error = None
-    conflict = isinstance(terminal_error, ConversationRevisionConflict)
+    conflict = isinstance(terminal_error, ConversationRevisionConflictError)
     return {
         "applied": False,
         "state": "conflict" if conflict else "failed",
@@ -25581,16 +25690,6 @@ async def _api_chat_turn(body: ChatRequest, request: Request):
                 )
 
             _record_recent_response(final_text, _semantic_user_message)
-            
-            memory_principal, memory_surface = _chat_memory_identity()
-            _schedule_chat_turn_memory_log(
-                user_message=_semantic_user_message,
-                aura_response=final_text,
-                session_id=_chat_session_id,
-                chat_origin=chat_origin,
-                user_id=memory_principal,
-                principal_surface=memory_surface,
-            )
             
             lane_status = (
                 _collect_governed_action_lane_status(status)

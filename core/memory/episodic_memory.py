@@ -10,6 +10,7 @@ Integrates with:
   - BeliefGraph: episodes can update beliefs
 """
 import asyncio
+import hashlib
 import json
 import logging
 import math
@@ -78,6 +79,10 @@ class Episode(BaseModel):
     reconsolidation_count: int = 0  # times the trace re-entered a labile state and was updated
     last_reconsolidated: float = 0.0
     novelty: float = 0.5            # prediction error at encoding — drives consolidation strength
+    source: str = "episodic_memory"
+    source_ref: str = ""
+    source_revision: int = 0
+    source_metadata: dict[str, Any] = Field(default_factory=dict)
 
     model_config = {
         "populate_by_name": True,
@@ -288,7 +293,11 @@ class EpisodicMemory:
                     original_valence REAL,
                     reconsolidation_count INTEGER DEFAULT 0,
                     last_reconsolidated REAL DEFAULT 0.0,
-                    novelty REAL DEFAULT 0.5
+                    novelty REAL DEFAULT 0.5,
+                    source TEXT DEFAULT 'episodic_memory',
+                    source_ref TEXT DEFAULT '',
+                    source_revision INTEGER DEFAULT 0,
+                    source_metadata TEXT DEFAULT '{}'
                 )
             """)
             conn.commit()
@@ -313,6 +322,10 @@ class EpisodicMemory:
                 ("reconsolidation_count", "INTEGER DEFAULT 0"),
                 ("last_reconsolidated", "REAL DEFAULT 0.0"),
                 ("novelty", "REAL DEFAULT 0.5"),
+                ("source", "TEXT DEFAULT 'episodic_memory'"),
+                ("source_ref", "TEXT DEFAULT ''"),
+                ("source_revision", "INTEGER DEFAULT 0"),
+                ("source_metadata", "TEXT DEFAULT '{}'"),
             ]
             # Add all missing columns before creating indexes that depend on them.
             cursor = conn.execute("PRAGMA table_info(episodes)")
@@ -370,6 +383,7 @@ class EpisodicMemory:
         importance: float = 0.5,
         source: str = "episodic_memory",
         metadata: dict[str, Any] | None = None,
+        idempotency_key: str = "",
     ) -> str:
         return await asyncio.to_thread(
             self.record_episode,
@@ -383,6 +397,7 @@ class EpisodicMemory:
             importance,
             source,
             metadata,
+            idempotency_key,
         )
 
     async def recall_recent_async(self, limit: int = 10) -> list[Episode]:
@@ -487,14 +502,43 @@ class EpisodicMemory:
         importance: float = 0.5,
         source: str = "episodic_memory",
         metadata: dict[str, Any] | None = None,
+        idempotency_key: str = "",
     ) -> str:
         """Record a new episode. Returns the episode_id.
         Importance is auto-boosted for failures (we learn more from mistakes).
         Automatically captures current qualia snapshot for mood-congruent recall.
         """
-        import uuid
         if not context and not action and not outcome:
             return ""
+        episode_metadata = dict(metadata or {})
+        stable_key = str(
+            idempotency_key
+            or episode_metadata.get("memory_log_operation_id")
+            or ""
+        ).strip()
+        if stable_key:
+            episode_id = "idem-" + hashlib.sha256(
+                stable_key.encode("utf-8")
+            ).hexdigest()[:24]
+            with self._get_conn() as conn:
+                existing = conn.execute(
+                    "SELECT context, action, outcome, success FROM episodes "
+                    "WHERE episode_id = ?",
+                    (episode_id,),
+                ).fetchone()
+            if existing is not None:
+                if (
+                    str(existing["context"] or "") != context
+                    or str(existing["action"] or "") != action
+                    or str(existing["outcome"] or "") != outcome
+                    or bool(existing["success"]) != bool(success)
+                ):
+                    raise ValueError("episodic idempotency identity collision")
+                return episode_id
+        else:
+            import uuid
+
+            episode_id = str(uuid.uuid4())[:12]
         approved, governance_decision = self._approve_memory_write(
             context,
             action,
@@ -506,13 +550,11 @@ class EpisodicMemory:
         )
         if not approved:
             return ""
-        episode_id = str(uuid.uuid4())[:12]
-
         # Rate limiting — prevent flood during rapid tool loops
         # ISSUE 31 fix: Capture constant timestamp for storage consistency
         now_mono = time.monotonic()
-        if now_mono - self._last_record_time < self._RECORD_COOLDOWN:
-            return episode_id  # Silently skip
+        if not stable_key and now_mono - self._last_record_time < self._RECORD_COOLDOWN:
+            return ""
             
         # Deduplication — check against last episode content (read-only peek)
         last_episode = self._peek_recent(limit=1)
@@ -557,8 +599,11 @@ class EpisodicMemory:
             importance = max(importance, min(0.9, importance + 0.15))
         original_valence = emotional_valence
 
+        inserted = False
+
         def _persist() -> None:
-            self._insert_and_index(
+            nonlocal inserted
+            inserted = self._insert_and_index(
                 episode_id=episode_id,
                 now=now,
                 context=context,
@@ -572,6 +617,12 @@ class EpisodicMemory:
                 lesson_list=lesson_list,
                 qualia_snapshot=qualia_snapshot,
                 novelty=novelty,
+                source=source,
+                source_ref=stable_key,
+                source_revision=int(
+                    episode_metadata.get("conversation_revision") or 0
+                ),
+                source_metadata=episode_metadata,
             )
 
         if governance_decision is not None:
@@ -581,6 +632,9 @@ class EpisodicMemory:
                 _persist()
         else:
             _persist()
+
+        if not inserted:
+            return episode_id
 
         # Causal encode signals — novelty feeds the neuromodulatory system and the
         # encoding is broadcast so self-model / dreaming / identity can react.
@@ -606,7 +660,11 @@ class EpisodicMemory:
         lesson_list: list[str],
         qualia_snapshot: dict[str, Any],
         novelty: float,
-    ) -> None:
+        source: str,
+        source_ref: str,
+        source_revision: int,
+        source_metadata: dict[str, Any],
+    ) -> bool:
         """Persist one episode row, index it for semantic + associative recall,
         and bind its engram cues in the hippocampal index.
 
@@ -614,19 +672,36 @@ class EpisodicMemory:
         lives in exactly one place.
         """
         with self._lock:
+            with self._get_conn() as conn:
+                existing = conn.execute(
+                    "SELECT context, action, outcome, success FROM episodes "
+                    "WHERE episode_id = ?",
+                    (episode_id,),
+                ).fetchone()
+            if existing is not None:
+                if (
+                    str(existing["context"] or "") != context
+                    or str(existing["action"] or "") != action
+                    or str(existing["outcome"] or "") != outcome
+                    or bool(existing["success"]) != bool(success)
+                ):
+                    raise ValueError("episodic episode identity collision")
+                return False
             max_retries = 3
+            inserted_here = False
             for attempt in range(max_retries):
                 try:
                     with self._get_conn() as conn:
-                        conn.execute(
-                            """INSERT INTO episodes
+                        cursor = conn.execute(
+                            """INSERT OR IGNORE INTO episodes
                                (episode_id, timestamp, context, action, outcome, success,
                                 emotional_valence, arousal, importance, participants,
                                 tools_used, lessons, tags, linked_semantic_ids, decay_rate,
                                 qualia_snapshot, next_decay_eval,
                                 fidelity, original_valence, reconsolidation_count,
-                                last_reconsolidated, novelty)
-                               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                                last_reconsolidated, novelty, source, source_ref,
+                                source_revision, source_metadata)
+                               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                             (
                                 episode_id, now, context, action, outcome,
                                 int(success), emotional_valence, 0.5, importance,
@@ -636,8 +711,30 @@ class EpisodicMemory:
                                 json.dumps(qualia_snapshot, cls=_SafeEncoder),
                                 now + 21600,  # First decay evaluation in 6 hours
                                 1.0, original_valence, 0, 0.0, novelty,
+                                str(source or "episodic_memory")[:64],
+                                str(source_ref or "")[:160],
+                                int(source_revision),
+                                json.dumps(source_metadata, cls=_SafeEncoder),
                             ),
                         )
+                        inserted_here = cursor.rowcount == 1
+                        if not inserted_here:
+                            existing = conn.execute(
+                                "SELECT context, action, outcome, success FROM episodes "
+                                "WHERE episode_id = ?",
+                                (episode_id,),
+                            ).fetchone()
+                            if existing is None:
+                                raise RuntimeError(
+                                    "episodic idempotent insert was ignored without an existing row"
+                                )
+                            if (
+                                str(existing["context"] or "") != context
+                                or str(existing["action"] or "") != action
+                                or str(existing["outcome"] or "") != outcome
+                                or bool(existing["success"]) != bool(success)
+                            ):
+                                raise ValueError("episodic episode identity collision")
                     break
                 except sqlite3.OperationalError as e:
                     if "locked" in str(e) and attempt < max_retries - 1:
@@ -645,6 +742,9 @@ class EpisodicMemory:
                         time.sleep(0.5 * (2 ** attempt))
                     else:
                         raise
+
+            if not inserted_here:
+                return False
 
             # Index in vector memory for semantic retrieval
             if self._vector_memory:
@@ -676,6 +776,7 @@ class EpisodicMemory:
                 logger.debug("Hippocampal cue binding skipped for %s: %s", episode_id, e)
 
             self._maybe_prune()
+            return True
 
     # ---- Compatibility Shims ------------------------------------------------
     
@@ -1715,6 +1816,10 @@ class EpisodicMemory:
             reconsolidation_count=safe_get("reconsolidation_count", 0),
             last_reconsolidated=safe_get("last_reconsolidated", 0.0),
             novelty=safe_get("novelty", 0.5),
+            source=safe_get("source", "episodic_memory"),
+            source_ref=safe_get("source_ref", ""),
+            source_revision=safe_get("source_revision", 0),
+            source_metadata=load_json(safe_get("source_metadata", "{}"), {}),
         )
 
     def _fetch_by_ids(self, episode_ids: list[str]) -> list[Episode]:

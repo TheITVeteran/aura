@@ -33,6 +33,8 @@ MAX_QUERY_LIMIT = 1000
 CONVERSATION_DB_BUSY_TIMEOUT_MS = 1000
 MAX_PRINCIPAL_CHARS = 160
 MAX_PRINCIPAL_SURFACE_CHARS = 32
+MEMORY_LOG_OUTBOX_LEASE_S = 60.0
+MEMORY_LOG_OUTBOX_MAX_ATTEMPTS = 8
 
 _PERSISTENCE_ERRORS = (
     AttributeError,
@@ -83,6 +85,32 @@ CREATE TABLE IF NOT EXISTS turn_revisions (
     updated_at      REAL NOT NULL,
     PRIMARY KEY (turn_id, revision)
 );
+
+CREATE TABLE IF NOT EXISTS conversation_memory_outbox (
+    operation_id    TEXT PRIMARY KEY,
+    session_id      TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+    exchange_id     TEXT NOT NULL,
+    revision        INTEGER NOT NULL CHECK (revision >= 1),
+    user_content    TEXT NOT NULL,
+    aura_content    TEXT NOT NULL,
+    origin          TEXT NOT NULL,
+    principal_id    TEXT NOT NULL,
+    principal_surface TEXT NOT NULL,
+    payload_sha256  TEXT NOT NULL,
+    state           TEXT NOT NULL CHECK (
+        state IN ('pending','processing','completed','rejected','failed')
+    ),
+    attempts        INTEGER NOT NULL DEFAULT 0,
+    available_at    REAL NOT NULL,
+    claimed_at      REAL,
+    completed_at    REAL,
+    last_error      TEXT NOT NULL DEFAULT '',
+    created_at      REAL NOT NULL,
+    updated_at      REAL NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_memory_outbox_ready
+ON conversation_memory_outbox(state, available_at, created_at);
 """
 
 
@@ -192,8 +220,12 @@ def _content_sha256(content: str) -> str:
     return hashlib.sha256(content.encode("utf-8")).hexdigest()
 
 
-class ConversationRevisionConflict(RuntimeError):
+class ConversationRevisionConflictError(RuntimeError):
     """The durable answer changed after regeneration selected its source."""
+
+
+# Compatibility for callers compiled against CP358's pre-lint public name.
+ConversationRevisionConflict = ConversationRevisionConflictError
 
 
 class ConversationPersistence:
@@ -389,6 +421,7 @@ class ConversationPersistence:
         session_id: str | None = None,
         principal_id: str = "",
         principal_surface: str = "",
+        enqueue_memory_log: bool = False,
     ) -> tuple[str, str]:
         """Atomically persist a completed user/Aura exchange."""
 
@@ -496,6 +529,19 @@ class ConversationPersistence:
                 "UPDATE sessions SET last_active = ? WHERE id = ?",
                 (now + 1e-6, sid),
             )
+            if enqueue_memory_log:
+                self._enqueue_memory_log_locked(
+                    con,
+                    session_id=sid,
+                    exchange_id=safe_cid or aura_turn_id,
+                    revision=1,
+                    user_content=safe_user_content,
+                    aura_content=safe_aura_content,
+                    origin=safe_origin,
+                    principal_id=principal_id,
+                    principal_surface=principal_surface,
+                    now=now + 1e-6,
+                )
             con.commit()
 
         if publish_user:
@@ -595,12 +641,12 @@ class ConversationPersistence:
                     (aura_cid,),
                 ).fetchall()
             if len(rows) != 1:
-                raise ConversationRevisionConflict(
+                raise ConversationRevisionConflictError(
                     "conversation regeneration target is missing or ambiguous"
                 )
             row = rows[0]
             if str(row["role"] or "") != "aura":
-                raise ConversationRevisionConflict(
+                raise ConversationRevisionConflictError(
                     "conversation regeneration target is not an Aura turn"
                 )
             if principal:
@@ -625,7 +671,7 @@ class ConversationPersistence:
                 current_sha,
                 expected_sha,
             ):
-                raise ConversationRevisionConflict(
+                raise ConversationRevisionConflictError(
                     "conversation regeneration source revision changed"
                 )
 
@@ -654,7 +700,7 @@ class ConversationPersistence:
                 (safe_replacement, str(row["id"]), current_content),
             )
             if int(updated.rowcount or 0) != 1:
-                raise ConversationRevisionConflict(
+                raise ConversationRevisionConflictError(
                     "conversation regeneration lost its durable compare-and-swap"
                 )
             con.execute(
@@ -677,6 +723,22 @@ class ConversationPersistence:
             con.execute(
                 "UPDATE sessions SET last_active = ? WHERE id = ?",
                 (now, str(row["session_id"])),
+            )
+            self._enqueue_memory_log_locked(
+                con,
+                session_id=str(row["session_id"]),
+                exchange_id=safe_exchange_id,
+                revision=next_revision,
+                user_content=self._exchange_user_content_locked(
+                    con,
+                    session_id=str(row["session_id"]),
+                    exchange_id=safe_exchange_id,
+                ),
+                aura_content=safe_replacement,
+                origin=safe_origin,
+                principal_id=principal,
+                principal_surface=surface,
+                now=now,
             )
             con.commit()
 
@@ -703,6 +765,215 @@ class ConversationPersistence:
             "previous_content": current_content,
             "content_sha256": replacement_sha,
             "applied": True,
+        }
+
+    @staticmethod
+    def _exchange_user_content_locked(
+        con: sqlite3.Connection,
+        *,
+        session_id: str,
+        exchange_id: str,
+    ) -> str:
+        row = con.execute(
+            "SELECT content FROM turns WHERE session_id = ? AND cid = ? "
+            "ORDER BY created_at ASC, rowid ASC LIMIT 1",
+            (session_id, f"{exchange_id}:user"),
+        ).fetchone()
+        if row is None:
+            raise ConversationRevisionConflictError(
+                "conversation regeneration user turn is missing"
+            )
+        return str(row["content"] or "")
+
+    @staticmethod
+    def _enqueue_memory_log_locked(
+        con: sqlite3.Connection,
+        *,
+        session_id: str,
+        exchange_id: str,
+        revision: int,
+        user_content: str,
+        aura_content: str,
+        origin: str,
+        principal_id: str,
+        principal_surface: str,
+        now: float,
+    ) -> str:
+        safe_exchange_id = _safe_text(exchange_id, max_chars=64)
+        operation_id = f"{session_id}:{safe_exchange_id}:r{int(revision)}"
+        payload = {
+            "session_id": session_id,
+            "exchange_id": safe_exchange_id,
+            "revision": int(revision),
+            "user_content": user_content,
+            "aura_content": aura_content,
+            "origin": origin,
+            "principal_id": principal_id,
+            "principal_surface": principal_surface,
+        }
+        payload_sha256 = hashlib.sha256(
+            json.dumps(
+                payload,
+                ensure_ascii=False,
+                sort_keys=True,
+                separators=(",", ":"),
+            ).encode("utf-8")
+        ).hexdigest()
+        existing = con.execute(
+            "SELECT payload_sha256 FROM conversation_memory_outbox "
+            "WHERE operation_id = ?",
+            (operation_id,),
+        ).fetchone()
+        if existing is not None:
+            if not hmac.compare_digest(
+                str(existing["payload_sha256"] or ""),
+                payload_sha256,
+            ):
+                raise ValueError(
+                    f"conversation memory outbox identity conflict: {operation_id}"
+                )
+            return operation_id
+        con.execute(
+            "INSERT INTO conversation_memory_outbox("
+            "operation_id, session_id, exchange_id, revision, user_content, "
+            "aura_content, origin, principal_id, principal_surface, payload_sha256, "
+            "state, attempts, available_at, claimed_at, completed_at, last_error, "
+            "created_at, updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            (
+                operation_id,
+                session_id,
+                safe_exchange_id,
+                int(revision),
+                user_content,
+                aura_content,
+                origin,
+                principal_id,
+                principal_surface,
+                payload_sha256,
+                "pending",
+                0,
+                now,
+                None,
+                None,
+                "",
+                now,
+                now,
+            ),
+        )
+        return operation_id
+
+    def claim_memory_log_batch(
+        self,
+        *,
+        limit: int = 16,
+        lease_s: float = MEMORY_LOG_OUTBOX_LEASE_S,
+    ) -> list[dict[str, Any]]:
+        """Lease durable memory-log work; expired claims become eligible again."""
+
+        safe_limit = max(1, min(128, int(limit)))
+        safe_lease_s = max(1.0, float(lease_s))
+        now = time.time()
+        with self._write_lock, connecting(self._connect()) as con:
+            con.execute("BEGIN IMMEDIATE")
+            con.execute(
+                "UPDATE conversation_memory_outbox SET state='pending', "
+                "claimed_at=NULL, updated_at=?, last_error=CASE "
+                "WHEN last_error='' THEN 'expired_processing_lease' ELSE last_error END "
+                "WHERE state='processing' AND claimed_at IS NOT NULL AND claimed_at < ?",
+                (now, now - safe_lease_s),
+            )
+            rows = con.execute(
+                "SELECT * FROM conversation_memory_outbox "
+                "WHERE state='pending' AND available_at <= ? "
+                "ORDER BY created_at ASC, operation_id ASC LIMIT ?",
+                (now, safe_limit),
+            ).fetchall()
+            operation_ids = [str(row["operation_id"]) for row in rows]
+            for operation_id in operation_ids:
+                con.execute(
+                    "UPDATE conversation_memory_outbox SET state='processing', "
+                    "attempts=attempts+1, claimed_at=?, updated_at=? "
+                    "WHERE operation_id=? AND state='pending'",
+                    (now, now, operation_id),
+                )
+            con.commit()
+        claimed = []
+        for row in rows:
+            item = dict(row)
+            item["state"] = "processing"
+            item["attempts"] = int(item.get("attempts") or 0) + 1
+            item["claimed_at"] = now
+            claimed.append(item)
+        return claimed
+
+    def settle_memory_log_item(
+        self,
+        operation_id: str,
+        *,
+        outcome: str,
+        error: str = "",
+        retry_delay_s: float = 0.0,
+    ) -> str:
+        """Complete, reject, or durably retry one leased outbox item."""
+
+        safe_operation_id = _safe_text(operation_id, max_chars=160)
+        safe_outcome = str(outcome or "").strip().casefold()
+        if safe_outcome not in {"completed", "rejected", "retry", "failed"}:
+            raise ValueError("invalid conversation memory outbox outcome")
+        now = time.time()
+        with self._write_lock, connecting(self._connect()) as con:
+            con.execute("BEGIN IMMEDIATE")
+            row = con.execute(
+                "SELECT state, attempts FROM conversation_memory_outbox "
+                "WHERE operation_id=?",
+                (safe_operation_id,),
+            ).fetchone()
+            if row is None:
+                raise KeyError(f"unknown conversation memory outbox item: {safe_operation_id}")
+            if str(row["state"] or "") in {"completed", "rejected", "failed"}:
+                con.commit()
+                return str(row["state"])
+            if str(row["state"] or "") != "processing":
+                raise RuntimeError("conversation memory outbox item is not leased")
+            attempts = int(row["attempts"] or 0)
+            if safe_outcome == "retry" and attempts >= MEMORY_LOG_OUTBOX_MAX_ATTEMPTS:
+                terminal_state = "failed"
+            elif safe_outcome == "retry":
+                terminal_state = "pending"
+            else:
+                terminal_state = safe_outcome
+            completed_at = now if terminal_state in {"completed", "rejected", "failed"} else None
+            available_at = (
+                now + max(0.0, float(retry_delay_s))
+                if terminal_state == "pending"
+                else now
+            )
+            con.execute(
+                "UPDATE conversation_memory_outbox SET state=?, available_at=?, "
+                "claimed_at=NULL, completed_at=?, last_error=?, updated_at=? "
+                "WHERE operation_id=?",
+                (
+                    terminal_state,
+                    available_at,
+                    completed_at,
+                    _safe_text(error, max_chars=1000),
+                    now,
+                    safe_operation_id,
+                ),
+            )
+            con.commit()
+        return terminal_state
+
+    def memory_log_outbox_status(self) -> dict[str, int]:
+        with connecting(self._connect()) as con:
+            rows = con.execute(
+                "SELECT state, COUNT(*) AS count FROM conversation_memory_outbox "
+                "GROUP BY state"
+            ).fetchall()
+        counts = {str(row["state"]): int(row["count"] or 0) for row in rows}
+        return {
+            state: counts.get(state, 0)
+            for state in ("pending", "processing", "completed", "rejected", "failed")
         }
 
     def _publish_turn_regenerated(

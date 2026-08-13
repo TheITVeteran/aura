@@ -21,6 +21,15 @@ from core.utils.task_tracker import get_task_tracker
 
 logger = logging.getLogger("Memory.ChatTurnLogger")
 
+_CHAT_TURN_ERROR_MARKERS = (
+    "i'm still with you",
+    "i'm still here",
+    "i'm having trouble",
+    "please try again",
+    "failed to process",
+    "error:",
+)
+
 _CHAT_TURN_RECOVERABLE_ERRORS = (
     ImportError,
     AttributeError,
@@ -30,6 +39,30 @@ _CHAT_TURN_RECOVERABLE_ERRORS = (
     OSError,
     asyncio.TimeoutError,
 )
+
+
+def local_chat_turn_learning_rejection_reason(
+    user_message: str,
+    aura_response: str,
+) -> str:
+    """Return a stable local rejection reason, or ``""`` when eligible.
+
+    This intentionally excludes the richer response-reliability gate. The
+    durable outbox runs that gate separately so an infrastructure error can be
+    retried instead of being mislabeled as permanently inadmissible content.
+    """
+
+    if len(str(user_message or "").strip()) < 5:
+        return "user_message_too_short_for_learned_memory"
+    response = str(aura_response or "").strip()
+    if len(response) < 10:
+        return "aura_response_too_short_for_learned_memory"
+    response_lower = response.casefold()
+    if len(response) < 50 and any(
+        marker in response_lower for marker in _CHAT_TURN_ERROR_MARKERS
+    ):
+        return "short_error_response"
+    return ""
 
 
 class ChatTurnLogger:
@@ -76,26 +109,8 @@ class ChatTurnLogger:
     
     def _is_meaningful_turn(self, user_message: str, aura_response: str) -> bool:
         """Admit only semantically valid turns to learned memory."""
-        # Minimum meaningful lengths
-        if len(user_message.strip()) < 5:
+        if local_chat_turn_learning_rejection_reason(user_message, aura_response):
             return False
-        if len(aura_response.strip()) < 10:
-            return False
-        
-        # Exclude common fallback responses that should not become memories.
-        error_markers = [
-            "i'm still with you",
-            "i'm still here",
-            "i'm having trouble",
-            "please try again",
-            "failed to process",
-            "error:",
-        ]
-        
-        response_lower = aura_response.lower()
-        if any(marker in response_lower for marker in error_markers):
-            if len(aura_response.strip()) < 50:  # Short error message
-                return False
 
         try:
             from core.conversation.response_reliability import (
@@ -286,6 +301,9 @@ class ChatTurnLogger:
                 importance=0.6,  # Default importance (boosted by relational detection)
                 source="chat_turn_logger",
                 metadata=episode_metadata,
+                idempotency_key=str(
+                    episode_metadata.get("memory_log_operation_id") or ""
+                ),
             )
             
             if episode_id:

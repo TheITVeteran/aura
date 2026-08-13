@@ -1,7 +1,118 @@
+import json
 import time
+from concurrent.futures import ThreadPoolExecutor
+from threading import Barrier
 from types import SimpleNamespace
 
+import pytest
+
 from core.memory.episodic_memory import EpisodicMemory
+
+
+def test_idempotent_episode_retry_returns_same_committed_row(tmp_path):
+    memory = EpisodicMemory(db_path=str(tmp_path / "episodic-idempotent.db"))
+    memory._approve_memory_write = lambda *args, **kwargs: (True, None)
+    kwargs = {
+        "context": "User asked: retain this",
+        "action": "Generated response in session durable",
+        "outcome": "I retained it.",
+        "success": True,
+        "source": "chat_turn_logger",
+        "idempotency_key": "session:exchange:r1",
+        "metadata": {
+            "memory_log_operation_id": "session:exchange:r1",
+            "conversation_revision": 2,
+            "origin": "desktop_ui",
+        },
+    }
+
+    first = memory.record_episode(**kwargs)
+    second = memory.record_episode(**kwargs)
+
+    assert first == second
+    assert first.startswith("idem-")
+    with memory._get_conn() as con:
+        row = con.execute(
+            "SELECT COUNT(*) AS count, source, source_ref, source_revision, "
+            "source_metadata FROM episodes WHERE episode_id = ?",
+            (first,),
+        ).fetchone()
+    assert row["count"] == 1
+    assert row["source"] == "chat_turn_logger"
+    assert row["source_ref"] == "session:exchange:r1"
+    assert row["source_revision"] == 2
+    assert json.loads(row["source_metadata"])["origin"] == "desktop_ui"
+
+
+def test_idempotent_episode_insert_is_atomic_across_memory_instances(tmp_path):
+    db_path = str(tmp_path / "episodic-concurrent.db")
+    first_memory = EpisodicMemory(db_path=db_path)
+    second_memory = EpisodicMemory(db_path=db_path)
+    barrier = Barrier(2)
+
+    def approve(*_args, **_kwargs):
+        barrier.wait(timeout=5.0)
+        return True, None
+
+    first_memory._approve_memory_write = approve
+    second_memory._approve_memory_write = approve
+    kwargs = {
+        "context": "User asked: retain one copy",
+        "action": "Generated response in session concurrent",
+        "outcome": "Only one durable row may exist.",
+        "success": True,
+        "idempotency_key": "session:concurrent:r1",
+    }
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        results = list(
+            pool.map(
+                lambda memory: memory.record_episode(**kwargs),
+                [first_memory, second_memory],
+            )
+        )
+
+    assert results[0] == results[1]
+    with first_memory._get_conn() as con:
+        assert con.execute(
+            "SELECT COUNT(*) FROM episodes WHERE episode_id = ?",
+            (results[0],),
+        ).fetchone()[0] == 1
+
+
+def test_idempotent_episode_rejects_payload_collision(tmp_path):
+    memory = EpisodicMemory(db_path=str(tmp_path / "episodic-collision.db"))
+    memory._approve_memory_write = lambda *args, **kwargs: (True, None)
+    memory.record_episode(
+        context="first",
+        action="answer",
+        outcome="one",
+        success=True,
+        idempotency_key="same-operation",
+    )
+
+    with pytest.raises(ValueError, match="idempotency identity collision"):
+        memory.record_episode(
+            context="second",
+            action="answer",
+            outcome="two",
+            success=True,
+            idempotency_key="same-operation",
+        )
+
+
+def test_cooldown_does_not_report_an_unpersisted_episode(tmp_path):
+    memory = EpisodicMemory(db_path=str(tmp_path / "episodic-cooldown.db"))
+    memory._approve_memory_write = lambda *args, **kwargs: (True, None)
+    memory._RECORD_COOLDOWN = 60.0
+
+    first = memory.record_episode("one", "answer", "stored", True)
+    second = memory.record_episode("two", "answer", "not stored", True)
+
+    assert first
+    assert second == ""
+    with memory._get_conn() as con:
+        assert con.execute("SELECT COUNT(*) FROM episodes").fetchone()[0] == 1
 
 
 def test_recall_similar_skips_keyword_fallback_when_vector_results_suffice(tmp_path):

@@ -481,6 +481,12 @@ async def lifespan(app: FastAPI):
         replace=True,
     )
     system_routes.start_health_read_model()
+    from interface.routes.chat import start_chat_turn_memory_log_worker
+
+    if not start_chat_turn_memory_log_worker():
+        logger.warning(
+            "Durable chat memory outbox worker could not start; pending work remains on disk."
+        )
 
     # Private Messages is another presentation surface over the canonical chat
     # lane. Its Keychain and SQLite work stays off the event loop, and missing

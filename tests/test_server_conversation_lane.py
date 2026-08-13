@@ -1,4 +1,5 @@
 import asyncio
+import contextlib
 import hashlib
 import json
 import tempfile
@@ -1971,8 +1972,8 @@ async def test_regenerated_reply_updates_selected_exchange_not_newer_turn(
     monkeypatch,
     tmp_path,
 ):
-    from interface.routes import chat as chat_routes
     from core.conversation.persistence import ConversationPersistence
+    from interface.routes import chat as chat_routes
 
     persistence = ConversationPersistence(tmp_path / "regeneration-chat.db")
     monkeypatch.setattr(
@@ -2093,7 +2094,9 @@ async def test_concurrent_regenerations_have_exactly_one_durable_winner(
     assert {result["state"] for result in results} == {"committed", "conflict"}
     winner = next(
         candidate
-        for candidate, result in zip(("Candidate A", "Candidate B"), results)
+        for candidate, result in zip(
+            ("Candidate A", "Candidate B"), results, strict=True
+        )
         if result["applied"]
     )
     aura = next(
@@ -4353,11 +4356,22 @@ def test_capability_inventory_skips_catalog_under_memory_pressure(monkeypatch):
     assert "not opening apps" in reply
 
 
-def test_chat_turn_memory_log_scheduler_queues_when_drain_is_active(monkeypatch):
+def test_chat_turn_memory_log_scheduler_does_not_duplicate_active_drain(
+    monkeypatch,
+    tmp_path,
+):
+    from core.conversation.persistence import ConversationPersistence
     from interface.routes import chat as chat_routes
 
-    with chat_routes._CHAT_TURN_MEMORY_LOG_QUEUE_LOCK:
-        chat_routes._CHAT_TURN_MEMORY_LOG_QUEUE.clear()
+    persistence = ConversationPersistence(tmp_path / "active-memory-outbox.db")
+    session_id = persistence.start_session()
+    persistence.record_exchange(
+        "hello",
+        "a meaningful answer for memory",
+        cid="active-drain",
+        session_id=session_id,
+        enqueue_memory_log=True,
+    )
 
     class _FakeTask:
         def done(self):
@@ -4377,6 +4391,20 @@ def test_chat_turn_memory_log_scheduler_queues_when_drain_is_active(monkeypatch)
 
     tracker = _FakeTracker()
     monkeypatch.setattr(chat_routes, "get_task_tracker", lambda: tracker)
+    monkeypatch.setattr(
+        chat_routes.ServiceContainer,
+        "get",
+        staticmethod(
+            lambda name, default=None: persistence
+            if name == "persistence"
+            else default
+        ),
+    )
+    monkeypatch.setattr(
+        chat_routes,
+        "_ensure_chat_turn_memory_log_shutdown_handler",
+        lambda: None,
+    )
 
     scheduled = chat_routes._schedule_chat_turn_memory_log(
         user_message="hello",
@@ -4388,25 +4416,22 @@ def test_chat_turn_memory_log_scheduler_queues_when_drain_is_active(monkeypatch)
 
     assert scheduled is True
     assert tracker.bounded_calls == 0
-    with chat_routes._CHAT_TURN_MEMORY_LOG_QUEUE_LOCK:
-        assert len(chat_routes._CHAT_TURN_MEMORY_LOG_QUEUE) == 1
-        chat_routes._CHAT_TURN_MEMORY_LOG_QUEUE.clear()
+    assert persistence.memory_log_outbox_status()["pending"] == 1
 
 
 @pytest.mark.asyncio
 async def test_chat_turn_memory_log_scheduler_uses_bounded_track(monkeypatch):
     from core.consciousness import coordinator as consciousness_coordinator
+    from core.conversation.persistence import ConversationPersistence
     from core.memory import chat_turn_logger
     from interface.routes import chat as chat_routes
-
-    with chat_routes._CHAT_TURN_MEMORY_LOG_QUEUE_LOCK:
-        chat_routes._CHAT_TURN_MEMORY_LOG_QUEUE.clear()
 
     log_calls = []
     consciousness_calls = []
 
     async def _fake_log_chat_turn_auto(**kwargs):
         log_calls.append(kwargs)
+        return True
 
     class _FakeCoordinator:
         async def on_chat_turn(self, user_message, aura_response):
@@ -4428,7 +4453,32 @@ async def test_chat_turn_memory_log_scheduler_uses_bounded_track(monkeypatch):
             return task
 
     tracker = _FakeTracker()
+    persistence = ConversationPersistence(tempfile.mktemp(suffix="-memory-outbox.db"))
+    persistence.record_exchange(
+        "remember this",
+        "I will keep it in the log.",
+        origin="desktop_ui",
+        cid="memory-worker",
+        session_id="test-session",
+        principal_id="bryan",
+        principal_surface="owner",
+        enqueue_memory_log=True,
+    )
     monkeypatch.setattr(chat_routes, "get_task_tracker", lambda: tracker)
+    monkeypatch.setattr(
+        chat_routes.ServiceContainer,
+        "get",
+        staticmethod(
+            lambda name, default=None: persistence
+            if name == "persistence"
+            else default
+        ),
+    )
+    monkeypatch.setattr(
+        chat_routes,
+        "_ensure_chat_turn_memory_log_shutdown_handler",
+        lambda: None,
+    )
     monkeypatch.setattr(chat_turn_logger, "log_chat_turn_auto", _fake_log_chat_turn_auto)
     monkeypatch.setattr(
         consciousness_coordinator,
@@ -4450,16 +4500,21 @@ async def test_chat_turn_memory_log_scheduler_uses_bounded_track(monkeypatch):
     assert log_calls[0]["user_message"] == "remember this"
     assert log_calls[0]["metadata"]["origin"] == "desktop_ui"
     assert log_calls[0]["metadata"]["user_id"] == "bryan"
+    assert log_calls[0]["metadata"]["memory_log_operation_id"].endswith(
+        ":memory-worker:r1"
+    )
     assert consciousness_calls == [("remember this", "I will keep it in the log.")]
+    assert persistence.memory_log_outbox_status()["completed"] == 1
 
 
 @pytest.mark.asyncio
-async def test_chat_turn_memory_log_scheduler_times_out_slow_logger(monkeypatch):
+async def test_chat_turn_memory_log_scheduler_retries_slow_logger_durably(
+    monkeypatch,
+    tmp_path,
+):
+    from core.conversation.persistence import ConversationPersistence
     from core.memory import chat_turn_logger
     from interface.routes import chat as chat_routes
-
-    with chat_routes._CHAT_TURN_MEMORY_LOG_QUEUE_LOCK:
-        chat_routes._CHAT_TURN_MEMORY_LOG_QUEUE.clear()
 
     async def _slow_log_chat_turn_auto(**_kwargs):
         await asyncio.sleep(1.0)
@@ -4475,7 +4530,29 @@ async def test_chat_turn_memory_log_scheduler_times_out_slow_logger(monkeypatch)
             return task
 
     tracker = _FakeTracker()
+    persistence = ConversationPersistence(tmp_path / "retry-memory-outbox.db")
+    persistence.record_exchange(
+        "slow memory turn",
+        "This meaningful answer must remain queued.",
+        cid="slow-memory-worker",
+        session_id="test-session",
+        enqueue_memory_log=True,
+    )
     monkeypatch.setattr(chat_routes, "get_task_tracker", lambda: tracker)
+    monkeypatch.setattr(
+        chat_routes.ServiceContainer,
+        "get",
+        staticmethod(
+            lambda name, default=None: persistence
+            if name == "persistence"
+            else default
+        ),
+    )
+    monkeypatch.setattr(
+        chat_routes,
+        "_ensure_chat_turn_memory_log_shutdown_handler",
+        lambda: None,
+    )
     monkeypatch.setattr(chat_routes, "_CHAT_TURN_MEMORY_LOG_TIMEOUT_S", 0.01)
     monkeypatch.setattr(chat_turn_logger, "log_chat_turn_auto", _slow_log_chat_turn_auto)
 
@@ -4489,41 +4566,168 @@ async def test_chat_turn_memory_log_scheduler_times_out_slow_logger(monkeypatch)
 
     assert scheduled is True
     await tracker.scheduled[0]
+    assert persistence.memory_log_outbox_status()["pending"] == 1
+    assert len(tracker.scheduled) == 2
+    tracker.scheduled[1].cancel()
+    with contextlib.suppress(asyncio.CancelledError):
+        await tracker.scheduled[1]
 
 
-def test_chat_turn_memory_log_queue_overflow_drops_oldest(monkeypatch):
+@pytest.mark.asyncio
+async def test_chat_turn_memory_log_outbox_exceeds_old_capacity_without_loss(
+    monkeypatch,
+    tmp_path,
+):
+    from core.conversation.persistence import ConversationPersistence
+    from core.memory import chat_turn_logger
     from interface.routes import chat as chat_routes
 
-    with chat_routes._CHAT_TURN_MEMORY_LOG_QUEUE_LOCK:
-        chat_routes._CHAT_TURN_MEMORY_LOG_QUEUE.clear()
-
-    class _FakeTask:
-        def done(self):
-            return False
-
-        def get_name(self):
-            return chat_routes._CHAT_TURN_MEMORY_LOG_DRAIN_TASK_NAME
-
-    class _FakeTracker:
-        tasks = {_FakeTask()}
-
-    monkeypatch.setattr(chat_routes, "get_task_tracker", lambda: _FakeTracker())
-    monkeypatch.setattr(chat_routes, "_CHAT_TURN_MEMORY_LOG_QUEUE_MAX", 2)
-
-    for item in ("oldest", "middle", "newest"):
-        assert chat_routes._schedule_chat_turn_memory_log(
-            user_message=item,
-            aura_response=f"reply {item}",
-            session_id="test-session",
-            chat_origin="desktop_ui",
-            user_id="bryan",
+    persistence = ConversationPersistence(tmp_path / "capacity-memory-outbox.db")
+    for index in range(70):
+        persistence.record_exchange(
+            f"meaningful prompt {index}",
+            f"meaningful durable answer {index}",
+            cid=f"capacity-{index}",
+            session_id="capacity-session",
+            enqueue_memory_log=True,
         )
 
-    with chat_routes._CHAT_TURN_MEMORY_LOG_QUEUE_LOCK:
-        queued = list(chat_routes._CHAT_TURN_MEMORY_LOG_QUEUE)
-        chat_routes._CHAT_TURN_MEMORY_LOG_QUEUE.clear()
+    calls = []
 
-    assert [item["user_message"] for item in queued] == ["middle", "newest"]
+    async def _fake_log(**kwargs):
+        calls.append(kwargs["metadata"]["memory_log_operation_id"])
+        return True
+
+    class _Coordinator:
+        async def on_chat_turn(self, *_args):
+            return None
+
+    async def _coordinator():
+        return _Coordinator()
+
+    monkeypatch.setattr(
+        chat_routes.ServiceContainer,
+        "get",
+        staticmethod(
+            lambda name, default=None: persistence
+            if name == "persistence"
+            else default
+        ),
+    )
+    monkeypatch.setattr(chat_turn_logger, "log_chat_turn_auto", _fake_log)
+    monkeypatch.setattr(
+        "core.consciousness.coordinator.get_consciousness_coordinator",
+        _coordinator,
+    )
+
+    await chat_routes._drain_chat_turn_memory_log_queue()
+
+    assert len(calls) == 70
+    assert len(set(calls)) == 70
+    assert persistence.memory_log_outbox_status()["completed"] == 70
+    assert persistence.memory_log_outbox_status()["pending"] == 0
+
+
+@pytest.mark.asyncio
+async def test_chat_turn_memory_log_outbox_retries_transient_claim_failure(monkeypatch):
+    from interface.routes import chat as chat_routes
+
+    class _Persistence:
+        def claim_memory_log_batch(self, **_kwargs):
+            raise OSError("database temporarily unavailable")
+
+        def settle_memory_log_item(self, *_args, **_kwargs):
+            raise AssertionError("nothing was claimed")
+
+        def memory_log_outbox_status(self):
+            raise AssertionError("claim failure exits before status")
+
+    delays = []
+    monkeypatch.setattr(
+        chat_routes.ServiceContainer,
+        "get",
+        staticmethod(
+            lambda name, default=None: _Persistence()
+            if name == "persistence"
+            else default
+        ),
+    )
+    monkeypatch.setattr(
+        chat_routes,
+        "_schedule_chat_turn_memory_log_retry",
+        lambda delay_s: delays.append(delay_s) or True,
+    )
+
+    await chat_routes._drain_chat_turn_memory_log_queue()
+
+    assert delays == [1.0]
+
+
+@pytest.mark.asyncio
+async def test_chat_turn_memory_log_outbox_rejects_permanent_local_filter(monkeypatch):
+    from core.memory import chat_turn_logger
+    from interface.routes import chat as chat_routes
+
+    async def _must_not_log(**_kwargs):
+        raise AssertionError("permanently inadmissible content reached memory")
+
+    monkeypatch.setattr(chat_turn_logger, "log_chat_turn_auto", _must_not_log)
+
+    outcome, reason = await chat_routes._run_chat_turn_memory_log_item(
+        {
+            "operation_id": "session:short:r1",
+            "session_id": "session",
+            "exchange_id": "short",
+            "revision": 1,
+            "user_content": "Hi",
+            "aura_content": "Hello",
+        }
+    )
+
+    assert outcome == "rejected"
+    assert reason == "user_message_too_short_for_learned_memory"
+
+
+@pytest.mark.asyncio
+async def test_chat_turn_memory_log_outbox_reclaims_after_settlement_failure(monkeypatch):
+    from interface.routes import chat as chat_routes
+
+    payload = {"operation_id": "session:exchange:r1", "attempts": 1}
+
+    class _Persistence:
+        def claim_memory_log_batch(self, **_kwargs):
+            return [payload]
+
+        def settle_memory_log_item(self, *_args, **_kwargs):
+            raise OSError("commit acknowledgement failed")
+
+        def memory_log_outbox_status(self):
+            raise AssertionError("settlement failure exits before status")
+
+    delays = []
+    monkeypatch.setattr(
+        chat_routes.ServiceContainer,
+        "get",
+        staticmethod(
+            lambda name, default=None: _Persistence()
+            if name == "persistence"
+            else default
+        ),
+    )
+    monkeypatch.setattr(
+        chat_routes,
+        "_run_chat_turn_memory_log_item",
+        lambda _payload: asyncio.sleep(0, result=("completed", "")),
+    )
+    monkeypatch.setattr(
+        chat_routes,
+        "_schedule_chat_turn_memory_log_retry",
+        lambda delay_s: delays.append(delay_s) or True,
+    )
+
+    await chat_routes._drain_chat_turn_memory_log_queue()
+
+    assert delays == [chat_routes._CHAT_TURN_MEMORY_LOG_LEASE_RECHECK_S]
 
 
 @pytest.mark.asyncio
@@ -11255,11 +11459,12 @@ async def test_chat_exchange_atomic_persistence_keeps_ui_session_id(monkeypatch)
             "exchange",
             "Remember this through the desktop UI session.",
             "I will persist it under the UI session id.",
-            {
-                "origin": "desktop_ui",
-                "cid": "ui-session-check",
-                "session_id": "desktop-ui-session-42",
-            },
+                {
+                    "origin": "desktop_ui",
+                    "cid": "ui-session-check",
+                    "session_id": "desktop-ui-session-42",
+                    "enqueue_memory_log": True,
+                },
         )
     ]
 
