@@ -64,6 +64,7 @@ from tools.train_unified_intrinsic_recurrence import (  # noqa: E402
     _canonical_sha256,
     _configure_window_tissue,
     _ground_state_value_embeddings,
+    _merge_bootstrap_codebook_extension,
     _model_identity,
     _runtime_identity,
     _trainable,
@@ -441,6 +442,7 @@ def load_root_initial_controller(
 def _bootstrap_initial_controller(
     layout: EvaluationLayout,
     model: Any,
+    tokenizer: Any,
     identity: dict[str, Any],
     literal_contract: LiteralObservationContract,
     opcode_contract: OpcodeObservationContract,
@@ -498,13 +500,24 @@ def _bootstrap_initial_controller(
         raise RuntimeError("unified checkpoint bootstrap commitment differs")
 
     mismatches = list(bootstrap_topology_mismatches(parent_identity, identity))
-    if mismatches:
-        raise RuntimeError("unified checkpoint bootstrap topology differs: " + ",".join(mismatches))
 
     controller = UnifiedRecurrentController(
         _controller_config(model, identity, literal_contract, opcode_contract)
     )
     parent_bundle = UnifiedTrainingBundle(model, controller)
+    if mismatches == ["state_codebook_sha256"]:
+        expected_grounding = identity.get("state_codebook_grounding")
+        if not isinstance(expected_grounding, dict):
+            raise RuntimeError("unified checkpoint state codebook grounding is absent")
+        observed_grounding = _ground_state_value_embeddings(
+            model,
+            tokenizer,
+            controller,
+            prelude_end=int(identity["spec"]["prelude_end"]),
+            batch_size=int(expected_grounding.get("batch_size", 0)),
+        )
+        if observed_grounding != expected_grounding:
+            raise RuntimeError("unified checkpoint bootstrap grounding differs")
     tensors = mx.load(str(resolved.weights_path))
     trainable = {
         name.removeprefix("bundle."): value
@@ -525,6 +538,15 @@ def _bootstrap_initial_controller(
             "unified checkpoint bootstrap tensor topology differs: "
             + ",".join(incompatible_tensors)
         )
+    trainable, observed_extension = _merge_bootstrap_codebook_extension(
+        trainable,
+        expected,
+        mismatches=mismatches,
+        parent_identity=parent_identity,
+        child_identity=identity,
+    )
+    if observed_extension != bootstrap.get("semantic_codebook_extension"):
+        raise RuntimeError("unified checkpoint bootstrap semantic extension differs")
     parent_bundle.update(tree_unflatten(list(trainable.items())))
     mx.eval(parent_bundle.parameters())
     expected_sha256 = identity.get("initial_controller_sha256")
@@ -730,6 +752,7 @@ def _load_checkpoint(
     initial_controller = _bootstrap_initial_controller(
         layout,
         model,
+        tokenizer,
         identity,
         literal_contract,
         opcode_contract,

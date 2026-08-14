@@ -58,6 +58,7 @@ from tools.train_unified_intrinsic_recurrence import (  # noqa: E402
     _invocation_stop_step,
     _load_frozen_dataset,
     _load_latest_checkpoint,
+    _merge_bootstrap_codebook_extension,
     _model_identity,
     _model_lane_purpose,
     _optimization_phase,
@@ -76,6 +77,96 @@ from tools.train_unified_intrinsic_recurrence import (  # noqa: E402
     _training_halt_reason,
     _training_verdict,
 )
+
+
+def _codebook_extension_values() -> tuple[dict, dict]:
+    parent_action = mx.zeros((8, 33, 2), dtype=mx.float32)
+    child_action = mx.concatenate(
+        (
+            mx.concatenate(
+                (
+                    parent_action[0:1, :9],
+                    mx.ones((1, 7, 2), dtype=mx.float32),
+                    parent_action[0:1, 16:],
+                ),
+                axis=1,
+            ),
+            parent_action[1:],
+        ),
+        axis=0,
+    )
+    shared = {
+        "controller.action_slot_embeddings": mx.zeros((8, 2)),
+        "controller.literal_value_embeddings": mx.zeros((33, 2)),
+        "controller.state_slot_embeddings": mx.zeros((5, 2)),
+        "controller.state_value_embeddings": mx.zeros((5, 33, 2)),
+        "controller.correction_a": mx.ones((2, 2)),
+    }
+    return (
+        {**shared, "controller.action_value_embeddings": parent_action},
+        {**shared, "controller.action_value_embeddings": child_action},
+    )
+
+
+def test_bootstrap_codebook_extension_replaces_only_new_opcode_rows() -> None:
+    parent, child = _codebook_extension_values()
+    migrated, receipt = _merge_bootstrap_codebook_extension(
+        parent,
+        child,
+        mismatches=["state_codebook_sha256"],
+        parent_identity={"state_codebook_sha256": "parent"},
+        child_identity={"state_codebook_sha256": "child"},
+    )
+
+    assert receipt is not None
+    assert receipt["value_start_inclusive"] == 9
+    assert receipt["value_stop_exclusive"] == 16
+    assert bool(
+        mx.array_equal(
+            migrated["controller.action_value_embeddings"][0, 9:16],
+            child["controller.action_value_embeddings"][0, 9:16],
+        )
+    )
+    assert bool(
+        mx.array_equal(
+            migrated["controller.action_value_embeddings"][0, :9],
+            parent["controller.action_value_embeddings"][0, :9],
+        )
+    )
+    assert bool(
+        mx.array_equal(
+            migrated["controller.correction_a"],
+            parent["controller.correction_a"],
+        )
+    )
+
+
+def test_bootstrap_codebook_extension_rejects_retained_coordinate_drift() -> None:
+    parent, child = _codebook_extension_values()
+    changed = child["controller.action_value_embeddings"] + 0
+    changed[0, 8] = 1
+    child["controller.action_value_embeddings"] = changed
+
+    with pytest.raises(RuntimeError, match="retained opcode coordinates"):
+        _merge_bootstrap_codebook_extension(
+            parent,
+            child,
+            mismatches=["state_codebook_sha256"],
+            parent_identity={"state_codebook_sha256": "parent"},
+            child_identity={"state_codebook_sha256": "child"},
+        )
+
+
+def test_bootstrap_codebook_extension_rejects_any_other_topology_drift() -> None:
+    parent, child = _codebook_extension_values()
+    with pytest.raises(RuntimeError, match="controller_rank"):
+        _merge_bootstrap_codebook_extension(
+            parent,
+            child,
+            mismatches=["state_codebook_sha256", "controller_rank"],
+            parent_identity={"state_codebook_sha256": "parent"},
+            child_identity={"state_codebook_sha256": "child"},
+        )
 
 
 def _model() -> Model:

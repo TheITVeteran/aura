@@ -165,6 +165,8 @@ def test_typed_action_lesion_removes_selected_process_channel() -> None:
         controller,
         state_slot_start=4,
         state_probability_trajectory=normal_states,
+        initial_state_teacher_values=(0, 0, 0, 0, 0),
+        state_teacher_forcing_probability=1.0,
     )
     unified_recurrent_hidden_states(
         model,
@@ -173,6 +175,8 @@ def test_typed_action_lesion_removes_selected_process_channel() -> None:
         controller,
         state_slot_start=4,
         state_probability_trajectory=lesioned_states,
+        initial_state_teacher_values=(0, 0, 0, 0, 0),
+        state_teacher_forcing_probability=1.0,
         typed_action_lesion=True,
     )
 

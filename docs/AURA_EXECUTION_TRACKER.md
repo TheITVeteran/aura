@@ -49073,3 +49073,40 @@ proves the comparison is ready to run. It does not itself prove a behavioral
 gain, resident-32B improvement, fusion, frontier performance or `WOW Signal`.
 Next is the bounded source-bound 1.5B adaptation at the measured natural
 process depths, followed immediately by this frozen canary.
+
+## Checkpoint 2026-08-13-399: Proven Tissue Gains a Certified Opcode Extension
+
+Two launch preflights prevented an invalid broad-process campaign before model
+load. The first restored the required `T=1` no-recurrence anchor alongside the
+measured natural process depths. The second found that CP394's newly assigned
+opcode meanings changed the grounded state-codebook commitment relative to the
+exact CP232 parent. Treating those values as topology-identical would have
+either rejected every legitimate broad transfer or silently overwritten the
+new semantic grounding with the old reserved-value embeddings.
+
+Bootstrap and independent evaluation now share one certified append-only
+semantic migration. It can replace only the opcode-slot embeddings for values
+9 through 15, the seven meanings introduced by CP394. Before replacement it
+requires byte equality for opcode values 0 through 8 and 16 through 32, every
+other action slot, and the action-slot, state-slot, state-value and literal-value
+codebooks. All other parent tensors retain their exact checkpoint values. The
+bootstrap receipt commits the parent and child codebook hashes, replacement
+and migrated-tensor hashes, exact coordinate interval, and both retained-region
+proofs. Any additional topology mismatch or retained-coordinate change still
+fails closed. Independent parent-arm reconstruction repeats the same migration,
+checks the receipt byte-for-byte and verifies the resulting controller hash
+against the child's committed step-zero identity.
+
+The action-lesion fixture also now starts from a deterministic nonterminal typed
+state. Its prior random terminal prediction could make a real action and its
+lesion both stutter, creating seed-dependent test evidence without changing the
+runtime mechanism.
+
+Focused broad-process, trainer, evaluator, checkpoint, decode and canary
+contracts pass `143/143`; canonical smoke passes `104/104`; Ruff and compilation
+pass. CP399 proves only that the exact retained CP232 tissue can be extended
+without ambiguous inheritance and compared against the same migrated parent.
+It does not prove broad adaptation, task-disjoint gain, resident-32B
+improvement, fusion, frontier performance or `WOW Signal`. Next is the bounded
+1.5B adaptation using train depths `1,3,4,5,6,8,10`, held-out depths `12,16`,
+then the already-frozen four-arm behavioral canary.

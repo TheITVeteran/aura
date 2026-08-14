@@ -242,6 +242,7 @@ def test_bootstrap_initial_controller_loads_exact_committed_parent(
     controller = evaluator._bootstrap_initial_controller(  # noqa: SLF001
         layout,
         object(),
+        object(),
         identity,
         argparse.Namespace(digit_token_ids=()),
         argparse.Namespace(patterns=(), contexts=()),
@@ -271,6 +272,7 @@ def test_bootstrap_initial_controller_rejects_parent_commitment_drift(
     with pytest.raises(RuntimeError, match="bootstrap output is unavailable"):
         evaluator._bootstrap_initial_controller(  # noqa: SLF001
             layout,
+            object(),
             object(),
             identity,
             object(),

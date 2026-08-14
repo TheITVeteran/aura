@@ -32,6 +32,8 @@ from core.learning.frontier_process_supervision import (  # noqa: E402
 from core.learning.intrinsic_recurrence import _run, checkpointed_window  # noqa: E402
 from core.learning.recurrent_action_schema import (  # noqa: E402
     ACTION_SLOT_NAMES,
+    OP_FRONTIER_AUDIT,
+    OP_FRONTIER_TRAVERSE,
     action_targets_from_program,
     action_value_semantic_label,
 )
@@ -1922,13 +1924,7 @@ def _bootstrap_bundle_from_checkpoint(
     parent_identity = receipt.get("identity")
     if not isinstance(parent_identity, dict):
         raise RuntimeError("unified recurrence bootstrap identity is unavailable")
-    mismatches = list(
-        bootstrap_topology_mismatches(parent_identity, expected_identity)
-    )
-    if mismatches:
-        raise RuntimeError(
-            "unified recurrence bootstrap topology differs: " + ",".join(mismatches)
-        )
+    mismatches = list(bootstrap_topology_mismatches(parent_identity, expected_identity))
     tensors = mx.load(str(resolved.weights_path))
     bundle_values = {
         name.removeprefix("bundle."): value
@@ -1950,9 +1946,16 @@ def _bootstrap_bundle_from_checkpoint(
             "unified recurrence bootstrap tensor topology differs: "
             + ",".join(incompatible_tensors)
         )
+    bundle_values, codebook_extension = _merge_bootstrap_codebook_extension(
+        bundle_values,
+        child_values,
+        mismatches=mismatches,
+        parent_identity=parent_identity,
+        child_identity=expected_identity,
+    )
     bundle.update(tree_unflatten(list(bundle_values.items())))
     mx.eval(bundle.parameters())
-    return {
+    result = {
         "schema": "aura.unified_intrinsic.bootstrap_tissue.v1",
         "stem": stem,
         "parent_step": int(receipt["step"]),
@@ -1965,6 +1968,107 @@ def _bootstrap_bundle_from_checkpoint(
         "dataset_transfer": "explicit_new_campaign",
         "tensor_shapes_verified": True,
         "tensor_dtypes_verified": True,
+    }
+    if codebook_extension is not None:
+        result["semantic_codebook_extension"] = codebook_extension
+    return result
+
+
+def _tensor_sha256(value: Any) -> str:
+    materialized = value.astype(mx.float32)
+    mx.eval(materialized)
+    return hashlib.sha256(bytes(memoryview(materialized))).hexdigest()
+
+
+def _merge_bootstrap_codebook_extension(
+    parent_values: dict[str, Any],
+    child_values: dict[str, Any],
+    *,
+    mismatches: list[str],
+    parent_identity: dict[str, Any],
+    child_identity: dict[str, Any],
+) -> tuple[dict[str, Any], dict[str, Any] | None]:
+    """Migrate only newly assigned opcode semantics into proven parent tissue."""
+
+    if not mismatches:
+        return dict(parent_values), None
+    if mismatches != ["state_codebook_sha256"]:
+        raise RuntimeError(
+            "unified recurrence bootstrap topology differs: " + ",".join(mismatches)
+        )
+
+    action_key = "controller.action_value_embeddings"
+    retained_codebook_keys = (
+        "controller.action_slot_embeddings",
+        "controller.literal_value_embeddings",
+        "controller.state_slot_embeddings",
+        "controller.state_value_embeddings",
+    )
+    if action_key not in parent_values or action_key not in child_values or any(
+        key not in parent_values or key not in child_values
+        for key in retained_codebook_keys
+    ):
+        raise RuntimeError("unified recurrence bootstrap semantic codebook is incomplete")
+    if any(
+        not bool(mx.array_equal(parent_values[key], child_values[key]))
+        for key in retained_codebook_keys
+    ):
+        raise RuntimeError(
+            "unified recurrence bootstrap semantic extension changed retained codebook tissue"
+        )
+
+    parent_action = parent_values[action_key]
+    child_action = child_values[action_key]
+    start = OP_FRONTIER_TRAVERSE
+    stop = OP_FRONTIER_AUDIT + 1
+    if (
+        len(parent_action.shape) != 3
+        or parent_action.shape[0] != len(ACTION_SLOT_NAMES)
+        or parent_action.shape[1] <= stop
+    ):
+        raise RuntimeError("unified recurrence bootstrap action codebook shape differs")
+    retained_equal = (
+        bool(mx.array_equal(parent_action[0, :start], child_action[0, :start]))
+        and bool(mx.array_equal(parent_action[0, stop:], child_action[0, stop:]))
+        and bool(mx.array_equal(parent_action[1:], child_action[1:]))
+    )
+    if not retained_equal:
+        raise RuntimeError(
+            "unified recurrence bootstrap semantic extension changed retained opcode coordinates"
+        )
+
+    migrated_action = mx.concatenate(
+        (
+            mx.concatenate(
+                (
+                    parent_action[0:1, :start],
+                    child_action[0:1, start:stop],
+                    parent_action[0:1, stop:],
+                ),
+                axis=1,
+            ),
+            parent_action[1:],
+        ),
+        axis=0,
+    )
+    mx.eval(migrated_action)
+    migrated = dict(parent_values)
+    migrated[action_key] = migrated_action
+    return migrated, {
+        "schema": "aura.unified_intrinsic.semantic_codebook_extension.v1",
+        "tensor": action_key,
+        "slot": "opcode",
+        "slot_index": 0,
+        "value_start_inclusive": start,
+        "value_stop_exclusive": stop,
+        "retained_coordinates_equal": True,
+        "retained_codebook_tensors_equal": True,
+        "parent_state_codebook_sha256": parent_identity.get(
+            "state_codebook_sha256"
+        ),
+        "child_state_codebook_sha256": child_identity.get("state_codebook_sha256"),
+        "replacement_sha256": _tensor_sha256(child_action[0, start:stop]),
+        "migrated_tensor_sha256": _tensor_sha256(migrated_action),
     }
 
 
