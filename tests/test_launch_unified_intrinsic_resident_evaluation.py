@@ -143,7 +143,8 @@ def _terminal_fixture(
         lambda *_args, **_kwargs: SimpleNamespace(receipt=selected_receipt),
     )
     admission_body = {
-        "schema": "aura.unified_intrinsic.answer_bridge_admission.v3",
+        "schema": "aura.unified_intrinsic.answer_bridge_admission.v4",
+        "answer_digit_pointer_enabled": False,
         "admitted": True,
         "exact": 1,
         "tasks": 1,
@@ -157,7 +158,13 @@ def _terminal_fixture(
         "steps": checkpoint["step"],
         "verdict": training_verdict,
         "answer_bridge_admission": admission,
-        "identity": {"dataset": {"holdout_count": 1}},
+        "identity": {
+            "dataset": {"holdout_count": 1},
+            "answer_bridge_supervision": {
+                "schema": "aura.unified_intrinsic.answer_bridge_supervision.v1",
+                "answer_digit_pointer_enabled": False,
+            },
+        },
     }
     training_receipt = {
         **training_body,
@@ -205,7 +212,8 @@ def test_prepare_binds_terminal_checkpoint_and_frozen_evaluator(
     assert plan["scientific"]["checkpoint"]["answer_bridge_admission"] == {
         "admission_sha256": launcher.canonical_sha256(
             {
-                "schema": "aura.unified_intrinsic.answer_bridge_admission.v3",
+                "schema": "aura.unified_intrinsic.answer_bridge_admission.v4",
+                "answer_digit_pointer_enabled": False,
                 "admitted": True,
                 "exact": 1,
                 "tasks": 1,
@@ -213,6 +221,7 @@ def test_prepare_binds_terminal_checkpoint_and_frozen_evaluator(
         ),
         "tasks": 1,
         "exact": 1,
+        "answer_digit_pointer_enabled": False,
     }
     assert plan["command"][0] == config["runtime"]["interpreter"]["executable"]
     assert plan["scientific"]["evaluator_source_root"] == config["source"]["git"]["root"]
@@ -378,6 +387,34 @@ def test_prepare_rejects_tampered_answer_bridge_admission(
     body = {key: value for key, value in receipt.items() if key != "receipt_sha256"}
     receipt["receipt_sha256"] = launcher.canonical_sha256(body)
     (output / "training_receipt.json").write_bytes(launcher.canonical_bytes(receipt) + b"\n")
+
+    with pytest.raises(
+        launcher.ResidentEvaluationLaunchError,
+        match="requires an admitted answer-bridge checkpoint",
+    ):
+        launcher.prepare(arguments)
+
+
+def test_prepare_rejects_admission_with_a_different_pointer_policy(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    arguments, config, _checkpoint = _terminal_fixture(tmp_path, monkeypatch)
+    output = Path(str(config["paths"]["training_output"]))
+    receipt = launcher._read_document(output / "training_receipt.json")
+    admission = receipt["answer_bridge_admission"]
+    admission["answer_digit_pointer_enabled"] = True
+    admission_body = {
+        key: value for key, value in admission.items() if key != "admission_sha256"
+    }
+    admission["admission_sha256"] = launcher.canonical_sha256(admission_body)
+    receipt_body = {
+        key: value for key, value in receipt.items() if key != "receipt_sha256"
+    }
+    receipt["receipt_sha256"] = launcher.canonical_sha256(receipt_body)
+    (output / "training_receipt.json").write_bytes(
+        launcher.canonical_bytes(receipt) + b"\n"
+    )
 
     with pytest.raises(
         launcher.ResidentEvaluationLaunchError,

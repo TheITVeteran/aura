@@ -195,6 +195,18 @@ def _selected_checkpoint(
         dataset_identity = (
             training_identity.get("dataset") if isinstance(training_identity, dict) else None
         )
+        supervision_identity = (
+            training_identity.get("answer_bridge_supervision")
+            if isinstance(training_identity, dict)
+            else None
+        )
+        expected_pointer_policy = (
+            supervision_identity.get("answer_digit_pointer_enabled")
+            if isinstance(supervision_identity, dict)
+            and supervision_identity.get("schema")
+            == "aura.unified_intrinsic.answer_bridge_supervision.v1"
+            else None
+        )
         expected_tasks = (
             dataset_identity.get("holdout_count") if isinstance(dataset_identity, dict) else None
         )
@@ -210,8 +222,11 @@ def _selected_checkpoint(
             or persisted.get("receipt_sha256") != training_receipt.get("receipt_sha256")
             or persisted.get("receipt_sha256") != canonical_sha256(persisted_body)
             or not isinstance(admission, dict)
-            or admission.get("schema") != "aura.unified_intrinsic.answer_bridge_admission.v3"
+            or admission.get("schema") != "aura.unified_intrinsic.answer_bridge_admission.v4"
             or admission.get("admission_sha256") != canonical_sha256(admission_body)
+            or type(expected_pointer_policy) is not bool
+            or admission.get("answer_digit_pointer_enabled")
+            is not expected_pointer_policy
             or admission.get("admitted") is not True
             or admission.get("exact") != admission.get("tasks")
             or type(admission.get("tasks")) is not int
@@ -235,6 +250,9 @@ def _selected_checkpoint(
             "admission_sha256": admission["admission_sha256"],
             "tasks": admission["tasks"],
             "exact": admission["exact"],
+            "answer_digit_pointer_enabled": admission[
+                "answer_digit_pointer_enabled"
+            ],
         }
     return selected_checkpoint
 
