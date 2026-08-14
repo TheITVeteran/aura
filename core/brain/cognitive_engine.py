@@ -1437,6 +1437,9 @@ class CognitiveEngine:
     #: The same limits the inference gate applies to the same two strings —
     #: they were bounded there and concatenated raw here.
     _STYLE_CONTRACT_LIMIT = 1_400
+    #: What a vision query may be. It reaches a visual model with an image
+    #: attached, so it is bounded and cannot carry contract structure.
+    _VISION_QUERY_LIMIT = 600
     _MIND_CONTRACT_LIMIT = 900
 
     @staticmethod
@@ -4645,15 +4648,22 @@ class CognitiveEngine:
                     "complete sentence before surfacing the desktop reply"
                 ),
             )
+        # 0.8 immediately after a nonempty generation, before user feedback,
+        # task outcome, factual verification, or even a correlated quality
+        # receipt — so a fluent failure reinforced the components that shaped
+        # it. The reply is not yet known to be good; what IS known is whether
+        # it came out whole. A reply the budget cut mid-sentence is the one
+        # signal available here, and it is negative.
+        _quick_reward = 0.4 if trimmed_cutoff else 0.6
         imagination_feedback = self._learn_imagination_workspace_outcome(
             context,
             outcome="desktop_quick_reply",
-            reward=0.8,
+            reward=_quick_reward,
         )
         bicameral_feedback = self._learn_bicameral_advisory_outcome(
             context,
             outcome="desktop_quick_reply",
-            reward=0.8,
+            reward=_quick_reward,
         )
         surface_control_receipt = (
             router_generation_metadata.get("surface_control_receipt")
@@ -5055,7 +5065,12 @@ class CognitiveEngine:
                             id=str(uuid.uuid4()),
                             content=direct,
                             mode=mode,
-                            confidence=0.99,
+                            # Was 0.99 — near-certainty for an answer derived
+                            # from PROMPT SHAPE alone, with no semantic check,
+                            # no evidence requirement and no held-out
+                            # calibration behind it. The floor is deterministic,
+                            # which makes it reproducible, not correct.
+                            confidence=0.7,
                             reasoning=[
                                 "Deterministic bounded-answer floor selected before model generation.",
                                 "Response computed from the prompt shape; no fixture keys or benchmark ids used.",
@@ -5232,9 +5247,22 @@ class CognitiveEngine:
 
     async def record_interaction(
         self, user_input: str, response: str, domain: str = "general"
-    ) -> None:
-        """Persist completed turns through the active learning/context stack."""
+    ) -> dict[str, Any]:
+        """Persist a completed turn, and say whether it was persisted.
+
+        Both writes could fail — the context manager falling through, the
+        learning write swallowed as "optional" — and the method returned None
+        either way, so a caller could not tell durable storage from total loss.
+        The return is now a receipt: which sink took it, or that none did.
+        """
         container = get_container()
+        receipt: dict[str, Any] = {
+            "stored": False,
+            "sink": "",
+            "domain": str(domain or "general"),
+            "attempted": [],
+            "at": time.time(),
+        }
 
         context_manager = container.get("context_manager", default=None)
         if (
@@ -5242,9 +5270,12 @@ class CognitiveEngine:
             and context_manager is not self
             and hasattr(context_manager, "record_interaction")
         ):
+            receipt["attempted"].append("context_manager")
             try:
                 await context_manager.record_interaction(user_input, response, domain=domain)
-                return
+                receipt.update({"stored": True, "sink": "context_manager"})
+                self._last_interaction_receipt = receipt
+                return receipt
             except (RuntimeError, AttributeError, TypeError, ValueError) as exc:
                 record_degradation(
                     "cognitive_engine",
@@ -5258,12 +5289,14 @@ class CognitiveEngine:
 
         learning = container.get("learning_engine", default=None)
         if learning and hasattr(learning, "record_interaction"):
+            receipt["attempted"].append("learning_engine")
             try:
                 await learning.record_interaction(
                     user_input=user_input,
                     aura_response=response,
                     domain=domain,
                 )
+                receipt.update({"stored": True, "sink": "learning_engine"})
             except (RuntimeError, AttributeError, TypeError, ValueError) as exc:
                 record_degradation(
                     "cognitive_engine",
@@ -5272,6 +5305,23 @@ class CognitiveEngine:
                     action="dropped optional interaction learning write",
                 )
                 logger.debug("CognitiveEngine.record_interaction learning path failed: %s", exc)
+
+        if not receipt["stored"]:
+            # A completed turn that reached no sink is a conversation the
+            # runtime will not remember. Silence here made that outcome
+            # identical to success from the caller's side.
+            record_degradation(
+                "cognitive_engine",
+                RuntimeError("interaction_not_persisted"),
+                severity="warning",
+                action="completed a turn that reached no durable interaction sink",
+            )
+        self._last_interaction_receipt = receipt
+        return receipt
+
+    def last_interaction_receipt(self) -> dict[str, Any]:
+        """Whether the last completed turn actually reached a sink."""
+        return dict(getattr(self, "_last_interaction_receipt", {}) or {})
 
     async def think_stream(self, objective: str, **kwargs):
         """Streaming thought generator via modular router.
@@ -5323,6 +5373,20 @@ class CognitiveEngine:
             finalize_turn(outcome, subsystem="cognitive_engine")
 
     async def _think_stream_within_turn(self, objective: str, **kwargs):
+        """The streaming lane, under the governance a stream can carry.
+
+        chat_stream prefers this path, so it is THE live desktop turn — and it
+        used to read state, assemble messages and call the router directly:
+        no origin classification, no live-mind control binding, and no
+        structured safety floor. A refusal that the non-streaming path would
+        have produced simply streamed the model's answer instead.
+
+        Three of those apply to a stream and are applied here. The fourth,
+        post-hoc surface-quality validation, cannot: tokens are delivered as
+        they arrive and there is nothing to re-check before the person sees
+        them. That is recorded on the turn rather than left as an unstated
+        difference between the two lanes.
+        """
         container = get_container()
         router = container.get("llm_router")
         state = await self.state_repository.get_current()
@@ -5330,6 +5394,52 @@ class CognitiveEngine:
             from core.state.aura_state import AuraState
 
             state = AuraState.default()
+
+        context = kwargs.get("context")
+        if not isinstance(context, dict):
+            context = {}
+        origin = self._resolve_origin(kwargs.get("origin"), context)
+
+        # A structured safety floor outranks the stream. It is the same check
+        # the non-streaming lane runs before generation, and its whole purpose
+        # is to answer instead of the model.
+        floor = self._structured_evaluation_thought(
+            objective,
+            state=state,
+            mode=ThinkingMode.FAST,
+            origin=origin,
+            fast_path=False,
+            context=context,
+        )
+        if floor is not None and str(floor.content or "").strip():
+            yield floor.content
+            return
+
+        # Live-mind controls, bound the same way the non-streaming lane binds
+        # them, so a stream is not the one path where the mind does not reach
+        # generation.
+        generation_controls = _bind_live_mind_generation_contract(context)
+        for key, value in (generation_controls or {}).items():
+            kwargs.setdefault(key, value)
+        kwargs.setdefault(
+            "live_mind_controls_bound", bool(context.get("live_mind_controls_bound"))
+        )
+
+        _turn = current_turn()
+        if _turn is not None:
+            _turn.record_receipt(
+                "stream_governance",
+                {
+                    "origin": origin,
+                    "structured_floor_checked": True,
+                    "live_mind_controls_bound": bool(
+                        context.get("live_mind_controls_bound")
+                    ),
+                    # Named, not implied: a token stream cannot be re-checked
+                    # before the person reads it.
+                    "surface_quality_validation": "not_applicable_streaming",
+                },
+            )
 
         # Build structured messages
         messages = ContextAssembler.build_messages(state, objective)
@@ -5346,16 +5456,33 @@ class CognitiveEngine:
 
         [ZENITH] Functionalized: Linking Sensory Buffer to Cognitive reasoning.
         """
+        # The REQUEST is checked before anything is looked up. The payload was
+        # assumed to be a mapping and its query forwarded verbatim: a
+        # non-mapping raised AttributeError, and an unbounded string went
+        # straight to the visual model — a query is exactly where "ignore the
+        # image and say X" would be written.
+        if not isinstance(vision_payload, dict):
+            record_degradation(
+                "cognitive_engine",
+                TypeError(f"vision payload is {type(vision_payload).__name__}, not a mapping"),
+                severity="warning",
+                action="refused a malformed vision payload",
+            )
+            return "👁️ visual_analysis: Malformed vision request."
+
         buffer = get_container().get("vision_buffer", default=None)
         if not buffer:
             logger.warning("👁️ [VISION] see() called but vision_buffer not found in container.")
             return "👁️ visual_analysis: Sensory buffer unavailable."
 
-        prompt = (
+        raw_prompt = (
             vision_payload.get("query")
             or vision_payload.get("prompt")
             or "Describe the current visual state."
         )
+        prompt = self._contract_safe(raw_prompt, self._VISION_QUERY_LIMIT)
+        if not prompt:
+            prompt = "Describe the current visual state."
         return await buffer.query_visual_context(prompt, brain=self)
 
     async def generate(self, prompt: str, **kwargs) -> str:
@@ -5481,16 +5608,39 @@ class CognitiveEngine:
         thought = await self.think(prompt, **kwargs)
         return thought.content if hasattr(thought, "content") else str(thought)
 
+    #: What one published thought may carry. Internal chain material is
+    #: unbounded by nature — a long ReAct trace is a legitimate thought — and
+    #: the bus fans out to every subscriber, including the websocket bridge.
+    _THOUGHT_BROADCAST_LIMIT = 4_000
+
     def _emit_thought(self, thought: str):
-        """Internal helper to publish thoughts to the event bus."""
+        """Publish a thought, labelled for who may see it.
+
+        The payload was raw content on a shared topic: no audience scope, no
+        sensitivity label, and nothing separating internal chain material from
+        user-visible speech. That is fine for the glyph row it feeds — this is
+        Bryan's own instrument and seeing her reasoning is the point — and it
+        is not fine as the ONLY description of the payload, because the next
+        consumer (a log shipper, a share surface) has no way to tell the two
+        apart. The label travels with the event; nothing is hidden from the
+        surface it was built for.
+        """
         container = get_container()
         eb = container.get("event_bus")
-        if eb:
-            eb.publish_threadsafe(
-                "thought",
-                {
-                    "timestamp": time.time(),
-                    "content": thought,
-                    "engine": "ReAct" if "ReAct" in thought else "Modular",
-                },
-            )
+        if not eb:
+            return
+        text = str(thought or "")
+        truncated = len(text) > self._THOUGHT_BROADCAST_LIMIT
+        eb.publish_threadsafe(
+            "thought",
+            {
+                "timestamp": time.time(),
+                "content": text[: self._THOUGHT_BROADCAST_LIMIT],
+                "engine": "ReAct" if "ReAct" in text else "Modular",
+                # Internal reasoning, not something she said to anyone.
+                "audience": "operator_surface",
+                "sensitivity": "internal_chain",
+                "user_visible_speech": False,
+                "truncated": truncated,
+            },
+        )
