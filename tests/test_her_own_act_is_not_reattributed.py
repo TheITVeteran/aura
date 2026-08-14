@@ -105,9 +105,29 @@ def test_no_act_of_hers_is_handed_to_the_user(sentence: str) -> None:
 
 
 def test_the_repair_still_does_the_job_it_exists_for() -> None:
-    """Adopting the user's utterance as her own is the real failure."""
+    """Adopting the user's utterance as her own is the real failure.
+
+    The quote is not optional. Rewriting "I …" into "You said …" is a factual
+    assertion about who spoke, so it is made only about words traceable to the
+    turn that was actually retrieved — which is why the live callers in
+    interface/routes/chat.py pass grounded_quote_from_context(...).
+    """
     text, changed = repair_grounded_recall_speaker_attribution(
-        "what did I first ask", "I asked about your neural network."
+        "what did I first ask",
+        "I asked about your neural network.",
+        "I asked about your neural network.",
     )
     assert changed
     assert text.startswith("You said you asked")
+
+
+def test_without_the_retrieved_quote_nothing_is_rewritten() -> None:
+    """No quote means nothing has been shown to be misattributed. Rewriting on
+    a leading pronoun alone is what turned her true "I remember the
+    conversation" into a claim that HE had said it."""
+    text, changed = repair_grounded_recall_speaker_attribution(
+        "what did I first ask", "I asked about your neural network."
+    )
+
+    assert not changed
+    assert text == "I asked about your neural network."

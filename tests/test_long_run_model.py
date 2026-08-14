@@ -147,3 +147,38 @@ def test_write_report_bundle_emits_markdown_and_json(tmp_path):
     assert summary_json["checkpoints"][0]["horizon"] == "24h"
     assert isinstance(risk_json, list)
     assert isinstance(remediation_json, list)
+
+
+def test_every_supervised_subsystem_path_still_exists():
+    """Commit 053b0a8ab retired 112 modules and left this registry pointing at
+    one of them, so the supervision audit died on a FileNotFoundError that
+    named a path and not the subsystem. A retirement should fail here, once,
+    with the key that went stale."""
+    from tools.long_run_model.registry import _missing_supervision_files
+
+    missing = _missing_supervision_files()
+
+    assert not missing, (
+        f"the supervision registry points at files that no longer exist: {missing}"
+    )
+
+
+def test_an_unreadable_subsystem_is_unresolved_not_audited():
+    """Unreadable is not supervised. Counting it as audited would be the
+    absence of a check reported as a passed one."""
+    import tools.long_run_model.registry as registry_mod
+
+    original = dict(registry_mod.CRITICAL_SUPERVISION_FILES)
+    registry_mod.CRITICAL_SUPERVISION_FILES["ghost"] = (
+        registry_mod.PROJECT_ROOT / "core" / "nowhere" / "retired_module.py"
+    )
+    try:
+        audit = registry_mod._critical_supervision_audit()
+    finally:
+        registry_mod.CRITICAL_SUPERVISION_FILES.clear()
+        registry_mod.CRITICAL_SUPERVISION_FILES.update(original)
+
+    assert audit["audited"]["ghost"] is False
+    assert "ghost" in audit["unresolved"]
+    assert "ghost" in audit["missing_sources"]
+    assert audit["all_resolved"] is False

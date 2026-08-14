@@ -224,3 +224,170 @@ def test_both_cloud_paths_are_capped_by_the_request_deadline():
     assert "timeout=30.0," not in source, (
         "a cloud attempt still runs on its own thirty-second clock"
     )
+
+
+# ────────────────────────── a draft handed downstream is not yet an answer
+
+
+def test_a_repairable_draft_opens_an_obligation_with_the_draft_hash():
+    """The endpoint was recorded as if the answer came from it, with no id, no
+    hash, no acceptance and no postcondition behind the promise of repair."""
+    gate = InferenceGate.__new__(InferenceGate)
+    gate._repair_obligations = {}
+
+    obligation_id = gate._open_repair_obligation(
+        label="Cortex", draft="half an answer", reasons=("truncated_tail",)
+    )
+
+    assert obligation_id.startswith("repair_")
+    [record] = gate.open_repair_obligations()
+    assert record["endpoint"] == "Cortex"
+    assert record["draft_chars"] == len("half an answer")
+    assert record["reasons"] == ["truncated_tail"]
+    assert len(record["draft_sha256"]) == 64
+
+
+def test_the_endpoint_attribution_is_marked_provisional():
+    gate = InferenceGate.__new__(InferenceGate)
+    gate._last_user_generation_provisional = False
+
+    gate._record_user_generation_endpoint("Cortex", provisional=True)
+
+    assert gate._last_user_generation_provisional is True
+
+
+def test_an_ordinary_answer_is_not_provisional():
+    gate = InferenceGate.__new__(InferenceGate)
+    gate._last_user_generation_provisional = True
+
+    gate._record_user_generation_endpoint("Cortex")
+
+    assert gate._last_user_generation_provisional is False
+
+
+def test_discharging_an_unknown_obligation_reports_false():
+    """Something claiming to have repaired a draft this gate never handed out
+    is worth knowing about."""
+    gate = InferenceGate.__new__(InferenceGate)
+    gate._repair_obligations = {}
+
+    assert (
+        gate.discharge_repair_obligation("repair_nope", repaired_text="x", accepted=True)
+        is False
+    )
+
+
+def test_a_discharged_obligation_records_whether_anything_changed():
+    gate = InferenceGate.__new__(InferenceGate)
+    gate._repair_obligations = {}
+    obligation_id = gate._open_repair_obligation(
+        label="Cortex", draft="half an answer", reasons=()
+    )
+
+    assert gate.discharge_repair_obligation(
+        obligation_id, repaired_text="a whole answer", accepted=True
+    )
+    assert gate.open_repair_obligations() == []
+
+
+def test_serving_the_turn_closes_the_obligation_with_a_postcondition():
+    """The ledger holds the draft hash and the served text; comparing them IS
+    the postcondition the promise of repair was missing."""
+    from core.runtime.turn_outcome import TurnOutcome
+
+    gate = InferenceGate.__new__(InferenceGate)
+    gate._repair_obligations = {}
+    outcome = TurnOutcome(origin="user_chat")
+
+    from core.runtime.turn_outcome import bind_turn
+
+    with bind_turn(outcome):
+        gate._open_repair_obligation(label="Cortex", draft="half an answer", reasons=())
+
+    outcome.mark_served("a whole, repaired answer")
+    receipt = outcome.finalize()
+
+    discharged = [r for r in receipt.causal_receipts if r["kind"] == "repair_discharged"]
+    assert discharged, "the repair promise was never closed"
+    assert discharged[0]["payload"]["changed"] is True
+
+
+def test_an_unrepaired_draft_that_goes_out_unchanged_is_recorded_as_such():
+    from core.runtime.turn_outcome import TurnOutcome, bind_turn
+
+    gate = InferenceGate.__new__(InferenceGate)
+    gate._repair_obligations = {}
+    outcome = TurnOutcome(origin="user_chat")
+
+    with bind_turn(outcome):
+        gate._open_repair_obligation(label="Cortex", draft="half an answer", reasons=())
+
+    outcome.mark_served("half an answer")
+    receipt = outcome.finalize()
+
+    discharged = [r for r in receipt.causal_receipts if r["kind"] == "repair_discharged"]
+    assert discharged[0]["payload"]["changed"] is False, (
+        "a flawed draft went out unchanged and the record could not say so"
+    )
+
+
+# ────────────────────────── a refusal undoes the temporal anchor
+
+
+def test_a_refusal_restores_the_temporal_anchor():
+    """on_inference_start anchors while parameters are still being assembled,
+    so a later refusal had moved temporal state for an inference that never
+    ran."""
+    from core.consciousness.temporal_continuity import TemporalContinuityEngine
+
+    continuity = TemporalContinuityEngine()
+    original = continuity._anchor_time
+
+    continuity.on_inference_start()
+    assert continuity._anchor_time != original
+
+    assert continuity.on_inference_abandoned("refused") is True
+    assert continuity._anchor_time == original
+    assert continuity.abandoned_inference_count() == 1
+
+
+def test_abandoning_twice_restores_once():
+    from core.consciousness.temporal_continuity import TemporalContinuityEngine
+
+    continuity = TemporalContinuityEngine()
+    continuity.on_inference_start()
+
+    assert continuity.on_inference_abandoned("refused") is True
+    assert continuity.on_inference_abandoned("refused again") is False
+
+
+def test_a_completed_inference_cannot_be_abandoned():
+    from core.consciousness.temporal_continuity import TemporalContinuityEngine
+
+    continuity = TemporalContinuityEngine()
+    before_start = continuity._anchor_time
+    continuity.on_inference_start()
+    # on_inference_complete re-anchors, which is its job.
+    continuity.on_inference_complete()
+    after_complete = continuity._anchor_time
+
+    assert continuity.on_inference_abandoned("too late") is False
+    assert continuity._anchor_time == after_complete
+    assert continuity._anchor_time != before_start
+
+
+def test_the_refusal_path_restores_the_anchor():
+    import ast
+    import inspect
+
+    from core.brain.inference_gate import InferenceGate
+
+    source = inspect.getsource(InferenceGate._refuse_generation)
+    tree = ast.parse(source.lstrip())
+
+    assert any(
+        isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Attribute)
+        and node.func.attr == "on_inference_abandoned"
+        for node in ast.walk(tree)
+    ), "a refusal leaves the temporal anchor advanced for an inference that never ran"

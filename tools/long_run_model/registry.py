@@ -41,7 +41,6 @@ from core.observability.unified_action_log import _MAX_ENTRIES as UNIFIED_ACTION
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 CRITICAL_SUPERVISION_FILES = {
     "belief_sync": PROJECT_ROOT / "core" / "collective" / "belief_sync.py",
-    "proactive_perception": PROJECT_ROOT / "core" / "perception" / "proactive_perception_v2.py",
     "memory_subsystem": PROJECT_ROOT / "core" / "memory" / "memory_subsystem.py",
     "proactive_presence": PROJECT_ROOT / "core" / "autonomy" / "proactive_presence.py",
     "process_manager": PROJECT_ROOT / "core" / "ops" / "process_manager.py",
@@ -181,6 +180,21 @@ def _read_source(path: Path) -> str:
     return path.read_text(encoding="utf-8")
 
 
+def _missing_supervision_files() -> Dict[str, str]:
+    """Registry entries whose file no longer exists.
+
+    Commit 053b0a8ab retired 112 modules and left this map pointing at one of
+    them, so every caller of the audit died on a bare FileNotFoundError that
+    named a path and not the subsystem. A supervision audit that cannot read
+    a subsystem has not audited it, and that is the fact to report.
+    """
+    return {
+        name: str(path)
+        for name, path in CRITICAL_SUPERVISION_FILES.items()
+        if not path.exists()
+    }
+
+
 def _extract_literal(path: Path, pattern: str, cast=float, default: Any = None) -> Any:
     match = re.search(pattern, _read_source(path), re.MULTILINE)
     if not match:
@@ -196,7 +210,14 @@ def _sha256_dict(payload: Dict[str, Any]) -> str:
 def _critical_supervision_audit() -> Dict[str, Any]:
     audited: Dict[str, bool] = {}
     unresolved: List[str] = []
+    missing = _missing_supervision_files()
     for name, path in CRITICAL_SUPERVISION_FILES.items():
+        if name in missing:
+            # Unreadable is not supervised. Reporting it as audited would be
+            # the absence of a check counted as a passed one.
+            audited[name] = False
+            unresolved.append(name)
+            continue
         source = _read_source(path)
         supervised = (
             "get_task_tracker" in source
@@ -213,6 +234,7 @@ def _critical_supervision_audit() -> Dict[str, Any]:
     return {
         "audited": audited,
         "unresolved": unresolved,
+        "missing_sources": missing,
         "all_resolved": not unresolved,
     }
 

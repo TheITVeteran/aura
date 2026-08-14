@@ -111,6 +111,15 @@ class TemporalContinuityEngine:
         self._anchor_substrate: Optional[np.ndarray] = None
         self._anchor_time: float = time.time()
         self._anchor_neurochemistry: Dict[str, float] = {}
+        #: The anchor before the current one, kept so an inference that never
+        #: happened can be undone. CP126 130a4708: on_inference_start runs
+        #: while generation parameters are still being assembled — before
+        #: prompt construction, lane warmup, or any provider call — so a later
+        #: refusal, timeout or cloud failure moved temporal state for an
+        #: inference that never ran, and the silence accumulator then measured
+        #: from an anchor no speech ever followed.
+        self._previous_anchor: Optional[tuple] = None
+        self._abandoned_inferences = 0
 
         # Accumulated residue (building up during silence)
         self._residue = TemporalResidue()
@@ -201,13 +210,49 @@ class TemporalContinuityEngine:
         by compute_modulation() which is called during parameter assembly.
         """
         with self._lock:
+            self._previous_anchor = (
+                self._anchor_substrate,
+                self._anchor_time,
+                dict(self._anchor_neurochemistry),
+            )
             self._anchor_substrate = self._sample_substrate()
             self._anchor_time = time.time()
             self._anchor_neurochemistry = self._sample_current_neurochemistry()
 
+    def on_inference_abandoned(self, reason: str = "") -> bool:
+        """No inference followed the anchor. Put the previous one back.
+
+        Returns whether anything was restored: False means no anchor was
+        pending, which is the ordinary case for a refusal that happened before
+        parameter assembly. Restoring twice is not possible — the saved anchor
+        is consumed.
+        """
+        with self._lock:
+            if self._previous_anchor is None:
+                return False
+            (
+                self._anchor_substrate,
+                self._anchor_time,
+                self._anchor_neurochemistry,
+            ) = self._previous_anchor
+            self._previous_anchor = None
+            self._abandoned_inferences += 1
+            logger.debug(
+                "Temporal anchor restored after an inference that never ran: %s",
+                reason or "unspecified",
+            )
+            return True
+
+    def abandoned_inference_count(self) -> int:
+        """How many anchors were rolled back. A rising count is a runtime
+        refusing or failing more turns than it serves."""
+        return self._abandoned_inferences
+
     def on_inference_complete(self):
         """Called after inference completes. Resets the accumulator."""
         with self._lock:
+            # The inference happened, so there is nothing left to undo.
+            self._previous_anchor = None
             # Record statistics before reset
             if self._residue.silence_duration_s > 5.0:
                 self._total_silences += 1

@@ -14,6 +14,7 @@ Timeouts are kept tight (45s) for conversational responsiveness.
 import asyncio
 import copy
 import gc
+import hashlib
 import inspect
 import logging
 import math
@@ -986,6 +987,10 @@ class InferenceGate:
         self._living_mind_receipt: Any = None
         #: Last dispatch's token-fit outcome; read via prompt_fit_receipt().
         self._prompt_fit_receipt: dict[str, Any] = {}
+        #: Drafts handed downstream for repair, keyed by obligation id.
+        self._repair_obligations: dict[str, Any] = {}
+        #: True while the last recorded endpoint is a draft awaiting repair.
+        self._last_user_generation_provisional = False
         #: Filled by every tier-health sweep; read via tier_health_receipt().
         self._tier_health_receipt: dict[str, Any] = {}
         self._constructed_wall_at: float = time.time()
@@ -1026,11 +1031,99 @@ class InferenceGate:
         type(self)._instance_ref = weakref.ref(self)
         logger.info("🛡️ InferenceGate created.")
 
-    def _record_user_generation_endpoint(self, label: str) -> None:
+    def _record_user_generation_endpoint(
+        self, label: str, *, provisional: bool = False
+    ) -> None:
         endpoint = PRIMARY_ENDPOINT if str(label).startswith(PRIMARY_ENDPOINT) else str(label)
         self._last_user_generation_endpoint = endpoint
         self._last_user_generation_at = time.time()
         self._last_user_generation_used_fallback = endpoint != PRIMARY_ENDPOINT
+        # A draft handed to downstream repair is not yet this endpoint's
+        # answer. Recording it as one made a flawed draft indistinguishable
+        # from a finished reply the moment it was written down.
+        self._last_user_generation_provisional = bool(provisional)
+
+    #: Drafts handed downstream for repair that nothing has come back about.
+    #: A repair that never happens used to leave no trace at all: the endpoint
+    #: was attributed, the flawed draft was returned, and there was no id, no
+    #: hash, no acceptance and no postcondition to check against.
+    def _open_repair_obligation(
+        self, *, label: str, draft: str, reasons: Any
+    ) -> str:
+        obligation_id = f"repair_{uuid.uuid4().hex[:12]}"
+        text = str(draft or "")
+        record = {
+            "schema": "aura.inference.repair_obligation.v1",
+            "obligation_id": obligation_id,
+            "endpoint": str(label),
+            "draft_sha256": hashlib.sha256(text.encode("utf-8")).hexdigest(),
+            "draft_chars": len(text),
+            "reasons": [str(reason)[:120] for reason in (reasons or ())][:8],
+            "opened_at": time.time(),
+        }
+        obligations = getattr(self, "_repair_obligations", None)
+        if obligations is None:
+            obligations = {}
+            self._repair_obligations = obligations
+        obligations[obligation_id] = record
+        try:
+            from core.runtime.turn_outcome import current_turn
+
+            turn = current_turn()
+            if turn is not None:
+                turn.record_receipt("repair_obligation", record)
+        except _INFERENCE_RECOVERABLE_ERRORS as exc:
+            logger.debug("Repair obligation not recorded on the turn ledger: %s", exc)
+        return obligation_id
+
+    def discharge_repair_obligation(
+        self, obligation_id: str, *, repaired_text: str, accepted: bool
+    ) -> bool:
+        """Close a repair obligation with what downstream actually produced.
+
+        Returns False for an unknown id, which is itself worth knowing: it
+        means something claims to have repaired a draft this gate never handed
+        out.
+        """
+        obligations = getattr(self, "_repair_obligations", None) or {}
+        record = obligations.pop(str(obligation_id), None)
+        if record is None:
+            return False
+        final = str(repaired_text or "")
+        record.update(
+            {
+                "discharged_at": time.time(),
+                "accepted": bool(accepted),
+                "final_sha256": hashlib.sha256(final.encode("utf-8")).hexdigest(),
+                "final_chars": len(final),
+                "changed": hashlib.sha256(final.encode("utf-8")).hexdigest()
+                != record["draft_sha256"],
+            }
+        )
+        try:
+            from core.runtime.turn_outcome import current_turn
+
+            turn = current_turn()
+            if turn is not None:
+                turn.record_receipt("repair_discharged", record)
+        except _INFERENCE_RECOVERABLE_ERRORS as exc:
+            logger.debug("Repair discharge not recorded on the turn ledger: %s", exc)
+        if not record["changed"] and accepted:
+            # Accepting the identical draft is a repair that did not happen,
+            # reported as one that did.
+            _record_inference_degradation(
+                RuntimeError("repair accepted a byte-identical draft"),
+                action="recorded a repair that produced no change to the draft",
+                extra={"obligation_id": str(obligation_id)},
+            )
+        return True
+
+    def open_repair_obligations(self) -> list[dict[str, Any]]:
+        """Drafts handed downstream that nothing has come back about."""
+        return [
+            copy.deepcopy(record)
+            for record in (getattr(self, "_repair_obligations", None) or {}).values()
+        ]
 
     def _generation_metadata_slot(self) -> ContextVar[dict[str, Any] | None]:
         slot = getattr(self, "_generation_metadata_context", None)
@@ -1259,6 +1352,19 @@ class InferenceGate:
         self._last_refusal_receipt = receipt
         if isinstance(context, dict):
             context["inference_refusal"] = dict(receipt)
+        # Temporal continuity anchors on inference START, which happens while
+        # generation parameters are still being assembled. A turn that refuses
+        # after that point had moved the anchor for an inference that never
+        # ran, and the silence accumulator then measured from a moment no
+        # speech ever followed. Undo it here, where every refusal now passes.
+        try:
+            from core.container import ServiceContainer as _Container
+
+            _tc = _Container.get("temporal_continuity", default=None)
+            if _tc is not None and hasattr(_tc, "on_inference_abandoned"):
+                _tc.on_inference_abandoned(f"{kind}:{reason}")
+        except _INFERENCE_RECOVERABLE_ERRORS as exc:
+            logger.debug("Temporal anchor not restored after refusal: %s", exc)
         try:
             from core.runtime.turn_outcome import current_turn
 
@@ -5642,9 +5748,13 @@ class InferenceGate:
                         ",".join(integrity.reasons) or "unknown",
                         len(cleaned),
                     )
-                    self._record_user_generation_endpoint(label)
+                    self._record_user_generation_endpoint(label, provisional=True)
                     self._annotate_last_generation_metadata(
                         post_generation_repair_expected=True,
+                        repair_obligation_id=self._open_repair_obligation(
+                            label=label, draft=cleaned, reasons=integrity.reasons
+                        ),
+                        provisional_endpoint=True,
                         failure_reasons=[str(r)[:120] for r in (integrity.reasons or ())][:8],
                     )
                     return self._strip_silence(cleaned)
@@ -5677,9 +5787,13 @@ class InferenceGate:
                             ",".join(assessment.reasons) or "unknown",
                             len(cleaned),
                         )
-                        self._record_user_generation_endpoint(label)
+                        self._record_user_generation_endpoint(label, provisional=True)
                         self._annotate_last_generation_metadata(
                             post_generation_repair_expected=True,
+                            repair_obligation_id=self._open_repair_obligation(
+                                label=label, draft=cleaned, reasons=assessment.reasons
+                            ),
+                            provisional_endpoint=True,
                             failure_reasons=[str(r)[:120] for r in (assessment.reasons or ())][:8],
                         )
                         return self._strip_silence(cleaned)
@@ -7818,10 +7932,17 @@ class InferenceGate:
                 unwrapped_candidate = unwrapped_candidate[: min(marker_positions)].strip()
             if _visible_precedes_only_internal_suffix(unwrapped_candidate):
                 contract_user_content = visible
+        # The output contract survives a long input.
+        #
+        # A short output contract does not imply a short input, so a contract
+        # turn whose user message runs long takes the standard INPUT budget.
+        # But `profile` also selected the system builder, so the downgrade used
+        # to drop `_contract_foreground_system_content` as well — and the
+        # contract is the reason this route was chosen. A long question lost the
+        # very output contract that routed it, which is the case where the
+        # contract matters most.
+        contract_output_profile = requested_profile == "contract"
         if profile == "contract":
-            # A short output contract does not imply a short input. The compact
-            # profile is lossless only while the complete current user turn fits
-            # its user allocation; otherwise retain the normal foreground budget.
             if len(contract_user_content) > 1_000:
                 profile = "standard"
             else:
@@ -7853,14 +7974,18 @@ class InferenceGate:
                 and latest_user_content
             ):
                 content_source = latest_user_content
+            if grounding_system and contract_output_profile:
+                message_profile = "contract_grounding"
+            elif role == "system" and contract_output_profile:
+                # The system block keeps the contract builder even when the
+                # input budget was widened above.
+                message_profile = "contract"
+            else:
+                message_profile = profile
             content = self._compact_prebuilt_message_content(
                 role,
                 content_source,
-                budget_profile=(
-                    "contract_grounding"
-                    if profile == "contract" and grounding_system
-                    else profile
-                ),
+                budget_profile=message_profile,
                 visible_request_chars=visible_request_chars,
             )
             if not content:

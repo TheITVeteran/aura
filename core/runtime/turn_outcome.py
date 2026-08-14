@@ -43,6 +43,7 @@ from __future__ import annotations
 import contextlib
 import contextvars
 import enum
+import hashlib
 import threading
 import time
 import uuid
@@ -576,6 +577,57 @@ class TurnOutcome:
             self._served = _clip(text)
             self._served_candidate_id = candidate_id
             self._user_visible = state
+            self._discharge_repair_obligations(self._served)
+
+    def _discharge_repair_obligations(self, served: str | None) -> None:
+        """Close any "this draft will be repaired downstream" promise.
+
+        The inference gate hands a flawed but repairable draft onward and
+        records the endpoint as if the answer came from it. CP126 51768ee9:
+        there was no id, no hash, no acceptance and no postcondition, so a
+        repair that never ran left the attribution standing and nothing to
+        check it against. The obligation carries the draft's hash; what was
+        served is right here; comparing them is the postcondition.
+
+        Caller holds the lock.
+        """
+        def _ids(kind: str) -> set[str]:
+            found = set()
+            for receipt in self._receipts:
+                if receipt.get("kind") != kind:
+                    continue
+                obligation_id = (receipt.get("payload") or {}).get("obligation_id")
+                if isinstance(obligation_id, str):
+                    found.add(obligation_id)
+            return found
+
+        open_ids = _ids("repair_obligation") - _ids("repair_discharged")
+        if not open_ids:
+            return
+        final = str(served or "")
+        final_hash = hashlib.sha256(final.encode("utf-8")).hexdigest()
+        for receipt in list(self._receipts):
+            if receipt.get("kind") != "repair_obligation":
+                continue
+            payload = receipt.get("payload") or {}
+            obligation_id = payload.get("obligation_id")
+            if obligation_id not in open_ids:
+                continue
+            self._receipts.append(
+                {
+                    "kind": "repair_discharged",
+                    "at": time.time(),
+                    "payload": {
+                        "obligation_id": obligation_id,
+                        "final_sha256": final_hash,
+                        "final_chars": len(final),
+                        # False here is the finding: the flawed draft went out
+                        # unchanged under an endpoint attribution that said it
+                        # was a finished answer.
+                        "changed": final_hash != payload.get("draft_sha256"),
+                    },
+                }
+            )
 
     # ------------------------------------------------------------------ finalizer
 
