@@ -21,6 +21,7 @@ from core.brain.llm.latent_cortex.fast_weight_learning import token_sequence_sha
 from core.brain.llm.latent_cortex.verified_best import tensor_sha256
 
 SEMANTIC_OUTPUT_ADAPTER_SCHEMA = "aura.rlc.semantic_output_adapter.v1"
+SEMANTIC_MARGIN_ADAPTER_SCHEMA = "aura.rlc.semantic_output_adapter.v2"
 SEMANTIC_OUTPUT_TRANSFER_SCHEMA = "aura.rlc.semantic_output_transfer_experiment.v1"
 SEMANTIC_OUTPUT_GAIN_GRID = (0.0, 0.5, 1.0, 2.0)
 
@@ -76,7 +77,7 @@ def _as_normalized_rows(keys: Any) -> np.ndarray:
 
 
 def _validate_adapter_identity(value: Mapping[str, Any]) -> dict[str, Any]:
-    fields = {
+    base_fields = {
         "schema",
         "erased",
         "weights_sha256",
@@ -91,11 +92,23 @@ def _validate_adapter_identity(value: Mapping[str, Any]) -> dict[str, Any]:
         "gain",
         "applications",
     }
-    if not isinstance(value, Mapping) or set(value) != fields:
+    if not isinstance(value, Mapping):
+        raise ValueError("semantic adapter identity fields differ")
+    schema = value.get("schema")
+    fields = set(base_fields)
+    if schema == SEMANTIC_MARGIN_ADAPTER_SCHEMA:
+        fields.update(
+            {
+                "fit_objective",
+                "effective_rank",
+                "target_values_sha256",
+            }
+        )
+    if set(value) != fields:
         raise ValueError("semantic adapter identity fields differ")
     tasks = value["task_sha256s"]
     if (
-        value["schema"] != SEMANTIC_OUTPUT_ADAPTER_SCHEMA
+        schema not in {SEMANTIC_OUTPUT_ADAPTER_SCHEMA, SEMANTIC_MARGIN_ADAPTER_SCHEMA}
         or value["erased"] is not False
         or any(
             not _is_sha256(value[name])
@@ -124,6 +137,14 @@ def _validate_adapter_identity(value: Mapping[str, Any]) -> dict[str, Any]:
         or value["applications"] != 0
     ):
         raise ValueError("semantic adapter identity is invalid")
+    if schema == SEMANTIC_MARGIN_ADAPTER_SCHEMA and (
+        value["fit_objective"] != "required_logit_margin_v1"
+        or type(value["effective_rank"]) is not int
+        or not 0 < value["effective_rank"] <= value["sample_count"]
+        or not _is_sha256(value["target_values_sha256"])
+        or float(value["logit_scale"]) != 1.0
+    ):
+        raise ValueError("semantic margin adapter identity is invalid")
     return dict(value)
 
 
@@ -145,6 +166,9 @@ class SemanticOutputAdapter:
         sample_count: int,
         ridge: float,
         logit_scale: float,
+        fit_objective: str = "signed_correction_v1",
+        effective_rank: int | None = None,
+        target_values_sha256: str = "",
     ) -> None:
         tokens = tuple(int(token) for token in token_ids)
         matrix = np.asarray(weights, dtype=np.float32)
@@ -175,6 +199,9 @@ class SemanticOutputAdapter:
         self.sample_count = sample_count
         self.ridge = float(ridge)
         self.logit_scale = float(logit_scale)
+        self.fit_objective = fit_objective
+        self.effective_rank = effective_rank
+        self.target_values_sha256 = target_values_sha256
         self.gain = 0.0
         self.applications = 0
         self.erased = False
@@ -242,6 +269,75 @@ class SemanticOutputAdapter:
             logit_scale=logit_scale,
         )
 
+    @classmethod
+    def fit_required_margins(
+        cls,
+        keys: Any,
+        target_tokens: Sequence[int],
+        required_margins: Sequence[float],
+        *,
+        task_ids: Sequence[str],
+        max_rank: int = 32,
+        ridge: float = 1e-4,
+    ) -> SemanticOutputAdapter:
+        """Fit a bounded-rank readout to measured target-logit deficits."""
+
+        rows = _as_normalized_rows(keys)
+        targets = tuple(int(token) for token in target_tokens)
+        required = np.asarray(required_margins, dtype=np.float32)
+        tasks = tuple(task_ids)
+        if (
+            len(targets) != rows.shape[0]
+            or required.shape != (rows.shape[0],)
+            or len(tasks) != rows.shape[0]
+            or any(token < 0 for token in targets)
+            or not np.isfinite(required).all()
+            or np.any(required <= 0.0)
+            or len(set(tasks)) < 2
+        ):
+            raise ValueError("semantic margin adapter rows are not aligned")
+        if type(max_rank) is not int or max_rank <= 0:
+            raise ValueError("semantic margin adapter rank bound must be positive")
+        if (
+            isinstance(ridge, bool)
+            or not math.isfinite(float(ridge))
+            or not 1e-8 <= float(ridge) <= 1e4
+        ):
+            raise ValueError("semantic margin adapter ridge is invalid")
+
+        token_ids = tuple(sorted(set(targets)))
+        columns = {token: index for index, token in enumerate(token_ids)}
+        desired = np.zeros((len(targets), len(token_ids)), dtype=np.float32)
+        for index, token in enumerate(targets):
+            desired[index, columns[token]] = required[index]
+        gram = rows @ rows.T
+        gram.flat[:: gram.shape[0] + 1] += float(ridge)
+        try:
+            weights = rows.T @ np.linalg.solve(gram, desired)
+        except np.linalg.LinAlgError as exc:
+            raise ValueError("semantic margin adapter ridge system is singular") from exc
+        left, singular, right = np.linalg.svd(weights, full_matrices=False)
+        numerical_rank = int(np.count_nonzero(singular > 1e-7))
+        effective_rank = min(max_rank, numerical_rank)
+        if effective_rank <= 0:
+            raise ValueError("semantic margin adapter fit collapsed")
+        weights = (left[:, :effective_rank] * singular[np.newaxis, :effective_rank]) @ right[
+            :effective_rank
+        ]
+        if not np.isfinite(weights).all() or not np.any(weights):
+            raise FloatingPointError("semantic margin adapter fit produced no correction")
+        return cls(
+            token_ids=token_ids,
+            weights=weights,
+            task_ids=sorted(set(tasks)),
+            sample_count=len(tasks),
+            ridge=float(ridge),
+            logit_scale=1.0,
+            fit_objective="required_logit_margin_v1",
+            effective_rank=effective_rank,
+            target_values_sha256=tensor_sha256(required),
+        )
+
     def reset(self, *, gain: float) -> None:
         if (
             isinstance(gain, bool)
@@ -273,8 +369,11 @@ class SemanticOutputAdapter:
             mx.eval(self._mlx_weights)
         query = hidden[0, -1].astype(mx.float32)
         query = query / mx.maximum(mx.linalg.norm(query), 1e-8)
-        signed = mx.tanh(query @ self._mlx_weights)
-        delta = signed * (self.gain * self.logit_scale)
+        signed = query @ self._mlx_weights
+        if self.fit_objective == "required_logit_margin_v1":
+            delta = mx.maximum(signed, 0.0) * self.gain
+        else:
+            delta = mx.tanh(signed) * (self.gain * self.logit_scale)
         updated = logits.at[0, -1, list(self.token_ids)].add(delta.astype(logits.dtype))
         self.applications += 1
         return updated
@@ -295,7 +394,7 @@ class SemanticOutputAdapter:
                 "token_count": 0,
                 "sample_count": self.sample_count,
             }
-        return {
+        receipt = {
             "schema": SEMANTIC_OUTPUT_ADAPTER_SCHEMA,
             "erased": False,
             "weights_sha256": tensor_sha256(self.weights),
@@ -310,6 +409,16 @@ class SemanticOutputAdapter:
             "gain": self.gain,
             "applications": self.applications,
         }
+        if self.fit_objective == "required_logit_margin_v1":
+            receipt.update(
+                {
+                    "schema": SEMANTIC_MARGIN_ADAPTER_SCHEMA,
+                    "fit_objective": self.fit_objective,
+                    "effective_rank": self.effective_rank,
+                    "target_values_sha256": self.target_values_sha256,
+                }
+            )
+        return receipt
 
 
 class SemanticOutputEmbeddingProxy:
@@ -450,6 +559,13 @@ def build_semantic_output_transfer_receipt(
         or treatment_identity["weights_sha256"] == sham_identity["weights_sha256"]
     ):
         raise ValueError("semantic transfer adapters are not matched")
+    if treatment_identity["schema"] != sham_identity["schema"]:
+        raise ValueError("semantic transfer adapter schemas differ")
+    if treatment_identity["schema"] == SEMANTIC_MARGIN_ADAPTER_SCHEMA and (
+        treatment_identity["fit_objective"] != sham_identity["fit_objective"]
+        or treatment_identity["effective_rank"] != sham_identity["effective_rank"]
+    ):
+        raise ValueError("semantic transfer margin adapters are not matched")
     validation = tuple(validation_task_ids)
     test = tuple(test_task_ids)
     validation_tasks = _task_sha256s(validation)
@@ -606,6 +722,13 @@ def validate_semantic_output_transfer_receipt(value: Mapping[str, Any]) -> dict[
         or treatment["weights_sha256"] == sham["weights_sha256"]
     ):
         raise ValueError("semantic transfer training identities differ")
+    if treatment["schema"] != sham["schema"]:
+        raise ValueError("semantic transfer training schemas differ")
+    if treatment["schema"] == SEMANTIC_MARGIN_ADAPTER_SCHEMA and (
+        treatment["fit_objective"] != sham["fit_objective"]
+        or treatment["effective_rank"] != sham["effective_rank"]
+    ):
+        raise ValueError("semantic transfer margin training identities differ")
     validation_tasks = value["validation_task_sha256s"]
     test_tasks = value["test_task_sha256s"]
     if any(
@@ -714,6 +837,7 @@ def validate_semantic_output_transfer_receipt(value: Mapping[str, Any]) -> dict[
 
 __all__ = [
     "SEMANTIC_OUTPUT_ADAPTER_SCHEMA",
+    "SEMANTIC_MARGIN_ADAPTER_SCHEMA",
     "SEMANTIC_OUTPUT_GAIN_GRID",
     "SEMANTIC_OUTPUT_TRANSFER_SCHEMA",
     "SemanticOutputAdapter",

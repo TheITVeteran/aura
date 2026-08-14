@@ -56,7 +56,6 @@ def _generate(model: Any, tokenizer: Any, prompt: list[int], max_tokens: int):
 
     from core.brain.llm.latent_cortex.answer_contract import is_contract_complete
 
-    pieces: list[str] = []
     tokens: list[int] = []
     for response in stream_generate(
         model,
@@ -64,15 +63,12 @@ def _generate(model: Any, tokenizer: Any, prompt: list[int], max_tokens: int):
         prompt=prompt,
         max_tokens=max_tokens,
     ):
-        pieces.append(response.text)
         if response.finish_reason != "stop":
             tokens.append(int(response.token))
-        if "}" in response.text and is_contract_complete("".join(pieces)):
+        decoded = tokenizer.decode(tokens)
+        if "}" in decoded and is_contract_complete(decoded):
             break
-    text = tokenizer.decode(tokens)
-    if text != "".join(pieces):
-        raise RuntimeError("semantic transfer decode token/text round trip differs")
-    return text, tokens
+    return tokenizer.decode(tokens), tokens
 
 
 def _capture_corrections(model: Any, tokenizer: Any, proxy: Any, tasks: list[Any]):
@@ -138,6 +134,79 @@ def _capture_corrections(model: Any, tokenizer: Any, proxy: Any, tasks: list[Any
     )
 
 
+def _capture_margin_rows(model: Any, tokenizer: Any, proxy: Any, tasks: list[Any]):
+    """Capture all teacher-forced rows and their measured target deficits."""
+
+    import mlx.core as mx
+
+    encoded = [(task, _render_prompt(tokenizer, task), _encode_answer(tokenizer, task.answer)) for task in tasks]
+    support = tuple(sorted({token for _task, _prompt, answer in encoded for token in answer}))
+    key_rows: list[np.ndarray] = []
+    targets: list[int] = []
+    incumbents: list[int] = []
+    task_ids: list[str] = []
+    required: list[float] = []
+    support_logits: list[dict[int, float]] = []
+    row_maxima: list[float] = []
+    task_rows: list[dict[str, Any]] = []
+    proxy.capture = True
+    try:
+        for task, prompt, answer in encoded:
+            if not prompt or not answer:
+                raise RuntimeError("semantic transfer calibration tokenization is empty")
+            logits = model(mx.array([prompt + answer[:-1]]))
+            hidden = proxy.last_hidden
+            if hidden is None:
+                raise RuntimeError("semantic transfer output boundary was not captured")
+            start = len(prompt) - 1
+            stop = start + len(answer)
+            aligned_logits = logits[0, start:stop].astype(mx.float32)
+            aligned_hidden = hidden[0, start:stop]
+            predicted = np.asarray(mx.argmax(aligned_logits, axis=-1)).astype(np.int64)
+            key_array = np.asarray(aligned_hidden, dtype=np.float32)
+            maxima = np.asarray(mx.max(aligned_logits, axis=-1), dtype=np.float32)
+            selected = np.asarray(aligned_logits[:, list(support)], dtype=np.float32)
+            corrected = 0
+            for index, (target, incumbent) in enumerate(
+                zip(answer, predicted.tolist(), strict=True)
+            ):
+                key_rows.append(key_array[index])
+                targets.append(target)
+                incumbents.append(int(incumbent))
+                task_ids.append(task.task_id)
+                row_max = float(maxima[index])
+                logits_by_token = dict(zip(support, selected[index].tolist(), strict=True))
+                row_maxima.append(row_max)
+                support_logits.append(logits_by_token)
+                required.append(max(row_max - logits_by_token[target] + 4.0, 4.0))
+                corrected += int(target != incumbent)
+            task_rows.append(
+                {
+                    "task_id_sha256": hashlib.sha256(task.task_id.encode()).hexdigest(),
+                    "answer_token_count": len(answer),
+                    "teacher_forced_correction_count": corrected,
+                    "teacher_forced_accuracy": round(1.0 - corrected / len(answer), 6),
+                }
+            )
+            del logits, hidden, aligned_logits, aligned_hidden
+            mx.clear_cache()
+    finally:
+        proxy.capture = False
+        proxy.last_hidden = None
+    if len(key_rows) < 2 or len({task_id.rsplit(":", 1)[0] for task_id in task_ids}) < 2:
+        raise RuntimeError("semantic transfer calibration produced insufficient margin rows")
+    return (
+        np.stack(key_rows),
+        tuple(targets),
+        tuple(incumbents),
+        tuple(task_ids),
+        tuple(required),
+        tuple(row_maxima),
+        tuple(support_logits),
+        task_rows,
+    )
+
+
 def _score_split(
     model: Any,
     tokenizer: Any,
@@ -148,14 +217,15 @@ def _score_split(
     sham: Any,
     gain: float,
     max_tokens: int,
+    baseline_rows: dict[str, dict[str, Any]],
 ) -> tuple[list[dict[str, Any]], float, float, float]:
     from core.brain.llm.latent_cortex.fast_weight_learning import token_sequence_sha256
 
     rows: list[dict[str, Any]] = []
     for task in tasks:
         prompt = _render_prompt(tokenizer, task)
-        baseline_text, baseline_tokens = _generate(model, tokenizer, prompt, max_tokens)
-        baseline_score = float(task.grade(baseline_text)["correct"])
+        baseline = baseline_rows[task.task_id]
+        baseline_score = float(baseline["score"])
 
         treatment.reset(gain=gain)
         proxy.attach(treatment)
@@ -178,7 +248,7 @@ def _score_split(
                 "baseline_score": baseline_score,
                 "treatment_score": treatment_score,
                 "sham_score": sham_score,
-                "baseline_tokens_sha256": token_sequence_sha256(baseline_tokens),
+                "baseline_tokens_sha256": baseline["tokens_sha256"],
                 "treatment_tokens_sha256": token_sequence_sha256(treatment_tokens),
                 "sham_tokens_sha256": token_sequence_sha256(sham_tokens),
             }
@@ -190,6 +260,41 @@ def _score_split(
         sum(row["treatment_score"] for row in rows) / count,
         sum(row["sham_score"] for row in rows) / count,
     )
+
+
+def _baseline_split(
+    model: Any,
+    tokenizer: Any,
+    tasks: list[Any],
+    *,
+    max_tokens: int,
+) -> dict[str, dict[str, Any]]:
+    from core.brain.llm.latent_cortex.fast_weight_learning import token_sequence_sha256
+
+    rows: dict[str, dict[str, Any]] = {}
+    for task in tasks:
+        text, tokens = _generate(model, tokenizer, _render_prompt(tokenizer, task), max_tokens)
+        rows[task.task_id] = {
+            "score": float(task.grade(text)["correct"]),
+            "tokens_sha256": token_sequence_sha256(tokens),
+        }
+    return rows
+
+
+def _answer_token_support(tokenizer: Any, train: list[Any], heldout: list[Any]) -> dict[str, Any]:
+    training_tokens = {
+        token for task in train for token in _encode_answer(tokenizer, task.answer)
+    }
+    heldout_tokens = [
+        token for task in heldout for token in _encode_answer(tokenizer, task.answer)
+    ]
+    covered = sum(token in training_tokens for token in heldout_tokens)
+    return {
+        "training_unique_token_count": len(training_tokens),
+        "heldout_token_count": len(heldout_tokens),
+        "covered_token_count": covered,
+        "coverage": round(covered / len(heldout_tokens), 6) if heldout_tokens else 0.0,
+    }
 
 
 def _parser() -> argparse.ArgumentParser:
@@ -206,8 +311,14 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--validation-per-cell", type=int, default=1)
     parser.add_argument("--test-per-cell", type=int, default=1)
     parser.add_argument("--seed", type=int, default=2026081019)
-    parser.add_argument("--ridge", type=float, default=1.0)
+    parser.add_argument("--ridge", type=float, default=1e-4)
     parser.add_argument("--logit-scale", type=float, default=8.0)
+    parser.add_argument(
+        "--fit-objective",
+        choices=("required_margin", "signed_correction"),
+        default="required_margin",
+    )
+    parser.add_argument("--max-rank", type=int, default=32)
     parser.add_argument("--max-tokens", type=int, default=96)
     return parser
 
@@ -229,7 +340,7 @@ def _run_admitted(args: argparse.Namespace, model_path: Path) -> int:
         validate_semantic_output_transfer_receipt,
     )
     from core.learning.recurrence_curriculum import task_battery
-    from core.runtime.atomic_writer import atomic_write_text, ensure_private_directory
+    from core.runtime.atomic_writer import atomic_write_text
 
     started = time.time()
     model, tokenizer = load(str(model_path))
@@ -265,34 +376,76 @@ def _run_admitted(args: argparse.Namespace, model_path: Path) -> int:
             excluded_task_ids=excluded_ids,
         )
 
-        keys, targets, incumbents, task_ids, calibration_rows = _capture_corrections(
-            model, tokenizer, proxy, train
-        )
-        treatment = SemanticOutputAdapter.fit(
-            keys,
-            targets,
-            incumbents,
-            task_ids=task_ids,
-            ridge=args.ridge,
-            logit_scale=args.logit_scale,
-        )
+        if args.fit_objective == "required_margin":
+            (
+                keys,
+                targets,
+                incumbents,
+                task_ids,
+                required_margins,
+                row_maxima,
+                support_logits,
+                calibration_rows,
+            ) = _capture_margin_rows(model, tokenizer, proxy, train)
+            treatment = SemanticOutputAdapter.fit_required_margins(
+                keys,
+                targets,
+                required_margins,
+                task_ids=task_ids,
+                max_rank=args.max_rank,
+                ridge=args.ridge,
+            )
+        else:
+            keys, targets, incumbents, task_ids, calibration_rows = _capture_corrections(
+                model, tokenizer, proxy, train
+            )
+            treatment = SemanticOutputAdapter.fit(
+                keys,
+                targets,
+                incumbents,
+                task_ids=task_ids,
+                ridge=args.ridge,
+                logit_scale=args.logit_scale,
+            )
         sham_targets = deterministic_sham_tokens(
             targets,
             task_ids=tuple(f"{task_id}:{index}" for index, task_id in enumerate(task_ids)),
             incumbent_tokens=incumbents,
         )
-        sham = SemanticOutputAdapter.fit(
-            keys,
-            sham_targets,
-            incumbents,
-            task_ids=task_ids,
-            ridge=args.ridge,
-            logit_scale=args.logit_scale,
-        )
+        if args.fit_objective == "required_margin":
+            sham_margins = tuple(
+                max(row_max - logits[token] + 4.0, 4.0)
+                for row_max, logits, token in zip(
+                    row_maxima, support_logits, sham_targets, strict=True
+                )
+            )
+            sham = SemanticOutputAdapter.fit_required_margins(
+                keys,
+                sham_targets,
+                sham_margins,
+                task_ids=task_ids,
+                max_rank=args.max_rank,
+                ridge=args.ridge,
+            )
+        else:
+            sham = SemanticOutputAdapter.fit(
+                keys,
+                sham_targets,
+                incumbents,
+                task_ids=task_ids,
+                ridge=args.ridge,
+                logit_scale=args.logit_scale,
+            )
         treatment_identity = treatment.receipt()
         sham_identity = sham.receipt()
 
         validation_rows: list[dict[str, Any]] = []
+        validation_baseline = _baseline_split(
+            model,
+            tokenizer,
+            validation,
+            max_tokens=args.max_tokens,
+        )
         for gain in SEMANTIC_OUTPUT_GAIN_GRID:
             _, baseline_mean, treatment_mean, sham_mean = _score_split(
                 model,
@@ -303,6 +456,7 @@ def _run_admitted(args: argparse.Namespace, model_path: Path) -> int:
                 sham=sham,
                 gain=gain,
                 max_tokens=args.max_tokens,
+                baseline_rows=validation_baseline,
             )
             validation_rows.append(
                 {
@@ -319,6 +473,12 @@ def _run_admitted(args: argparse.Namespace, model_path: Path) -> int:
                 -row["gain"],
             ),
         )
+        test_baseline = _baseline_split(
+            model,
+            tokenizer,
+            test,
+            max_tokens=args.max_tokens,
+        )
         test_rows, _, _, _ = _score_split(
             model,
             tokenizer,
@@ -328,6 +488,7 @@ def _run_admitted(args: argparse.Namespace, model_path: Path) -> int:
             sham=sham,
             gain=float(selected["gain"]),
             max_tokens=args.max_tokens,
+            baseline_rows=test_baseline,
         )
         treatment.erase()
         sham.erase()
@@ -369,6 +530,8 @@ def _run_admitted(args: argparse.Namespace, model_path: Path) -> int:
             "seed": args.seed,
             "ridge": args.ridge,
             "logit_scale": args.logit_scale,
+            "fit_objective": args.fit_objective,
+            "max_rank": args.max_rank,
             "max_tokens": args.max_tokens,
         },
         "source_bindings": [
@@ -381,8 +544,13 @@ def _run_admitted(args: argparse.Namespace, model_path: Path) -> int:
         ],
         "calibration": {
             "task_count": len(train),
-            "correction_count": len(targets),
+            "sample_count": len(targets),
+            "correction_count": sum(
+                int(row["teacher_forced_correction_count"]) for row in calibration_rows
+            ),
             "rows": calibration_rows,
+            "validation_token_support": _answer_token_support(tokenizer, train, validation),
+            "test_token_support": _answer_token_support(tokenizer, train, test),
         },
         "experiment": experiment,
         "model_object_restored": True,
@@ -401,7 +569,7 @@ def _run_admitted(args: argparse.Namespace, model_path: Path) -> int:
         json.dumps(payload, sort_keys=True, separators=(",", ":")).encode()
     ).hexdigest()
     out = args.out.expanduser().resolve()
-    ensure_private_directory(out.parent)
+    out.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
     atomic_write_text(out, json.dumps(payload, indent=2, sort_keys=True) + "\n")
     print(json.dumps(payload, indent=2, sort_keys=True), flush=True)
     return 0 if experiment["accepted"] else 2

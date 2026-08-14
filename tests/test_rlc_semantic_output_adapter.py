@@ -12,6 +12,7 @@ from core.brain.llm.latent_cortex.fast_weight_learning import (  # noqa: E402
     token_sequence_sha256,
 )
 from core.brain.llm.latent_cortex.semantic_output_adapter import (  # noqa: E402
+    SEMANTIC_MARGIN_ADAPTER_SCHEMA,
     SemanticOutputAdapter,
     SemanticOutputEmbeddingProxy,
     build_semantic_output_transfer_receipt,
@@ -74,6 +75,79 @@ def test_fit_generalizes_signed_correction_to_unseen_hidden_rows():
     assert int(mx.argmax(positive[0, -1])) == 2
     assert int(mx.argmax(negative[0, -1])) == 3
     assert adapter.applications == 2
+
+
+def test_required_margin_fit_generalizes_and_has_distinct_identity():
+    keys = np.asarray(
+        [
+            [1.0, 0.0, 0.0],
+            [0.9, 0.1, 0.0],
+            [-1.0, 0.0, 0.0],
+            [-0.9, -0.1, 0.0],
+        ],
+        dtype=np.float32,
+    )
+    adapter = SemanticOutputAdapter.fit_required_margins(
+        keys,
+        (2, 2, 3, 3),
+        (6.0, 5.0, 7.0, 6.0),
+        task_ids=("train-a", "train-b", "train-c", "train-d"),
+        max_rank=2,
+        ridge=0.01,
+    )
+    identity = adapter.receipt()
+    assert identity["schema"] == SEMANTIC_MARGIN_ADAPTER_SCHEMA
+    assert identity["fit_objective"] == "required_logit_margin_v1"
+    assert 0 < identity["effective_rank"] <= 2
+    assert identity["target_values_sha256"]
+
+    adapter.reset(gain=1.0)
+    logits = mx.zeros((1, 1, 5))
+    positive = adapter.apply(mx.array([[[0.95, 0.0, 0.0]]]), logits)
+    negative = adapter.apply(mx.array([[[-0.95, 0.0, 0.0]]]), logits)
+    assert int(mx.argmax(positive[0, -1])) == 2
+    assert int(mx.argmax(negative[0, -1])) == 3
+
+
+def test_margin_transfer_receipt_requires_matched_rank():
+    keys = np.asarray(
+        [[1.0, 0.0], [0.9, 0.1], [-1.0, 0.0], [-0.9, -0.1]],
+        dtype=np.float32,
+    )
+    tasks = ("a", "b", "c", "d")
+    treatment = SemanticOutputAdapter.fit_required_margins(
+        keys,
+        (2, 2, 3, 3),
+        (6.0, 5.0, 7.0, 6.0),
+        task_ids=tasks,
+        max_rank=2,
+    )
+    sham = SemanticOutputAdapter.fit_required_margins(
+        keys,
+        (3, 3, 2, 2),
+        (6.0, 5.0, 7.0, 6.0),
+        task_ids=tasks,
+        max_rank=1,
+    )
+    validation = [
+        {
+            "gain": gain,
+            "baseline_mean": 0.0,
+            "treatment_mean": 0.5 if gain else 0.0,
+            "sham_mean": 0.0,
+        }
+        for gain in (0.0, 0.5, 1.0, 2.0)
+    ]
+    with pytest.raises(ValueError, match="margin adapters are not matched"):
+        build_semantic_output_transfer_receipt(
+            treatment_identity=treatment.receipt(),
+            sham_identity=sham.receipt(),
+            validation_task_ids=("validation",),
+            test_task_ids=("test",),
+            validation_rows=validation,
+            test_rows=(_test_row("test", 0.0, 1.0, 0.0),),
+            erase_proven=True,
+        )
 
 
 def test_zero_gain_is_identity_and_erase_removes_private_tissue():

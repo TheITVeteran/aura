@@ -48863,3 +48863,43 @@ The next bounded action is a persistent-process mechanistic lab that fits on
 verified calibration trajectories and measures fresh held-out tasks in seconds
 per operator; only a task-disjoint positive result returns to the full RLC and
 resident-32B campaign.
+
+## Checkpoint 2026-08-13-393: Output-Only Transfer Is Rejected Quickly
+
+CP393 turns CP392's successful query-local margin fit into a task-disjoint
+persistent-process canary. The model loads once. Twelve calibration tasks,
+nine validation tasks and nine sealed test tasks are prompt- and identity-
+disjoint. The adapter now fits measured per-token logit deficits rather than
+fixed `+1/-1` labels, truncates the resulting map to a declared rank, freezes
+before validation and test generation, and erases after the probe. Treatment
+and deterministic wrong-label sham use the same hidden rows, sample count,
+rank, ridge and gain grid. Vanilla baselines are generated once per split
+rather than redundantly once per gain.
+
+The real Qwen2.5-1.5B run fitted rank 23 over 164 answer positions from 12
+training tasks. Validation and test answer tokens had 100% coverage in the
+23-token calibration support. Gain `1.0` produced one validation success where
+baseline and sham produced none, proving the margin tissue was active and
+semantically non-identical to its control on that split. On the sealed nine-
+task test, however, baseline, treatment and sham each solved `0/9`. Treatment
+and sham both changed all nine token sequences, so the result is not an
+identity operator or missing-vocabulary artifact. The output-only map changed
+generation without transferring the underlying computation.
+
+The canary also retires two evidence-path defects exposed by the live run.
+Artifact publication no longer attempts to chmod an existing shared parent
+such as macOS `/private/tmp`; the atomic file itself remains mode `0600`.
+Streaming termination and grading use the canonical decode of the committed
+token sequence rather than assuming independently decoded stream fragments
+must concatenate byte-for-byte.
+
+This rejects task-disjoint semantic transfer through the final sparse output
+readout under the frozen protocol. It does not reject CP392's query-local
+internalization result, the already-powered typed recurrent controller, or
+process-level recurrent learning. It establishes no general reasoning gain,
+resident-32B broad gain, fusion, frontier performance or `WOW Signal`.
+Evidence is recorded in
+`artifacts/closeout/latent_cortex/cp393_margin_output_transfer_canary.json`.
+The next implementation gate moves verified intermediate state/action credit
+into the recurrent transition path and holds the final answer out as a
+consequence; another output-only hyperparameter campaign is not admissible.

@@ -1,10 +1,32 @@
 from __future__ import annotations
 
+import sys
 from contextlib import contextmanager
 from pathlib import Path
 from types import SimpleNamespace
 
 import tools.run_semantic_output_transfer_canary as canary
+
+
+def test_generate_uses_canonical_sequence_decode_not_stream_text(monkeypatch) -> None:
+    responses = (
+        SimpleNamespace(text="not-a-prefix", token=1, finish_reason=None),
+        SimpleNamespace(text="not-a-suffix", token=2, finish_reason=None),
+    )
+    monkeypatch.setitem(
+        sys.modules,
+        "mlx_lm",
+        SimpleNamespace(stream_generate=lambda *_args, **_kwargs: iter(responses)),
+    )
+
+    class Tokenizer:
+        @staticmethod
+        def decode(tokens):
+            return "FINAL_ANSWER: {\"value\":1}" if tokens == [1, 2] else "FINAL_ANSWER: {"
+
+    text, tokens = canary._generate(object(), Tokenizer(), [9], 8)
+    assert tokens == [1, 2]
+    assert text == 'FINAL_ANSWER: {"value":1}'
 
 
 def test_main_holds_non_evicting_lane_for_complete_model_lifetime(
