@@ -1261,3 +1261,71 @@ def test_a_published_thought_carries_its_audience_and_sensitivity():
     assert '"sensitivity": "internal_chain"' in source
     assert '"user_visible_speech": False' in source
     assert "_THOUGHT_BROADCAST_LIMIT" in source
+
+
+# ─────────────────── a hand-tuned policy says it is hand-tuned
+
+
+def test_the_control_policy_does_not_claim_calibration():
+    """Every weight, threshold and clamp was chosen by hand. The mechanism is
+    real and lesionable; presenting it as calibrated is the overclaim."""
+    from core.brain.cognitive_engine import (
+        LIVE_MIND_CONTROL_POLICY,
+        LIVE_MIND_CONTROL_POLICY_CALIBRATED,
+    )
+
+    assert LIVE_MIND_CONTROL_POLICY == "hand_tuned_heuristic.v1"
+    assert LIVE_MIND_CONTROL_POLICY_CALIBRATED is False
+
+
+def test_the_policy_label_travels_with_the_binding():
+    from core.brain.cognitive_engine import _bind_live_mind_generation_contract
+
+    context: dict = {}
+    _bind_live_mind_generation_contract(context)
+
+    policy = context["live_mind_control_policy"]
+    assert policy["calibrated"] is False
+    assert policy["evidence"] == "lesionable_via_influence_channels"
+
+
+# ─────────────────── a persisted turn carries what a deletion needs
+
+
+def test_an_ordinary_turn_is_classified_as_such():
+    from core.brain.cognitive_engine import CognitiveEngine
+
+    assert (
+        CognitiveEngine._interaction_sensitivity("what is 2+2?", "four")
+        == "ordinary_conversation"
+    )
+
+
+def test_a_turn_carrying_personal_data_is_labelled():
+    """Not redaction — her memory of a conversation is the conversation. This
+    is the label a retention or deletion policy needs to act on the record."""
+    from core.brain.cognitive_engine import CognitiveEngine
+
+    label = CognitiveEngine._interaction_sensitivity("mail me at a@b.com", "sure")
+
+    assert label.startswith("personal_data:")
+    assert "email" in label
+
+
+@pytest.mark.asyncio
+async def test_the_persistence_receipt_carries_purpose_and_sensitivity():
+    import core.brain.cognitive_engine as engine_mod
+    from core.brain.cognitive_engine import CognitiveEngine
+
+    engine = CognitiveEngine()
+    original = engine_mod.get_container
+    engine_mod.get_container = lambda: SimpleNamespace(
+        get=lambda name, default=None: default
+    )
+    try:
+        receipt = await engine.record_interaction("what is 2+2?", "four")
+    finally:
+        engine_mod.get_container = original
+
+    assert receipt["purpose"] == "conversation_continuity"
+    assert receipt["sensitivity"] == "ordinary_conversation"

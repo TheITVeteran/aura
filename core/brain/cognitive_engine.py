@@ -585,11 +585,29 @@ def _apply_neurodynamic_sampling_bias(
     return updated
 
 
+#: What the control policy below IS. Every weight, threshold and clamp in it
+#: was chosen by hand — there is no model-specific calibration behind them, no
+#: uncertainty propagated through them, no held-out evidence that these
+#: particular numbers beat neighbouring ones, and no learned policy that
+#: produced them. The mechanism is real and causal: it moves temperature, top_p
+#: and recurrent depth, and the lesion registry can run a turn without it
+#: (see _register_live_mind_lesions). What it is not is calibrated, and the
+#: receipt says so rather than leaving a reader to assume otherwise.
+LIVE_MIND_CONTROL_POLICY = "hand_tuned_heuristic.v1"
+LIVE_MIND_CONTROL_POLICY_CALIBRATED = False
+
+
 def _live_mind_generation_controls(
     live_mind_context: Any,
     *,
     user_message: Any = None,
 ) -> dict[str, Any]:
+    """Map a mind snapshot onto sampling controls.
+
+    A hand-tuned heuristic — see LIVE_MIND_CONTROL_POLICY. Causal and
+    measurable through the lesion registry; not calibrated, and not presented
+    as such anywhere downstream.
+    """
     if not isinstance(live_mind_context, dict):
         return {}
     quality = live_mind_context.get("mind_snapshot_quality")
@@ -919,6 +937,13 @@ def _bind_live_mind_generation_contract(context: dict[str, Any]) -> dict[str, An
 
     context["live_mind_generation_controls"] = dict(generation_controls)
     context["live_mind_controls_bound"] = controls_bound
+    # Travels with the binding, so nothing downstream reads these numbers as
+    # a calibrated policy.
+    context["live_mind_control_policy"] = {
+        "policy": LIVE_MIND_CONTROL_POLICY,
+        "calibrated": LIVE_MIND_CONTROL_POLICY_CALIBRATED,
+        "evidence": "lesionable_via_influence_channels",
+    }
     context["live_mind_snapshot_ready"] = snapshot_ready
     context["live_mind_required_subsystems_ok"] = required_subsystems_ok
     context["clean_user_surface_contract"] = bool(
@@ -5245,6 +5270,27 @@ class CognitiveEngine:
             "structured_floor_source": source,
         }
 
+    @staticmethod
+    def _interaction_sensitivity(user_input: Any, response: Any) -> str:
+        """Classify what a completed turn is carrying, before it is stored.
+
+        Not redaction: her memory of a conversation is the conversation, and
+        scrubbing it would make her unable to recall what was actually said.
+        This is the label a retention or deletion policy needs in order to act
+        on the record at all — without it every stored turn looks the same.
+        """
+        try:
+            from core.brain.pii_scrubber import residual_pii_findings
+        except (ImportError, RuntimeError):
+            return "unclassified"
+        findings = sorted(
+            set(residual_pii_findings(str(user_input or "")))
+            | set(residual_pii_findings(str(response or "")))
+        )
+        if not findings:
+            return "ordinary_conversation"
+        return "personal_data:" + ",".join(findings)
+
     async def record_interaction(
         self, user_input: str, response: str, domain: str = "general"
     ) -> dict[str, Any]:
@@ -5256,10 +5302,18 @@ class CognitiveEngine:
         The return is now a receipt: which sink took it, or that none did.
         """
         container = get_container()
+        # A completed turn is the person's words plus her reply, going to a
+        # durable store. It used to travel with no purpose, no sensitivity
+        # class and nothing a deletion request could key on — so "delete what
+        # I said about X" had no handle to find it by. The classification is
+        # derived here, once, and travels with the receipt.
+        sensitivity = self._interaction_sensitivity(user_input, response)
         receipt: dict[str, Any] = {
             "stored": False,
             "sink": "",
             "domain": str(domain or "general"),
+            "purpose": "conversation_continuity",
+            "sensitivity": sensitivity,
             "attempted": [],
             "at": time.time(),
         }
