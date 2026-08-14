@@ -1737,9 +1737,13 @@ class UnifiedRecurrentController(nn.Module):
         # teach action selection; once selected, these transitions are exact and
         # require neither a runtime teacher nor a task-specific answer producer.
         is_traverse = opcode == OP_FRONTIER_TRAVERSE
+        selected_value = arg1 + PROCESS_RADIX * arg2
+        next_checksum = (
+            value2 + (state[:, 0] + 1) * selected_value
+        ) % PROCESS_RADIX
         value0 = mx.where(is_traverse, arg0, value0)
         value1 = mx.where(is_traverse, mx.maximum(value1 - 1, 0), value1)
-        value2 = mx.where(is_traverse, arg3, value2)
+        value2 = mx.where(is_traverse, next_checksum, value2)
 
         is_enumerate = opcode == OP_FRONTIER_ENUMERATE
         count = state[:, 1] + PROCESS_RADIX * state[:, 2]
@@ -1789,9 +1793,34 @@ class UnifiedRecurrentController(nn.Module):
         )
 
         is_audit = opcode == OP_FRONTIER_AUDIT
-        value0 = mx.where(is_audit, arg0, value0)
-        value1 = mx.where(is_audit, arg4, value1)
-        value2 = mx.where(is_audit, arg5, value2)
+        encoded_score = value1 + PROCESS_RADIX * value2
+        current_score = mx.where(
+            (encoded_score % 2) == 0,
+            encoded_score // 2,
+            -((encoded_score + 1) // 2),
+        )
+        candidate_score = arg1 * arg2 - arg3
+        candidate_encoded = mx.where(
+            candidate_score >= 0,
+            candidate_score * 2,
+            (-candidate_score * 2) - 1,
+        )
+        candidate_wins = (state[:, 0] == 0) | (candidate_score > current_score)
+        value0 = mx.where(
+            is_audit & candidate_wins,
+            arg0,
+            value0,
+        )
+        value1 = mx.where(
+            is_audit & candidate_wins,
+            candidate_encoded % PROCESS_RADIX,
+            value1,
+        )
+        value2 = mx.where(
+            is_audit & candidate_wins,
+            candidate_encoded // PROCESS_RADIX,
+            value2,
+        )
         next_values = mx.stack((pc, value0, value1, value2, terminal), axis=1)
         categories = mx.arange(self.config.state_cardinality)[None, None, :]
         exact = (next_values[..., None] == categories).astype(mx.float32)

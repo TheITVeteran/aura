@@ -7,7 +7,7 @@ import json
 from dataclasses import dataclass
 from typing import Any, Final
 
-RECURRENT_ACTION_SCHEMA: Final = "aura.recurrent_action_target.v2"
+RECURRENT_ACTION_SCHEMA: Final = "aura.recurrent_action_target.v3"
 ACTION_SLOT_NAMES: Final = (
     "opcode",
     "arg0",
@@ -77,6 +77,7 @@ def _canonical_instruction(
     field_names: tuple[str, ...],
     action: tuple[int, ...],
     *,
+    step: int,
     terminal: int,
 ) -> tuple[int, ...]:
     """Compile family encodings into one executable micro-instruction set."""
@@ -114,7 +115,10 @@ def _canonical_instruction(
         "checksum_hi",
     ):
         opcode = OP_FRONTIER_TRAVERSE
-        arguments[:5] = action
+        # The recurrent machine computes the running checksum from the public
+        # selected value.  Copying the teacher's future checksum here made the
+        # nominal "action" an answer-bearing label rather than an instruction.
+        arguments[:3] = action[:3]
     elif family == "frontier_mathematics" and field_names == (
         "input_index",
         "value_lo",
@@ -152,7 +156,12 @@ def _canonical_instruction(
         "dependency_code",
     ):
         opcode = OP_FRONTIER_SCHEDULE
-        arguments[:5] = action
+        # Deadline and dependency are admission predicates used by the private
+        # compiler.  The executable state update only consumes task identity,
+        # duration and reward, so do not train two decorative action fields.
+        arguments[0] = action[0]
+        arguments[1] = action[1]
+        arguments[3] = action[3]
     elif family == "frontier_calibration" and field_names == (
         "stage",
         "numerator_lo",
@@ -172,7 +181,12 @@ def _canonical_instruction(
         "score_hi",
     ):
         opcode = OP_FRONTIER_AUDIT
-        arguments[:] = action
+        # Execute the public score formula in recurrent state.  The source
+        # program contains the running winner and score as verification facts;
+        # exposing those values as targets taught the decoder to predict the
+        # answer instead of selecting an evidence row and its operands.
+        arguments[0] = step
+        arguments[1:4] = action[1:4]
     else:
         raise ValueError("structured action has no canonical micro-instruction")
     instruction = (opcode, *arguments, terminal)
@@ -283,6 +297,7 @@ def action_targets_from_program(program: Any, iterations: int) -> RecurrentActio
                 family,
                 field_names,
                 action,
+                step=step,
                 terminal=int(step + 1 == depth),
             )
             row[:] = instruction

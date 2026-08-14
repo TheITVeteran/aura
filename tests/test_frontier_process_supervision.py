@@ -114,6 +114,36 @@ def test_every_frontier_process_executes_exactly_without_its_teacher(
         current = produced
 
 
+def test_frontier_actions_execute_results_instead_of_copying_teacher_answers() -> None:
+    novel = compile_frontier_process_supervision(
+        generate_task("novel_algorithms", seed=51_901, difficulty=2)
+    ).program
+    audit = compile_frontier_process_supervision(
+        generate_task("misleading_premise", seed=51_902, difficulty=2)
+    ).program
+    planning = compile_frontier_process_supervision(
+        generate_task("long_horizon_planning", seed=51_903, difficulty=2)
+    ).program
+
+    novel_targets = action_targets_from_program(novel, novel.state_trace.depth)
+    audit_targets = action_targets_from_program(audit, audit.state_trace.depth)
+    planning_targets = action_targets_from_program(planning, planning.state_trace.depth)
+
+    # Traversal carries selection plus value operands, never the teacher's
+    # precomputed checksum. Premise audit carries a row plus score operands,
+    # never the running winner/score. Planning masks fields not consumed by the
+    # executable transition.
+    assert all(row[4:7] == (ACTION_NULL,) * 3 for row in novel_targets.values)
+    assert all(row[5:7] == (ACTION_NULL,) * 2 for row in audit_targets.values)
+    assert tuple(row[1] for row in audit_targets.values) == tuple(
+        range(audit.state_trace.depth)
+    )
+    assert all(
+        row[3] == ACTION_NULL and row[5:7] == (ACTION_NULL,) * 2
+        for row in planning_targets.values
+    )
+
+
 @pytest.mark.parametrize("domain", FRONTIER_DOMAINS)
 def test_frontier_process_commitment_is_deterministic_and_value_free(domain: str) -> None:
     source = generate_task(domain, seed=8_173, difficulty=2)
