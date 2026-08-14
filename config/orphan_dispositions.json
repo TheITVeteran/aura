@@ -3,63 +3,10 @@
     "INVOKED": "entry point or named in configuration",
     "RETIRE": "no references, no entry point, no service surface",
     "STAGED": "kept on purpose, not yet wired",
+    "STRUCTURAL": "package marker; deleting it breaks every import beneath it",
     "WIRE_PENDING": "exposes a service surface nothing reaches"
   },
   "modules": {
-    "core.advanced_cognition.evidence_deliberation": {
-      "classified": "SCAFFOLDING",
-      "disposition": "RETIRE",
-      "lines": 121,
-      "reason": "no references, no entry point, no accessor"
-    },
-    "core.advanced_cognition.social_cognition": {
-      "classified": "SCAFFOLDING",
-      "disposition": "RETIRE",
-      "lines": 140,
-      "reason": "no references, no entry point, no accessor"
-    },
-    "core.agency.specialist_society": {
-      "classified": "SCAFFOLDING",
-      "disposition": "RETIRE",
-      "lines": 55,
-      "reason": "no references, no entry point, no accessor"
-    },
-    "core.architecture_quality.dependency_analysis": {
-      "classified": "SCAFFOLDING",
-      "disposition": "RETIRE",
-      "lines": 265,
-      "reason": "no references, no entry point, no accessor"
-    },
-    "core.autonomic.survival_driver": {
-      "classified": "SERVICE",
-      "disposition": "WIRE_PENDING",
-      "lines": 70,
-      "reason": "exposes ['get_imperatives']"
-    },
-    "core.being.higher_order_monitor": {
-      "classified": "SCAFFOLDING",
-      "disposition": "RETIRE",
-      "lines": 66,
-      "reason": "no references, no entry point, no accessor"
-    },
-    "core.being.interoceptive_model": {
-      "classified": "SCAFFOLDING",
-      "disposition": "RETIRE",
-      "lines": 51,
-      "reason": "no references, no entry point, no accessor"
-    },
-    "core.being.plasticity_promotion": {
-      "classified": "SCAFFOLDING",
-      "disposition": "RETIRE",
-      "lines": 190,
-      "reason": "no references, no entry point, no accessor"
-    },
-    "core.being.self_ownership": {
-      "classified": "SCAFFOLDING",
-      "disposition": "RETIRE",
-      "lines": 62,
-      "reason": "no references, no entry point, no accessor"
-    },
     "core.brain.affect_state": {
       "classified": "SERVICE",
       "disposition": "WIRE_PENDING",
@@ -72,113 +19,17 @@
       "lines": 61,
       "reason": "has __main__ block"
     },
-    "core.brain.cognitive_interface": {
-      "classified": "SCAFFOLDING",
-      "disposition": "RETIRE",
-      "lines": 25,
-      "reason": "no references, no entry point, no accessor"
-    },
-    "core.brain.consistency": {
-      "classified": "SCAFFOLDING",
-      "disposition": "RETIRE",
-      "lines": 26,
-      "reason": "no references, no entry point, no accessor"
-    },
-    "core.brain.debate": {
-      "classified": "SCAFFOLDING",
-      "disposition": "RETIRE",
-      "lines": 31,
-      "reason": "no references, no entry point, no accessor"
-    },
-    "core.brain.decomposition": {
-      "classified": "SCAFFOLDING",
-      "disposition": "RETIRE",
-      "lines": 25,
-      "reason": "no references, no entry point, no accessor"
-    },
     "core.brain.hierarchical": {
       "classified": "SCAFFOLDING",
       "disposition": "RETIRE",
       "lines": 35,
       "reason": "no references, no entry point, no accessor"
     },
-    "core.brain.llm.context_assembler_patch": {
-      "classified": "SCAFFOLDING",
-      "disposition": "RETIRE",
-      "lines": 65,
-      "reason": "no references, no entry point, no accessor"
-    },
-    "core.brain.llm.mlx_vision_worker": {
-      "classified": "SCAFFOLDING",
-      "disposition": "RETIRE",
-      "lines": 148,
-      "reason": "no references, no entry point, no accessor"
-    },
-    "core.brain.llm.provider": {
-      "classified": "SCAFFOLDING",
-      "disposition": "RETIRE",
-      "lines": 38,
-      "reason": "no references, no entry point, no accessor"
-    },
-    "core.brain.llm.retry_compat": {
-      "classified": "SCAFFOLDING",
-      "disposition": "RETIRE",
-      "lines": 22,
-      "reason": "no references, no entry point, no accessor"
-    },
-    "core.brain.monitor": {
-      "classified": "SCAFFOLDING",
-      "disposition": "RETIRE",
-      "lines": 67,
-      "reason": "no references, no entry point, no accessor"
-    },
-    "core.brain.recovery": {
-      "classified": "SCAFFOLDING",
-      "disposition": "RETIRE",
-      "lines": 26,
-      "reason": "no references, no entry point, no accessor"
-    },
-    "core.brain.reflection": {
-      "classified": "SCAFFOLDING",
-      "disposition": "RETIRE",
-      "lines": 54,
-      "reason": "no references, no entry point, no accessor"
-    },
-    "core.brain.sampler_adapter": {
-      "classified": "SCAFFOLDING",
-      "disposition": "RETIRE",
-      "lines": 48,
-      "reason": "no references, no entry point, no accessor"
-    },
-    "core.brain.tool_reflection": {
-      "classified": "SCAFFOLDING",
-      "disposition": "RETIRE",
-      "lines": 27,
-      "reason": "no references, no entry point, no accessor"
-    },
-    "core.brain.uncertainty": {
-      "classified": "SCAFFOLDING",
-      "disposition": "RETIRE",
-      "lines": 30,
-      "reason": "no references, no entry point, no accessor"
-    },
     "core.brain.verification": {
-      "classified": "SCAFFOLDING",
-      "disposition": "RETIRE",
+      "classified": "PACKAGE",
+      "disposition": "STRUCTURAL",
       "lines": 1,
-      "reason": "no references, no entry point, no accessor"
-    },
-    "core.brain.verifiers.logic_engine": {
-      "classified": "SCAFFOLDING",
-      "disposition": "RETIRE",
-      "lines": 50,
-      "reason": "no references, no entry point, no accessor"
-    },
-    "core.capabilities.app_builder": {
-      "classified": "SCAFFOLDING",
-      "disposition": "RETIRE",
-      "lines": 218,
-      "reason": "no references, no entry point, no accessor"
+      "reason": "package __init__ \u2014 importing the package requires it"
     },
     "core.circuit_breaker": {
       "classified": "SERVICE",
@@ -186,89 +37,17 @@
       "lines": 21,
       "reason": "exposes ['get_circuit']"
     },
-    "core.cognition.loop_detector": {
-      "classified": "SCAFFOLDING",
-      "disposition": "RETIRE",
-      "lines": 38,
-      "reason": "no references, no entry point, no accessor"
-    },
-    "core.cognition.synthetic_language_genesis": {
-      "classified": "SCAFFOLDING",
-      "disposition": "RETIRE",
-      "lines": 69,
-      "reason": "no references, no entry point, no accessor"
-    },
-    "core.cognitive.parallel_thought": {
-      "classified": "SCAFFOLDING",
-      "disposition": "RETIRE",
-      "lines": 73,
-      "reason": "no references, no entry point, no accessor"
-    },
     "core.communication": {
-      "classified": "SCAFFOLDING",
-      "disposition": "RETIRE",
+      "classified": "PACKAGE",
+      "disposition": "STRUCTURAL",
       "lines": 19,
-      "reason": "no references, no entry point, no accessor"
-    },
-    "core.consciousness.active_learning": {
-      "classified": "SCAFFOLDING",
-      "disposition": "RETIRE",
-      "lines": 56,
-      "reason": "no references, no entry point, no accessor"
-    },
-    "core.consciousness.caa.mode_collapse_detector": {
-      "classified": "SCAFFOLDING",
-      "disposition": "RETIRE",
-      "lines": 112,
-      "reason": "no references, no entry point, no accessor"
-    },
-    "core.consciousness.caa.quality_metrics": {
-      "classified": "SCAFFOLDING",
-      "disposition": "RETIRE",
-      "lines": 75,
-      "reason": "no references, no entry point, no accessor"
-    },
-    "core.consciousness.caa.readiness_gate": {
-      "classified": "SCAFFOLDING",
-      "disposition": "RETIRE",
-      "lines": 59,
-      "reason": "no references, no entry point, no accessor"
-    },
-    "core.consciousness.continuity_patch": {
-      "classified": "SCAFFOLDING",
-      "disposition": "RETIRE",
-      "lines": 368,
-      "reason": "no references, no entry point, no accessor"
-    },
-    "core.consciousness.mhaf.hrr": {
-      "classified": "SCAFFOLDING",
-      "disposition": "RETIRE",
-      "lines": 107,
-      "reason": "no references, no entry point, no accessor"
-    },
-    "core.consciousness.reasoning_queue": {
-      "classified": "SERVICE",
-      "disposition": "WIRE_PENDING",
-      "lines": 37,
-      "reason": "exposes ['get_reasoning_queue']"
-    },
-    "core.consciousness.semantic_bridge": {
-      "classified": "SCAFFOLDING",
-      "disposition": "RETIRE",
-      "lines": 56,
-      "reason": "no references, no entry point, no accessor"
-    },
-    "core.constitution.disclosure_policy": {
-      "classified": "SCAFFOLDING",
-      "disposition": "RETIRE",
-      "lines": 24,
-      "reason": "no references, no entry point, no accessor"
+      "reason": "package __init__ \u2014 importing the package requires it"
     },
     "core.context": {
-      "classified": "SCAFFOLDING",
-      "disposition": "RETIRE",
+      "classified": "PACKAGE",
+      "disposition": "STRUCTURAL",
       "lines": 1,
-      "reason": "no references, no entry point, no accessor"
+      "reason": "package __init__ \u2014 importing the package requires it"
     },
     "core.context.tool_distillation": {
       "classified": "SERVICE",
@@ -276,47 +55,17 @@
       "lines": 255,
       "reason": "exposes ['get_distillation_service']"
     },
-    "core.continuity.duplicate_action_guard": {
+    "core.continuity.checkpoint_manager": {
       "classified": "SCAFFOLDING",
       "disposition": "RETIRE",
-      "lines": 29,
-      "reason": "no references, no entry point, no accessor"
-    },
-    "core.continuity.identity_restore": {
-      "classified": "SCAFFOLDING",
-      "disposition": "RETIRE",
-      "lines": 27,
-      "reason": "no references, no entry point, no accessor"
-    },
-    "core.continuity.memory_backup": {
-      "classified": "SCAFFOLDING",
-      "disposition": "RETIRE",
-      "lines": 37,
-      "reason": "no references, no entry point, no accessor"
-    },
-    "core.continuity.recovery_drill": {
-      "classified": "SCAFFOLDING",
-      "disposition": "RETIRE",
-      "lines": 32,
-      "reason": "no references, no entry point, no accessor"
-    },
-    "core.continuity.restart_resume": {
-      "classified": "SCAFFOLDING",
-      "disposition": "RETIRE",
-      "lines": 24,
-      "reason": "no references, no entry point, no accessor"
-    },
-    "core.control.governor": {
-      "classified": "SCAFFOLDING",
-      "disposition": "RETIRE",
-      "lines": 53,
+      "lines": 50,
       "reason": "no references, no entry point, no accessor"
     },
     "core.conversational": {
-      "classified": "SCAFFOLDING",
-      "disposition": "RETIRE",
+      "classified": "PACKAGE",
+      "disposition": "STRUCTURAL",
       "lines": 2,
-      "reason": "no references, no entry point, no accessor"
+      "reason": "package __init__ \u2014 importing the package requires it"
     },
     "core.conversational.conversation_intelligence": {
       "classified": "SERVICE",
@@ -325,10 +74,10 @@
       "reason": "exposes ['get_conversation_intelligence', 'get_directive', 'get_context_injection']"
     },
     "core.creativity": {
-      "classified": "SCAFFOLDING",
-      "disposition": "RETIRE",
+      "classified": "PACKAGE",
+      "disposition": "STRUCTURAL",
       "lines": 6,
-      "reason": "no references, no entry point, no accessor"
+      "reason": "package __init__ \u2014 importing the package requires it"
     },
     "core.cybernetics.sibyl": {
       "classified": "SERVICE",
@@ -343,34 +92,22 @@
       "reason": "exposes ['get_threat']"
     },
     "core.data": {
-      "classified": "SCAFFOLDING",
-      "disposition": "RETIRE",
+      "classified": "PACKAGE",
+      "disposition": "STRUCTURAL",
       "lines": 19,
-      "reason": "no references, no entry point, no accessor"
+      "reason": "package __init__ \u2014 importing the package requires it"
     },
     "core.dialogue": {
-      "classified": "SCAFFOLDING",
-      "disposition": "RETIRE",
+      "classified": "PACKAGE",
+      "disposition": "STRUCTURAL",
       "lines": 1,
-      "reason": "no references, no entry point, no accessor"
+      "reason": "package __init__ \u2014 importing the package requires it"
     },
     "core.discovery": {
-      "classified": "SCAFFOLDING",
-      "disposition": "RETIRE",
+      "classified": "PACKAGE",
+      "disposition": "STRUCTURAL",
       "lines": 34,
-      "reason": "no references, no entry point, no accessor"
-    },
-    "core.drives": {
-      "classified": "SCAFFOLDING",
-      "disposition": "RETIRE",
-      "lines": 12,
-      "reason": "no references, no entry point, no accessor"
-    },
-    "core.embodiment.games.nethack.state_compiler": {
-      "classified": "SCAFFOLDING",
-      "disposition": "RETIRE",
-      "lines": 11,
-      "reason": "no references, no entry point, no accessor"
+      "reason": "package __init__ \u2014 importing the package requires it"
     },
     "core.embodiment.soma": {
       "classified": "SERVICE",
@@ -378,143 +115,23 @@
       "lines": 75,
       "reason": "exposes ['get_status']"
     },
-    "core.embodiment.unity_bridge": {
-      "classified": "SERVICE",
-      "disposition": "WIRE_PENDING",
-      "lines": 84,
-      "reason": "exposes ['get_sensor_data']"
-    },
-    "core.environment.asset.asset_model": {
-      "classified": "SERVICE",
-      "disposition": "WIRE_PENDING",
-      "lines": 80,
-      "reason": "exposes ['get_active_assets', 'get_assets_by_category']"
-    },
-    "core.environment.capability_matrix": {
-      "classified": "SCAFFOLDING",
-      "disposition": "RETIRE",
-      "lines": 209,
-      "reason": "no references, no entry point, no accessor"
-    },
-    "core.environment.command_compiler": {
-      "classified": "SCAFFOLDING",
-      "disposition": "RETIRE",
-      "lines": 11,
-      "reason": "no references, no entry point, no accessor"
-    },
     "core.environment.command_registry": {
       "classified": "SERVICE",
       "disposition": "WIRE_PENDING",
       "lines": 25,
       "reason": "exposes ['get_command_registry']"
     },
-    "core.environment.experimentation": {
-      "classified": "SCAFFOLDING",
-      "disposition": "RETIRE",
-      "lines": 33,
-      "reason": "no references, no entry point, no accessor"
-    },
-    "core.environment.hazard.hazard_model": {
-      "classified": "SCAFFOLDING",
-      "disposition": "RETIRE",
-      "lines": 82,
-      "reason": "no references, no entry point, no accessor"
-    },
-    "core.environment.information_boundary": {
-      "classified": "SCAFFOLDING",
-      "disposition": "RETIRE",
-      "lines": 32,
-      "reason": "no references, no entry point, no accessor"
-    },
-    "core.environment.modal_manager": {
-      "classified": "SCAFFOLDING",
-      "disposition": "RETIRE",
-      "lines": 4,
-      "reason": "no references, no entry point, no accessor"
-    },
-    "core.environment.options.base": {
-      "classified": "SCAFFOLDING",
-      "disposition": "RETIRE",
-      "lines": 33,
-      "reason": "no references, no entry point, no accessor"
-    },
-    "core.environment.options.builtins": {
-      "classified": "SCAFFOLDING",
-      "disposition": "RETIRE",
-      "lines": 41,
-      "reason": "no references, no entry point, no accessor"
-    },
-    "core.environment.options.compiler": {
-      "classified": "SCAFFOLDING",
-      "disposition": "RETIRE",
-      "lines": 35,
-      "reason": "no references, no entry point, no accessor"
-    },
-    "core.environment.options.library": {
-      "classified": "SCAFFOLDING",
-      "disposition": "RETIRE",
-      "lines": 49,
-      "reason": "no references, no entry point, no accessor"
-    },
-    "core.environment.registry": {
-      "classified": "SERVICE",
-      "disposition": "WIRE_PENDING",
-      "lines": 51,
-      "reason": "exposes ['get_environment_registry', 'get_state_compiler']"
-    },
-    "core.environment.resources.resource_calendar": {
-      "classified": "SCAFFOLDING",
-      "disposition": "RETIRE",
-      "lines": 93,
-      "reason": "no references, no entry point, no accessor"
-    },
-    "core.environment.semantic_events": {
-      "classified": "SCAFFOLDING",
-      "disposition": "RETIRE",
-      "lines": 20,
-      "reason": "no references, no entry point, no accessor"
-    },
-    "core.environment.snapshot": {
-      "classified": "SCAFFOLDING",
-      "disposition": "RETIRE",
-      "lines": 19,
-      "reason": "no references, no entry point, no accessor"
-    },
-    "core.environment.spatial.topological_map": {
-      "classified": "SERVICE",
-      "disposition": "WIRE_PENDING",
-      "lines": 74,
-      "reason": "exposes ['get_node_at', 'get_adjacent_nodes']"
-    },
-    "core.environment.world_model": {
-      "classified": "SCAFFOLDING",
-      "disposition": "RETIRE",
-      "lines": 4,
-      "reason": "no references, no entry point, no accessor"
-    },
     "core.environments": {
-      "classified": "SCAFFOLDING",
-      "disposition": "RETIRE",
+      "classified": "PACKAGE",
+      "disposition": "STRUCTURAL",
       "lines": 1,
-      "reason": "no references, no entry point, no accessor"
+      "reason": "package __init__ \u2014 importing the package requires it"
     },
     "core.evaluation": {
-      "classified": "SCAFFOLDING",
-      "disposition": "RETIRE",
+      "classified": "PACKAGE",
+      "disposition": "STRUCTURAL",
       "lines": 2,
-      "reason": "no references, no entry point, no accessor"
-    },
-    "core.evaluation.self_evaluator": {
-      "classified": "SCAFFOLDING",
-      "disposition": "RETIRE",
-      "lines": 63,
-      "reason": "no references, no entry point, no accessor"
-    },
-    "core.evolution.generational_handoff": {
-      "classified": "SCAFFOLDING",
-      "disposition": "RETIRE",
-      "lines": 64,
-      "reason": "no references, no entry point, no accessor"
+      "reason": "package __init__ \u2014 importing the package requires it"
     },
     "core.evolution.liquid_state": {
       "classified": "SERVICE",
@@ -534,12 +151,6 @@
       "lines": 121,
       "reason": "exposes ['get_project']"
     },
-    "core.governance.closure_auditor": {
-      "classified": "SCAFFOLDING",
-      "disposition": "RETIRE",
-      "lines": 131,
-      "reason": "no references, no entry point, no accessor"
-    },
     "core.governance.constitutional_amendment": {
       "classified": "SERVICE",
       "disposition": "WIRE_PENDING",
@@ -552,35 +163,11 @@
       "lines": 128,
       "reason": "no references, no entry point, no accessor"
     },
-    "core.grounding.reality_grounding": {
-      "classified": "SCAFFOLDING",
-      "disposition": "RETIRE",
-      "lines": 78,
-      "reason": "no references, no entry point, no accessor"
-    },
     "core.guardians.conversational_guard": {
       "classified": "SERVICE",
       "disposition": "WIRE_PENDING",
       "lines": 97,
       "reason": "exposes ['get_prompt_for_tier']"
-    },
-    "core.guardians.resource_guardian": {
-      "classified": "SCAFFOLDING",
-      "disposition": "RETIRE",
-      "lines": 57,
-      "reason": "no references, no entry point, no accessor"
-    },
-    "core.identity.biography": {
-      "classified": "SERVICE",
-      "disposition": "WIRE_PENDING",
-      "lines": 66,
-      "reason": "exposes ['get_legacy_context']"
-    },
-    "core.identity.identity_conflict_resolver": {
-      "classified": "SCAFFOLDING",
-      "disposition": "RETIRE",
-      "lines": 18,
-      "reason": "no references, no entry point, no accessor"
     },
     "core.identity.rapid_adaptation": {
       "classified": "SERVICE",
@@ -589,70 +176,10 @@
       "reason": "exposes ['get_rapid_adaptation', 'get_adaptation_cues', 'get_prompt_injection']"
     },
     "core.initializers": {
-      "classified": "SCAFFOLDING",
-      "disposition": "RETIRE",
+      "classified": "PACKAGE",
+      "disposition": "STRUCTURAL",
       "lines": 1,
-      "reason": "no references, no entry point, no accessor"
-    },
-    "core.initializers.cognitive_sensory": {
-      "classified": "SCAFFOLDING",
-      "disposition": "RETIRE",
-      "lines": 137,
-      "reason": "no references, no entry point, no accessor"
-    },
-    "core.kernel.self_review": {
-      "classified": "SCAFFOLDING",
-      "disposition": "RETIRE",
-      "lines": 70,
-      "reason": "no references, no entry point, no accessor"
-    },
-    "core.knowledge.grounding": {
-      "classified": "SCAFFOLDING",
-      "disposition": "RETIRE",
-      "lines": 11,
-      "reason": "no references, no entry point, no accessor"
-    },
-    "core.knowledge.ingestion": {
-      "classified": "SCAFFOLDING",
-      "disposition": "RETIRE",
-      "lines": 21,
-      "reason": "no references, no entry point, no accessor"
-    },
-    "core.knowledge.retrieval": {
-      "classified": "SCAFFOLDING",
-      "disposition": "RETIRE",
-      "lines": 26,
-      "reason": "no references, no entry point, no accessor"
-    },
-    "core.knowledge.rule_extractor": {
-      "classified": "SCAFFOLDING",
-      "disposition": "RETIRE",
-      "lines": 35,
-      "reason": "no references, no entry point, no accessor"
-    },
-    "core.knowledge.source_registry": {
-      "classified": "SCAFFOLDING",
-      "disposition": "RETIRE",
-      "lines": 28,
-      "reason": "no references, no entry point, no accessor"
-    },
-    "core.learning.experience_collector": {
-      "classified": "SCAFFOLDING",
-      "disposition": "RETIRE",
-      "lines": 45,
-      "reason": "no references, no entry point, no accessor"
-    },
-    "core.learning.meta_plasticity": {
-      "classified": "SCAFFOLDING",
-      "disposition": "RETIRE",
-      "lines": 55,
-      "reason": "no references, no entry point, no accessor"
-    },
-    "core.learning.regression_guard": {
-      "classified": "SCAFFOLDING",
-      "disposition": "RETIRE",
-      "lines": 19,
-      "reason": "no references, no entry point, no accessor"
+      "reason": "package __init__ \u2014 importing the package requires it"
     },
     "core.learning.rl_train": {
       "classified": "ENTRY_POINT",
@@ -661,28 +188,22 @@
       "reason": "has __main__ block"
     },
     "core.llm": {
-      "classified": "SCAFFOLDING",
-      "disposition": "RETIRE",
+      "classified": "PACKAGE",
+      "disposition": "STRUCTURAL",
       "lines": 11,
-      "reason": "no references, no entry point, no accessor"
+      "reason": "package __init__ \u2014 importing the package requires it"
     },
     "core.managers": {
-      "classified": "SCAFFOLDING",
-      "disposition": "RETIRE",
+      "classified": "PACKAGE",
+      "disposition": "STRUCTURAL",
       "lines": 0,
-      "reason": "no references, no entry point, no accessor"
+      "reason": "package __init__ \u2014 importing the package requires it"
     },
     "core.memory.commitment_ledger": {
       "classified": "SERVICE",
       "disposition": "WIRE_PENDING",
       "lines": 43,
       "reason": "exposes ['get_commitments']"
-    },
-    "core.memory.data_engine": {
-      "classified": "SCAFFOLDING",
-      "disposition": "RETIRE",
-      "lines": 149,
-      "reason": "no references, no entry point, no accessor"
     },
     "core.memory.entity_graph": {
       "classified": "SERVICE",
@@ -691,40 +212,16 @@
       "reason": "exposes ['get_ecosystem_context']"
     },
     "core.memory.knowledge": {
-      "classified": "SCAFFOLDING",
-      "disposition": "RETIRE",
+      "classified": "PACKAGE",
+      "disposition": "STRUCTURAL",
       "lines": 0,
-      "reason": "no references, no entry point, no accessor"
+      "reason": "package __init__ \u2014 importing the package requires it"
     },
     "core.memory.learning": {
-      "classified": "SCAFFOLDING",
-      "disposition": "RETIRE",
+      "classified": "PACKAGE",
+      "disposition": "STRUCTURAL",
       "lines": 6,
-      "reason": "no references, no entry point, no accessor"
-    },
-    "core.memory.predictive_graph": {
-      "classified": "SCAFFOLDING",
-      "disposition": "RETIRE",
-      "lines": 64,
-      "reason": "no references, no entry point, no accessor"
-    },
-    "core.memory.procedural.consolidation": {
-      "classified": "SCAFFOLDING",
-      "disposition": "RETIRE",
-      "lines": 42,
-      "reason": "no references, no entry point, no accessor"
-    },
-    "core.memory.procedural.retrieval": {
-      "classified": "SCAFFOLDING",
-      "disposition": "RETIRE",
-      "lines": 3,
-      "reason": "no references, no entry point, no accessor"
-    },
-    "core.memory.procedural.schema": {
-      "classified": "SCAFFOLDING",
-      "disposition": "RETIRE",
-      "lines": 29,
-      "reason": "no references, no entry point, no accessor"
+      "reason": "package __init__ \u2014 importing the package requires it"
     },
     "core.memory.project_timeline": {
       "classified": "SERVICE",
@@ -733,58 +230,16 @@
       "reason": "exposes ['get_active_milestones']"
     },
     "core.memory.stratified": {
-      "classified": "SCAFFOLDING",
-      "disposition": "RETIRE",
+      "classified": "PACKAGE",
+      "disposition": "STRUCTURAL",
       "lines": 6,
-      "reason": "no references, no entry point, no accessor"
-    },
-    "core.memory.stratified.episodic": {
-      "classified": "SCAFFOLDING",
-      "disposition": "RETIRE",
-      "lines": 7,
-      "reason": "no references, no entry point, no accessor"
-    },
-    "core.memory.stratified.procedural": {
-      "classified": "SCAFFOLDING",
-      "disposition": "RETIRE",
-      "lines": 4,
-      "reason": "no references, no entry point, no accessor"
-    },
-    "core.memory.stratified.semantic": {
-      "classified": "SCAFFOLDING",
-      "disposition": "RETIRE",
-      "lines": 7,
-      "reason": "no references, no entry point, no accessor"
-    },
-    "core.memory.stratified.strategic": {
-      "classified": "SCAFFOLDING",
-      "disposition": "RETIRE",
-      "lines": 9,
-      "reason": "no references, no entry point, no accessor"
-    },
-    "core.memory.stratified.working": {
-      "classified": "SCAFFOLDING",
-      "disposition": "RETIRE",
-      "lines": 11,
-      "reason": "no references, no entry point, no accessor"
-    },
-    "core.memory.week_summary": {
-      "classified": "SCAFFOLDING",
-      "disposition": "RETIRE",
-      "lines": 24,
-      "reason": "no references, no entry point, no accessor"
+      "reason": "package __init__ \u2014 importing the package requires it"
     },
     "core.meta": {
-      "classified": "SCAFFOLDING",
-      "disposition": "RETIRE",
+      "classified": "PACKAGE",
+      "disposition": "STRUCTURAL",
       "lines": 1,
-      "reason": "no references, no entry point, no accessor"
-    },
-    "core.middleware.introspection_guard": {
-      "classified": "SCAFFOLDING",
-      "disposition": "RETIRE",
-      "lines": 39,
-      "reason": "no references, no entry point, no accessor"
+      "reason": "package __init__ \u2014 importing the package requires it"
     },
     "core.mission.mission_engine": {
       "classified": "SERVICE",
@@ -793,70 +248,28 @@
       "reason": "exposes ['get_mission_engine', 'get_active_campaigns', 'get_campaign']"
     },
     "core.morphogenesis": {
-      "classified": "SCAFFOLDING",
-      "disposition": "RETIRE",
+      "classified": "PACKAGE",
+      "disposition": "STRUCTURAL",
       "lines": 50,
-      "reason": "no references, no entry point, no accessor"
+      "reason": "package __init__ \u2014 importing the package requires it"
     },
-    "core.morphogenesis.native_compiler": {
-      "classified": "SCAFFOLDING",
-      "disposition": "RETIRE",
-      "lines": 61,
-      "reason": "no references, no entry point, no accessor"
+    "core.motivation.drives": {
+      "classified": "SERVICE",
+      "disposition": "WIRE_PENDING",
+      "lines": 62,
+      "reason": "exposes ['get_imperative', 'get_status']"
     },
     "core.multimodal": {
-      "classified": "SCAFFOLDING",
-      "disposition": "RETIRE",
+      "classified": "PACKAGE",
+      "disposition": "STRUCTURAL",
       "lines": 0,
-      "reason": "no references, no entry point, no accessor"
-    },
-    "core.networking.device_discovery": {
-      "classified": "SCAFFOLDING",
-      "disposition": "RETIRE",
-      "lines": 427,
-      "reason": "no references, no entry point, no accessor"
-    },
-    "core.networking.network": {
-      "classified": "SCAFFOLDING",
-      "disposition": "RETIRE",
-      "lines": 173,
-      "reason": "no references, no entry point, no accessor"
+      "reason": "package __init__ \u2014 importing the package requires it"
     },
     "core.neuroweb": {
-      "classified": "SCAFFOLDING",
-      "disposition": "RETIRE",
+      "classified": "PACKAGE",
+      "disposition": "STRUCTURAL",
       "lines": 4,
-      "reason": "no references, no entry point, no accessor"
-    },
-    "core.neuroweb.cns": {
-      "classified": "SCAFFOLDING",
-      "disposition": "RETIRE",
-      "lines": 152,
-      "reason": "no references, no entry point, no accessor"
-    },
-    "core.neuroweb.glue_factory": {
-      "classified": "SCAFFOLDING",
-      "disposition": "RETIRE",
-      "lines": 132,
-      "reason": "no references, no entry point, no accessor"
-    },
-    "core.neuroweb.mycelial_bridge": {
-      "classified": "SCAFFOLDING",
-      "disposition": "RETIRE",
-      "lines": 53,
-      "reason": "no references, no entry point, no accessor"
-    },
-    "core.neuroweb.structures": {
-      "classified": "SCAFFOLDING",
-      "disposition": "RETIRE",
-      "lines": 23,
-      "reason": "no references, no entry point, no accessor"
-    },
-    "core.observability.logging_hmac": {
-      "classified": "SCAFFOLDING",
-      "disposition": "RETIRE",
-      "lines": 61,
-      "reason": "no references, no entry point, no accessor"
+      "reason": "package __init__ \u2014 importing the package requires it"
     },
     "core.observability.telemetry": {
       "classified": "SERVICE",
@@ -864,17 +277,11 @@
       "lines": 61,
       "reason": "exposes ['get_pulse']"
     },
-    "core.observability.tracer": {
-      "classified": "SCAFFOLDING",
-      "disposition": "RETIRE",
-      "lines": 56,
-      "reason": "no references, no entry point, no accessor"
-    },
     "core.ontology": {
-      "classified": "SCAFFOLDING",
-      "disposition": "RETIRE",
+      "classified": "PACKAGE",
+      "disposition": "STRUCTURAL",
       "lines": 0,
-      "reason": "no references, no entry point, no accessor"
+      "reason": "package __init__ \u2014 importing the package requires it"
     },
     "core.ontology.aura_ontology": {
       "classified": "SERVICE",
@@ -888,203 +295,23 @@
       "lines": 56,
       "reason": "exposes ['get_priority_gator']"
     },
-    "core.ops.shell": {
-      "classified": "SCAFFOLDING",
-      "disposition": "RETIRE",
-      "lines": 83,
-      "reason": "no references, no entry point, no accessor"
-    },
-    "core.orchestrator.coordinators.agency": {
-      "classified": "SERVICE",
-      "disposition": "WIRE_PENDING",
-      "lines": 199,
-      "reason": "exposes ['get_status']"
-    },
-    "core.orchestrator.coordinators.memory": {
-      "classified": "SERVICE",
-      "disposition": "WIRE_PENDING",
-      "lines": 319,
-      "reason": "exposes ['get_hot_memory', 'get_cold_memory_context', 'get_status']"
-    },
-    "core.orchestrator.handlers.status_manager": {
-      "classified": "SERVICE",
-      "disposition": "WIRE_PENDING",
-      "lines": 323,
-      "reason": "exposes ['get_status']"
-    },
-    "core.orchestrator.initializers.pathways": {
-      "classified": "SCAFFOLDING",
-      "disposition": "RETIRE",
-      "lines": 413,
-      "reason": "no references, no entry point, no accessor"
-    },
-    "core.orchestrator.methods": {
-      "classified": "SCAFFOLDING",
-      "disposition": "RETIRE",
-      "lines": 5,
-      "reason": "no references, no entry point, no accessor"
-    },
-    "core.orchestrator.mixins.boot.boot_background": {
-      "classified": "SCAFFOLDING",
-      "disposition": "RETIRE",
-      "lines": 247,
-      "reason": "no references, no entry point, no accessor"
-    },
-    "core.orchestrator.mixins.personality_bridge": {
-      "classified": "SCAFFOLDING",
-      "disposition": "RETIRE",
-      "lines": 62,
-      "reason": "no references, no entry point, no accessor"
-    },
-    "core.orchestrator.orchestrator_state": {
-      "classified": "SCAFFOLDING",
-      "disposition": "RETIRE",
-      "lines": 143,
-      "reason": "no references, no entry point, no accessor"
-    },
-    "core.orchestrator.privacy_stealth": {
-      "classified": "SCAFFOLDING",
-      "disposition": "RETIRE",
-      "lines": 26,
-      "reason": "no references, no entry point, no accessor"
-    },
-    "core.orchestrator.services": {
-      "classified": "SCAFFOLDING",
-      "disposition": "RETIRE",
-      "lines": 448,
-      "reason": "no references, no entry point, no accessor"
-    },
-    "core.orchestrator.state": {
-      "classified": "SCAFFOLDING",
-      "disposition": "RETIRE",
-      "lines": 150,
-      "reason": "no references, no entry point, no accessor"
-    },
-    "core.orchestrator_boot": {
-      "classified": "SCAFFOLDING",
-      "disposition": "RETIRE",
-      "lines": 10,
-      "reason": "no references, no entry point, no accessor"
-    },
     "core.organism.cycle_clock": {
       "classified": "SERVICE",
       "disposition": "WIRE_PENDING",
       "lines": 49,
       "reason": "exposes ['get_time_of_day']"
     },
-    "core.organism.organism_contract": {
-      "classified": "SCAFFOLDING",
-      "disposition": "RETIRE",
-      "lines": 54,
-      "reason": "no references, no entry point, no accessor"
-    },
-    "core.perception.action_gateway": {
-      "classified": "SCAFFOLDING",
-      "disposition": "RETIRE",
-      "lines": 173,
-      "reason": "no references, no entry point, no accessor"
-    },
-    "core.perception.belief_state": {
-      "classified": "SERVICE",
-      "disposition": "WIRE_PENDING",
-      "lines": 509,
-      "reason": "exposes ['get_belief', 'get_strategic_summary']"
-    },
-    "core.perception.evaluation_harness": {
-      "classified": "SCAFFOLDING",
-      "disposition": "RETIRE",
-      "lines": 73,
-      "reason": "no references, no entry point, no accessor"
-    },
-    "core.perception.goal_manager": {
-      "classified": "SCAFFOLDING",
-      "disposition": "RETIRE",
-      "lines": 233,
-      "reason": "no references, no entry point, no accessor"
-    },
-    "core.perception.postmortem": {
-      "classified": "SCAFFOLDING",
-      "disposition": "RETIRE",
-      "lines": 271,
-      "reason": "no references, no entry point, no accessor"
-    },
-    "core.perception.proactive_perception_v2": {
-      "classified": "SCAFFOLDING",
-      "disposition": "RETIRE",
-      "lines": 202,
-      "reason": "no references, no entry point, no accessor"
-    },
-    "core.perception.reflex_layer": {
-      "classified": "SCAFFOLDING",
-      "disposition": "RETIRE",
-      "lines": 309,
-      "reason": "no references, no entry point, no accessor"
-    },
-    "core.perception.skill_graph": {
-      "classified": "SERVICE",
-      "disposition": "WIRE_PENDING",
-      "lines": 205,
-      "reason": "exposes container registration"
-    },
-    "core.perception.trace": {
-      "classified": "SCAFFOLDING",
-      "disposition": "RETIRE",
-      "lines": 99,
-      "reason": "no references, no entry point, no accessor"
-    },
     "core.persistence": {
-      "classified": "SCAFFOLDING",
-      "disposition": "RETIRE",
+      "classified": "PACKAGE",
+      "disposition": "STRUCTURAL",
       "lines": 1,
-      "reason": "no references, no entry point, no accessor"
-    },
-    "core.phenomenal_substrate.active_inference": {
-      "classified": "SCAFFOLDING",
-      "disposition": "RETIRE",
-      "lines": 69,
-      "reason": "no references, no entry point, no accessor"
-    },
-    "core.phenomenal_substrate.affective_core": {
-      "classified": "SCAFFOLDING",
-      "disposition": "RETIRE",
-      "lines": 80,
-      "reason": "no references, no entry point, no accessor"
-    },
-    "core.phenomenal_substrate.attachment": {
-      "classified": "SCAFFOLDING",
-      "disposition": "RETIRE",
-      "lines": 59,
-      "reason": "no references, no entry point, no accessor"
-    },
-    "core.phenomenal_substrate.global_workspace": {
-      "classified": "SCAFFOLDING",
-      "disposition": "RETIRE",
-      "lines": 63,
-      "reason": "no references, no entry point, no accessor"
-    },
-    "core.phenomenal_substrate.maths": {
-      "classified": "SCAFFOLDING",
-      "disposition": "RETIRE",
-      "lines": 59,
-      "reason": "no references, no entry point, no accessor"
-    },
-    "core.phenomenal_substrate.phenomenal_field": {
-      "classified": "SCAFFOLDING",
-      "disposition": "RETIRE",
-      "lines": 71,
-      "reason": "no references, no entry point, no accessor"
+      "reason": "package __init__ \u2014 importing the package requires it"
     },
     "core.pipeline": {
-      "classified": "SCAFFOLDING",
-      "disposition": "RETIRE",
+      "classified": "PACKAGE",
+      "disposition": "STRUCTURAL",
       "lines": 1,
-      "reason": "no references, no entry point, no accessor"
-    },
-    "core.pipeline.critic": {
-      "classified": "SCAFFOLDING",
-      "disposition": "RETIRE",
-      "lines": 120,
-      "reason": "no references, no entry point, no accessor"
+      "reason": "package __init__ \u2014 importing the package requires it"
     },
     "core.play.ontological_play": {
       "classified": "SERVICE",
@@ -1092,47 +319,17 @@
       "lines": 258,
       "reason": "exposes ['get_play_engine']"
     },
-    "core.pneuma.free_energy_oracle": {
-      "classified": "SERVICE",
-      "disposition": "WIRE_PENDING",
-      "lines": 181,
-      "reason": "exposes ['get_preferred_temperature', 'get_state_dict']"
-    },
-    "core.pneuma.information_geometric_tracker": {
-      "classified": "SERVICE",
-      "disposition": "WIRE_PENDING",
-      "lines": 144,
-      "reason": "exposes ['get_geodesic_velocity', 'get_state_dict']"
-    },
     "core.promotion": {
-      "classified": "SCAFFOLDING",
-      "disposition": "RETIRE",
+      "classified": "PACKAGE",
+      "disposition": "STRUCTURAL",
       "lines": 32,
-      "reason": "no references, no entry point, no accessor"
-    },
-    "core.reasoning.search_engine": {
-      "classified": "SCAFFOLDING",
-      "disposition": "RETIRE",
-      "lines": 89,
-      "reason": "no references, no entry point, no accessor"
-    },
-    "core.reproducibility.proof_substrate": {
-      "classified": "SERVICE",
-      "disposition": "WIRE_PENDING",
-      "lines": 473,
-      "reason": "exposes ['get_ref']"
+      "reason": "package __init__ \u2014 importing the package requires it"
     },
     "core.research_core": {
-      "classified": "SCAFFOLDING",
-      "disposition": "RETIRE",
+      "classified": "PACKAGE",
+      "disposition": "STRUCTURAL",
       "lines": 53,
-      "reason": "no references, no entry point, no accessor"
-    },
-    "core.resilience.antibody": {
-      "classified": "SCAFFOLDING",
-      "disposition": "RETIRE",
-      "lines": 101,
-      "reason": "no references, no entry point, no accessor"
+      "reason": "package __init__ \u2014 importing the package requires it"
     },
     "core.resilience.atomic_state": {
       "classified": "SERVICE",
@@ -1140,23 +337,11 @@
       "lines": 80,
       "reason": "exposes ['get_all']"
     },
-    "core.resilience.circuit_breaker_state": {
-      "classified": "SCAFFOLDING",
-      "disposition": "RETIRE",
-      "lines": 7,
-      "reason": "no references, no entry point, no accessor"
-    },
     "core.resilience.circuit_dash": {
       "classified": "ENTRY_POINT",
       "disposition": "INVOKED",
       "lines": 112,
       "reason": "has __main__ block"
-    },
-    "core.resilience.code_validation": {
-      "classified": "SCAFFOLDING",
-      "disposition": "RETIRE",
-      "lines": 220,
-      "reason": "no references, no entry point, no accessor"
     },
     "core.resilience.dlq_service": {
       "classified": "SERVICE",
@@ -1164,29 +349,23 @@
       "lines": 72,
       "reason": "exposes ['get_failure_report']"
     },
-    "core.resilience.fail_controller": {
-      "classified": "SCAFFOLDING",
-      "disposition": "RETIRE",
-      "lines": 29,
-      "reason": "no references, no entry point, no accessor"
-    },
     "core.resilience.graceful_degradation": {
       "classified": "SERVICE",
       "disposition": "WIRE_PENDING",
       "lines": 223,
       "reason": "exposes ['get_degradation_manager', 'get_status_summary']"
     },
-    "core.resilience.system_integrity": {
+    "core.resilience.sandbox_manager": {
       "classified": "SCAFFOLDING",
       "disposition": "RETIRE",
-      "lines": 108,
+      "lines": 59,
       "reason": "no references, no entry point, no accessor"
     },
     "core.resource": {
-      "classified": "SCAFFOLDING",
-      "disposition": "RETIRE",
+      "classified": "PACKAGE",
+      "disposition": "STRUCTURAL",
       "lines": 1,
-      "reason": "no references, no entry point, no accessor"
+      "reason": "package __init__ \u2014 importing the package requires it"
     },
     "core.resource.rate_limiter": {
       "classified": "SERVICE",
@@ -1200,24 +379,6 @@
       "lines": 62,
       "reason": "exposes ['get_token_monitor', 'get_stats']"
     },
-    "core.runtime.app_context": {
-      "classified": "SCAFFOLDING",
-      "disposition": "RETIRE",
-      "lines": 20,
-      "reason": "no references, no entry point, no accessor"
-    },
-    "core.runtime.config_paths": {
-      "classified": "SCAFFOLDING",
-      "disposition": "RETIRE",
-      "lines": 11,
-      "reason": "no references, no entry point, no accessor"
-    },
-    "core.runtime.immutable_messages": {
-      "classified": "SCAFFOLDING",
-      "disposition": "RETIRE",
-      "lines": 89,
-      "reason": "no references, no entry point, no accessor"
-    },
     "core.runtime.metal_scheduler": {
       "classified": "SERVICE",
       "disposition": "WIRE_PENDING",
@@ -1225,10 +386,16 @@
       "reason": "exposes ['get_metal_scheduler', 'get_stats']"
     },
     "core.safety": {
-      "classified": "SCAFFOLDING",
-      "disposition": "RETIRE",
+      "classified": "PACKAGE",
+      "disposition": "STRUCTURAL",
       "lines": 1,
-      "reason": "no references, no entry point, no accessor"
+      "reason": "package __init__ \u2014 importing the package requires it"
+    },
+    "core.security.audit_trail": {
+      "classified": "SERVICE",
+      "disposition": "WIRE_PENDING",
+      "lines": 217,
+      "reason": "exposes ['get_audit_trail', 'get_recent', 'get_by_target']"
     },
     "core.security.permissions": {
       "classified": "SERVICE",
@@ -1236,59 +403,11 @@
       "lines": 76,
       "reason": "exposes ['get_permission_manager']"
     },
-    "core.self.predictive_model": {
-      "classified": "SCAFFOLDING",
-      "disposition": "RETIRE",
-      "lines": 63,
-      "reason": "no references, no entry point, no accessor"
-    },
-    "core.self.self_model": {
-      "classified": "SCAFFOLDING",
-      "disposition": "RETIRE",
-      "lines": 11,
-      "reason": "no references, no entry point, no accessor"
-    },
-    "core.self_improvement.llm_code_generator": {
-      "classified": "SCAFFOLDING",
-      "disposition": "RETIRE",
-      "lines": 6,
-      "reason": "no references, no entry point, no accessor"
-    },
-    "core.self_modification.ast_analyzer": {
-      "classified": "SCAFFOLDING",
-      "disposition": "RETIRE",
-      "lines": 231,
-      "reason": "no references, no entry point, no accessor"
-    },
-    "core.self_modification.engine": {
-      "classified": "SCAFFOLDING",
-      "disposition": "RETIRE",
-      "lines": 7,
-      "reason": "no references, no entry point, no accessor"
-    },
-    "core.self_modification.learning_system": {
-      "classified": "SERVICE",
-      "disposition": "WIRE_PENDING",
-      "lines": 454,
-      "reason": "exposes ['get_strategy_report', 'get_recent_lessons', 'get_learning_velocity']"
-    },
     "core.self_modification.meta_optimization": {
       "classified": "SERVICE",
       "disposition": "WIRE_PENDING",
       "lines": 81,
       "reason": "exposes ['get_summary']"
-    },
-    "core.self_modification.promotion_policy": {
-      "classified": "SCAFFOLDING",
-      "disposition": "RETIRE",
-      "lines": 113,
-      "reason": "no references, no entry point, no accessor"
-    },
-    "core.self_modification.repo_search": {
-      "classified": "SCAFFOLDING",
-      "disposition": "RETIRE",
-      "lines": 146,
-      "reason": "no references, no entry point, no accessor"
     },
     "core.senses.gps_interface": {
       "classified": "SERVICE",
@@ -1302,149 +421,41 @@
       "lines": 336,
       "reason": "exposes ['get_screen_observer', 'get_status']"
     },
-    "core.senses.voice_engine_decoupled": {
-      "classified": "SCAFFOLDING",
-      "disposition": "RETIRE",
-      "lines": 143,
-      "reason": "no references, no entry point, no accessor"
-    },
     "core.services": {
-      "classified": "SCAFFOLDING",
-      "disposition": "RETIRE",
+      "classified": "PACKAGE",
+      "disposition": "STRUCTURAL",
       "lines": 1,
-      "reason": "no references, no entry point, no accessor"
+      "reason": "package __init__ \u2014 importing the package requires it"
     },
     "core.session": {
-      "classified": "SCAFFOLDING",
-      "disposition": "RETIRE",
+      "classified": "PACKAGE",
+      "disposition": "STRUCTURAL",
       "lines": 1,
-      "reason": "no references, no entry point, no accessor"
+      "reason": "package __init__ \u2014 importing the package requires it"
     },
-    "core.sim.causal_graph": {
+    "core.sim.monte_carlo": {
       "classified": "SCAFFOLDING",
       "disposition": "RETIRE",
-      "lines": 47,
-      "reason": "no references, no entry point, no accessor"
-    },
-    "core.sim.risk_forecaster": {
-      "classified": "SCAFFOLDING",
-      "disposition": "RETIRE",
-      "lines": 42,
-      "reason": "no references, no entry point, no accessor"
-    },
-    "core.sim.scenario_tree": {
-      "classified": "SCAFFOLDING",
-      "disposition": "RETIRE",
-      "lines": 42,
-      "reason": "no references, no entry point, no accessor"
-    },
-    "core.sim.world_simulator": {
-      "classified": "SCAFFOLDING",
-      "disposition": "RETIRE",
-      "lines": 53,
+      "lines": 30,
       "reason": "no references, no entry point, no accessor"
     },
     "core.simulation": {
-      "classified": "SCAFFOLDING",
-      "disposition": "RETIRE",
+      "classified": "PACKAGE",
+      "disposition": "STRUCTURAL",
       "lines": 1,
-      "reason": "no references, no entry point, no accessor"
+      "reason": "package __init__ \u2014 importing the package requires it"
     },
-    "core.skills.build_app": {
-      "classified": "SCAFFOLDING",
-      "disposition": "RETIRE",
-      "lines": 72,
-      "reason": "no references, no entry point, no accessor"
-    },
-    "core.skills.cognitive_trainer": {
-      "classified": "SCAFFOLDING",
-      "disposition": "RETIRE",
-      "lines": 143,
-      "reason": "no references, no entry point, no accessor"
-    },
-    "core.skills.computer_use_agent": {
-      "classified": "SCAFFOLDING",
-      "disposition": "RETIRE",
-      "lines": 130,
-      "reason": "no references, no entry point, no accessor"
+    "core.skills.computer_interface": {
+      "classified": "SERVICE",
+      "disposition": "WIRE_PENDING",
+      "lines": 92,
+      "reason": "exposes ['get_url', 'get_html']"
     },
     "core.skills.context_injection": {
       "classified": "SERVICE",
       "disposition": "WIRE_PENDING",
       "lines": 138,
       "reason": "exposes ['get_context_injection_service']"
-    },
-    "core.skills.evolution_status": {
-      "classified": "SCAFFOLDING",
-      "disposition": "RETIRE",
-      "lines": 83,
-      "reason": "no references, no entry point, no accessor"
-    },
-    "core.skills.grounded_search": {
-      "classified": "SCAFFOLDING",
-      "disposition": "RETIRE",
-      "lines": 119,
-      "reason": "no references, no entry point, no accessor"
-    },
-    "core.skills.improve_own_code": {
-      "classified": "SCAFFOLDING",
-      "disposition": "RETIRE",
-      "lines": 75,
-      "reason": "no references, no entry point, no accessor"
-    },
-    "core.skills.manage_abilities": {
-      "classified": "SCAFFOLDING",
-      "disposition": "RETIRE",
-      "lines": 61,
-      "reason": "no references, no entry point, no accessor"
-    },
-    "core.skills.manifest_to_device": {
-      "classified": "SCAFFOLDING",
-      "disposition": "RETIRE",
-      "lines": 91,
-      "reason": "no references, no entry point, no accessor"
-    },
-    "core.skills.memory_sync": {
-      "classified": "SCAFFOLDING",
-      "disposition": "RETIRE",
-      "lines": 195,
-      "reason": "no references, no entry point, no accessor"
-    },
-    "core.skills.plan_mode": {
-      "classified": "SCAFFOLDING",
-      "disposition": "RETIRE",
-      "lines": 40,
-      "reason": "no references, no entry point, no accessor"
-    },
-    "core.skills.self_repair_legacy": {
-      "classified": "SCAFFOLDING",
-      "disposition": "RETIRE",
-      "lines": 4,
-      "reason": "no references, no entry point, no accessor"
-    },
-    "core.skills.skill_evolution": {
-      "classified": "SCAFFOLDING",
-      "disposition": "RETIRE",
-      "lines": 130,
-      "reason": "no references, no entry point, no accessor"
-    },
-    "core.skills.swarm_delegation": {
-      "classified": "SCAFFOLDING",
-      "disposition": "RETIRE",
-      "lines": 189,
-      "reason": "no references, no entry point, no accessor"
-    },
-    "core.skills.toolbox_web_agent": {
-      "classified": "SCAFFOLDING",
-      "disposition": "RETIRE",
-      "lines": 85,
-      "reason": "no references, no entry point, no accessor"
-    },
-    "core.social.boundary_respect": {
-      "classified": "SCAFFOLDING",
-      "disposition": "RETIRE",
-      "lines": 23,
-      "reason": "no references, no entry point, no accessor"
     },
     "core.social.community": {
       "classified": "SERVICE",
@@ -1482,18 +493,6 @@
       "lines": 25,
       "reason": "exposes ['get_preference']"
     },
-    "core.sovereign.safety": {
-      "classified": "SCAFFOLDING",
-      "disposition": "RETIRE",
-      "lines": 50,
-      "reason": "no references, no entry point, no accessor"
-    },
-    "core.sovereign.sandbox": {
-      "classified": "SCAFFOLDING",
-      "disposition": "RETIRE",
-      "lines": 47,
-      "reason": "no references, no entry point, no accessor"
-    },
     "core.sovereignty.migration": {
       "classified": "SERVICE",
       "disposition": "WIRE_PENDING",
@@ -1512,46 +511,10 @@
       "lines": 88,
       "reason": "has __main__ block"
     },
-    "core.state.state_manager": {
-      "classified": "SCAFFOLDING",
-      "disposition": "RETIRE",
-      "lines": 85,
-      "reason": "no references, no entry point, no accessor"
-    },
-    "core.state.transport": {
-      "classified": "SCAFFOLDING",
-      "disposition": "RETIRE",
-      "lines": 28,
-      "reason": "no references, no entry point, no accessor"
-    },
-    "core.swarm.k8s_backend": {
-      "classified": "SCAFFOLDING",
-      "disposition": "RETIRE",
-      "lines": 54,
-      "reason": "no references, no entry point, no accessor"
-    },
-    "core.tasks.celery_app": {
-      "classified": "SCAFFOLDING",
-      "disposition": "RETIRE",
-      "lines": 57,
-      "reason": "no references, no entry point, no accessor"
-    },
-    "core.tasks.schema_types": {
-      "classified": "SCAFFOLDING",
-      "disposition": "RETIRE",
-      "lines": 32,
-      "reason": "no references, no entry point, no accessor"
-    },
     "core.temporal.causal_reasoning": {
       "classified": "SCAFFOLDING",
       "disposition": "RETIRE",
       "lines": 507,
-      "reason": "no references, no entry point, no accessor"
-    },
-    "core.temporal.temporal_engine": {
-      "classified": "SCAFFOLDING",
-      "disposition": "RETIRE",
-      "lines": 144,
       "reason": "no references, no entry point, no accessor"
     },
     "core.temporal.temporal_reasoning": {
@@ -1560,65 +523,23 @@
       "lines": 855,
       "reason": "no references, no entry point, no accessor"
     },
-    "core.unity.mind_moment": {
-      "classified": "SCAFFOLDING",
-      "disposition": "RETIRE",
-      "lines": 385,
-      "reason": "no references, no entry point, no accessor"
-    },
     "core.unknowns": {
-      "classified": "SCAFFOLDING",
-      "disposition": "RETIRE",
+      "classified": "PACKAGE",
+      "disposition": "STRUCTURAL",
       "lines": 29,
-      "reason": "no references, no entry point, no accessor"
+      "reason": "package __init__ \u2014 importing the package requires it"
     },
-    "core.utils.circuit": {
-      "classified": "SCAFFOLDING",
-      "disposition": "RETIRE",
-      "lines": 41,
-      "reason": "no references, no entry point, no accessor"
-    },
-    "core.utils.circuit_breaker": {
-      "classified": "SCAFFOLDING",
-      "disposition": "RETIRE",
-      "lines": 15,
-      "reason": "no references, no entry point, no accessor"
-    },
-    "core.utils.context_assembler": {
-      "classified": "SCAFFOLDING",
-      "disposition": "RETIRE",
-      "lines": 137,
-      "reason": "no references, no entry point, no accessor"
-    },
-    "core.utils.safe_llm": {
-      "classified": "SCAFFOLDING",
-      "disposition": "RETIRE",
-      "lines": 67,
-      "reason": "no references, no entry point, no accessor"
-    },
-    "core.utils.sandbox_selfmod": {
-      "classified": "SCAFFOLDING",
-      "disposition": "RETIRE",
-      "lines": 97,
-      "reason": "no references, no entry point, no accessor"
-    },
-    "core.utils.schemas": {
-      "classified": "SCAFFOLDING",
-      "disposition": "RETIRE",
-      "lines": 51,
-      "reason": "no references, no entry point, no accessor"
+    "core.utils.retry": {
+      "classified": "SERVICE",
+      "disposition": "WIRE_PENDING",
+      "lines": 160,
+      "reason": "exposes ['get_retry_error_type']"
     },
     "core.utils.supervisor": {
       "classified": "SERVICE",
       "disposition": "WIRE_PENDING",
       "lines": 195,
       "reason": "exposes ['get_task_names', 'get_task']"
-    },
-    "core.utils.test_canary": {
-      "classified": "SCAFFOLDING",
-      "disposition": "RETIRE",
-      "lines": 5,
-      "reason": "no references, no entry point, no accessor"
     },
     "core.utils.token_budget": {
       "classified": "SERVICE",
@@ -1627,22 +548,22 @@
       "reason": "exposes ['get_optimizer']"
     },
     "core.values": {
-      "classified": "SCAFFOLDING",
-      "disposition": "RETIRE",
+      "classified": "PACKAGE",
+      "disposition": "STRUCTURAL",
       "lines": 0,
-      "reason": "no references, no entry point, no accessor"
+      "reason": "package __init__ \u2014 importing the package requires it"
     },
     "core.verification": {
-      "classified": "SCAFFOLDING",
-      "disposition": "RETIRE",
+      "classified": "PACKAGE",
+      "disposition": "STRUCTURAL",
       "lines": 31,
-      "reason": "no references, no entry point, no accessor"
+      "reason": "package __init__ \u2014 importing the package requires it"
     },
     "core.workspace": {
-      "classified": "SCAFFOLDING",
-      "disposition": "RETIRE",
+      "classified": "PACKAGE",
+      "disposition": "STRUCTURAL",
       "lines": 30,
-      "reason": "no references, no entry point, no accessor"
+      "reason": "package __init__ \u2014 importing the package requires it"
     },
     "core.world.causal_links": {
       "classified": "SERVICE",

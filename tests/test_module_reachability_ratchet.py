@@ -131,7 +131,7 @@ def test_every_disposition_is_one_of_the_declared_kinds():
 
 
 def test_the_wire_pending_set_is_real_debt_and_stays_visible():
-    """66 modules expose a service surface and nothing reaches them.
+    """53 modules expose a service surface and nothing reaches them.
 
     This is the half-wired shape this codebase keeps finding — a second affect
     engine, an unreachable fallback — at scale. Pinned so the count cannot
@@ -139,9 +139,10 @@ def test_the_wire_pending_set_is_real_debt_and_stays_visible():
     """
     modules = _dispositions()["modules"]
     pending = [n for n, e in modules.items() if e["disposition"] == "WIRE_PENDING"]
-    # 66 at first count; 65 after core.cognition.belief_revision was resolved
-    # (retired as a duplicate, with its one genuine capability ported into the
-    # engine that runs). The ceiling only falls.
-    assert len(pending) <= 65, (
+    # 66 at first count, 65 after core.cognition.belief_revision was retired
+    # as a duplicate, 53 once relative imports were resolved correctly — a
+    # third of the "unwired services" were reachable all along, through
+    # imports the scanner could not see. The ceiling only falls.
+    assert len(pending) <= 53, (
         f"modules written to be wired but unreachable grew to {len(pending)}"
     )

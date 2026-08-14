@@ -43,7 +43,14 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 BASELINE = ROOT / "config" / "module_reachability_baseline.json"
 
-_CLASSES = ("ENTRY_POINT", "SERVICE", "TEST_ONLY", "DOCUMENTED", "SCAFFOLDING")
+_CLASSES = (
+    "PACKAGE",
+    "ENTRY_POINT",
+    "SERVICE",
+    "TEST_ONLY",
+    "DOCUMENTED",
+    "SCAFFOLDING",
+)
 
 
 def _module_path(dotted: str) -> Path | None:
@@ -123,7 +130,15 @@ def classify(dotted: str) -> dict[str, object]:
     tail = dotted.rsplit(".", 1)[-1]
     external += [p for p in _grep_outside_python(tail) if p not in external]
 
-    if has_main:
+    if path.name == "__init__.py":
+        # A package marker is structural, not code that failed to get wired.
+        # Nothing imports `core.values` by name because callers import
+        # `core.values.something`, and deleting the marker breaks every one of
+        # them. 34 of the 209 RETIRE candidates were these; retiring them would
+        # have been the single most destructive thing in this whole exercise.
+        evidence.append("package __init__ — importing the package requires it")
+        kind = "PACKAGE"
+    elif has_main:
         evidence.append("has __main__ block")
         kind = "ENTRY_POINT"
     elif external:
@@ -153,6 +168,8 @@ DISPOSITIONS = ROOT / "config" / "orphan_dispositions.json"
 #: file is that every one of them has an entry: "279 unreachable" is a number
 #: nobody can act on, "279 decided" is a plan.
 _DISPOSITIONS = {
+    #: A package __init__ that must exist for the package to import at all.
+    "STRUCTURAL": "package marker; deleting it breaks every import beneath it",
     #: Reachable by something the import graph cannot see. Not debt.
     "INVOKED": "entry point or named in configuration",
     #: Deliberately not wired yet, with a reason someone can argue with.
@@ -164,6 +181,7 @@ _DISPOSITIONS = {
 }
 
 _DEFAULT_BY_CLASS = {
+    "PACKAGE": "STRUCTURAL",
     "ENTRY_POINT": "INVOKED",
     "DOCUMENTED": "INVOKED",
     "SERVICE": "WIRE_PENDING",

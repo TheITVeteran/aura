@@ -77,15 +77,43 @@ def scan() -> dict[str, object]:
         except (SyntaxError, UnicodeDecodeError, OSError):
             continue
         me = _module_name(path)
+        is_package = path.name == "__init__.py"
 
         for node in ast.walk(tree):
             names: list[str] = []
             if isinstance(node, ast.Import):
                 names = [a.name for a in node.names]
-            elif isinstance(node, ast.ImportFrom) and node.module and node.level == 0:
-                names = [node.module] + [
-                    f"{node.module}.{a.name}" for a in node.names
-                ]
+            elif isinstance(node, ast.ImportFrom):
+                # Relative imports were skipped entirely, and that was a real
+                # blind spot rather than a rounding error: `from .celery_app
+                # import app` made celery_app invisible to this scan, so it was
+                # reported unreachable while its own package imported it. A
+                # retirement pass built on that reported 57 modules as safe to
+                # delete and 21 of them were relatively imported by a sibling.
+                #
+                # `node.level` counts the leading dots. Level 1 is the
+                # importer's own package, and each extra dot climbs one more.
+                #
+                # The package/module distinction is the whole difficulty and
+                # getting it wrong is not visible in the output. For a module
+                # `a.b.c` living in c.py, level 1 is `a.b`; for a package
+                # `a.b` living in b/__init__.py, `_module_name` has already
+                # dropped the `__init__` so level 1 is `a.b` itself. A single
+                # formula therefore cannot serve both, and the version that
+                # served only packages resolved `from ..cognitive.x import` in
+                # core/phases/cognitive_routing.py to core.phases.cognitive.x
+                # instead of core.cognitive.x — which reported a module that 51
+                # others transitively import as unreachable.
+                if node.level:
+                    parts = me.split(".")
+                    climb = node.level - 1 if is_package else node.level
+                    base_parts = parts[: len(parts) - climb] if climb else parts
+                    base = ".".join(base_parts)
+                    prefix = f"{base}.{node.module}" if node.module else base
+                else:
+                    prefix = node.module or ""
+                if prefix:
+                    names = [prefix] + [f"{prefix}.{a.name}" for a in node.names]
             elif isinstance(node, ast.Constant) and isinstance(node.value, str):
                 # importlib.import_module("core.x.y"), registry tables, config
                 # strings. A module reached this way is reached.

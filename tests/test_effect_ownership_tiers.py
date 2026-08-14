@@ -35,8 +35,10 @@ BASELINE = ROOT / "config" / "aura_effect_ownership_baseline.json"
 #: RAW was 973 and is 905 after removing 69 `X.parent.mkdir(...)` calls that
 #: the atomic writer already performs — dead code that also registered as
 #: ungoverned effect debt.
-GOVERNED_CEILING = 1000
-RAW_CEILING = 905
+#: 1,000/905 before the orphan retirement removed 112 unreachable modules,
+#: which took their effect call sites with them.
+GOVERNED_CEILING = 976
+RAW_CEILING = 878
 
 
 def _split() -> tuple[int, int]:

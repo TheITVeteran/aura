@@ -788,14 +788,6 @@
       "callee": "core.runtime.atomic_writer.async_atomic_write_text",
       "canonical_owner": false,
       "category": "direct_atomic_file_write",
-      "count": 1,
-      "path": "core/capabilities/app_builder.py",
-      "scope": "<module>.build_app"
-    },
-    {
-      "callee": "core.runtime.atomic_writer.async_atomic_write_text",
-      "canonical_owner": false,
-      "category": "direct_atomic_file_write",
       "count": 2,
       "path": "core/capabilities/self_taught_builder.py",
       "scope": "<module>.build_app_verified"
@@ -823,14 +815,6 @@
       "count": 1,
       "path": "core/cognition/precognitive_model.py",
       "scope": "<module>.PrecognitiveEngine._save_patterns"
-    },
-    {
-      "callee": "core.runtime.atomic_writer.atomic_write_text",
-      "canonical_owner": false,
-      "category": "direct_atomic_file_write",
-      "count": 1,
-      "path": "core/cognition/synthetic_language_genesis.py",
-      "scope": "<module>.SyntheticLanguageRegistry._save"
     },
     {
       "callee": "core.runtime.atomic_writer.async_atomic_write_text",
@@ -1119,14 +1103,6 @@
       "count": 1,
       "path": "core/evolution/evolution_orchestrator.py",
       "scope": "<module>.EvolutionOrchestrator._save"
-    },
-    {
-      "callee": "core.runtime.atomic_writer.atomic_write_text",
-      "canonical_owner": false,
-      "category": "direct_atomic_file_write",
-      "count": 1,
-      "path": "core/evolution/generational_handoff.py",
-      "scope": "<module>.GenerationalHandoff.create_child_workspace"
     },
     {
       "callee": "core.runtime.atomic_writer.async_atomic_write_text",
@@ -4009,14 +3985,6 @@
       "scope": "<module>.CheckpointManager.save_checkpoint"
     },
     {
-      "callee": "core.runtime.file_write_gateway.get_file_write_gateway().write_bytes",
-      "canonical_owner": false,
-      "category": "file_write_gateway",
-      "count": 1,
-      "path": "core/continuity/memory_backup.py",
-      "scope": "<module>.MemoryBackupManager.backup_database"
-    },
-    {
       "callee": "<file_write_gateway>.write_text",
       "canonical_owner": false,
       "category": "file_write_gateway",
@@ -4287,14 +4255,6 @@
       "count": 2,
       "path": "core/learning/durable_run.py",
       "scope": "<module>.DurableRun.save"
-    },
-    {
-      "callee": "core.runtime.file_write_gateway.get_file_write_gateway().write_text",
-      "canonical_owner": false,
-      "category": "file_write_gateway",
-      "count": 1,
-      "path": "core/learning/experience_collector.py",
-      "scope": "<module>.ExperienceCollector.collect_and_save"
     },
     {
       "callee": "core.runtime.file_write_gateway.get_file_write_gateway().append_text",
@@ -4577,22 +4537,6 @@
       "scope": "<module>.BusRecorder.stop_file"
     },
     {
-      "callee": "core.runtime.file_write_gateway.get_file_write_gateway().write_bytes",
-      "canonical_owner": false,
-      "category": "file_write_gateway",
-      "count": 1,
-      "path": "core/observability/logging_hmac.py",
-      "scope": "<module>"
-    },
-    {
-      "callee": "core.runtime.file_write_gateway.get_file_write_gateway().append_text",
-      "canonical_owner": false,
-      "category": "file_write_gateway",
-      "count": 2,
-      "path": "core/observability/logging_hmac.py",
-      "scope": "<module>.append_audit"
-    },
-    {
       "callee": "<file_write_gateway>.ensure_directory_async",
       "canonical_owner": true,
       "category": "file_write_gateway",
@@ -4607,14 +4551,6 @@
       "count": 1,
       "path": "core/observability/trace_events.py",
       "scope": "<module>.Tracer.write"
-    },
-    {
-      "callee": "core.runtime.file_write_gateway.get_file_write_gateway().append_text",
-      "canonical_owner": false,
-      "category": "file_write_gateway",
-      "count": 1,
-      "path": "core/observability/tracer.py",
-      "scope": "<module>.Tracer.end_trace"
     },
     {
       "callee": "core.runtime.file_write_gateway.get_file_write_gateway().append_text",
@@ -4695,14 +4631,6 @@
       "count": 1,
       "path": "core/ontogeny/state.py",
       "scope": "<module>.OntogeneticState.save"
-    },
-    {
-      "callee": "core.runtime.file_write_gateway.get_file_write_gateway().write_text_async",
-      "canonical_owner": false,
-      "category": "file_write_gateway",
-      "count": 1,
-      "path": "core/ops/shell.py",
-      "scope": "<module>.ShellInterface.write_file_safe"
     },
     {
       "callee": "core.runtime.file_write_gateway.get_file_write_gateway().append_text",
@@ -5825,28 +5753,12 @@
       "scope": "<module>._record_sync"
     },
     {
-      "callee": "core.runtime.file_write_gateway.get_file_write_gateway().write_bytes_async",
-      "canonical_owner": false,
-      "category": "file_write_gateway",
-      "count": 1,
-      "path": "core/skills/manifest_to_device.py",
-      "scope": "<module>.ManifestToDeviceSkill.execute"
-    },
-    {
       "callee": "core.runtime.file_write_gateway.get_file_write_gateway().write_text_async",
       "canonical_owner": false,
       "category": "file_write_gateway",
       "count": 1,
       "path": "core/skills/manim_renderer.py",
       "scope": "<module>.ManimRendererSkill.execute"
-    },
-    {
-      "callee": "core.runtime.file_write_gateway.get_file_write_gateway().write_text",
-      "canonical_owner": false,
-      "category": "file_write_gateway",
-      "count": 1,
-      "path": "core/skills/memory_sync.py",
-      "scope": "<module>.MemorySyncSkill._push"
     },
     {
       "callee": "core.runtime.file_write_gateway.get_file_write_gateway().write_text_async",
@@ -5887,14 +5799,6 @@
       "count": 1,
       "path": "core/skills/self_improvement.py",
       "scope": "<module>.SelfImprovementSkill._append_to_log"
-    },
-    {
-      "callee": "core.runtime.file_write_gateway.get_file_write_gateway().write_text",
-      "canonical_owner": false,
-      "category": "file_write_gateway",
-      "count": 1,
-      "path": "core/skills/skill_evolution.py",
-      "scope": "<module>.SkillEvolver.generate_skill"
     },
     {
       "callee": "core.runtime.file_write_gateway.get_file_write_gateway().write_text",
@@ -6057,14 +5961,6 @@
       "scope": "<module>._save_cap"
     },
     {
-      "callee": "core.runtime.file_write_gateway.get_file_write_gateway().write_text",
-      "canonical_owner": false,
-      "category": "file_write_gateway",
-      "count": 1,
-      "path": "core/state/state_manager.py",
-      "scope": "<module>.StateManager.create_snapshot"
-    },
-    {
       "callee": "core.runtime.file_write_gateway.get_file_write_gateway().ensure_directory",
       "canonical_owner": false,
       "category": "file_write_gateway",
@@ -6095,14 +5991,6 @@
       "count": 1,
       "path": "core/utils/aura_logging.py",
       "scope": "<module>.SQLiteMemoryHandler._open_writer_connection"
-    },
-    {
-      "callee": "core.runtime.file_write_gateway.get_file_write_gateway().write_text",
-      "canonical_owner": false,
-      "category": "file_write_gateway",
-      "count": 1,
-      "path": "core/utils/sandbox_selfmod.py",
-      "scope": "<module>.test_patch_in_sandbox"
     },
     {
       "callee": "core.runtime.file_write_gateway.get_file_write_gateway().write_text",
@@ -6500,14 +6388,6 @@
       "callee": "core.runtime.network_gateway.get_network_gateway().request",
       "canonical_owner": false,
       "category": "network_gateway",
-      "count": 1,
-      "path": "core/networking/network.py",
-      "scope": "<module>.RobustHTTP._request_via_gateway"
-    },
-    {
-      "callee": "core.runtime.network_gateway.get_network_gateway().request",
-      "canonical_owner": false,
-      "category": "network_gateway",
       "count": 2,
       "path": "core/phases/response_generation_unitary.py",
       "scope": "<module>.UnitaryResponsePhase.execute"
@@ -6593,14 +6473,6 @@
       "scope": "<module>.InterAgentCommSkill.execute"
     },
     {
-      "callee": "core.runtime.network_gateway.get_network_gateway().request",
-      "canonical_owner": false,
-      "category": "network_gateway",
-      "count": 1,
-      "path": "core/skills/manifest_to_device.py",
-      "scope": "<module>.ManifestToDeviceSkill.execute"
-    },
-    {
       "callee": "core.runtime.network_gateway.get_network_gateway().request_async",
       "canonical_owner": false,
       "category": "network_gateway",
@@ -6615,14 +6487,6 @@
       "count": 1,
       "path": "core/skills/sovereign_network.py",
       "scope": "<module>.SovereignNetworkSkill._perform_tcp_peer_discovery.probe"
-    },
-    {
-      "callee": "core.runtime.network_gateway.get_network_gateway().request",
-      "canonical_owner": false,
-      "category": "network_gateway",
-      "count": 1,
-      "path": "core/skills/toolbox_web_agent.py",
-      "scope": "<module>.BrowserWebAgent._read_httpx"
     },
     {
       "callee": "core.runtime.network_gateway.get_network_gateway().request",
@@ -6927,22 +6791,6 @@
       "count": 1,
       "path": "core/skills/sovereign_browser.py",
       "scope": "<module>.SovereignBrowserSkill._handle_interact"
-    },
-    {
-      "callee": "browser.new_page",
-      "canonical_owner": false,
-      "category": "raw_browser",
-      "count": 1,
-      "path": "core/skills/toolbox_web_agent.py",
-      "scope": "<module>.BrowserWebAgent._read_playwright"
-    },
-    {
-      "callee": "page.goto",
-      "canonical_owner": false,
-      "category": "raw_browser",
-      "count": 1,
-      "path": "core/skills/toolbox_web_agent.py",
-      "scope": "<module>.BrowserWebAgent._read_playwright"
     },
     {
       "callee": "browser.new_page",
@@ -8673,14 +8521,6 @@
       "scope": "<module>._FileBackedSharedMemory.unlink"
     },
     {
-      "callee": "out_path.mkdir",
-      "canonical_owner": false,
-      "category": "raw_file_mutation",
-      "count": 1,
-      "path": "core/capabilities/app_builder.py",
-      "scope": "<module>.build_app"
-    },
-    {
       "callee": "d.mkdir",
       "canonical_owner": false,
       "category": "raw_file_mutation",
@@ -8967,22 +8807,6 @@
       "count": 1,
       "path": "core/consciousness/conscious_core.py",
       "scope": "<module>.ConsciousnessCore._log_causal_telemetry"
-    },
-    {
-      "callee": "os.remove",
-      "canonical_owner": false,
-      "category": "raw_file_mutation",
-      "count": 1,
-      "path": "core/consciousness/continuity_patch.py",
-      "scope": "<module>._patched_save_phenomenal_memory"
-    },
-    {
-      "callee": "os.replace",
-      "canonical_owner": false,
-      "category": "raw_file_mutation",
-      "count": 1,
-      "path": "core/consciousness/continuity_patch.py",
-      "scope": "<module>._patched_save_phenomenal_memory"
     },
     {
       "callee": "PERSIST_PATH.parent.mkdir",
@@ -9583,38 +9407,6 @@
       "count": 1,
       "path": "core/evaluation/behavioral_proof.py",
       "scope": "<module>.run_live_autonomy_loop_smoke"
-    },
-    {
-      "callee": "<pathlib.Path>.mkdir",
-      "canonical_owner": false,
-      "category": "raw_file_mutation",
-      "count": 1,
-      "path": "core/evolution/generational_handoff.py",
-      "scope": "<module>.GenerationalHandoff.create_child_workspace"
-    },
-    {
-      "callee": "shutil.copy2",
-      "canonical_owner": false,
-      "category": "raw_file_mutation",
-      "count": 1,
-      "path": "core/evolution/generational_handoff.py",
-      "scope": "<module>.GenerationalHandoff.create_child_workspace"
-    },
-    {
-      "callee": "shutil.copytree",
-      "canonical_owner": false,
-      "category": "raw_file_mutation",
-      "count": 1,
-      "path": "core/evolution/generational_handoff.py",
-      "scope": "<module>.GenerationalHandoff.create_child_workspace"
-    },
-    {
-      "callee": "shutil.rmtree",
-      "canonical_owner": false,
-      "category": "raw_file_mutation",
-      "count": 1,
-      "path": "core/evolution/generational_handoff.py",
-      "scope": "<module>.GenerationalHandoff.create_child_workspace"
     },
     {
       "callee": "os.remove",
@@ -10729,30 +10521,6 @@
       "scope": "<module>.ConversationPersistence._rotate_old_sessions"
     },
     {
-      "callee": "self.dataset_file.parent.mkdir",
-      "canonical_owner": false,
-      "category": "raw_file_mutation",
-      "count": 1,
-      "path": "core/memory/data_engine.py",
-      "scope": "<module>.DataEngine.__init__"
-    },
-    {
-      "callee": "os.unlink",
-      "canonical_owner": false,
-      "category": "raw_file_mutation",
-      "count": 1,
-      "path": "core/memory/data_engine.py",
-      "scope": "<module>.DataEngine._save"
-    },
-    {
-      "callee": "pathlib.Path().replace",
-      "canonical_owner": false,
-      "category": "raw_file_mutation",
-      "count": 1,
-      "path": "core/memory/data_engine.py",
-      "scope": "<module>.DataEngine._save"
-    },
-    {
       "callee": "<pathlib.Path>.parent.mkdir",
       "canonical_owner": false,
       "category": "raw_file_mutation",
@@ -11063,22 +10831,6 @@
       "count": 1,
       "path": "core/observability/logging_config.py",
       "scope": "<module>.setup_logging"
-    },
-    {
-      "callee": "os.makedirs",
-      "canonical_owner": false,
-      "category": "raw_file_mutation",
-      "count": 2,
-      "path": "core/observability/logging_hmac.py",
-      "scope": "<module>"
-    },
-    {
-      "callee": "os.makedirs",
-      "canonical_owner": false,
-      "category": "raw_file_mutation",
-      "count": 1,
-      "path": "core/observability/tracer.py",
-      "scope": "<module>.Tracer.__init__"
     },
     {
       "callee": "self._persist_path.parent.mkdir",
@@ -11791,22 +11543,6 @@
       "count": 1,
       "path": "core/resilience/supervisor.py",
       "scope": "<module>.SovereignSupervisor._handle_exit"
-    },
-    {
-      "callee": "shutil.copy",
-      "canonical_owner": false,
-      "category": "raw_file_mutation",
-      "count": 1,
-      "path": "core/resilience/system_integrity.py",
-      "scope": "<module>.SafetyGate.create_backup"
-    },
-    {
-      "callee": "shutil.copy",
-      "canonical_owner": false,
-      "category": "raw_file_mutation",
-      "count": 1,
-      "path": "core/resilience/system_integrity.py",
-      "scope": "<module>.SafetyGate.rollback"
     },
     {
       "callee": "shutil.copytree",
@@ -13529,14 +13265,6 @@
       "scope": "<module>._record_sync"
     },
     {
-      "callee": "self.desktop_path.mkdir",
-      "canonical_owner": false,
-      "category": "raw_file_mutation",
-      "count": 1,
-      "path": "core/skills/manifest_to_device.py",
-      "scope": "<module>.ManifestToDeviceSkill.__init__"
-    },
-    {
       "callee": "artifacts_dir.mkdir",
       "canonical_owner": false,
       "category": "raw_file_mutation",
@@ -13567,14 +13295,6 @@
       "count": 1,
       "path": "core/skills/memory_ops.py",
       "scope": "<module>.MemoryOpsSkill.__init__"
-    },
-    {
-      "callee": "self.memory_path.mkdir",
-      "canonical_owner": false,
-      "category": "raw_file_mutation",
-      "count": 1,
-      "path": "core/skills/memory_sync.py",
-      "scope": "<module>.MemorySyncSkill.execute"
     },
     {
       "callee": "os.makedirs",
@@ -13753,14 +13473,6 @@
       "scope": "<module>.ConcreteStateGateway.__init__"
     },
     {
-      "callee": "self.persist_dir.mkdir",
-      "canonical_owner": false,
-      "category": "raw_file_mutation",
-      "count": 1,
-      "path": "core/state/state_manager.py",
-      "scope": "<module>.StateManager.__init__"
-    },
-    {
       "callee": "oldest.unlink",
       "canonical_owner": false,
       "category": "raw_file_mutation",
@@ -13903,14 +13615,6 @@
       "count": 1,
       "path": "core/utils/paths.py",
       "scope": "<module>._ensure_dir"
-    },
-    {
-      "callee": "shutil.rmtree",
-      "canonical_owner": false,
-      "category": "raw_file_mutation",
-      "count": 1,
-      "path": "core/utils/sandbox_selfmod.py",
-      "scope": "<module>.test_patch_in_sandbox"
     },
     {
       "callee": "lock_dir.mkdir",
@@ -14167,54 +13871,6 @@
       "count": 1,
       "path": "core/embodiment/unity_bridge.py",
       "scope": "<module>.UnityEmbodiment.connect_unity"
-    },
-    {
-      "callee": "httpx.Request",
-      "canonical_owner": false,
-      "category": "raw_network",
-      "count": 1,
-      "path": "core/networking/network.py",
-      "scope": "<module>.RobustHTTP._request_via_gateway"
-    },
-    {
-      "callee": "httpx.RequestError",
-      "canonical_owner": false,
-      "category": "raw_network",
-      "count": 1,
-      "path": "core/networking/network.py",
-      "scope": "<module>.RobustHTTP._request_via_gateway"
-    },
-    {
-      "callee": "httpx.Response",
-      "canonical_owner": false,
-      "category": "raw_network",
-      "count": 1,
-      "path": "core/networking/network.py",
-      "scope": "<module>.RobustHTTP._request_via_gateway"
-    },
-    {
-      "callee": "httpx.QueryParams",
-      "canonical_owner": false,
-      "category": "raw_network",
-      "count": 1,
-      "path": "core/networking/network.py",
-      "scope": "<module>._coerce_gateway_payload"
-    },
-    {
-      "callee": "httpx.URL",
-      "canonical_owner": false,
-      "category": "raw_network",
-      "count": 1,
-      "path": "core/networking/network.py",
-      "scope": "<module>._merge_params"
-    },
-    {
-      "callee": "httpx.URL().copy_merge_params",
-      "canonical_owner": false,
-      "category": "raw_network",
-      "count": 1,
-      "path": "core/networking/network.py",
-      "scope": "<module>._merge_params"
     },
     {
       "callee": "socket.create_connection",
@@ -14953,28 +14609,12 @@
       "scope": "<module>.CommandRoleSignerBroker._execute"
     },
     {
-      "callee": "core.runtime.subprocess_gateway.get_subprocess_gateway().run",
-      "canonical_owner": false,
-      "category": "subprocess_gateway",
-      "count": 1,
-      "path": "core/morphogenesis/native_compiler.py",
-      "scope": "<module>.NativeCompilerPlanner.compile"
-    },
-    {
       "callee": "core.runtime.subprocess_gateway.get_subprocess_gateway().spawn_python_process",
       "canonical_owner": false,
       "category": "subprocess_gateway",
       "count": 1,
       "path": "core/ops/process_manager.py",
       "scope": "<module>.ManagedProcess.start"
-    },
-    {
-      "callee": "core.runtime.subprocess_gateway.get_subprocess_gateway().run",
-      "canonical_owner": false,
-      "category": "subprocess_gateway",
-      "count": 1,
-      "path": "core/ops/shell.py",
-      "scope": "<module>.ShellInterface.execute"
     },
     {
       "callee": "core.runtime.subprocess_gateway.get_subprocess_gateway().run",
@@ -15087,14 +14727,6 @@
       "count": 1,
       "path": "core/perception/sensory_runtime.py",
       "scope": "<module>.VoiceProvider.speak"
-    },
-    {
-      "callee": "core.runtime.subprocess_gateway.get_subprocess_gateway().run",
-      "canonical_owner": false,
-      "category": "subprocess_gateway",
-      "count": 1,
-      "path": "core/resilience/antibody.py",
-      "scope": "<module>.Antibody.scan_environment"
     },
     {
       "callee": "core.runtime.subprocess_gateway.get_subprocess_gateway().run",
@@ -15657,14 +15289,6 @@
       "scope": "<module>.SovereignVoiceEngine._play_locally._play"
     },
     {
-      "callee": "core.runtime.subprocess_gateway.get_subprocess_gateway().spawn",
-      "canonical_owner": false,
-      "category": "subprocess_gateway",
-      "count": 1,
-      "path": "core/senses/voice_engine_decoupled.py",
-      "scope": "<module>.DecoupledVoiceEngine._synthesize_and_play"
-    },
-    {
       "callee": "core.runtime.subprocess_gateway.get_subprocess_gateway().run",
       "canonical_owner": false,
       "category": "subprocess_gateway",
@@ -15727,14 +15351,6 @@
       "count": 1,
       "path": "core/skills/manim_renderer.py",
       "scope": "<module>.ManimRendererSkill.execute"
-    },
-    {
-      "callee": "core.runtime.subprocess_gateway.get_subprocess_gateway().run",
-      "canonical_owner": false,
-      "category": "subprocess_gateway",
-      "count": 1,
-      "path": "core/skills/memory_sync.py",
-      "scope": "<module>.MemorySyncSkill._run_git"
     },
     {
       "callee": "core.runtime.subprocess_gateway.get_subprocess_gateway().run_async",
@@ -15895,14 +15511,6 @@
       "count": 1,
       "path": "core/tools/computer_use.py",
       "scope": "<module>.ComputerUseSkill._default_screenshot"
-    },
-    {
-      "callee": "core.runtime.subprocess_gateway.get_subprocess_gateway().run",
-      "canonical_owner": false,
-      "category": "subprocess_gateway",
-      "count": 1,
-      "path": "core/utils/sandbox_selfmod.py",
-      "scope": "<module>._run_cmd"
     },
     {
       "callee": "core.runtime.subprocess_gateway.get_subprocess_gateway().run",
@@ -16266,6 +15874,6 @@
     }
   ],
   "description": "Exact AST effect-ownership debt ratchet; refresh only after reviewed change",
-  "inventory_sha256": "3144a820228e450b1186263881307ddc88f3efcbef2142c54d69641b02889326",
+  "inventory_sha256": "cd1a0cea595f5cfcf66ab85dcfd97a0373e543c9737cde4040091a3c782f972e",
   "schema_version": 1
 }
