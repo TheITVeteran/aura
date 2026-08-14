@@ -61,6 +61,12 @@ class HomeostasisEngine(AuraBaseModule):
         self._successful_responses = 0
         self._failed_responses = 0
         self._total_responses = 0
+        #: Answers served by a fallback lane. Counted, never credited: a
+        #: canned recovery message is a response, not evidence of health.
+        self._fallback_responses = 0
+        #: Endpoint of the last answer something actually verified, "" until
+        #: one exists. Absence here is absence of evidence, not a pass.
+        self.last_verified_response_endpoint = ""
 
         # ── Weights for vitality ──────────────────────────────────────────
         self._vitality_weights = {
@@ -212,13 +218,36 @@ class HomeostasisEngine(AuraBaseModule):
     # NEW: Post-Response Feedback
     # ──────────────────────────────────────────────────────────────────────
 
-    def on_response_success(self, response_length: int = 0):
-        """Called after a successful inference response."""
-        self._successful_responses += 1
+    def on_response_success(
+        self,
+        response_length: int = 0,
+        *,
+        verified: bool = False,
+        fallback: bool = False,
+        endpoint: str = "",
+    ):
+        """Called after an inference response.
+
+        CP126 c971254c: a nonempty string was the whole test. A canned
+        recovery message served off a fallback lane raised integrity —
+        her sense that she is working correctly — on exactly the turns that
+        are evidence she is not. The caller now says which lane answered and
+        whether anything verified the answer.
+
+        The metabolic and curiosity costs are unchanged: a long reply costs
+        what it costs whoever produced it. Only the integrity and persistence
+        boosts are conditional, because those are the claim about health.
+        """
         self._total_responses += 1
-        # Successful response gently boosts integrity and persistence
-        self.integrity = min(1.0, self.integrity + 0.008)
-        self.persistence = min(1.0, self.persistence + 0.003)
+        if fallback:
+            self._fallback_responses = getattr(self, "_fallback_responses", 0) + 1
+        else:
+            self._successful_responses += 1
+            # Successful response gently boosts integrity and persistence
+            self.integrity = min(1.0, self.integrity + 0.008)
+            self.persistence = min(1.0, self.persistence + 0.003)
+        if verified:
+            self.last_verified_response_endpoint = str(endpoint or "")
         # Long responses cost more metabolism but feed curiosity
         if response_length > 500:
             self.metabolism = max(0.1, self.metabolism - 0.005)
@@ -266,10 +295,26 @@ class HomeostasisEngine(AuraBaseModule):
         return "stable"
 
     def get_response_success_rate(self) -> float:
-        """Returns the ratio of successful responses to total."""
+        """Ratio of responses that were NOT a fallback lane answering.
+
+        A boot with no responses yet returns 1.0, which reads as perfect
+        health from zero evidence — kept because callers treat it as "nothing
+        wrong yet", and :meth:`response_outcome_counts` is the honest view for
+        anything that needs to tell "no failures" from "no data".
+        """
         if self._total_responses == 0:
             return 1.0
         return self._successful_responses / self._total_responses
+
+    def response_outcome_counts(self) -> dict:
+        """The counts behind the rate, so zero evidence is distinguishable."""
+        return {
+            "total": self._total_responses,
+            "succeeded": self._successful_responses,
+            "fallback": self._fallback_responses,
+            "failed": self._failed_responses,
+            "last_verified_endpoint": self.last_verified_response_endpoint,
+        }
 
     # ──────────────────────────────────────────────────────────────────────
     # NEW: Inference Modulation

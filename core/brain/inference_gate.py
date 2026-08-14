@@ -1209,6 +1209,140 @@ class InferenceGate:
                     ][:8]
         self._publish_generation_metadata(metadata, receipt)
 
+    #: Kinds of refusal a caller has to be able to tell apart. A bare None
+    #: told it none of this: policy deferral, a lane that could not be
+    #: reached, a proof contract that names a model, and resource exhaustion
+    #: all arrived as the same value the model returns when it says nothing.
+    REFUSAL_DEFERRED = "deferred"
+    REFUSAL_PROOF_LANE = "proof_lane_required"
+    REFUSAL_RESOURCE = "resource_exhausted"
+    REFUSAL_EXHAUSTED = "lanes_exhausted"
+    REFUSAL_PRIVACY = "privacy_block"
+
+    def last_refusal_receipt(self) -> dict[str, Any]:
+        """Why the last generation returned nothing, if it was a refusal."""
+        return copy.deepcopy(getattr(self, "_last_refusal_receipt", {}))
+
+    def _refuse_generation(
+        self,
+        kind: str,
+        reason: str,
+        *,
+        context: dict[str, Any] | None = None,
+        origin: str = "",
+        retry_after_s: float | None = None,
+        detail: dict[str, Any] | None = None,
+    ) -> None:
+        """Record WHY this turn produced nothing, then produce nothing.
+
+        ``generate`` returns ``str | None`` and that contract is not changing
+        here — every caller depends on it. What changes is that None stops
+        being the whole message. The receipt goes three places: the caller's
+        own context dict, the gate (for health), and the turn ledger, whose
+        terminal status is then a refusal rather than a turn that mysteriously
+        held no answer.
+
+        ``retry_after_s`` is omitted rather than zeroed when it is not known:
+        a zero would read as "retry immediately", which is a claim.
+        """
+        receipt: dict[str, Any] = {
+            "schema": "aura.inference.refusal.v1",
+            "kind": str(kind),
+            "reason": str(reason),
+            "origin": str(origin or ""),
+            "at": time.time(),
+        }
+        if retry_after_s is not None:
+            receipt["retry_after_s"] = max(0.0, float(retry_after_s))
+        if detail:
+            receipt["detail"] = dict(detail)
+        self._last_refusal_receipt = receipt
+        if isinstance(context, dict):
+            context["inference_refusal"] = dict(receipt)
+        try:
+            from core.runtime.turn_outcome import current_turn
+
+            turn = current_turn()
+            if turn is not None:
+                turn.record_receipt("inference_refusal", receipt)
+                turn.record_refusal(reason=f"{kind}:{reason}", authority="inference_gate")
+        except _INFERENCE_RECOVERABLE_ERRORS as exc:
+            logger.debug("Refusal receipt not recorded on the turn ledger: %s", exc)
+        logger.info(
+            "⛔ InferenceGate refused generation: kind=%s reason=%s origin=%s",
+            kind,
+            reason,
+            origin or "unknown",
+        )
+        return None
+
+    @staticmethod
+    def _abort_active_generation(client: Any, reason: str) -> None:
+        """Tell the worker to stop, whatever went wrong at this boundary."""
+        abort = getattr(client, "force_abort_active_generation", None)
+        if not callable(abort):
+            return
+        try:
+            abort(reason=reason)
+        except _INFERENCE_RECOVERABLE_ERRORS as abort_exc:
+            _record_inference_degradation(
+                abort_exc,
+                action="continued after local client abort hook failed",
+                severity="error",
+            )
+
+    @staticmethod
+    def _window_within(deadline: Any, requested: float) -> float:
+        """The smaller of what this attempt wants and what the request has left.
+
+        Returns 0.0 when the request budget is gone. Callers must treat that
+        as "do not start", not as "use a small window": an attempt that begins
+        after the caller's deadline cannot deliver anything the caller will
+        still be waiting for, and it holds the model lane while it fails.
+        """
+        wanted = max(0.0, float(requested or 0.0))
+        remaining = getattr(deadline, "remaining", None)
+        if remaining is None:
+            return wanted
+        return max(0.0, min(wanted, float(remaining)))
+
+    def _response_credit_outcome(self) -> tuple[float | None, str]:
+        """The credit this answer earned, or None when nothing graded it.
+
+        Credit used to be computed from length and whether the text contained
+        a newline or a list marker. That rewards a long, well-formatted
+        hallucination with the maximum available score and penalizes a correct
+        one-line answer — the learner was being trained on shape and told it
+        was correctness.
+
+        The turn ledger already records what verified the SERVED answer, on a
+        ranked scale, so the score is that rank normalized against the top of
+        the scale. Nothing invented: an externally verified answer earns full
+        credit, an asserted one earns none, and an ungraded turn earns no
+        entry at all.
+        """
+        try:
+            from core.runtime.turn_outcome import VerificationGrade, current_turn
+        except ImportError:
+            return None, "turn_ledger_unavailable"
+        turn = current_turn()
+        if turn is None:
+            return None, "no_turn_bound"
+        try:
+            grade = turn.verification_grade_so_far()
+        except _INFERENCE_RECOVERABLE_ERRORS:
+            return None, "grade_unreadable"
+        top = max(member.rank for member in VerificationGrade)
+        if grade.rank <= VerificationGrade.ASSERTED.rank or top <= 0:
+            # ASSERTED means the runtime said so about itself. That is the
+            # claim under test, not evidence for it.
+            return None, f"ungraded:{grade.value}"
+        return grade.rank / top, f"graded:{grade.value}"
+
+    def last_credit_basis(self) -> str:
+        """Why the last response did or did not receive credit."""
+        return str(getattr(self, "_last_credit_basis", "") or "")
+
     def _credit_action_seq(self) -> int:
         """Monotonic per-gate counter so credit action ids never collide."""
         value = int(getattr(self, "_credit_action_counter", 0)) + 1
@@ -5337,7 +5471,29 @@ class InferenceGate:
         generation_timeout_s = deadline.remaining if isinstance(deadline, Deadline) else None
         if generation_timeout_s is None:
             generation_timeout_s = 300.0 if foreground_request else 120.0
-        generation_timeout_s = max(0.5, float(generation_timeout_s))
+        generation_timeout_s = float(generation_timeout_s)
+        if generation_timeout_s <= 0.0:
+            # The budget is already gone. The clamp used to be max(0.5, …), so
+            # an expired request still started a generation: it woke the lane,
+            # took the lock, ran the prompt-eval side effects, and then timed
+            # out half a second later with nothing for the caller, who had
+            # stopped waiting. Failing before dispatch costs nothing and holds
+            # nothing.
+            reason = f"inference_gate_deadline_expired_before_dispatch:{label}"
+            _record_inference_degradation(
+                TimeoutError(reason),
+                action="refused local generation because the request budget was already spent",
+                severity="warning",
+            )
+            self._record_client_generation_metadata(
+                client,
+                label=label,
+                success=False,
+                text="",
+                requested_max_tokens=max_tokens,
+                generation_metadata={"error": reason},
+            )
+            return None
         try:
             result = await asyncio.wait_for(
                 client.generate_text_async(**gen_kwargs),
@@ -5350,16 +5506,7 @@ class InferenceGate:
                 label,
                 generation_timeout_s,
             )
-            abort = getattr(client, "force_abort_active_generation", None)
-            if callable(abort):
-                try:
-                    abort(reason=reason)
-                except _INFERENCE_RECOVERABLE_ERRORS as abort_exc:
-                    _record_inference_degradation(
-                        abort_exc,
-                        action="continued after local client abort hook failed",
-                        severity="error",
-                    )
+            self._abort_active_generation(client, reason)
             _record_inference_degradation(
                 TimeoutError(reason),
                 action="returned control after local generation exceeded inference-gate timeout",
@@ -5379,7 +5526,14 @@ class InferenceGate:
         except _INFERENCE_RECOVERABLE_ERRORS as exc:
             # Non-timeout client failures keep their propagation semantics for
             # upstream routing, but this boundary still owns publishing failed
-            # metadata so stale success evidence cannot survive the raise.
+            # metadata so stale success evidence cannot survive the raise —
+            # and it owns the abort, which only the timeout path used to do.
+            # A transport or runtime error here leaves the worker still
+            # generating into a request nobody is holding, and the next turn
+            # then waits behind it.
+            self._abort_active_generation(
+                client, f"inference_gate_client_error:{label}:{type(exc).__name__}"
+            )
             self._record_client_generation_metadata(
                 client,
                 label=label,
@@ -8157,7 +8311,12 @@ class InferenceGate:
                         "⏸️ InferenceGate: Foreground lane reserved. Deferring background inference for origin=%s.",
                         origin,
                     )
-                return None
+                return self._refuse_generation(
+                    self.REFUSAL_DEFERRED,
+                    str(background_deferral or "foreground_lane_reserved"),
+                    context=context,
+                    origin=origin,
+                )
 
         if protected_foreground_lane and not is_background:
             self._extend_startup_quiet_window(180.0)
@@ -8215,7 +8374,13 @@ class InferenceGate:
                             "🧠 Cortex inline recovery was deferred and this turn's "
                             "contract names the primary lane; refusing lower-lane fallback."
                         )
-                        return None
+                        return self._refuse_generation(
+                            self.REFUSAL_PROOF_LANE,
+                            str(inline_deferral),
+                            context=context,
+                            origin=origin,
+                            detail={"lane": "primary", "deferral": str(inline_deferral)},
+                        )
                     # protected_foreground_lane is a PRIORITY marker — "a real
                     # person is waiting" — not a provenance requirement. Treating
                     # it as one inverted its purpose: the 2026-07-25 endurance
@@ -8489,6 +8654,17 @@ class InferenceGate:
         primary_timeout, fallback_timeout = self._split_attempt_timeouts(
             timeout_val, requested_tier
         )
+        # ONE clock for the whole request.
+        #
+        # Every attempt below used to start a fresh timeout of its own: the
+        # primary attempt, then each scheduled repair at 30–60s, then the
+        # brainstem, then the reflex, then APIAdapter at 30s, then HealthRouter
+        # at another 30s. A caller asking for 45 seconds could wait several
+        # minutes and every individual wait_for was "within budget". This
+        # deadline is the budget the caller actually asked for, and every
+        # window below is capped by what is left of it.
+        request_deadline = get_deadline(float(timeout_val))
+        context["request_deadline_s"] = float(timeout_val)
         max_tokens = int(
             context.get("max_tokens")
             or self._default_max_tokens_for_request(
@@ -8568,6 +8744,10 @@ class InferenceGate:
                 primary_timeout, fallback_timeout = self._split_attempt_timeouts(
                     timeout_val, requested_tier
                 )
+                # Re-derived budget after a tier downgrade; the clock does not
+                # restart, so the deadline keeps its original start time.
+                request_deadline = get_deadline(float(timeout_val))
+                context["request_deadline_s"] = float(timeout_val)
                 max_tokens = int(
                     context.get("max_tokens")
                     or self._default_max_tokens_for_request(
@@ -8608,7 +8788,19 @@ class InferenceGate:
                         process_rss,
                         process_limit,
                     )
-                    return None
+                    return self._refuse_generation(
+                        self.REFUSAL_RESOURCE,
+                        "critical_memory_pressure",
+                        context=context,
+                        origin=origin,
+                        detail={
+                            "pressure_percent": pressure,
+                            "available_gb": available,
+                            "process_rss_gb": process_rss,
+                            "process_rss_limit_gb": process_limit,
+                            "admission": dict(admission_snapshot or {}),
+                        },
+                    )
                 near_process_limit = bool(process_limit > 0.0 and process_rss >= process_limit * 0.90)
                 # What an output token actually costs is KV cache, not model
                 # weights. For this 64-layer 32B with 8 KV heads at head_dim
@@ -10274,7 +10466,20 @@ class InferenceGate:
                             logger.warning(
                                 "🧠 Proof/evaluation request requires Cortex; refusing Brainstem fallback after primary warmup deferral."
                             )
-                            return None
+                            return self._refuse_generation(
+                                self.REFUSAL_PROOF_LANE,
+                                "primary_warmup_deferred_by_ram_admission",
+                                context=context,
+                                origin=origin,
+                                detail={
+                                    "lane": "primary",
+                                    "proof_evaluation_contract": bool(proof_evaluation_contract),
+                                    "strict_primary_proof_lane": bool(strict_primary_proof_lane),
+                                    "desktop_cognitive_engine_contract": bool(
+                                        desktop_cognitive_engine_contract
+                                    ),
+                                },
+                            )
                         logger.warning(
                             "🧠 Cortex cold-load deferred by RAM admission; routing this foreground turn to %s.",
                             fallback_label,
@@ -10289,7 +10494,9 @@ class InferenceGate:
                         float(timeout_val),
                         _is_user_facing,
                     )
-                    primary_deadline = get_deadline(primary_timeout)
+                    primary_deadline = get_deadline(
+                        self._window_within(request_deadline, primary_timeout)
+                    )
                     primary_attempt_started = time.monotonic()
                     if skip_initial_primary_attempt:
                         text = None
@@ -10361,13 +10568,25 @@ class InferenceGate:
                             "preserving the lane and refusing a duplicate inference-gate retry.",
                             local_label,
                         )
-                        return None
+                        return self._refuse_generation(
+                            self.REFUSAL_EXHAUSTED,
+                            "worker_semantic_quality_retries_exhausted",
+                            context=context,
+                            origin=origin,
+                            detail={"lane": local_label},
+                        )
                     if health_probe:
                         logger.warning(
                             "🧠 %s proof health probe returned no text; refusing local fallback for lane certification.",
                             local_label,
                         )
-                        return None
+                        return self._refuse_generation(
+                            self.REFUSAL_PROOF_LANE,
+                            "health_probe_returned_no_text",
+                            context=context,
+                            origin=origin,
+                            detail={"lane": local_label},
+                        )
                     if (
                         proof_evaluation_contract
                         or strict_primary_proof_lane
@@ -10375,7 +10594,13 @@ class InferenceGate:
                         logger.warning(
                             "🧠 Proof/evaluation request requires a valid Cortex response; refusing retry/fallback cascade after no text."
                         )
-                        return None
+                        return self._refuse_generation(
+                            self.REFUSAL_PROOF_LANE,
+                            "cortex_returned_no_text",
+                            context=context,
+                            origin=origin,
+                            detail={"lane": local_label},
+                        )
                     # NOTE: desktop_cognitive_engine_contract is intentionally NOT
                     # refused here. A thin/empty first draft on a live desktop turn
                     # (e.g. the 32B emits a short reply that trips too_thin) must
@@ -10441,11 +10666,15 @@ class InferenceGate:
                                 )
                                 return ""
 
-                            retry_timeout = min(
-                                60.0,
-                                max(30.0, primary_timeout * 0.4),
+                            # Each repair used to open a fresh 30–60s window of
+                            # its own, outside the caller's budget.
+                            retry_timeout = self._window_within(
+                                request_deadline,
+                                min(60.0, max(30.0, primary_timeout * 0.4)),
                             )
-                            retry_deadline = get_deadline(retry_timeout)
+                            retry_deadline = get_deadline(
+                                self._window_within(request_deadline, retry_timeout)
+                            )
                             retry_messages = self._build_primary_repair_messages(
                                 visible_user_prompt,
                                 messages,
@@ -10532,7 +10761,13 @@ class InferenceGate:
                             logger.warning(
                                 "🧠 Proof/operator request requires a valid Cortex response; refusing lower-lane fallback."
                             )
-                            return None
+                            return self._refuse_generation(
+                                self.REFUSAL_PROOF_LANE,
+                                "lower_lane_fallback_refused",
+                                context=context,
+                                origin=origin,
+                                detail={"lane": local_label},
+                            )
                         # For user-facing requests, skip brainstem — go straight to cloud
                         if allow_cloud_fallback:
                             logger.warning(
@@ -10556,12 +10791,20 @@ class InferenceGate:
                                 "🧠 Background %s request returned no text; suppressing local fallback to protect foreground latency.",
                                 local_label,
                             )
-                            return None
+                            return self._refuse_generation(
+                                self.REFUSAL_DEFERRED,
+                                "background_local_fallback_suppressed",
+                                context=context,
+                                origin=origin,
+                                detail={"lane": local_label},
+                            )
 
                     # Graceful local fallback: for background/autonomous requests, the
                     # brainstem is an acceptable degradation. For user-facing requests
                     # that reach here (cloud disabled), it's the last local resort.
-                    fallback_deadline = get_deadline(fallback_timeout)
+                    fallback_deadline = get_deadline(
+                        self._window_within(request_deadline, fallback_timeout)
+                    )
                     fallback_client = _ensure_fallback_client()
                     async with self._resource_context(
                         enabled=fallback_label != FALLBACK_ENDPOINT,
@@ -10683,7 +10926,11 @@ class InferenceGate:
                     logger.warning(
                         "🆘 [REFLEX] Cortex + Brainstem both failed. Trying 1.5B CPU Reflex..."
                     )
-                    reflex_deadline = get_deadline(15.0)  # 15s hard limit for tiny model
+                    # 15s hard limit for the tiny model, and never more than
+                    # what the caller still has.
+                    reflex_deadline = get_deadline(
+                        self._window_within(request_deadline, 15.0)
+                    )
                     reflex_text = await self._generate_with_client(
                         reflex_client,
                         prompt,
@@ -10724,7 +10971,12 @@ class InferenceGate:
             logger.error("Local inference paths exhausted. Cloud fallback disabled by request policy.")
             if proof_evaluation_contract or desktop_cognitive_engine_contract:
                 logger.error("Primary foreground contract exhausted Cortex without valid text.")
-                return None
+                return self._refuse_generation(
+                    self.REFUSAL_EXHAUSTED,
+                    "cortex_exhausted_with_cloud_disabled",
+                    context=context,
+                    origin=origin,
+                )
             # User-facing requests still trigger local Cortex recovery, but
             # ``allow_cloud_fallback=False`` is a hard boundary. Do not route to
             # Gemini/HealthRouter from this branch; callers set this flag for
@@ -10792,7 +11044,12 @@ class InferenceGate:
                     max_tokens=max_tokens,
                     output_contract=output_contract_payload,
                 )
-            return None
+            return self._refuse_generation(
+                self.REFUSAL_EXHAUSTED,
+                "offline_and_cloud_unreachable",
+                context=context,
+                origin=origin,
+            )
 
         if time.monotonic() < self._cloud_backoff_until:
             logger.warning("Cloud fallback cooling down. Skipping remote retry.")
@@ -10806,7 +11063,12 @@ class InferenceGate:
                     max_tokens=max_tokens,
                     output_contract=output_contract_payload,
                 )
-            return None
+            return self._refuse_generation(
+                self.REFUSAL_EXHAUSTED,
+                "cloud_backoff_active",
+                context=context,
+                origin=origin,
+            )
 
         # Resolve the recoverable error surface BEFORE the try so the handler
         # can catch it directly — provider SDK error types vary by
@@ -10839,7 +11101,12 @@ class InferenceGate:
             scrubbed_payload = self._scrub_cloud_payload(system_prompt, prompt)
             if scrubbed_payload is None:
                 if not _is_user_facing:
-                    return None
+                    return self._refuse_generation(
+                        self.REFUSAL_PRIVACY,
+                        "cloud_payload_could_not_be_scrubbed",
+                        context=context,
+                        origin=origin,
+                    )
                 recovery_text = self._user_facing_recovery_response(visible_user_prompt)
                 return self._finalize_nonlocal_user_facing_text(
                     recovery_text,
@@ -10864,11 +11131,21 @@ class InferenceGate:
                 }
                 adapter_prompt = f"{cloud_system_prompt}\n\nUser: {cloud_prompt}\nAura:"
                 metadata_generate = getattr(adapter, "generate_with_metadata", None)
+                # Cloud recovery ran on its own 30s clock, after every local
+                # attempt had already spent the caller's budget — and then
+                # HealthRouter below ran on another 30. Both are inside the one
+                # request budget now; if it is gone, the cloud path is skipped
+                # rather than started.
+                cloud_window_s = self._window_within(request_deadline, 30.0)
                 try:
+                    if not cloud_window_s:
+                        raise TimeoutError(
+                            "request budget spent before cloud recovery could start"
+                        )
                     if callable(metadata_generate):
                         adapter_result = await asyncio.wait_for(
                             metadata_generate(adapter_prompt, adapter_options),
-                            timeout=30.0,
+                            timeout=cloud_window_s,
                         )
                     else:
                         logger.error(
@@ -10963,7 +11240,12 @@ class InferenceGate:
             metadata_generate = getattr(router, "generate_with_metadata", None)
             if router and callable(metadata_generate):
                 logger.info("☁️ Falling back to HealthRouter...")
+                router_window_s = self._window_within(request_deadline, 30.0)
                 try:
+                    if not router_window_s:
+                        raise TimeoutError(
+                            "request budget spent before HealthRouter recovery could start"
+                        )
                     router_result = await asyncio.wait_for(
                         metadata_generate(
                             cloud_prompt,
@@ -10986,7 +11268,7 @@ class InferenceGate:
                             semantic_output_token_cap=output_contract.semantic_token_cap,
                             hard_output_token_ceiling=output_contract.hard_token_ceiling,
                         ),
-                        timeout=30.0,
+                        timeout=router_window_s,
                     )
                 except recoverable_cloud_errors as router_err:
                     record_degradation(
@@ -11067,7 +11349,12 @@ class InferenceGate:
                 max_tokens=max_tokens,
                 output_contract=output_contract_payload,
             )
-        return None
+        return self._refuse_generation(
+            self.REFUSAL_EXHAUSTED,
+            "all_inference_lanes_exhausted",
+            context=context,
+            origin=origin,
+        )
 
     def _cascade_cleanup_stuck_worker_locked(self) -> None:
         """Kill a genuinely wedged cortex worker and sever its IPC queues.
@@ -11267,21 +11554,25 @@ class InferenceGate:
         try:
             credit = ServiceContainer.get("credit_assignment", default=None)
             if credit:
-                # SURFACE-SHAPE heuristic only: length and structure say
-                # nothing about correctness, so the signal is capped well
-                # below max credit and labeled as a shape proxy. Verified
-                # outcomes (task verifiers, user feedback) are the only
-                # sources allowed to assign full credit.
-                response_len = len(response_text.strip())
-                has_structure = any(marker in response_text for marker in ["\n", "- ", "1.", "```"])
-                quality = min(0.6, (response_len / 500.0) * 0.4 + (0.2 if has_structure else 0.05))
-                credit.assign_credit(
-                    # time_ns + counter keeps concurrent same-second responses
-                    # attributable instead of colliding on one id.
-                    action_id=f"inference_{time.time_ns()}_{self._credit_action_seq()}",
-                    outcome=quality,
-                    domain="chat",
-                )
+                outcome, basis = self._response_credit_outcome()
+                if outcome is None:
+                    # Nothing verified this answer. The previous signal was
+                    # length plus the presence of a newline or a list marker,
+                    # which rewards a long hallucination and penalizes a
+                    # correct one-line answer — the learner was being taught
+                    # shape and told it was correctness. Withholding is the
+                    # honest move: an unmeasured turn is not a graded turn.
+                    _credit_basis = basis
+                else:
+                    _credit_basis = basis
+                    credit.assign_credit(
+                        # time_ns + counter keeps concurrent same-second
+                        # responses attributable instead of colliding on one id.
+                        action_id=f"inference_{time.time_ns()}_{self._credit_action_seq()}",
+                        outcome=outcome,
+                        domain="chat",
+                    )
+                self._last_credit_basis = _credit_basis
         except _INFERENCE_RECOVERABLE_ERRORS as _exc:
             _record_inference_degradation(
                 _exc,
@@ -11295,7 +11586,21 @@ class InferenceGate:
         try:
             homeostasis = ServiceContainer.get("homeostasis", default=None)
             if homeostasis and hasattr(homeostasis, "on_response_success"):
-                homeostasis.on_response_success(response_length=len(response_text))
+                # A nonempty string was the whole test, so a canned recovery
+                # message off a fallback lane raised her sense that she was
+                # working correctly. What is actually knowable at this point
+                # is the lane that answered and whether anything verified it;
+                # both now travel with the signal.
+                homeostasis.on_response_success(
+                    response_length=len(response_text),
+                    verified=self._response_credit_outcome()[0] is not None,
+                    fallback=bool(
+                        getattr(self, "_last_user_generation_used_fallback", False)
+                    ),
+                    endpoint=str(
+                        getattr(self, "_last_user_generation_endpoint", "") or ""
+                    ),
+                )
         except _INFERENCE_RECOVERABLE_ERRORS as _exc:
             _record_inference_degradation(
                 _exc,

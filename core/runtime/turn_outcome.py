@@ -667,6 +667,18 @@ class TurnOutcome:
                 "result that has already been reported"
             )
 
+    def verification_grade_so_far(self) -> VerificationGrade:
+        """The grade of what has been served, readable before finalization.
+
+        Post-inference hooks run while the turn is still open and need to know
+        whether anything actually verified this answer. Reading it must not
+        finalize the turn, and it must be the SERVED grade — the same rule the
+        receipt uses — so a draft that was verified and then discarded cannot
+        buy credit for the answer that replaced it.
+        """
+        with self._lock:
+            return self._effective_grade()
+
     def _effective_grade(self) -> VerificationGrade:
         """The grade of what was SERVED, not the best grade seen anywhere.
 
