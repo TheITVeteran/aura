@@ -11854,6 +11854,22 @@
       "category": "raw_file_mutation",
       "count": 1,
       "path": "core/runtime/file_write_gateway.py",
+      "scope": "<module>.FileWriteGateway.delete_path"
+    },
+    {
+      "callee": "target.unlink",
+      "canonical_owner": true,
+      "category": "raw_file_mutation",
+      "count": 2,
+      "path": "core/runtime/file_write_gateway.py",
+      "scope": "<module>.FileWriteGateway.delete_path"
+    },
+    {
+      "callee": "shutil.rmtree",
+      "canonical_owner": true,
+      "category": "raw_file_mutation",
+      "count": 1,
+      "path": "core/runtime/file_write_gateway.py",
       "scope": "<module>.FileWriteGateway.delete_path_async._delete"
     },
     {
@@ -14741,6 +14757,14 @@
       "canonical_owner": false,
       "category": "subprocess_gateway",
       "count": 1,
+      "path": "core/runtime/disk_budget.py",
+      "scope": "<module>._is_git_tracked"
+    },
+    {
+      "callee": "core.runtime.subprocess_gateway.get_subprocess_gateway().run",
+      "canonical_owner": false,
+      "category": "subprocess_gateway",
+      "count": 1,
       "path": "core/runtime/flagship_doctor.py",
       "scope": "<module>._run"
     },
@@ -14788,9 +14812,9 @@
       "callee": "core.runtime.subprocess_gateway.get_subprocess_gateway().run",
       "canonical_owner": false,
       "category": "subprocess_gateway",
-      "count": 2,
+      "count": 1,
       "path": "core/runtime/mlx_memory_guard.py",
-      "scope": "<module>.host_pressure"
+      "scope": "<module>._host_probe_output"
     },
     {
       "callee": "core.runtime.subprocess_gateway.get_subprocess_gateway().spawn_async",
@@ -15810,6 +15834,6 @@
     }
   ],
   "description": "Exact AST effect-ownership debt ratchet; refresh only after reviewed change",
-  "inventory_sha256": "c861e23f2a1fe3a18f320ad73fbced873ebb7d962d672a8adc7c819dd969b07b",
+  "inventory_sha256": "831a7df1d1bb9856f4e4f77750ad7172c3314ad0c181a8be890bed1e3455a2bc",
   "schema_version": 1
 }

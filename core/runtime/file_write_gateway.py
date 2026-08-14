@@ -1469,6 +1469,50 @@ class FileWriteGateway:
         except FileNotFoundError:
             return False
 
+    def delete_path(
+        self, path: PathLike, *, recursive: bool = False, source: str = "unknown"
+    ) -> bool:
+        """Synchronous counterpart of :meth:`delete_path_async`.
+
+        `delete_file` refuses directories and `delete_path_async` is a
+        coroutine, so a SYNCHRONOUS caller that needed to remove a tree had
+        no governed option and reached for `shutil.rmtree` directly —
+        `disk_budget.prune_superseded_artifacts` did exactly that, deleting
+        artifact directories outside the write gateway entirely.
+
+        Same rules as the async form: governance is required, and a
+        directory needs `recursive=True` stated explicitly, because
+        "remove this file" and "remove everything under here" must not be
+        the same call.
+
+        Use the async form on the event loop — this one blocks on the
+        filesystem, and an on-loop tree delete is the shape that froze the
+        runtime for twenty minutes once already.
+        """
+        target = _coerce_path_allow_dir(path)
+        if governance_runtime_active():
+            require_governance(
+                f"file_write_gateway.delete_path:{source}",
+                strict=True,
+                allowed_domains=self._allowed_domains,
+            )
+        if not os.path.lexists(target):
+            return False
+        if target.is_symlink():
+            target.unlink()
+            return True
+        if target.is_dir():
+            if not recursive:
+                raise IsADirectoryError(
+                    f"refusing to delete directory without recursive=True: {target}"
+                )
+            import shutil
+
+            shutil.rmtree(target)
+            return True
+        target.unlink()
+        return True
+
     async def delete_path_async(
         self, path: PathLike, *, recursive: bool = False, source: str = "unknown"
     ) -> bool:

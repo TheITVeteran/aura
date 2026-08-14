@@ -133,3 +133,114 @@ def test_a_dry_run_removes_nothing(tmp_path: Path) -> None:
 
 def test_a_missing_root_is_not_an_error(tmp_path: Path) -> None:
     assert prune_superseded_artifacts(tmp_path / "nope", keep=1) == []
+
+
+# ───────── a recursive delete belongs behind the write gateway
+
+
+def test_pruning_goes_through_the_write_gateway_not_shutil():
+    """`prune_superseded_artifacts` removes whole artifact DIRECTORIES.
+
+    CLAUDE.md is explicit that every consequential file write goes through
+    `file_write_gateway`, and a recursive delete is the most consequential
+    of them. This called `shutil.rmtree` directly, which the governance
+    lint reported as new `raw_file_mutation` debt in `core/runtime`.
+    """
+    import ast
+    from pathlib import Path
+
+    source = (
+        Path(__file__).resolve().parents[2] / "core" / "runtime" / "disk_budget.py"
+    ).read_text("utf-8")
+    tree = ast.parse(source)
+
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Call):
+            continue
+        func = node.func
+        if isinstance(func, ast.Attribute) and func.attr == "rmtree":
+            raise AssertionError(
+                "disk_budget calls shutil.rmtree directly again; use "
+                "get_file_write_gateway().delete_path(recursive=True)"
+            )
+
+    assert "delete_path(" in source
+
+
+def test_the_git_probe_goes_through_the_subprocess_gateway():
+    """A raw `subprocess.run` in core/runtime bypasses every shutdown,
+    privilege and desktop-safety check the gateway performs."""
+    import ast
+    from pathlib import Path
+
+    source = (
+        Path(__file__).resolve().parents[2] / "core" / "runtime" / "disk_budget.py"
+    ).read_text("utf-8")
+    tree = ast.parse(source)
+
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Call):
+            continue
+        func = node.func
+        if (
+            isinstance(func, ast.Attribute)
+            and func.attr == "run"
+            and isinstance(func.value, ast.Name)
+            and func.value.id == "subprocess"
+        ):
+            raise AssertionError(
+                "disk_budget calls subprocess.run directly again; use "
+                "get_subprocess_gateway().run(..., read_only=True)"
+            )
+
+    assert "get_subprocess_gateway()" in source
+
+
+def test_the_gateway_has_a_sync_recursive_delete():
+    """The reason the raw call existed: `delete_file` refuses directories
+    and `delete_path_async` is a coroutine, so a synchronous caller that
+    needed to remove a tree had no governed option."""
+    from core.runtime.file_write_gateway import get_file_write_gateway
+
+    gateway = get_file_write_gateway()
+
+    assert hasattr(gateway, "delete_path")
+
+
+def test_the_sync_delete_still_insists_on_recursive_for_a_directory(tmp_path):
+    """"Remove this file" and "remove everything under here" must not be
+    the same call."""
+    import pytest
+
+    from core.runtime.file_write_gateway import get_file_write_gateway
+
+    directory = tmp_path / "tree"
+    (directory / "inner").mkdir(parents=True)
+
+    with pytest.raises(IsADirectoryError):
+        get_file_write_gateway().delete_path(directory, source="test")
+
+    assert directory.exists()
+
+
+def test_the_sync_delete_removes_a_tree_when_asked(tmp_path):
+    from core.runtime.file_write_gateway import get_file_write_gateway
+
+    directory = tmp_path / "tree"
+    (directory / "inner").mkdir(parents=True)
+    (directory / "inner" / "f.txt").write_text("x", encoding="utf-8")
+
+    removed = get_file_write_gateway().delete_path(
+        directory, recursive=True, source="test"
+    )
+
+    assert removed is True
+    assert not directory.exists()
+
+
+def test_the_sync_delete_reports_an_absent_path_rather_than_raising(tmp_path):
+    from core.runtime.file_write_gateway import get_file_write_gateway
+
+    assert (
+        get_file_write_gateway().delete_path(tmp_path / "nope", source="test") is False
+    )

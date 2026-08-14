@@ -254,13 +254,18 @@ def ensure_headroom_for(
 def _is_git_tracked(entry: Path) -> bool:
     """True when git knows about this path, in which case it is not ours to remove."""
     try:
-        result = subprocess.run(
+        from core.runtime.subprocess_gateway import get_subprocess_gateway
+
+        result = get_subprocess_gateway().run(
             ["git", "ls-files", "--error-unmatch", str(entry)],
             cwd=str(entry.parent),
             capture_output=True,
             timeout=10,
+            read_only=True,
+            source="disk_budget.git_tracked_probe",
+            accelerator_capability="none",
         )
-    except (OSError, subprocess.SubprocessError):
+    except (OSError, subprocess.SubprocessError, RuntimeError):
         # Cannot prove it is untracked, so treat it as tracked and leave it.
         return True
     return result.returncode == 0
@@ -306,8 +311,16 @@ def prune_superseded_artifacts(
             removed.append((entry.name, size_gb))
             continue
         try:
-            shutil.rmtree(entry)
-        except OSError as exc:
+            # Through the write gateway, not `shutil.rmtree`. This removes
+            # whole artifact directories; CLAUDE.md is explicit that every
+            # consequential file write goes through the gateway, and a
+            # recursive delete is the most consequential of them.
+            from core.runtime.file_write_gateway import get_file_write_gateway
+
+            get_file_write_gateway().delete_path(
+                entry, recursive=True, source="disk_budget.prune_superseded"
+            )
+        except (OSError, RuntimeError) as exc:
             record_degradation(
                 "disk_budget", exc, action=f"could not prune {entry.name}"
             )
