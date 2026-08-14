@@ -81,6 +81,7 @@ def _config(tmp_path: Path, *, profile: str = "canary") -> tuple[Path, dict]:
     bootstrap = None
     bootstrap_profiles = {
         "process_action_canary",
+        "process_answer_bridge_canary",
         "process_family_acquisition",
         "process_neural_acquisition",
         "recovery",
@@ -273,6 +274,21 @@ def test_process_action_canary_trains_only_new_workspace_from_parent() -> None:
     assert arguments[arguments.index("--process-curriculum") + 1] == ("action_workspace")
 
 
+def test_process_answer_bridge_canary_reads_verified_recurrent_execution() -> None:
+    training = _profile_training("process_answer_bridge_canary")
+    arguments = _training_cli(training)
+
+    assert training["task_source"] == "frontier_process"
+    assert training["window_tissue_mode"] == "scoped_lora"
+    assert training["state_warmup_steps"] == 0
+    assert training["answer_bridge_steps"] == training["max_steps"] == 36
+    assert training["answer_bridge_inner_steps"] == 4
+    assert training["eval_every"] == training["checkpoint_every"] == 9
+    assert training["process_transformer_gradient_scale"] == 0.0
+    assert training["process_query_gradient_scale"] == 0.0
+    assert arguments[arguments.index("--answer-bridge-steps") + 1] == "36"
+
+
 def test_process_family_acquisition_cooptimizes_eight_distinct_examples() -> None:
     training = _profile_training("process_family_acquisition")
     arguments = _training_cli(training)
@@ -340,6 +356,29 @@ def test_process_family_acquisition_signed_config_is_controller_admitted(
     loaded = controller._load_config(path)
 
     assert loaded["profile"] == "process_family_acquisition"
+
+
+def test_process_answer_bridge_signed_config_is_controller_admitted(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    path, _raw = _config(tmp_path, profile="process_answer_bridge_canary")
+    monkeypatch.setattr(
+        controller,
+        "resolve_checkpoint_generation",
+        lambda *_args, **_kwargs: SimpleNamespace(
+            receipt={
+                "step": 73,
+                "checkpoint_sha256": "c" * 64,
+                "receipt_sha256": "d" * 64,
+                "identity": {"identity_sha256": "e" * 64},
+            }
+        ),
+    )
+
+    loaded = controller._load_config(path)
+
+    assert loaded["profile"] == "process_answer_bridge_canary"
 
 
 def test_process_action_config_binds_parent_and_one_step_launch(

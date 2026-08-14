@@ -65,6 +65,7 @@ PROFILES: Final = frozenset(
         "canary",
         "full",
         "process_action_canary",
+        "process_answer_bridge_canary",
         "process_canary",
         "process_family_acquisition",
         "process_neural_acquisition",
@@ -239,6 +240,46 @@ def _profile_training(profile: str) -> dict[str, Any]:
         "cache_limit_gb": 2.0,
         "wired_limit_gb": 48.0,
     }
+    if profile == "process_answer_bridge_canary":
+        families = (
+            "novel_algorithms,mathematics,coding,scientific_inference,"
+            "long_horizon_planning,calibration,misleading_premise"
+        )
+        # Difficulty one compiles to nine family/depth cells: one per family
+        # plus two additional planning horizons. Four examples per cell is a
+        # bounded readout diagnostic, not a powered transfer campaign.
+        answer_bridge_steps = 9 * 4
+        return {
+            **common,
+            "window_tissue_mode": "scoped_lora",
+            "lora_targets": "q_proj,o_proj,v_proj",
+            "task_source": "frontier_process",
+            "families": families,
+            "task_depths": "3,4,5,6,9,10",
+            "train_depths": "1,3,4,5,6,9,10",
+            "heldout_depths": "12,16",
+            "per_cell": 4,
+            "holdout_per_cell": 3,
+            "max_steps": answer_bridge_steps,
+            "semantic_warmup_steps": 0,
+            "state_warmup_steps": 0,
+            "answer_bridge_steps": answer_bridge_steps,
+            "answer_bridge_inner_steps": 4,
+            "process_curriculum": "joint",
+            "process_family_batch_size": 1,
+            "process_family_batch_mode": "same_family",
+            "process_transformer_gradient_scale": 0.0,
+            "process_query_gradient_scale": 0.0,
+            "eval_every": 9,
+            "checkpoint_every": 9,
+            "answer_bridge_learning_rate": 0.0005,
+            "seed": 2026081401,
+            "init_seed": 2026081402,
+            "memory_fraction": 0.35,
+            "memory_limit_gb": 24.0,
+            "wired_limit_gb": 28.0,
+            "max_minutes": 120.0,
+        }
     if profile in {
         "process_action_canary",
         "process_canary",
@@ -537,6 +578,7 @@ def _freeze_campaign(
 
     bootstrap_profiles = {
         "process_action_canary",
+        "process_answer_bridge_canary",
         "process_family_acquisition",
         "process_neural_acquisition",
         "recovery",
@@ -676,6 +718,7 @@ def _freeze_campaign(
                 in {
                     "canary",
                     "process_action_canary",
+                    "process_answer_bridge_canary",
                     "process_canary",
                     "process_family_acquisition",
                     "process_neural_acquisition",
