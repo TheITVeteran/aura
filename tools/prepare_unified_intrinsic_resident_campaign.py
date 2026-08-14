@@ -22,7 +22,13 @@ from typing import Any, Final, Never
 REPO_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO_ROOT))
 
+from core.brain.llm.latent_cortex.frontier_tasks import (  # noqa: E402
+    CONTAMINATION_SAFE_REGISTRY_VERSION,
+)
 from core.learning import recurrence_curriculum as curriculum  # noqa: E402
+from core.learning.frontier_process_supervision import (  # noqa: E402
+    frontier_process_task_battery,
+)
 from core.runtime.atomic_writer import (  # noqa: E402
     atomic_write_bytes_if_absent,
     ensure_private_directory,
@@ -54,7 +60,7 @@ from tools.unified_intrinsic_tokenization_contract import (  # noqa: E402
 
 PREPARATION_SCHEMA: Final = "aura.unified_intrinsic.resident_preparation.v1"
 CONFIG_SCHEMA: Final = "aura.unified_intrinsic.resident_campaign.v1"
-PROFILES: Final = frozenset({"canary", "full", "recovery"})
+PROFILES: Final = frozenset({"canary", "full", "process_canary", "recovery"})
 DEFAULT_MODEL: Final = Path(
     "/Users/bryan/.aura/live-source/training/fused-model/"
     "Aura-32B-crsm-closeout-jul1-20260701-215118"
@@ -181,6 +187,9 @@ def _profile_training(profile: str) -> dict[str, Any]:
         _fail("campaign_profile_invalid")
     common: dict[str, Any] = {
         "window_tissue_mode": "controller_only",
+        "task_source": "curriculum",
+        "frontier_difficulties": "1",
+        "frontier_registry_version": CONTAMINATION_SAFE_REGISTRY_VERSION,
         "prelude_fraction": 0.25,
         "coda_fraction": 0.25,
         "train_depths": "1,2,4",
@@ -188,6 +197,8 @@ def _profile_training(profile: str) -> dict[str, Any]:
         "families": "khop,modular,register_trace",
         "task_depths": "1,2,4",
         "controller_rank": 64,
+        "lora_rank": 8,
+        "lora_targets": "o_proj,v_proj",
         "state_weight": 6.0,
         "stutter_weight": 0.1,
         "depth_basis_size": 4,
@@ -214,6 +225,38 @@ def _profile_training(profile: str) -> dict[str, Any]:
         "cache_limit_gb": 2.0,
         "wired_limit_gb": 48.0,
     }
+    if profile == "process_canary":
+        families = (
+            "novel_algorithms,mathematics,coding,scientific_inference,"
+            "long_horizon_planning,calibration,misleading_premise"
+        )
+        training_examples = 14
+        return {
+            **common,
+            "window_tissue_mode": "scoped_lora",
+            "task_source": "frontier_process",
+            "families": families,
+            "task_depths": "3,4,5,6,8,10",
+            "train_depths": "1,3,4,5,6,8,10",
+            "heldout_depths": "12,16",
+            "per_cell": 2,
+            "holdout_per_cell": 1,
+            "max_steps": training_examples * 3,
+            "semantic_warmup_steps": 0,
+            "state_warmup_steps": training_examples * 2,
+            "answer_bridge_steps": 0,
+            "answer_bridge_inner_steps": 1,
+            "student_rollin_probability": 0.0,
+            "student_rollin_final_probability": 0.5,
+            "state_teacher_forcing_probability": 1.0,
+            "state_teacher_forcing_final_probability": 0.0,
+            "eval_every": training_examples,
+            "checkpoint_every": 7,
+            "seed": 2026081401,
+            "init_seed": 2026081402,
+            "memory_fraction": 0.35,
+            "max_minutes": 60.0,
+        }
     if profile == "canary":
         # Two examples per cell twice reached 8/9 exact resident admission but
         # did not generalize the register-value readout reliably. Four remains
@@ -276,6 +319,9 @@ def _profile_training(profile: str) -> dict[str, Any]:
 def _training_cli(training: Mapping[str, Any]) -> list[str]:
     flag_names = {
         "window_tissue_mode": "--window-tissue-mode",
+        "task_source": "--task-source",
+        "frontier_difficulties": "--frontier-difficulties",
+        "frontier_registry_version": "--frontier-registry-version",
         "prelude_fraction": "--prelude-fraction",
         "coda_fraction": "--coda-fraction",
         "train_depths": "--train-depths",
@@ -285,6 +331,8 @@ def _training_cli(training: Mapping[str, Any]) -> list[str]:
         "per_cell": "--per-cell",
         "holdout_per_cell": "--holdout-per-cell",
         "controller_rank": "--controller-rank",
+        "lora_rank": "--lora-rank",
+        "lora_targets": "--lora-targets",
         "state_weight": "--state-weight",
         "stutter_weight": "--stutter-weight",
         "depth_basis_size": "--depth-basis-size",
@@ -426,21 +474,42 @@ def _freeze_campaign(
     task_depths = tuple(
         int(value) for value in str(training["task_depths"]).split(",")
     )
-    train_tasks = curriculum.task_battery(
-        families,
-        task_depths,
-        int(training["per_cell"]),
-        seed=int(training["seed"]),
-    )
+    if training["task_source"] == "frontier_process":
+        difficulties = tuple(
+            int(value)
+            for value in str(training["frontier_difficulties"]).split(",")
+        )
+        train_tasks = frontier_process_task_battery(
+            families,
+            difficulties,
+            int(training["per_cell"]),
+            seed=int(training["seed"]),
+            registry_version=str(training["frontier_registry_version"]),
+        )
+        holdout_tasks = frontier_process_task_battery(
+            families,
+            difficulties,
+            int(training["holdout_per_cell"]),
+            seed=int(training["seed"]) + 9_973,
+            registry_version=str(training["frontier_registry_version"]),
+            excluded_prompts=tuple(task.prompt for task in train_tasks),
+        )
+    else:
+        train_tasks = curriculum.task_battery(
+            families,
+            task_depths,
+            int(training["per_cell"]),
+            seed=int(training["seed"]),
+        )
+        holdout_tasks = curriculum.task_battery(
+            families,
+            task_depths,
+            int(training["holdout_per_cell"]),
+            seed=int(training["seed"]) + 9_973,
+            excluded_prompts=tuple(task.prompt for task in train_tasks),
+            excluded_task_ids=tuple(task.task_id for task in train_tasks),
+        )
     random.Random(int(training["seed"])).shuffle(train_tasks)
-    holdout_tasks = curriculum.task_battery(
-        families,
-        task_depths,
-        int(training["holdout_per_cell"]),
-        seed=int(training["seed"]) + 9_973,
-        excluded_prompts=tuple(task.prompt for task in train_tasks),
-        excluded_task_ids=tuple(task.task_id for task in train_tasks),
-    )
     dataset_identity = freeze_source_dataset(
         inputs / SOURCE_DATASET_FILENAME,
         train_tasks,
@@ -503,7 +572,7 @@ def _freeze_campaign(
             "heartbeat_stale_s": 180.0,
             "attempt_timeout_s": (
                 5.0 * 3600.0
-                if profile == "canary"
+                if profile in {"canary", "process_canary"}
                 else 14.0 * 3600.0
                 if profile == "recovery"
                 else 54.0 * 3600.0

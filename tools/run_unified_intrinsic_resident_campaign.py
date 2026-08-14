@@ -276,7 +276,12 @@ def _load_config(path: Path) -> dict[str, Any]:
         set(config) not in allowed_keys
         or config.get("schema") != CONFIG_SCHEMA
         or config.get("config_sha256") != canonical_sha256(body)
-        or config.get("profile") not in {"canary", "full", "recovery"}
+        or config.get("profile") not in {
+            "canary",
+            "full",
+            "process_canary",
+            "recovery",
+        }
         or not isinstance(config.get("campaign_id"), str)
     ):
         _fail("campaign_config_invalid")
@@ -1729,7 +1734,7 @@ def _trailing_no_progress(config: Mapping[str, Any], completed_attempts: int) ->
 def _planned_invocation_steps(
     config: Mapping[str, Any], checkpoint: Mapping[str, Any]
 ) -> int | None:
-    if config["profile"] not in {"canary", "recovery"}:
+    if config["profile"] not in {"canary", "process_canary", "recovery"}:
         return None
     step = int(checkpoint["step"])
     if step == 0:

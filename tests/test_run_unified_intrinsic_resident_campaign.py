@@ -237,6 +237,23 @@ def test_full_profile_uses_the_decode_admitted_cached_bridge_schedule() -> None:
     assert training["max_steps"] == 73
 
 
+def test_process_canary_trains_scoped_tissue_on_autonomous_frontier_process() -> None:
+    training = _profile_training("process_canary")
+    arguments = _training_cli(training)
+
+    assert training["window_tissue_mode"] == "scoped_lora"
+    assert training["task_source"] == "frontier_process"
+    assert training["per_cell"] == 2
+    assert training["holdout_per_cell"] == 1
+    assert training["state_warmup_steps"] == 28
+    assert training["answer_bridge_steps"] == 0
+    assert training["max_steps"] == 42
+    assert training["state_teacher_forcing_probability"] == 1.0
+    assert training["state_teacher_forcing_final_probability"] == 0.0
+    assert arguments[arguments.index("--task-source") + 1] == "frontier_process"
+    assert arguments[arguments.index("--window-tissue-mode") + 1] == "scoped_lora"
+
+
 def test_recovery_profile_warm_starts_fresh_data_without_parent_optimizer() -> None:
     training = _profile_training("recovery")
 
