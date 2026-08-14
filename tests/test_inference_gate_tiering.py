@@ -4156,8 +4156,56 @@ def test_live_inference_readiness_does_not_reprobe_prewarm_policy(monkeypatch):
         "_boot_should_schedule_deferred_prewarm",
         staticmethod(lambda: pytest.fail("resident Cortex must bypass prewarm admission")),
     )
+    monkeypatch.setattr(
+        gate, "get_conversation_status", lambda **_kw: {"conversation_ready": True}
+    )
 
     assert gate.is_inference_ready() is True
+
+
+def test_a_live_primary_process_is_not_by_itself_ready(monkeypatch):
+    """Process liveness was the whole test, so a worker still loading weights —
+    or wedged on a handshake — satisfied readiness."""
+    gate = InferenceGate()
+    gate._initialized = True
+    gate._mlx_client = SimpleNamespace(is_alive=lambda: True)
+    monkeypatch.setattr(
+        "core.runtime.proof_policy.proof_run_active",
+        lambda **_kwargs: False,
+    )
+    monkeypatch.setattr(gate, "_iter_local_clients", lambda: {})
+    monkeypatch.setattr(
+        gate,
+        "get_conversation_status",
+        lambda **_kw: {"conversation_ready": False, "active_generations": 0},
+    )
+
+    ready, reason = gate.inference_readiness()
+
+    assert ready is False
+    assert reason == "no_live_backend"
+
+
+def test_a_fallback_client_that_cannot_report_a_lane_is_not_ready(monkeypatch):
+    """Returning True because `get_lane_status` was ABSENT counted a missing
+    check as a passed one."""
+    gate = InferenceGate()
+    gate._initialized = True
+    gate._mlx_client = None
+    monkeypatch.setattr(
+        "core.runtime.proof_policy.proof_run_active",
+        lambda **_kwargs: False,
+    )
+    monkeypatch.setattr(
+        gate,
+        "_iter_local_clients",
+        lambda: {"mystery": SimpleNamespace(is_alive=lambda: True)},
+    )
+
+    ready, reason = gate.inference_readiness()
+
+    assert ready is False
+    assert reason == "no_client_can_prove_readiness"
 
 
 @pytest.mark.asyncio
@@ -4573,8 +4621,97 @@ async def test_tier_health_reports_demand_loaded_brainstem_as_standby(monkeypatc
     monkeypatch.setattr(mlx_client, "get_mlx_client", lambda **_kwargs: _Lane())
     monkeypatch.setattr(model_registry, "get_brainstem_path", lambda: "/models/brainstem")
     monkeypatch.setattr(model_registry, "get_fallback_path", lambda: None)
+    monkeypatch.setattr(
+        gate, "get_conversation_status", lambda **_kw: {"conversation_ready": True}
+    )
 
     statuses = await gate.ensure_all_tiers_healthy()
 
     assert statuses["cortex"] == "alive"
     assert statuses["brainstem"] == "standby"
+
+
+@pytest.mark.asyncio
+async def test_a_cortex_that_cannot_hold_a_conversation_is_not_labelled_alive(monkeypatch):
+    """"alive" was read off process liveness, so a worker loading weights or
+    wedged on a handshake reported the same word as one taking turns."""
+    gate = InferenceGate()
+    gate._mlx_client = SimpleNamespace(is_alive=lambda: True, _lane_state="warming")
+    gate._cortex_recovery_in_progress = False
+    monkeypatch.setattr(gate, "_background_local_deferral_reason", lambda origin: "test")
+    monkeypatch.setattr(
+        gate,
+        "get_conversation_status",
+        lambda **_kw: {"conversation_ready": False, "active_generations": 0},
+    )
+
+    import core.brain.llm.model_registry as model_registry
+
+    monkeypatch.setattr(model_registry, "get_fallback_path", lambda: None)
+
+    statuses = await gate.ensure_all_tiers_healthy()
+
+    assert statuses["cortex"] == "alive_not_conversation_ready"
+    # Not dead: no incident, no recovery. The label just stops overclaiming.
+    assert statuses["cortex"] != "dead"
+    assert gate.tier_health_receipt()["evidence"]["cortex"] == "process_liveness_only"
+
+
+@pytest.mark.asyncio
+async def test_an_observe_only_sweep_actuates_nothing(monkeypatch):
+    """The monitoring cadence called this every ten ticks, and a dead Cortex
+    made it spawn recovery — GPU and RAM, on a timer, from a health check."""
+    gate = InferenceGate()
+    gate._mlx_client = SimpleNamespace(is_alive=lambda: False, _lane_state="cold")
+    gate._cortex_recovery_in_progress = False
+
+    recovered: list[str] = []
+
+    async def _recover():
+        recovered.append("cortex")
+
+    monkeypatch.setattr(gate, "_ensure_cortex_recovery", _recover)
+    monkeypatch.setattr(gate, "_background_local_deferral_reason", lambda origin: "test")
+
+    import core.brain.llm.model_registry as model_registry
+
+    monkeypatch.setattr(model_registry, "get_fallback_path", lambda: None)
+
+    statuses = await gate.observe_tier_health()
+
+    assert statuses["cortex"] == "dead"
+    assert recovered == [], "an observe-only sweep started a recovery"
+    receipt = gate.tier_health_receipt()
+    assert receipt["repair_enabled"] is False
+    assert receipt["actuated"] == []
+
+    statuses = await gate.ensure_all_tiers_healthy()
+
+    assert recovered == ["cortex"], "the repairing sweep stopped repairing"
+    assert gate.tier_health_receipt()["actuated"] == ["cortex_recovery"]
+
+
+@pytest.mark.asyncio
+async def test_a_named_but_unreadable_reflex_model_is_not_available(monkeypatch, tmp_path):
+    """`available` meant `Path.exists()`, so a zero-byte file from an
+    interrupted download passed — on the tier that answers when the other two
+    are gone."""
+    gate = InferenceGate()
+    gate._mlx_client = None
+    monkeypatch.setattr(gate, "_background_local_deferral_reason", lambda origin: "test")
+
+    import core.brain.llm.model_registry as model_registry
+
+    truncated = tmp_path / "reflex.gguf"
+    truncated.write_bytes(b"")
+    monkeypatch.setattr(model_registry, "get_fallback_path", lambda: truncated)
+
+    statuses = await gate.ensure_all_tiers_healthy()
+
+    assert statuses["reflex"] == "model_unreadable"
+    assert gate.tier_health_receipt()["evidence"]["reflex"] == "empty_file"
+
+    truncated.write_bytes(b"not empty")
+    statuses = await gate.ensure_all_tiers_healthy()
+
+    assert statuses["reflex"] == "available"

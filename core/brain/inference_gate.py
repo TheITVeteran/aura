@@ -339,6 +339,101 @@ _GENERATE_EXPLICIT_KWARGS: frozenset[str] = frozenset(
     {"messages", "max_tokens", "temperature", "origin", "is_background", "foreground_request"}
 )
 
+#: Health windows are read from operator flags, so both ends need a bound.
+#: Only the minimum was clamped, which let an operator set a startup grace of
+#: 1e9 seconds — or ``inf`` — and keep a permanently stalled generation
+#: classified as operational forever. Ten minutes is longer than any real
+#: foreground turn on this hardware and short enough that a wedge surfaces.
+_MAX_HEALTH_WINDOW_S = 600.0
+
+#: A timestamp from another process can sit slightly ahead of ours. Beyond
+#: this, "the future" is a broken clock or a corrupt status payload, not skew,
+#: and it must not read as fresh progress.
+_HEALTH_CLOCK_SKEW_TOLERANCE_S = 2.0
+
+
+def _finite(value: Any, default: float | None = None) -> float | None:
+    """Coerce to a real, finite float or give back ``default``.
+
+    ``float("nan")`` and ``float("inf")`` survive a bare ``float()`` and then
+    poison every comparison they touch: ``max(0.0, now - nan)`` is ``nan``,
+    and ``nan <= stale_window`` is False in one place and True nowhere, so a
+    generation with a NaN timestamp could be certified as progressing while
+    nothing was progressing. Anything not finite is missing evidence here,
+    never a value.
+    """
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return default
+    if not math.isfinite(number):
+        return default
+    return number
+
+
+def _health_window_s(raw: Any, *, default: float, minimum: float) -> float:
+    """Clamp an operator-supplied health window at BOTH ends."""
+    window = _finite(raw, default)
+    if window is None:
+        window = default
+    return max(minimum, min(_MAX_HEALTH_WINDOW_S, window))
+
+
+def _elapsed_since(timestamp: Any, *, now: float) -> float | None:
+    """Age of ``timestamp`` in seconds, or None when it proves nothing.
+
+    None means "no trustworthy evidence": absent, non-finite, non-positive, or
+    far enough in the future that the clock or the payload is wrong. Callers
+    must treat None as unproven rather than as age zero — reading a future
+    timestamp as a fresh zero age was how a stalled lane stayed healthy.
+    """
+    stamp = _finite(timestamp)
+    if stamp is None or stamp <= 0.0:
+        return None
+    age = now - stamp
+    if age < -_HEALTH_CLOCK_SKEW_TOLERANCE_S:
+        return None
+    return max(0.0, age)
+
+
+def _reflex_model_status(raw_path: str) -> tuple[str, str]:
+    """Say whether the reflex model can actually be loaded, not whether a path exists.
+
+    ``available`` used to mean ``Path(...).exists()``. A directory with the
+    right name, a zero-byte file left by an interrupted download, or a file
+    the process cannot read all passed that test, so the last tier — the one
+    that answers when Cortex and brainstem are both gone — reported itself
+    available right up to the moment it was needed.
+
+    Runs on a thread: every call here touches the filesystem.
+    """
+    if not raw_path:
+        return "model_missing", "no_path_configured"
+    path = Path(raw_path)
+    try:
+        stat = path.stat()
+    except OSError:
+        return "model_missing", "path_absent"
+    if path.is_dir():
+        # An mlx model directory is a real layout; require the weights in it.
+        weights = sorted(path.glob("*.safetensors")) + sorted(path.glob("*.npz"))
+        if not weights:
+            return "model_unreadable", "directory_without_weights"
+        readable = any(os.access(str(candidate), os.R_OK) for candidate in weights)
+        return ("available", "weights_readable") if readable else (
+            "model_unreadable",
+            "weights_not_readable",
+        )
+    if not path.is_file():
+        return "model_unreadable", "not_a_regular_file"
+    if stat.st_size <= 0:
+        # The signature of an interrupted download.
+        return "model_unreadable", "empty_file"
+    if not os.access(raw_path, os.R_OK):
+        return "model_unreadable", "not_readable"
+    return "available", "file_readable"
+
+
 _INFERENCE_RECOVERABLE_ERRORS = (
     AttributeError,
     ImportError,
@@ -869,6 +964,8 @@ class InferenceGate:
         # report a recent success it never produced. Consumers derive ages
         # from _constructed_wall_at when this is unset.
         self._last_successful_generation_at: float = 0.0
+        #: Filled by every tier-health sweep; read via tier_health_receipt().
+        self._tier_health_receipt: dict[str, Any] = {}
         self._constructed_wall_at: float = time.time()
         self._prewarm_task: asyncio.Task | None = None
         self._deferred_prewarm_task: asyncio.Task | None = None
@@ -3770,14 +3867,39 @@ class InferenceGate:
         logger.info("🔄 _respawn_cortex_if_needed: cortex is dead, delegating to recovery.")
         await self._ensure_cortex_recovery()
 
-    async def ensure_all_tiers_healthy(self) -> dict[str, str]:
+    def tier_health_receipt(self) -> dict[str, Any]:
+        """What the last tier sweep observed, and what it actuated.
+
+        The sweep's ``{tier: status}`` return says "alive" without saying what
+        "alive" was read off, and says nothing at all about the recovery and
+        warmup it may have started on the way. Both belong in the record.
+        """
+        return copy.deepcopy(getattr(self, "_tier_health_receipt", {}))
+
+    async def observe_tier_health(self) -> dict[str, str]:
+        """Read tier health and actuate NOTHING.
+
+        Use this for monitoring cadence. :meth:`ensure_all_tiers_healthy` is
+        the same probe with repair enabled, and repair here means spawning a
+        Cortex recovery or a 7B warmup — GPU and RAM, on a timer.
+        """
+        return await self.ensure_all_tiers_healthy(repair=False)
+
+    async def ensure_all_tiers_healthy(self, *, repair: bool = True) -> dict[str, str]:
         """Proactive health check for ALL inference tiers. Called by MindTick.
 
-        Returns a dict of {tier: status} for monitoring.
+        Returns a dict of {tier: status} for monitoring. With ``repair`` set
+        (the default, which is what MindTick wants) a dead Cortex schedules
+        recovery and a dead brainstem may schedule a warmup, so this is not a
+        pure observation — pass ``repair=False``, or call
+        :meth:`observe_tier_health`, when it needs to be. Whatever was
+        actuated is named in :meth:`tier_health_receipt`.
         """
         if is_shutdown_requested():
             return {"cortex": "shutdown"}
         statuses = {}
+        evidence: dict[str, str] = {}
+        actuated: list[str] = []
 
         # Primary cortex
         try:
@@ -3787,7 +3909,34 @@ class InferenceGate:
                 lane_state = getattr(self._mlx_client, "_lane_state", "cold")
 
                 if self._mlx_client.is_alive():
+                    # Process liveness alone used to be reported as "alive".
+                    # It is the weakest evidence this file has: a worker that
+                    # is loading weights, wedged on a handshake, or holding a
+                    # lock it will never release is alive by that measure. The
+                    # lane read costs nothing extra here and says whether the
+                    # process can actually take a turn.
                     statuses["cortex"] = "alive"
+                    evidence["cortex"] = "process_liveness"
+                    try:
+                        lane = self.get_conversation_status()
+                    except _INFERENCE_RECOVERABLE_ERRORS as exc:
+                        _record_inference_degradation(
+                            exc,
+                            action="labelled Cortex alive on process liveness alone "
+                            "after the lane status read failed",
+                        )
+                        lane = None
+                    if isinstance(lane, dict):
+                        if bool(lane.get("conversation_ready", False)):
+                            evidence["cortex"] = "conversation_ready"
+                        elif self._active_generation_is_progressing(lane):
+                            evidence["cortex"] = "generation_progressing"
+                        else:
+                            # Alive but not able to hold a conversation. Not
+                            # dead — no incident, no recovery — but the label
+                            # must not claim more than the lane proved.
+                            statuses["cortex"] = "alive_not_conversation_ready"
+                            evidence["cortex"] = "process_liveness_only"
                 elif self._cortex_recovery_in_progress or lane_state in (
                     "spawning",
                     "handshaking",
@@ -3795,18 +3944,24 @@ class InferenceGate:
                     "recovering",
                 ):
                     statuses["cortex"] = "recovering"
+                    evidence["cortex"] = f"lane_state:{lane_state}"
                 else:
                     statuses["cortex"] = "dead"
-                    # Trigger recovery if not already in progress.
-                    await self._ensure_cortex_recovery()
+                    evidence["cortex"] = "process_not_alive"
+                    if repair:
+                        # Trigger recovery if not already in progress.
+                        await self._ensure_cortex_recovery()
+                        actuated.append("cortex_recovery")
             else:
                 statuses["cortex"] = "not_initialized"
+                evidence["cortex"] = "no_client"
         except _INFERENCE_RECOVERABLE_ERRORS as e:
             _record_inference_degradation(
                 e,
                 action="continued tier-health sweep after one tier probe failed",
             )
             statuses["cortex"] = f"error:{e}"
+            evidence["cortex"] = "probe_error"
 
         # Brainstem
         try:
@@ -3818,6 +3973,7 @@ class InferenceGate:
             }
             if deferral_reason:
                 statuses["brainstem"] = f"deferred:{deferral_reason}"
+                evidence["brainstem"] = f"policy_deferral:{deferral_reason}"
             else:
                 from core.brain.llm.mlx_client import get_mlx_client
                 from core.brain.llm.model_registry import get_brainstem_path
@@ -3828,46 +3984,64 @@ class InferenceGate:
 
                     if brainstem.is_alive():
                         statuses["brainstem"] = "alive"
+                        evidence["brainstem"] = "process_liveness"
                     elif lane_state in ("spawning", "handshaking", "warming", "recovering"):
                         statuses["brainstem"] = "recovering"
+                        evidence["brainstem"] = f"lane_state:{lane_state}"
                     elif not warm_local_tiers:
                         # Brainstem is a demand-loaded background lane. A cold
                         # worker is healthy standby unless policy explicitly
                         # requires it to remain warm; calling it dead creates a
                         # false incident while the required Cortex lane is live.
                         statuses["brainstem"] = "standby"
+                        evidence["brainstem"] = "cold_by_policy"
                     else:
                         statuses["brainstem"] = "dead"
+                        evidence["brainstem"] = "process_not_alive"
                         # Tier health sweeps are observability by default. They
                         # must not spawn a background 7B worker while a foreground
                         # Cortex turn or proof run owns the local runtime.
-                        if hasattr(brainstem, "warmup"):
+                        if repair and hasattr(brainstem, "warmup"):
                             get_task_tracker().create_task(brainstem.warmup())
                             statuses["brainstem"] = "recovering"
+                            actuated.append("brainstem_warmup")
                 else:
                     statuses["brainstem"] = "not_initialized"
+                    evidence["brainstem"] = "no_client"
         except _INFERENCE_RECOVERABLE_ERRORS as e:
             _record_inference_degradation(
                 e,
                 action="continued tier-health sweep after one tier probe failed",
             )
             statuses["brainstem"] = f"error:{e}"
+            evidence["brainstem"] = "probe_error"
 
-        # Reflex (CPU) — always available if model file exists
+        # Reflex (CPU) — the model file has to be readable, not merely named
         try:
             from core.brain.llm.model_registry import get_fallback_path
 
             fallback_path = get_fallback_path()
-            fallback_exists = bool(
-                fallback_path and await asyncio.to_thread(Path(str(fallback_path)).exists)
+            statuses["reflex"], evidence["reflex"] = await asyncio.to_thread(
+                _reflex_model_status, str(fallback_path) if fallback_path else ""
             )
-            if fallback_exists:
-                statuses["reflex"] = "available"
-            else:
-                statuses["reflex"] = "model_missing"
-        except _INFERENCE_RECOVERABLE_ERRORS:
+        except _INFERENCE_RECOVERABLE_ERRORS as e:
+            _record_inference_degradation(
+                e,
+                action="reported reflex tier as unknown after the model probe failed",
+            )
             statuses["reflex"] = "unknown"
+            evidence["reflex"] = "probe_error"
 
+        self._tier_health_receipt = {
+            "observed_at": time.time(),
+            "statuses": dict(statuses),
+            # What each label is standing on. "alive" off process liveness and
+            # "alive" off a conversation-ready lane are not the same claim.
+            "evidence": dict(evidence),
+            "repair_enabled": bool(repair),
+            # Empty on an observe-only sweep, by construction.
+            "actuated": list(actuated),
+        }
         return statuses
 
     @staticmethod
@@ -11023,18 +11197,216 @@ class InferenceGate:
             return result
         return None
 
-    def is_alive(self) -> bool:
-        """Check if the InferenceGate and MLX client are operational."""
+    def liveness_state(self) -> str:
+        """Name what "alive" is standing on, rather than collapsing it to a bool.
+
+        Three states, and the difference between the first two is the whole
+        point: ``backend_live`` means a worker process answered; ``deferred``
+        means no worker is running and policy says one will start on the first
+        request. Both used to return the same True from ``is_alive()``, so a
+        consumer could certify an operational inference gate while nothing was
+        accepting work. ``down`` is neither.
+        """
         if not self._initialized:
+            return "uninitialized"
+        try:
+            if (
+                self._mlx_client is not None
+                and hasattr(self._mlx_client, "is_alive")
+                and self._mlx_client.is_alive()
+            ):
+                return "backend_live"
+        except _INFERENCE_RECOVERABLE_ERRORS as exc:
+            _record_inference_degradation(
+                exc,
+                action="treated the primary client as not live during a liveness probe",
+            )
+        try:
+            if self._desktop_safe_boot_enabled() or self._boot_should_schedule_deferred_prewarm():
+                return "deferred"
+        except _INFERENCE_RECOVERABLE_ERRORS as exc:
+            # Fail CLOSED: an unreadable boot policy is not evidence that a
+            # worker will start on demand.
+            _record_inference_degradation(
+                exc,
+                action="treated deferred-start policy as unavailable during a liveness probe",
+            )
+        return "down"
+
+    def is_alive(self) -> bool:
+        """The gate can serve a request, possibly after a cold start.
+
+        This is deliberately weaker than :meth:`is_inference_ready`. It is true
+        under deferred/safe boot, when no worker is running yet. Anything that
+        needs a backend that can accept a generation NOW must call
+        ``is_inference_ready()``; anything that needs to tell the two apart
+        must call ``liveness_state()``. The runtime health contract
+        (``core/runtime/health_contract.py``) binds to the strict one.
+        """
+        return self.liveness_state() in {"backend_live", "deferred"}
+
+    @staticmethod
+    def _active_generation_is_progressing(lane: Any) -> bool:
+        """Treat bounded, observable foreground work as operational inference.
+
+        A client cannot advertise ``conversation_ready`` while it owns the
+        foreground generation lock. That is backpressure, not backend failure.
+        Health may accept the in-flight request only while its start and
+        token-progress timestamps prove it has not stalled.
+
+        Every number here comes off a payload another process wrote, so each
+        one goes through :func:`_finite` / :func:`_elapsed_since`: a NaN, an
+        infinity, or a timestamp from the future is missing evidence, not a
+        fresh age of zero, and a bad payload must return False rather than
+        raise out of a health endpoint.
+        """
+        if not isinstance(lane, dict):
             return False
-        # If MLX client is alive, we are operational
-        if self._mlx_client and hasattr(self._mlx_client, "is_alive") and self._mlx_client.is_alive():
-            return True
-        # If we are in safe boot or deferred mode, the MLX worker starts on first request,
-        # so InferenceGate itself is operational even if the worker isn't running yet.
-        if self._desktop_safe_boot_enabled() or self._boot_should_schedule_deferred_prewarm():
-            return True
-        return False
+        active = _finite(lane.get("active_generations"), 0.0) or 0.0
+        if active <= 0:
+            return False
+        if not bool(lane.get("foreground_owned", False)):
+            return False
+
+        now = time.time()
+        request_age_s = _elapsed_since(lane.get("current_request_started_at"), now=now)
+        if request_age_s is None:
+            return False
+
+        startup_grace_s = _health_window_s(
+            _FLAG_INFERENCE_ACTIVE_STARTUP_GRACE_S.value(), default=120.0, minimum=15.0
+        )
+        progress_stale_s = _health_window_s(
+            _FLAG_INFERENCE_ACTIVE_PROGRESS_STALE_S.value(), default=45.0, minimum=10.0
+        )
+
+        raw_token_progress = lane.get("last_token_progress_at")
+        if raw_token_progress not in (None, 0, 0.0, ""):
+            # The field is PRESENT. If it is also unusable — NaN, a future
+            # stamp, a string — the payload is corrupt, and falling back to the
+            # weaker request-age check would let a lane that just started a
+            # stalled generation read as progressing. Absent is "no token yet";
+            # present-and-unreadable is "do not trust this lane".
+            token_age_s = _elapsed_since(raw_token_progress, now=now)
+            if token_age_s is None:
+                return False
+            return token_age_s <= progress_stale_s
+        return request_age_s <= startup_grace_s
+
+    @staticmethod
+    def _client_backend_alive(client: Any) -> bool:
+        try:
+            return bool(
+                client is not None
+                and hasattr(client, "is_alive")
+                and client.is_alive()
+            )
+        except _INFERENCE_RECOVERABLE_ERRORS:
+            return False
+
+    def inference_readiness(self) -> tuple[bool, str]:
+        """Readiness with the reason attached, so a False can be diagnosed.
+
+        :meth:`is_inference_ready` is the boolean the health contract binds to;
+        this is the same decision with the evidence that produced it.
+        """
+        if not self._initialized:
+            return False, "gate_not_initialized"
+
+        # ── one proof-policy decision, read once ────────────────────────────
+        # It used to be read at entry and then read AGAIN further down. A
+        # config change or a transient error between the two reads mixed proof
+        # rules with ordinary rules inside a single answer.
+        proof_active = False
+        proof_tier = ""
+        proof_policy_unknown = False
+        try:
+            from core.runtime.proof_policy import proof_model_tier, proof_run_active
+
+            proof_active = bool(proof_run_active(origin="inference_gate_health"))
+            proof_tier = str(proof_model_tier() or "") if proof_active else ""
+        except _INFERENCE_RECOVERABLE_ERRORS as exc:
+            # Fail CLOSED: an unreadable proof policy must not silently grant
+            # the permissive readiness paths below.
+            proof_policy_unknown = True
+            _record_inference_degradation(
+                exc,
+                action="treated proof policy as unknown during inference readiness check",
+            )
+            logger.debug("Inference readiness proof-policy check unavailable: %s", exc)
+
+        # NOTE: deferred/safe-boot policy deliberately does NOT satisfy this
+        # contract. ``is_alive()`` covers "the gate can cold-start on demand";
+        # inference-READY requires a concrete live backend, proven below.
+        #
+        # There used to be a shortcut here: on a non-proof run, an alive
+        # primary process returned True before lane status was read at all. A
+        # wedged, still-loading, or non-conversation-capable worker satisfied
+        # readiness on process liveness alone. The lane read below is the same
+        # cost and strictly more evidence, so the shortcut is gone.
+        if self._client_backend_alive(self._mlx_client):
+            try:
+                lane = self.get_conversation_status()
+            except _INFERENCE_RECOVERABLE_ERRORS as exc:
+                _record_inference_degradation(
+                    exc,
+                    action="reported inference not ready after the lane status read failed",
+                )
+                return False, "primary_lane_status_unreadable"
+            if not isinstance(lane, dict):
+                return False, "primary_lane_status_malformed"
+            if bool(lane.get("conversation_ready", False)):
+                return True, "primary_conversation_ready"
+            if self._active_generation_is_progressing(lane):
+                return True, "primary_generation_progressing"
+
+        if proof_policy_unknown:
+            return False, "proof_policy_unknown"
+        if proof_active and proof_tier == "primary":
+            # A proof-primary run is answered by Cortex or not at all; a lower
+            # tier answering would silently change what the run measured.
+            return False, "proof_primary_requires_cortex"
+
+        try:
+            local_clients = self._iter_local_clients()
+        except _INFERENCE_RECOVERABLE_ERRORS as exc:
+            _record_inference_degradation(
+                exc,
+                action="reported inference not ready after enumerating local clients failed",
+            )
+            return False, "local_clients_unenumerable"
+
+        unproven: list[str] = []
+        for name, client in local_clients.items():
+            if not self._client_backend_alive(client):
+                continue
+            get_lane_status = getattr(client, "get_lane_status", None)
+            if not callable(get_lane_status):
+                # This used to return True. A client with no way to report its
+                # lane cannot show a loaded model, a queue, or a conversation
+                # contract — the ABSENCE of the check was being counted as a
+                # passed check. It is now unproven, and it is named.
+                unproven.append(str(name))
+                continue
+            try:
+                lane = get_lane_status()
+            except _INFERENCE_RECOVERABLE_ERRORS:
+                continue
+            if isinstance(lane, dict) and bool(lane.get("conversation_ready", False)):
+                return True, f"fallback_conversation_ready:{name}"
+            if self._active_generation_is_progressing(lane):
+                return True, f"fallback_generation_progressing:{name}"
+
+        if unproven:
+            _record_inference_degradation(
+                RuntimeError(
+                    "live local clients cannot report lane status: " + ", ".join(sorted(unproven))
+                ),
+                action="reported inference not ready because no live client could prove readiness",
+                extra={"unproven_clients": sorted(unproven)},
+            )
+            return False, "no_client_can_prove_readiness"
+        return False, "no_live_backend"
 
     def is_inference_ready(self) -> bool:
         """Return true only when a concrete inference backend is live now.
@@ -11044,133 +11416,8 @@ class InferenceGate:
         contract is stricter: healthy must mean an actual backend can accept a
         generation without relying on deferred startup. Proof-primary runs also
         require the primary Cortex lane specifically, not a lower-tier fallback.
+
+        Use :meth:`inference_readiness` when the reason matters.
         """
-        if not self._initialized:
-            return False
-
-        proof_active = False
-        proof_policy_unknown = False
-        try:
-            from core.runtime.proof_policy import proof_run_active
-
-            proof_active = bool(proof_run_active(origin="inference_gate_health"))
-        except (ImportError, RuntimeError, AttributeError) as exc:
-            # Fail CLOSED: an unreadable proof policy must not silently grant
-            # the permissive non-proof readiness shortcuts below.
-            proof_policy_unknown = True
-            _record_inference_degradation(
-                exc,
-                action="treated proof policy as unknown during inference readiness check",
-            )
-            logger.debug("Inference readiness proof-policy check unavailable: %s", exc)
-
-        # A resident backend is already stronger evidence than a deferred-boot
-        # policy probe.  Checking the policy first caused every health poll to
-        # rerun the RAM-admission calculation after Cortex was loaded, flooding
-        # the neural stream with "deferred prewarm refused" warnings even though
-        # there was nothing left to prewarm. Proof runs retain the stricter
-        # endpoint-specific checks below.
-        if not proof_active and not proof_policy_unknown:
-            try:
-                if (
-                    self._mlx_client is not None
-                    and hasattr(self._mlx_client, "is_alive")
-                    and self._mlx_client.is_alive()
-                ):
-                    return True
-            except _INFERENCE_RECOVERABLE_ERRORS:
-                pass
-
-        # NOTE: deferred/safe-boot policy deliberately does NOT satisfy this
-        # contract. ``is_alive()`` covers "the gate can cold-start on demand";
-        # inference-READY requires a concrete live backend, proven below.
-
-        def _client_alive(client: Any) -> bool:
-            try:
-                return bool(
-                    client is not None
-                    and hasattr(client, "is_alive")
-                    and client.is_alive()
-                )
-            except _INFERENCE_RECOVERABLE_ERRORS:
-                return False
-
-        def _active_generation_is_progressing(lane: Any) -> bool:
-            """Treat bounded, observable foreground work as operational inference.
-
-            A client cannot advertise ``conversation_ready`` while it owns the
-            foreground generation lock. That is backpressure, not backend
-            failure. Health may accept the in-flight request only while its
-            start and token-progress timestamps prove it has not stalled.
-            """
-            if not isinstance(lane, dict):
-                return False
-            if int(lane.get("active_generations", 0) or 0) <= 0:
-                return False
-            if not bool(lane.get("foreground_owned", False)):
-                return False
-
-            now = time.time()
-            request_started_at = float(lane.get("current_request_started_at", 0.0) or 0.0)
-            if request_started_at <= 0.0:
-                return False
-            request_age_s = max(0.0, now - request_started_at)
-            try:
-                startup_grace_s = max(
-                    15.0,
-                    float(
-                        _FLAG_INFERENCE_ACTIVE_STARTUP_GRACE_S.value()
-                        or 120.0
-                    ),
-                )
-                progress_stale_s = max(
-                    10.0,
-                    float(
-                        _FLAG_INFERENCE_ACTIVE_PROGRESS_STALE_S.value()
-                        or 45.0
-                    ),
-                )
-            except (TypeError, ValueError):
-                startup_grace_s = 120.0
-                progress_stale_s = 45.0
-            token_progress_at = float(lane.get("last_token_progress_at", 0.0) or 0.0)
-            if token_progress_at > 0.0:
-                return max(0.0, now - token_progress_at) <= progress_stale_s
-            return request_age_s <= startup_grace_s
-
-        primary_ready = _client_alive(self._mlx_client)
-        if primary_ready:
-            try:
-                lane = self.get_conversation_status()
-            except _INFERENCE_RECOVERABLE_ERRORS:
-                return False
-            if bool(lane.get("conversation_ready", False)) or _active_generation_is_progressing(lane):
-                return True
-
-        try:
-            from core.runtime.proof_policy import proof_model_tier, proof_run_active
-
-            if proof_run_active(origin="inference_gate_health") and proof_model_tier() == "primary":
-                return False
-        except _INFERENCE_RECOVERABLE_ERRORS:
-            return False
-
-        try:
-            local_clients = self._iter_local_clients()
-        except _INFERENCE_RECOVERABLE_ERRORS:
-            local_clients = {}
-        for client in local_clients.values():
-            if not _client_alive(client):
-                continue
-            get_lane_status = getattr(client, "get_lane_status", None)
-            if not callable(get_lane_status):
-                return True
-            try:
-                lane = get_lane_status()
-            except _INFERENCE_RECOVERABLE_ERRORS:
-                continue
-            if bool(isinstance(lane, dict) and lane.get("conversation_ready", False)):
-                return True
-            if _active_generation_is_progressing(lane):
-                return True
-        return False
+        ready, _reason = self.inference_readiness()
+        return ready
