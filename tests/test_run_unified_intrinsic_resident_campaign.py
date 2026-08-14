@@ -15,7 +15,9 @@ from tools.prepare_unified_intrinsic_resident_campaign import (
     _freeze_bootstrap_checkpoint,
     _profile_training,
     _training_cli,
+    _validate_task_depth_admission,
 )
+from core.learning.frontier_process_supervision import frontier_process_task_battery
 from tools.unified_intrinsic_checkpoint import resolve_checkpoint_generation
 from tools.unified_intrinsic_resident_identity import canonical_bytes, canonical_sha256
 
@@ -296,8 +298,25 @@ def test_process_neural_acquisition_trains_balanced_recurrent_tissue() -> None:
     assert training["process_query_gradient_scale"] == pytest.approx(0.01)
     assert training["state_warmup_steps"] == training["max_steps"] == 64
     assert training["eval_every"] == training["checkpoint_every"] == 8
+    assert training["task_depths"] == "3,4,5,6,9,10"
+    assert training["train_depths"] == "1,3,4,5,6,9,10"
     assert arguments[arguments.index("--process-family-batch-mode") + 1] == ("balanced_families")
     assert arguments[arguments.index("--process-query-gradient-scale") + 1] == "0.01"
+
+    families = tuple(training["families"].split(","))
+    tasks = frontier_process_task_battery(
+        families,
+        tuple(int(value) for value in training["frontier_difficulties"].split(",")),
+        1,
+        seed=int(training["seed"]),
+        registry_version=str(training["frontier_registry_version"]),
+    )
+    assert {task.depth for task in tasks} == {3, 4, 5, 6, 9, 10}
+    _validate_task_depth_admission(training, tasks)
+
+    stale = {**training, "train_depths": "1,3,4,5,6,8,10"}
+    with pytest.raises(RuntimeError, match="compiled_task_depth_not_train_admitted"):
+        _validate_task_depth_admission(stale, tasks)
 
 
 def test_process_family_acquisition_signed_config_is_controller_admitted(

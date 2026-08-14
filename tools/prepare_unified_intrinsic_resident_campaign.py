@@ -276,8 +276,8 @@ def _profile_training(profile: str) -> dict[str, Any]:
             ),
             "task_source": "frontier_process",
             "families": families,
-            "task_depths": "3,4,5,6,8,10",
-            "train_depths": "1,3,4,5,6,8,10",
+            "task_depths": "3,4,5,6,9,10",
+            "train_depths": "1,3,4,5,6,9,10",
             "heldout_depths": "12,16",
             "per_cell": per_cell,
             "holdout_per_cell": 3 if acquisition else 1,
@@ -434,6 +434,21 @@ def _training_cli(training: Mapping[str, Any]) -> list[str]:
     for name, flag in flag_names.items():
         arguments.extend((flag, str(training[name])))
     return arguments
+
+
+def _validate_task_depth_admission(
+    training: Mapping[str, Any],
+    tasks: Sequence[Any],
+) -> None:
+    """Keep the signed recurrence geometry aligned with compiled programs."""
+
+    observed = {int(task.depth) for task in tasks}
+    declared = {int(value) for value in str(training["task_depths"]).split(",")}
+    admitted = {int(value) for value in str(training["train_depths"]).split(",")}
+    if not observed or not observed.issubset(admitted):
+        _fail("compiled_task_depth_not_train_admitted")
+    if training["task_source"] == "frontier_process" and observed != declared:
+        _fail("frontier_task_depth_profile_drift")
 
 
 def _freeze_bootstrap_checkpoint(
@@ -593,6 +608,7 @@ def _freeze_campaign(
             excluded_prompts=tuple(task.prompt for task in train_tasks),
             excluded_task_ids=tuple(task.task_id for task in train_tasks),
         )
+    _validate_task_depth_admission(training, (*train_tasks, *holdout_tasks))
     random.Random(int(training["seed"])).shuffle(train_tasks)
     dataset_identity = freeze_source_dataset(
         inputs / SOURCE_DATASET_FILENAME,
