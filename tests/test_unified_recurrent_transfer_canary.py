@@ -45,6 +45,7 @@ def _candidates() -> list[dict[str, object]]:
             "parent_typed": index in {0, 1, 2},
             "treatment_typed": index in {0, 1, 2, 3, 4},
             "action_lesion": index in {0, 1, 2},
+            "process_tape_lesion": index in {0, 1, 2},
         }
         for arm in canary.ARMS:
             rows.append(
@@ -74,6 +75,7 @@ def test_transfer_canary_supports_gain_with_causal_lesion() -> None:
         "parent_typed": 3,
         "treatment_typed": 5,
         "action_lesion": 3,
+        "process_tape_lesion": 3,
     }
     assert canary.transfer_canary_result_errors(result, plan=plan) == []
 

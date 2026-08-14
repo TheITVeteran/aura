@@ -143,8 +143,9 @@ def _terminal_fixture(
         lambda *_args, **_kwargs: SimpleNamespace(receipt=selected_receipt),
     )
     admission_body = {
-        "schema": "aura.unified_intrinsic.answer_bridge_admission.v4",
+        "schema": "aura.unified_intrinsic.answer_bridge_admission.v5",
         "answer_digit_pointer_enabled": False,
+        "process_tape_enabled": True,
         "admitted": True,
         "exact": 1,
         "tasks": 1,
@@ -161,8 +162,15 @@ def _terminal_fixture(
         "identity": {
             "dataset": {"holdout_count": 1},
             "answer_bridge_supervision": {
-                "schema": "aura.unified_intrinsic.answer_bridge_supervision.v1",
+                "schema": "aura.unified_intrinsic.answer_bridge_supervision.v2",
                 "answer_digit_pointer_enabled": False,
+                "process_tape": {
+                    "schema": "aura.unified_intrinsic.process_tape.v1",
+                    "contents": ["typed_action", "committed_state"],
+                    "entries_per_live_step": 13,
+                    "terminal_stutter_entries_masked": True,
+                    "private_answer_exposed": False,
+                },
             },
         },
     }
@@ -212,8 +220,9 @@ def test_prepare_binds_terminal_checkpoint_and_frozen_evaluator(
     assert plan["scientific"]["checkpoint"]["answer_bridge_admission"] == {
         "admission_sha256": launcher.canonical_sha256(
             {
-                "schema": "aura.unified_intrinsic.answer_bridge_admission.v4",
+                "schema": "aura.unified_intrinsic.answer_bridge_admission.v5",
                 "answer_digit_pointer_enabled": False,
+                "process_tape_enabled": True,
                 "admitted": True,
                 "exact": 1,
                 "tasks": 1,
@@ -222,6 +231,7 @@ def test_prepare_binds_terminal_checkpoint_and_frozen_evaluator(
         "tasks": 1,
         "exact": 1,
         "answer_digit_pointer_enabled": False,
+        "process_tape_enabled": True,
     }
     assert plan["command"][0] == config["runtime"]["interpreter"]["executable"]
     assert plan["scientific"]["evaluator_source_root"] == config["source"]["git"]["root"]

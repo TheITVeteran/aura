@@ -923,7 +923,8 @@ def test_answer_bridge_admission_requires_exact_autonomous_emission_per_cell(
 
     assert report["admitted"] is True
     assert report["exact_accuracy"] == 1.0
-    assert report["schema"] == "aura.unified_intrinsic.answer_bridge_admission.v4"
+    assert report["schema"] == "aura.unified_intrinsic.answer_bridge_admission.v5"
+    assert report["process_tape_enabled"] is True
     assert report["answer_digit_pointer_enabled"] is False
     assert pointer_policies == [False] * 9
     assert report["cells"] == 9

@@ -204,7 +204,12 @@ def _selected_checkpoint(
             supervision_identity.get("answer_digit_pointer_enabled")
             if isinstance(supervision_identity, dict)
             and supervision_identity.get("schema")
-            == "aura.unified_intrinsic.answer_bridge_supervision.v1"
+            == "aura.unified_intrinsic.answer_bridge_supervision.v2"
+            else None
+        )
+        process_tape_identity = (
+            supervision_identity.get("process_tape")
+            if isinstance(supervision_identity, dict)
             else None
         )
         expected_tasks = (
@@ -222,11 +227,21 @@ def _selected_checkpoint(
             or persisted.get("receipt_sha256") != training_receipt.get("receipt_sha256")
             or persisted.get("receipt_sha256") != canonical_sha256(persisted_body)
             or not isinstance(admission, dict)
-            or admission.get("schema") != "aura.unified_intrinsic.answer_bridge_admission.v4"
+            or admission.get("schema") != "aura.unified_intrinsic.answer_bridge_admission.v5"
             or admission.get("admission_sha256") != canonical_sha256(admission_body)
             or type(expected_pointer_policy) is not bool
             or admission.get("answer_digit_pointer_enabled")
             is not expected_pointer_policy
+            or admission.get("process_tape_enabled") is not True
+            or not isinstance(process_tape_identity, dict)
+            or process_tape_identity
+            != {
+                "schema": "aura.unified_intrinsic.process_tape.v1",
+                "contents": ["typed_action", "committed_state"],
+                "entries_per_live_step": 13,
+                "terminal_stutter_entries_masked": True,
+                "private_answer_exposed": False,
+            }
             or admission.get("admitted") is not True
             or admission.get("exact") != admission.get("tasks")
             or type(admission.get("tasks")) is not int
@@ -253,6 +268,7 @@ def _selected_checkpoint(
             "answer_digit_pointer_enabled": admission[
                 "answer_digit_pointer_enabled"
             ],
+            "process_tape_enabled": admission["process_tape_enabled"],
         }
     return selected_checkpoint
 

@@ -9,13 +9,14 @@ from typing import Any, Final
 
 from core.brain.llm.latent_cortex.frontier_tasks import FRONTIER_DOMAINS
 
-PLAN_SCHEMA: Final = "aura.unified_intrinsic.transfer_canary_plan.v1"
-RESULT_SCHEMA: Final = "aura.unified_intrinsic.transfer_canary_result.v1"
+PLAN_SCHEMA: Final = "aura.unified_intrinsic.transfer_canary_plan.v2"
+RESULT_SCHEMA: Final = "aura.unified_intrinsic.transfer_canary_result.v2"
 ARMS: Final = (
     "base_greedy",
     "parent_typed",
     "treatment_typed",
     "action_lesion",
+    "process_tape_lesion",
 )
 SUPPORTED: Final = "broad_process_transfer_canary_supported"
 REFUTED: Final = "broad_process_transfer_canary_refuted"
@@ -23,8 +24,9 @@ INCONCLUSIVE: Final = "broad_process_transfer_canary_inconclusive"
 CLAIM_BOUNDARY: Final = (
     "A supported result is exploratory task-disjoint evidence that broad-process "
     "adaptation improves exact correctness over the frozen imported parent and "
-    "base model, and that removing the typed action channel removes at least one "
-    "gain. It is not powered replication, resident-32B evidence, serving "
+    "base model, and that removing either the typed action channel or recurrent "
+    "process tape removes at least one gain. It is not powered replication, "
+    "resident-32B evidence, serving "
     "authority, static fusion, frontier performance, or a WOW Signal."
 )
 
@@ -89,6 +91,8 @@ def seal_transfer_canary_plan(
         "tasks": [dict(task) for task in tasks],
         "source_binding": dict(source_binding),
         "typed_state_slots_enabled": True,
+        "treatment_process_tape_enabled": True,
+        "parent_uses_frozen_legacy_final_state_bridge": True,
         "terminal_grammar_enabled": False,
         "answer_digit_pointer_enabled": False,
         "runtime_teacher_available": False,
@@ -119,6 +123,8 @@ def transfer_canary_plan_errors(value: Any) -> list[str]:
         "tasks",
         "source_binding",
         "typed_state_slots_enabled",
+        "treatment_process_tape_enabled",
+        "parent_uses_frozen_legacy_final_state_bridge",
         "terminal_grammar_enabled",
         "answer_digit_pointer_enabled",
         "runtime_teacher_available",
@@ -201,6 +207,8 @@ def transfer_canary_plan_errors(value: Any) -> list[str]:
         errors.append("transfer_canary_source_binding_invalid")
     if (
         value.get("typed_state_slots_enabled") is not True
+        or value.get("treatment_process_tape_enabled") is not True
+        or value.get("parent_uses_frozen_legacy_final_state_bridge") is not True
         or any(
             value.get(name) is not False
             for name in (
@@ -282,6 +290,7 @@ def seal_transfer_canary_result(
     parent_effect = transitions("parent_typed", "treatment_typed")
     base_effect = transitions("base_greedy", "treatment_typed")
     lesion_effect = transitions("action_lesion", "treatment_typed")
+    tape_lesion_effect = transitions("process_tape_lesion", "treatment_typed")
     task_count = len(task_rows)
     terminal_complete = complete and all(
         observed[key]["stopped"] is True for key in expected
@@ -303,6 +312,11 @@ def seal_transfer_canary_result(
             and lesion_effect["wrong_to_right"] > 0
             and lesion_effect["right_to_wrong"] == 0
         ),
+        "process_tape_lesion_removes_treatment_gain": (
+            counts["treatment_typed"] > counts["process_tape_lesion"]
+            and tape_lesion_effect["wrong_to_right"] > 0
+            and tape_lesion_effect["right_to_wrong"] == 0
+        ),
     }
     conclusive = (
         checks["complete_candidate_matrix"]
@@ -321,6 +335,7 @@ def seal_transfer_canary_result(
             "parent_to_treatment": parent_effect,
             "base_to_treatment": base_effect,
             "lesion_to_treatment": lesion_effect,
+            "tape_lesion_to_treatment": tape_lesion_effect,
         },
         "checks": checks,
         "candidate_errors": sorted(candidate_errors),

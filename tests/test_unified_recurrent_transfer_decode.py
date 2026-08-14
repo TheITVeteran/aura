@@ -60,6 +60,7 @@ def test_typed_process_decode_uses_slots_without_answer_helpers(
     assert all(row["state_slot_start"] == 3 for row in calls)
     assert all(row["answer_digit_pointer_enabled"] is False for row in calls)
     assert all(row["typed_action_lesion"] is True for row in calls)
+    assert all(row["process_tape_lesion"] is False for row in calls)
 
 
 def test_typed_process_decode_rejects_untyped_or_invalid_dimensions() -> None:

@@ -1452,7 +1452,8 @@ def _evaluate_answer_bridge_admission(
     matching = sum(row["matching_tokens"] for row in rows)
     token_count = sum(row["token_count"] for row in rows)
     body = {
-        "schema": "aura.unified_intrinsic.answer_bridge_admission.v4",
+        "schema": "aura.unified_intrinsic.answer_bridge_admission.v5",
+        "process_tape_enabled": True,
         "depth": max(spec.train_depths),
         "answer_digit_pointer_enabled": answer_digit_pointer_enabled,
         "cells": len(cells),
@@ -2967,7 +2968,7 @@ def main() -> int:
         )
         training_families = sorted({str(task.family) for task in train_tasks})
         answer_bridge_supervision = {
-            "schema": "aura.unified_intrinsic.answer_bridge_supervision.v1",
+            "schema": "aura.unified_intrinsic.answer_bridge_supervision.v2",
             "semantic_cross_entropy_families": training_families,
             "role_place_binding_families": sorted(
                 family for family in training_families if family in pointer_bound_families
@@ -2977,6 +2978,13 @@ def main() -> int:
             ),
             "unsupported_pointer_targets_are_fabricated": False,
             "answer_digit_pointer_enabled": args.task_source != "frontier_process",
+            "process_tape": {
+                "schema": "aura.unified_intrinsic.process_tape.v1",
+                "contents": ["typed_action", "committed_state"],
+                "entries_per_live_step": len(ACTION_SLOT_NAMES) + len(STATE_SLOT_NAMES),
+                "terminal_stutter_entries_masked": True,
+                "private_answer_exposed": False,
+            },
         }
         wiring = _configure_window_tissue(
             model,

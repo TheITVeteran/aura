@@ -231,6 +231,10 @@ def _run_loaded(
                     eos_token_id=tokenizer.eos_token_id,
                     max_tokens=maximum_tokens,
                     typed_action_lesion=arm == "action_lesion",
+                    process_tape_lesion=arm in {
+                        "parent_typed",
+                        "process_tape_lesion",
+                    },
                     completion_check=complete,
                     progress=progress,
                 )

@@ -166,6 +166,8 @@ class UnifiedRecurrenceTelemetry:
     halt_reason: str
     memory_retention: dict[str, float] | None
     semantic_residuals: tuple[float, ...]
+    process_tape_entries: int
+    process_tape_active_entries: int
     controller_sha256: str
 
     def receipt(self) -> dict[str, Any]:
@@ -180,6 +182,8 @@ class UnifiedRecurrenceTelemetry:
             "halt_reason": self.halt_reason,
             "memory_retention": self.memory_retention,
             "semantic_residuals": list(self.semantic_residuals),
+            "process_tape_entries": self.process_tape_entries,
+            "process_tape_active_entries": self.process_tape_active_entries,
             "controller_sha256": self.controller_sha256,
             "teacher_available": False,
             "solver_available": False,
@@ -608,6 +612,8 @@ class UnifiedRecurrentController(nn.Module):
         *,
         state_slot_start: int,
         state_probabilities: Any | None = None,
+        process_memory: Any | None = None,
+        process_memory_mask: Any | None = None,
         role_logit_trajectory: list[Any] | None = None,
         place_logit_trajectory: list[Any] | None = None,
         binding_feature_trajectory: list[tuple[Any, Any, Any]] | None = None,
@@ -625,15 +631,34 @@ class UnifiedRecurrentController(nn.Module):
             raise ValueError("state-to-answer bridge layout differs")
         answer = candidate[:, answer_start:, :].astype(mx.float32)
         state = committed_state[:, state_slot_start:stop, :].astype(mx.float32)
+        memory = state if process_memory is None else process_memory.astype(mx.float32)
+        if (
+            len(memory.shape) != 3
+            or int(memory.shape[0]) != int(answer.shape[0])
+            or int(memory.shape[-1]) != self.config.hidden_size
+            or int(memory.shape[1]) < self.config.state_slots
+        ):
+            raise ValueError("answer process-memory layout differs")
+        if process_memory_mask is not None and (
+            len(process_memory_mask.shape) != 2
+            or process_memory_mask.shape != memory.shape[:2]
+        ):
+            raise ValueError("answer process-memory mask differs")
         query = answer @ self.answer_query
-        key = state @ self.answer_key
-        value = state @ self.answer_value
-        attention = mx.softmax(
-            mx.einsum("bar,bsr->bas", query, key)
-            / math.sqrt(self.config.correction_rank),
-            axis=-1,
+        key = memory @ self.answer_key
+        value = memory @ self.answer_value
+        attention_logits = (
+            mx.einsum("bar,bmr->bam", query, key)
+            / math.sqrt(self.config.correction_rank)
         )
-        context = mx.einsum("bas,bsr->bar", attention, value)
+        if process_memory_mask is not None:
+            attention_logits = mx.where(
+                process_memory_mask[:, None, :],
+                attention_logits,
+                mx.array(-1e9, dtype=attention_logits.dtype),
+            )
+        attention = mx.softmax(attention_logits, axis=-1)
+        context = mx.einsum("bam,bmr->bar", attention, value)
         delta = context @ self.answer_output
         # State is useful at value-bearing positions and harmful when a frozen
         # language manifold is already emitting syntax or EOS. A global gate
@@ -1657,7 +1682,7 @@ class UnifiedRecurrentController(nn.Module):
             ),
             "transformer_answer_passes_per_state": 1,
             "state_to_answer_bridge": (
-                "role_and_digit_place_conditioned_pointer_over_frozen_readout"
+                "masked_action_state_process_tape_attention_over_frozen_readout"
             ),
             "parameter_sha256": self.parameter_sha256(),
         }
@@ -1688,6 +1713,7 @@ def unified_recurrent_hidden_states(
     initial_state_teacher_values: Sequence[int] | None = None,
     state_teacher_forcing_probability: float = 0.0,
     typed_action_lesion: bool = False,
+    process_tape_lesion: bool = False,
     caches: dict[str, Any] | None = None,
 ) -> tuple[Any, list[Any], UnifiedRecurrenceTelemetry]:
     """Run all Level-3 control mechanisms on one transformer trajectory."""
@@ -1698,6 +1724,7 @@ def unified_recurrent_hidden_states(
         type(adaptive_halt) is not bool
         or type(soft_memory_writes) is not bool
         or type(typed_action_lesion) is not bool
+        or type(process_tape_lesion) is not bool
     ):
         raise TypeError("unified recurrence mode flags must be bools")
     if adaptive_halt and controller.config.minimum_iterations > plan.iterations:
@@ -1782,6 +1809,8 @@ def unified_recurrent_hidden_states(
     halt_probabilities: list[float] = []
     memory_write_means: list[float] = []
     transport_gates: list[float] = []
+    process_tape: list[Any] = []
+    process_tape_masks: list[Any] = []
     window = layers[plan.prelude_end : plan.coda_start]
     problem_evidence: Any | None = None
     state_probabilities: Any | None = None
@@ -1919,6 +1948,36 @@ def unified_recurrent_hidden_states(
                     probabilities=next_state_probabilities,
                 )
                 state_probabilities = next_state_probabilities
+                active = (
+                    mx.ones((int(hidden.shape[0]),), dtype=mx.bool_)
+                    if prior_terminal_mask is None
+                    else ~prior_terminal_mask
+                )
+                if not process_tape_lesion:
+                    process_tape.extend(
+                        (
+                            action_state,
+                            hidden[:, state_slot_start:state_stop, :],
+                        )
+                    )
+                    process_tape_masks.extend(
+                        (
+                            mx.broadcast_to(
+                                active[:, None],
+                                (
+                                    int(hidden.shape[0]),
+                                    controller.config.action_slots,
+                                ),
+                            ),
+                            mx.broadcast_to(
+                                active[:, None],
+                                (
+                                    int(hidden.shape[0]),
+                                    controller.config.state_slots,
+                                ),
+                            ),
+                        )
+                    )
                 if state_probability_trajectory is not None:
                     state_probability_trajectory.append(state_probabilities)
                 # State recurrence is cheap and explicit.  The resident
@@ -1931,6 +1990,16 @@ def unified_recurrent_hidden_states(
                     hidden,
                     state_slot_start=state_slot_start,
                     state_probabilities=state_probabilities,
+                    process_memory=(
+                        mx.concatenate(process_tape, axis=1)
+                        if process_tape
+                        else None
+                    ),
+                    process_memory_mask=(
+                        mx.concatenate(process_tape_masks, axis=1)
+                        if process_tape_masks
+                        else None
+                    ),
                     role_logit_trajectory=answer_role_logit_trajectory,
                     place_logit_trajectory=answer_place_logit_trajectory,
                     binding_feature_trajectory=answer_binding_feature_trajectory,
@@ -2073,6 +2142,12 @@ def unified_recurrent_hidden_states(
         halt_reason=halt_reason,
         memory_retention=retention,
         semantic_residuals=residuals,
+        process_tape_entries=sum(int(value.shape[1]) for value in process_tape),
+        process_tape_active_entries=(
+            int(mx.sum(mx.concatenate(process_tape_masks, axis=1)).item())
+            if process_tape_masks
+            else 0
+        ),
         controller_sha256=controller.parameter_sha256(),
     )
     return final, trajectory, telemetry

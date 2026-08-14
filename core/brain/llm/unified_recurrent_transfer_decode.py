@@ -64,6 +64,7 @@ def decode_typed_process_tokens(
     eos_token_id: int | None,
     max_tokens: int,
     typed_action_lesion: bool = False,
+    process_tape_lesion: bool = False,
     completion_check: Callable[[tuple[int, ...]], bool] | None = None,
     progress: Callable[[int], None] | None = None,
 ) -> tuple[tuple[int, ...], bool, int]:
@@ -84,6 +85,7 @@ def decode_typed_process_tokens(
         or type(max_tokens) is not int
         or max_tokens < 1
         or type(typed_action_lesion) is not bool
+        or type(process_tape_lesion) is not bool
     ):
         raise ValueError("typed transfer decode dimensions are invalid")
     prompt_count = len(public_tokens)
@@ -105,6 +107,7 @@ def decode_typed_process_tokens(
                 state_slot_start=prompt_count,
                 answer_digit_pointer_enabled=False,
                 typed_action_lesion=typed_action_lesion,
+                process_tape_lesion=process_tape_lesion,
             )
             token_id = int(mx.argmax(logits[0, -1]).item())
             generated.append(token_id)

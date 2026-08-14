@@ -104,7 +104,7 @@ def test_runner_executes_parent_treatment_and_real_action_lesion(
         "recurrence_depth": 4,
         "tasks": [{"task_id": task.task_id} for task in tasks],
     }
-    typed_calls: list[tuple[str, bool]] = []
+    typed_calls: list[tuple[str, bool, bool]] = []
     monkeypatch.setattr(runner, "_contract_complete", lambda *_args: True)
     monkeypatch.setattr(
         runner,
@@ -114,7 +114,11 @@ def test_runner_executes_parent_treatment_and_real_action_lesion(
 
     def typed(_model, controller, _spec, _tokens, **kwargs):
         typed_calls.append(
-            (controller.parameter_sha256(), kwargs["typed_action_lesion"])
+            (
+                controller.parameter_sha256(),
+                kwargs["typed_action_lesion"],
+                kwargs["process_tape_lesion"],
+            )
         )
         return (8,), True, 2
 
@@ -135,8 +139,17 @@ def test_runner_executes_parent_treatment_and_real_action_lesion(
         treatment_controller=treatment,
     )
 
-    assert len(candidates) == len(FRONTIER_DOMAINS) * 4
+    assert len(candidates) == len(FRONTIER_DOMAINS) * 5
     assert verdict == {"supported": True, "rows": len(candidates)}
-    assert typed_calls.count((parent.parameter_sha256(), False)) == len(FRONTIER_DOMAINS)
-    assert typed_calls.count((treatment.parameter_sha256(), False)) == len(FRONTIER_DOMAINS)
-    assert typed_calls.count((treatment.parameter_sha256(), True)) == len(FRONTIER_DOMAINS)
+    assert typed_calls.count((parent.parameter_sha256(), False, True)) == len(
+        FRONTIER_DOMAINS
+    )
+    assert typed_calls.count((treatment.parameter_sha256(), False, False)) == len(
+        FRONTIER_DOMAINS
+    )
+    assert typed_calls.count((treatment.parameter_sha256(), True, False)) == len(
+        FRONTIER_DOMAINS
+    )
+    assert typed_calls.count((treatment.parameter_sha256(), False, True)) == len(
+        FRONTIER_DOMAINS
+    )

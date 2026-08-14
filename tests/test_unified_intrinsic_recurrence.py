@@ -145,7 +145,7 @@ def test_typed_state_decision_is_committed_as_next_step_input() -> None:
     assert receipt["transformer_answer_passes_per_state"] == 1
     assert (
         receipt["state_to_answer_bridge"]
-        == "role_and_digit_place_conditioned_pointer_over_frozen_readout"
+        == "masked_action_state_process_tape_attention_over_frozen_readout"
     )
     assert receipt["terminal_decode_semantics"] == "first_terminal_state_preserved"
 
@@ -217,6 +217,77 @@ def test_neural_answer_bridge_reads_state_without_rewriting_public_prefix() -> N
     assert bool(mx.array_equal(baseline[:, :8, :], changed[:, :8, :]))
     assert not bool(mx.array_equal(baseline[:, 8:, :], changed[:, 8:, :]))
     assert controller.answer_gate_query.shape == (64, 1)
+
+
+def test_neural_answer_bridge_reads_only_active_process_tape_entries() -> None:
+    controller = _controller()
+    candidate = mx.zeros((1, 12, 64), dtype=mx.float32)
+    committed = mx.zeros((1, 12, 64), dtype=mx.float32)
+    baseline_memory = mx.zeros((1, 10, 64), dtype=mx.float32)
+    changed_memory = baseline_memory.at[:, 5:, :].add(100.0)
+    mask = mx.array([[True] * 5 + [False] * 5])
+
+    baseline = controller.attend_answer_to_state(
+        candidate,
+        committed,
+        state_slot_start=4,
+        process_memory=baseline_memory,
+        process_memory_mask=mask,
+    )
+    masked = controller.attend_answer_to_state(
+        candidate,
+        committed,
+        state_slot_start=4,
+        process_memory=changed_memory,
+        process_memory_mask=mask,
+    )
+    unmasked = controller.attend_answer_to_state(
+        candidate,
+        committed,
+        state_slot_start=4,
+        process_memory=changed_memory,
+        process_memory_mask=mx.ones((1, 10), dtype=mx.bool_),
+    )
+
+    assert bool(mx.array_equal(baseline, masked))
+    assert not bool(mx.array_equal(baseline[:, 8:, :], unmasked[:, 8:, :]))
+
+
+def test_process_tape_records_every_live_action_and_state_and_can_be_lesioned() -> None:
+    model = _model()
+    controller = _controller()
+    controller.state_transition_bias = mx.full((5, 33), -100.0)
+    for slot in range(5):
+        controller.state_transition_bias = (
+            controller.state_transition_bias.at[slot, 0].add(200.0)
+        )
+    plan = RecurrentDepthPlan(2, 6, iterations=3)
+
+    _final, _trajectory, intact = unified_recurrent_hidden_states(
+        model,
+        TOKENS,
+        plan,
+        controller,
+        state_slot_start=4,
+        initial_state_teacher_values=(0, 0, 0, 0, 0),
+        state_teacher_forcing_probability=1.0,
+    )
+    _final, _trajectory, lesioned = unified_recurrent_hidden_states(
+        model,
+        TOKENS,
+        plan,
+        controller,
+        state_slot_start=4,
+        initial_state_teacher_values=(0, 0, 0, 0, 0),
+        state_teacher_forcing_probability=1.0,
+        process_tape_lesion=True,
+    )
+
+    entries_per_step = controller.config.action_slots + controller.config.state_slots
+    assert intact.process_tape_entries == entries_per_step * plan.iterations
+    assert intact.process_tape_active_entries == intact.process_tape_entries
+    assert lesioned.process_tape_entries == 0
+    assert lesioned.process_tape_active_entries == 0
 
 
 def test_answer_digit_place_reads_the_selected_terminal_register() -> None:
