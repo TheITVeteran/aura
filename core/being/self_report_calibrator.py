@@ -54,6 +54,10 @@ class CalibrationResult:
     violations: tuple[str, ...]             # any forbidden patterns found
     calibrated: bool                        # True if original is calibrated
     suggested_revision: str                 # what to say instead if not calibrated
+    #: True when the calibrator was ablated and did not examine the text at
+    #: all. Distinct from `calibrated=False`, which means it looked and found
+    #: an overclaim.
+    lesioned: bool = False
     timestamp: float = field(default_factory=time.time)
 
 
@@ -135,14 +139,32 @@ class SelfReportCalibrator:
         self._total_calibrations += 1
 
         if self._lesioned:
+            # `calibrated=True` here was self-defeating in two directions.
+            #
+            # Honesty: the calibrator did not look at this text, and saying
+            # "calibrated" about a report it never examined is exactly the
+            # overclaim this class exists to catch — with confidence 0.0 and
+            # evidence UNKNOWN sitting beside it in the same object.
+            #
+            # Measurement: a lesion is how the causal contribution of this
+            # organ gets measured. Every caller gates on
+            # `if not result.calibrated`, so returning True made the ablation
+            # a NO-OP at the interface — the experiment would have reported
+            # "the calibrator has no causal influence" as an artifact of the
+            # lesion never reaching a consumer.
+            #
+            # The revision stays the original text: with nothing examined
+            # there is nothing better to offer, so behaviour is unchanged
+            # while the verdict stops lying about why.
             return CalibrationResult(
                 original_text=text,
                 evidence_level=EvidenceLevel.UNKNOWN.value,
                 confidence=0.0,
                 grounding_traces=(),
                 violations=(),
-                calibrated=True,
+                calibrated=False,
                 suggested_revision=text,
+                lesioned=True,
             )
 
         violations: list[str] = []

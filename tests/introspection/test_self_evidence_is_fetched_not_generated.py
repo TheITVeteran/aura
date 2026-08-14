@@ -637,13 +637,40 @@ def test_the_recorded_answer_is_applied_around_the_whole_turn() -> None:
 
     api_chat wraps every one of those branches.
     """
+    import ast
     import inspect
+    import textwrap
 
     from interface.routes import chat
 
-    source = inspect.getsource(chat.api_chat)
+    # Asserted STRUCTURALLY, not as a source substring. The previous version
+    # matched the literal text
+    # "_apply_recorded_answer(body.message, await _api_chat_turn(" and broke
+    # the moment the call was wrapped across three lines — a formatter could
+    # turn this red while the property it guards was completely intact, and
+    # a real regression could hide behind a reflow.
+    tree = ast.parse(textwrap.dedent(inspect.getsource(chat.api_chat)))
 
-    assert "_apply_recorded_answer(body.message, await _api_chat_turn(" in source
+    def _wraps_the_whole_turn(node: ast.AST) -> bool:
+        if not isinstance(node, ast.Call):
+            return False
+        if getattr(node.func, "id", None) != "_apply_recorded_answer":
+            return False
+        # The turn must be INSIDE the call — that is what "around the whole
+        # turn" means. Passing an already-awaited result computed earlier
+        # would satisfy a substring check and not this one.
+        return any(
+            isinstance(inner, ast.Call)
+            and getattr(inner.func, "id", None) == "_api_chat_turn"
+            for arg in node.args
+            for inner in ast.walk(arg)
+        )
+
+    assert any(_wraps_the_whole_turn(node) for node in ast.walk(tree)), (
+        "api_chat no longer applies the recorded answer around the whole "
+        "_api_chat_turn call, so the failure branches that return hundreds "
+        "of lines before _final_reply are unwrapped again"
+    )
 
 
 def test_the_wrapper_leaves_an_unrelated_reply_alone() -> None:

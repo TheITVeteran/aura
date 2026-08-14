@@ -116,7 +116,22 @@ class SelfModel:
                     if isinstance(value, str) and value and not is_valid_standing_objective(value):
                         closure[key] = ""
             except (ImportError, AttributeError, RecursionError) as exc:
-                logger.debug("Self-model belief sanitation unavailable: %s", exc)
+                # The validator that decides whether a standing objective is
+                # usable could not run, so validity is UNKNOWN — and these
+                # two keys drive what she pursues next. Leaving them in place
+                # acts on an objective nothing confirmed; clearing them costs
+                # one re-derivation. Only a debug line before this, so an
+                # unsanitised objective looked identical to a clean one.
+                record_degradation(
+                    "self_model",
+                    exc,
+                    severity="warning",
+                    action="cleared standing objectives because the validator was unavailable",
+                    extra={"keys": ["selected_objective", "background_commitment"]},
+                )
+                for key in ("selected_objective", "background_commitment"):
+                    if isinstance(closure.get(key), str) and closure.get(key):
+                        closure[key] = ""
         return beliefs
 
     @effect_sink("belief.self_model_persist", allowed_domains=("memory_write",))
@@ -374,8 +389,21 @@ class SelfModel:
             else:
                 note = reviewed.reason
         except (ImportError, AttributeError, RuntimeError) as exc:
-            record_degradation('self_model', exc)
-            logger.debug("BeliefAuthority review skipped: %s", exc)
+            record_degradation(
+                'self_model',
+                exc,
+                severity="warning",
+                action="carried an unreviewed belief key/value to the update gate",
+                extra={"belief_key": str(key)[:120]},
+            )
+            logger.warning("BeliefAuthority review skipped: %s", exc)
+            # Mark it in the DATA, not only in the log. The note travels with
+            # the update into the decision and onto whatever persists it, so
+            # a belief that was never reviewed can be told apart later from
+            # one that passed review. A log line cannot be queried by the
+            # thing that stored the belief.
+            marker = "belief_authority_unavailable"
+            note = f"{note} | {marker}" if note else marker
 
         approved, reason, gate_failed, decision = self._unpack_belief_update_result(
             self._belief_update_decision(key, value, note)
