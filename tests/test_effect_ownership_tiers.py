@@ -109,3 +109,61 @@ def test_the_gateways_themselves_are_canonical_owners():
         assert not raw_debt, (
             f"{path} is the write gateway and its own writes are counted as debt"
         )
+
+
+# --------------------------------------------------------------------------
+# The payable third of the raw tier
+# --------------------------------------------------------------------------
+
+#: unlink/remove/rename/replace calls, which durable_unlink and durable_replace
+#: could take ownership of. Measured at the time of splitting; only falls.
+PAYABLE_CEILING = 184
+
+
+def _payable() -> int:
+    from tools.lint_governance_cli import GATEWAY_CATEGORIES, PAYABLE_PRIMITIVES
+
+    buckets = json.loads(BASELINE.read_text(encoding="utf-8"))["buckets"]
+    return sum(
+        b["count"]
+        for b in buckets
+        if not b["canonical_owner"]
+        and b["category"] not in GATEWAY_CATEGORIES
+        and any(token in b["callee"] for token in PAYABLE_PRIMITIVES)
+    )
+
+
+def test_the_payable_raw_debt_only_falls():
+    assert _payable() <= PAYABLE_CEILING
+
+
+def test_every_payable_primitive_has_a_governed_equivalent():
+    """The split is only honest if "payable" means a migration target exists.
+
+    Otherwise it is a way to make the number look smaller by declaring the
+    inconvenient part unpayable.
+    """
+    writer = (ROOT / "core" / "runtime" / "atomic_writer.py").read_text(encoding="utf-8")
+    assert "def durable_unlink(" in writer
+    assert "def durable_replace(" in writer
+
+
+def test_mkdir_is_not_counted_as_payable():
+    """It is over half the raw tier and has no matching governed primitive.
+
+    ensure_directory creates a PRIVATE 0o700 directory and requires an active
+    governance scope, so substituting it for `path.mkdir(parents=True,
+    exist_ok=True)` would tighten permissions at 450+ sites and fail wherever
+    no governed scope is open. Counting those as migratable would imply a
+    migration that breaks the system.
+    """
+    from tools.lint_governance_cli import PAYABLE_PRIMITIVES
+
+    assert not any("mkdir" in token for token in PAYABLE_PRIMITIVES)
+    gateway = (
+        ROOT / "core" / "runtime" / "file_write_gateway.py"
+    ).read_text(encoding="utf-8")
+    assert "ensure_private_directory" in gateway, (
+        "ensure_directory no longer delegates to the private-directory creator; "
+        "re-check whether mkdir has become migratable"
+    )

@@ -246,7 +246,17 @@ def main(argv: Iterable[str] = ()) -> int:
     print(
         f"  ├─ through a declared gateway, not ActionExecutor-owned: {governed}"
     )
+    payable = 0
+    for bucket in buckets:
+        if bucket.canonical_owner or bucket.category in GATEWAY_CATEGORIES:
+            continue
+        if any(token in bucket.callee for token in PAYABLE_PRIMITIVES):
+            payable += bucket.count
+    report["debt_raw_payable_calls"] = payable
     print(f"  └─ RAW ungoverned primitives:                          {raw}")
+    print(
+        f"       of which durable_unlink/durable_replace could own:  {payable}"
+    )
     for category, row in sorted(summary.items()):
         tier = "gateway" if category in GATEWAY_CATEGORIES else "RAW" if row["debt_calls"] else ""
         print(
@@ -262,6 +272,19 @@ def main(argv: Iterable[str] = ()) -> int:
 #: ("all consequential file writes go through file_write_gateway"). Lumping
 #: them together with raw primitives produces one large number that reads as
 #: "N governance bypasses" and is not that.
+#: Raw primitives that HAVE a governed equivalent in the atomic writer, so the
+#: debt is payable by migration. Everything else in the raw tier is debt only in
+#: the sense that no governed primitive exists for it yet.
+#:
+#: mkdir is the reason this third split matters. It is over half the raw tier,
+#: and the gateway's only directory primitive — ensure_directory — creates a
+#: PRIVATE 0o700 directory and requires an active governance scope. Substituting
+#: it for a plain `path.mkdir(parents=True, exist_ok=True)` would tighten
+#: permissions at 450+ call sites and fail outright wherever no governed scope
+#: is open. Counting those as migratable debt implies a migration that would
+#: break the system.
+PAYABLE_PRIMITIVES = ("unlink", "remove", "rename", "replace")
+
 GATEWAY_CATEGORIES = frozenset(
     {
         "file_write_gateway",
