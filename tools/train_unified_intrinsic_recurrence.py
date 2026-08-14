@@ -1136,8 +1136,16 @@ def _answer_role_place_targets(
     family: str,
     answer_tokens: Any,
     contract: RecurrentAnswerEmissionContract,
-) -> tuple[Any, Any]:
-    """Label syntax versus terminal-register digit positions exactly."""
+) -> tuple[Any, Any] | None:
+    """Label pointer-compatible answers; leave general schemas semantic-only.
+
+    The pointer target means that a digit is an exact rendering of one of the
+    five categorical recurrent state slots.  Broad frontier answers contain
+    strings, arrays, booleans, and values assembled from multiple process
+    fields, so inventing a slot label for them would be false supervision.
+    They still train the complete answer bridge through token-level semantic
+    cross-entropy; only this optional narrow auxiliary is omitted.
+    """
 
     syntax = dict(contract.syntax)
     layouts = {
@@ -1160,7 +1168,7 @@ def _answer_role_place_targets(
         ),
     }
     if family not in layouts:
-        raise ValueError("answer bridge family is outside the admitted grammar")
+        return None
     values = tuple(int(value) for value in answer_tokens.tolist()[0])
     roles = [0] * len(values)
     places = [0] * len(values)
@@ -1369,9 +1377,13 @@ def _evaluate_answer_bridge_admission(
     spec: UnifiedIntrinsicTrainingSpec,
     bridge: str,
     contract: RecurrentAnswerEmissionContract,
+    *,
+    answer_digit_pointer_enabled: bool = True,
 ) -> dict[str, Any]:
     """Require exact autonomous emission on every supplied unseen task."""
 
+    if type(answer_digit_pointer_enabled) is not bool:
+        raise TypeError("answer bridge admission pointer policy must be boolean")
     cells = {(str(task.family), int(task.depth)) for task in tasks}
     if not cells:
         raise ValueError("answer bridge admission requires unseen tasks")
@@ -1400,6 +1412,7 @@ def _evaluate_answer_bridge_admission(
                 spec.plan_at(max(spec.train_depths)),
                 eos_token_id=tokenizer.eos_token_id,
                 answer_emission_contract=contract,
+                answer_digit_pointer_enabled=answer_digit_pointer_enabled,
                 state_slot_start=int(prompt.shape[-1]),
             )
             expected_values = tuple(int(value) for value in answer.tolist()[0])
@@ -1439,8 +1452,9 @@ def _evaluate_answer_bridge_admission(
     matching = sum(row["matching_tokens"] for row in rows)
     token_count = sum(row["token_count"] for row in rows)
     body = {
-        "schema": "aura.unified_intrinsic.answer_bridge_admission.v3",
+        "schema": "aura.unified_intrinsic.answer_bridge_admission.v4",
         "depth": max(spec.train_depths),
+        "answer_digit_pointer_enabled": answer_digit_pointer_enabled,
         "cells": len(cells),
         "tasks": len(rows),
         "exact": exact,
@@ -2948,6 +2962,22 @@ def main() -> int:
             tokenizer,
             opcode_contract,
         )
+        pointer_bound_families = frozenset(
+            family for family, _marker in answer_emission_contract.family_markers
+        )
+        training_families = sorted({str(task.family) for task in train_tasks})
+        answer_bridge_supervision = {
+            "schema": "aura.unified_intrinsic.answer_bridge_supervision.v1",
+            "semantic_cross_entropy_families": training_families,
+            "role_place_binding_families": sorted(
+                family for family in training_families if family in pointer_bound_families
+            ),
+            "semantic_only_families": sorted(
+                family for family in training_families if family not in pointer_bound_families
+            ),
+            "unsupported_pointer_targets_are_fabricated": False,
+            "answer_digit_pointer_enabled": args.task_source != "frontier_process",
+        }
         wiring = _configure_window_tissue(
             model,
             spec,
@@ -3043,6 +3073,7 @@ def main() -> int:
                 **answer_emission_contract.to_dict(),
                 "contract_sha256": answer_emission_contract.contract_sha256,
             },
+            "answer_bridge_supervision": answer_bridge_supervision,
             "depth_basis_size": args.depth_basis_size,
             "lora_targets": list(targets),
             "wiring": wiring,
@@ -3175,13 +3206,21 @@ def main() -> int:
                 prompt, answer = encode_example(tokenizer, task, bridge)
                 with recurrence_adapter_scope(start=None, stop=None):
                     update_applied = False
-                    if phase == "answer_bridge" and args.answer_bridge_inner_steps > 1:
-                        semantic_depth = _semantic_execution_depth(task.depth, spec)
-                        binding_targets = _answer_role_place_targets(
+                    binding_targets = (
+                        _answer_role_place_targets(
                             task.family,
                             answer,
                             answer_emission_contract,
                         )
+                        if phase == "answer_bridge"
+                        else None
+                    )
+                    if (
+                        phase == "answer_bridge"
+                        and args.answer_bridge_inner_steps > 1
+                        and binding_targets is not None
+                    ):
+                        semantic_depth = _semantic_execution_depth(task.depth, spec)
                         features = _cached_answer_binding_features(
                             bundle,
                             prompt,
@@ -3209,13 +3248,7 @@ def main() -> int:
                     elif phase in {"semantic_anchor", "answer_bridge"}:
                         semantic_depth = _semantic_execution_depth(task.depth, spec)
                         effective = None
-                        binding_targets = None
                         if phase == "answer_bridge":
-                            binding_targets = _answer_role_place_targets(
-                                task.family,
-                                answer,
-                                answer_emission_contract,
-                            )
                             bridge_start = (
                                 args.state_warmup_steps + args.semantic_warmup_steps
                             )
@@ -3562,6 +3595,9 @@ def main() -> int:
                 spec,
                 bridge,
                 answer_emission_contract,
+                answer_digit_pointer_enabled=(
+                    args.task_source != "frontier_process"
+                ),
             )
             if args.answer_bridge_steps > 0 and step >= args.max_steps
             else None

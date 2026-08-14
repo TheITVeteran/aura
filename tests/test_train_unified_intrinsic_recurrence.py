@@ -641,7 +641,11 @@ def test_answer_binding_targets_identify_register_roles_and_digit_places() -> No
     contract = RecurrentAnswerEmissionContract(
         digit_token_ids=tuple(range(10, 20)),
         eos_token_id=99,
-        family_markers=(("khop", (70,)), ("modular", (71,)), ("register_trace", (72,))),
+        family_markers=(
+            ("khop", (70,)),
+            ("modular", (71,)),
+            ("register_trace", (72,)),
+        ),
         syntax=(
             ("close", (6,)),
             ("khop", (1,)),
@@ -664,6 +668,31 @@ def test_answer_binding_targets_identify_register_roles_and_digit_places() -> No
     place_logits = mx.zeros((1, 10, 3))
     loss = _answer_binding_loss(role_logits, place_logits, roles, places)
     assert float(loss.item()) > 0.0
+
+
+def test_answer_binding_targets_leave_general_answer_schemas_semantic_only() -> None:
+    contract = RecurrentAnswerEmissionContract(
+        digit_token_ids=tuple(range(10, 20)),
+        eos_token_id=99,
+        family_markers=(("khop", (70,)), ("modular", (71,)), ("register_trace", (72,))),
+        syntax=(
+            ("close", (6,)),
+            ("khop", (1,)),
+            ("modular", (2,)),
+            ("register_head", (3,)),
+            ("register_mid_r1", (4,)),
+            ("register_mid_r2", (5,)),
+        ),
+    )
+
+    assert (
+        _answer_role_place_targets(
+            "frontier_scientific_inference",
+            mx.array([[21, 22, 23, 99]]),
+            contract,
+        )
+        is None
+    )
 
 
 def test_answer_bridge_schedule_covers_each_family_before_repeating() -> None:
@@ -851,9 +880,21 @@ def test_answer_bridge_admission_requires_exact_autonomous_emission_per_cell(
         "tools.train_unified_intrinsic_recurrence.encode_example",
         lambda _tokenizer, task, _bridge: (mx.array([[1]]), answers[task.family]),
     )
+    pointer_policies: list[bool] = []
+
+    def exact_rollin(
+        _bundle: object,
+        _prompt: object,
+        answer: object,
+        _plan: object,
+        **kwargs: object,
+    ) -> object:
+        pointer_policies.append(bool(kwargs["answer_digit_pointer_enabled"]))
+        return answer
+
     monkeypatch.setattr(
         "tools.train_unified_intrinsic_recurrence._generate_student_rollin",
-        lambda _bundle, _prompt, answer, _plan, **_kwargs: answer,
+        exact_rollin,
     )
     tokenizer = type("Tokenizer", (), {"eos_token_id": 63})()
     contract = RecurrentAnswerEmissionContract(
@@ -877,11 +918,14 @@ def test_answer_bridge_admission_requires_exact_autonomous_emission_per_cell(
         spec,
         "",
         contract,
+        answer_digit_pointer_enabled=False,
     )
 
     assert report["admitted"] is True
     assert report["exact_accuracy"] == 1.0
-    assert report["schema"] == "aura.unified_intrinsic.answer_bridge_admission.v3"
+    assert report["schema"] == "aura.unified_intrinsic.answer_bridge_admission.v4"
+    assert report["answer_digit_pointer_enabled"] is False
+    assert pointer_policies == [False] * 9
     assert report["cells"] == 9
     assert report["tasks"] == 9
     assert {
