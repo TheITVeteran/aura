@@ -183,9 +183,32 @@ class PersonalityEngine:
         self.reload_persona()
         self.load_profiles()
         
-        # Verify identity integrity
-        if not self._verify_cryptographic_seal():
+        # Verify identity integrity.
+        #
+        # This used to log CRITICAL and then finish constructing, so a
+        # tampered identity kernel produced a fully working PersonalityEngine
+        # and every caller received one that behaves exactly like a verified
+        # one. The seal exists to detect precisely that, and the detection
+        # reached a log line and stopped.
+        #
+        # Construction is not refused: raising here would take down boot for
+        # a seal that a legitimate migration or a fresh install cannot yet
+        # satisfy, and `_verify_cryptographic_seal` already re-seals the
+        # cases it can prove are benign. What changes is that the verdict is
+        # now STATE — recorded, exposed, and consulted by the filter below —
+        # rather than a sentence in a log nobody queries.
+        self.identity_verified = bool(self._verify_cryptographic_seal())
+        if not self.identity_verified:
             logger.critical("🚨 IDENTITY TAMPER DETECTED: Kernel seal mismatch.")
+            _record_personality_degradation(
+                PersistenceCorruption("identity seal did not verify"),
+                action=(
+                    "constructed a personality engine whose identity seal did "
+                    "not verify; identity filtering is not attested"
+                ),
+                severity="critical",
+                extra={"seal_file": str(getattr(self, "seal_file", ""))},
+            )
         
     def reload_persona(self):
         """Reload base and evolved persona traits (Phase 8)."""
@@ -923,6 +946,25 @@ class PersonalityEngine:
         # not replies, so preserve them byte-for-byte.
         if not user_facing:
             return text
+
+        # An engine whose identity seal did not verify must not silently
+        # present its output as identity-filtered. The shaping below still
+        # runs — dropping it would make a tampered seal degrade her voice on
+        # top of everything else — but the fact is recorded once per engine
+        # so a caller reading runtime health can see that the filter it is
+        # relying on was never attested.
+        if not getattr(self, "identity_verified", True) and not getattr(
+            self, "_unverified_filter_reported", False
+        ):
+            self._unverified_filter_reported = True
+            _record_personality_degradation(
+                PersistenceCorruption("identity seal unverified at filter time"),
+                action=(
+                    "filtered a user-facing response through an engine whose "
+                    "identity seal did not verify"
+                ),
+                severity="critical",
+            )
 
         # Nothing to shape is not a failure to shape. Blank text in means blank
         # text out of both the shaper and the honesty guard, and that path

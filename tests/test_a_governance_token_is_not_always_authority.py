@@ -146,3 +146,92 @@ def test_the_non_authority_sets_are_named_once():
     assert "ungoverned" in _NON_AUTHORITY_DOMAINS
     assert "degraded_mode" in _NON_AUTHORITY_RECEIPTS
     assert "VIOLATION" in _NON_AUTHORITY_RECEIPTS
+
+
+# ───────── a tampered identity seal produced a working engine
+
+
+def test_the_seal_verdict_is_state_not_just_a_log_line():
+    """`if not self._verify_cryptographic_seal(): logger.critical(...)` — and
+    then construction finished. A tampered identity kernel produced a fully
+    working PersonalityEngine, indistinguishable from a verified one to
+    every caller. The seal exists to detect exactly that, and the detection
+    reached a log and stopped."""
+    source = (ROOT / "core" / "brain" / "personality_engine.py").read_text("utf-8")
+
+    assert "self.identity_verified = bool(self._verify_cryptographic_seal())" in source, (
+        "the seal result is discarded again instead of being recorded on the "
+        "engine"
+    )
+
+
+def test_an_unverified_engine_records_it_when_it_filters(monkeypatch):
+    """The filter must not present its output as identity-filtered when the
+    engine backing it was never attested."""
+    from core.brain import personality_engine as pe
+
+    engine = pe.PersonalityEngine.__new__(pe.PersonalityEngine)
+    engine.identity_verified = False
+    engine._unverified_filter_reported = False
+
+    recorded: list[dict] = []
+    monkeypatch.setattr(
+        pe,
+        "_record_personality_degradation",
+        lambda exc, **kw: recorded.append(kw),
+    )
+
+    # Only the guard clause matters here; stop before the shaping machinery.
+    try:
+        pe.PersonalityEngine.filter_response(engine, "hello", user_facing=True)
+    except Exception:  # noqa: BLE001 - shaping needs state this stub lacks
+        pass
+
+    assert recorded, "an unverified engine filtered a reply and said nothing"
+    assert recorded[0].get("severity") == "critical"
+
+
+def test_the_report_fires_once_per_engine(monkeypatch):
+    """A per-turn critical record for a standing condition is noise that
+    buries the next real one."""
+    from core.brain import personality_engine as pe
+
+    engine = pe.PersonalityEngine.__new__(pe.PersonalityEngine)
+    engine.identity_verified = False
+    engine._unverified_filter_reported = False
+
+    recorded: list[dict] = []
+    monkeypatch.setattr(
+        pe,
+        "_record_personality_degradation",
+        lambda exc, **kw: recorded.append(kw),
+    )
+
+    for _ in range(3):
+        try:
+            pe.PersonalityEngine.filter_response(engine, "hello", user_facing=True)
+        except Exception:  # noqa: BLE001 - shaping needs state this stub lacks
+            pass
+
+    assert len(recorded) == 1
+
+
+def test_a_verified_engine_records_nothing(monkeypatch):
+    from core.brain import personality_engine as pe
+
+    engine = pe.PersonalityEngine.__new__(pe.PersonalityEngine)
+    engine.identity_verified = True
+
+    recorded: list[dict] = []
+    monkeypatch.setattr(
+        pe,
+        "_record_personality_degradation",
+        lambda exc, **kw: recorded.append(kw),
+    )
+
+    try:
+        pe.PersonalityEngine.filter_response(engine, "hello", user_facing=True)
+    except Exception:  # noqa: BLE001 - shaping needs state this stub lacks
+        pass
+
+    assert not recorded
