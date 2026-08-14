@@ -190,7 +190,16 @@ def _mathematics(expected: dict[str, Any], prompt: str) -> StructuredTransitionP
         current = len(valid)
         added_lo, added_hi = _digits(current - previous)
         value_lo, value_hi = _signed_digits(value)
-        actions.append((index, value_lo, value_hi, added_lo, added_hi, int(value in witness_tuple)))
+        actions.append(
+            (
+                index,
+                value_lo,
+                value_hi,
+                added_lo,
+                added_hi,
+                witness_head if valid else 0,
+            )
+        )
         count_lo, count_hi = _digits(current)
         states.append(
             (
@@ -214,7 +223,7 @@ def _mathematics(expected: dict[str, Any], prompt: str) -> StructuredTransitionP
             "value_hi",
             "valid_added_lo",
             "valid_added_hi",
-            "witness_member",
+            "next_witness_head",
         ),
         actions=actions,
     )
@@ -402,11 +411,20 @@ def _premise(expected: dict[str, Any], prompt: str) -> StructuredTransitionProgr
     for index, row in enumerate(rows):
         score = row["impact"] * row["reliability"] - row["cost"]
         score_lo, score_hi = _signed_digits(score)
-        actions.append((index, row["impact"], row["reliability"], row["cost"], score_lo, score_hi))
         if score > best_score or (score == best_score and row["name"] < rows[best_index]["name"]):
             best_index = index
             best_score = score
         best_lo, best_hi = _signed_digits(best_score)
+        actions.append(
+            (
+                best_index,
+                row["impact"],
+                row["reliability"],
+                row["cost"],
+                best_lo,
+                best_hi,
+            )
+        )
         states.append((index + 1, best_index, best_lo, best_hi, int(index + 1 == len(rows))))
     winner = rows[best_index]["name"]
     if winner != expected.get("actual_winner") or best_score != expected.get("actual_score"):
@@ -418,7 +436,7 @@ def _premise(expected: dict[str, Any], prompt: str) -> StructuredTransitionProgr
         field_names=("pc", "winner_index", "score_lo", "score_hi", "done"),
         states=states,
         action_field_names=(
-            "project_index",
+            "winner_index",
             "impact",
             "reliability",
             "cost",

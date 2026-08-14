@@ -40,6 +40,13 @@ from core.learning.recurrent_action_schema import (
     OP_BOOL_OR,
     OP_BOOL_XOR,
     OP_COPY_VALUE,
+    OP_FRONTIER_AUDIT,
+    OP_FRONTIER_CALIBRATE,
+    OP_FRONTIER_ENUMERATE,
+    OP_FRONTIER_INFER,
+    OP_FRONTIER_SCHEDULE,
+    OP_FRONTIER_SIMULATE,
+    OP_FRONTIER_TRAVERSE,
     OP_MUL_MOD,
     OP_REGISTER_AFFINE,
     OP_SUB_MOD,
@@ -56,6 +63,8 @@ from core.learning.recurrent_state_schema import (
 )
 
 UNIFIED_INTRINSIC_RECURRENCE_SCHEMA: Final = "aura.unified_intrinsic_recurrence.v1"
+PROCESS_RADIX: Final = 31
+MAX_PROCESS_INTEGER: Final = PROCESS_RADIX**2 - 1
 
 
 def _canonical_sha256(value: Any) -> str:
@@ -1145,7 +1154,7 @@ class UnifiedRecurrentController(nn.Module):
         opcode = action[:, 0]
         arguments = action[:, 1:7]
         terminal = action[:, 7]
-        recognized = (opcode >= OP_COPY_VALUE) & (opcode <= OP_REGISTER_AFFINE)
+        recognized = (opcode >= OP_COPY_VALUE) & (opcode <= OP_FRONTIER_AUDIT)
         recognized = recognized & (opcode != ACTION_NULL)
 
         pc = mx.minimum(state[:, 0] + 1, self.config.state_cardinality - 1)
@@ -1190,6 +1199,67 @@ class UnifiedRecurrentController(nn.Module):
         value0 = mx.where(is_register & (arg0 == 0), register_result, value0)
         value1 = mx.where(is_register & (arg0 == 1), register_result, value1)
         value2 = mx.where(is_register & (arg0 == 2), register_result, value2)
+
+        # Broad process instructions use the same finite categorical machine as
+        # the original executable curriculum.  Their private training traces
+        # teach action selection; once selected, these transitions are exact and
+        # require neither a runtime teacher nor a task-specific answer producer.
+        is_traverse = opcode == OP_FRONTIER_TRAVERSE
+        value0 = mx.where(is_traverse, arg0, value0)
+        value1 = mx.where(is_traverse, mx.maximum(value1 - 1, 0), value1)
+        value2 = mx.where(is_traverse, arg3, value2)
+
+        is_enumerate = opcode == OP_FRONTIER_ENUMERATE
+        count = state[:, 1] + PROCESS_RADIX * state[:, 2]
+        added = arg3 + PROCESS_RADIX * arg4
+        next_count = mx.minimum(count + added, MAX_PROCESS_INTEGER)
+        value0 = mx.where(is_enumerate, next_count % PROCESS_RADIX, value0)
+        value1 = mx.where(is_enumerate, next_count // PROCESS_RADIX, value1)
+        value2 = mx.where(is_enumerate, arg5, value2)
+
+        is_simulate = opcode == OP_FRONTIER_SIMULATE
+        value0 = mx.where(is_simulate, arg0, value0)
+        value1 = mx.where(is_simulate, arg4, value1)
+        value2 = mx.where(is_simulate, arg3, value2)
+
+        is_infer = opcode == OP_FRONTIER_INFER
+        inferred_role = mx.where(
+            arg0 == 0,
+            arg1 + 1,
+            mx.where(
+                arg0 == 1,
+                arg1 * 3 + arg2 + 1,
+                value0,
+            ),
+        )
+        value0 = mx.where(is_infer, inferred_role, value0)
+        value1 = mx.where(is_infer & (arg0 == 3), arg1, value1)
+        value2 = mx.where(is_infer & (arg0 == 3), arg2, value2)
+
+        is_schedule = opcode == OP_FRONTIER_SCHEDULE
+        reward = state[:, 2] + PROCESS_RADIX * state[:, 3]
+        next_reward = mx.minimum(reward + arg3, MAX_PROCESS_INTEGER)
+        value0 = mx.where(
+            is_schedule,
+            mx.minimum(value0 + arg1, self.config.state_cardinality - 1),
+            value0,
+        )
+        value1 = mx.where(is_schedule, next_reward % PROCESS_RADIX, value1)
+        value2 = mx.where(is_schedule, next_reward // PROCESS_RADIX, value2)
+
+        is_calibrate = opcode == OP_FRONTIER_CALIBRATE
+        value0 = mx.where(is_calibrate, arg1, value0)
+        value1 = mx.where(is_calibrate, arg3, value1)
+        value2 = mx.where(
+            is_calibrate,
+            mx.where(arg0 == 0, 0, arg5 + 1),
+            value2,
+        )
+
+        is_audit = opcode == OP_FRONTIER_AUDIT
+        value0 = mx.where(is_audit, arg0, value0)
+        value1 = mx.where(is_audit, arg4, value1)
+        value2 = mx.where(is_audit, arg5, value2)
         next_values = mx.stack((pc, value0, value1, value2, terminal), axis=1)
         categories = mx.arange(self.config.state_cardinality)[None, None, :]
         exact = (next_values[..., None] == categories).astype(mx.float32)

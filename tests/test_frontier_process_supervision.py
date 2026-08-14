@@ -72,6 +72,49 @@ def test_every_frontier_domain_compiles_into_recurrent_process_targets(domain: s
 
 
 @pytest.mark.parametrize("domain", FRONTIER_DOMAINS)
+@pytest.mark.parametrize("difficulty", (1, 2, 3))
+def test_every_frontier_process_executes_exactly_without_its_teacher(
+    domain: str,
+    difficulty: int,
+) -> None:
+    mx = pytest.importorskip("mlx.core")
+    from core.learning.unified_intrinsic_recurrence import (
+        UnifiedRecurrenceConfig,
+        UnifiedRecurrentController,
+    )
+
+    source = generate_task(domain, seed=91_700 + difficulty, difficulty=difficulty)
+    program = compile_frontier_process_supervision(source).program
+    targets = action_targets_from_program(program, program.state_trace.depth)
+    controller = UnifiedRecurrentController(
+        UnifiedRecurrenceConfig(hidden_size=32, correction_rank=4)
+    )
+    current = program.state_trace.states[0]
+    for step, expected in enumerate(program.state_trace.states[1:]):
+        state_probabilities = controller.exact_probabilities(
+            current,
+            slots=controller.config.state_slots,
+            cardinality=controller.config.state_cardinality,
+        )
+        action_probabilities = controller.exact_probabilities(
+            targets.values[step],
+            slots=controller.config.action_slots,
+            cardinality=controller.config.action_cardinality,
+        )
+        logits, recognized = controller.microcode_transition_logits(
+            state_probabilities,
+            action_probabilities,
+        )
+        mx.eval(logits, recognized)
+        produced = tuple(
+            int(value) for value in mx.argmax(logits[0], axis=-1).tolist()
+        )
+        assert bool(recognized.item())
+        assert produced == expected
+        current = produced
+
+
+@pytest.mark.parametrize("domain", FRONTIER_DOMAINS)
 def test_frontier_process_commitment_is_deterministic_and_value_free(domain: str) -> None:
     source = generate_task(domain, seed=8_173, difficulty=2)
     first = compile_frontier_process_supervision(source)

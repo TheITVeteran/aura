@@ -48942,3 +48942,35 @@ Signal`. The next bounded action is a source-bound, task-disjoint 1.5B canary
 bootstrapped from the proven typed controller. Treatment must beat its frozen
 parent and initialization-matched control after teacher removal before any new
 resident-32B allocation.
+
+## Checkpoint 2026-08-13-395: Broad Process Opcodes Execute Causally
+
+CP395 closes a launch-blocking gap found while tracing CP394 into the live
+recurrent state processor. The process compiler and action schema emitted seven
+new semantic opcodes, but the categorical microcode processor still recognized
+only the original executable curriculum's opcodes 1 through 8. Every broad
+instruction therefore fell through to an approximate learned state transition.
+That could train action classification, but it could not provide the exact
+recurrent process substrate claimed by the broad canary.
+
+The protected finite-state machine now executes all seven operations. Traversal
+commits the selected item and remaining work; enumeration accumulates base-31
+counts and witness state; code simulation commits case pressure and active
+state; inference advances causal roles and the intervention prediction;
+scheduling accumulates elapsed time and reward; calibration commits posterior
+and decision stages; premise audit commits the current verified winner and
+score. The process compiler now emits sufficient next-state coordinates for
+enumeration and audit rather than labels that could not determine their next
+state. Action selection remains neural and teacher-removed at inference; only
+the selected instruction's declared register semantics are exact.
+
+Focused process and action contracts pass `46/46`. A fresh exhaustive sweep
+across all seven domains, all three difficulty cells and 12 seeds per cell
+executed 1,652 recurrent transitions from their initial state through terminal
+state with zero mismatches. Ruff and compilation pass. This proves the broad
+training programs are causally executable by the same recurrent machine that
+will be trained and lesioned. It does not prove learned action selection,
+task-disjoint behavioral gain, resident-32B improvement, fusion, frontier
+performance or `WOW Signal`. Next is immutable import of the exact published
+CP232 typed controller, compatibility-bound broad adaptation, and the frozen
+1.5B treatment/parent/lesion canary.

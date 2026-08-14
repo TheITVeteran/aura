@@ -121,7 +121,7 @@ def _canonical_instruction(
         "value_hi",
         "valid_added_lo",
         "valid_added_hi",
-        "witness_member",
+        "next_witness_head",
     ):
         opcode = OP_FRONTIER_ENUMERATE
         arguments[:] = action
@@ -164,7 +164,7 @@ def _canonical_instruction(
         opcode = OP_FRONTIER_CALIBRATE
         arguments[:] = action
     elif family == "frontier_misleading_premise" and field_names == (
-        "project_index",
+        "winner_index",
         "impact",
         "reliability",
         "cost",
