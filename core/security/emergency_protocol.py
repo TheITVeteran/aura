@@ -164,6 +164,12 @@ class EmergencyProtocol:
         logger.info("EmergencyProtocol online — self-preservation active.")
 
     # ── Public API ─────────────────────────────────────────────────────────
+        self._threat_log_history: dict[str, float] = {}
+
+    #: How long a standing threat stays quiet in the log before it is restated.
+    #: The threat itself is registered and scored every time; only the warning
+    #: line is rate-limited.
+    _THREAT_REPEAT_LOG_INTERVAL_S = 60.0
 
     def flag_threat(
         self,
@@ -191,11 +197,34 @@ class EmergencyProtocol:
         self._recompute_threat_score()
         self._log_threat(signal)
 
-        log = logger.warning if severity >= 0.4 else logger.info
-        log(
-            "EmergencyProtocol: threat flagged by %s (severity=%.2f, score=%.2f): %s",
-            source, severity, self._threat_score, description[:80]
-        )
+        # A standing condition is one threat, not a new one every sample.
+        #
+        # LIVE, 2026-08-13: "threat flagged by immune:resource_monitor
+        # (severity=0.90): resource strain: disk at 99%" every ~15 seconds for
+        # the entire session. The disk really was at 99% and it really did
+        # matter — and re-announcing an unchanged fact at warning level buries
+        # the signals that ARE new. The operator sees a wall and stops reading,
+        # which is the failure mode the warning exists to prevent.
+        #
+        # The threat is still registered, still scored, still responded to.
+        # Only the LOG repeats less: first sighting at full volume, then once a
+        # minute while the condition holds, and immediately again the moment
+        # the description changes.
+        repeat_key = f"{source}|{description[:120]}"
+        now = time.monotonic()
+        last_logged = self._threat_log_history.get(repeat_key, 0.0)
+        first_sighting = repeat_key not in self._threat_log_history
+        if first_sighting or (now - last_logged) >= self._THREAT_REPEAT_LOG_INTERVAL_S:
+            self._threat_log_history[repeat_key] = now
+            if len(self._threat_log_history) > 128:
+                oldest = min(self._threat_log_history, key=self._threat_log_history.get)
+                self._threat_log_history.pop(oldest, None)
+            held_for = "" if first_sighting else f" (unchanged for {now - last_logged:.0f}s)"
+            log = logger.warning if severity >= 0.4 else logger.info
+            log(
+                "EmergencyProtocol: threat flagged by %s (severity=%.2f, score=%.2f): %s%s",
+                source, severity, self._threat_score, description[:80], held_for
+            )
 
         self._respond_to_threat()
 
