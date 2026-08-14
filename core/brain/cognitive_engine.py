@@ -1163,6 +1163,8 @@ class CognitiveEngine:
         self._active_tasks: set = set()
         self._phases = []
         self._augmentors = []
+        #: Class names of the registered augmentors, for the audit.
+        self._augmentor_registry_receipt: list[str] = []
         self.state_repository = None
         self.autopoiesis = AutopoieticGraph()
         self._recovery_lock = RobustLock(
@@ -1355,11 +1357,68 @@ class CognitiveEngine:
             "ready": self.is_ready(),
         }
 
-    def register_augmentor(self, augmentor: Any):
-        """Register a cognitive augmentor (e.g. SovereignWebAugmentor)."""
-        if augmentor not in self._augmentors:
-            self._augmentors.append(augmentor)
-            logger.info("🧠 CognitiveEngine: Registered augmentor %s", type(augmentor).__name__)
+    #: What an augmentor's output may contribute to one turn. It lands in the
+    #: prompt context, so it is bounded like any other prompt material rather
+    #: than by whatever the augmentor felt like returning.
+    _AUGMENTATION_CHAR_LIMIT = 4_000
+    #: An augmentor runs synchronously, on the event loop, before the phases.
+    #: A slow one used to hold every turn behind it.
+    _AUGMENTATION_TIMEOUT_S = 2.0
+
+    def register_augmentor(self, augmentor: Any) -> bool:
+        """Register a cognitive augmentor (e.g. SovereignWebAugmentor).
+
+        This accepted any object at all: no declared name, no callable
+        contract, no bound on what it returns — and its output goes into the
+        prompt. The admission below is small on purpose (this is an in-process
+        extension point, not a plugin marketplace) but it is a contract rather
+        than a shrug, and a refusal is recorded instead of silently producing
+        an augmentor that raises AttributeError on every turn.
+        """
+        getter = getattr(augmentor, "get_augmentation", None)
+        if not callable(getter):
+            record_degradation(
+                "cognitive_engine",
+                TypeError(
+                    f"augmentor {type(augmentor).__name__} has no callable get_augmentation"
+                ),
+                severity="warning",
+                action="refused to register an augmentor with no augmentation contract",
+            )
+            return False
+        if augmentor in self._augmentors:
+            return True
+        self._augmentors.append(augmentor)
+        self._augmentor_registry_receipt = [
+            type(existing).__name__ for existing in self._augmentors
+        ]
+        logger.info("🧠 CognitiveEngine: Registered augmentor %s", type(augmentor).__name__)
+        return True
+
+    def augmentor_registry_receipt(self) -> list[str]:
+        """Which augmentors may contribute to a turn."""
+        return list(getattr(self, "_augmentor_registry_receipt", []) or [])
+
+    @classmethod
+    def _bounded_augmentation(cls, raw: Any) -> Any:
+        """Bound and neutralize what an augmentor contributes to the prompt.
+
+        Augmentor output is not one of Aura's own measurements — it is
+        whatever a registered object returned — and it reaches the prompt. It
+        is bounded, and its text cannot forge contract structure.
+        """
+        from core.brain.living_mind_context import neutralize_learned_text
+
+        if isinstance(raw, str):
+            return neutralize_learned_text(raw)[: cls._AUGMENTATION_CHAR_LIMIT]
+        if isinstance(raw, dict):
+            return {
+                str(key)[:120]: cls._bounded_augmentation(value)
+                for key, value in list(raw.items())[:32]
+            }
+        if isinstance(raw, (list, tuple)):
+            return [cls._bounded_augmentation(item) for item in list(raw)[:32]]
+        return raw
 
     @staticmethod
     def _normalize_mode(mode: ThinkingMode | str | Any) -> ThinkingMode:
@@ -1515,6 +1574,71 @@ class CognitiveEngine:
     def _is_user_facing_origin(cls, origin: Any) -> bool:
         return is_foreground_objective_origin(origin)
 
+    #: Reported once per (origin, source): a caller that omits its origin on
+    #: every request would otherwise fill the trail.
+    _refused_origin_inheritance_seen: set[tuple[str, str]] = set()
+
+    @classmethod
+    def _note_refused_origin_inheritance(cls, origin: str, *, source: str) -> None:
+        key = (str(origin), str(source))
+        if key in cls._refused_origin_inheritance_seen:
+            return
+        cls._refused_origin_inheritance_seen.add(key)
+        logger.warning(
+            "🛡️ Refused to inherit the user-facing origin %r from %s: a request "
+            "that did not declare its own principal does not get one.",
+            origin,
+            source,
+        )
+
+    @classmethod
+    def refused_origin_inheritances(cls) -> list[tuple[str, str]]:
+        """(origin, source) pairs this process declined to inherit."""
+        return sorted(cls._refused_origin_inheritance_seen)
+
+    @classmethod
+    def _is_test_run(cls, origin: Any) -> bool:
+        """Whether THIS request runs under test isolation.
+
+        AURA_TESTING and AURA_AGI_MAX_TASKS are process-wide, and this used to
+        read them for every origin — so in a mixed process (a suite running
+        beside the live runtime, or a developer with the variable exported) a
+        real person's turn silently got a substituted default state and its
+        commit bypassed. Their answer would be produced from no memory and
+        remembered by nothing.
+
+        Ambient variables still mark test runs; they just cannot make a
+        USER-FACING turn into one. A live turn keeps its state and its commit
+        whatever the environment says.
+        """
+        import os
+
+        if str(origin or "").strip().lower() == "test":
+            return True
+        ambient = (
+            os.environ.get("AURA_AGI_MAX_TASKS") is not None
+            or os.environ.get("AURA_TESTING") is not None
+        )
+        if not ambient:
+            return False
+        if cls._is_user_facing_origin(origin):
+            cls._note_refused_test_isolation(str(origin or ""))
+            return False
+        return True
+
+    _refused_test_isolation_seen: set[str] = set()
+
+    @classmethod
+    def _note_refused_test_isolation(cls, origin: str) -> None:
+        if origin in cls._refused_test_isolation_seen:
+            return
+        cls._refused_test_isolation_seen.add(origin)
+        logger.warning(
+            "🛡️ Ambient test environment is set, but origin %r is user-facing: "
+            "keeping real state and committing this turn.",
+            origin,
+        )
+
     @classmethod
     def _resolve_origin(cls, origin: Any, context: dict[str, Any] | None = None) -> str:
         normalized = cls._normalize_origin(origin)
@@ -1527,6 +1651,13 @@ class CognitiveEngine:
                 if contextual:
                     return contextual
 
+        # Below here the origin comes from SHARED MUTABLE STATE — the
+        # orchestrator's last-seen origin and the repository's latest state.
+        # Two requests in flight can read each other's, and inheriting a
+        # USER-FACING origin is a privilege escalation: it grants the protected
+        # Cortex lane, trust treatment, and foreground admission to a request
+        # whose caller never claimed to be a person. Inheriting a background
+        # origin costs nothing, so only that inheritance is allowed.
         try:
             container = get_container()
             orchestrator = container.get("orchestrator", default=None)
@@ -1534,7 +1665,12 @@ class CognitiveEngine:
                 getattr(orchestrator, "_current_origin", "")
             )
             if orchestrator_origin:
-                return orchestrator_origin
+                if cls._is_user_facing_origin(orchestrator_origin):
+                    cls._note_refused_origin_inheritance(
+                        orchestrator_origin, source="orchestrator"
+                    )
+                else:
+                    return orchestrator_origin
 
             repo = container.get("state_repository", default=None)
             live_state = getattr(repo, "_current", None) if repo is not None else None
@@ -1542,7 +1678,12 @@ class CognitiveEngine:
                 getattr(getattr(live_state, "cognition", None), "current_origin", "")
             )
             if state_origin:
-                return state_origin
+                if cls._is_user_facing_origin(state_origin):
+                    cls._note_refused_origin_inheritance(
+                        state_origin, source="state_repository"
+                    )
+                else:
+                    return state_origin
         except (OSError, ConnectionError, TimeoutError) as exc:
             record_degradation(
                 "cognitive_engine",
@@ -2207,12 +2348,7 @@ class CognitiveEngine:
         )
 
         # 1. Get current state (BUG-12 Fix: handle None state on first boot)
-        import os
-        is_test_run = (
-            origin == "test"
-            or os.environ.get("AURA_AGI_MAX_TASKS") is not None
-            or os.environ.get("AURA_TESTING") is not None
-        )
+        is_test_run = self._is_test_run(origin)
         if is_test_run:
             from core.state.aura_state import AuraState
             state = AuraState.default()
@@ -2386,10 +2522,30 @@ class CognitiveEngine:
         for aug in self._augmentors:
             try:
                 if hasattr(aug, "get_augmentation"):
-                    aug_data = aug.get_augmentation(objective)
+                    # On a thread with a deadline: get_augmentation is
+                    # synchronous and ran on the event loop, so one slow
+                    # augmentor held every turn in the process behind it.
+                    aug_data = await asyncio.wait_for(
+                        asyncio.to_thread(aug.get_augmentation, objective),
+                        timeout=self._AUGMENTATION_TIMEOUT_S,
+                    )
                     if aug_data:
-                        augmentor_context[type(aug).__name__] = aug_data
-            except (RuntimeError, AttributeError, TypeError) as e:
+                        augmentor_context[type(aug).__name__] = (
+                            self._bounded_augmentation(aug_data)
+                        )
+            except TimeoutError as e:
+                record_degradation(
+                    "cognitive_engine",
+                    e,
+                    severity="warning",
+                    action="skipped an augmentor that exceeded its turn budget",
+                )
+                logger.warning(
+                    "Augmentor %s exceeded %.1fs and was skipped.",
+                    type(aug).__name__,
+                    self._AUGMENTATION_TIMEOUT_S,
+                )
+            except (RuntimeError, AttributeError, TypeError, ValueError, OSError) as e:
                 record_degradation(
                     "cognitive_engine",
                     e,
@@ -2744,12 +2900,7 @@ class CognitiveEngine:
         # ─── SUCCESS PATH (Unreachable before fix) ──────────────────────────
         # 5. Final State Commit
         # HF12: Handle concurrent version conflicts with a mini-retry loop
-        import os
-        is_test_run = (
-            origin == "test"
-            or os.environ.get("AURA_AGI_MAX_TASKS") is not None
-            or os.environ.get("AURA_TESTING") is not None
-        )
+        is_test_run = self._is_test_run(origin)
         should_bypass_commit = is_test_run or self.state_repository is None
         # The watchdog above wraps PHASE EXECUTION only. Repository reads,
         # advisors, spine checks, augmentors, the deep copy, this commit loop
