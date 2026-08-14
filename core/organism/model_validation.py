@@ -1299,73 +1299,7 @@ def install_runtime_validation() -> dict[str, Any]:
             )
         )
 
-    for statement, test_name, asserted_in in (
-        (
-            "A credential never leaves this machine inside a prompt bound for a "
-            "third-party model, and a body that cannot be read is not sent to one.",
-            "cloud_prompts_are_read_before_they_leave",
-            "core/security/egress_privacy.py",
-        ),
-        (
-            "Identity state that fails attestation is quarantined rather than loaded, "
-            "so Aura boots with no self-model rather than someone else's.",
-            "identity_state_that_failed_attestation_is_not_loaded",
-            "core/security/state_attestation.py",
-        ),
-        (
-            # Scoped deliberately. Lockdep can only order the locks it wraps,
-            # and most of this runtime's locks are still raw threading/asyncio
-            # primitives it never sees — capability_engine was instrumented
-            # *after* it deadlocked the boot path, not before. The unscoped
-            # version of this sentence claimed the whole runtime was clear of
-            # ABBA on evidence covering a minority of its locks.
-            # tools/lint_lock_coverage.py holds the ratchet that shrinks the
-            # gap; when it reaches parity this qualifier can go.
-            "Among the locks lockdep instruments, the runtime takes its locks in a "
-            "consistent order and has no latent ABBA deadlock. Locks not wrapped in "
-            "checked_lock/checked_async_lock are outside this claim.",
-            "lockdep_reports_no_order_violations",
-            "core/runtime/lockdep.py",
-        ),
-        (
-            "Periodic work runs at its declared rate rather than at rate-plus-work-time.",
-            "rate_group_period_is_a_period",
-            "core/fsw/rate_groups.py",
-        ),
-        (
-            "Memory growth can be attributed to a named component.",
-            "memory_growth_is_attributable_to_a_component",
-            "core/runtime/memory_infra.py",
-        ),
-        (
-            "The runtime's structural invariants are enforced, not merely documented.",
-            "structural_invariants_hold",
-            "core/verify/runtime_invariants.py",
-        ),
-        (
-            "A wedged critical component is detected rather than inferred from silence.",
-            "no_critical_component_is_wedged",
-            "core/fsw/health_checker.py",
-        ),
-        (
-            "A green health verdict is never reported over known, hidden damage.",
-            "health_verdicts_are_not_reported_over_hidden_damage",
-            "core/runtime/taint.py",
-        ),
-        (
-            "Action routing follows the turn's semantic speech act rather than requiring a trigger phrase.",
-            "semantic_action_routing_preserves_speech_act",
-            "core/runtime/turn_analysis.py",
-        ),
-        (
-            "Physical measurement keeps live, simulated, and hardware-in-loop evidence causally distinct.",
-            "reality_metrology_contract_separates_sources",
-            "core/reality_reach/metrology.py",
-        ),
-    ):
-        suite.add_claim(
-            Claim(statement=statement, test=test_name, owner=asserted_in, asserted_in=asserted_in)
-        )
+    _install_suite_tail(suite)
 
     # Graded honestly. Both mechanisms are proven by construction and by
     # test, and neither has yet run against live traffic — the work ledger
@@ -1792,6 +1726,81 @@ def install_runtime_validation() -> dict[str, Any]:
         "tests": [t.name for t in suite.tests()],
         "claims": len(suite.claims()),
     }
+
+def _install_suite_tail(suite):
+    """Body lifted verbatim out of ``install_runtime_validation``.
+
+    Moved by tools/extract_seam.py, which refuses to write unless the
+    relocated body diffs clean against the original. The seam was
+    1 names in, 0 out, 0 early return(s), 0 awaits.
+    """
+    for statement, test_name, asserted_in in (
+        (
+            "A credential never leaves this machine inside a prompt bound for a "
+            "third-party model, and a body that cannot be read is not sent to one.",
+            "cloud_prompts_are_read_before_they_leave",
+            "core/security/egress_privacy.py",
+        ),
+        (
+            "Identity state that fails attestation is quarantined rather than loaded, "
+            "so Aura boots with no self-model rather than someone else's.",
+            "identity_state_that_failed_attestation_is_not_loaded",
+            "core/security/state_attestation.py",
+        ),
+        (
+            # Scoped deliberately. Lockdep can only order the locks it wraps,
+            # and most of this runtime's locks are still raw threading/asyncio
+            # primitives it never sees — capability_engine was instrumented
+            # *after* it deadlocked the boot path, not before. The unscoped
+            # version of this sentence claimed the whole runtime was clear of
+            # ABBA on evidence covering a minority of its locks.
+            # tools/lint_lock_coverage.py holds the ratchet that shrinks the
+            # gap; when it reaches parity this qualifier can go.
+            "Among the locks lockdep instruments, the runtime takes its locks in a "
+            "consistent order and has no latent ABBA deadlock. Locks not wrapped in "
+            "checked_lock/checked_async_lock are outside this claim.",
+            "lockdep_reports_no_order_violations",
+            "core/runtime/lockdep.py",
+        ),
+        (
+            "Periodic work runs at its declared rate rather than at rate-plus-work-time.",
+            "rate_group_period_is_a_period",
+            "core/fsw/rate_groups.py",
+        ),
+        (
+            "Memory growth can be attributed to a named component.",
+            "memory_growth_is_attributable_to_a_component",
+            "core/runtime/memory_infra.py",
+        ),
+        (
+            "The runtime's structural invariants are enforced, not merely documented.",
+            "structural_invariants_hold",
+            "core/verify/runtime_invariants.py",
+        ),
+        (
+            "A wedged critical component is detected rather than inferred from silence.",
+            "no_critical_component_is_wedged",
+            "core/fsw/health_checker.py",
+        ),
+        (
+            "A green health verdict is never reported over known, hidden damage.",
+            "health_verdicts_are_not_reported_over_hidden_damage",
+            "core/runtime/taint.py",
+        ),
+        (
+            "Action routing follows the turn's semantic speech act rather than requiring a trigger phrase.",
+            "semantic_action_routing_preserves_speech_act",
+            "core/runtime/turn_analysis.py",
+        ),
+        (
+            "Physical measurement keeps live, simulated, and hardware-in-loop evidence causally distinct.",
+            "reality_metrology_contract_separates_sources",
+            "core/reality_reach/metrology.py",
+        ),
+    ):
+        suite.add_claim(
+            Claim(statement=statement, test=test_name, owner=asserted_in, asserted_in=asserted_in)
+        )
 
 
 # ── prediction helpers, kept small and failure-tolerant ───────────────

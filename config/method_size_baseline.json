@@ -1,7 +1,7 @@
 {
   "threshold_lines": 400,
   "tracked": 76,
-  "total_lines": 70057,
+  "total_lines": 69571,
   "functions": {
     "core/brain/cognitive_engine.py::CognitiveEngine._direct_desktop_quick_reply": {
       "lines": 975,
@@ -29,8 +29,8 @@
       "returns": 33
     },
     "core/brain/latent_cortex_service.py::LatentCortexService._receipt_contract_errors": {
-      "lines": 2088,
-      "complexity": 598,
+      "lines": 1756,
+      "complexity": 518,
       "returns": 24
     },
     "core/brain/latent_cortex_service.py::LatentCortexService.deep_reason": {
@@ -169,8 +169,8 @@
       "returns": 1
     },
     "core/conversation/response_reliability.py::_assess_user_facing_reply": {
-      "lines": 488,
-      "complexity": 85,
+      "lines": 400,
+      "complexity": 52,
       "returns": 4
     },
     "core/embodiment/reality_connectors.py::build_configured_reality_connector_catalog": {
@@ -259,8 +259,8 @@
       "returns": 29
     },
     "core/organism/model_validation.py::install_runtime_validation": {
-      "lines": 1168,
-      "complexity": 4,
+      "lines": 1102,
+      "complexity": 3,
       "returns": 1
     },
     "core/phases/cognitive_routing.py::CognitiveRoutingPhase.execute": {

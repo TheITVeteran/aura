@@ -7718,95 +7718,7 @@ def _assess_user_facing_reply(
     exact_reply = _matches_exact_reply_request(user_message, raw)
     strict_answer_tag_reply = _matches_strict_answer_tag_request(user_message, raw)
     memory_pin_confirmation = _matches_memory_pin_confirmation(user_message, raw)
-    if reliability_turn:
-        if _LOW_SIGNAL_REASSURANCE_RE.match(raw):
-            reasons.append("low_signal_reliability_reply")
-        elif reliability_diagnostic_turn and _RELIABILITY_DIAGNOSTIC_DEFLECTION_RE.search(raw):
-            reasons.append("reliability_diagnostic_deflection")
-        elif reliability_diagnostic_turn and not _has_reliability_diagnostic_substance(raw):
-            reasons.append("reliability_diagnostic_too_thin")
-        elif not _has_reliability_substance(raw):
-            reasons.append("too_thin_for_reliability_turn")
-    elif is_self_condition_turn(user_message):
-        if _LOW_SIGNAL_REASSURANCE_RE.match(raw):
-            reasons.append("low_signal_self_condition_reply")
-        elif not _host_telemetry_substitutes_for_self_condition(user_message, raw) and not _has_self_condition_substance(raw):
-            reasons.append("missing_self_condition_answer")
-    elif operational_status_turn:
-        if not _has_operational_status_substance(user_message, raw):
-            reasons.append("too_thin_for_operational_status_turn")
-    elif is_live_self_reflection_turn(user_message) or is_self_process_question(user_message):
-        if _has_social_presence_instead_of_self_reflection(user_message, raw):
-            reasons.append("social_presence_instead_of_self_reflection")
-        if not (
-            _has_self_reflection_substance(raw)
-            or _has_operational_status_substance(user_message, raw)
-            or _reports_measured_self_state(raw)
-        ):
-            reasons.append("off_topic_self_reflection_reply")
-        if _missing_requested_self_process_coverage(user_message, raw):
-            reasons.append("missing_requested_self_process_coverage")
-    elif is_expansion_request_turn(user_message):
-        if _EXPANSION_DEFLECTION_RE.search(raw):
-            reasons.append("too_thin_for_expansion_request")
-    elif is_status_check_turn(user_message):
-        if _LOW_SIGNAL_REASSURANCE_RE.match(raw):
-            reasons.append("low_signal_status_reply")
-        elif not (
-            _has_status_substance(raw)
-            or _has_operational_status_substance(user_message, raw)
-        ):
-            reasons.append("too_thin_for_status_turn")
-    elif (
-        not exact_reply
-        and not strict_answer_tag_reply
-        and not memory_pin_confirmation
-        and _requires_substantive_reply(user_message)
-    ):
-        # NO WORD-COUNT FLOOR.
-        #
-        # There used to be three, stacked: words < 2 -> too_short_for_user_turn,
-        # words < 4 -> too_thin_for_user_turn, words < 6 (open-ended) ->
-        # too_thin_for_open_ended_turn.
-        #
-        # LIVE DEFECT, 2026-08-10. Asked "multiply 7919 by 6421 — actually run
-        # it, give me the number", the Cortex answered 50847899. Correct, and
-        # exactly what was asked for. The floor counted one word:
-        #
-        #   Cortex produced an unsafe user-facing draft
-        #       (too_short_for_user_turn, len=8). Treating it as failed generation.
-        #   Cortex-RETRY-1 produced an unsafe user-facing draft
-        #       (too_short_for_user_turn, len=8). Treating it as failed generation.
-        #   Proof/operator request requires a valid Cortex response; refusing
-        #       lower-lane fallback.
-        #
-        # Two correct answers destroyed and then a refusal — "I couldn't get to
-        # an answer I'd stand behind" — about a multiplication she had already
-        # done right, twice. The same reason string appears in
-        # test_live_recurrence_depth_is_earned with len=5.
-        #
-        # The floors were justified as catching "near-empty non-answers", but
-        # that is a question about information content and the semantic
-        # detector already answers it: _LOW_SIGNAL_REASSURANCE_RE matches
-        # "Sure.", "Okay.", "Yes." and does not match "50847899". The counts
-        # added nothing except a length at which a correct answer becomes
-        # unservable — and the right length is unknowable, because it depends
-        # on the question, which is why every one of these numbers was a guess.
-        #
-        # She does not trend toward one-word replies. The floor was insurance
-        # against a failure mode that does not occur, priced in correct answers
-        # that do.
-        if _LOW_SIGNAL_REASSURANCE_RE.match(raw) and not _explicit_brevity_requested(
-            user_message
-        ):
-            reasons.append("too_short_for_user_turn")
-        elif not re.search(r"[A-Za-z0-9]", raw):
-            # Content, not length. Live 2026-08-10, after the word-count floors
-            # came out, a screen question was answered with a bare "…". That is
-            # the case the floors were groping for and never named: a reply
-            # made entirely of punctuation carries nothing, at any length,
-            # while "50847899" carries everything at eight characters.
-            reasons.append("no_content_in_user_turn")
+    _assess_operational_status_reply(exact_reply, memory_pin_confirmation, operational_status_turn, raw, reasons, reliability_diagnostic_turn, reliability_turn, strict_answer_tag_reply, user_message)
 
     if is_confusion_repair_turn(user_message) and _LOW_SIGNAL_REASSURANCE_RE.match(raw):
         if not (_word_count(raw) >= 3 and any(w in raw.lower() for w in ("thinking", "working", "processing", "online"))):
@@ -8025,6 +7937,103 @@ def _assess_user_facing_reply(
         hard_failure=bool(set(blocking) & hard_reasons),
         retryable=bool(set(blocking) & retryable_reasons),
     )
+
+def _assess_operational_status_reply(exact_reply, memory_pin_confirmation, operational_status_turn, raw, reasons, reliability_diagnostic_turn, reliability_turn, strict_answer_tag_reply, user_message):
+    """Body lifted verbatim out of ``_assess_user_facing_reply``.
+
+    Moved by tools/extract_seam.py, which refuses to write unless the
+    relocated body diffs clean against the original. The seam was
+    9 names in, 0 out, 0 early return(s), 0 awaits.
+    """
+    if reliability_turn:
+        if _LOW_SIGNAL_REASSURANCE_RE.match(raw):
+            reasons.append("low_signal_reliability_reply")
+        elif reliability_diagnostic_turn and _RELIABILITY_DIAGNOSTIC_DEFLECTION_RE.search(raw):
+            reasons.append("reliability_diagnostic_deflection")
+        elif reliability_diagnostic_turn and not _has_reliability_diagnostic_substance(raw):
+            reasons.append("reliability_diagnostic_too_thin")
+        elif not _has_reliability_substance(raw):
+            reasons.append("too_thin_for_reliability_turn")
+    elif is_self_condition_turn(user_message):
+        if _LOW_SIGNAL_REASSURANCE_RE.match(raw):
+            reasons.append("low_signal_self_condition_reply")
+        elif not _host_telemetry_substitutes_for_self_condition(user_message, raw) and not _has_self_condition_substance(raw):
+            reasons.append("missing_self_condition_answer")
+    elif operational_status_turn:
+        if not _has_operational_status_substance(user_message, raw):
+            reasons.append("too_thin_for_operational_status_turn")
+    elif is_live_self_reflection_turn(user_message) or is_self_process_question(user_message):
+        if _has_social_presence_instead_of_self_reflection(user_message, raw):
+            reasons.append("social_presence_instead_of_self_reflection")
+        if not (
+            _has_self_reflection_substance(raw)
+            or _has_operational_status_substance(user_message, raw)
+            or _reports_measured_self_state(raw)
+        ):
+            reasons.append("off_topic_self_reflection_reply")
+        if _missing_requested_self_process_coverage(user_message, raw):
+            reasons.append("missing_requested_self_process_coverage")
+    elif is_expansion_request_turn(user_message):
+        if _EXPANSION_DEFLECTION_RE.search(raw):
+            reasons.append("too_thin_for_expansion_request")
+    elif is_status_check_turn(user_message):
+        if _LOW_SIGNAL_REASSURANCE_RE.match(raw):
+            reasons.append("low_signal_status_reply")
+        elif not (
+            _has_status_substance(raw)
+            or _has_operational_status_substance(user_message, raw)
+        ):
+            reasons.append("too_thin_for_status_turn")
+    elif (
+        not exact_reply
+        and not strict_answer_tag_reply
+        and not memory_pin_confirmation
+        and _requires_substantive_reply(user_message)
+    ):
+        # NO WORD-COUNT FLOOR.
+        #
+        # There used to be three, stacked: words < 2 -> too_short_for_user_turn,
+        # words < 4 -> too_thin_for_user_turn, words < 6 (open-ended) ->
+        # too_thin_for_open_ended_turn.
+        #
+        # LIVE DEFECT, 2026-08-10. Asked "multiply 7919 by 6421 — actually run
+        # it, give me the number", the Cortex answered 50847899. Correct, and
+        # exactly what was asked for. The floor counted one word:
+        #
+        #   Cortex produced an unsafe user-facing draft
+        #       (too_short_for_user_turn, len=8). Treating it as failed generation.
+        #   Cortex-RETRY-1 produced an unsafe user-facing draft
+        #       (too_short_for_user_turn, len=8). Treating it as failed generation.
+        #   Proof/operator request requires a valid Cortex response; refusing
+        #       lower-lane fallback.
+        #
+        # Two correct answers destroyed and then a refusal — "I couldn't get to
+        # an answer I'd stand behind" — about a multiplication she had already
+        # done right, twice. The same reason string appears in
+        # test_live_recurrence_depth_is_earned with len=5.
+        #
+        # The floors were justified as catching "near-empty non-answers", but
+        # that is a question about information content and the semantic
+        # detector already answers it: _LOW_SIGNAL_REASSURANCE_RE matches
+        # "Sure.", "Okay.", "Yes." and does not match "50847899". The counts
+        # added nothing except a length at which a correct answer becomes
+        # unservable — and the right length is unknowable, because it depends
+        # on the question, which is why every one of these numbers was a guess.
+        #
+        # She does not trend toward one-word replies. The floor was insurance
+        # against a failure mode that does not occur, priced in correct answers
+        # that do.
+        if _LOW_SIGNAL_REASSURANCE_RE.match(raw) and not _explicit_brevity_requested(
+            user_message
+        ):
+            reasons.append("too_short_for_user_turn")
+        elif not re.search(r"[A-Za-z0-9]", raw):
+            # Content, not length. Live 2026-08-10, after the word-count floors
+            # came out, a screen question was answered with a bare "…". That is
+            # the case the floors were groping for and never named: a reply
+            # made entirely of punctuation carries nothing, at any length,
+            # while "50847899" carries everything at eight characters.
+            reasons.append("no_content_in_user_turn")
 
 
 #: Reasons that mean "this text is internal machinery, not speech". They are

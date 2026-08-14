@@ -2381,6 +2381,274 @@ class LatentCortexService:
         ):
             errors.append("branch_exchange_resource_binding_unproven")
         raw_action_trace = receipt.get("cognitive_action_trace")
+        LatentCortexService._receipt_action_trace_errors(answer_replacement_private, config, errors, expected_objective, output_text, output_tokens, raw_action_trace, receipt, resource_accounting)
+        preflight: dict[str, Any] | None = None
+        if receipt.get("verifier_preflight"):
+            try:
+                from core.brain.llm.latent_cortex.blind_review import (
+                    validate_decoy_preflight_receipt,
+                )
+
+                preflight = validate_decoy_preflight_receipt(
+                    receipt.get("verifier_preflight"),
+                    episode_id=receipt.get("episode_id"),
+                    objective_sha256=receipt.get("input_tokens_sha256"),
+                )
+                if preflight[
+                    "verifier_admitted"
+                ] is False and "verifier_preflight_decoy_calibration_failed" not in (
+                    receipt.get("honest_flags") or []
+                ):
+                    raise ValueError("decoy preflight rejection was not disclosed")
+            except (ImportError, TypeError, ValueError):
+                errors.append("decoy_verifier_preflight_unproven")
+        LatentCortexService._receipt_counterfactual_errors(config, errors, receipt, verified_counterfactual, verified_generation)
+        exchange_interval = config.get("exchange_interval")
+        if (
+            type(exchange_interval) is int
+            and exchange_interval > 0
+            and type(config.get("n_branches")) is int
+            and config["n_branches"] > 1
+            and positive_int(receipt, "steps_taken")
+            and receipt["steps_taken"] >= exchange_interval
+            and not positive_int(receipt, "exchanges")
+        ):
+            errors.append("branch_exchange_unproven")
+        budget = receipt.get("budget")
+        if not isinstance(budget, dict) or not positive_int(budget, "spent_layer_apps"):
+            errors.append("missing_compute_receipt")
+        elif (
+            not positive_int(budget, "max_layer_apps")
+            or budget["spent_layer_apps"] > budget["max_layer_apps"]
+            or budget.get("exhausted") is not False
+        ):
+            errors.append("incomplete_or_exhausted_compute_receipt")
+        elif isinstance(allocated_budget, dict):
+            # CP126 0673f84a: the checks above compare the worker's spend
+            # against the worker's OWN reported maximum, which any receipt can
+            # satisfy by reporting a large enough ceiling. Nothing compared
+            # either number with what this facade actually allocated, so an
+            # episode could spend far more than its budget and still produce a
+            # self-consistent, passing receipt.
+            allocated_max = allocated_budget.get("max_layer_apps")
+            if type(allocated_max) is int and allocated_max > 0:
+                # Independent, not elif: a receipt can declare a ceiling above
+                # its allocation without spending it, and a spend above the
+                # allocation is the fact that matters even when the declared
+                # ceiling explains it. Chaining them made the spend check
+                # unreachable.
+                if budget["max_layer_apps"] > allocated_max:
+                    errors.append("compute_ceiling_exceeds_allocation")
+                if budget["spent_layer_apps"] > allocated_max:
+                    errors.append("compute_spend_exceeds_allocation")
+            allocated_wall = allocated_budget.get("wall_clock_s")
+            spent_wall = budget.get("wall_clock_s")
+            if (
+                isinstance(allocated_wall, (int, float))
+                and math.isfinite(float(allocated_wall))
+                and allocated_wall > 0
+                and isinstance(spent_wall, (int, float))
+                and not isinstance(spent_wall, bool)
+                and math.isfinite(float(spent_wall))
+                # A small overrun is scheduling noise; a large one means the
+                # deadline was not honoured.
+                and float(spent_wall) > float(allocated_wall) * 1.25
+            ):
+                errors.append("wall_clock_exceeds_allocation")
+        if not positive_int(receipt, "decode_requested_tokens") or receipt.get(
+            "decode_requested_tokens"
+        ) != config.get("decode_max_tokens"):
+            errors.append("decode_request_mismatch")
+        if not positive_int(receipt, "decode_generated_tokens"):
+            errors.append("decode_output_empty")
+        decode_contract = config.get("decode_contract", "none")
+        contract_required = decode_contract == "final_answer_v1"
+        configured_contract_grace = config.get(
+            "decode_contract_grace_tokens",
+            0,
+        )
+        if contract_required:
+            if receipt.get("decode_contract_required") is not True:
+                errors.append("decode_contract_requirement_unreceipted")
+            if receipt.get("decode_contract_satisfied") is not True:
+                errors.append("decode_contract_unsatisfied")
+            if receipt.get("decode_termination") not in {
+                "contract_complete",
+                "confidence_bound_replacement",
+            }:
+                errors.append("decode_contract_termination_mismatch")
+            if (
+                type(configured_contract_grace) is not int
+                or configured_contract_grace < 0
+                or receipt.get("decode_contract_grace_tokens") != configured_contract_grace
+            ):
+                errors.append("decode_contract_grace_mismatch")
+            grace_used = receipt.get("decode_contract_grace_used_tokens")
+            expected_grace_used = max(
+                0,
+                int(receipt.get("decode_generated_tokens") or 0)
+                - int(receipt.get("decode_requested_tokens") or 0),
+            )
+            if (
+                type(grace_used) is not int
+                or not 0 <= grace_used <= configured_contract_grace
+                or grace_used != expected_grace_used
+            ):
+                errors.append("decode_contract_grace_accounting_invalid")
+        elif receipt.get("decode_contract_required") is True:
+            errors.append("unexpected_decode_contract")
+        configured_probe_tokens = config.get("verifier_probe_max_tokens", 48)
+        if (
+            type(configured_probe_tokens) is not int
+            or receipt.get("verifier_probe_max_tokens") != configured_probe_tokens
+        ):
+            errors.append("verifier_probe_profile_mismatch")
+        configured_probe_contract = config.get("verifier_probe_contract", "none")
+        if (
+            "verifier_probe_contract" in config
+            or "verifier_probe_contract" in receipt
+        ) and (
+            configured_probe_contract not in {"none", "final_answer_v1"}
+            or receipt.get("verifier_probe_contract") != configured_probe_contract
+        ):
+            errors.append("verifier_probe_contract_mismatch")
+        if receipt.get("decode_termination") not in {
+            "eos",
+            # The public answer contract completed (one FINAL_ANSWER JSON
+            # object closed and parsed) — a complete answer by construction.
+            "contract_complete",
+            "token_limit",
+            # Sentence grace: the limit landed mid-sentence and sampling
+            # continued a few model-chosen tokens to the natural boundary.
+            "token_limit_sentence_grace",
+            # Wall-clock analogues: time pressure ended decoding, ideally at
+            # a sentence boundary (wind-down). The output-quality gate is
+            # the completeness judge either way.
+            "wall_reserve_sentence_grace",
+            "wall_reserve",
+            "confidence_bound_replacement",
+        }:
+            errors.append("decode_incomplete")
+        decode_bridge_policy = config.get("decode_bridge_policy", "none")
+        if decode_bridge_policy in {
+            "assistant_answer_v1",
+            "assistant_answer_v2",
+            "assistant_answer_v3",
+        }:
+            if receipt.get("decode_bridge_applied") is not True:
+                errors.append("decode_bridge_unapplied")
+            if receipt.get("decode_bridge_policy") != decode_bridge_policy:
+                errors.append("decode_bridge_policy_mismatch")
+            if not positive_int(receipt, "decode_bridge_token_count"):
+                errors.append("decode_bridge_tokens_missing")
+            if not sha256(receipt.get("decode_bridge_tokens_sha256")):
+                errors.append("decode_bridge_token_identity_unproven")
+            if not sha256(receipt.get("decode_bridge_logits_digest")):
+                errors.append("decode_bridge_logits_unproven")
+        if not nonnegative_int(receipt, "decode_newline_suppressions"):
+            errors.append("decode_newline_discipline_unreceipted")
+        configured_repetition = config.get("decode_repetition_penalty", 1.0)
+        applied_repetition = receipt.get("decode_repetition_penalty_applied")
+        if (
+            isinstance(applied_repetition, bool)
+            or not isinstance(applied_repetition, (int, float))
+            or not isinstance(configured_repetition, (int, float))
+            or isinstance(configured_repetition, bool)
+            or abs(float(applied_repetition) - float(configured_repetition)) > 1e-9
+        ):
+            errors.append("decode_repetition_guard_unproven")
+        configured_temperature = config.get("decode_temperature", 0.0)
+        configured_top_p = config.get("decode_top_p", 1.0)
+        if (
+            isinstance(configured_temperature, bool)
+            or not isinstance(configured_temperature, (int, float))
+            or isinstance(receipt.get("decode_temperature"), bool)
+            or not isinstance(receipt.get("decode_temperature"), (int, float))
+            or not math.isclose(
+                float(receipt["decode_temperature"]),
+                float(configured_temperature),
+                rel_tol=0.0,
+                abs_tol=1e-9,
+            )
+        ):
+            errors.append("decode_temperature_mismatch")
+        if (
+            isinstance(configured_top_p, bool)
+            or not isinstance(configured_top_p, (int, float))
+            or isinstance(receipt.get("decode_top_p"), bool)
+            or not isinstance(receipt.get("decode_top_p"), (int, float))
+            or not math.isclose(
+                float(receipt["decode_top_p"]),
+                float(configured_top_p),
+                rel_tol=0.0,
+                abs_tol=1e-9,
+            )
+        ):
+            errors.append("decode_top_p_mismatch")
+        raw_flags = receipt.get("honest_flags")
+        if not isinstance(raw_flags, list) or any(not isinstance(flag, str) for flag in raw_flags):
+            errors.append("invalid_honest_flags")
+            flags: list[str] = []
+        else:
+            flags = raw_flags
+        if any(flag.startswith("fallback_vanilla") for flag in flags):
+            errors.append("vanilla_fallback")
+        if config.get("latent_opt") is True:
+            if receipt.get("latent_opt_applied") is not True:
+                errors.append("latent_optimization_not_applied")
+            if receipt.get("latent_opt_mode") != "gradient":
+                errors.append("latent_optimization_wrong_mode")
+            if not positive_int(receipt, "latent_opt_attempts"):
+                errors.append("latent_optimization_not_attempted")
+            # Under verifier guidance, zero ACCEPTED steps is a legitimate
+            # verified outcome (every proposal was checked and declined) —
+            # the verifier evidence must exist to earn that exemption.
+            verifier_evidence = receipt.get("verifier_guidance")
+            # CP126 94593618: int() on a worker-supplied field raises on a
+            # string or a list, and this sits OUTSIDE any protective
+            # conversion — so a malformed receipt escaped the contract as an
+            # exception instead of the promised ok=false with a reason. A
+            # validator that can be crashed by the thing it validates is not
+            # a validator.
+            verifier_ran = (
+                isinstance(verifier_evidence, dict)
+                and type(verifier_evidence.get("evaluations")) is int
+                and verifier_evidence["evaluations"] > 0
+            )
+            if not positive_int(receipt, "latent_opt_steps") and not verifier_ran:
+                errors.append("latent_optimization_no_accepted_steps")
+            if not nonnegative_int(receipt, "latent_opt_rejected"):
+                errors.append("latent_optimization_rejection_count_invalid")
+            elif (
+                positive_int(receipt, "latent_opt_attempts")
+                and nonnegative_int(receipt, "latent_opt_steps")
+                and (
+                    receipt["latent_opt_attempts"]
+                    != receipt["latent_opt_steps"] + receipt["latent_opt_rejected"]
+                )
+            ):
+                errors.append("latent_optimization_accounting_mismatch")
+            if receipt.get("latent_opt_budget_exhausted") is not False:
+                errors.append("latent_optimization_budget_exhausted")
+            if config.get("verifier_accept_non_regression") is True:
+                arbitration = receipt.get("latent_opt_verifier")
+                if not verifier_arbitration_valid(
+                    arbitration,
+                    attempts=int(receipt.get("latent_opt_attempts") or 0),
+                    accepted_steps=int(receipt.get("latent_opt_steps") or 0),
+                ):
+                    errors.append("latent_optimization_verifier_receipt_invalid")
+        LatentCortexService._receipt_fast_weight_errors(config, errors, expected_worker_identity, finite_number_list, nonnegative_int, output_text, output_tokens, positive_int, receipt, resource_accounting)
+        return errors
+
+    @staticmethod
+    def _receipt_action_trace_errors(answer_replacement_private, config, errors, expected_objective, output_text, output_tokens, raw_action_trace, receipt, resource_accounting):
+        """Body lifted verbatim out of ``LatentCortexService._receipt_contract_errors``.
+
+        Moved by tools/extract_seam.py, which refuses to write unless the
+        relocated body diffs clean against the original. The seam was
+        9 names in, 0 out, 0 early return(s), 0 awaits.
+        """
         if isinstance(raw_action_trace, list) and raw_action_trace:
             validating_context_focus = False
             try:
@@ -2714,264 +2982,6 @@ class LatentCortexService:
             for name in resource_accounting.get("operations", {})
         ):
             errors.append("cognitive_operator_execution_unproven")
-        preflight: dict[str, Any] | None = None
-        if receipt.get("verifier_preflight"):
-            try:
-                from core.brain.llm.latent_cortex.blind_review import (
-                    validate_decoy_preflight_receipt,
-                )
-
-                preflight = validate_decoy_preflight_receipt(
-                    receipt.get("verifier_preflight"),
-                    episode_id=receipt.get("episode_id"),
-                    objective_sha256=receipt.get("input_tokens_sha256"),
-                )
-                if preflight[
-                    "verifier_admitted"
-                ] is False and "verifier_preflight_decoy_calibration_failed" not in (
-                    receipt.get("honest_flags") or []
-                ):
-                    raise ValueError("decoy preflight rejection was not disclosed")
-            except (ImportError, TypeError, ValueError):
-                errors.append("decoy_verifier_preflight_unproven")
-        LatentCortexService._receipt_counterfactual_errors(config, errors, receipt, verified_counterfactual, verified_generation)
-        exchange_interval = config.get("exchange_interval")
-        if (
-            type(exchange_interval) is int
-            and exchange_interval > 0
-            and type(config.get("n_branches")) is int
-            and config["n_branches"] > 1
-            and positive_int(receipt, "steps_taken")
-            and receipt["steps_taken"] >= exchange_interval
-            and not positive_int(receipt, "exchanges")
-        ):
-            errors.append("branch_exchange_unproven")
-        budget = receipt.get("budget")
-        if not isinstance(budget, dict) or not positive_int(budget, "spent_layer_apps"):
-            errors.append("missing_compute_receipt")
-        elif (
-            not positive_int(budget, "max_layer_apps")
-            or budget["spent_layer_apps"] > budget["max_layer_apps"]
-            or budget.get("exhausted") is not False
-        ):
-            errors.append("incomplete_or_exhausted_compute_receipt")
-        elif isinstance(allocated_budget, dict):
-            # CP126 0673f84a: the checks above compare the worker's spend
-            # against the worker's OWN reported maximum, which any receipt can
-            # satisfy by reporting a large enough ceiling. Nothing compared
-            # either number with what this facade actually allocated, so an
-            # episode could spend far more than its budget and still produce a
-            # self-consistent, passing receipt.
-            allocated_max = allocated_budget.get("max_layer_apps")
-            if type(allocated_max) is int and allocated_max > 0:
-                # Independent, not elif: a receipt can declare a ceiling above
-                # its allocation without spending it, and a spend above the
-                # allocation is the fact that matters even when the declared
-                # ceiling explains it. Chaining them made the spend check
-                # unreachable.
-                if budget["max_layer_apps"] > allocated_max:
-                    errors.append("compute_ceiling_exceeds_allocation")
-                if budget["spent_layer_apps"] > allocated_max:
-                    errors.append("compute_spend_exceeds_allocation")
-            allocated_wall = allocated_budget.get("wall_clock_s")
-            spent_wall = budget.get("wall_clock_s")
-            if (
-                isinstance(allocated_wall, (int, float))
-                and math.isfinite(float(allocated_wall))
-                and allocated_wall > 0
-                and isinstance(spent_wall, (int, float))
-                and not isinstance(spent_wall, bool)
-                and math.isfinite(float(spent_wall))
-                # A small overrun is scheduling noise; a large one means the
-                # deadline was not honoured.
-                and float(spent_wall) > float(allocated_wall) * 1.25
-            ):
-                errors.append("wall_clock_exceeds_allocation")
-        if not positive_int(receipt, "decode_requested_tokens") or receipt.get(
-            "decode_requested_tokens"
-        ) != config.get("decode_max_tokens"):
-            errors.append("decode_request_mismatch")
-        if not positive_int(receipt, "decode_generated_tokens"):
-            errors.append("decode_output_empty")
-        decode_contract = config.get("decode_contract", "none")
-        contract_required = decode_contract == "final_answer_v1"
-        configured_contract_grace = config.get(
-            "decode_contract_grace_tokens",
-            0,
-        )
-        if contract_required:
-            if receipt.get("decode_contract_required") is not True:
-                errors.append("decode_contract_requirement_unreceipted")
-            if receipt.get("decode_contract_satisfied") is not True:
-                errors.append("decode_contract_unsatisfied")
-            if receipt.get("decode_termination") not in {
-                "contract_complete",
-                "confidence_bound_replacement",
-            }:
-                errors.append("decode_contract_termination_mismatch")
-            if (
-                type(configured_contract_grace) is not int
-                or configured_contract_grace < 0
-                or receipt.get("decode_contract_grace_tokens") != configured_contract_grace
-            ):
-                errors.append("decode_contract_grace_mismatch")
-            grace_used = receipt.get("decode_contract_grace_used_tokens")
-            expected_grace_used = max(
-                0,
-                int(receipt.get("decode_generated_tokens") or 0)
-                - int(receipt.get("decode_requested_tokens") or 0),
-            )
-            if (
-                type(grace_used) is not int
-                or not 0 <= grace_used <= configured_contract_grace
-                or grace_used != expected_grace_used
-            ):
-                errors.append("decode_contract_grace_accounting_invalid")
-        elif receipt.get("decode_contract_required") is True:
-            errors.append("unexpected_decode_contract")
-        configured_probe_tokens = config.get("verifier_probe_max_tokens", 48)
-        if (
-            type(configured_probe_tokens) is not int
-            or receipt.get("verifier_probe_max_tokens") != configured_probe_tokens
-        ):
-            errors.append("verifier_probe_profile_mismatch")
-        configured_probe_contract = config.get("verifier_probe_contract", "none")
-        if (
-            "verifier_probe_contract" in config
-            or "verifier_probe_contract" in receipt
-        ) and (
-            configured_probe_contract not in {"none", "final_answer_v1"}
-            or receipt.get("verifier_probe_contract") != configured_probe_contract
-        ):
-            errors.append("verifier_probe_contract_mismatch")
-        if receipt.get("decode_termination") not in {
-            "eos",
-            # The public answer contract completed (one FINAL_ANSWER JSON
-            # object closed and parsed) — a complete answer by construction.
-            "contract_complete",
-            "token_limit",
-            # Sentence grace: the limit landed mid-sentence and sampling
-            # continued a few model-chosen tokens to the natural boundary.
-            "token_limit_sentence_grace",
-            # Wall-clock analogues: time pressure ended decoding, ideally at
-            # a sentence boundary (wind-down). The output-quality gate is
-            # the completeness judge either way.
-            "wall_reserve_sentence_grace",
-            "wall_reserve",
-            "confidence_bound_replacement",
-        }:
-            errors.append("decode_incomplete")
-        decode_bridge_policy = config.get("decode_bridge_policy", "none")
-        if decode_bridge_policy in {
-            "assistant_answer_v1",
-            "assistant_answer_v2",
-            "assistant_answer_v3",
-        }:
-            if receipt.get("decode_bridge_applied") is not True:
-                errors.append("decode_bridge_unapplied")
-            if receipt.get("decode_bridge_policy") != decode_bridge_policy:
-                errors.append("decode_bridge_policy_mismatch")
-            if not positive_int(receipt, "decode_bridge_token_count"):
-                errors.append("decode_bridge_tokens_missing")
-            if not sha256(receipt.get("decode_bridge_tokens_sha256")):
-                errors.append("decode_bridge_token_identity_unproven")
-            if not sha256(receipt.get("decode_bridge_logits_digest")):
-                errors.append("decode_bridge_logits_unproven")
-        if not nonnegative_int(receipt, "decode_newline_suppressions"):
-            errors.append("decode_newline_discipline_unreceipted")
-        configured_repetition = config.get("decode_repetition_penalty", 1.0)
-        applied_repetition = receipt.get("decode_repetition_penalty_applied")
-        if (
-            isinstance(applied_repetition, bool)
-            or not isinstance(applied_repetition, (int, float))
-            or not isinstance(configured_repetition, (int, float))
-            or isinstance(configured_repetition, bool)
-            or abs(float(applied_repetition) - float(configured_repetition)) > 1e-9
-        ):
-            errors.append("decode_repetition_guard_unproven")
-        configured_temperature = config.get("decode_temperature", 0.0)
-        configured_top_p = config.get("decode_top_p", 1.0)
-        if (
-            isinstance(configured_temperature, bool)
-            or not isinstance(configured_temperature, (int, float))
-            or isinstance(receipt.get("decode_temperature"), bool)
-            or not isinstance(receipt.get("decode_temperature"), (int, float))
-            or not math.isclose(
-                float(receipt["decode_temperature"]),
-                float(configured_temperature),
-                rel_tol=0.0,
-                abs_tol=1e-9,
-            )
-        ):
-            errors.append("decode_temperature_mismatch")
-        if (
-            isinstance(configured_top_p, bool)
-            or not isinstance(configured_top_p, (int, float))
-            or isinstance(receipt.get("decode_top_p"), bool)
-            or not isinstance(receipt.get("decode_top_p"), (int, float))
-            or not math.isclose(
-                float(receipt["decode_top_p"]),
-                float(configured_top_p),
-                rel_tol=0.0,
-                abs_tol=1e-9,
-            )
-        ):
-            errors.append("decode_top_p_mismatch")
-        raw_flags = receipt.get("honest_flags")
-        if not isinstance(raw_flags, list) or any(not isinstance(flag, str) for flag in raw_flags):
-            errors.append("invalid_honest_flags")
-            flags: list[str] = []
-        else:
-            flags = raw_flags
-        if any(flag.startswith("fallback_vanilla") for flag in flags):
-            errors.append("vanilla_fallback")
-        if config.get("latent_opt") is True:
-            if receipt.get("latent_opt_applied") is not True:
-                errors.append("latent_optimization_not_applied")
-            if receipt.get("latent_opt_mode") != "gradient":
-                errors.append("latent_optimization_wrong_mode")
-            if not positive_int(receipt, "latent_opt_attempts"):
-                errors.append("latent_optimization_not_attempted")
-            # Under verifier guidance, zero ACCEPTED steps is a legitimate
-            # verified outcome (every proposal was checked and declined) —
-            # the verifier evidence must exist to earn that exemption.
-            verifier_evidence = receipt.get("verifier_guidance")
-            # CP126 94593618: int() on a worker-supplied field raises on a
-            # string or a list, and this sits OUTSIDE any protective
-            # conversion — so a malformed receipt escaped the contract as an
-            # exception instead of the promised ok=false with a reason. A
-            # validator that can be crashed by the thing it validates is not
-            # a validator.
-            verifier_ran = (
-                isinstance(verifier_evidence, dict)
-                and type(verifier_evidence.get("evaluations")) is int
-                and verifier_evidence["evaluations"] > 0
-            )
-            if not positive_int(receipt, "latent_opt_steps") and not verifier_ran:
-                errors.append("latent_optimization_no_accepted_steps")
-            if not nonnegative_int(receipt, "latent_opt_rejected"):
-                errors.append("latent_optimization_rejection_count_invalid")
-            elif (
-                positive_int(receipt, "latent_opt_attempts")
-                and nonnegative_int(receipt, "latent_opt_steps")
-                and (
-                    receipt["latent_opt_attempts"]
-                    != receipt["latent_opt_steps"] + receipt["latent_opt_rejected"]
-                )
-            ):
-                errors.append("latent_optimization_accounting_mismatch")
-            if receipt.get("latent_opt_budget_exhausted") is not False:
-                errors.append("latent_optimization_budget_exhausted")
-            if config.get("verifier_accept_non_regression") is True:
-                arbitration = receipt.get("latent_opt_verifier")
-                if not verifier_arbitration_valid(
-                    arbitration,
-                    attempts=int(receipt.get("latent_opt_attempts") or 0),
-                    accepted_steps=int(receipt.get("latent_opt_steps") or 0),
-                ):
-                    errors.append("latent_optimization_verifier_receipt_invalid")
-        LatentCortexService._receipt_fast_weight_errors(config, errors, expected_worker_identity, finite_number_list, nonnegative_int, output_text, output_tokens, positive_int, receipt, resource_accounting)
-        return errors
 
     @staticmethod
     def _receipt_counterfactual_errors(config, errors, receipt, verified_counterfactual, verified_generation):
