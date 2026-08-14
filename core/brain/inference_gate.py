@@ -449,6 +449,11 @@ def _reflex_model_status(raw_path: str) -> tuple[str, str]:
 #: so the override below has something to be an override OF.
 _STAKES_DENIED_TOKEN_CAP = 128
 
+#: Longest a foreground turn may block on Cortex warmup. A cold 32B load is
+#: ~150s and the cold-boot budget is 180s; beyond ten minutes the person has
+#: gone, and the lane is better served by the fallback tier.
+_MAX_FOREGROUND_READY_WAIT_S = 600.0
+
 _FOREGROUND_CONTEXT_WINDOW_DEFAULT = 16384
 _FOREGROUND_CONTEXT_WINDOW_FLOOR = 4096
 
@@ -975,6 +980,17 @@ class InferenceGate:
         self._cortex_stuck_kill_times: deque[float] = deque(maxlen=16)
         self._cortex_warmup_backoff_until: float = 0.0
         self._cortex_warmup_backoff_streak: int = 0
+        #: Load setbacks by kind; see cortex_load_setbacks().
+        self._cortex_load_setback_counts: dict[str, int] = {}
+        #: Who currently owns rewriting Cortex lane state, and when.
+        self._lane_transition_owner: str = ""
+        self._lane_transition_at: float = 0.0
+        #: Cancelled loads not yet observed to stop.
+        self._abandoned_cortex_loads: list[Any] = []
+        #: Guards the status-triggered recovery cooldown stamp.
+        self._status_recovery_lock = checked_lock(
+            "inference_gate.status_recovery_cooldown", rank=LockRank.LEAF
+        )
         self._last_stale_reset_log_at: float = (
             0.0  # [HARDENING v54] Rate-limit stale state warnings
         )
@@ -1961,9 +1977,148 @@ class InferenceGate:
                 "measured_at_monotonic": time.monotonic(),
             }
 
+    #: What actually happened to a load attempt. Both defer warmup — the GPU
+    #: thrash is the same either way — but they are not the same event, and
+    #: recording an overrun as a kill puts a process termination in the record
+    #: that never occurred. CP126 d25f5f0a: repeated slow-but-LIVE loads armed
+    #: kill-based backoff on evidence of a kill nobody performed.
+    LOAD_SETBACK_KILL = "stuck_load_kill"
+    LOAD_SETBACK_OVERRUN = "warmup_budget_overrun"
+
+    def cortex_load_setbacks(self) -> dict[str, int]:
+        """Counts by kind, so "we killed it twice" and "it was slow twice" are
+        distinguishable in the record."""
+        return dict(getattr(self, "_cortex_load_setback_counts", {}) or {})
+
+    #: How long a lane-transition lease is honoured before it is considered
+    #: abandoned. Long enough for a cancel-and-verify pass, short enough that a
+    #: crashed holder cannot wedge recovery for good.
+    _LANE_TRANSITION_LEASE_S = 30.0
+
+    def _claim_lane_transition(self, owner: str) -> bool:
+        """Take the right to rewrite Cortex lane state. False means someone has it.
+
+        The watchdog, the status path and the recovery scheduler all reach into
+        the client's private ``_warmup_in_flight``, cancel the prewarm task and
+        call private lane-state setters. None of them took anything first, so
+        two of them could do it at once: one clears the flag while the other is
+        mid-cancel, and a fresh warmup starts underneath a load that has not
+        stopped.
+
+        Deliberately not a lock: two of the three callers are synchronous and
+        one is on the event loop, so a lock here would either block the loop or
+        not be honoured. A compare-and-set with an expiry gives the same
+        exclusion without either.
+        """
+        now = time.monotonic()
+        held_by = getattr(self, "_lane_transition_owner", "")
+        held_at = float(getattr(self, "_lane_transition_at", 0.0) or 0.0)
+        if held_by and (now - held_at) < self._LANE_TRANSITION_LEASE_S:
+            logger.debug(
+                "Lane transition for %s refused; %s holds the lease (%.1fs old).",
+                owner,
+                held_by,
+                now - held_at,
+            )
+            return False
+        if held_by:
+            logger.warning(
+                "🔍 Lane-transition lease from %s expired after %.0fs; %s is taking it.",
+                held_by,
+                now - held_at,
+                owner,
+            )
+        self._lane_transition_owner = str(owner)
+        self._lane_transition_at = now
+        return True
+
+    def _release_lane_transition(self, owner: str) -> None:
+        if getattr(self, "_lane_transition_owner", "") == str(owner):
+            self._lane_transition_owner = ""
+            self._lane_transition_at = 0.0
+
+    def _clear_wedged_cortex_warmup(self, reason: str, *, owner: str) -> dict[str, Any]:
+        """Clear a wedged warmup flag and cancel its load, under one owner.
+
+        Cancelling a task is a REQUEST. The old code cancelled, set
+        ``_prewarm_task = None`` and moved on, so a load that had not yet
+        noticed the cancellation became invisible — and the next warmup started
+        on top of it, two 20GB loads competing for one GPU slot. The task is
+        kept here instead of dropped; :meth:`await_abandoned_cortex_loads`
+        proves it stopped, and warmup admission refuses while one is unproven.
+        """
+        receipt: dict[str, Any] = {
+            "reason": str(reason),
+            "owner": str(owner),
+            "cleared_warmup_flag": False,
+            "cancelled_prewarm": False,
+            "at": time.time(),
+        }
+        if not self._claim_lane_transition(owner):
+            receipt["refused"] = "lane_transition_held"
+            return receipt
+        try:
+            client = self._mlx_client
+            if client is not None and getattr(client, "_warmup_in_flight", False):
+                client._warmup_in_flight = False
+                receipt["cleared_warmup_flag"] = True
+            task = getattr(self, "_prewarm_task", None)
+            if task is not None and not task.done():
+                task.cancel()
+                receipt["cancelled_prewarm"] = True
+                abandoned = getattr(self, "_abandoned_cortex_loads", None)
+                if abandoned is None:
+                    abandoned = []
+                    self._abandoned_cortex_loads = abandoned
+                abandoned.append(task)
+            self._prewarm_task = None
+        finally:
+            self._release_lane_transition(owner)
+        return receipt
+
+    def unproven_cortex_loads(self) -> int:
+        """Cancelled loads that have not been observed to stop."""
+        return len(
+            [
+                task
+                for task in (getattr(self, "_abandoned_cortex_loads", None) or [])
+                if not task.done()
+            ]
+        )
+
+    async def await_abandoned_cortex_loads(self, timeout: float = 10.0) -> dict[str, Any]:
+        """Wait for cancelled loads to actually finish, and say if they did not."""
+        abandoned = list(getattr(self, "_abandoned_cortex_loads", None) or [])
+        if not abandoned:
+            return {"awaited": 0, "still_running": 0}
+        # asyncio.wait, NOT wait_for: on timeout wait_for CANCELS what it is
+        # waiting on, and the case this method exists to detect is a load that
+        # ignores cancellation — so the cleanup would wait forever on the one
+        # task it was written to notice. wait observes and returns.
+        await asyncio.wait(abandoned, timeout=max(0.1, float(timeout)))
+        still_running = [task for task in abandoned if not task.done()]
+        self._abandoned_cortex_loads = still_running
+        if still_running:
+            _record_inference_degradation(
+                TimeoutError(
+                    f"{len(still_running)} cancelled Cortex load(s) did not stop within {timeout:.0f}s"
+                ),
+                action="refused to certify that a cancelled model load had stopped",
+                severity="error",
+                extra={"still_running": len(still_running)},
+            )
+        return {"awaited": len(abandoned), "still_running": len(still_running)}
+
+    def _note_cortex_warmup_overrun(self) -> None:
+        """A load exceeded its budget and was LEFT RUNNING. Not a kill."""
+        self._note_cortex_load_setback(self.LOAD_SETBACK_OVERRUN)
+
     def _note_cortex_stuck_kill(self) -> None:
-        """Record a stuck-cortex force-kill and arm a warmup cooldown once the
-        kills cluster.
+        """A stuck load was force-killed and reaped."""
+        self._note_cortex_load_setback(self.LOAD_SETBACK_KILL)
+
+    def _note_cortex_load_setback(self, kind: str) -> None:
+        """Record a load setback and arm a warmup cooldown once they cluster.
 
         Each kill means a load attempt exceeded the deadline (thermal throttle /
         GPU contention) and got reaped. Re-spawning immediately just repeats the
@@ -1976,6 +2131,11 @@ class InferenceGate:
         now = time.monotonic()
         window = InferenceGate._env_float("AURA_CORTEX_STUCK_KILL_WINDOW_S", 300.0)
         threshold = max(1, int(InferenceGate._env_float("AURA_CORTEX_STUCK_KILL_THRESHOLD", 2.0)))
+        counts = getattr(self, "_cortex_load_setback_counts", None)
+        if counts is None:
+            counts = {}
+            self._cortex_load_setback_counts = counts
+        counts[str(kind)] = counts.get(str(kind), 0) + 1
         self._cortex_stuck_kill_times.append(now)
         recent = [t for t in self._cortex_stuck_kill_times if now - t <= window]
         if len(recent) < threshold:
@@ -1986,7 +2146,7 @@ class InferenceGate:
         cooldown = min(cap, base * self._cortex_warmup_backoff_streak)
         self._cortex_warmup_backoff_until = now + cooldown
         logger.warning(
-            "🧊 [CORTEX BACKOFF] %d stuck-load kills in %.0fs — deferring warmup %.0fs so the "
+            "🧊 [CORTEX BACKOFF] %d load setbacks in %.0fs — deferring warmup %.0fs so the "
             "resident fallback carries and thermal recovers before the next reload shot.",
             len(recent),
             window,
@@ -2910,7 +3070,10 @@ class InferenceGate:
                     logger.warning(
                         "🔍 [WATCHDOG] Force-clearing wedged warmup_in_flight before recovery."
                     )
-                    self._mlx_client._warmup_in_flight = False
+                    self._clear_wedged_cortex_warmup(
+                        "watchdog_pre_recovery", owner="watchdog"
+                    )
+                    await self.await_abandoned_cortex_loads()
                 await self._ensure_cortex_recovery()
         else:
             # Lane is alive — clear the dead-man clock.
@@ -2926,13 +3089,16 @@ class InferenceGate:
                 logger.warning(
                     "🔍 [WATCHDOG] MLX warmup_in_flight stuck for >300s. Force-clearing."
                 )
-                self._mlx_client._warmup_in_flight = False
-                if self._prewarm_task and not self._prewarm_task.done():
+                receipt = self._clear_wedged_cortex_warmup(
+                    "watchdog_stuck_warmup", owner="watchdog"
+                )
+                if receipt.get("cancelled_prewarm"):
                     logger.warning(
-                        "🔍 [WATCHDOG] Stuck prewarm task found during watchdog cleanup. Cancelling."
+                        "🔍 [WATCHDOG] Stuck prewarm task cancelled; waiting for it to stop."
                     )
-                    self._prewarm_task.cancel()
-                    self._prewarm_task = None
+                # Cancelling is a request. Waiting is how we know a 20GB load
+                # is not still running under the next warmup.
+                await self.await_abandoned_cortex_loads()
 
         # 3. Detect completed-but-unreaped prewarm tasks
         if self._prewarm_task and self._prewarm_task.done():
@@ -3267,8 +3433,12 @@ class InferenceGate:
                     # reads "recovering" from the client again and the stale check
                     # fires in an infinite loop.
                     if self._mlx_client:
-                        if hasattr(self._mlx_client, "_warmup_in_flight"):
-                            self._mlx_client._warmup_in_flight = False
+                        # Through the one owner, so a watchdog pass mid-cancel
+                        # cannot be racing this. The cancelled load is kept for
+                        # await_abandoned_cortex_loads() rather than dropped.
+                        self._clear_wedged_cortex_warmup(
+                            "stale_lane_observed", owner="conversation_status"
+                        )
                         if hasattr(self._mlx_client, "_set_lane_state"):
                             self._mlx_client._set_lane_state("cold")
                     # [HARDENING v54] Schedule a recovery warmup so the cortex
@@ -3359,15 +3529,31 @@ class InferenceGate:
         must not become an unbounded work generator.
         """
 
+        # The cooldown stamp used to be written BEFORE the scheduling call and
+        # outside any exclusion. Two status polls could both read a cold stamp
+        # and both schedule; and if scheduling then raised, the stamp still
+        # suppressed every other attempt for the full interval — a failure to
+        # schedule bought silence instead of a retry.
         now = time.monotonic()
-        if (now - self._last_status_recovery_schedule_at) < max(1.0, min_interval_s):
-            logger.debug(
-                "Skipping status-triggered Cortex prewarm (%s); cooldown active.",
-                reason,
-            )
-            return
-        self._last_status_recovery_schedule_at = now
-        self._schedule_background_cortex_prewarm(delay=delay)
+        interval = max(1.0, float(min_interval_s))
+        with self._status_recovery_lock:
+            if (now - self._last_status_recovery_schedule_at) < interval:
+                logger.debug(
+                    "Skipping status-triggered Cortex prewarm (%s); cooldown active.",
+                    reason,
+                )
+                return
+            previous = self._last_status_recovery_schedule_at
+            self._last_status_recovery_schedule_at = now
+        try:
+            self._schedule_background_cortex_prewarm(delay=delay)
+        except _INFERENCE_RECOVERABLE_ERRORS:
+            # Nothing was scheduled, so nothing should be suppressed. Put the
+            # stamp back and let the next observation try.
+            with self._status_recovery_lock:
+                if self._last_status_recovery_schedule_at == now:
+                    self._last_status_recovery_schedule_at = previous
+            raise
 
     def _schedule_background_cortex_prewarm(self, delay: float = 12.0) -> None:
         if is_shutdown_requested():
@@ -3551,11 +3737,22 @@ class InferenceGate:
         }
         if blockers != {"visible_conversation_probe_missing"}:
             return False
-        return (
-            str(lane.get("state", "") or "").lower() == "ready"
-            and bool(lane.get("warmup_attempted", True))
-            and not bool(lane.get("warmup_in_flight", False))
-        )
+        if str(lane.get("state", "") or "").lower() != "ready":
+            return False
+        if bool(lane.get("warmup_in_flight", False)):
+            return False
+        # `warmup_attempted` defaulted to True, so a lane payload that simply
+        # did not carry the field satisfied "the worker is loaded" on the
+        # strength of a default. Absent evidence of a warmup is not evidence of
+        # a warmup, and this predicate is what lets a foreground PROOF turn go
+        # to a lane. Missing means no.
+        if "warmup_attempted" not in lane:
+            logger.debug(
+                "Lane omits warmup_attempted; refusing the visible-conversation "
+                "proof rather than assuming a warmup happened."
+            )
+            return False
+        return bool(lane.get("warmup_attempted"))
 
     @classmethod
     def _lane_can_attempt_visible_conversation_turn(cls, lane: dict[str, Any] | None) -> bool:
@@ -3652,7 +3849,15 @@ class InferenceGate:
         """Ensure the 32B conversation lane has actually attempted warmup for this turn."""
         if is_shutdown_requested():
             raise RuntimeError("runtime_shutdown")
-        timeout = max(15.0, float(timeout or 90.0))
+        # The clamp was max(15.0, …) with nothing above it, so a caller passing
+        # inf — or a config that produced one — made this an unbounded wait on
+        # a cold lane while holding the foreground. NaN was worse: every
+        # comparison against it is False, so the wait ran to whichever branch
+        # happened to exit. Neither is a timeout; both fall back to the default.
+        requested = _finite(timeout, 90.0)
+        if requested is None or requested <= 0.0:
+            requested = 90.0
+        timeout = max(15.0, min(_MAX_FOREGROUND_READY_WAIT_S, float(requested)))
         lane = self.get_conversation_status()
         if self._lane_can_attempt_visible_conversation_turn(lane):
             # Cortex is serving again — clear any post-thrash warmup cooldown.
@@ -3757,7 +3962,9 @@ class InferenceGate:
             # was never given the chance to finish warming. A deferral is not
             # damage; the same category error, one layer down.
             if not recovery_handoff:
-                self._note_cortex_stuck_kill()
+                # The shielded warmup is still running: this budget overran,
+                # nothing was killed. Same backoff, honest evidence.
+                self._note_cortex_warmup_overrun()
             else:
                 logger.info(
                     "🧠 Foreground recovery handoff after %.0fs — cortex keeps "
@@ -3933,9 +4140,15 @@ class InferenceGate:
                 self._cortex_recovery_in_progress = False
                 return
             self._cortex_recovery_in_progress = True
-            self._cortex_recovery_attempts += 1
+            # The attempt counter used to increment HERE, before the warmup
+            # admission recheck below. Memory pressure can change between
+            # scheduling and running, and a deferral loads nothing — but it
+            # still spent an attempt, so repeated deferrals walked the counter
+            # to the exponential cooldown without one load ever being tried.
+            # An attempt is now counted where a load is actually attempted.
+            attempt_counted = False
 
-            if self._cortex_recovery_attempts == 3:
+            if self._cortex_recovery_attempts + 1 == 3:
                 logger.warning(
                     "🧹 [RECOVERY] 3 failed attempts. Forcing deep GC and stale process cleanup..."
                 )
@@ -4004,6 +4217,19 @@ class InferenceGate:
                 if is_shutdown_requested():
                     logger.debug("Primary cortex recovery stopped before warmup: runtime shutdown requested.")
                     return
+                if self.unproven_cortex_loads():
+                    # A cancelled load has not been observed to stop. Starting
+                    # a second 20GB load on top of it is the overlap the
+                    # cancellation was supposed to prevent.
+                    await self.await_abandoned_cortex_loads()
+                    if self.unproven_cortex_loads():
+                        logger.warning(
+                            "♻️ [RECOVERY] Deferring warmup: a cancelled Cortex load has not stopped."
+                        )
+                        return
+                # A load is about to be attempted. THIS is an attempt.
+                self._cortex_recovery_attempts += 1
+                attempt_counted = True
                 if cold_start_recovery:
                     logger.info(
                         "♻️ [STARTUP] Primary 32B cortex is cold. Starting warmup (Attempt %d/5)...",
@@ -4066,6 +4292,10 @@ class InferenceGate:
                         exc,
                     )
             finally:
+                if not attempt_counted:
+                    logger.debug(
+                        "♻️ [RECOVERY] No load was attempted; recovery attempt not counted."
+                    )
                 # [STABILITY v51] ALWAYS clear the flag, even on unexpected exceptions.
                 self._cortex_recovery_in_progress = False
 
@@ -4554,7 +4784,17 @@ class InferenceGate:
                 self._last_background_memory_shed_at = now
                 return
         except _INFERENCE_RECOVERABLE_ERRORS as exc:
-            logger.debug("Shed memory-abundance check unavailable: %s", exc)
+            # The comment above promises to shed ONLY when free memory
+            # genuinely cannot hold the models. An unreadable memory probe is
+            # not that measurement, and continuing into the unload path made
+            # the promise conditional on a debug log nobody reads. No verified
+            # pressure, no shed.
+            _record_inference_degradation(
+                exc,
+                action="skipped memory-pressure shedding because free memory could not be measured",
+            )
+            self._last_background_memory_shed_at = now
+            return
 
         self._last_background_memory_shed_at = now
 
@@ -4638,12 +4878,26 @@ class InferenceGate:
 
         shed_count = 0
         shed_ladder_count = 0
+        unverified_sheds: list[str] = []
         for client_path, client in eligible:
             try:
                 await client.reboot_worker(
                     reason=reason,
                     mark_failed=False,
                 )
+                # A shed is only a shed if the worker actually went away.
+                # The count used to increment on the CALL, so a reboot that
+                # returned without unloading anything — or that brought the
+                # worker straight back — was reported as memory reclaimed, and
+                # the caller went on believing it had headroom it did not have.
+                if not self._worker_is_unloaded(client):
+                    unverified_sheds.append(client_path)
+                    logger.warning(
+                        "🧹 InferenceGate: %s did not report unloaded after reboot; "
+                        "not counting it as reclaimed memory.",
+                        os.path.basename(client_path),
+                    )
+                    continue
                 shed_count += 1
                 if client_path in configured_ladder_paths:
                     shed_ladder_count += 1
@@ -4668,12 +4922,48 @@ class InferenceGate:
                 shed_ladder_count,
             )
 
+        if unverified_sheds:
+            _record_inference_degradation(
+                RuntimeError(
+                    "workers still alive after reboot: " + ", ".join(sorted(unverified_sheds))
+                ),
+                action="reported less reclaimed memory than shed attempts because "
+                "some workers did not stop",
+                extra={"unverified": sorted(unverified_sheds)},
+            )
+        self._last_shed_receipt = {
+            "reason": str(reason),
+            "attempted": len(eligible),
+            "shed": shed_count,
+            "unverified": sorted(unverified_sheds),
+            "ladder_shed": shed_ladder_count,
+            "at": time.time(),
+        }
         if shed_count:
             logger.info(
                 "✅ InferenceGate: shed %d background local worker(s) (%s).",
                 shed_count,
                 reason,
             )
+
+    @staticmethod
+    def _worker_is_unloaded(client: Any) -> bool:
+        """Whether the worker actually stopped, rather than being asked to.
+
+        A client that cannot report its own liveness cannot prove it stopped,
+        so it does not count — the absence of the check is not the check.
+        """
+        is_alive = getattr(client, "is_alive", None)
+        if not callable(is_alive):
+            return False
+        try:
+            return not bool(is_alive())
+        except _INFERENCE_RECOVERABLE_ERRORS:
+            return False
+
+    def last_shed_receipt(self) -> dict[str, Any]:
+        """What the last memory-pressure shed attempted and what it proved."""
+        return copy.deepcopy(getattr(self, "_last_shed_receipt", {}))
 
     def _primary_lane_ready(self) -> bool:
         """Whether the primary worker is initialized and available now."""
@@ -11154,9 +11444,10 @@ class InferenceGate:
                     breaker = CircuitRegistry.get_instance().get_breaker(
                         "phase:UnitaryResponsePhase"
                     )
-                    if breaker.state != CircuitState.CLOSED:
-                        breaker.state = CircuitState.HALF_OPEN
-                        breaker.reset_timeout = min(breaker.reset_timeout, 15.0)
+                    if breaker.state != CircuitState.CLOSED and breaker.request_probe(
+                        reason="inference_gate_cortex_recovery",
+                        requested_timeout=15.0,
+                    ):
                         logger.info("Reset UnitaryResponsePhase circuit to HALF_OPEN for recovery")
                 except _INFERENCE_RECOVERABLE_ERRORS as exc:
                     logger.debug("Circuit-breaker recovery reset unavailable: %s", exc)

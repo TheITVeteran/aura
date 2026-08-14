@@ -59,6 +59,50 @@ class CircuitBreaker:
             
         return False
 
+    #: A probe may shorten the cooldown, never below this. Zero would mean an
+    #: OPEN circuit is retried instantly, which is the thundering retry the
+    #: breaker exists to stop.
+    MIN_PROBE_RESET_TIMEOUT = 5.0
+
+    def request_probe(self, *, reason: str, requested_timeout: Optional[float] = None) -> bool:
+        """Ask a tripped circuit to allow ONE trial call.
+
+        CP126 39211fcc: recovery paths reached in and assigned ``state`` and
+        ``reset_timeout`` directly. That can half-open a breaker while the
+        underlying failure is still active, leaves the failure counter saying
+        something the state contradicts, and skips every log line that makes a
+        transition auditable. Worse, the assignment could LENGTHEN nothing and
+        shorten anything — including to zero.
+
+        This is the transition API those callers were missing. It refuses on a
+        CLOSED circuit (there is nothing to reopen), never touches the failure
+        count — so a failing probe trips again exactly as it should — and can
+        only shorten the cooldown, down to a floor.
+
+        Returns whether the circuit is now allowing a trial call.
+        """
+        if self.state == CircuitState.CLOSED:
+            return False
+        if requested_timeout is not None:
+            try:
+                requested = float(requested_timeout)
+            except (TypeError, ValueError):
+                requested = self.reset_timeout
+            if requested == requested and requested not in (float("inf"), float("-inf")):
+                self.reset_timeout = max(
+                    self.MIN_PROBE_RESET_TIMEOUT, min(self.reset_timeout, requested)
+                )
+        previous = self.state
+        self.state = CircuitState.HALF_OPEN
+        logger.info(
+            "⚡ Circuit [%s] Transition: %s -> HALF_OPEN (probe requested: %s, cooldown %.0fs)",
+            self.name,
+            previous.value,
+            str(reason or "unspecified"),
+            self.reset_timeout,
+        )
+        return True
+
     def record_success(self):
         """Reset failures on successful call."""
         if self.state != CircuitState.CLOSED:
