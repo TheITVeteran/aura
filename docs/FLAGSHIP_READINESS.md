@@ -18,7 +18,7 @@ runtime, not because a style guide dislikes it:
 - missing global asyncio task supervision patch
 - missing direct morphogenesis lifecycle counters
 
-This is not a complete proof that Aura is perfect. It is a fast red/green gate for the kinds of issues that most often prevent a large local AI runtime from feeling flagship-grade.
+This is a fast red/green gate for the kinds of issues that most often stop a large local AI runtime from feeling flagship-grade. It does not prove the runtime is correct.
 
 ## Run
 

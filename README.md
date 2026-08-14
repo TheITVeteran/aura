@@ -26,13 +26,12 @@ want the same ideas without the math, read [HOW_IT_WORKS.md](HOW_IT_WORKS.md). I
 you want the evidence standard for autonomy and novel output claims, read
 [docs/BEHAVIORAL_PROOF_STANDARD.md](docs/BEHAVIORAL_PROOF_STANDARD.md).
 
-**If you only read one research page, read
+**The main research programme is
 [docs/RECURSIVE_LATENT_CORTEX.md](docs/RECURSIVE_LATENT_CORTEX.md).** It asks
 whether a frozen 32B checkpoint can be made to think longer without changing a
-weight, builds the machinery, runs a preregistered campaign against it — and
-reports that the capability dividend did not appear. That page is the clearest
-picture of how this repository handles a result it didn't want. See
-[Recursive Latent Cortex](#recursive-latent-cortex) below for the summary.
+weight, builds the machinery, runs a preregistered campaign against it, and
+reports that the capability dividend did not appear. Summary in
+[Recursive Latent Cortex](#recursive-latent-cortex) below.
 
 **Evidence map:** Claims should point to runnable tests, proof bundles, receipts,
 or replayable logs. Test counts move with the repo; use `pytest --collect-only`,
@@ -126,9 +125,9 @@ Then it does the whole thing again, on top of the artifact it just published.
 
 Every generation lands in a hash-chained ledger
 (`core/learning/rsi_lineage.py`). The verdict is computed from those
-receipts, not written by hand afterward. And when it refuses to promote,
-that prints just as loudly as a gain — which is the part worth watching.
-Raw responses, eval reports, and cycle receipts all stay on disk.
+receipts, not written by hand afterward. When it refuses to promote, that
+prints just as loudly as a gain. Raw responses, eval reports, and cycle
+receipts all stay on disk.
 
 The same machinery runs autonomously inside the live runtime
 (`core/learning/compounding_scheduler.py`): idle-gated, governance-approved,
@@ -232,9 +231,7 @@ from how confident the prose sounds.
 
 ## Recursive Latent Cortex
 
-The largest research programme in the repo, and the one that best shows how
-evidence is handled here. Full page:
-[docs/RECURSIVE_LATENT_CORTEX.md](docs/RECURSIVE_LATENT_CORTEX.md).
+Full page: [docs/RECURSIVE_LATENT_CORTEX.md](docs/RECURSIVE_LATENT_CORTEX.md).
 
 The question: a frozen 32B checkpoint is a fixed-depth pipeline — 64 layers,
 once, per token. **Can you make it think longer on a hard problem without
@@ -258,25 +255,24 @@ generated, n=24 per family, Holm-corrected — and returned this:
 | Capability gain, frozen loop, 32B | **CONJECTURE**, negative point estimate — latent 0.375 vs vanilla 0.417, overlapping intervals |
 | Broad reasoning gain, fusion, frontier performance | **NOT CLAIMED** |
 
-The honest headline the programme published about itself: *on an
+The headline the programme published about itself: *on an
 untrained-for-recurrence checkpoint at this scale, the frozen loop does not
 merely fail to help — it hurts.*
 
-Two things came out of that. First, an architectural explanation rather than a
-tuning excuse: the answer tokens had always traversed the middle block exactly
-once, so no depth was ever applied to the answer's own computation. Only the
-scratchpad was recurring. Second, the follow-on programme —
+That produced an architectural explanation. The answer tokens had always
+traversed the middle block exactly once, so no depth was ever applied to the
+answer's own computation. Only the scratchpad was recurring. Hence the
+follow-on programme,
 [docs/INTRINSIC_RECURRENCE.md](docs/INTRINSIC_RECURRENCE.md) — which makes the
 real token stream re-enter the middle block, so a 64-layer checkpoint runs 160
 layers deep at T=4 with the same weights, and trains it on typed, exactly
 checkable program traces instead of answers.
 
-Worth knowing before you read either page: two clean negative results from
-early August were **void**, because the promotion gate had been wired to the
-one decode policy that removes the vanilla floor. A win had been structurally
-impossible. Every negative result up to that point measured a system that was
-never switched on. That's in
-[docs/RLC_RECONCILIATION.md](docs/RLC_RECONCILIATION.md), with the fourteen
+Before you read either page: two clean negative results from early August were
+**void**, because the promotion gate had been wired to the one decode policy
+that removes the vanilla floor. A win had been structurally impossible. Every
+negative result up to that point measured a system that was never switched on.
+[docs/RLC_RECONCILIATION.md](docs/RLC_RECONCILIATION.md) has the fourteen
 defects in dependency order.
 
 ---
@@ -383,8 +379,8 @@ This repository is the baseline, not the whole story on any given machine.
 Canonical skills live under `core/skills/`. The top-level `skills/` package
 is a compatibility layer for older imports and nothing new should go there.
 
-The part worth knowing if you're auditing: a local workspace can hold
-private modules listed in `.gitignore`. They aren't in the tracked review
+If you're auditing: a local workspace can hold private modules listed in
+`.gitignore`. They aren't in the tracked review
 surface, and they can change the risk profile of that specific machine.
 Reading this repo tells you about this repo. If you're auditing a real
 deployment, read the disk too.
@@ -448,7 +444,7 @@ Lane names map to `core/config.py`: `fast_model` is the Cortex
 (`Qwen3.5-9B-4bit`), and `vision_model` is pinned to the Cortex build
 so vision and conversation share one identity.
 
-Two non-LLM lanes were replaced in August 2026 after measurement, not taste:
+Two non-LLM lanes were replaced in August 2026, each on a measurement:
 
 - **Speech-to-text** is one streaming-native Parakeet TDT pass
   (`core/voice/duplex/streaming_asr.py`) serving both duplex stages, replacing
@@ -1052,8 +1048,8 @@ governor blocks itself when another LoRA process is running.
 
 ## What this isn't
 
-This project uses a lot of loaded words. Consciousness. Qualia.
-Phenomenology. Words like that make overclaiming easy, so here is where the
+This project uses a lot of loaded words — consciousness, qualia,
+phenomenology. Words like that make overclaiming easy, so here is where the
 code actually stops.
 
 - **Integration isn't experience.** PhiCore does real IIT math on a 16-node
@@ -1092,9 +1088,8 @@ code actually stops.
   `phenomenal_criterion_met = True` fires, it means `opacity_index > 0.4`.
   That number is engineering. It isn't derived from anything deeper.
 
-These aren't disclaimers. They're the line where the code stops and the
-open questions start, and knowing exactly where that line sits is most of
-what makes the rest of the repo worth reading.
+These aren't disclaimers. They're the line where the code stops and the open
+questions start.
 
 ---
 

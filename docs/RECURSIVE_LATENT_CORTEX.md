@@ -5,17 +5,14 @@ at CP409. Checkpoints land faster than this page tracks; the claims ladder
 below changes slowly, and the append-only
 [ledger](RLC_SPARK_EXECUTION_LEDGER.md) is the live record.
 
-Aura's largest research programme, and the one most likely to be worth your
-time if you only read one. It asks a question with a checkable answer:
+Aura's largest research programme. The question:
 
 > A frozen 32B checkpoint is a fixed-depth pipeline — 64 layers, once, per
 > token. Can you make it *think longer* on a hard problem without changing a
 > single stored weight?
 
-The machinery says yes. **The capability dividend has not appeared, and the
-programme's own preregistered campaign is what proved it hadn't.** That
-result is the reason this page is worth reading: the harness was built to be
-able to say so without flinching, and then it did.
+The machinery works. **The capability dividend has not appeared, and the
+programme's own preregistered campaign is what proved it hadn't.**
 
 Turn the frozen resident checkpoint from a fixed-depth 64-layer pipeline into
 a **programmable, stateful, self-configuring reasoning machine** — without
@@ -41,11 +38,11 @@ seeds a set of **thought slots** beside the prompt, runs a *window* of the
 middle layers over those slots repeatedly under a schedule program, and
 persists the refined slots' K/V so every generated token attends to them.
 
-The recurrence is the compute. The slots are the state. Nothing is written
-back to disk, and the checkpoint bytes are hash-checked before and after
-every episode.
+The recurrence is where the extra compute goes. Nothing is written back to
+disk, and the checkpoint bytes are hash-checked before and after every
+episode.
 
-Four things make it a research instrument rather than a trick:
+What makes it a research instrument:
 
 1. **The invariant is checked, not promised.** Checkpoint bytes, permanent
    parameters, episode fast-weight erasure, and no-hidden-fine-tuning are
@@ -73,7 +70,7 @@ preregistered campaigns with committed seeds.
 | **Runtime integration** | **PROVEN.** Live on the resident 32B through the signed installed app; deep deliberation routes DEEP passes through latent episodes. Kill switch `AURA_LATENT_CORTEX=0`. |
 | **Capability gain, frozen loop** | **REFUTED at 1.5B scale.** The 2026-07-17 preregistered campaign (seed committed first, n=24/family, Holm-corrected) returned: slot causality REFUTED at n=72; all 7 factorial ablation arms REFUTED — vanilla 21/72 beat every latent arm (7–13/72); self-consistency beat virtual width; gradient latent optimization was indistinguishable from its random control *and* from off. On an untrained-for-recurrence checkpoint at this scale, the frozen loop does not merely fail to help — **it hurts.** |
 | **Capability gain, 32B frozen loop** | **CONJECTURE (negative point estimate).** Template-parity sweep: latent 0.167→0.375 over 1→2 recurrent steps then plateau; vanilla 0.417 leads with fully overlapping Wilson intervals at n=24. Statistical parity. |
-| **Recurrence-native training** | **OPEN — this is the live front.** If the frozen loop hurts, the dividend has to come from training the checkpoint to use recurrence. That is what every CP-numbered checkpoint since is about. |
+| **Recurrence-native training** | **OPEN — the live front.** If the frozen loop hurts, the dividend has to come from training the checkpoint to use recurrence. Every CP-numbered checkpoint since is about that. |
 | **Broad reasoning gain, fusion, frontier performance** | **NOT CLAIMED.** No checkpoint in this programme authorizes any of them, and each entry in the ledger says so explicitly. |
 
 ### What the training front has established
@@ -85,10 +82,10 @@ Working on a 1.5B vehicle so the resident 32B stays live, at
   model to *stop reasoning* — recurrence itself became the damage. Output-only
   transfer is now rejected fast and by contract (CP393).
 - **Trained recurrence is not inert.** Package-depth trained parameters beat
-  their exact initialization control 3/7 to 2/7 (CP368). Small, but not zero,
-  and measured against the right control.
-- **The serving policy was the bug, not the tissue.** Fixed depth four
-  discarded a correct depth-one answer. Decode now produces separately
+  their exact initialization control 3/7 to 2/7 (CP368) — a small margin,
+  measured against the right control.
+- **The serving policy was the bug.** Fixed depth four discarded a correct
+  depth-one answer. Decode now produces separately
   attested depth-one and package-depth candidates, so deeper recurrence can
   add a success but can never erase a shallow one already proven correct
   (CP376, "recurrent depth is monotonic").
@@ -97,7 +94,7 @@ Working on a 1.5B vehicle so the resident 32B stays live, at
   `register_trace` families at task depths 1,2,4 — decoded 9/9 exactly across
   two independent cold loads. `ordinary_chat_authorized=false` and
   `arbitrary_reasoning_authorized=false` remain the boundary (CP357).
-- **Process, not output, is now what gets taught** (CP394–CP400): a broad
+- **Process is now what gets taught** (CP394–CP400): a broad
   opcode vocabulary that executes causally, the proven narrow tissue recovered
   immutably from CP232, and a certified append-only migration that extends it
   to the new vocabulary while every other learned parameter stays byte-exact.
@@ -105,7 +102,7 @@ Working on a 1.5B vehicle so the resident 32B stays live, at
 Next bounded step: the 1.5B adaptation over train depths 1,3,4,5,6,8,10 with
 held-out 12,16, then the already-frozen four-arm behavioral canary.
 
-### A structural warning worth generalizing
+### Two negative results that were void
 
 Between 2026-08-06 and 2026-08-07 the programme produced two clean negative
 results — 13-vs-5 and a 9-vs-4 reproduction. Both were void. **A win had been
@@ -114,16 +111,15 @@ policy that removes the vanilla floor, so no configuration could keep the
 floor *and* gain. The coupling existed in three places, and fixing fewer than
 all three left every receipt reporting `answer_replacement_unproven`.
 
-Every negative result measured a system that was never switched on. If you
-take one methodological lesson from this repository, take that one — and see
-[RLC_RECONCILIATION.md](RLC_RECONCILIATION.md) for the fourteen defects in
+Every negative result measured a system that was never switched on.
+[RLC_RECONCILIATION.md](RLC_RECONCILIATION.md) has the fourteen defects in
 dependency order.
 
 ## The programme's documents
 
 | Document | What it is |
 |---|---|
-| **This page** | The spec, the mechanism, the claims ladder. Start here. |
+| **This page** | Spec, mechanism, claims ladder. Start here. |
 | [RLC_RECONCILIATION.md](RLC_RECONCILIATION.md) | State of the campaign, the `≥ vanilla always` invariant, and the fourteen defects that made a win impossible |
 | [RLC_SPARK_EXECUTION_LEDGER.md](RLC_SPARK_EXECUTION_LEDGER.md) | The append-only execution ledger. Long, dated, never revised — the primary record |
 | [RLC_WIRING_HANDOFF.md](RLC_WIRING_HANDOFF.md) | How the organ attaches to the live runtime |

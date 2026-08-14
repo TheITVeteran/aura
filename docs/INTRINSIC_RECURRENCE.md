@@ -31,9 +31,8 @@ vanilla greedy          : 21 %
 ```
 
 Slots are causal and worth a few points as a prior. **Depth was worth nothing
-because no depth was ever applied to the answer's own computation.** That is
-the whole explanation for the frozen-loop negative result, and it is an
-architectural fact rather than a tuning failure.
+because no depth was ever applied to the answer's own computation.** The
+frozen-loop negative result follows from the architecture, not from tuning.
 
 `core/learning/intrinsic_recurrence.py` (CP226) applies depth where it
 actually matters. The real token stream re-enters the middle block `T` times:
@@ -70,7 +69,7 @@ plain loop is what gets measured first.
 ## Teaching process instead of output
 
 The first training attempt was answer-only SFT. It taught the model to *stop
-reasoning*: recurrence itself became the damage. Output-only transfer is now
+reasoning* — recurrence itself became the damage. Output-only transfer is now
 rejected quickly and by contract (CP393).
 
 What replaced it is a typed program the recurrence executes and is supervised
@@ -111,13 +110,13 @@ Working on a 1.5B vehicle so the resident 32B stays live. Every item below is
 bounded to what it measured; none of them authorize a broad claim.
 
 **Trained recurrence is not inert.** Package-depth trained parameters beat
-their exact initialization control 3/7 to 2/7 (CP368). Small, but measured
-against the right control — the same architecture with the same decode
-budget, differing only in whether the parameters were trained.
+their exact initialization control 3/7 to 2/7 (CP368) — a small margin against
+the right control: same architecture, same decode budget, differing only in
+whether the parameters were trained.
 
-**The serving policy was the bug, not the tissue.** CP368's campaign failed
-not because the controller was useless but because fixed depth four discarded
-a correct depth-one answer and produced no new success over ordinary decode.
+**The serving policy was the bug.** CP368's campaign failed because fixed
+depth four discarded a correct depth-one answer and produced no new success
+over ordinary decode.
 Decode now produces two separately attested candidates from the same trained
 controller — depth one and the package-qualified depth — and public exact
 verification considers both. A deeper decode can *add* a success that depth
@@ -154,7 +153,7 @@ authorize resident training.
 
 ## What is not established
 
-Stated plainly, because the ledger states it at every checkpoint:
+The ledger restates this at every checkpoint:
 
 - No broad behavioral gain.
 - No resident-32B reasoning improvement.

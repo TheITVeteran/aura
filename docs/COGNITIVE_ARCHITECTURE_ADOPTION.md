@@ -82,21 +82,20 @@ deliberation with the seam method held as a gate.
 
 ### The defect
 
-`EpisodicMemory._recency_score` was:
+`EpisodicMemory._recency_score` was this:
 
 ```python
 min(1.0, max(0.0, ep.timestamp - 1774000000) / 2000000)
 ```
 
-That is not a recency score. It is a step function keyed to a hardcoded
-wall-clock epoch: 0.0 before 2026-03-20, a 23-day ramp, then a flat 1.0
+That is a step function keyed to a hardcoded wall-clock epoch: 0.0 before 2026-03-20, a 23-day ramp, then a flat 1.0
 forever. Evaluated on 2026-08-12, an episode from one minute ago and one from
 thirty days ago **both scored exactly 1.000000**. The recency term contributed
 a constant 0.4 to every candidate and the ranking was importance-only. It could
 not have discriminated, and it drifted further from usable every day.
 
-The fix is not a better constant. *Any* absolute-epoch formulation has this bug
-latent in it. ACT-R's base-level equation is scale-free — it depends only on
+A better constant would not fix it. *Any* absolute-epoch formulation carries
+the same bug. ACT-R's base-level equation is scale-free — it depends only on
 elapsed time — so it cannot saturate and has no epoch to go stale.
 
 ### The equations
@@ -117,7 +116,7 @@ being modelled separately.
 Both equations were fitted against Aura's own measured recall — 6,000 samples,
 150 batches of 40 traces, ages from one minute to a year, 0 to 30 rehearsals,
 scored on whether each trace actually came back in the ranked top-k. **They
-came out differently, and that is the important part.**
+came out differently.**
 
 **The retrieval curve fits.** Maximum likelihood gives `tau = -0.4666`,
 `s = 2.0` (`FITTED_PARAMETERS`), with a Brier skill of 0.154 over the base
@@ -132,9 +131,9 @@ ACT-R because retrieval there is a race between activations, whereas Aura's
 recall is a ranked scan whose cost tracks how many candidates exist and what
 the store does, not how strong the winning trace is.
 
-This is worth stating plainly because **`F` is a pure multiplicative scale and
-would have absorbed any timing whatsoever.** Fitting it would have produced a
-confident number with no mechanism under it. `tools/fit_actr_retrieval.py`
+**`F` is a pure multiplicative scale and would have absorbed any timing
+whatsoever.** Fitting it would have produced a confident number with no
+mechanism under it. `tools/fit_actr_retrieval.py`
 refuses to emit an `F` below an r² of 0.10 for that reason, and a test pins the
 null so that if retrieval ever does become activation-driven, someone finds
 out.

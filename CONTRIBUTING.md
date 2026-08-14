@@ -35,6 +35,8 @@ make lint
 4. **Immutable messages.** Subsystems talk through the frozen dataclasses
    in `core/bus/events.py` (`Event`, `DeliveryReceipt`). An actor must not be
    able to mutate a message another actor is reading.
+   Prose in this repo follows [docs/WRITING_RULES.md](docs/WRITING_RULES.md);
+   `make writing` is the gate.
 5. **Lifecycle tracking.** Subsystems report state through
    `core/runtime/service_state.py:ServiceState`.
 6. **Locks are checked.** Use `checked_lock` / `checked_async_lock` from

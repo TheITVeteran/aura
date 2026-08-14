@@ -50,6 +50,28 @@ make layering     # DEPS include-rule gate; baseline in config/ only shrinks
 - Long runs: bound them (`caffeinate -dims`, explicit timeouts), check
   interim output at expected milestones, never poll unbounded.
 
+## Writing
+
+Bryan writes about AI for a living and can spot machine-written prose
+instantly. Everything you write here — docs, commit messages, code comments,
+replies — is checked against [docs/WRITING_RULES.md](docs/WRITING_RULES.md).
+
+- Follow **Zinsser's four principles**: 1. Simplicity 2. Brevity 3. Clarity
+  4. Humanity. A controlled-English standard gives you the first three and
+  loses the fourth; put it back.
+- Use **ASD-STE100** for procedures, runbooks, gates, and API docs. Do not use
+  it for anything with a voice — it flattens.
+- The nine forbidden patterns, short version: no "That's not X, that's Y"; no
+  stapled one-word sentences; no twin images without advice; **no clapping for
+  your own point**; no analogy that assumes the reader knows both referents; no
+  warming up before the sentence that matters; no reflexive triads; no ranges
+  where a measurement belongs; no ending that recaps what was just read.
+- `make writing` is the gate. The baseline in
+  `config/ai_writing_baseline.json` only goes down.
+- **Append-only records are exempt and must not be restyled** — the execution
+  tracker, the RLC ledger, `docs/evidence/`, dated verdicts. Editing those is
+  falsifying a record.
+
 ## Conventions that will bite you
 
 - **All consequential file writes go through `core/runtime/file_write_gateway.py`.**

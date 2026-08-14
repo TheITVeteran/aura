@@ -1,0 +1,21 @@
+{
+  "all": {
+    "per_file": {
+      "ARCHITECTURE.md": 4,
+      "INSTALL.md": 2,
+      "README.md": 3,
+      "docs/PHI_LIVE_MEASUREMENT_HANDOFF.md": 1,
+      "docs/USER_GUIDE.md": 1
+    },
+    "total": 11
+  },
+  "front": {
+    "per_file": {
+      "ARCHITECTURE.md": 4,
+      "INSTALL.md": 2,
+      "README.md": 3,
+      "docs/USER_GUIDE.md": 1
+    },
+    "total": 10
+  }
+}

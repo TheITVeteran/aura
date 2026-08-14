@@ -12,7 +12,7 @@ this program has produced — the 2026-08-06 campaign's 13-vs-5, and its 9-vs-4
 reproduction — measured a system that either was not switched on or had no
 code path by which it could exceed ordinary decode.
 
-That is not a face-saving reading. It is three specific defects:
+Three specific defects, not a face-saving reading:
 
 - the promotion gate was wired to `decode_incumbent_policy == "latent"`, the
   very policy that removes the floor. Under `latent` the recurrent path owned

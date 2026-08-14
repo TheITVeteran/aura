@@ -3,8 +3,7 @@
 Status: Guide · Reviewed against the tree 2026-08-13
 
 Every model Aura loads, which lane it serves, and the measurement that put it
-there. Lanes churn — this page exists so the reason for each choice outlives
-the choice.
+there. Lanes churn, so the reason for each choice is recorded here.
 
 The authoritative values are `core/config.py` (`LLMConfig`) and
 `core/brain/llm/model_registry.py` (declared flags with defaults). Where this
@@ -86,8 +85,8 @@ One Parakeet decode is cheaper than the incumbent *partial* and about half the
 incumbent *final*: one model-lane lease, one set of weights resident, no
 accuracy sacrificed on partials.
 
-**A discarded first benchmark, recorded because it was wrong in an instructive
-way.** The first pass used synthetic noise and produced nonsense for Whisper.
+**A discarded first benchmark.** The first pass used synthetic noise and
+produced nonsense for Whisper.
 Whisper pads every input to 30 s and its cost is bound by tokens emitted, so on
 noise it hallucinated variable-length output and the timings were
 non-monotonic — 3 s of audio measured slower than 10 s. Discarded and redone on
@@ -138,8 +137,7 @@ Four ~800-word documents whose distinguishing sentence sits past token 256
 | `Qwen3-Embedding-0.6B` @384 | **3/4** | 20.2 ms/query |
 
 MiniLM ranked the *same* document first for all four queries — four identical
-prefixes, so it tied and broke arbitrarily. **1/4 is chance, not partial
-credit.**
+prefixes, so it tied and broke arbitrarily. **1/4 is chance.**
 
 Vectors from both models have 384 entries, so the store shape is unchanged.
 Qwen3-Embedding conditions the query embedding on a natural-language task

@@ -29,6 +29,7 @@ you.
 | [ENGINEERING_ADOPTION.md](ENGINEERING_ADOPTION.md) | The seven clean-room adoption waves and why each landed |
 | [COGNITIVE_ARCHITECTURE_ADOPTION.md](COGNITIVE_ARCHITECTURE_ADOPTION.md) | What was taken from Soar and ACT-R, the equation that fitted, and the one that didn't |
 | [MODEL_ROSTER.md](MODEL_ROSTER.md) | Every model lane — LLM, ASR, embeddings — and the measurement that put it there |
+| [WRITING_RULES.md](WRITING_RULES.md) | The nine patterns that read as machine-written, and the `make writing` gate that checks for them |
 
 ## The claim surface
 

@@ -14,7 +14,7 @@
 
 ## What Aura already had
 
-Both halves of the machinery, and this is the important part:
+Both halves of the machinery already existed:
 
 - `core/observability/tracing.py` — Span/Tracer, OTel-compatible export format;
 - `core/runtime/causal_trace.py` — context carried across async tasks, with
