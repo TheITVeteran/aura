@@ -99,6 +99,13 @@ ACTION_WORKSPACE_PARAMETER_NAMES: Final = (
     "action_workspace_ff_down",
     "action_workspace_output",
 )
+CAUSAL_ACTION_PARAMETER_NAMES: Final = (
+    "action_causal_value_embeddings",
+    "action_causal_input_projection",
+    "action_causal_state_projection",
+    "action_causal_prior_projection",
+    "action_causal_output",
+)
 PROCESS_RADIX: Final = 31
 MAX_PROCESS_INTEGER: Final = PROCESS_RADIX**2 - 1
 
@@ -299,6 +306,15 @@ class UnifiedRecurrentController(nn.Module):
         ) = mx.random.split(
             mx.random.key(config.initialization_seed ^ 0x4143544E),
             num=12,
+        )
+        (
+            key_action_causal_values,
+            key_action_causal_input,
+            key_action_causal_state,
+            key_action_causal_prior,
+        ) = mx.random.split(
+            mx.random.key(config.initialization_seed ^ 0x43415553),
+            num=4,
         )
         scale = 1.0 / math.sqrt(config.hidden_size)
         self.correction_a = (
@@ -605,6 +621,48 @@ class UnifiedRecurrentController(nn.Module):
             / math.sqrt(4 * workspace_width)
         )
         self.action_workspace_output = mx.zeros(
+            (config.action_slots, workspace_width, config.action_cardinality),
+            dtype=mx.float32,
+        )
+        # A program instruction is not eight independent labels. The opcode
+        # constrains its arguments, each emitted argument constrains those that
+        # follow, and the previous instruction can matter to the next recurrent
+        # step. This bounded autoregressive extension supplies that causal graph.
+        # Its output starts at exact zero, preserving every parent logit until
+        # the typed-action objective trains it.
+        self.action_causal_value_embeddings = (
+            mx.random.normal(
+                (
+                    config.action_slots,
+                    config.action_cardinality,
+                    workspace_width,
+                ),
+                key=key_action_causal_values,
+            ).astype(mx.float32)
+            * 0.02
+        )
+        self.action_causal_input_projection = (
+            mx.random.normal(
+                (workspace_width, workspace_width),
+                key=key_action_causal_input,
+            ).astype(mx.float32)
+            * workspace_scale
+        )
+        self.action_causal_state_projection = (
+            mx.random.normal(
+                (workspace_width, workspace_width),
+                key=key_action_causal_state,
+            ).astype(mx.float32)
+            * workspace_scale
+        )
+        self.action_causal_prior_projection = (
+            mx.random.normal(
+                (workspace_width, workspace_width),
+                key=key_action_causal_prior,
+            ).astype(mx.float32)
+            * workspace_scale
+        )
+        self.action_causal_output = mx.zeros(
             (config.action_slots, workspace_width, config.action_cardinality),
             dtype=mx.float32,
         )
@@ -1646,6 +1704,11 @@ class UnifiedRecurrentController(nn.Module):
         step: int,
         token_ids: Any | None = None,
         state_probabilities: Any | None = None,
+        teacher_values: Sequence[int] | None = None,
+        teacher_forcing_probability: float = 0.0,
+        prior_action_probabilities: Any | None = None,
+        causal_action_lesion: bool = False,
+        action_feedback_lesion: bool = False,
     ) -> Any:
         """Decode the next typed operation from public evidence and current state."""
 
@@ -1676,6 +1739,15 @@ class UnifiedRecurrentController(nn.Module):
             "baw,awc->bac",
             workspace,
             self.action_workspace_output,
+        )
+        logits = self._causal_action_logits(
+            logits,
+            workspace,
+            teacher_values=teacher_values,
+            teacher_forcing_probability=teacher_forcing_probability,
+            prior_action_probabilities=prior_action_probabilities,
+            causal_action_lesion=causal_action_lesion,
+            action_feedback_lesion=action_feedback_lesion,
         )
         # Observation priors help before a recurrent state exists, but they are
         # not licensed semantics. Once execution has a state, derived values
@@ -1826,6 +1898,96 @@ class UnifiedRecurrentController(nn.Module):
             expanded = nn.gelu(normalized @ self.action_workspace_ff_up[layer])
             workspace = workspace + expanded @ self.action_workspace_ff_down[layer]
         return self._workspace_norm(workspace)
+
+    def _causal_action_logits(
+        self,
+        base_logits: Any,
+        workspace: Any,
+        *,
+        teacher_values: Sequence[int] | None,
+        teacher_forcing_probability: float,
+        prior_action_probabilities: Any | None,
+        causal_action_lesion: bool,
+        action_feedback_lesion: bool,
+    ) -> Any:
+        """Decode one instruction left-to-right without future-field leakage."""
+
+        expected_logits = (
+            int(workspace.shape[0]),
+            self.config.action_slots,
+            self.config.action_cardinality,
+        )
+        if tuple(base_logits.shape) != expected_logits or tuple(workspace.shape[:2]) != (
+            expected_logits[0],
+            expected_logits[1],
+        ):
+            raise ValueError("causal action tensors differ from the canonical schema")
+        if type(causal_action_lesion) is not bool or type(action_feedback_lesion) is not bool:
+            raise TypeError("causal action lesion flags must be bools")
+        if (
+            isinstance(teacher_forcing_probability, bool)
+            or not isinstance(teacher_forcing_probability, (int, float))
+            or not 0.0 <= float(teacher_forcing_probability) <= 1.0
+        ):
+            raise ValueError("action teacher-forcing probability must be inside [0, 1]")
+        if teacher_values is not None and (
+            len(teacher_values) != self.config.action_slots
+            or any(
+                type(value) is not int
+                or not 0 <= value < self.config.action_cardinality
+                for value in teacher_values
+            )
+        ):
+            raise ValueError("action teacher values differ from the canonical schema")
+        if prior_action_probabilities is not None and tuple(
+            prior_action_probabilities.shape
+        ) != expected_logits:
+            raise ValueError("prior action probabilities differ from the canonical schema")
+        if causal_action_lesion:
+            return base_logits
+
+        width = int(workspace.shape[-1])
+        prefix = mx.zeros((expected_logits[0], width), dtype=mx.float32)
+        if prior_action_probabilities is not None and not action_feedback_lesion:
+            prior_values = mx.einsum(
+                "bac,acw->baw",
+                prior_action_probabilities.astype(mx.float32),
+                self.action_causal_value_embeddings,
+            )
+            prefix = self._workspace_norm(
+                mx.mean(prior_values, axis=1) @ self.action_causal_prior_projection
+            )
+
+        decisions: list[Any] = []
+        categories = mx.arange(self.config.action_cardinality)[None, :]
+        teacher_probability = float(teacher_forcing_probability)
+        for slot in range(self.config.action_slots):
+            feature = self._workspace_norm(
+                workspace[:, slot, :].astype(mx.float32) + prefix
+            )
+            slot_logits = (
+                base_logits[:, slot, :]
+                + feature @ self.action_causal_output[slot]
+            )
+            decisions.append(slot_logits)
+            selected = self.straight_through_probabilities(
+                slot_logits[:, None, :]
+            )[:, 0, :]
+            if teacher_values is not None and teacher_probability > 0.0:
+                teacher = (
+                    categories == int(teacher_values[slot])
+                ).astype(mx.float32)
+                selected = (
+                    (1.0 - teacher_probability) * selected
+                    + teacher_probability * teacher
+                )
+            emitted = selected @ self.action_causal_value_embeddings[slot]
+            update = mx.tanh(
+                emitted @ self.action_causal_input_projection
+                + prefix @ self.action_causal_state_projection
+            )
+            prefix = self._workspace_norm(prefix + update)
+        return mx.stack(decisions, axis=1)
 
     @staticmethod
     def _exact_categorical_logits(
@@ -2072,6 +2234,7 @@ class UnifiedRecurrentController(nn.Module):
             "action_depth",
             "action_bias",
             *ACTION_WORKSPACE_PARAMETER_NAMES,
+            *CAUSAL_ACTION_PARAMETER_NAMES,
             "state_action_projection",
             "literal_value_embeddings",
             "literal_grounding_logit",
@@ -2096,9 +2259,16 @@ class UnifiedRecurrentController(nn.Module):
             "predicted_state_is_next_step_input": True,
             "state_processor": "separate_initial_parser_and_recurrent_transition",
             "action_processor": (
-                "public_evidence_bounded_recurrent_semantic_action_workspace"
+                "public_evidence_bounded_autoregressive_typed_action_workspace"
             ),
             "predicted_action_is_state_transition_input": True,
+            "causal_action_decoder": {
+                "field_order": list(ACTION_SLOT_NAMES),
+                "future_field_teacher_leakage": False,
+                "previous_action_feedback": True,
+                "parent_attachment": "exact_zero_output_noop",
+                "lesionable": True,
+            },
             "terminal_state_semantics": "exact_idempotent_stutter",
             "terminal_decode_semantics": "first_terminal_state_preserved",
             "state_problem_evidence": "frozen_deep_prefix_no_decoder_suffix",
@@ -2171,6 +2341,8 @@ def unified_recurrent_hidden_states(
     initial_state_teacher_values: Sequence[int] | None = None,
     state_teacher_forcing_probability: float = 0.0,
     typed_action_lesion: bool = False,
+    causal_action_lesion: bool = False,
+    action_feedback_lesion: bool = False,
     process_tape_lesion: bool = False,
     process_only: bool = False,
     detach_problem_evidence: bool = True,
@@ -2184,6 +2356,8 @@ def unified_recurrent_hidden_states(
         type(adaptive_halt) is not bool
         or type(soft_memory_writes) is not bool
         or type(typed_action_lesion) is not bool
+        or type(causal_action_lesion) is not bool
+        or type(action_feedback_lesion) is not bool
         or type(process_tape_lesion) is not bool
         or type(process_only) is not bool
         or type(detach_problem_evidence) is not bool
@@ -2288,6 +2462,7 @@ def unified_recurrent_hidden_states(
     window = layers[plan.prelude_end : plan.coda_start]
     problem_evidence: Any | None = None
     state_probabilities: Any | None = None
+    prior_action_probabilities: Any | None = None
     if state_slot_start is not None:
         # Prefix-only execution is causally identical to the same positions in
         # the complete sequence, but cannot expose teacher-forced answer tokens.
@@ -2366,6 +2541,15 @@ def unified_recurrent_hidden_states(
                     step=iteration,
                     token_ids=tokens[:, :state_slot_start],
                     state_probabilities=state_probabilities,
+                    teacher_values=(
+                        action_teacher_values[iteration]
+                        if action_teacher_values is not None
+                        else None
+                    ),
+                    teacher_forcing_probability=state_teacher_forcing_probability,
+                    prior_action_probabilities=prior_action_probabilities,
+                    causal_action_lesion=causal_action_lesion,
+                    action_feedback_lesion=action_feedback_lesion,
                 )
                 action_probabilities = controller.straight_through_probabilities(
                     action_logits
@@ -2393,6 +2577,7 @@ def unified_recurrent_hidden_states(
                 action_state = controller.commit_action_probabilities(
                     action_probabilities
                 )
+                prior_action_probabilities = action_probabilities
                 state_logits = controller.state_transition_logits(
                     problem_evidence,
                     recurrent_input,
@@ -2799,6 +2984,7 @@ def unified_recurrent_logits(
 
 __all__ = [
     "ACTION_WORKSPACE_PARAMETER_NAMES",
+    "CAUSAL_ACTION_PARAMETER_NAMES",
     "UNIFIED_INTRINSIC_RECURRENCE_SCHEMA",
     "UnifiedRecurrenceConfig",
     "UnifiedRecurrenceTelemetry",

@@ -126,8 +126,158 @@ def test_action_workspace_attaches_as_exact_noop_then_changes_logits() -> None:
     assert not bool(mx.array_equal(expected, active))
     assert (
         altered.receipt()["action_processor"]
-        == "public_evidence_bounded_recurrent_semantic_action_workspace"
+        == "public_evidence_bounded_autoregressive_typed_action_workspace"
     )
+
+
+def test_causal_action_decoder_is_exact_noop_until_its_output_is_trained() -> None:
+    controller = _controller()
+    evidence = mx.random.normal((1, 9, 64), key=mx.random.key(95))
+    hidden = mx.random.normal((1, 12, 64), key=mx.random.key(96))
+
+    intact = controller.action_logits(
+        evidence,
+        hidden,
+        state_slot_start=4,
+        step=2,
+    )
+    lesioned = controller.action_logits(
+        evidence,
+        hidden,
+        state_slot_start=4,
+        step=2,
+        causal_action_lesion=True,
+    )
+
+    assert bool(mx.array_equal(intact, lesioned))
+    assert bool(mx.all(controller.action_causal_output == 0))
+
+
+def test_causal_action_prefix_changes_only_later_fields() -> None:
+    controller = _controller()
+    controller.action_causal_output = mx.random.normal(
+        controller.action_causal_output.shape,
+        key=mx.random.key(97),
+    )
+    evidence = mx.random.normal((1, 9, 64), key=mx.random.key(98))
+    hidden = mx.random.normal((1, 12, 64), key=mx.random.key(99))
+    left = (1, 2, 3, 4, 5, 6, 7, 0)
+    changed_first = (9, 2, 3, 4, 5, 6, 7, 0)
+    changed_future = (1, 2, 3, 4, 5, 6, 7, 1)
+
+    baseline = controller.action_logits(
+        evidence,
+        hidden,
+        state_slot_start=4,
+        step=2,
+        teacher_values=left,
+        teacher_forcing_probability=1.0,
+    )
+    earlier_changed = controller.action_logits(
+        evidence,
+        hidden,
+        state_slot_start=4,
+        step=2,
+        teacher_values=changed_first,
+        teacher_forcing_probability=1.0,
+    )
+    future_changed = controller.action_logits(
+        evidence,
+        hidden,
+        state_slot_start=4,
+        step=2,
+        teacher_values=changed_future,
+        teacher_forcing_probability=1.0,
+    )
+
+    assert bool(mx.array_equal(baseline[:, 0], earlier_changed[:, 0]))
+    assert not bool(mx.array_equal(baseline[:, 1:], earlier_changed[:, 1:]))
+    assert bool(mx.array_equal(baseline, future_changed))
+
+
+def test_causal_action_teacher_matches_autonomous_prefix_when_predictions_match() -> None:
+    controller = _controller()
+    forced = (1, 2, 3, 4, 5, 6, 7, 0)
+    controller.action_bias = mx.full_like(controller.action_bias, -100.0)
+    for slot, value in enumerate(forced):
+        controller.action_bias = controller.action_bias.at[slot, value].add(200.0)
+    controller.action_causal_output = mx.random.normal(
+        controller.action_causal_output.shape,
+        key=mx.random.key(100),
+    )
+    evidence = mx.random.normal((1, 9, 64), key=mx.random.key(101))
+    hidden = mx.random.normal((1, 12, 64), key=mx.random.key(102))
+
+    autonomous = controller.action_logits(
+        evidence,
+        hidden,
+        state_slot_start=4,
+        step=2,
+    )
+    taught = controller.action_logits(
+        evidence,
+        hidden,
+        state_slot_start=4,
+        step=2,
+        teacher_values=forced,
+        teacher_forcing_probability=1.0,
+    )
+
+    assert bool(mx.array_equal(autonomous, taught))
+
+
+def test_previous_action_feedback_is_causal_and_lesionable() -> None:
+    controller = _controller()
+    controller.action_causal_output = mx.random.normal(
+        controller.action_causal_output.shape,
+        key=mx.random.key(103),
+    )
+    evidence = mx.random.normal((1, 9, 64), key=mx.random.key(104))
+    hidden = mx.random.normal((1, 12, 64), key=mx.random.key(105))
+    left = controller.exact_probabilities(
+        (1, 2, 3, 4, 5, 6, 7, 0),
+        slots=controller.config.action_slots,
+        cardinality=controller.config.action_cardinality,
+    )
+    right = controller.exact_probabilities(
+        (9, 8, 7, 6, 5, 4, 3, 1),
+        slots=controller.config.action_slots,
+        cardinality=controller.config.action_cardinality,
+    )
+
+    left_logits = controller.action_logits(
+        evidence,
+        hidden,
+        state_slot_start=4,
+        step=2,
+        prior_action_probabilities=left,
+    )
+    right_logits = controller.action_logits(
+        evidence,
+        hidden,
+        state_slot_start=4,
+        step=2,
+        prior_action_probabilities=right,
+    )
+    left_lesioned = controller.action_logits(
+        evidence,
+        hidden,
+        state_slot_start=4,
+        step=2,
+        prior_action_probabilities=left,
+        action_feedback_lesion=True,
+    )
+    right_lesioned = controller.action_logits(
+        evidence,
+        hidden,
+        state_slot_start=4,
+        step=2,
+        prior_action_probabilities=right,
+        action_feedback_lesion=True,
+    )
+
+    assert not bool(mx.array_equal(left_logits, right_logits))
+    assert bool(mx.array_equal(left_lesioned, right_lesioned))
 
 
 def test_action_loss_reaches_workspace_without_needing_nonzero_attachment() -> None:
@@ -147,6 +297,7 @@ def test_action_loss_reaches_workspace_without_needing_nonzero_attachment() -> N
     loss, gradients = nn.value_and_grad(controller, objective)(controller)
     mx.eval(loss, gradients)
     assert float(mx.max(mx.abs(gradients["action_workspace_output"]))) > 0.0
+    assert float(mx.max(mx.abs(gradients["action_causal_output"]))) > 0.0
     assert float(mx.max(mx.abs(gradients["initial_state_output"]))) == 0.0
 
 

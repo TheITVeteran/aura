@@ -31,6 +31,7 @@ from core.learning.unified_intrinsic_objective import (  # noqa: E402
 )
 from core.learning.unified_intrinsic_recurrence import (  # noqa: E402
     ACTION_WORKSPACE_PARAMETER_NAMES,
+    CAUSAL_ACTION_PARAMETER_NAMES,
     INITIAL_STATE_PARAMETER_NAMES,
     PROCESS_READER_PARAMETER_NAMES,
     UnifiedRecurrenceConfig,
@@ -67,6 +68,7 @@ from tools.train_unified_intrinsic_recurrence import (  # noqa: E402
     _load_latest_checkpoint,
     _masked_process_decisions,
     _merge_bootstrap_action_workspace_extension,
+    _merge_bootstrap_causal_action_extension,
     _merge_bootstrap_codebook_extension,
     _merge_bootstrap_initial_state_extension,
     _merge_bootstrap_process_reader_extension,
@@ -262,6 +264,50 @@ def test_bootstrap_action_workspace_rejects_partial_or_active_extension() -> Non
     parent = {"controller.action_output": child["controller.action_output"]}
     with pytest.raises(RuntimeError, match="action workspace is not a no-op"):
         _merge_bootstrap_action_workspace_extension(parent, child)
+
+
+def test_bootstrap_causal_action_extension_is_exact_and_audited() -> None:
+    parent = {"controller.action_output": mx.ones((2, 3), dtype=mx.float32)}
+    child = {
+        **parent,
+        **{
+            f"controller.{name}": mx.ones((2, 2), dtype=mx.float32)
+            for name in CAUSAL_ACTION_PARAMETER_NAMES
+            if name != "action_causal_output"
+        },
+        "controller.action_causal_output": mx.zeros((2, 2), dtype=mx.float32),
+    }
+
+    migrated, receipt = _merge_bootstrap_causal_action_extension(parent, child)
+
+    assert receipt is not None
+    assert receipt["behavior_before_training_preserved"] is True
+    assert receipt["future_field_teacher_leakage"] is False
+    assert migrated["controller.action_output"] is parent["controller.action_output"]
+    assert set(migrated) == set(child)
+    assert set(receipt["new_tensor_names"]) == set(child) - set(parent)
+
+
+def test_bootstrap_causal_action_rejects_partial_or_active_extension() -> None:
+    child = {
+        "controller.action_output": mx.ones((2, 3), dtype=mx.float32),
+        **{
+            f"controller.{name}": mx.ones((2, 2), dtype=mx.float32)
+            for name in CAUSAL_ACTION_PARAMETER_NAMES
+        },
+    }
+    partial_parent = {
+        "controller.action_output": child["controller.action_output"],
+        "controller.action_causal_value_embeddings": child[
+            "controller.action_causal_value_embeddings"
+        ],
+    }
+    with pytest.raises(RuntimeError, match="causal-action inventory differs"):
+        _merge_bootstrap_causal_action_extension(partial_parent, child)
+
+    parent = {"controller.action_output": child["controller.action_output"]}
+    with pytest.raises(RuntimeError, match="not a no-op"):
+        _merge_bootstrap_causal_action_extension(parent, child)
 
 
 def test_bootstrap_initial_state_extension_copies_legacy_transition_exactly() -> None:
@@ -656,6 +702,7 @@ def test_process_component_gradients_prevent_cross_role_rewrites() -> None:
             "initial_state_output": mx.ones((2, 2)),
             "action_output": mx.ones((2, 2)),
             "action_workspace_output": mx.ones((2, 2)),
+            "action_causal_output": mx.ones((2, 2)),
             "state_transition_output": mx.ones((2, 2)),
             "answer_output": mx.ones((2, 2)),
         },
@@ -665,13 +712,18 @@ def test_process_component_gradients_prevent_cross_role_rewrites() -> None:
         "action": {
             "controller.action_output",
             "controller.action_workspace_output",
+            "controller.action_causal_output",
         },
-        "action_workspace": {"controller.action_workspace_output"},
+        "action_workspace": {
+            "controller.action_workspace_output",
+            "controller.action_causal_output",
+        },
         "transition": {"controller.state_transition_output"},
         "joint": {
             "controller.initial_state_output",
             "controller.action_output",
             "controller.action_workspace_output",
+            "controller.action_causal_output",
             "controller.state_transition_output",
         },
     }
