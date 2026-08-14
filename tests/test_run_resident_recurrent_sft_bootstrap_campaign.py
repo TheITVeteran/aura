@@ -412,11 +412,35 @@ def test_protected_source_changes_include_dynamic_and_declared_closure() -> None
 
 
 def test_live_trainer_import_closure_captures_transitive_source() -> None:
+    """The closure must reach past the files SOURCE_PATHS already names.
+
+    This asserted core/brain/frontier_evidence_v5.py, which the trainer no
+    longer imports transitively — so the test failed while the property it
+    protects held. Worse, the other two names it checks are both IN
+    SOURCE_PATHS, so with that line gone the test would have proved nothing
+    about transitivity at all.
+
+    The property is asserted directly now: the closure contains repository
+    source that no explicit list names, which is the whole reason to compute a
+    closure instead of reading SOURCE_PATHS.
+    """
+    from tools.prepare_resident_recurrent_sft_bootstrap_campaign import SOURCE_PATHS
+
     closure = controller._trainer_import_closure()
 
     assert "tools/train_resident_recurrent_sft_bootstrap.py" in closure
     assert "core/brain/llm/latent_cortex/execution_spec.py" in closure
-    assert "core/brain/frontier_evidence_v5.py" in closure
+
+    named = set(SOURCE_PATHS.values())
+    transitive = {
+        path
+        for path in closure
+        if path.startswith("core/") and path not in named
+    }
+    assert transitive, (
+        "the trainer import closure captured nothing beyond the explicitly "
+        "named source paths, so it is not measuring transitive imports"
+    )
 
 def test_launch_command_caps_partial_resume_to_exact_cell_remainder(
     monkeypatch: pytest.MonkeyPatch,

@@ -19,6 +19,7 @@ from core.goals.objective_lifecycle import (
 from core.memory.retention_policy import working_history_retention_policy
 from core.runtime import background_policy
 from core.runtime.errors import record_degradation
+from core.runtime.lockdep import LockRank, checked_lock
 from core.runtime.pipeline_blueprint import (
     instantiate_legacy_runtime_phases,
     legacy_runtime_phase_specs,
@@ -584,11 +585,29 @@ def _apply_neurodynamic_sampling_bias(
     return updated
 
 
+#: What the control policy below IS. Every weight, threshold and clamp in it
+#: was chosen by hand — there is no model-specific calibration behind them, no
+#: uncertainty propagated through them, no held-out evidence that these
+#: particular numbers beat neighbouring ones, and no learned policy that
+#: produced them. The mechanism is real and causal: it moves temperature, top_p
+#: and recurrent depth, and the lesion registry can run a turn without it
+#: (see _register_live_mind_lesions). What it is not is calibrated, and the
+#: receipt says so rather than leaving a reader to assume otherwise.
+LIVE_MIND_CONTROL_POLICY = "hand_tuned_heuristic.v1"
+LIVE_MIND_CONTROL_POLICY_CALIBRATED = False
+
+
 def _live_mind_generation_controls(
     live_mind_context: Any,
     *,
     user_message: Any = None,
 ) -> dict[str, Any]:
+    """Map a mind snapshot onto sampling controls.
+
+    A hand-tuned heuristic — see LIVE_MIND_CONTROL_POLICY. Causal and
+    measurable through the lesion registry; not calibrated, and not presented
+    as such anywhere downstream.
+    """
     if not isinstance(live_mind_context, dict):
         return {}
     quality = live_mind_context.get("mind_snapshot_quality")
@@ -760,13 +779,38 @@ def _live_mind_controls_bound(
     live_mind_context: Any,
     generation_controls: Any,
 ) -> bool:
+    """Whether a live-mind snapshot may steer generation for this turn.
+
+    The snapshot arrives inside the caller's ``context`` dict and used to
+    vouch for itself: its own ``ready`` flag said it was ready, and nothing
+    established that this runtime had produced it. ``think()`` accepts an
+    arbitrary context, so anything reaching that entry point could hand over a
+    dictionary and take control of temperature, top_p and recurrent depth.
+
+    Two conditions now: the payload carries this process's stamp, and the
+    subsystems the snapshot itself declares as required are actually healthy.
+    ``required_subsystems_ok`` was computed and recorded beside this and never
+    consulted by it — a check that ran, produced an answer, and gated nothing.
+    """
     if not isinstance(live_mind_context, dict) or not isinstance(generation_controls, dict):
+        return False
+    from core.utils.injected_blocks import is_stamped_runtime_payload
+
+    if not is_stamped_runtime_payload(live_mind_context):
+        logger.debug(
+            "Live-mind controls refused: the snapshot carries no runtime stamp."
+        )
         return False
     quality = live_mind_context.get("mind_snapshot_quality")
     snapshot = live_mind_context.get("mind_snapshot")
     if not isinstance(quality, dict) or not bool(quality.get("ready")):
         return False
     if not isinstance(snapshot, dict):
+        return False
+    if not bool(live_mind_context.get("required_subsystems_ok")):
+        logger.debug(
+            "Live-mind controls refused: required subsystems are not healthy."
+        )
         return False
     return REQUIRED_LIVE_MIND_GENERATION_CONTROL_KEYS.issubset(
         generation_controls.keys()
@@ -893,12 +937,36 @@ def _bind_live_mind_generation_contract(context: dict[str, Any]) -> dict[str, An
 
     context["live_mind_generation_controls"] = dict(generation_controls)
     context["live_mind_controls_bound"] = controls_bound
+    # Travels with the binding, so nothing downstream reads these numbers as
+    # a calibrated policy.
+    context["live_mind_control_policy"] = {
+        "policy": LIVE_MIND_CONTROL_POLICY,
+        "calibrated": LIVE_MIND_CONTROL_POLICY_CALIBRATED,
+        "evidence": "lesionable_via_influence_channels",
+    }
     context["live_mind_snapshot_ready"] = snapshot_ready
     context["live_mind_required_subsystems_ok"] = required_subsystems_ok
     context["clean_user_surface_contract"] = bool(
         context.get("clean_user_surface_contract", False) or desktop_required
     )
     return generation_controls
+
+
+#: Reported once per shape: a caller that always passes unattested history
+#: would otherwise fill the trail.
+_UNATTESTED_EXCHANGE_SEEN: set[str] = set()
+
+
+def _note_unattested_exchange(entry: Any) -> None:
+    shape = ",".join(sorted(str(key) for key in entry)) if isinstance(entry, dict) else "non_dict"
+    if shape in _UNATTESTED_EXCHANGE_SEEN:
+        return
+    _UNATTESTED_EXCHANGE_SEEN.add(shape)
+    logger.warning(
+        "🔏 Dropped a conversation exchange with no runtime stamp (keys: %s). "
+        "Its producer should call injected_blocks.stamp_runtime_payload().",
+        shape,
+    )
 
 
 def _desktop_history_messages_from_context(
@@ -910,9 +978,19 @@ def _desktop_history_messages_from_context(
     if not isinstance(exchanges, (list, tuple)):
         return []
 
+    from core.utils.injected_blocks import is_stamped_runtime_payload
+
     messages: list[dict[str, str]] = []
     for entry in list(exchanges)[-max(1, int(max_pairs)) :]:
         if not isinstance(entry, dict):
+            continue
+        # These become user and assistant MESSAGES. An entry this runtime did
+        # not produce would become an assistant turn Aura never took, quoted
+        # back to her as her own prior words — and she would answer as if she
+        # had said it. The stamp is per entry, so a forged one mixed into a
+        # real list is dropped on its own.
+        if not is_stamped_runtime_payload(entry):
+            _note_unattested_exchange(entry)
             continue
         user_text = _compact_text(entry.get("user"), limit=420)
         aura_text = _compact_text(entry.get("aura"), limit=520)
@@ -1138,12 +1216,20 @@ class CognitiveEngine:
         self._active_tasks: set = set()
         self._phases = []
         self._augmentors = []
+        #: Class names of the registered augmentors, for the audit.
+        self._augmentor_registry_receipt: list[str] = []
         self.state_repository = None
         self.autopoiesis = AutopoieticGraph()
         self._recovery_lock = RobustLock(
             "CognitiveEngine.RecoveryLock"
         )  # Audit Fix: Mutex for recovery
         self._reasoning: ReasoningStrategies | None = None  # Lazy-init
+        #: The router the reasoning layer was built around, so a
+        #: replacement or failover rebuilds it instead of being ignored.
+        self._reasoning_router: Any = None
+        self._reasoning_lock = checked_lock(
+            "cognitive_engine.reasoning_layer", rank=LockRank.LEAF
+        )
 
     @property
     def consciousness(self) -> Any:
@@ -1288,6 +1374,10 @@ class CognitiveEngine:
         confidence -= min(0.2, 0.05 * max(0, int(degraded_subsystems)))
         return round(max(0.3, min(0.95, confidence)), 3)
 
+    def phase_rollback_receipt(self) -> dict[str, Any]:
+        """What the last phase-failure rollback restored, and what it could not."""
+        return dict(getattr(self, "_last_phase_rollback", {}) or {})
+
     def pipeline_receipt(self) -> dict[str, Any]:
         """What setup() built, against what the blueprint declares."""
         return dict(getattr(self, "_pipeline_receipt", {}) or {})
@@ -1326,11 +1416,128 @@ class CognitiveEngine:
             "ready": self.is_ready(),
         }
 
-    def register_augmentor(self, augmentor: Any):
-        """Register a cognitive augmentor (e.g. SovereignWebAugmentor)."""
-        if augmentor not in self._augmentors:
-            self._augmentors.append(augmentor)
-            logger.info("🧠 CognitiveEngine: Registered augmentor %s", type(augmentor).__name__)
+    #: What an augmentor's output may contribute to one turn. It lands in the
+    #: prompt context, so it is bounded like any other prompt material rather
+    #: than by whatever the augmentor felt like returning.
+    _AUGMENTATION_CHAR_LIMIT = 4_000
+    #: An augmentor runs synchronously, on the event loop, before the phases.
+    #: A slow one used to hold every turn behind it.
+    _AUGMENTATION_TIMEOUT_S = 2.0
+
+    def register_augmentor(self, augmentor: Any) -> bool:
+        """Register a cognitive augmentor (e.g. SovereignWebAugmentor).
+
+        This accepted any object at all: no declared name, no callable
+        contract, no bound on what it returns — and its output goes into the
+        prompt. The admission below is small on purpose (this is an in-process
+        extension point, not a plugin marketplace) but it is a contract rather
+        than a shrug, and a refusal is recorded instead of silently producing
+        an augmentor that raises AttributeError on every turn.
+        """
+        getter = getattr(augmentor, "get_augmentation", None)
+        if not callable(getter):
+            record_degradation(
+                "cognitive_engine",
+                TypeError(
+                    f"augmentor {type(augmentor).__name__} has no callable get_augmentation"
+                ),
+                severity="warning",
+                action="refused to register an augmentor with no augmentation contract",
+            )
+            return False
+        if augmentor in self._augmentors:
+            return True
+        self._augmentors.append(augmentor)
+        self._augmentor_registry_receipt = [
+            type(existing).__name__ for existing in self._augmentors
+        ]
+        logger.info("🧠 CognitiveEngine: Registered augmentor %s", type(augmentor).__name__)
+        return True
+
+    def augmentor_registry_receipt(self) -> list[str]:
+        """Which augmentors may contribute to a turn."""
+        return list(getattr(self, "_augmentor_registry_receipt", []) or [])
+
+    #: What a caller-supplied contract may contribute to the system prompt.
+    #: The same limits the inference gate applies to the same two strings —
+    #: they were bounded there and concatenated raw here.
+    _STYLE_CONTRACT_LIMIT = 1_400
+    #: What a vision query may be. It reaches a visual model with an image
+    #: attached, so it is bounded and cannot carry contract structure.
+    _VISION_QUERY_LIMIT = 600
+    _MIND_CONTRACT_LIMIT = 900
+
+    @staticmethod
+    def _bounded_request_int(raw: Any, *, default: int, low: int, high: int) -> int:
+        """An integer from caller context, or the default. Never a raise."""
+        try:
+            value = float(raw)
+        except (TypeError, ValueError):
+            return default
+        if value != value or value in (float("inf"), float("-inf")):
+            return default
+        return max(low, min(high, int(value)))
+
+    @staticmethod
+    def _log_safe_objective(objective: Any, limit: int = 50) -> str:
+        """A log-safe preview of what was asked.
+
+        Scrubbed, not just truncated: truncation preserves the FIRST fifty
+        characters, which is exactly where an address, a key or a phone number
+        appears in a message that opens with one.
+        """
+        text = str(objective or "")
+        try:
+            from core.brain.pii_scrubber import scrub_pii_for_cloud
+
+            text = scrub_pii_for_cloud(text)
+        except (ImportError, RuntimeError, TypeError, ValueError):
+            # Unable to scrub is not permission to print.
+            return "[objective unavailable for logging]"
+        return text[:limit]
+
+    @staticmethod
+    def _contract_safe(value: Any, limit: int) -> str:
+        """Flatten a caller string so it cannot forge system-prompt structure.
+
+        response_style_contract and mind_context_contract arrive in the
+        caller's context and were concatenated straight into the system
+        message. A line break turns the rest into a sibling instruction; a
+        leading "#" opens a sibling section; a chat control token forges a role
+        boundary. The inference gate already neutralizes both of these strings
+        (_contract_safe there); this path did not, so the same value was safe
+        through one door and privileged through the other.
+        """
+        from core.brain.living_mind_context import neutralize_learned_text
+
+        text = neutralize_learned_text(str(value or ""))
+        if not text:
+            return ""
+        text = " ".join(text.split())
+        if len(text) <= limit:
+            return text
+        return text[: max(1, limit - 1)].rstrip() + "…"
+
+    @classmethod
+    def _bounded_augmentation(cls, raw: Any) -> Any:
+        """Bound and neutralize what an augmentor contributes to the prompt.
+
+        Augmentor output is not one of Aura's own measurements — it is
+        whatever a registered object returned — and it reaches the prompt. It
+        is bounded, and its text cannot forge contract structure.
+        """
+        from core.brain.living_mind_context import neutralize_learned_text
+
+        if isinstance(raw, str):
+            return neutralize_learned_text(raw)[: cls._AUGMENTATION_CHAR_LIMIT]
+        if isinstance(raw, dict):
+            return {
+                str(key)[:120]: cls._bounded_augmentation(value)
+                for key, value in list(raw.items())[:32]
+            }
+        if isinstance(raw, (list, tuple)):
+            return [cls._bounded_augmentation(item) for item in list(raw)[:32]]
+        return raw
 
     @staticmethod
     def _normalize_mode(mode: ThinkingMode | str | Any) -> ThinkingMode:
@@ -1486,6 +1693,71 @@ class CognitiveEngine:
     def _is_user_facing_origin(cls, origin: Any) -> bool:
         return is_foreground_objective_origin(origin)
 
+    #: Reported once per (origin, source): a caller that omits its origin on
+    #: every request would otherwise fill the trail.
+    _refused_origin_inheritance_seen: set[tuple[str, str]] = set()
+
+    @classmethod
+    def _note_refused_origin_inheritance(cls, origin: str, *, source: str) -> None:
+        key = (str(origin), str(source))
+        if key in cls._refused_origin_inheritance_seen:
+            return
+        cls._refused_origin_inheritance_seen.add(key)
+        logger.warning(
+            "🛡️ Refused to inherit the user-facing origin %r from %s: a request "
+            "that did not declare its own principal does not get one.",
+            origin,
+            source,
+        )
+
+    @classmethod
+    def refused_origin_inheritances(cls) -> list[tuple[str, str]]:
+        """(origin, source) pairs this process declined to inherit."""
+        return sorted(cls._refused_origin_inheritance_seen)
+
+    @classmethod
+    def _is_test_run(cls, origin: Any) -> bool:
+        """Whether THIS request runs under test isolation.
+
+        AURA_TESTING and AURA_AGI_MAX_TASKS are process-wide, and this used to
+        read them for every origin — so in a mixed process (a suite running
+        beside the live runtime, or a developer with the variable exported) a
+        real person's turn silently got a substituted default state and its
+        commit bypassed. Their answer would be produced from no memory and
+        remembered by nothing.
+
+        Ambient variables still mark test runs; they just cannot make a
+        USER-FACING turn into one. A live turn keeps its state and its commit
+        whatever the environment says.
+        """
+        import os
+
+        if str(origin or "").strip().lower() == "test":
+            return True
+        ambient = (
+            os.environ.get("AURA_AGI_MAX_TASKS") is not None
+            or os.environ.get("AURA_TESTING") is not None
+        )
+        if not ambient:
+            return False
+        if cls._is_user_facing_origin(origin):
+            cls._note_refused_test_isolation(str(origin or ""))
+            return False
+        return True
+
+    _refused_test_isolation_seen: set[str] = set()
+
+    @classmethod
+    def _note_refused_test_isolation(cls, origin: str) -> None:
+        if origin in cls._refused_test_isolation_seen:
+            return
+        cls._refused_test_isolation_seen.add(origin)
+        logger.warning(
+            "🛡️ Ambient test environment is set, but origin %r is user-facing: "
+            "keeping real state and committing this turn.",
+            origin,
+        )
+
     @classmethod
     def _resolve_origin(cls, origin: Any, context: dict[str, Any] | None = None) -> str:
         normalized = cls._normalize_origin(origin)
@@ -1498,6 +1770,13 @@ class CognitiveEngine:
                 if contextual:
                     return contextual
 
+        # Below here the origin comes from SHARED MUTABLE STATE — the
+        # orchestrator's last-seen origin and the repository's latest state.
+        # Two requests in flight can read each other's, and inheriting a
+        # USER-FACING origin is a privilege escalation: it grants the protected
+        # Cortex lane, trust treatment, and foreground admission to a request
+        # whose caller never claimed to be a person. Inheriting a background
+        # origin costs nothing, so only that inheritance is allowed.
         try:
             container = get_container()
             orchestrator = container.get("orchestrator", default=None)
@@ -1505,7 +1784,12 @@ class CognitiveEngine:
                 getattr(orchestrator, "_current_origin", "")
             )
             if orchestrator_origin:
-                return orchestrator_origin
+                if cls._is_user_facing_origin(orchestrator_origin):
+                    cls._note_refused_origin_inheritance(
+                        orchestrator_origin, source="orchestrator"
+                    )
+                else:
+                    return orchestrator_origin
 
             repo = container.get("state_repository", default=None)
             live_state = getattr(repo, "_current", None) if repo is not None else None
@@ -1513,7 +1797,12 @@ class CognitiveEngine:
                 getattr(getattr(live_state, "cognition", None), "current_origin", "")
             )
             if state_origin:
-                return state_origin
+                if cls._is_user_facing_origin(state_origin):
+                    cls._note_refused_origin_inheritance(
+                        state_origin, source="state_repository"
+                    )
+                else:
+                    return state_origin
         except (OSError, ConnectionError, TimeoutError) as exc:
             record_degradation(
                 "cognitive_engine",
@@ -2173,17 +2462,21 @@ class CognitiveEngine:
             )
             return self._empty_thought(mode, "background_reflection_suppressed")
 
+        # The first 50 characters of every objective went to the log sink as
+        # typed. A person's message can open with an address, a token, or a
+        # phone number, and log files are read, shipped and kept. The scrubber
+        # that already protects the cloud path protects this one too; her
+        # working memory keeps the real words, because that is her memory of
+        # what was said and this is a diagnostic.
         logger.info(
-            "🧠 CognitiveEngine.think: %s... (%s) Origin: %s", objective[:50], mode.name, origin
+            "🧠 CognitiveEngine.think: %s... (%s) Origin: %s",
+            self._log_safe_objective(objective),
+            mode.name,
+            origin,
         )
 
         # 1. Get current state (BUG-12 Fix: handle None state on first boot)
-        import os
-        is_test_run = (
-            origin == "test"
-            or os.environ.get("AURA_AGI_MAX_TASKS") is not None
-            or os.environ.get("AURA_TESTING") is not None
-        )
+        is_test_run = self._is_test_run(origin)
         if is_test_run:
             from core.state.aura_state import AuraState
             state = AuraState.default()
@@ -2289,10 +2582,25 @@ class CognitiveEngine:
 
             check = await spine.pre_response_check(objective, topic=topic)
             if check.injection:
-                logger.info("⚡ [Spine] Injecting prior position into cognitive objective.")
-                # Prepend the injection to the objective so it influences the entire cycle
-                objective = check.injection + "\n\n" + objective
-                state.cognition.current_objective = objective
+                logger.info("⚡ [Spine] Binding prior position as system context.")
+                # As a SYSTEM message, not spliced into the objective.
+                #
+                # The injection used to be prepended to `objective`, and the
+                # prompt builder appends the whole objective as role=user — so
+                # Aura's own prior position was persisted, and re-read on every
+                # later turn, as something the PERSON had said. It still
+                # influences the cycle (working memory is history, and history
+                # reaches the prompt); it is just attributed to the side that
+                # produced it.
+                state.cognition.working_memory.append(
+                    {
+                        "role": "system",
+                        "content": str(check.injection),
+                        "timestamp": time.time(),
+                        "metadata": {"type": "spine_prior_position", "topic": topic},
+                    }
+                )
+                state.cognition.modifiers["spine_prior_position"] = str(check.injection)
                 _record_objective_binding(
                     state,
                     objective,
@@ -2342,10 +2650,30 @@ class CognitiveEngine:
         for aug in self._augmentors:
             try:
                 if hasattr(aug, "get_augmentation"):
-                    aug_data = aug.get_augmentation(objective)
+                    # On a thread with a deadline: get_augmentation is
+                    # synchronous and ran on the event loop, so one slow
+                    # augmentor held every turn in the process behind it.
+                    aug_data = await asyncio.wait_for(
+                        asyncio.to_thread(aug.get_augmentation, objective),
+                        timeout=self._AUGMENTATION_TIMEOUT_S,
+                    )
                     if aug_data:
-                        augmentor_context[type(aug).__name__] = aug_data
-            except (RuntimeError, AttributeError, TypeError) as e:
+                        augmentor_context[type(aug).__name__] = (
+                            self._bounded_augmentation(aug_data)
+                        )
+            except TimeoutError as e:
+                record_degradation(
+                    "cognitive_engine",
+                    e,
+                    severity="warning",
+                    action="skipped an augmentor that exceeded its turn budget",
+                )
+                logger.warning(
+                    "Augmentor %s exceeded %.1fs and was skipped.",
+                    type(aug).__name__,
+                    self._AUGMENTATION_TIMEOUT_S,
+                )
+            except (RuntimeError, AttributeError, TypeError, ValueError, OSError) as e:
                 record_degradation(
                     "cognitive_engine",
                     e,
@@ -2424,9 +2752,8 @@ class CognitiveEngine:
             else:
                 cycle_timeout = 240.0
         cycle_timeout = max(8.0, min(240.0, cycle_timeout))
-        context["cognitive_cycle_deadline_monotonic"] = (
-            time.monotonic() + cycle_timeout
-        )
+        cycle_deadline_at = time.monotonic() + cycle_timeout
+        context["cognitive_cycle_deadline_monotonic"] = cycle_deadline_at
 
         # 4. Phase Execution Loop with Watchdog
         import copy
@@ -2588,8 +2915,18 @@ class CognitiveEngine:
                     origin,
                     "timeout",
                     context=context,
+                    # The version THIS turn derived. A rollback that cannot
+                    # match it is undoing somebody else's work.
+                    authored_version=int(getattr(state, "version", 0) or 0),
                 )
-            except (sqlite3.Error, OSError) as e:
+            except (sqlite3.Error, *_COGNITIVE_ENGINE_RECOVERABLE_ERRORS) as e:
+                # This caught sqlite3.Error and OSError only, so the failures a
+                # phase ACTUALLY produces — RuntimeError, AttributeError,
+                # TypeError, ValueError from a malformed return or an
+                # implementation defect — escaped the cognitive API entirely.
+                # The caller got a raw exception where reactive recovery was
+                # the designed behaviour, and the degradation record that names
+                # the phase was never written.
                 record_degradation(
                     "cognitive_engine",
                     e,
@@ -2602,7 +2939,19 @@ class CognitiveEngine:
                     logger.warning(
                         "🔄 [COGNITION] Downshifting to REACTIVE mode due to Deep Failure..."
                     )
-                    return await self.think(objective, mode=ThinkingMode.FAST, origin=origin, **kwargs)
+                    # WITH the context. The downshift used to call think()
+                    # without it, so the retry lost the desktop-required
+                    # flags, the live-mind evidence, the scoped request
+                    # metadata and the recent exchanges — and then answered a
+                    # question it could no longer see the terms of. A retry
+                    # that drops the contract is a different request.
+                    return await self.think(
+                        objective,
+                        context=dict(context or {}),
+                        mode=ThinkingMode.FAST,
+                        origin=origin,
+                        **kwargs,
+                    )
 
                 record_response_path("reactive_recovery_crash", model_generation=False)
                 return await self._reactive_recovery(
@@ -2611,6 +2960,7 @@ class CognitiveEngine:
                     origin,
                     f"crash: {e}",
                     context=context,
+                    authored_version=int(getattr(state, "version", 0) or 0),
                 )
             finally:
                 # Closed here rather than after the loop so a tick that timed
@@ -2622,7 +2972,33 @@ class CognitiveEngine:
                 try:
                     # vResilience: Avoid locals().get() for type stability
                     if not success and "backup_state" in locals():
+                        # This restores a LOCAL REFERENCE and nothing else.
+                        #
+                        # A deep copy of the state object cannot undo what a
+                        # phase already did outside it: events published, tools
+                        # invoked, rows written, in-place mutations to
+                        # collaborators the phase was handed. Calling this
+                        # "rollback" invites the next reader to rely on a
+                        # transaction that does not exist, so the receipt says
+                        # what was and was not restored.
                         state = backup_state
+                        self._last_phase_rollback = {
+                            "restored": "cognitive_state_snapshot",
+                            "not_restored": [
+                                "external_service_writes",
+                                "published_events",
+                                "tool_invocations",
+                                "database_rows",
+                                "in_place_collaborator_mutations",
+                            ],
+                            "at": time.time(),
+                        }
+                        record_degradation(
+                            "cognitive_engine",
+                            RuntimeError("phase_failure_partial_rollback"),
+                            severity="warning",
+                            action="restored the cognitive state snapshot; external phase effects are not reversible here",
+                        )
                 except (OSError, ConnectionError, TimeoutError) as _e:
                     record_degradation(
                         "cognitive_engine",
@@ -2656,13 +3032,15 @@ class CognitiveEngine:
         # ─── SUCCESS PATH (Unreachable before fix) ──────────────────────────
         # 5. Final State Commit
         # HF12: Handle concurrent version conflicts with a mini-retry loop
-        import os
-        is_test_run = (
-            origin == "test"
-            or os.environ.get("AURA_AGI_MAX_TASKS") is not None
-            or os.environ.get("AURA_TESTING") is not None
-        )
+        is_test_run = self._is_test_run(origin)
         should_bypass_commit = is_test_run or self.state_repository is None
+        # The watchdog above wraps PHASE EXECUTION only. Repository reads,
+        # advisors, spine checks, augmentors, the deep copy, this commit loop
+        # and feedback learning all run outside it, so a configured cycle
+        # timeout was never the end-to-end budget it reads as. The commit loop
+        # is the largest of those — three attempts, each a database round trip
+        # — so it gets what is left of the same deadline instead of an
+        # unbounded wait after the budget is already gone.
 
         from core.state.state_repository import StateVersionConflictError
 
@@ -2679,11 +3057,33 @@ class CognitiveEngine:
                 )
                 logger.info("🧠 [STATE] Test run state isolation: bypassing database commit.")
                 break
+            _commit_budget = max(0.0, cycle_deadline_at - time.monotonic())
+            if _commit_budget <= 0.0:
+                commit_outcome = "cycle_deadline_expired"
+                record_degradation(
+                    "cognitive_engine",
+                    TimeoutError("cognitive cycle budget spent before state commit"),
+                    severity="warning",
+                    action="skipped the state commit because the cycle deadline had passed",
+                )
+                break
             try:
                 # v14.2: Ensure the repository reference is correct (self.state_repository)
-                await self.state_repository.commit(state, "cognitive_cycle")
+                await asyncio.wait_for(
+                    self.state_repository.commit(state, "cognitive_cycle"),
+                    timeout=_commit_budget,
+                )
                 commit_outcome = "committed"
                 break  # Success!
+            except TimeoutError:
+                commit_outcome = "commit_timeout"
+                record_degradation(
+                    "cognitive_engine",
+                    TimeoutError(f"state commit exceeded {_commit_budget:.1f}s"),
+                    severity="error",
+                    action="abandoned the state commit at the cognitive cycle deadline",
+                )
+                break
             except StateVersionConflictError as v_err:
                 if attempt == max_retries - 1:
                     commit_outcome = "version_conflict_exhausted"
@@ -2955,17 +3355,44 @@ class CognitiveEngine:
         )
 
         # ── ACTION IMPERATIVE FALLBACK ──
+        #
+        # This used to emit [SOMATIC:key='.'] for ANY turn whose objective
+        # contained "[ACTION IMPERATIVE]" — text a user can type and injected
+        # content can carry — and called it a safe no-op. A keystroke is not a
+        # no-op: it goes to whatever holds focus, which may be a terminal, an
+        # editor, or a form. The legitimate somatic reflex
+        # (orchestrator/mixins/incoming_logic.py) fires only on a message
+        # carrying [EMBODIED CONTROL CONTRACT] and only when a real CLI prompt
+        # pattern matched. The same condition governs it here: without the
+        # contract, a turn that produced no response says so.
         if is_action_imperative:
+            embodied_control = "[EMBODIED CONTROL CONTRACT]" in objective or (
+                "[EMBODIED CONTROL CONTRACT]" in routed_obj
+            )
+            if embodied_control:
+                logger.warning(
+                    "⚠️ [COGNITION] Embodied control turn produced no response. "
+                    "Falling back to the pager-advance key."
+                )
+                return Thought(
+                    id=str(uuid.uuid4()),
+                    content="[SOMATIC:key='.']",
+                    mode=mode,
+                    confidence=0.5,
+                    reasoning=["Embodied control fallback (pager advance)."],
+                    metadata={"embodied_control_contract": True},
+                )
+            record_degradation(
+                "cognitive_engine",
+                RuntimeError("action_imperative_without_embodied_contract"),
+                severity="warning",
+                action="refused a motor fallback for an action imperative with no embodied control contract",
+            )
             logger.warning(
-                "⚠️ [COGNITION] Action Imperative active but no response generated. Falling back to motor no-op."
+                "⚠️ [COGNITION] Action Imperative active but no response generated, "
+                "and no embodied control contract authorises a keystroke."
             )
-            return Thought(
-                id=str(uuid.uuid4()),
-                content="[SOMATIC:key='.']",  # Safe 'wait' or 'clear' key
-                mode=mode,
-                confidence=0.5,
-                reasoning=["Action Imperative fallback (no-op)."],
-            )
+            return self._empty_thought(mode, "action_imperative_no_response")
 
         if is_background:
             logger.debug(
@@ -2987,7 +3414,20 @@ class CognitiveEngine:
 
         # If the objective requires a strict answer format, do not return conversational evasive fallbacks.
         # Instead, attempt a direct, single-turn LLM generation as a high-fidelity recovery mechanism.
-        is_strict_answer = "<answer>" in objective.lower() or "answer_format" in kwargs
+        # A literal "<answer>" ANYWHERE in the objective used to activate this
+        # recovery — text a person can type, and text injected content can
+        # carry — and the recovery sends the full objective to a cloud
+        # provider. Routing to a third party is not something the prompt gets
+        # to decide. The caller's answer_format kwarg is an explicit contract
+        # and still counts; a substring in the user's words does not.
+        is_strict_answer = "answer_format" in kwargs or bool(
+            context.get("strict_answer_contract", False)
+        )
+        if "<answer>" in objective.lower() and not is_strict_answer:
+            logger.info(
+                "🛡️ [COGNITION] '<answer>' appears in the objective but no caller "
+                "declared a strict-answer contract; not activating cloud recovery."
+            )
         if is_strict_answer:
             logger.warning("⚠️ [COGNITION] Structured answer required but phase execution produced no response. Running last-resort direct recovery...")
             try:
@@ -3014,16 +3454,32 @@ class CognitiveEngine:
                     proof_evaluation_contract=is_test_run,
                     foreground_request=True,
                 )
-                if content and len(content.strip()) > 0:
+                # Nonempty was the whole postcondition: the recovery claimed
+                # success at confidence 0.8 for any text at all, including
+                # text with no <answer> envelope — the one thing the contract
+                # promised. A strict answer that does not carry its envelope
+                # did not satisfy the contract, and saying it did is what the
+                # caller then parses and fails on.
+                cleaned = str(content or "").strip()
+                envelope_ok = "<answer>" in cleaned.lower() and "</answer>" in cleaned.lower()
+                if cleaned and envelope_ok:
                     thought = Thought(
                         id=str(uuid.uuid4()),
                         content=content,
                         mode=mode,
                         confidence=0.8,
                         reasoning=["Last-resort direct structured recovery succeeded."],
+                        metadata={"strict_answer_envelope_verified": True},
                     )
                     self.thoughts.append(thought)
                     return thought
+                if cleaned:
+                    record_degradation(
+                        "cognitive_engine",
+                        ValueError("strict answer recovery returned no <answer> envelope"),
+                        severity="warning",
+                        action="refused a strict-answer recovery that did not carry its envelope",
+                    )
             except _COGNITIVE_ENGINE_RECOVERABLE_ERRORS as rec_err:
                 record_degradation(
                     "cognitive_engine",
@@ -3313,7 +3769,13 @@ class CognitiveEngine:
         container = get_container()
         router = container.get("llm_router", default=None)
 
-        max_tokens = int(context.get("max_tokens") or 768)
+        # int() on caller input, outside the guarded router call below: a
+        # string or a NaN raised TypeError/ValueError here and took the turn
+        # down before any bounded failure thought could be produced. A bad
+        # request is a bad request, not a crash.
+        max_tokens = self._bounded_request_int(
+            context.get("max_tokens"), default=768, low=1, high=32_768
+        )
         advice = context.get("spiking_active_inference")
         imagination_frame = context.get("imagination_workspace")
         bicameral_frame = context.get("bicameral_advisory")
@@ -3423,7 +3885,9 @@ class CognitiveEngine:
             request_timeout = min(request_timeout, 90.0)
         if capability_inventory_contract:
             request_timeout = min(request_timeout, 28.0)
-        style_contract = str(context.get("response_style_contract") or "").strip()
+        style_contract = self._contract_safe(
+            context.get("response_style_contract"), self._STYLE_CONTRACT_LIMIT
+        )
         visible_user_message = str(context.get("visible_user_message") or objective or "").strip()
         recent_conversation_context = str(context.get("recent_conversation_context") or "").strip()
         history_messages = (
@@ -3452,27 +3916,44 @@ class CognitiveEngine:
             live_mind_context,
             live_mind_generation_controls,
         )
+        # The three flags below gate the structured floors, which return
+        # self-condition, planning, capability and identity answers at high
+        # confidence with live-mind metadata attached. They used to be
+        # satisfiable from the caller's own context booleans — and the last
+        # branch re-derived controls_bound as True from them, bypassing
+        # _live_mind_controls_bound entirely. A caller could therefore mint a
+        # proof-bearing reply by asserting that it was entitled to one.
+        #
+        # A context fallback is still allowed, but only when the payload
+        # carries this runtime's stamp: then the booleans are the runtime's own
+        # summary of a snapshot it produced, not a claim about itself.
+        from core.utils.injected_blocks import is_stamped_runtime_payload
+
+        _context_attested = is_stamped_runtime_payload(live_mind_context)
         live_mind_snapshot_ready = bool(
             isinstance(live_mind_context, dict)
             and isinstance(live_mind_context.get("mind_snapshot_quality"), dict)
             and live_mind_context["mind_snapshot_quality"].get("ready")
         )
-        if not live_mind_snapshot_ready:
+        if not live_mind_snapshot_ready and _context_attested:
             live_mind_snapshot_ready = bool(context.get("live_mind_snapshot_ready"))
         live_mind_required_subsystems_ok = bool(
             isinstance(live_mind_context, dict)
             and live_mind_context.get("required_subsystems_ok")
         )
-        if not live_mind_required_subsystems_ok:
+        if not live_mind_required_subsystems_ok and _context_attested:
             live_mind_required_subsystems_ok = bool(
                 context.get("live_mind_required_subsystems_ok")
             )
-        if (
+        # controls_bound comes from _live_mind_controls_bound and nowhere else.
+        # It used to be re-derived True here from the flags above, which is the
+        # check answering to the thing it was checking.
+        if live_mind_controls_bound and not (
             live_mind_generation_controls
             and live_mind_snapshot_ready
             and live_mind_required_subsystems_ok
         ):
-            live_mind_controls_bound = True
+            live_mind_controls_bound = False
         canonical_self_condition_reply = str(
             context.get("canonical_self_condition_reply") or ""
         ).strip()
@@ -3770,7 +4251,9 @@ class CognitiveEngine:
             # text could override it and it polluted task semantics, caching,
             # memory and audit attribution.
             system_prompt = f"{system_prompt}\n[PERSONA CONTRACT]\n{persona_contract[:2000]}"
-        mind_context_contract = str(context.get("mind_context_contract") or "").strip()
+        mind_context_contract = self._contract_safe(
+            context.get("mind_context_contract"), self._MIND_CONTRACT_LIMIT
+        )
         # The block below tells the model its own state is "causal grounding for
         # the reply". Whether it is, is a measurement, and this is the switch
         # that lets the measurement happen: lesioned, the whole block is absent
@@ -3816,6 +4299,7 @@ class CognitiveEngine:
             )
             if mind_context_contract:
                 system_prompt = f"{system_prompt}\n{mind_context_contract}"
+
             system_prompt = f"{system_prompt}\n[END LIVE MIND CONTEXT]"
         if isinstance(live_speech_frame, dict) and live_speech_frame and not capability_inventory_contract:
             compact_frame = {
@@ -4189,15 +4673,22 @@ class CognitiveEngine:
                     "complete sentence before surfacing the desktop reply"
                 ),
             )
+        # 0.8 immediately after a nonempty generation, before user feedback,
+        # task outcome, factual verification, or even a correlated quality
+        # receipt — so a fluent failure reinforced the components that shaped
+        # it. The reply is not yet known to be good; what IS known is whether
+        # it came out whole. A reply the budget cut mid-sentence is the one
+        # signal available here, and it is negative.
+        _quick_reward = 0.4 if trimmed_cutoff else 0.6
         imagination_feedback = self._learn_imagination_workspace_outcome(
             context,
             outcome="desktop_quick_reply",
-            reward=0.8,
+            reward=_quick_reward,
         )
         bicameral_feedback = self._learn_bicameral_advisory_outcome(
             context,
             outcome="desktop_quick_reply",
-            reward=0.8,
+            reward=_quick_reward,
         )
         surface_control_receipt = (
             router_generation_metadata.get("surface_control_receipt")
@@ -4272,6 +4763,33 @@ class CognitiveEngine:
             },
         )
 
+    def _record_recovery_deferral(
+        self, objective: Any, origin: str, reason: str, kind: str
+    ) -> None:
+        """Write the record the deferral reply says exists."""
+        receipt = {
+            "kind": str(kind),
+            "reason": str(reason),
+            "origin": str(origin or ""),
+            "objective_preview": self._log_safe_objective(objective, limit=120),
+            "at": time.time(),
+        }
+        deferrals = getattr(self, "_recovery_deferrals", None)
+        if deferrals is None:
+            deferrals = deque(maxlen=64)
+            self._recovery_deferrals = deferrals
+        deferrals.append(receipt)
+        record_degradation(
+            "cognitive_engine",
+            RuntimeError(f"reactive_recovery_deferred:{kind}"),
+            severity="warning",
+            action="deferred a reactive recovery and recorded the turn",
+        )
+
+    def recovery_deferrals(self) -> list[dict[str, Any]]:
+        """Turns that were told they had been logged."""
+        return [dict(entry) for entry in (getattr(self, "_recovery_deferrals", None) or ())]
+
     async def _reactive_recovery(
         self,
         objective: str,
@@ -4280,6 +4798,7 @@ class CognitiveEngine:
         reason: str,
         *,
         context: dict[str, Any] | None = None,
+        authored_version: int | None = None,
     ) -> Thought:
         """
         Emergency reactive response when the main cognitive loop fails.
@@ -4296,22 +4815,31 @@ class CognitiveEngine:
         # Only use the mutex to guard the flag flip; long-running recovery work
         # must happen outside the lock so watchdogs don't see a false deadlock.
         if not await self._recovery_lock.acquire_robust(timeout=1.0):
+            # The reply says the turn was logged, so log it. It claimed a
+            # record that nothing wrote — a sentence about bookkeeping standing
+            # in for the bookkeeping.
+            self._record_recovery_deferral(objective, origin, reason, "lock_busy")
             return Thought(
                 id=str(uuid.uuid4()),
                 content="Reactive recovery is still gathering a stable answer; I logged this turn instead of emitting a second recovery fragment.",
                 mode=ThinkingMode.FAST,
                 confidence=0.2,
                 reasoning=["Recovery lock busy"],
+                metadata={"recovery_deferral_recorded": True},
             )
 
         try:
             if getattr(self, "_recovery_in_progress", False):
+                self._record_recovery_deferral(
+                    objective, origin, reason, "recursion_guard"
+                )
                 return Thought(
                     id=str(uuid.uuid4()),
                     content="Reactive recovery is still gathering a stable answer; I logged this turn instead of emitting a duplicate recovery fragment.",
                     mode=ThinkingMode.FAST,
                     confidence=0.2,
                     reasoning=["Recovery recursion guard triggered"],
+                    metadata={"recovery_deferral_recorded": True},
                 )
             self._recovery_in_progress = True
         finally:
@@ -4322,12 +4850,20 @@ class CognitiveEngine:
             logger.warning("⚡ [COGNITION] Initiating Reactive Recovery Phase. Reason: %s", reason)
 
             # 1. Rollback state to last stable version (with timeout + guard)
+            #
+            # Only if THIS turn authored what is being reverted. The rollback
+            # used to fire on a free-text reason alone, with no version, no
+            # precondition and no proof of authorship — so a failed turn could
+            # revert cognitive state a concurrent turn had just committed.
             try:
                 async with asyncio.timeout(5.0):
                     if self.state_repository is not None:
                         # StateRepository is the canonical rollback owner and
                         # creates the state-mutation receipt around persistence.
-                        await self.state_repository.rollback(f"recovery: {reason}")
+                        await self.state_repository.rollback(
+                            f"recovery: {reason}",
+                            expected_version=authored_version,
+                        )
             except (RuntimeError, AttributeError, TypeError, ValueError) as rollback_err:
                 record_degradation(
                     "cognitive_engine",
@@ -4359,8 +4895,17 @@ class CognitiveEngine:
                     id=str(uuid.uuid4()),
                     content=reflex,
                     mode=ThinkingMode.FAST,
-                    confidence=1.0,
-                    reasoning=[f"Reactive recovery via reflex matrix ({reason})"],
+                    # A reflex is a pattern match against the objective. It is
+                    # useful and it is unverified — nothing checked that this
+                    # answer is right for this turn — and 1.0 was the highest
+                    # confidence this engine can express, assigned to the one
+                    # answer with the least evidence behind it.
+                    confidence=0.5,
+                    reasoning=[
+                        f"Reactive recovery via reflex matrix ({reason})",
+                        "Pattern-matched reflex; no verification ran on this answer.",
+                    ],
+                    metadata={"reflex_response": True, "verified": False},
                 )
 
             structured = self._structured_evaluation_thought(
@@ -4496,6 +5041,24 @@ class CognitiveEngine:
         if self.stopped:
             raise RuntimeError(f"cognitive_engine_stopped:{operation}")
 
+    @staticmethod
+    def _structured_floor_receipt(fast_path: bool) -> dict[str, Any]:
+        """Say that this answer skipped the pipeline it is standing in for.
+
+        On proof, eval, evaluation, benchmark and test origins the structured
+        floor runs BEFORE spine handling, augmentors, the thinking loop, phase
+        execution and the state commit. The answer is legitimate; what it is
+        not is evidence that the modular cognitive cycle ran. A benchmark that
+        passes on a floor and reads its result as a full-cycle result is
+        measuring the floor, so the result says which it was.
+        """
+        return {
+            "pipeline_executed": False,
+            "structured_floor": True,
+            "structured_floor_fast_path": bool(fast_path),
+            "measures_full_cognitive_cycle": False,
+        }
+
     def _structured_evaluation_thought(
         self,
         objective: str,
@@ -4518,19 +5081,27 @@ class CognitiveEngine:
 
                     direct = deterministic_user_facing_floor(objective)
                     if direct:
+                        floor_metadata = self._live_mind_structured_floor_metadata(
+                            context,
+                            source="deterministic_user_facing_floor",
+                        )
+                        floor_metadata.update(self._structured_floor_receipt(fast_path))
                         thought = Thought(
                             id=str(uuid.uuid4()),
                             content=direct,
                             mode=mode,
-                            confidence=0.99,
+                            # Was 0.99 — near-certainty for an answer derived
+                            # from PROMPT SHAPE alone, with no semantic check,
+                            # no evidence requirement and no held-out
+                            # calibration behind it. The floor is deterministic,
+                            # which makes it reproducible, not correct.
+                            confidence=0.7,
                             reasoning=[
                                 "Deterministic bounded-answer floor selected before model generation.",
                                 "Response computed from the prompt shape; no fixture keys or benchmark ids used.",
+                                "The modular phase pipeline did not run for this answer.",
                             ],
-                            metadata=self._live_mind_structured_floor_metadata(
-                                context,
-                                source="deterministic_user_facing_floor",
-                            ),
+                            metadata=floor_metadata,
                         )
                         self.thoughts.append(thought)
                         return thought
@@ -4538,6 +5109,11 @@ class CognitiveEngine:
             if not fast_path and response.kind not in {"safety_refusal"}:
                 return None
 
+            floor_metadata = self._live_mind_structured_floor_metadata(
+                context,
+                source=f"structured_evaluation:{response.kind}",
+            )
+            floor_metadata.update(self._structured_floor_receipt(fast_path))
             thought = Thought(
                 id=str(uuid.uuid4()),
                 content=response.content,
@@ -4546,11 +5122,9 @@ class CognitiveEngine:
                 reasoning=[
                     f"Structured runtime evaluation floor selected: {response.kind}.",
                     "Response derived from current prompt shape; no fixture keys or benchmark ids used.",
+                    "The modular phase pipeline did not run for this answer.",
                 ],
-                metadata=self._live_mind_structured_floor_metadata(
-                    context,
-                    source=f"structured_evaluation:{response.kind}",
-                ),
+                metadata=floor_metadata,
             )
             self.thoughts.append(thought)
             return thought
@@ -4599,15 +5173,15 @@ class CognitiveEngine:
                 user_message=context.get("visible_user_message"),
             )
             controls_provenance = "live_mind_snapshot"
+        # The caller's own live_mind_controls_bound flag used to grant this,
+        # with _live_mind_controls_bound only consulted as a fallback — so a
+        # context asserting it was bound produced a receipt saying it was
+        # bound. The authoritative check decides; the flag may agree with it
+        # and nothing more.
         controls_bound = bool(
-            context.get("live_mind_controls_bound")
-            and generation_controls
+            generation_controls
+            and _live_mind_controls_bound(live_mind_context, generation_controls)
         )
-        if not controls_bound:
-            controls_bound = _live_mind_controls_bound(
-                live_mind_context,
-                generation_controls,
-            )
         desktop_required = bool(
             context.get("desktop_cognitive_engine_required")
             or context.get("cognitive_engine_required")
@@ -4665,7 +5239,12 @@ class CognitiveEngine:
                 context.get("clean_user_surface_contract", True)
             ),
             "surface_quality_gate_enabled": False,
-            "surface_quality_gate_passed": True,
+            # A gate that did not run did not PASS. True here put a passed
+            # verdict in the receipt for a check nobody performed, which is
+            # the exact shape this pass exists to remove. None is "no verdict";
+            # the status says why there is none.
+            "surface_quality_gate_passed": None,
+            "surface_quality_gate_status": "not_run_structured_floor",
             "surface_quality_gate_attempts": 0,
             "surface_quality_gate_reasons": [],
             "source": source,
@@ -4691,11 +5270,53 @@ class CognitiveEngine:
             "structured_floor_source": source,
         }
 
+    @staticmethod
+    def _interaction_sensitivity(user_input: Any, response: Any) -> str:
+        """Classify what a completed turn is carrying, before it is stored.
+
+        Not redaction: her memory of a conversation is the conversation, and
+        scrubbing it would make her unable to recall what was actually said.
+        This is the label a retention or deletion policy needs in order to act
+        on the record at all — without it every stored turn looks the same.
+        """
+        try:
+            from core.brain.pii_scrubber import residual_pii_findings
+        except (ImportError, RuntimeError):
+            return "unclassified"
+        findings = sorted(
+            set(residual_pii_findings(str(user_input or "")))
+            | set(residual_pii_findings(str(response or "")))
+        )
+        if not findings:
+            return "ordinary_conversation"
+        return "personal_data:" + ",".join(findings)
+
     async def record_interaction(
         self, user_input: str, response: str, domain: str = "general"
-    ) -> None:
-        """Persist completed turns through the active learning/context stack."""
+    ) -> dict[str, Any]:
+        """Persist a completed turn, and say whether it was persisted.
+
+        Both writes could fail — the context manager falling through, the
+        learning write swallowed as "optional" — and the method returned None
+        either way, so a caller could not tell durable storage from total loss.
+        The return is now a receipt: which sink took it, or that none did.
+        """
         container = get_container()
+        # A completed turn is the person's words plus her reply, going to a
+        # durable store. It used to travel with no purpose, no sensitivity
+        # class and nothing a deletion request could key on — so "delete what
+        # I said about X" had no handle to find it by. The classification is
+        # derived here, once, and travels with the receipt.
+        sensitivity = self._interaction_sensitivity(user_input, response)
+        receipt: dict[str, Any] = {
+            "stored": False,
+            "sink": "",
+            "domain": str(domain or "general"),
+            "purpose": "conversation_continuity",
+            "sensitivity": sensitivity,
+            "attempted": [],
+            "at": time.time(),
+        }
 
         context_manager = container.get("context_manager", default=None)
         if (
@@ -4703,9 +5324,12 @@ class CognitiveEngine:
             and context_manager is not self
             and hasattr(context_manager, "record_interaction")
         ):
+            receipt["attempted"].append("context_manager")
             try:
                 await context_manager.record_interaction(user_input, response, domain=domain)
-                return
+                receipt.update({"stored": True, "sink": "context_manager"})
+                self._last_interaction_receipt = receipt
+                return receipt
             except (RuntimeError, AttributeError, TypeError, ValueError) as exc:
                 record_degradation(
                     "cognitive_engine",
@@ -4719,12 +5343,14 @@ class CognitiveEngine:
 
         learning = container.get("learning_engine", default=None)
         if learning and hasattr(learning, "record_interaction"):
+            receipt["attempted"].append("learning_engine")
             try:
                 await learning.record_interaction(
                     user_input=user_input,
                     aura_response=response,
                     domain=domain,
                 )
+                receipt.update({"stored": True, "sink": "learning_engine"})
             except (RuntimeError, AttributeError, TypeError, ValueError) as exc:
                 record_degradation(
                     "cognitive_engine",
@@ -4733,6 +5359,23 @@ class CognitiveEngine:
                     action="dropped optional interaction learning write",
                 )
                 logger.debug("CognitiveEngine.record_interaction learning path failed: %s", exc)
+
+        if not receipt["stored"]:
+            # A completed turn that reached no sink is a conversation the
+            # runtime will not remember. Silence here made that outcome
+            # identical to success from the caller's side.
+            record_degradation(
+                "cognitive_engine",
+                RuntimeError("interaction_not_persisted"),
+                severity="warning",
+                action="completed a turn that reached no durable interaction sink",
+            )
+        self._last_interaction_receipt = receipt
+        return receipt
+
+    def last_interaction_receipt(self) -> dict[str, Any]:
+        """Whether the last completed turn actually reached a sink."""
+        return dict(getattr(self, "_last_interaction_receipt", {}) or {})
 
     async def think_stream(self, objective: str, **kwargs):
         """Streaming thought generator via modular router.
@@ -4784,6 +5427,20 @@ class CognitiveEngine:
             finalize_turn(outcome, subsystem="cognitive_engine")
 
     async def _think_stream_within_turn(self, objective: str, **kwargs):
+        """The streaming lane, under the governance a stream can carry.
+
+        chat_stream prefers this path, so it is THE live desktop turn — and it
+        used to read state, assemble messages and call the router directly:
+        no origin classification, no live-mind control binding, and no
+        structured safety floor. A refusal that the non-streaming path would
+        have produced simply streamed the model's answer instead.
+
+        Three of those apply to a stream and are applied here. The fourth,
+        post-hoc surface-quality validation, cannot: tokens are delivered as
+        they arrive and there is nothing to re-check before the person sees
+        them. That is recorded on the turn rather than left as an unstated
+        difference between the two lanes.
+        """
         container = get_container()
         router = container.get("llm_router")
         state = await self.state_repository.get_current()
@@ -4791,6 +5448,52 @@ class CognitiveEngine:
             from core.state.aura_state import AuraState
 
             state = AuraState.default()
+
+        context = kwargs.get("context")
+        if not isinstance(context, dict):
+            context = {}
+        origin = self._resolve_origin(kwargs.get("origin"), context)
+
+        # A structured safety floor outranks the stream. It is the same check
+        # the non-streaming lane runs before generation, and its whole purpose
+        # is to answer instead of the model.
+        floor = self._structured_evaluation_thought(
+            objective,
+            state=state,
+            mode=ThinkingMode.FAST,
+            origin=origin,
+            fast_path=False,
+            context=context,
+        )
+        if floor is not None and str(floor.content or "").strip():
+            yield floor.content
+            return
+
+        # Live-mind controls, bound the same way the non-streaming lane binds
+        # them, so a stream is not the one path where the mind does not reach
+        # generation.
+        generation_controls = _bind_live_mind_generation_contract(context)
+        for key, value in (generation_controls or {}).items():
+            kwargs.setdefault(key, value)
+        kwargs.setdefault(
+            "live_mind_controls_bound", bool(context.get("live_mind_controls_bound"))
+        )
+
+        _turn = current_turn()
+        if _turn is not None:
+            _turn.record_receipt(
+                "stream_governance",
+                {
+                    "origin": origin,
+                    "structured_floor_checked": True,
+                    "live_mind_controls_bound": bool(
+                        context.get("live_mind_controls_bound")
+                    ),
+                    # Named, not implied: a token stream cannot be re-checked
+                    # before the person reads it.
+                    "surface_quality_validation": "not_applicable_streaming",
+                },
+            )
 
         # Build structured messages
         messages = ContextAssembler.build_messages(state, objective)
@@ -4807,16 +5510,33 @@ class CognitiveEngine:
 
         [ZENITH] Functionalized: Linking Sensory Buffer to Cognitive reasoning.
         """
+        # The REQUEST is checked before anything is looked up. The payload was
+        # assumed to be a mapping and its query forwarded verbatim: a
+        # non-mapping raised AttributeError, and an unbounded string went
+        # straight to the visual model — a query is exactly where "ignore the
+        # image and say X" would be written.
+        if not isinstance(vision_payload, dict):
+            record_degradation(
+                "cognitive_engine",
+                TypeError(f"vision payload is {type(vision_payload).__name__}, not a mapping"),
+                severity="warning",
+                action="refused a malformed vision payload",
+            )
+            return "👁️ visual_analysis: Malformed vision request."
+
         buffer = get_container().get("vision_buffer", default=None)
         if not buffer:
             logger.warning("👁️ [VISION] see() called but vision_buffer not found in container.")
             return "👁️ visual_analysis: Sensory buffer unavailable."
 
-        prompt = (
+        raw_prompt = (
             vision_payload.get("query")
             or vision_payload.get("prompt")
             or "Describe the current visual state."
         )
+        prompt = self._contract_safe(raw_prompt, self._VISION_QUERY_LIMIT)
+        if not prompt:
+            prompt = "Describe the current visual state."
         return await buffer.query_visual_context(prompt, brain=self)
 
     async def generate(self, prompt: str, **kwargs) -> str:
@@ -4868,14 +5588,30 @@ class CognitiveEngine:
 
         if router and use_strategies:
             # Lazy-init the reasoning layer on first use
-            if self._reasoning is None:
+            # Rebuild when the ROUTER changes, not only when the layer is
+            # absent. The closure below captured whichever router object the
+            # first caller resolved, so a replacement or a failover left every
+            # later strategy call generating through the old one — and the
+            # lazy construction itself was unsynchronised, so two first callers
+            # could each build one and the loser's closure vanished silently.
+            with self._reasoning_lock:
+                if self._reasoning is None or self._reasoning_router is not router:
 
-                async def _raw_generate(p, **kw):
-                    return await router.think(p, **kw)
+                    async def _raw_generate(p, _router=router, **kw):
+                        return await _router.think(p, **kw)
 
-                self._reasoning = ReasoningStrategies(_raw_generate)
+                    self._reasoning = ReasoningStrategies(_raw_generate)
+                    self._reasoning_router = router
 
             strategy = force_strategy
+            # Bound BEFORE the branch that assigns it.
+            #
+            # classify_target was assigned only inside `if strategy is None`,
+            # and the condition below reads it unconditionally — so a caller
+            # passing force_strategy=DIRECT hit UnboundLocalError instead of
+            # getting direct generation. The one path a caller takes to say
+            # "no strategy, just answer" was the one that crashed.
+            classify_target = strategy_query or prompt
             if strategy is None:
                 if not strategy_query:
                     messages = kwargs.get("messages")
@@ -4926,16 +5662,39 @@ class CognitiveEngine:
         thought = await self.think(prompt, **kwargs)
         return thought.content if hasattr(thought, "content") else str(thought)
 
+    #: What one published thought may carry. Internal chain material is
+    #: unbounded by nature — a long ReAct trace is a legitimate thought — and
+    #: the bus fans out to every subscriber, including the websocket bridge.
+    _THOUGHT_BROADCAST_LIMIT = 4_000
+
     def _emit_thought(self, thought: str):
-        """Internal helper to publish thoughts to the event bus."""
+        """Publish a thought, labelled for who may see it.
+
+        The payload was raw content on a shared topic: no audience scope, no
+        sensitivity label, and nothing separating internal chain material from
+        user-visible speech. That is fine for the glyph row it feeds — this is
+        Bryan's own instrument and seeing her reasoning is the point — and it
+        is not fine as the ONLY description of the payload, because the next
+        consumer (a log shipper, a share surface) has no way to tell the two
+        apart. The label travels with the event; nothing is hidden from the
+        surface it was built for.
+        """
         container = get_container()
         eb = container.get("event_bus")
-        if eb:
-            eb.publish_threadsafe(
-                "thought",
-                {
-                    "timestamp": time.time(),
-                    "content": thought,
-                    "engine": "ReAct" if "ReAct" in thought else "Modular",
-                },
-            )
+        if not eb:
+            return
+        text = str(thought or "")
+        truncated = len(text) > self._THOUGHT_BROADCAST_LIMIT
+        eb.publish_threadsafe(
+            "thought",
+            {
+                "timestamp": time.time(),
+                "content": text[: self._THOUGHT_BROADCAST_LIMIT],
+                "engine": "ReAct" if "ReAct" in text else "Modular",
+                # Internal reasoning, not something she said to anyone.
+                "audience": "operator_surface",
+                "sensitivity": "internal_chain",
+                "user_visible_speech": False,
+                "truncated": truncated,
+            },
+        )

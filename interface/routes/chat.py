@@ -35,6 +35,7 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 from starlette.background import BackgroundTask
 
+from core.utils.injected_blocks import stamp_runtime_payload
 from core.brain.live_mind_contract import (
     append_text_mutation,
     merge_text_mutations,
@@ -5401,19 +5402,26 @@ async def _recent_completed_conversation_exchanges(
         if not user_text and not aura_text:
             continue
         exchanges.append(
-            {
-                "exchange_id": str(entry.get("id") or ""),
-                "user": _clip_conversation_text(
-                    user_text,
-                    limit=_RECENT_CONVERSATION_USER_CHARS,
-                ),
-                "aura": _clip_conversation_text(
-                    aura_text,
-                    limit=_RECENT_CONVERSATION_AURA_CHARS,
-                ),
-                "timestamp": str(entry.get("completed_at") or entry.get("timestamp") or ""),
-                "session_id": str(entry.get("session_id") or "")[:64],
-            }
+            # Stamped per entry: the cognitive engine promotes these straight
+            # into chat roles, so a forged entry mixed into a real list would
+            # become an assistant turn Aura never took.
+            stamp_runtime_payload(
+                {
+                    "exchange_id": str(entry.get("id") or ""),
+                    "user": _clip_conversation_text(
+                        user_text,
+                        limit=_RECENT_CONVERSATION_USER_CHARS,
+                    ),
+                    "aura": _clip_conversation_text(
+                        aura_text,
+                        limit=_RECENT_CONVERSATION_AURA_CHARS,
+                    ),
+                    "timestamp": str(
+                        entry.get("completed_at") or entry.get("timestamp") or ""
+                    ),
+                    "session_id": str(entry.get("session_id") or "")[:64],
+                }
+            )
         )
         if len(exchanges) >= max(1, int(limit)):
             break
@@ -6073,7 +6081,12 @@ def _load_durable_conversation_exchanges_sync(
         )
 
     candidates.sort(key=lambda item: item[0])
-    return [exchange for _position, exchange in candidates[-limit:]]
+    # Stamped on the way out, so the durable path attests exactly like the
+    # live one. The cognitive engine promotes these into chat roles.
+    return [
+        stamp_runtime_payload(exchange)
+        for _position, exchange in candidates[-limit:]
+    ]
 
 
 async def _load_durable_conversation_exchanges(
@@ -9062,7 +9075,11 @@ def _build_live_mind_context_payload(
             },
         }
 
-    return {
+    # Stamped: the cognitive engine binds generation controls off this
+    # snapshot, and a dictionary that vouched only for its own `ready` flag
+    # could be handed in by anything reaching think(). The stamp is a
+    # per-process nonce the caller cannot know.
+    return stamp_runtime_payload({
         "schema": "aura.live_mind_context.v1",
         "required_for_live_desktop": bool(require_engine),
         "must_answer_from_full_mind_path": bool(require_engine),
@@ -9091,7 +9108,7 @@ def _build_live_mind_context_payload(
             "legacy_fallback_allowed": False,
             "bounded_repairs_are_degraded": True,
         },
-    }
+    })
 
 
 async def _collect_live_mind_context_payload(

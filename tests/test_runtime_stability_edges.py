@@ -432,15 +432,24 @@ class TestSensoryClientRecovery(unittest.IsolatedAsyncioTestCase):
         ctx.Process.return_value = process
         ctx.get_start_method.return_value = "spawn"
 
+        # start() drives _request_blocking, which returns a STATUS DICT.
+        # The double here stubbed _send_command with booleans — a method the
+        # start path no longer calls — so this test stopped exercising the
+        # ping/init sequence it names and simply failed.
+        commands: list[str] = []
+
+        def _request_blocking(command, payload=None, timeout=None):
+            commands.append(command)
+            return {"status": "ok"}
+
         with swap("core.senses.sensory_client.sys.platform", "darwin"), \
              swap("core.senses.sensory_client.mp.get_context", return_value=ctx) as get_context, \
-             swap.object(client, "_send_command", new=_AsyncCallRecorder(side_effect=[True, True, True])) as send_command:
+             swap.object(client, "_request_blocking", new=_request_blocking):
             started = await client.start()
 
         self.assertTrue(started)
         get_context.assert_called_once_with("spawn")
-        send_command.assert_any_await("ping", timeout=2.0, auto_restart=False)
-        self.assertEqual(send_command.await_count, 3)
+        self.assertEqual(commands, ["ping", "init_vision", "init_audio"])
 
     async def test_send_command_restarts_dead_worker(self):
         client = SensoryLocalClient()

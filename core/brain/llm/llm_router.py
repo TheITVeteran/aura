@@ -1946,14 +1946,30 @@ class IntelligentLLMRouter:
                 max_tools=getattr(contract, "max_tools", 8) if contract else 8,
             )
             if tools:
+                # Same defence the non-streaming handoff already carries: any
+                # of these five arriving in **kwargs makes Python reject the
+                # call with a duplicate-keyword TypeError BEFORE the coroutine
+                # dispatches, and no boundary here catches it — the forced tool
+                # handoff would simply die on the stream lane.
+                handoff_kwargs = dict(kwargs)
+                handoff_system_prompt = str(
+                    handoff_kwargs.pop("system_prompt", "") or system_prompt or ""
+                )
+                for _consumed in (
+                    "tools",
+                    "context",
+                    "prefer_tier",
+                    "_contract_tool_handoff",
+                ):
+                    handoff_kwargs.pop(_consumed, None)
                 result = await self.think_and_act(
                     prompt,
-                    system_prompt=system_prompt,
+                    system_prompt=handoff_system_prompt,
                     tools=tools,
                     context={"response_contract": contract.to_dict()} if contract else {},
                     prefer_tier=prefer_tier,
                     _contract_tool_handoff=True,
-                    **kwargs,
+                    **handoff_kwargs,
                 )
                 text = str(result.get("content", "") or "").strip()
                 if text:
